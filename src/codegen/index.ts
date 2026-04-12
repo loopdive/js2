@@ -277,6 +277,26 @@ export function generateModule(
     // Collect ref.func targets so the binary emitter can add a declarative element segment
     collectDeclaredFuncRefs(ctx);
 
+    // Resolve deferred `export default <variable>` for module globals (#1108).
+    // Must run AFTER compileDeclarations — string-constant imports added during
+    // body compilation shift numImportGlobals, so indices aren't final until now.
+    if (ctx.deferredDefaultGlobalExport) {
+      const varName = ctx.deferredDefaultGlobalExport;
+      const globalName = `__mod_${varName}`;
+      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
+      if (localIdx >= 0) {
+        const absIdx = ctx.numImportGlobals + localIdx;
+        const alreadyExported = ctx.mod.exports.some(
+          (e) => e.name === "default" || (e.name === varName && e.desc.kind === "global"),
+        );
+        if (!alreadyExported) {
+          ctx.mod.exports.push({ name: "default", desc: { kind: "global", index: absIdx } });
+          ctx.mod.exports.push({ name: varName, desc: { kind: "global", index: absIdx } });
+        }
+      }
+      ctx.deferredDefaultGlobalExport = undefined;
+    }
+
     // Copy metadata for .d.ts / helper generation — only include actually-used extern classes
     const importNames = mod.imports.map((imp) => imp.name);
     for (const [key, info] of ctx.externClasses) {
@@ -1840,6 +1860,26 @@ export function generateMultiModule(
     // Collect ref.func targets so the binary emitter can add a declarative element segment
     collectDeclaredFuncRefs(ctx);
 
+    // Resolve deferred `export default <variable>` for module globals (#1108).
+    // Must run AFTER compileDeclarations — string-constant imports added during
+    // body compilation shift numImportGlobals, so indices aren't final until now.
+    if (ctx.deferredDefaultGlobalExport) {
+      const varName = ctx.deferredDefaultGlobalExport;
+      const globalName = `__mod_${varName}`;
+      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
+      if (localIdx >= 0) {
+        const absIdx = ctx.numImportGlobals + localIdx;
+        const alreadyExported = ctx.mod.exports.some(
+          (e) => e.name === "default" || (e.name === varName && e.desc.kind === "global"),
+        );
+        if (!alreadyExported) {
+          ctx.mod.exports.push({ name: "default", desc: { kind: "global", index: absIdx } });
+          ctx.mod.exports.push({ name: varName, desc: { kind: "global", index: absIdx } });
+        }
+      }
+      ctx.deferredDefaultGlobalExport = undefined;
+    }
+
     // Copy metadata for .d.ts / helper generation
     const importNames = mod.imports.map((imp) => imp.name);
     for (const [key, info] of ctx.externClasses) {
@@ -2416,6 +2456,13 @@ export function addStringImports(ctx: CodegenContext): void {
     kind: "func",
     typeIdx: charCodeAtType,
   });
+
+  // Store wasm:js-string import indices separately so user-defined functions
+  // with the same name (e.g. user's "charCodeAt") don't shadow them (#1072).
+  for (const name of ["concat", "length", "equals", "substring", "charCodeAt"]) {
+    const idx = ctx.funcMap.get(name);
+    if (idx !== undefined) ctx.jsStringImports.set(name, idx);
+  }
 
   // If imports were added after defined functions were registered (late addition),
   // shift all defined-function indices.

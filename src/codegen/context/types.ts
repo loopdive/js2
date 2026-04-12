@@ -197,6 +197,9 @@ export interface CodegenContext {
   structFields: Map<string, FieldDef[]>;
   /** Number of imported functions */
   numImportFuncs: number;
+  /** wasm:js-string import indices — separate from funcMap to prevent
+   *  user-defined functions from shadowing them (#1072). */
+  jsStringImports: Map<string, number>;
   /** Current function context (set during function compilation) */
   currentFunc: FunctionContext | null;
   /** Stack of parent function contexts saved during nested closure compilation. */
@@ -300,6 +303,9 @@ export interface CodegenContext {
   generatorYieldType: Map<string, ValType>;
   /** Map from module-level variable name → global index in mod.globals */
   moduleGlobals: Map<string, number>;
+  /** Deferred `export default <variable>` where variable is a module global (#1108).
+   *  Resolved after all collectDeclarations calls when global indices are final. */
+  deferredDefaultGlobalExport?: string;
   /** Module-level variable initializers (compiled into __module_init) */
   moduleInitStatements: ts.Statement[];
   /** Nested function capture info. */

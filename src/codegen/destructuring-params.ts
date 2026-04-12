@@ -25,6 +25,62 @@ import {
 import { compileExternrefArrayDestructuringDecl } from "./statements/destructuring.js";
 import { collectInstrs } from "./statements/shared.js";
 
+/**
+ * Bounds-checked array.get that returns JS `undefined` (via __get_undefined)
+ * for out-of-bounds indices on externref arrays, instead of ref.null.extern.
+ * This is critical for destructuring defaults: per ES spec, accessing an array
+ * index beyond its length produces `undefined` (which triggers defaults), NOT
+ * `null` (which does not).  (#1016a)
+ *
+ * Stack: [arrayref, i32 index]  →  [externref element or __get_undefined()]
+ * Falls through to regular emitBoundsCheckedArrayGet for non-externref types.
+ */
+function emitBoundsCheckedArrayGetUndef(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrTypeIdx: number,
+  elementType: ValType,
+): void {
+  if (elementType.kind !== "externref" && elementType.kind !== "ref_extern") {
+    emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elementType);
+    return;
+  }
+  const getUndefIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+  if (getUndefIdx === undefined) {
+    // standalone mode — can't get JS undefined, fall back to regular path
+    emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elementType);
+    return;
+  }
+  flushLateImportShifts(ctx, fctx);
+
+  // Save index and array ref to locals
+  const idxLocal = allocLocal(fctx, `__undef_idx_${fctx.locals.length}`, { kind: "i32" });
+  const arrLocal = allocLocal(fctx, `__undef_arr_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: arrTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: idxLocal }); // save index
+  fctx.body.push({ op: "local.set", index: arrLocal }); // save array ref
+
+  // Condition: (unsigned)idx < array.len
+  fctx.body.push({ op: "local.get", index: idxLocal });
+  fctx.body.push({ op: "local.get", index: arrLocal });
+  fctx.body.push({ op: "array.len" });
+  fctx.body.push({ op: "i32.lt_u" } as Instr);
+
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [
+      { op: "local.get", index: arrLocal } as Instr,
+      { op: "ref.as_non_null" } as Instr,
+      { op: "local.get", index: idxLocal } as Instr,
+      { op: "array.get", typeIdx: arrTypeIdx } as Instr,
+    ],
+    else: [{ op: "call", funcIdx: getUndefIdx } as Instr],
+  });
+}
+
 function boxToExternref(ctx: CodegenContext, elemKey: string): Instr[] {
   if (elemKey === "externref") {
     // Already externref, just pass through
@@ -733,7 +789,7 @@ export function destructureParamArray(
       fctx.body.push({ op: "local.get", index: paramIdx });
       fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }); // get data
       fctx.body.push({ op: "i32.const", value: i });
-      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elemType);
+      emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemType); // #1016a
       fctx.body.push({ op: "local.set", index: tmpLocal });
       // Handle default initializer: [[x, y] = [4, 5]] — use default when element is null/undefined (#794)
       if (element.initializer) {
@@ -833,7 +889,7 @@ export function destructureParamArray(
     fctx.body.push({ op: "local.get", index: paramIdx });
     fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }); // get data
     fctx.body.push({ op: "i32.const", value: i });
-    emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elemType);
+    emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemType); // #1016a
     // Handle default initializer: [x = 23] — use default when element is null/undefined
     if (element.initializer) {
       const dfltTmpLocal = allocLocal(fctx, `__dparam_dflt_${fctx.locals.length}`, elemType);
