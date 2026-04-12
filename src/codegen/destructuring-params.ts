@@ -22,6 +22,8 @@ import {
   flushLateImportShifts,
   valTypesMatch,
 } from "./shared.js";
+import { compileExternrefArrayDestructuringDecl } from "./statements/destructuring.js";
+import { collectInstrs } from "./statements/shared.js";
 
 function boxToExternref(ctx: CodegenContext, elemKey: string): Instr[] {
   if (elemKey === "externref") {
@@ -522,8 +524,29 @@ export function destructureParamArray(
         else: convertInstrs,
       });
 
-      // Now destructure from the converted vec_externref
-      destructureParamArray(ctx, fctx, resultLocal, pattern, convertedType);
+      // Check if vec conversion succeeded — if resultLocal is still null,
+      // the value is not a known vec type (e.g. generator, custom iterator).
+      // Fall back to externref destructuring which uses __extern_to_array
+      // to iterate via the JS iterator protocol (#862).
+      fctx.body.push({ op: "local.get", index: resultLocal });
+      fctx.body.push({ op: "ref.is_null" } as Instr);
+
+      const vecDestructInstrs = collectInstrs(fctx, () => {
+        destructureParamArray(ctx, fctx, resultLocal, pattern, convertedType);
+      });
+
+      const externrefFallbackInstrs = collectInstrs(fctx, () => {
+        // Push original externref param for compileExternrefArrayDestructuringDecl
+        fctx.body.push({ op: "local.get", index: paramIdx });
+        compileExternrefArrayDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+      });
+
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: externrefFallbackInstrs, // null = not a vec → use externref path
+        else: vecDestructInstrs, // not null = valid vec → destructure directly
+      });
       return;
     }
     // Cannot destructure a non-ref type — register locals with defaults
@@ -541,12 +564,33 @@ export function destructureParamArray(
   }
 
   const vecTypeIdx = (paramType as { typeIdx: number }).typeIdx;
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-  const arrDef = ctx.mod.types[arrTypeIdx];
+
+  // Verify this is actually a registered vec type, not just a struct that
+  // coincidentally has an array field (e.g. generator structs have an array
+  // field for their locals buffer but aren't vecs) (#862).
+  let isRegisteredVec = false;
+  for (const [, regIdx] of ctx.vecTypeMap) {
+    if (regIdx === vecTypeIdx) {
+      isRegisteredVec = true;
+      break;
+    }
+  }
+
+  const arrTypeIdx = isRegisteredVec ? getArrTypeIdxFromVec(ctx, vecTypeIdx) : -1;
+  const arrDef = isRegisteredVec ? ctx.mod.types[arrTypeIdx] : undefined;
   if (!arrDef || arrDef.kind !== "array") {
     // Not a vec array — check if it's a tuple struct (fields named _0, _1, ...)
+    // MUST also verify it's a registered tuple type to avoid treating generator
+    // structs (which also have _0 fields) as tuples (#862).
+    const isRegisteredTuple = Array.from(ctx.tupleTypeMap.values()).includes(vecTypeIdx);
     const tupleDef = ctx.mod.types[vecTypeIdx];
-    if (tupleDef && tupleDef.kind === "struct" && tupleDef.fields.length > 0 && tupleDef.fields[0]!.name === "_0") {
+    if (
+      isRegisteredTuple &&
+      tupleDef &&
+      tupleDef.kind === "struct" &&
+      tupleDef.fields.length > 0 &&
+      tupleDef.fields[0]!.name === "_0"
+    ) {
       // Tuple struct destructuring: extract positional fields via struct.get
       // Always treat as nullable — callers may pass empty/mismatched arrays that
       // compile to ref.null even when the declared type is non-nullable ref (#852).
@@ -651,17 +695,13 @@ export function destructureParamArray(
       return;
     }
 
-    // Not an array and not a tuple — register locals with defaults
-    for (const element of pattern.elements) {
-      if (ts.isOmittedExpression(element)) continue;
-      if (ts.isIdentifier((element as ts.BindingElement).name)) {
-        const name = ((element as ts.BindingElement).name as ts.Identifier).text;
-        if (!fctx.localMap.has(name)) {
-          const elemType = ctx.checker.getTypeAtLocation(element);
-          allocLocal(fctx, name, resolveWasmType(ctx, elemType));
-        }
-      }
-    }
+    // Not an array and not a tuple — convert to externref and use host-side
+    // Array.from via __extern_to_array to support iterables (generators,
+    // custom iterators). The conversion invokes the iterator protocol,
+    // so .next() throws propagate as catchable JS exceptions (#862).
+    fctx.body.push({ op: "local.get", index: paramIdx });
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+    compileExternrefArrayDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
     return;
   }
 

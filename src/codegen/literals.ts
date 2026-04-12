@@ -907,6 +907,14 @@ export function compileObjectLiteralForStruct(
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
+        // Destructuring params without explicit type may receive iterables (#862)
+        if (
+          !param.type &&
+          (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+          (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+        ) {
+          wasmType = { kind: "externref" };
+        }
         methodParams.push(wasmType);
       }
 
@@ -974,6 +982,16 @@ export function compileObjectLiteralForStruct(
         // to match the function signature (which uses ref_null so callers can pass ref.null)
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
+        }
+        // Destructuring params without explicit type annotations may receive
+        // any iterable at runtime. Widen to externref so the body uses the
+        // iterator protocol via __extern_to_array (#862).
+        if (
+          !param.type &&
+          (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+          (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+        ) {
+          wasmType = { kind: "externref" };
         }
         methodFctxParams.push({ name: paramName, type: wasmType });
       }

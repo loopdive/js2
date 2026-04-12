@@ -799,6 +799,18 @@ export function compileArrowAsClosure(
     if (p.initializer && wasmType.kind === "ref") {
       wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
     }
+    // Destructuring params without explicit type annotations may receive any
+    // iterable at runtime (generators, custom iterators, etc).  TypeScript
+    // infers a concrete type (tuple struct, etc) from the call site, but at
+    // Wasm level the argument is externref.  Widen to externref so the body
+    // can use __extern_to_array / __extern_get for the iterator protocol (#862).
+    if (
+      !p.type &&
+      (ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name)) &&
+      (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+    ) {
+      wasmType = { kind: "externref" };
+    }
     arrowParams.push(wasmType);
   }
 
@@ -1245,12 +1257,30 @@ export function compileArrowAsClosure(
         srcParamIdx = paramIdx;
       }
 
-      if (resolvedParamType.kind === "ref" || resolvedParamType.kind === "ref_null") {
+      if (!handled && (resolvedParamType.kind === "ref" || resolvedParamType.kind === "ref_null")) {
         const typeIdx = resolvedParamType.typeIdx;
         const typeDef = ctx.mod.types[typeIdx];
         if (typeDef && typeDef.kind === "struct") {
-          const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
-          const arrDef = ctx.mod.types[arrTypeIdx];
+          // Verify this is a registered vec type before treating as vec (#862).
+          // Non-vec structs (generators, iterators) must go through the externref
+          // path to invoke the iterator protocol.
+          let isVec = false;
+          for (const [, regIdx] of ctx.vecTypeMap) {
+            if (regIdx === typeIdx) {
+              isVec = true;
+              break;
+            }
+          }
+          const isTuple = !isVec && Array.from(ctx.tupleTypeMap.values()).includes(typeIdx);
+          if (!isVec && !isTuple) {
+            // Not a vec or tuple — convert to externref and use iterator protocol
+            liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
+            liftedFctx.body.push({ op: "extern.convert_any" } as Instr);
+            compileExternrefArrayDestructuringDecl(ctx, liftedFctx, param.name, { kind: "externref" });
+            handled = true;
+          }
+          const arrTypeIdx = isVec ? getArrTypeIdxFromVec(ctx, typeIdx) : -1;
+          const arrDef = isVec ? ctx.mod.types[arrTypeIdx] : undefined;
           if (arrDef && arrDef.kind === "array") {
             const elemType = arrDef.element;
             const savedBodyFPAD = liftedFctx.body;

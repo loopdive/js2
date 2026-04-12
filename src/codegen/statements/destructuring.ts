@@ -860,6 +860,27 @@ export function compileExternrefArrayDestructuringDecl(
     return;
   }
 
+  // Ensure __extern_to_array is available — converts iterables (generators, custom
+  // iterators) to JS arrays via Array.from. If iterator .next() throws, the exception
+  // propagates naturally as a catchable JS error (#862).
+  let toArrayIdx = ctx.funcMap.get("__extern_to_array");
+  if (toArrayIdx === undefined) {
+    const importsBefore = ctx.numImportFuncs;
+    const toArrayType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+    addImport(ctx, "env", "__extern_to_array", { kind: "func", typeIdx: toArrayType });
+    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
+    toArrayIdx = ctx.funcMap.get("__extern_to_array");
+    // Refresh shifted indices
+    getIdx = ctx.funcMap.get("__extern_get");
+    boxIdx = ctx.funcMap.get("__box_number");
+  }
+  if (toArrayIdx !== undefined) {
+    // Convert iterable to array: tmpLocal = __extern_to_array(tmpLocal)
+    fctx.body.push({ op: "local.get", index: tmpLocal });
+    fctx.body.push({ op: "call", funcIdx: toArrayIdx });
+    fctx.body.push({ op: "local.set", index: tmpLocal });
+  }
+
   // Pre-allocate all binding locals
   ensureBindingLocals(ctx, fctx, pattern);
 

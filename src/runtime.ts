@@ -1671,6 +1671,72 @@ function resolveImport(
           if (arr != null && typeof arr[Symbol.iterator] === "function") return Array.from(arr).slice(start);
           return [];
         };
+      // __extern_to_array: convert any iterable to a JS array via Array.from.
+      // Used by array destructuring to support iterators/generators (#862).
+      // If the iterable's .next() throws, the exception propagates naturally.
+      // Handles both JS iterables and WasmGC structs with iterator protocol.
+      if (name === "__extern_to_array")
+        return (iterable: any) => {
+          if (Array.isArray(iterable)) return iterable;
+          // JS iterable (has Symbol.iterator directly)
+          if (iterable != null && typeof iterable[Symbol.iterator] === "function") {
+            return Array.from(iterable);
+          }
+          // WasmGC struct: check sidecar and exported iterator protocol
+          if (iterable != null && _isWasmStruct(iterable)) {
+            const exports = callbackState?.getExports();
+            // Check sidecar Symbol.iterator
+            const scIter = _sidecarGet(iterable, Symbol.iterator) ?? _sidecarGet(iterable, "@@iterator");
+            if (typeof scIter === "function") {
+              const iter = scIter.call(iterable);
+              if (iter != null) return Array.from(iter);
+            }
+            // WasmGC closure as iterator function
+            if (scIter != null && _isWasmStruct(scIter)) {
+              const callFn0 = (exports as any)?.__call_fn_0;
+              if (typeof callFn0 === "function") {
+                const iter = callFn0(scIter);
+                if (iter != null) return Array.from(iter);
+              }
+            }
+            // Try __call_@@iterator export
+            const callIter = (exports as any)?.["__call_@@iterator"];
+            if (typeof callIter === "function") {
+              const iter = callIter(iterable);
+              if (iter != null) return Array.from(iter);
+            }
+            // Vec struct fallback: convert via __vec_len/__vec_get
+            const vecLen = exports?.__vec_len;
+            const vecGet = exports?.__vec_get;
+            if (typeof vecLen === "function" && typeof vecGet === "function") {
+              try {
+                const len = vecLen(iterable);
+                if (typeof len === "number" && len >= 0) {
+                  const arr: any[] = [];
+                  for (let i = 0; i < len; i++) arr.push(vecGet(iterable, i));
+                  return arr;
+                }
+              } catch {
+                // Not a vec — fall through
+              }
+            }
+            // Generator struct: check for .next method via __extern_call
+            const next = _sidecarGet(iterable, "next");
+            if (typeof next === "function") {
+              // This is an iterator object — iterate via .next()
+              const arr: any[] = [];
+              while (true) {
+                const result = next.call(iterable);
+                const done = result?.done ?? _sidecarGet(result, "done");
+                if (done) break;
+                arr.push(result?.value ?? _sidecarGet(result, "value"));
+              }
+              return arr;
+            }
+          }
+          // Not iterable — return as-is for indexed access fallback
+          return iterable;
+        };
       if (name === "__extern_rest_object")
         return (obj: any, excludedKeysStr: string) => {
           if (obj == null) return {};

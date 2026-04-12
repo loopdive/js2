@@ -141,8 +141,15 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // may have been inferred from call sites for untyped params).
       const funcType = ctx.mod.types[func.typeIdx];
       const sigParamType = funcType?.kind === "func" ? funcType.params[i] : undefined;
-      const paramType =
-        resolved?.params[i] ?? sigParamType ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
+      let paramType = resolved?.params[i] ?? sigParamType ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
+      // Destructuring params without explicit type may receive iterables (#862)
+      if (
+        !param.type &&
+        (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+        (paramType.kind === "ref" || paramType.kind === "ref_null")
+      ) {
+        paramType = { kind: "externref" };
+      }
       params.push({ name: paramName, type: paramType });
     }
   }

@@ -118,6 +118,14 @@ export function compileNestedFunctionDeclaration(
     if (p.initializer && wasmType.kind === "ref") {
       wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
     }
+    // Destructuring params without explicit type may receive iterables (#862)
+    if (
+      !p.type &&
+      (ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name)) &&
+      (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+    ) {
+      wasmType = { kind: "externref" };
+    }
     paramTypes.push(wasmType);
   }
 

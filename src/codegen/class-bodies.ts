@@ -235,6 +235,14 @@ export function collectClassDeclaration(
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
         }
+        // Destructuring params without explicit type may receive iterables (#862)
+        if (
+          !param.type &&
+          (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+          (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+        ) {
+          wasmType = { kind: "externref" };
+        }
         ctorParams.push(wasmType);
       }
     }
@@ -297,6 +305,14 @@ export function collectClassDeclaration(
         // Widen ref to ref_null for params with defaults (caller passes ref.null as sentinel)
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
+        }
+        // Destructuring params without explicit type may receive iterables (#862)
+        if (
+          !param.type &&
+          (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+          (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+        ) {
+          wasmType = { kind: "externref" };
         }
         methodParams.push(wasmType);
       }
@@ -683,6 +699,14 @@ export function compileClassBodies(
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
+        // Destructuring params without explicit type may receive iterables (#862)
+        if (
+          !param.type &&
+          (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+          (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+        ) {
+          wasmType = { kind: "externref" };
+        }
         params.push({ name: paramName, type: wasmType });
       }
     }
@@ -954,6 +978,14 @@ export function compileClassBodies(
         // (caller passes ref.null as sentinel). Must match collection phase (#702)
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
+        }
+        // Destructuring params without explicit type may receive iterables (#862)
+        if (
+          !param.type &&
+          (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+          (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+        ) {
+          wasmType = { kind: "externref" };
         }
         params.push({ name: paramName, type: wasmType });
       }
@@ -1275,6 +1307,14 @@ export function compileClassBodies(
         // Widen ref to ref_null for params with defaults or optional params (#702)
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
+        }
+        // Destructuring params without explicit type may receive iterables (#862)
+        if (
+          !param.type &&
+          (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+          (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+        ) {
+          wasmType = { kind: "externref" };
         }
         params.push({ name: paramName, type: wasmType });
       }
