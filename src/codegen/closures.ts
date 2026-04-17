@@ -283,7 +283,7 @@ export function emitArrowParamDestructuring(
       const testLocal = allocLocal(fctx, `__destr_test_${fctx.locals.length}`, { kind: "i32" });
       fctx.body.push({ op: "local.get", index: paramIdx });
       fctx.body.push({ op: "any.convert_extern" } as Instr);
-      fctx.body.push({ op: "ref.test", typeIdx: structTypeIdx } as unknown as Instr);
+      fctx.body.push({ op: "ref.test", typeIdx: structTypeIdx });
       fctx.body.push({ op: "local.set", index: testLocal });
 
       // Struct path (ref.test succeeded)
@@ -1481,7 +1481,7 @@ export function compileArrowAsClosure(
     const createBufIdx = ctx.funcMap.get("__gen_create_buffer")!;
     liftedFctx.body.push({ op: "call", funcIdx: createBufIdx });
     liftedFctx.body.push({ op: "local.set", index: bufferLocal });
-    liftedFctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+    liftedFctx.body.push({ op: "ref.null.extern" });
     liftedFctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
     // Wrap body in a block so return can br out
@@ -1508,13 +1508,10 @@ export function compileArrowAsClosure(
     // Wrap generator body block in try/catch to capture exceptions as pending throw
     const tagIdx = ensureExnTag(ctx);
     const getCaughtIdx = ctx.funcMap.get("__get_caught_exception");
-    const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal } as unknown as Instr];
+    const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal }];
     const catchAllBody: Instr[] =
       getCaughtIdx !== undefined
-        ? [
-            { op: "call", funcIdx: getCaughtIdx } as Instr,
-            { op: "local.set", index: pendingThrowLocal } as unknown as Instr,
-          ]
+        ? [{ op: "call", funcIdx: getCaughtIdx } as Instr, { op: "local.set", index: pendingThrowLocal }]
         : [];
     liftedFctx.body.push({
       op: "try",
@@ -1522,7 +1519,7 @@ export function compileArrowAsClosure(
       body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
       catches: [{ tagIdx, body: catchBody }],
       catchAll: catchAllBody,
-    } as unknown as Instr);
+    });
 
     // Return __create_generator or __create_async_generator depending on async flag
     const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
@@ -2016,7 +2013,7 @@ export function compileArrowAsCallback(
       const writebacks: Instr[] = [];
       for (const rc of refCellLocals) {
         writebacks.push({ op: "local.get", index: rc.refCellLocal } as Instr);
-        writebacks.push({ op: "ref.as_non_null" } as unknown as Instr);
+        writebacks.push({ op: "ref.as_non_null" });
         writebacks.push({ op: "struct.get", typeIdx: rc.refCellTypeIdx, fieldIdx: 0 } as Instr);
         writebacks.push({ op: "local.set", index: rc.outerLocalIdx } as Instr);
       }
@@ -2169,7 +2166,7 @@ export function emitFuncRefAsClosure(
 
     // Cast self from base struct to custom struct to access capture fields
     trampolineBody.push({ op: "local.get", index: 0 } as Instr);
-    trampolineBody.push({ op: "ref.cast", typeIdx: structTypeIdx } as unknown as Instr);
+    trampolineBody.push({ op: "ref.cast", typeIdx: structTypeIdx });
 
     if (numCaptures === 1) {
       trampolineBody.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 1 } as Instr);

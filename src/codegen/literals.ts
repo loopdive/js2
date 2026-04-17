@@ -733,8 +733,8 @@ export function compileObjectLiteralForStruct(
         // destructuring default-value checks can detect missing properties.
         // f64 uses sNaN sentinel 0x7FF00000DEADC0DE (matches emitDefaultValueCheck #866).
         if (field.type.kind === "f64") {
-          fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
-          fctx.body.push({ op: "f64.reinterpret_i64" } as unknown as Instr);
+          fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+          fctx.body.push({ op: "f64.reinterpret_i64" });
         } else if (field.type.kind === "externref") {
           fctx.body.push({ op: "ref.null.extern" });
         } else if (field.type.kind === "eqref") {
@@ -1112,7 +1112,7 @@ export function compileObjectLiteralForStruct(
         const createBufIdx = ctx.funcMap.get("__gen_create_buffer")!;
         methodFctx.body.push({ op: "call", funcIdx: createBufIdx });
         methodFctx.body.push({ op: "local.set", index: bufferLocal });
-        methodFctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+        methodFctx.body.push({ op: "ref.null.extern" });
         methodFctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
         const bodyInstrs: Instr[] = [];
@@ -1138,13 +1138,10 @@ export function compileObjectLiteralForStruct(
         // Wrap generator body block in try/catch to capture exceptions as pending throw
         const tagIdx = ensureExnTag(ctx);
         const getCaughtIdx = ctx.funcMap.get("__get_caught_exception");
-        const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal } as unknown as Instr];
+        const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal }];
         const catchAllBody: Instr[] =
           getCaughtIdx !== undefined
-            ? [
-                { op: "call", funcIdx: getCaughtIdx } as Instr,
-                { op: "local.set", index: pendingThrowLocal } as unknown as Instr,
-              ]
+            ? [{ op: "call", funcIdx: getCaughtIdx } as Instr, { op: "local.set", index: pendingThrowLocal }]
             : [];
         methodFctx.body.push({
           op: "try",
@@ -1152,7 +1149,7 @@ export function compileObjectLiteralForStruct(
           body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
           catches: [{ tagIdx, body: catchBody }],
           catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-        } as unknown as Instr);
+        });
 
         // Return __create_generator or __create_async_generator depending on async flag
         const createGenName = isAsyncMethod ? "__create_async_generator" : "__create_generator";
@@ -1218,8 +1215,8 @@ export function compileTupleLiteral(
       // compileExpression emits regular NaN for undefined, which doesn't match
       // the sNaN sentinel that emitDefaultValueCheck looks for (#1024).
       if (expectedType.kind === "f64" && _isUndefinedLike(el)) {
-        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
-        fctx.body.push({ op: "f64.reinterpret_i64" } as unknown as Instr);
+        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+        fctx.body.push({ op: "f64.reinterpret_i64" });
       } else {
         compileExpression(ctx, fctx, el, expectedType);
       }
@@ -1227,15 +1224,15 @@ export function compileTupleLiteral(
       // Missing element — push sentinel value that destructuring recognizes as
       // "absent": sNaN sentinel for f64, ref.null for refs/externref, 0 for i32 (#852, #866).
       if (expectedType.kind === "f64") {
-        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
-        fctx.body.push({ op: "f64.reinterpret_i64" } as unknown as Instr);
+        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+        fctx.body.push({ op: "f64.reinterpret_i64" });
       } else if (expectedType.kind === "i32") {
         fctx.body.push({ op: "i32.const", value: 0 });
       } else if (expectedType.kind === "externref") {
-        fctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+        fctx.body.push({ op: "ref.null.extern" });
       } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
         const typeIdx = (expectedType as { typeIdx: number }).typeIdx;
-        fctx.body.push({ op: "ref.null", typeIdx } as unknown as Instr);
+        fctx.body.push({ op: "ref.null", typeIdx });
       } else {
         pushDefaultValue(fctx, expectedType, ctx);
       }
@@ -1376,8 +1373,8 @@ export function compileArrayLiteral(
       // For holes and explicit undefined in f64 context, emit sNaN sentinel
       // so destructuring default checks trigger correctly (#1024).
       if (elemWasm.kind === "f64" && _isUndefinedLike(el)) {
-        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
-        fctx.body.push({ op: "f64.reinterpret_i64" } as unknown as Instr);
+        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+        fctx.body.push({ op: "f64.reinterpret_i64" });
       } else {
         compileExpression(ctx, fctx, el, elemWasm);
       }

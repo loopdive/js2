@@ -236,8 +236,8 @@ export function emitNestedBindingDefault(
     // Check for sNaN sentinel (0x7FF00000DEADC0DE) — NOT generic NaN.
     // This distinguishes missing/undefined from explicit NaN arguments (#866).
     fctx.body.push({ op: "local.get", index: nestedLocal });
-    fctx.body.push({ op: "i64.reinterpret_f64" } as unknown as Instr);
-    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
+    fctx.body.push({ op: "i64.reinterpret_f64" });
+    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
     fctx.body.push({ op: "i64.eq" });
     const defaultInstrs = collectInstrs(fctx, () => {
       compileExpression(ctx, fctx, initializer, valueType);
@@ -311,8 +311,8 @@ export function emitDefaultValueCheck(
     fctx.body.push({ op: "local.tee", index: tmpField });
     // Check for sNaN sentinel (0x7FF00000DEADC0DE) — NOT generic NaN.
     // This distinguishes missing/undefined from explicit NaN arguments (#866).
-    fctx.body.push({ op: "i64.reinterpret_f64" } as unknown as Instr);
-    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
+    fctx.body.push({ op: "i64.reinterpret_f64" });
+    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
     fctx.body.push({ op: "i64.eq" });
     const thenInstrs = collectInstrs(fctx, () => {
       compileExpression(ctx, fctx, initializer, hintType);

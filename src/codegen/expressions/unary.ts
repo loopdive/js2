@@ -550,7 +550,7 @@ function compilePrefixUnary(
       const ppOperand = unwrapParens(expr.operand);
       if (ts.isIdentifier(ppOperand) && fctx.constBindings?.has(ppOperand.text)) {
         emitThrowString(ctx, fctx, "TypeError: Assignment to constant variable.");
-        fctx.body.push({ op: "unreachable" } as unknown as Instr);
+        fctx.body.push({ op: "unreachable" });
         return { kind: "f64" };
       }
       if (ts.isIdentifier(ppOperand)) {
@@ -761,7 +761,7 @@ function compilePrefixUnary(
       const mmOperand = unwrapParens(expr.operand);
       if (ts.isIdentifier(mmOperand) && fctx.constBindings?.has(mmOperand.text)) {
         emitThrowString(ctx, fctx, "TypeError: Assignment to constant variable.");
-        fctx.body.push({ op: "unreachable" } as unknown as Instr);
+        fctx.body.push({ op: "unreachable" });
         return { kind: "f64" };
       }
       if (ts.isIdentifier(mmOperand)) {
@@ -788,7 +788,7 @@ function compilePrefixUnary(
               });
               coerceType(ctx, fctx, boxed.valType, { kind: "f64" });
               fctx.body.push({ op: "f64.const", value: 1 });
-              fctx.body.push({ op: arithOp } as unknown as Instr);
+              fctx.body.push({ op: arithOp });
               fctx.body.push({ op: "local.tee", index: mmF64Tmp });
               coerceType(ctx, fctx, { kind: "f64" }, boxed.valType);
               fctx.body.push({ op: "local.set", index: mmNewTmp });
@@ -873,7 +873,7 @@ function compilePrefixUnary(
           if (localType?.kind === "i64") {
             fctx.body.push({ op: "local.get", index: idx });
             fctx.body.push({ op: "i64.const", value: 1n });
-            fctx.body.push({ op: isIncrement ? "i64.add" : "i64.sub" } as unknown as Instr);
+            fctx.body.push({ op: isIncrement ? "i64.add" : "i64.sub" });
             fctx.body.push({ op: "local.tee", index: idx });
             emitMappedArgParamSync(ctx, fctx, idx, { kind: "i64" });
             return { kind: "i64" };
@@ -989,7 +989,7 @@ function compilePostfixUnary(
     // const bindings — increment/decrement throws TypeError at runtime
     if (fctx.constBindings?.has(postOperand.text)) {
       emitThrowString(ctx, fctx, "TypeError: Assignment to constant variable.");
-      fctx.body.push({ op: "unreachable" } as unknown as Instr);
+      fctx.body.push({ op: "unreachable" });
       return { kind: "f64" };
     }
     const idx = fctx.localMap.get(postOperand.text);
@@ -1088,7 +1088,7 @@ function compilePostfixUnary(
         coerceType(ctx, fctx, boxedPost.valType, { kind: "f64" });
         fctx.body.push({ op: "local.tee", index: postOldF64 });
         fctx.body.push({ op: "f64.const", value: 1 });
-        fctx.body.push({ op: arithOp } as unknown as Instr);
+        fctx.body.push({ op: arithOp });
         coerceType(ctx, fctx, { kind: "f64" }, boxedPost.valType);
         fctx.body.push({ op: "local.set", index: postNewTmp });
         fctx.body.push({ op: "local.get", index: idx });
@@ -1185,7 +1185,7 @@ function compilePostfixUnary(
       fctx.body.push({ op: "local.get", index: idx });
       fctx.body.push({ op: "local.get", index: idx });
       fctx.body.push({ op: "i64.const", value: 1n });
-      fctx.body.push({ op: isIncrement ? "i64.add" : "i64.sub" } as unknown as Instr);
+      fctx.body.push({ op: isIncrement ? "i64.add" : "i64.sub" });
       fctx.body.push({ op: "local.set", index: idx });
       emitMappedArgParamSync(ctx, fctx, idx, { kind: "i64" });
       return { kind: "i64" };

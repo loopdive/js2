@@ -76,7 +76,7 @@ function collectRefsFromBody(body: Instr[], usedFuncs: Set<number>, usedTypes: S
         if (instr.catchAll) collectRefsFromBody(instr.catchAll, usedFuncs, usedTypes);
         break;
       default: {
-        // Catch-all for instructions cast via `as unknown as Instr`
+        // Catch-all for instructions not handled by specific cases above
         const a = instr as any;
         if (typeof a.typeIdx === "number") usedTypes.add(a.typeIdx);
         if (typeof a.funcIdx === "number") usedFuncs.add(a.funcIdx);

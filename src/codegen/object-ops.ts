@@ -204,7 +204,7 @@ export function emitDefinePropertyFlagCheck(
 
   // Convert existing flags to i32 (NaN -> 0 via i32.trunc_sat_f64_s)
   fctx.body.push({ op: "local.get", index: existingFlagsLocal });
-  fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: existingI32Local });
 
   // Build non-configurable violation checks (only emitted when property is defined AND non-configurable)
@@ -224,7 +224,7 @@ export function emitDefinePropertyFlagCheck(
     { op: "i32.and" } as Instr,
     { op: "i32.const", value: newEnumerable } as Instr,
     { op: "i32.ne" } as Instr,
-    { op: "if", blockType: { kind: "empty" }, then: [...throwInstrs] } as unknown as Instr,
+    { op: "if", blockType: { kind: "empty" }, then: [...throwInstrs] },
   );
 
   // Check for data property restrictions
@@ -242,14 +242,14 @@ export function emitDefinePropertyFlagCheck(
         { op: "i32.const", value: PROP_FLAG_WRITABLE } as Instr,
         { op: "i32.and" } as Instr,
         { op: "i32.eqz" } as Instr,
-        { op: "if", blockType: { kind: "empty" }, then: nonWritableChecks } as unknown as Instr,
+        { op: "if", blockType: { kind: "empty" }, then: nonWritableChecks },
       ];
       nonConfigChecks.push(
         { op: "local.get", index: existingI32Local } as Instr,
         { op: "i32.const", value: PROP_FLAG_ACCESSOR } as Instr,
         { op: "i32.and" } as Instr,
         { op: "i32.eqz" } as Instr,
-        { op: "if", blockType: { kind: "empty" }, then: isDataAndNonWritable } as unknown as Instr,
+        { op: "if", blockType: { kind: "empty" }, then: isDataAndNonWritable },
       );
     }
   }
@@ -261,14 +261,14 @@ export function emitDefinePropertyFlagCheck(
       { op: "i32.const", value: PROP_FLAG_ACCESSOR } as Instr,
       { op: "i32.and" } as Instr,
       { op: "i32.eqz" } as Instr,
-      { op: "if", blockType: { kind: "empty" }, then: [...throwInstrs] } as unknown as Instr,
+      { op: "if", blockType: { kind: "empty" }, then: [...throwInstrs] },
     );
   } else if (hasValue || newFlags & PROP_FLAG_WRITABLE) {
     nonConfigChecks.push(
       { op: "local.get", index: existingI32Local } as Instr,
       { op: "i32.const", value: PROP_FLAG_ACCESSOR } as Instr,
       { op: "i32.and" } as Instr,
-      { op: "if", blockType: { kind: "empty" }, then: [...throwInstrs] } as unknown as Instr,
+      { op: "if", blockType: { kind: "empty" }, then: [...throwInstrs] },
     );
   }
 
@@ -298,7 +298,7 @@ export function emitDefinePropertyFlagCheck(
     op: "block",
     blockType: { kind: "empty" },
     body: blockBody,
-  } as unknown as Instr);
+  });
 
   // Check: If property was NOT defined yet, check non-extensibility
   const neCheckBody: Instr[] = [
@@ -306,8 +306,8 @@ export function emitDefinePropertyFlagCheck(
     { op: "global.get", index: neKeyGlobal } as Instr,
     { op: "call", funcIdx: getIdx } as Instr,
     { op: "call", funcIdx: unboxIdx } as Instr,
-    { op: "i32.trunc_sat_f64_s" } as unknown as Instr,
-    { op: "if", blockType: { kind: "empty" }, then: [...neThrowInstrs] } as unknown as Instr,
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "if", blockType: { kind: "empty" }, then: [...neThrowInstrs] },
   ];
 
   fctx.body.push(
@@ -320,7 +320,7 @@ export function emitDefinePropertyFlagCheck(
     op: "if",
     blockType: { kind: "empty" },
     then: neCheckBody,
-  } as unknown as Instr);
+  });
 
   // Store the new flags: __extern_set(obj, "__pf_<propName>", box(newFlags))
   fctx.body.push({ op: "local.get", index: objLocal });
@@ -355,7 +355,7 @@ export function compileObjectDefineProperty(
   // ES spec 19.1.2.4 step 1: throw TypeError if first arg is not an object
   if (emitNonObjectArgGuard(ctx, fctx, objArg, "Object.defineProperty")) {
     // After the throw, emit unreachable and return externref to satisfy callers
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "externref" };
   }
 
@@ -890,7 +890,7 @@ export function compileObjectDefineProperty(
           op: "if",
           blockType: { kind: "empty" },
           then: compareBody,
-        } as unknown as Instr);
+        });
       } else if (fieldType.kind === "i32") {
         const compareBody: Instr[] = [
           { op: "global.get", index: errMsgGlobal } as Instr,
@@ -903,7 +903,7 @@ export function compileObjectDefineProperty(
           op: "if",
           blockType: { kind: "empty" },
           then: compareBody,
-        } as unknown as Instr);
+        });
       }
       // For externref/ref types, skip value comparison (would need reference equality)
 
@@ -1411,7 +1411,7 @@ export function compileObjectDefineProperties(
 
   // ES spec 19.1.2.3 step 1: throw TypeError if first arg is not an object
   if (emitNonObjectArgGuard(ctx, fctx, objArg, "Object.defineProperties")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "externref" };
   }
 
@@ -1649,7 +1649,7 @@ export function compileObjectDefineProperties(
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr],
-                } as unknown as Instr);
+                });
               } else if (fieldType.kind === "i32") {
                 fctx.body.push({ op: "local.get", index: oldValLocal });
                 fctx.body.push({ op: "local.get", index: newValLocal });
@@ -1658,7 +1658,7 @@ export function compileObjectDefineProperties(
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr],
-                } as unknown as Instr);
+                });
               }
 
               // Do the struct.set if values match
@@ -1702,7 +1702,7 @@ export function compileObjectDefineProperties(
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr],
-                } as unknown as Instr);
+                });
               } else if (fieldType.kind === "i32") {
                 fctx.body.push({ op: "local.get", index: oldValLocal });
                 fctx.body.push({ op: "local.get", index: newValLocal });
@@ -1711,7 +1711,7 @@ export function compileObjectDefineProperties(
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr],
-                } as unknown as Instr);
+                });
               }
 
               // Do the struct.set

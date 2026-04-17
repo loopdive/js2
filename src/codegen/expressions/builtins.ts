@@ -137,7 +137,7 @@ function ensureDateCivilHelper(ctx: CodegenContext): number {
         { op: "i64.const", value: 146096n } as Instr,
         { op: "i64.sub" } as Instr,
       ],
-    } as unknown as Instr,
+    },
     { op: "i64.const", value: 146097n } as Instr,
     { op: "i64.div_s" } as Instr,
     { op: "local.set", index: 1 } as Instr, // era
@@ -247,7 +247,7 @@ function ensureDateCivilHelper(ctx: CodegenContext): number {
         { op: "i64.const", value: 9n } as Instr,
         { op: "i64.sub" } as Instr,
       ],
-    } as unknown as Instr,
+    },
     { op: "local.set", index: 7 } as Instr, // m (1-12)
   );
 
@@ -339,7 +339,7 @@ export function ensureDateDaysFromCivilHelper(ctx: CodegenContext): number {
         { op: "i64.const", value: 399n } as Instr,
         { op: "i64.sub" } as Instr,
       ],
-    } as unknown as Instr,
+    },
     { op: "i64.const", value: 400n } as Instr,
     { op: "i64.div_s" } as Instr,
     { op: "local.set", index: 3 } as Instr, // era
@@ -374,7 +374,7 @@ export function ensureDateDaysFromCivilHelper(ctx: CodegenContext): number {
         { op: "i64.const", value: 9n } as Instr,
         { op: "i64.add" } as Instr,
       ],
-    } as unknown as Instr,
+    },
     { op: "i64.mul" } as Instr,
     { op: "i64.const", value: 2n } as Instr,
     { op: "i64.add" } as Instr,
@@ -495,7 +495,7 @@ function compileDateMethodCall(
       op: "struct.get",
       typeIdx: dateTypeIdx,
       fieldIdx: 0,
-    } as unknown as Instr);
+    });
     fctx.body.push({ op: "f64.convert_i64_s" } as Instr);
     return { kind: "f64" };
   }
@@ -523,14 +523,14 @@ function compileDateMethodCall(
         op: "struct.set",
         typeIdx: dateTypeIdx,
         fieldIdx: 0,
-      } as unknown as Instr);
+      });
       // Return the new timestamp as f64
       fctx.body.push({ op: "local.get", index: tempLocal } as Instr);
       fctx.body.push({
         op: "struct.get",
         typeIdx: dateTypeIdx,
         fieldIdx: 0,
-      } as unknown as Instr);
+      });
       fctx.body.push({ op: "f64.convert_i64_s" } as Instr);
     } else {
       fctx.body.push({ op: "f64.const", value: NaN } as Instr);
@@ -545,7 +545,7 @@ function compileDateMethodCall(
     op: "struct.get",
     typeIdx: dateTypeIdx,
     fieldIdx: 0,
-  } as unknown as Instr);
+  });
   // Stack: [i64 timestamp]
 
   // Time-of-day getters (no civil calendar needed)
@@ -673,7 +673,7 @@ function compileDateMethodCall(
           { op: "i64.const", value: MS_PER_DAY } as Instr,
           { op: "i64.div_s" } as Instr,
         ],
-      } as unknown as Instr,
+      },
     );
     releaseTempLocal(fctx, tempTs);
   }

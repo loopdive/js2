@@ -451,7 +451,7 @@ function compileExpressionBody(
           const boxSymIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
           if (boxSymIdx !== undefined) {
             flushLateImportShifts(ctx, fctx);
-            fctx.body.push({ op: "call", funcIdx: boxSymIdx } as unknown as Instr);
+            fctx.body.push({ op: "call", funcIdx: boxSymIdx });
             return expectedType;
           }
         }

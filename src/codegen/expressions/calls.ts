@@ -159,7 +159,7 @@ function compileOptionalDirectCall(ctx: CodegenContext, fctx: FunctionContext, e
     fctx.body.push({ op: "local.tee", index: closureTmp });
     fctx.body.push({ op: "local.get", index: closureTmp });
     for (const arg of expr.arguments) compileExpression(ctx, fctx, arg);
-    fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx } as unknown as Instr);
+    fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
     resolved = true;
   } else if (funcIdx !== undefined) {
     const paramTypes = getFuncParamTypes(ctx, funcIdx);
@@ -415,7 +415,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       }
     } else {
       // No argument — pass undefined (null externref)
-      fctx.body.push({ op: "ref.null", refType: "extern" } as unknown as Instr);
+      fctx.body.push({ op: "ref.null.extern" });
     }
 
     // Evaluate remaining arguments (e.g. import attributes/options) for side effects.
@@ -529,7 +529,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         if (recvType === null) {
           fctx.body.push({ op: "ref.null.extern" });
         } else if (recvType.kind !== "externref") {
-          fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+          fctx.body.push({ op: "extern.convert_any" });
         }
         return { kind: "externref" };
       }
@@ -841,7 +841,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
               const receiverArg = expr.arguments[0]!;
               const recvType = compileExpression(ctx, fctx, receiverArg, { kind: "externref" });
               if (recvType && recvType.kind !== "externref") {
-                fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+                fctx.body.push({ op: "extern.convert_any" });
               }
               if (recvType === null) {
                 fctx.body.push({ op: "ref.null.extern" });
@@ -856,7 +856,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
                 fctx.body.push({ op: "local.get", index: argsLocal });
                 const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
                 if (argType && argType.kind !== "externref") {
-                  fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+                  fctx.body.push({ op: "extern.convert_any" });
                 }
                 if (argType === null) {
                   fctx.body.push({ op: "ref.null.extern" });
@@ -1564,7 +1564,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
             fctx.body.push({ op: "ref.null.extern" });
           } else if (argType.kind !== "externref") {
             // Coerce to externref for the host import
-            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+            fctx.body.push({ op: "extern.convert_any" });
           }
         }
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -1683,7 +1683,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
             if (!descType) {
               fctx.body.push({ op: "ref.null.extern" });
             } else if (descType.kind !== "externref") {
-              fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+              fctx.body.push({ op: "extern.convert_any" });
             }
             fctx.body.push({ op: "call", funcIdx: dpIdx });
           } else {
@@ -1775,7 +1775,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
             {
               let needsCast = false;
               if (objType.kind === "externref") {
-                fctx.body.push({ op: "any.convert_extern" } as unknown as Instr);
+                fctx.body.push({ op: "any.convert_extern" });
                 needsCast = true;
               } else if (objType.kind === "ref_null" && objType.typeIdx !== structTypeIdx) {
                 needsCast = true;
@@ -1859,7 +1859,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
                 fctx.body.push({ op: "call", funcIdx: boxIdx });
               }
             } else if (fieldType.kind === "i64") {
-              fctx.body.push({ op: "f64.convert_i64_s" } as unknown as Instr);
+              fctx.body.push({ op: "f64.convert_i64_s" });
               const boxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
               flushLateImportShifts(ctx, fctx);
               if (boxIdx !== undefined) {
@@ -1869,7 +1869,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
               fctx.body.push({ op: "extern.convert_any" });
             } else if (fieldType.kind !== "externref") {
               // Other types: try extern.convert_any
-              fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+              fctx.body.push({ op: "extern.convert_any" });
             }
 
             // Push flags as i32 constant
@@ -2587,7 +2587,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
                 coerceType(ctx, fctx, repType, { kind: "externref" });
               }
             } else {
-              fctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+              fctx.body.push({ op: "ref.null.extern" });
             }
             if (expr.arguments.length >= 3) {
               const spType = compileExpression(ctx, fctx, expr.arguments[2]!);
@@ -2595,7 +2595,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
                 coerceType(ctx, fctx, spType, { kind: "externref" });
               }
             } else {
-              fctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+              fctx.body.push({ op: "ref.null.extern" });
             }
           }
           fctx.body.push({ op: "call", funcIdx });
@@ -3443,7 +3443,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       if (expr.arguments.length > 0) {
         compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
         // Floor the radix (ToInteger semantics: NaN→0, 2.5→2, etc.)
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+        fctx.body.push({ op: "f64.floor" });
         const radixLocal = allocLocal(fctx, `__radix_${fctx.locals.length}`, { kind: "f64" });
         fctx.body.push({ op: "local.tee", index: radixLocal });
         // Check radix < 2 (also catches NaN since NaN < 2 after floor(NaN)=NaN is still false)
@@ -3737,7 +3737,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         if (recvType === null) {
           fctx.body.push({ op: "ref.null.extern" });
         } else if (recvType.kind !== "externref") {
-          fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+          fctx.body.push({ op: "extern.convert_any" });
         }
         fctx.body.push({ op: "call", funcIdx: toLSIdx });
         return { kind: "externref" };
@@ -3954,7 +3954,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
             } else {
               recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
               if (recvType && recvType.kind !== "externref") {
-                fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+                fctx.body.push({ op: "extern.convert_any" });
               }
             }
             const recvLocal = allocLocal(fctx, `__emc_recv_${fctx.locals.length}`, { kind: "externref" });
@@ -3969,7 +3969,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
               fctx.body.push({ op: "local.get", index: argsLocal });
               const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
               if (argType && argType.kind !== "externref") {
-                fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+                fctx.body.push({ op: "extern.convert_any" });
               }
               if (argType === null) {
                 fctx.body.push({ op: "ref.null.extern" });
@@ -5255,7 +5255,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         if (methodName === "toString" && expr.arguments.length > 0) {
           compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
           // Floor the radix (ToInteger semantics)
-          fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+          fctx.body.push({ op: "f64.floor" });
           const radixLocal = allocLocal(fctx, `__radix_${fctx.locals.length}`, { kind: "f64" });
           fctx.body.push({ op: "local.tee", index: radixLocal });
           fctx.body.push({ op: "f64.const", value: 2 });

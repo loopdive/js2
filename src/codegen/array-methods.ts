@@ -100,16 +100,16 @@ function emitCallbackTypeCheck(
 function guardedFuncRefCastInstrs(fctx: FunctionContext, funcTypeIdx: number): Instr[] {
   const tmpFunc = allocLocal(fctx, `__gfc_${fctx.locals.length}`, { kind: "funcref" } as ValType);
   return [
-    { op: "local.tee", index: tmpFunc } as unknown as Instr,
-    { op: "ref.test", typeIdx: funcTypeIdx } as unknown as Instr,
+    { op: "local.tee", index: tmpFunc },
+    { op: "ref.test", typeIdx: funcTypeIdx },
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "ref_null", typeIdx: funcTypeIdx } as ValType },
       then: [
-        { op: "local.get", index: tmpFunc } as unknown as Instr,
-        { op: "ref.cast_null", typeIdx: funcTypeIdx } as unknown as Instr,
+        { op: "local.get", index: tmpFunc },
+        { op: "ref.cast_null", typeIdx: funcTypeIdx },
       ],
-      else: [{ op: "ref.null", typeIdx: funcTypeIdx } as unknown as Instr],
+      else: [{ op: "ref.null", typeIdx: funcTypeIdx }],
     } as Instr,
   ];
 }
@@ -414,7 +414,7 @@ export function compileArrayLikePrototypeCall(
   const receiverTmp = allocLocal(fctx, `__ali_recv_${fctx.locals.length}`, { kind: "externref" });
   const recvType = compileExpression(ctx, fctx, receiverArg, { kind: "externref" });
   if (recvType && recvType.kind !== "externref") {
-    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+    fctx.body.push({ op: "extern.convert_any" });
   }
   if (recvType === null) {
     fctx.body.push({ op: "ref.null.extern" });
@@ -455,7 +455,7 @@ export function compileArrayLikePrototypeCall(
   const loadElem: Instr[] = [
     { op: "local.get", index: receiverTmp } as Instr,
     { op: "local.get", index: iTmp } as Instr,
-    { op: "f64.convert_i32_s" } as unknown as Instr,
+    { op: "f64.convert_i32_s" },
     { op: "call", funcIdx: getIdxFn } as Instr,
     { op: "local.set", index: elemTmp } as Instr,
   ];
@@ -670,7 +670,7 @@ export function compileArrayLikePrototypeCall(
                 blockType: { kind: "empty" },
                 then: [
                   { op: "local.get", index: iTmp } as Instr,
-                  { op: "f64.convert_i32_s" } as unknown as Instr,
+                  { op: "f64.convert_i32_s" },
                   { op: "local.set", index: resTmp } as Instr,
                   { op: "br", depth: 2 } as Instr,
                 ],
@@ -737,9 +737,9 @@ export function compileArrayLikePrototypeCall(
         closureInfo.returnType?.kind === "f64"
           ? [{ op: "call", funcIdx: mapBoxIdx } as Instr]
           : closureInfo.returnType?.kind === "i32"
-            ? [{ op: "f64.convert_i32_s" } as unknown as Instr, { op: "call", funcIdx: mapBoxIdx } as Instr]
+            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: mapBoxIdx } as Instr]
             : closureInfo.returnType?.kind === "ref" || closureInfo.returnType?.kind === "ref_null"
-              ? [{ op: "extern.convert_any" } as unknown as Instr]
+              ? [{ op: "extern.convert_any" }]
               : []; // externref: already right type
       fctx.body.push({ op: "call", funcIdx: arrNewIdx });
       fctx.body.push({ op: "local.set", index: resultTmp });
@@ -776,7 +776,7 @@ export function compileArrayLikePrototypeCall(
       if (hasInitial) {
         const initType = compileExpression(ctx, fctx, callExpr.arguments[2]!, { kind: "externref" });
         if (initType && initType.kind !== "externref") {
-          fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+          fctx.body.push({ op: "extern.convert_any" });
         }
         if (initType === null) fctx.body.push({ op: "ref.null.extern" });
       } else {
@@ -835,9 +835,9 @@ export function compileArrayLikePrototypeCall(
         closureInfo.returnType?.kind === "f64"
           ? [{ op: "call", funcIdx: rdBoxIdx } as Instr]
           : closureInfo.returnType?.kind === "i32"
-            ? [{ op: "f64.convert_i32_s" } as unknown as Instr, { op: "call", funcIdx: rdBoxIdx } as Instr]
+            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: rdBoxIdx } as Instr]
             : closureInfo.returnType?.kind === "ref" || closureInfo.returnType?.kind === "ref_null"
-              ? [{ op: "extern.convert_any" } as unknown as Instr]
+              ? [{ op: "extern.convert_any" }]
               : []; // externref or null: already right type
 
       fctx.body.push({
@@ -876,14 +876,14 @@ export function compileArrayLikePrototypeCall(
       if (hasInitial) {
         const initType = compileExpression(ctx, fctx, callExpr.arguments[2]!, { kind: "externref" });
         if (initType && initType.kind !== "externref") {
-          fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+          fctx.body.push({ op: "extern.convert_any" });
         }
         if (initType === null) fctx.body.push({ op: "ref.null.extern" });
       } else {
         // No initial: acc = receiver[len-1], start from i = len-2
         fctx.body.push({ op: "local.get", index: receiverTmp });
         fctx.body.push({ op: "local.get", index: iTmp });
-        fctx.body.push({ op: "f64.convert_i32_s" } as unknown as Instr);
+        fctx.body.push({ op: "f64.convert_i32_s" });
         fctx.body.push({ op: "call", funcIdx: getIdxFn });
         fctx.body.push({ op: "local.get", index: iTmp });
         fctx.body.push({ op: "i32.const", value: 1 });
@@ -933,9 +933,9 @@ export function compileArrayLikePrototypeCall(
         closureInfo.returnType?.kind === "f64"
           ? [{ op: "call", funcIdx: rrBoxIdx } as Instr]
           : closureInfo.returnType?.kind === "i32"
-            ? [{ op: "f64.convert_i32_s" } as unknown as Instr, { op: "call", funcIdx: rrBoxIdx } as Instr]
+            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: rrBoxIdx } as Instr]
             : closureInfo.returnType?.kind === "ref" || closureInfo.returnType?.kind === "ref_null"
-              ? [{ op: "extern.convert_any" } as unknown as Instr]
+              ? [{ op: "extern.convert_any" }]
               : [];
 
       // Loop: while i >= 0
@@ -2864,7 +2864,7 @@ function compileArrayConcatExtern(
   const recvLocal = allocLocal(fctx, `__cat_ext_recv_${fctx.locals.length}`, { kind: "externref" });
   const recvType = compileExpression(ctx, fctx, propAccess.expression);
   if (recvType && recvType.kind !== "externref") {
-    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+    fctx.body.push({ op: "extern.convert_any" });
   }
   fctx.body.push({ op: "local.set", index: recvLocal });
 
@@ -2879,7 +2879,7 @@ function compileArrayConcatExtern(
     if (argType === null) {
       fctx.body.push({ op: "ref.null.extern" });
     } else if (argType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+      fctx.body.push({ op: "extern.convert_any" });
     }
     fctx.body.push({ op: "call", funcIdx: arrPushIdx });
   }
@@ -3435,7 +3435,7 @@ function compileArrayFilter(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.filter")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
@@ -3521,7 +3521,7 @@ function compileArrayMap(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.map")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
@@ -3618,7 +3618,7 @@ function compileArrayReduce(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.reduce")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return elemType;
   }
 
@@ -3730,7 +3730,7 @@ function compileArrayReduceRight(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.reduceRight")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return elemType;
   }
 
@@ -3883,7 +3883,7 @@ function compileArrayForEach(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.forEach")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return null; // void method
   }
 
@@ -3926,7 +3926,7 @@ function compileArrayFind(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.find")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return elemType;
   }
 
@@ -4004,7 +4004,7 @@ function compileArrayFindIndex(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findIndex")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "i32" };
   }
 
@@ -4072,7 +4072,7 @@ function compileArraySome(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.some")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "i32" };
   }
 
@@ -4134,7 +4134,7 @@ function compileArrayEvery(
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.every")) {
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "i32" };
   }
 

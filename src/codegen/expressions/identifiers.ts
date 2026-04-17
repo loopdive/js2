@@ -30,7 +30,7 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, _n
     blockType: { kind: "empty" },
     then: [{ op: "ref.null.extern" } as Instr, { op: "throw", tagIdx }],
     else: [],
-  } as unknown as Instr);
+  });
 }
 
 /**
@@ -395,7 +395,7 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     // Truly undeclared variable — throw ReferenceError at runtime
     const tagIdx = ensureExnTag(ctx);
     fctx.body.push({ op: "ref.null.extern" } as Instr);
-    fctx.body.push({ op: "throw", tagIdx } as unknown as Instr);
+    fctx.body.push({ op: "throw", tagIdx });
     return { kind: "externref" };
   }
 

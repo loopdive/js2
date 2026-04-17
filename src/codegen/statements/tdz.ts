@@ -39,7 +39,7 @@ export function emitTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: s
       { op: "throw", tagIdx },
     ],
     else: [],
-  } as unknown as Instr);
+  });
 }
 
 /**

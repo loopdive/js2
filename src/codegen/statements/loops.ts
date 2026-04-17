@@ -2190,7 +2190,7 @@ function compileForOfDirectIterator(
       { op: "br", depth: 2 } as Instr, // break out of block (if + loop = depth 2)
     ],
     else: [],
-  } as unknown as Instr);
+  });
 
   // Get value: elem = result.value
   fctx.body.push({ op: "local.get", index: resultLocal });
@@ -2266,7 +2266,7 @@ function compileForOfDirectIterator(
         { op: "drop" } as Instr,
       ],
       else: [],
-    } as unknown as Instr);
+    });
   }
 
   return true;
@@ -2488,7 +2488,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
               { op: "call", funcIdx: capturedReturnIdx } as Instr,
             ],
             else: [],
-          } as unknown as Instr,
+          },
         ]),
       breakStackLen: iterCloseBreakStackLen,
       continueStackLen: iterCloseContinueStackLen,
@@ -2526,7 +2526,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       { op: "br", depth: 2 } as Instr, // break out of block (if + loop = depth 2)
     ],
     else: [],
-  } as unknown as Instr);
+  });
 
   // Get value: elem = __iterator_value(result)
   fctx.body.push({ op: "local.get", index: resultLocal });
@@ -2575,7 +2575,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
 
   // The block/loop body; wrapped in try/catch_all when __iterator_return is available
   // to call iterator.return() on throw (#851 via-throw).
-  const blockLoop = {
+  const blockLoop: Instr = {
     op: "block",
     blockType: { kind: "empty" },
     body: [
@@ -2597,8 +2597,8 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
         blockType: { kind: "empty" },
         then: [{ op: "local.get", index: iterLocal } as Instr, { op: "call", funcIdx: returnIdx } as Instr],
         else: [],
-      } as unknown as Instr,
-      { op: "rethrow", depth: 0 } as unknown as Instr,
+      },
+      { op: "rethrow", depth: 0 },
     ];
     fctx.body.push({
       op: "try",
@@ -2606,9 +2606,9 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       body: [blockLoop],
       catches: [],
       catchAll: catchAllBody,
-    } as unknown as Instr);
+    });
   } else {
-    fctx.body.push(blockLoop as unknown as Instr);
+    fctx.body.push(blockLoop);
   }
 
   // Iterator close protocol (#851): call iterator.return() on break (post-loop check).
@@ -2621,7 +2621,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       blockType: { kind: "empty" },
       then: [{ op: "local.get", index: iterLocal } as Instr, { op: "call", funcIdx: returnIdx } as Instr],
       else: [],
-    } as unknown as Instr);
+    });
   }
 }
 

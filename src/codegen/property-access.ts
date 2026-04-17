@@ -574,7 +574,7 @@ export function emitExternrefToStructGet(
         flushLateImportShifts(ctx, fctx);
         if (unboxIdx !== undefined) {
           externGetFallback.push({ op: "call", funcIdx: unboxIdx } as Instr);
-          externGetFallback.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+          externGetFallback.push({ op: "i32.trunc_sat_f64_s" });
         }
       }
       // For ref/ref_null result types, the externref from __extern_get needs
@@ -892,7 +892,7 @@ export function compilePropertyAccess(
       flushLateImportShifts(ctx, fctx);
       if (unboxIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: unboxIdx });
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
       }
       return { kind: "i32" };
     }
@@ -1197,7 +1197,7 @@ export function compilePropertyAccess(
               ? [
                   { op: "local.get", index: extTmpIdx } as Instr,
                   { op: "call", funcIdx: lengthFuncIdx } as Instr,
-                  ...(ctx.fast ? [{ op: "i32.trunc_sat_f64_s" } as unknown as Instr] : []),
+                  ...(ctx.fast ? [{ op: "i32.trunc_sat_f64_s" } as Instr] : []),
                   { op: "local.set", index: lenTmp2 } as Instr,
                 ]
               : [
@@ -1660,7 +1660,7 @@ export function compilePropertyAccess(
               ...(effectiveResult.kind === "f64" && unboxIdx !== undefined
                 ? [{ op: "call", funcIdx: unboxIdx } as Instr]
                 : effectiveResult.kind === "i32" && unboxIdx !== undefined
-                  ? [{ op: "call", funcIdx: unboxIdx } as Instr, { op: "i32.trunc_sat_f64_s" } as unknown as Instr]
+                  ? [{ op: "call", funcIdx: unboxIdx } as Instr, { op: "i32.trunc_sat_f64_s" } as Instr]
                   : []),
             ],
           });
@@ -1709,7 +1709,7 @@ export function compilePropertyAccess(
             flushLateImportShifts(ctx, fctx);
             if (unboxIdx !== undefined) {
               fctx.body.push({ op: "call", funcIdx: unboxIdx });
-              fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+              fctx.body.push({ op: "i32.trunc_sat_f64_s" });
             }
             return { kind: "i32" };
           }
@@ -1885,7 +1885,7 @@ export function compilePropertyAccess(
             externGetFallback.push({ op: "call", funcIdx: unboxIdx } as Instr);
           } else if (resultWasm.kind === "i32" && unboxIdx !== undefined) {
             externGetFallback.push({ op: "call", funcIdx: unboxIdx } as Instr);
-            externGetFallback.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+            externGetFallback.push({ op: "i32.trunc_sat_f64_s" });
           }
           externGetFallback.push({ op: "local.set", index: resultLocal } as Instr);
 
@@ -1942,7 +1942,7 @@ export function compilePropertyAccess(
           if (unboxIdx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx });
           }
-          fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+          fctx.body.push({ op: "i32.trunc_sat_f64_s" });
           return { kind: "i32" };
         }
         return { kind: "externref" };
@@ -1994,7 +1994,7 @@ export function compilePropertyAccess(
         if (accessWasm.kind === "i32") {
           if (unboxIdx856 !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx856 });
-            fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+            fctx.body.push({ op: "i32.trunc_sat_f64_s" });
           }
           return { kind: "i32" };
         }

@@ -268,7 +268,7 @@ export function compileNestedFunctionDeclaration(
       const createBufIdx = ctx.funcMap.get("__gen_create_buffer")!;
       liftedFctx.body.push({ op: "call", funcIdx: createBufIdx });
       liftedFctx.body.push({ op: "local.set", index: bufferLocal });
-      liftedFctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+      liftedFctx.body.push({ op: "ref.null.extern" });
       liftedFctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
       const bodyInstrs: Instr[] = [];
@@ -294,13 +294,10 @@ export function compileNestedFunctionDeclaration(
       // Wrap generator body block in try/catch to capture exceptions as pending throw
       const tagIdx = ensureExnTag(ctx);
       const getCaughtIdx = ctx.funcMap.get("__get_caught_exception");
-      const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal } as unknown as Instr];
+      const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal }];
       const catchAllBody: Instr[] =
         getCaughtIdx !== undefined
-          ? [
-              { op: "call", funcIdx: getCaughtIdx } as Instr,
-              { op: "local.set", index: pendingThrowLocal } as unknown as Instr,
-            ]
+          ? [{ op: "call", funcIdx: getCaughtIdx } as Instr, { op: "local.set", index: pendingThrowLocal }]
           : [];
       liftedFctx.body.push({
         op: "try",
@@ -308,7 +305,7 @@ export function compileNestedFunctionDeclaration(
         body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
         catches: [{ tagIdx, body: catchBody }],
         catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      } as unknown as Instr);
+      });
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
@@ -427,7 +424,7 @@ export function compileNestedFunctionDeclaration(
       const createBufIdx = ctx.funcMap.get("__gen_create_buffer")!;
       liftedFctx.body.push({ op: "call", funcIdx: createBufIdx });
       liftedFctx.body.push({ op: "local.set", index: bufferLocal });
-      liftedFctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+      liftedFctx.body.push({ op: "ref.null.extern" });
       liftedFctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
       const bodyInstrs: Instr[] = [];
@@ -453,13 +450,10 @@ export function compileNestedFunctionDeclaration(
       // Wrap generator body block in try/catch to capture exceptions as pending throw
       const tagIdx = ensureExnTag(ctx);
       const getCaughtIdx = ctx.funcMap.get("__get_caught_exception");
-      const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal } as unknown as Instr];
+      const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal }];
       const catchAllBody: Instr[] =
         getCaughtIdx !== undefined
-          ? [
-              { op: "call", funcIdx: getCaughtIdx } as Instr,
-              { op: "local.set", index: pendingThrowLocal } as unknown as Instr,
-            ]
+          ? [{ op: "call", funcIdx: getCaughtIdx } as Instr, { op: "local.set", index: pendingThrowLocal }]
           : [];
       liftedFctx.body.push({
         op: "try",
@@ -467,7 +461,7 @@ export function compileNestedFunctionDeclaration(
         body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
         catches: [{ tagIdx, body: catchBody }],
         catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      } as unknown as Instr);
+      });
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
@@ -652,8 +646,8 @@ function emitDefaultParamInit(
       // This distinguishes missing args from explicit NaN/0/any other value.
       // Sentinel: 0x7FF00000DEADC0DE (emitted by pushDefaultValue).
       liftedFctx.body.push({ op: "local.get", index: paramIdx });
-      liftedFctx.body.push({ op: "i64.reinterpret_f64" } as unknown as Instr);
-      liftedFctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
+      liftedFctx.body.push({ op: "i64.reinterpret_f64" });
+      liftedFctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
       liftedFctx.body.push({ op: "i64.eq" });
       liftedFctx.body.push({
         op: "if",

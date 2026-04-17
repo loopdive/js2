@@ -23,16 +23,16 @@ import { coerceType, emitGuardedRefCast, pushDefaultValue, pushParamSentinel } f
 // ── Guarded funcref cast (ref.test before ref.cast to avoid illegal cast traps) ──
 function emitGuardedFuncRefCast(fctx: FunctionContext, funcTypeIdx: number): void {
   const tmpFunc = allocLocal(fctx, `__gfc_${fctx.locals.length}`, { kind: "funcref" } as ValType);
-  fctx.body.push({ op: "local.tee", index: tmpFunc } as unknown as Instr);
-  fctx.body.push({ op: "ref.test", typeIdx: funcTypeIdx } as unknown as Instr);
+  fctx.body.push({ op: "local.tee", index: tmpFunc });
+  fctx.body.push({ op: "ref.test", typeIdx: funcTypeIdx });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "ref_null", typeIdx: funcTypeIdx } as ValType },
     then: [
-      { op: "local.get", index: tmpFunc } as unknown as Instr,
-      { op: "ref.cast_null", typeIdx: funcTypeIdx } as unknown as Instr,
+      { op: "local.get", index: tmpFunc },
+      { op: "ref.cast_null", typeIdx: funcTypeIdx },
     ],
-    else: [{ op: "ref.null", typeIdx: funcTypeIdx } as unknown as Instr],
+    else: [{ op: "ref.null", typeIdx: funcTypeIdx }],
   } as Instr);
 }
 

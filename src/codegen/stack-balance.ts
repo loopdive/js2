@@ -700,7 +700,7 @@ function fixBranchType(body: Instr[], blockType: BlockType, types: TypeDef[], si
   // Downstream code has null guards, so null values are handled correctly.
   if ((expectedType.kind === "ref" || expectedType.kind === "ref_null") && produced === "externref") {
     body.push({ op: "any.convert_extern" } as Instr);
-    body.push({ op: "ref.cast_null", typeIdx: expectedType.typeIdx } as unknown as Instr);
+    body.push({ op: "ref.cast_null", typeIdx: expectedType.typeIdx });
     return 1;
   }
 
@@ -728,7 +728,7 @@ function fixBranchType(body: Instr[], blockType: BlockType, types: TypeDef[], si
 
   // i64 → f64: convert
   if (expectedType.kind === "f64" && produced === "i64") {
-    body.push({ op: "f64.convert_i64_s" } as unknown as Instr);
+    body.push({ op: "f64.convert_i64_s" });
     return 1;
   }
 
@@ -1193,7 +1193,7 @@ function callArgCoercionInstrs(
       // insert ref.cast_null to coerce to the expected ref type.
       // This is safe in call-argument context (callArgCoercionInstrs is only used there).
       if (expectedIdx !== undefined) {
-        return [{ op: "ref.cast_null", typeIdx: expectedIdx } as unknown as Instr];
+        return [{ op: "ref.cast_null", typeIdx: expectedIdx }];
       }
     } else {
       return [];
@@ -1211,7 +1211,7 @@ function callArgCoercionInstrs(
     const expectedIdx = (expected as any).typeIdx;
     if (actualIdx === expectedIdx) return []; // subtyping handles nullability
     if (expectedIdx !== undefined) {
-      return [{ op: "ref.cast_null", typeIdx: expectedIdx } as unknown as Instr];
+      return [{ op: "ref.cast_null", typeIdx: expectedIdx }];
     }
   }
 
@@ -1232,32 +1232,32 @@ function callArgCoercionInstrs(
 
   // f64 → externref: __box_number
   if (actual.kind === "f64" && expected.kind === "externref" && boxNumberIdx !== null) {
-    return [{ op: "call", funcIdx: boxNumberIdx } as unknown as Instr];
+    return [{ op: "call", funcIdx: boxNumberIdx }];
   }
 
   // i32 → externref: f64.convert_i32_s + __box_number
   if (actual.kind === "i32" && expected.kind === "externref" && boxNumberIdx !== null) {
-    return [{ op: "f64.convert_i32_s" } as Instr, { op: "call", funcIdx: boxNumberIdx } as unknown as Instr];
+    return [{ op: "f64.convert_i32_s" } as Instr, { op: "call", funcIdx: boxNumberIdx }];
   }
 
   // i64 → externref: f64.convert_i64_s + __box_number
   if (actual.kind === "i64" && expected.kind === "externref" && boxNumberIdx !== null) {
-    return [{ op: "f64.convert_i64_s" } as unknown as Instr, { op: "call", funcIdx: boxNumberIdx } as unknown as Instr];
+    return [{ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx }];
   }
 
   // externref → f64: __unbox_number
   if (actual.kind === "externref" && expected.kind === "f64" && unboxNumberIdx !== null) {
-    return [{ op: "call", funcIdx: unboxNumberIdx } as unknown as Instr];
+    return [{ op: "call", funcIdx: unboxNumberIdx }];
   }
 
   // ref/ref_null → f64: extern.convert_any + __unbox_number
   if ((actual.kind === "ref" || actual.kind === "ref_null") && expected.kind === "f64" && unboxNumberIdx !== null) {
-    return [{ op: "extern.convert_any" } as Instr, { op: "call", funcIdx: unboxNumberIdx } as unknown as Instr];
+    return [{ op: "extern.convert_any" } as Instr, { op: "call", funcIdx: unboxNumberIdx }];
   }
 
   // i64 → i32: i32.wrap_i64
   if (actual.kind === "i64" && expected.kind === "i32") {
-    return [{ op: "i32.wrap_i64" } as unknown as Instr];
+    return [{ op: "i32.wrap_i64" }];
   }
 
   // f64 → i32: i32.trunc_sat_f64_s (#822)
@@ -1272,12 +1272,12 @@ function callArgCoercionInstrs(
 
   // i64 → f64: f64.convert_i64_s
   if (actual.kind === "i64" && expected.kind === "f64") {
-    return [{ op: "f64.convert_i64_s" } as unknown as Instr];
+    return [{ op: "f64.convert_i64_s" }];
   }
 
   // i32 → i64: i64.extend_i32_s
   if (actual.kind === "i32" && expected.kind === "i64") {
-    return [{ op: "i64.extend_i32_s" } as unknown as Instr];
+    return [{ op: "i64.extend_i32_s" }];
   }
 
   // externref → ref/ref_null: any.convert_extern + ref.cast_null
@@ -1292,14 +1292,14 @@ function callArgCoercionInstrs(
   if ((actual.kind === "ref" || actual.kind === "ref_null") && expected.kind === "i32" && unboxNumberIdx !== null) {
     return [
       { op: "extern.convert_any" } as Instr,
-      { op: "call", funcIdx: unboxNumberIdx } as unknown as Instr,
+      { op: "call", funcIdx: unboxNumberIdx },
       { op: "i32.trunc_sat_f64_s" } as Instr,
     ];
   }
 
   // externref → i32: __unbox_number + i32.trunc_sat_f64_s
   if (actualIsExternref && expected.kind === "i32" && unboxNumberIdx !== null) {
-    return [{ op: "call", funcIdx: unboxNumberIdx } as unknown as Instr, { op: "i32.trunc_sat_f64_s" } as Instr];
+    return [{ op: "call", funcIdx: unboxNumberIdx }, { op: "i32.trunc_sat_f64_s" } as Instr];
   }
 
   return [];
@@ -1797,12 +1797,12 @@ function fixStructNewFieldCoercion(
               // 1. Save top N values to temps (reverse order: last field = top of stack saved first)
               const saveInstrs: Instr[] = [];
               for (let fi = numFields - 1; fi >= 0; fi--) {
-                saveInstrs.push({ op: "local.set", index: tempLocals[fi]! } as unknown as Instr);
+                saveInstrs.push({ op: "local.set", index: tempLocals[fi]! });
               }
               // 2. Re-push each value with coercion
               const restoreInstrs: Instr[] = [];
               for (let fi = 0; fi < numFields; fi++) {
-                restoreInstrs.push({ op: "local.get", index: tempLocals[fi]! } as unknown as Instr);
+                restoreInstrs.push({ op: "local.get", index: tempLocals[fi]! });
                 for (const c of coercions[fi]!) {
                   restoreInstrs.push(c);
                 }

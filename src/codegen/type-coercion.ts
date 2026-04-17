@@ -51,16 +51,16 @@ export function emitGuardedRefCast(fctx: FunctionContext, typeIdx: number): void
  */
 export function emitGuardedFuncRefCast(fctx: FunctionContext, funcTypeIdx: number): void {
   const tmpFunc = allocLocal(fctx, `__gfc_${fctx.locals.length}`, { kind: "funcref" } as ValType);
-  fctx.body.push({ op: "local.tee", index: tmpFunc } as unknown as Instr);
-  fctx.body.push({ op: "ref.test", typeIdx: funcTypeIdx } as unknown as Instr);
+  fctx.body.push({ op: "local.tee", index: tmpFunc });
+  fctx.body.push({ op: "ref.test", typeIdx: funcTypeIdx });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "ref_null", typeIdx: funcTypeIdx } as ValType },
     then: [
-      { op: "local.get", index: tmpFunc } as unknown as Instr,
-      { op: "ref.cast_null", typeIdx: funcTypeIdx } as unknown as Instr,
+      { op: "local.get", index: tmpFunc },
+      { op: "ref.cast_null", typeIdx: funcTypeIdx },
     ],
-    else: [{ op: "ref.null", typeIdx: funcTypeIdx } as unknown as Instr],
+    else: [{ op: "ref.null", typeIdx: funcTypeIdx }],
   } as Instr);
 }
 
@@ -100,7 +100,7 @@ function emitToPrimitiveHostCall(
   hint: "number" | "string" | "default",
 ): void {
   // Convert struct ref → externref
-  fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+  fctx.body.push({ op: "extern.convert_any" });
   // Push hint string
   pushStringHint(ctx, fctx, hint);
   // Call __to_primitive(externref, externref) → externref
@@ -191,7 +191,7 @@ function buildVecFromExternref(
       return [{ op: "call", funcIdx: unboxIdx } as Instr];
     }
     if (et.kind === "i32" && unboxIdx !== undefined) {
-      return [{ op: "call", funcIdx: unboxIdx } as Instr, { op: "i32.trunc_sat_f64_s" } as unknown as Instr];
+      return [{ op: "call", funcIdx: unboxIdx } as Instr, { op: "i32.trunc_sat_f64_s" }];
     }
     if (et.kind === "externref") return [];
     if (et.kind === "ref" || et.kind === "ref_null") {
@@ -222,7 +222,7 @@ function buildVecFromExternref(
             instrs.push({ op: "call", funcIdx: unboxIdx } as Instr);
           } else if (fieldType.kind === "i32" && unboxIdx !== undefined) {
             instrs.push({ op: "call", funcIdx: unboxIdx } as Instr);
-            instrs.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+            instrs.push({ op: "i32.trunc_sat_f64_s" });
           }
           // externref fields don't need conversion
         }
@@ -239,7 +239,7 @@ function buildVecFromExternref(
   return [
     { op: "local.get", index: externLocal } as Instr,
     { op: "call", funcIdx: lenIdx } as Instr,
-    { op: "i32.trunc_sat_f64_s" } as unknown as Instr,
+    { op: "i32.trunc_sat_f64_s" },
     { op: "local.set", index: lenLocal } as Instr,
     { op: "local.get", index: lenLocal } as Instr,
     { op: "array.new_default", typeIdx: vecInfo.arrTypeIdx } as Instr,
@@ -1022,7 +1022,7 @@ export function coerceType(
                 { op: "local.get", index: tmpAny },
                 { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 }, // f64val
               ],
-            } as unknown as Instr,
+            },
           ],
         });
         releaseTempLocal(fctx, tmpTag);
@@ -1511,16 +1511,16 @@ export function coerceType(
             fctx.body.push({ op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 });
             {
               const tmpFunc = allocTempLocal(fctx, { kind: "funcref" } as ValType);
-              fctx.body.push({ op: "local.tee", index: tmpFunc } as unknown as Instr);
-              fctx.body.push({ op: "ref.test", typeIdx: closureInfo.funcTypeIdx } as unknown as Instr);
+              fctx.body.push({ op: "local.tee", index: tmpFunc });
+              fctx.body.push({ op: "ref.test", typeIdx: closureInfo.funcTypeIdx });
               fctx.body.push({
                 op: "if",
                 blockType: { kind: "val", type: { kind: "ref_null", typeIdx: closureInfo.funcTypeIdx } as ValType },
                 then: [
-                  { op: "local.get", index: tmpFunc } as unknown as Instr,
-                  { op: "ref.cast_null", typeIdx: closureInfo.funcTypeIdx } as unknown as Instr,
+                  { op: "local.get", index: tmpFunc },
+                  { op: "ref.cast_null", typeIdx: closureInfo.funcTypeIdx },
                 ],
-                else: [{ op: "ref.null", typeIdx: closureInfo.funcTypeIdx } as unknown as Instr],
+                else: [{ op: "ref.null", typeIdx: closureInfo.funcTypeIdx }],
               } as Instr);
               releaseTempLocal(fctx, tmpFunc);
             }
@@ -1598,16 +1598,16 @@ export function coerceType(
                 { op: "local.get", index: closureLocal } as Instr,
                 { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 } as Instr,
                 // Guarded funcref cast to avoid illegal cast traps
-                { op: "local.tee", index: funcTmp } as unknown as Instr,
-                { op: "ref.test", typeIdx: info.funcTypeIdx } as unknown as Instr,
+                { op: "local.tee", index: funcTmp },
+                { op: "ref.test", typeIdx: info.funcTypeIdx },
                 {
                   op: "if",
                   blockType: { kind: "val", type: { kind: "ref_null", typeIdx: info.funcTypeIdx } as ValType },
                   then: [
-                    { op: "local.get", index: funcTmp } as unknown as Instr,
-                    { op: "ref.cast_null", typeIdx: info.funcTypeIdx } as unknown as Instr,
+                    { op: "local.get", index: funcTmp },
+                    { op: "ref.cast_null", typeIdx: info.funcTypeIdx },
                   ],
-                  else: [{ op: "ref.null", typeIdx: info.funcTypeIdx } as unknown as Instr],
+                  else: [{ op: "ref.null", typeIdx: info.funcTypeIdx }],
                 } as Instr,
                 { op: "ref.as_non_null" } as Instr,
                 { op: "call_ref", typeIdx: info.funcTypeIdx },
@@ -1731,16 +1731,16 @@ function tryToStringFallback(
         fctx.body.push({ op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 });
         {
           const tmpFunc = allocTempLocal(fctx, { kind: "funcref" } as ValType);
-          fctx.body.push({ op: "local.tee", index: tmpFunc } as unknown as Instr);
-          fctx.body.push({ op: "ref.test", typeIdx: closureInfo.funcTypeIdx } as unknown as Instr);
+          fctx.body.push({ op: "local.tee", index: tmpFunc });
+          fctx.body.push({ op: "ref.test", typeIdx: closureInfo.funcTypeIdx });
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: { kind: "ref_null", typeIdx: closureInfo.funcTypeIdx } as ValType },
             then: [
-              { op: "local.get", index: tmpFunc } as unknown as Instr,
-              { op: "ref.cast_null", typeIdx: closureInfo.funcTypeIdx } as unknown as Instr,
+              { op: "local.get", index: tmpFunc },
+              { op: "ref.cast_null", typeIdx: closureInfo.funcTypeIdx },
             ],
-            else: [{ op: "ref.null", typeIdx: closureInfo.funcTypeIdx } as unknown as Instr],
+            else: [{ op: "ref.null", typeIdx: closureInfo.funcTypeIdx }],
           } as Instr);
           releaseTempLocal(fctx, tmpFunc);
         }
@@ -1767,13 +1767,13 @@ function tryToStringFallback(
           fctx.body.push({ op: "local.set", index: eqLocal });
           // ref.test + cast + call
           fctx.body.push({ op: "local.get", index: eqLocal } as Instr);
-          fctx.body.push({ op: "ref.test", typeIdx: closureTypeIdx } as unknown as Instr);
+          fctx.body.push({ op: "ref.test", typeIdx: closureTypeIdx });
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: { kind: "f64" } },
             then: [
               { op: "local.get", index: eqLocal } as Instr,
-              { op: "ref.cast", typeIdx: closureTypeIdx } as unknown as Instr,
+              { op: "ref.cast", typeIdx: closureTypeIdx },
               (() => {
                 const closureLocal2 = allocLocal(fctx, `__ts_cl2_${fctx.locals.length}`, {
                   kind: "ref",
@@ -1789,16 +1789,16 @@ function tryToStringFallback(
               (() => {
                 const funcTmp = allocTempLocal(fctx, { kind: "funcref" } as ValType);
                 const instrs: Instr[] = [
-                  { op: "local.tee", index: funcTmp } as unknown as Instr,
-                  { op: "ref.test", typeIdx: info.funcTypeIdx } as unknown as Instr,
+                  { op: "local.tee", index: funcTmp },
+                  { op: "ref.test", typeIdx: info.funcTypeIdx },
                   {
                     op: "if",
                     blockType: { kind: "val", type: { kind: "ref_null", typeIdx: info.funcTypeIdx } as ValType },
                     then: [
-                      { op: "local.get", index: funcTmp } as unknown as Instr,
-                      { op: "ref.cast_null", typeIdx: info.funcTypeIdx } as unknown as Instr,
+                      { op: "local.get", index: funcTmp },
+                      { op: "ref.cast_null", typeIdx: info.funcTypeIdx },
                     ],
-                    else: [{ op: "ref.null", typeIdx: info.funcTypeIdx } as unknown as Instr],
+                    else: [{ op: "ref.null", typeIdx: info.funcTypeIdx }],
                   } as Instr,
                   { op: "ref.as_non_null" } as Instr,
                   { op: "call_ref", typeIdx: info.funcTypeIdx } as Instr,
@@ -1918,7 +1918,7 @@ export function emitSafeExternrefToF64(ctx: CodegenContext, fctx: FunctionContex
   const unboxIdx = ctx.funcMap.get("__unbox_number")!;
   const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
   const tmpLocal = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.tee", index: tmpLocal } as unknown as Instr);
+  fctx.body.push({ op: "local.tee", index: tmpLocal });
   // Check if it's a JS number (typeof === "number")
   fctx.body.push({ op: "call", funcIdx: typeofNumIdx });
   fctx.body.push({
@@ -1933,7 +1933,7 @@ export function emitSafeExternrefToF64(ctx: CodegenContext, fctx: FunctionContex
       // Not a number (GC struct, string, null, etc.): return NaN
       { op: "f64.const", value: NaN } as Instr,
     ],
-  } as unknown as Instr);
+  });
   releaseTempLocal(fctx, tmpLocal);
 }
 
@@ -2034,8 +2034,8 @@ export function pushParamSentinel(
   if (type.kind === "f64" && (optInfo?.hasExpressionDefault ?? true)) {
     // Unique sNaN sentinel: quiet bit (bit 51) clear, custom payload.
     // JS NaN is always 0x7FF8000000000000 (quiet NaN), so this is distinguishable.
-    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
-    fctx.body.push({ op: "f64.reinterpret_i64" } as unknown as Instr);
+    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+    fctx.body.push({ op: "f64.reinterpret_i64" });
   } else {
     pushDefaultValue(fctx, type, ctx);
   }
@@ -2046,10 +2046,7 @@ export function defaultValueInstrs(vt: ValType): Instr[] {
     case "f64":
       // Use sNaN sentinel so destructuring default checks (which compare against
       // 0x7FF00000DEADC0DE) correctly trigger for out-of-bounds elements (#866)
-      return [
-        { op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr,
-        { op: "f64.reinterpret_i64" } as unknown as Instr,
-      ];
+      return [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }];
     case "f32":
       return [{ op: "f32.const", value: 0 } as Instr];
     case "i32":
@@ -2071,10 +2068,7 @@ export function defaultValueInstrs(vt: ValType): Instr[] {
       return [{ op: "ref.null.func" }];
     default:
       // Fallback: sNaN sentinel (most arrays are f64 in this compiler)
-      return [
-        { op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr,
-        { op: "f64.reinterpret_i64" } as unknown as Instr,
-      ];
+      return [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }];
   }
 }
 
@@ -2220,7 +2214,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     }
     // No fctx available — use original ref.cast (may trap as illegal_cast,
     // but that's more informative than silently returning null).
-    return [{ op: "any.convert_extern" } as Instr, { op: "ref.cast_null", typeIdx: toIdx } as unknown as Instr];
+    return [{ op: "any.convert_extern" } as Instr, { op: "ref.cast_null", typeIdx: toIdx }];
   }
   // externref → ref: any.convert_extern + guarded ref.cast
   if (from.kind === "externref" && to.kind === "ref") {
@@ -2242,7 +2236,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
       return result;
     }
     // No fctx available — use ref.cast_null (passes null through instead of trapping)
-    return [{ op: "any.convert_extern" } as Instr, { op: "ref.cast_null", typeIdx: toIdx } as unknown as Instr];
+    return [{ op: "any.convert_extern" } as Instr, { op: "ref.cast_null", typeIdx: toIdx }];
   }
   // eqref/anyref → ref_null: guarded ref.cast_null
   if ((from.kind === "eqref" || from.kind === "anyref") && to.kind === "ref_null") {

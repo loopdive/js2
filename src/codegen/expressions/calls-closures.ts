@@ -271,7 +271,7 @@ export function compileObjectPrototypeFallback(
     flushLateImportShifts(ctx, fctx);
     if (toStrIdx !== undefined) {
       compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+      fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       return { kind: "externref" };
     }
@@ -284,7 +284,7 @@ export function compileObjectPrototypeFallback(
     flushLateImportShifts(ctx, fctx);
     if (toStrIdx !== undefined) {
       compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+      fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       return { kind: "externref" };
     }
@@ -294,7 +294,7 @@ export function compileObjectPrototypeFallback(
   // valueOf: return the receiver itself (Object.prototype.valueOf returns this)
   if (methodName === "valueOf") {
     compileExpression(ctx, fctx, propAccess.expression);
-    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+    fctx.body.push({ op: "extern.convert_any" });
     return { kind: "externref" };
   }
 
@@ -309,7 +309,7 @@ export function compileObjectPrototypeFallback(
     flushLateImportShifts(ctx, fctx);
     if (hopIdx !== undefined) {
       compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+      fctx.body.push({ op: "extern.convert_any" });
       if (expr.arguments.length > 0) {
         compileExpression(ctx, fctx, expr.arguments[0]!);
       } else {
@@ -332,7 +332,7 @@ export function compileObjectPrototypeFallback(
     flushLateImportShifts(ctx, fctx);
     if (pieIdx !== undefined) {
       compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+      fctx.body.push({ op: "extern.convert_any" });
       if (expr.arguments.length > 0) {
         compileExpression(ctx, fctx, expr.arguments[0]!);
       } else {
@@ -355,7 +355,7 @@ export function compileObjectPrototypeFallback(
     flushLateImportShifts(ctx, fctx);
     if (ipIdx !== undefined) {
       compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+      fctx.body.push({ op: "extern.convert_any" });
       if (expr.arguments.length > 0) {
         compileExpression(ctx, fctx, expr.arguments[0]!);
       } else {
