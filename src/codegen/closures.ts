@@ -805,8 +805,11 @@ export function compileArrowAsClosure(
     // infers a concrete type (tuple struct, etc) from the call site, but at
     // Wasm level the argument is externref.  Widen to externref so the body
     // can use __extern_to_array / __extern_get for the iterator protocol (#862).
+    // Skip widening when the parameter has a default initializer — the typed
+    // path (with ref_null sentinel above) handles the default-value case.
     if (
       !p.type &&
+      !p.initializer &&
       (ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name)) &&
       (wasmType.kind === "ref" || wasmType.kind === "ref_null")
     ) {

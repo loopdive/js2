@@ -988,8 +988,10 @@ export function compileObjectLiteralForStruct(
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
         // Destructuring params without explicit type may receive iterables (#862)
+        // Skip when the parameter has a default initializer — typed path handles it.
         if (
           !param.type &&
+          !param.initializer &&
           (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
           (wasmType.kind === "ref" || wasmType.kind === "ref_null")
         ) {
@@ -1066,8 +1068,10 @@ export function compileObjectLiteralForStruct(
         // Destructuring params without explicit type annotations may receive
         // any iterable at runtime. Widen to externref so the body uses the
         // iterator protocol via __extern_to_array (#862).
+        // Skip when the parameter has a default initializer — typed path handles it.
         if (
           !param.type &&
+          !param.initializer &&
           (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
           (wasmType.kind === "ref" || wasmType.kind === "ref_null")
         ) {

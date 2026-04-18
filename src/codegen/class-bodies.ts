@@ -237,8 +237,10 @@ export function collectClassDeclaration(
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
         }
         // Destructuring params without explicit type may receive iterables (#862)
+        // Skip when the parameter has a default initializer — typed path handles it.
         if (
           !param.type &&
+          !param.initializer &&
           (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
           (wasmType.kind === "ref" || wasmType.kind === "ref_null")
         ) {
@@ -308,8 +310,10 @@ export function collectClassDeclaration(
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
         }
         // Destructuring params without explicit type may receive iterables (#862)
+        // Skip when the parameter has a default initializer — typed path handles it.
         if (
           !param.type &&
+          !param.initializer &&
           (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
           (wasmType.kind === "ref" || wasmType.kind === "ref_null")
         ) {
@@ -701,8 +705,10 @@ export function compileClassBodies(
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
         // Destructuring params without explicit type may receive iterables (#862)
+        // Skip when the parameter has a default initializer — typed path handles it.
         if (
           !param.type &&
+          !param.initializer &&
           (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
           (wasmType.kind === "ref" || wasmType.kind === "ref_null")
         ) {
@@ -981,8 +987,10 @@ export function compileClassBodies(
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
         // Destructuring params without explicit type may receive iterables (#862)
+        // Skip when the parameter has a default initializer — typed path handles it.
         if (
           !param.type &&
+          !param.initializer &&
           (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
           (wasmType.kind === "ref" || wasmType.kind === "ref_null")
         ) {
@@ -1310,8 +1318,10 @@ export function compileClassBodies(
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
         // Destructuring params without explicit type may receive iterables (#862)
+        // Skip when the parameter has a default initializer — typed path handles it.
         if (
           !param.type &&
+          !param.initializer &&
           (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
           (wasmType.kind === "ref" || wasmType.kind === "ref_null")
         ) {
