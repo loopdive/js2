@@ -1848,6 +1848,18 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             let wasmType: ValType = restBindingOverridesToExternref(param)
               ? { kind: "externref" }
               : resolveWasmType(ctx, paramType);
+            // #862: unannotated binding-pattern param without default — widen to externref
+            // so destructuring applies the iterator protocol (§13.3.3.6). Matches the body
+            // compilation widening in function-body.ts and closures.ts; without this, the
+            // Wasm signature is ref_null but destructure path treats it as externref → mismatch.
+            if (
+              !param.type &&
+              !param.initializer &&
+              (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name)) &&
+              (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+            ) {
+              wasmType = { kind: "externref" };
+            }
             // If the parameter has a default value and is a non-null ref type,
             // widen to ref_null so callers can pass ref.null as a sentinel for "use default"
             if (param.initializer && wasmType.kind === "ref") {
