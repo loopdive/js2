@@ -75,7 +75,7 @@ jobs:
       # On merge to main, refresh the committed baseline so the next PR
       # compares against the latest known-good state.
       - name: Refresh baseline on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.repository == 'loopdive/js2wasm' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           cp benchmarks/results/diff-test.json benchmarks/results/diff-test-baseline.json
           if ! git diff --quiet benchmarks/results/diff-test-baseline.json; then

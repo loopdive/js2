@@ -374,7 +374,7 @@ jobs:
           exit 1
 
   promote-baseline:
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.actor != 'github-actions[bot]'
+    if: github.repository == 'loopdive/js2wasm' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.actor != 'github-actions[bot]'
     name: promote merged report to main baseline
     needs: merge-report
     runs-on: ubuntu-latest

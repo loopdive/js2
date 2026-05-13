@@ -70,14 +70,15 @@ jobs:
     #    own commits. Routes through the workflow_dispatch logic to find
     #    the latest available artifact.
     if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.actor.login != 'github-actions[bot]') ||
-      (github.event_name == 'push' &&
-       github.actor != 'github-actions[bot]' &&
-       !contains(github.event.head_commit.message, '[skip ci]'))
+      github.repository == 'loopdive/js2wasm' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.actor.login != 'github-actions[bot]') ||
+       (github.event_name == 'push' &&
+        github.actor != 'github-actions[bot]' &&
+        !contains(github.event.head_commit.message, '[skip ci]')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
