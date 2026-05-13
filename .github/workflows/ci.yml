@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify origin/main is merged into branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "::error::Branch is missing commits from origin/main. Run 'git merge origin/main' and push again."
+            exit 1
+          fi
+          echo "✓ origin/main is an ancestor of this branch"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format check
+        run: pnpm run format:check
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: IR fallback gate (#1376)
+        run: pnpm run check:ir-fallbacks
+
+      - name: Fetch runs/index.json from baselines repo
+        if: github.event_name == 'push'
+        continue-on-error: true
+        run: |
+          # runs/index.json moved from LFS to js2wasm-baselines to avoid bandwidth exhaustion
+          git clone --depth=1 https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines 2>/dev/null || true
+          if [ -f /tmp/js2wasm-baselines/runs/index.json ]; then
+            mkdir -p benchmarks/results/runs
+            cp /tmp/js2wasm-baselines/runs/index.json benchmarks/results/runs/index.json
+          fi

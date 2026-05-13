@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
+
+const ROOT = resolve(import.meta.dirname, "..");
+
+function run(command, args) {
+  execFileSync(command, args, {
+    cwd: ROOT,
+    stdio: "inherit",
+  });
+}
+
+run(process.execPath, ["--experimental-strip-types", "scripts/generate-editions.ts"]);
+run("pnpm", ["run", "build:playground"]);
+run("pnpm", ["run", "build:compiler-bundle"]);
+run(process.execPath, ["--experimental-strip-types", "scripts/generate-size-benchmarks.ts"]);
+run("node", ["scripts/build-pages.js"]);

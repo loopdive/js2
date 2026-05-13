@@ -1,0 +1,597 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * Variable declaration statement lowering.
+ */
+import { ts, forEachChild } from "../../ts-api.js";
+import { isStringType, isVoidType } from "../../checker/type-mapper.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import { reportError } from "../context/errors.js";
+import { allocLocal } from "../context/locals.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { emitCoercedLocalSet } from "../expressions/helpers.js";
+import { emitUndefined } from "../expressions/late-imports.js";
+import { resolveWasmType } from "../index.js";
+import { resolveComputedKeyExpression } from "../literals.js";
+import { localGlobalIdx } from "../registry/imports.js";
+import { getOrRegisterVecType } from "../registry/types.js";
+import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
+import { emitGuardedRefCast } from "../type-coercion.js";
+import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
+import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
+import { ensureNativeStringHelpers } from "../native-strings.js";
+import { compileStringBuilderInit } from "../string-builder.js";
+
+function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
+  if (!ts.isIdentifier(decl.name)) return null;
+  const varName = decl.name.text;
+
+  // Walk up to the enclosing function body or source file
+  let scope: ts.Node = decl;
+  while (
+    scope &&
+    !ts.isFunctionDeclaration(scope) &&
+    !ts.isFunctionExpression(scope) &&
+    !ts.isArrowFunction(scope) &&
+    !ts.isMethodDeclaration(scope) &&
+    !ts.isSourceFile(scope)
+  ) {
+    scope = scope.parent;
+  }
+  if (!scope) return null;
+
+  let inferredElemType: ts.Type | null = null;
+
+  function visit(node: ts.Node) {
+    if (inferredElemType) return;
+
+    // arr[i] = value
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isElementAccessExpression(node.left) &&
+      ts.isIdentifier(node.left.expression) &&
+      node.left.expression.text === varName
+    ) {
+      const valType = ctx.checker.getTypeAtLocation(node.right);
+      if (!(valType.flags & ts.TypeFlags.Any)) {
+        inferredElemType = valType;
+        return;
+      }
+    }
+
+    // arr.push(value)
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "push" &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === varName &&
+      node.arguments.length >= 1
+    ) {
+      const valType = ctx.checker.getTypeAtLocation(node.arguments[0]!);
+      if (!(valType.flags & ts.TypeFlags.Any)) {
+        inferredElemType = valType;
+        return;
+      }
+    }
+
+    forEachChild(node, visit);
+  }
+
+  visit(scope);
+  if (!inferredElemType) return null;
+
+  // Resolve the inferred element type to a wasm type, then register the vec
+  const elemWasm = resolveWasmType(ctx, inferredElemType);
+  const elemKey =
+    elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
+      ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
+      : elemWasm.kind;
+  const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
+  return { kind: "ref_null", typeIdx: vecTypeIdx };
+}
+
+/** String methods that return a host array (externref) rather than a wasm GC array.
+ *  Variables initialized from these calls use externref instead of the GC vec struct
+ *  that resolveWasmType would produce for the TS return type (e.g. string[]). */
+const HOST_ARRAY_STRING_METHODS = new Set(["split"]);
+
+/** Check if an expression is a string method call that returns a host array (externref). */
+function isStringMethodReturningHostArray(ctx: CodegenContext, expr: ts.Expression): boolean {
+  // With native strings, split returns a native string array, not externref
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) return false;
+  if (!ts.isCallExpression(expr)) return false;
+  if (!ts.isPropertyAccessExpression(expr.expression)) return false;
+  const method = expr.expression.name.text;
+  if (!HOST_ARRAY_STRING_METHODS.has(method)) return false;
+  const receiverType = ctx.checker.getTypeAtLocation(expr.expression.expression);
+  return isStringType(receiverType);
+}
+
+/**
+ * Check if an expression is a host Promise call whose result is a real JS Promise.
+ * Only matches static Promise methods (resolve/reject/all/race/allSettled/any) and
+ * new Promise(). DELIBERATELY OMITS instance methods (.then/.catch/.finally) to
+ * prevent cascading type overrides through Promise chains on compiled async functions.
+ */
+function isPromiseHostCall(_ctx: CodegenContext, expr: ts.Expression): boolean {
+  // new Promise(executor)
+  if (ts.isNewExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === "Promise") {
+    return true;
+  }
+  if (!ts.isCallExpression(expr)) return false;
+  if (!ts.isPropertyAccessExpression(expr.expression)) return false;
+  const method = expr.expression.name.text;
+  // Static methods: Promise.resolve/reject/all/race/allSettled/any
+  if (
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "Promise" &&
+    (method === "resolve" ||
+      method === "reject" ||
+      method === "all" ||
+      method === "race" ||
+      method === "allSettled" ||
+      method === "any")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.VariableStatement): void {
+  for (const decl of stmt.declarationList.declarations) {
+    if (ts.isObjectBindingPattern(decl.name)) {
+      compileObjectDestructuring(ctx, fctx, decl);
+      continue;
+    }
+
+    if (ts.isArrayBindingPattern(decl.name)) {
+      compileArrayDestructuring(ctx, fctx, decl);
+      continue;
+    }
+
+    if (!ts.isIdentifier(decl.name)) {
+      reportError(ctx, decl, "Destructuring not supported");
+      continue;
+    }
+
+    const name = decl.name.text;
+
+    // Track const bindings for runtime enforcement (assignment throws TypeError)
+    if (stmt.declarationList.flags & ts.NodeFlags.Const) {
+      if (!fctx.constBindings) fctx.constBindings = new Set();
+      fctx.constBindings.add(name);
+    }
+
+    // #1210: string-builder rewrite for `let s = "";` followed by an
+    // accumulating loop. Detected pre-pass populates `pendingStringBuilders`;
+    // emit the buffer-init sequence here and skip the normal local
+    // allocation (the binding name is intentionally NOT placed in
+    // `localMap` — `compileIdentifier` and `compileNativeStringCompoundAssignment`
+    // route through `fctx.stringBuilders` instead). The TDZ flag is also
+    // not allocated, since the variable is always logically initialised
+    // immediately after the buffer is created.
+    if (fctx.pendingStringBuilders?.has(decl)) {
+      // Native string helpers (incl. __str_buf_next_cap and __str_flatten)
+      // must be available before any append site emits a call to them. The
+      // detector only fires under nativeStrings; ensure here too in case the
+      // function body uses no other native-string helpers.
+      ensureNativeStringHelpers(ctx);
+      compileStringBuilderInit(ctx, fctx, name);
+      // Mark as initialized for any TDZ flag captured by enclosing closures.
+      // (compileStringBuilderInit didn't set localMap, so emitTdzInit only
+      // touches the flag local if one was already allocated by the hoist
+      // pre-pass.)
+      emitTdzInit(ctx, fctx, name);
+      continue;
+    }
+
+    // Class expression: const C = class { ... } — skip, already handled as class declaration
+    if (decl.initializer && ts.isClassExpression(decl.initializer)) {
+      continue;
+    }
+
+    // For arrow/function expression initializers, compile the expression first
+    // to get the actual closure struct ref type (resolveWasmType returns externref
+    // for function types, but closures need ref $struct)
+    if (decl.initializer && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))) {
+      const actualType = compileExpression(ctx, fctx, decl.initializer);
+      const closureType = actualType ?? { kind: "externref" as const };
+
+      // If this is a module-level variable, also store in the module global
+      // so other functions can access the closure via global.get.
+      const modGlobalIdx = ctx.moduleGlobals.get(name);
+      if (modGlobalIdx !== undefined) {
+        // Update the global's type to match the actual closure ref type
+        const globalDef = ctx.mod.globals[localGlobalIdx(ctx, modGlobalIdx)];
+        if (globalDef) {
+          const nullableType: ValType =
+            closureType.kind === "ref"
+              ? { kind: "ref_null", typeIdx: (closureType as { typeIdx: number }).typeIdx }
+              : closureType;
+          globalDef.type = nullableType;
+          // Also fix the init expression to match the new type
+          if (nullableType.kind === "ref_null") {
+            globalDef.init = [{ op: "ref.null", typeIdx: (nullableType as { typeIdx: number }).typeIdx }];
+          }
+        }
+        // Duplicate value on stack: one for the global, one for the local
+        const localIdx = allocLocal(fctx, name, closureType);
+        fctx.body.push({ op: "local.tee", index: localIdx });
+        fctx.body.push({ op: "global.set", index: modGlobalIdx });
+        // Set TDZ flag to 1 (initialized)
+        emitTdzInit(ctx, fctx, name);
+      } else {
+        // Reuse pre-hoisted slot if it exists.
+        // Do NOT narrow externref → ref: the hoisting pass already emitted
+        // __get_undefined() targeting externref; mutating the type causes
+        // impossible ref.cast at runtime (#962). Coercion handles it.
+        const priorIdx = fctx.localMap.get(name);
+        const localIdx =
+          priorIdx !== undefined && priorIdx >= fctx.params.length ? priorIdx : allocLocal(fctx, name, closureType);
+        if (priorIdx !== undefined && priorIdx >= fctx.params.length) {
+          const slot = fctx.locals[priorIdx - fctx.params.length];
+          if (slot && slot.type.kind !== "externref") slot.type = closureType;
+        }
+        emitCoercedLocalSet(ctx, fctx, localIdx, closureType);
+      }
+      continue;
+    }
+
+    // For object literal initializers with computed property names that TS
+    // cannot resolve (resulting in 0 type properties), compile the expression
+    // first to get the actual struct ref type. Similar to arrow function handling.
+    if (
+      decl.initializer &&
+      ts.isObjectLiteralExpression(decl.initializer) &&
+      decl.initializer.properties.some((p) => ts.isPropertyAssignment(p) && p.name && ts.isComputedPropertyName(p.name))
+    ) {
+      const varType2 = ctx.checker.getTypeAtLocation(decl);
+      const tsProps = varType2.getProperties();
+      // Only use this path when TS cannot resolve any properties
+      // (i.e. all properties are computed and non-resolvable)
+      const hasUnresolvedComputed = tsProps.length < decl.initializer.properties.length;
+      if (hasUnresolvedComputed) {
+        // Check if ALL computed keys can be resolved at compile time.
+        // If so, skip this early-out and let ensureComputedPropertyFields + the
+        // normal module-global path handle it properly.
+        const allComputedResolvable = decl.initializer.properties.every((p) => {
+          if (!ts.isPropertyAssignment(p) || !p.name || !ts.isComputedPropertyName(p.name)) return true;
+          return resolveComputedKeyExpression(ctx, p.name.expression) !== undefined;
+        });
+        if (!allComputedResolvable) {
+          const actualType = compileExpression(ctx, fctx, decl.initializer);
+          const objType = actualType ?? { kind: "externref" as const };
+          // Store to module global if available, otherwise local
+          const modGlobal = ctx.moduleGlobals.get(name);
+          if (modGlobal !== undefined) {
+            fctx.body.push({ op: "global.set", index: modGlobal });
+            emitTdzInit(ctx, fctx, name);
+          } else {
+            // Reuse pre-hoisted slot if it exists.
+            // Do NOT narrow externref → ref (#962).
+            const priorIdx = fctx.localMap.get(name);
+            const localIdx =
+              priorIdx !== undefined && priorIdx >= fctx.params.length ? priorIdx : allocLocal(fctx, name, objType);
+            if (priorIdx !== undefined && priorIdx >= fctx.params.length) {
+              const slot = fctx.locals[priorIdx - fctx.params.length];
+              if (slot && slot.type.kind !== "externref") slot.type = objType;
+            }
+            fctx.body.push({ op: "local.set", index: localIdx });
+          }
+          continue;
+        }
+        // All computed keys resolvable — fall through to normal path
+      }
+    }
+
+    // Check if this is a module-level global (already registered)
+    const moduleGlobalIdx = ctx.moduleGlobals.get(name);
+    if (moduleGlobalIdx !== undefined) {
+      // Shape-inferred array-like: compile {} as empty vec struct
+      const shapeInfo = ctx.shapeMap.get(name);
+      if (shapeInfo && decl.initializer) {
+        // Create an empty vec struct: struct.new(length=0, data=array.new_default(4))
+        fctx.body.push({ op: "i32.const", value: 0 }); // length = 0
+        fctx.body.push({ op: "i32.const", value: 4 }); // initial capacity
+        fctx.body.push({ op: "array.new_default", typeIdx: shapeInfo.arrTypeIdx } as Instr);
+        fctx.body.push({ op: "struct.new", typeIdx: shapeInfo.vecTypeIdx });
+        fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+        // Set TDZ flag to 1 (initialized)
+        emitTdzInit(ctx, fctx, name);
+        continue;
+      }
+      // Module global: compile initializer and set global
+      if (decl.initializer) {
+        const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
+        const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
+        compileExpression(ctx, fctx, decl.initializer, wasmType);
+        // Re-read index: compileExpression may shift globals via addStringConstantGlobal
+        const moduleGlobalIdxPost = ctx.moduleGlobals.get(name)!;
+        fctx.body.push({ op: "global.set", index: moduleGlobalIdxPost });
+      } else {
+        // No initializer: `let x;` at module level — in JS, uninitialized
+        // variables are `undefined`. For externref globals, emit __get_undefined()
+        // so `x === undefined` works correctly (#737).
+        const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
+        if (globalDef?.type.kind === "externref") {
+          emitUndefined(ctx, fctx);
+          fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+        }
+      }
+      // Set TDZ flag to 1 (initialized) — even for `let x;` without initializer
+      emitTdzInit(ctx, fctx, name);
+      continue;
+    }
+
+    const varType = ctx.checker.getTypeAtLocation(decl);
+    // #1120: If this local has been detected as i32-coerced (every write
+    // is wrapped in `| 0` or another bitwise int32 coercion), force its
+    // Wasm type to i32. This must be checked BEFORE inferred-array logic
+    // because the candidate set is gathered ahead of time and only
+    // contains numeric-typed names.
+    const isI32CoercedLocal =
+      fctx.i32CoercedLocals?.has(name) === true && (varType.flags & ts.TypeFlags.NumberLike) !== 0;
+    let inferredVecType: ValType | null = null;
+    if (varType.flags & ts.TypeFlags.Object) {
+      const sym = (varType as ts.TypeReference).symbol ?? (varType as ts.Type).symbol;
+      if (sym?.name === "Array") {
+        const typeArgs = ctx.checker.getTypeArguments(varType as ts.TypeReference);
+        if (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any) {
+          inferredVecType = inferArrayVecType(ctx, decl);
+        }
+      }
+    }
+    // Override type for string methods returning host arrays (e.g. split() returns
+    // externref but TS types as string[] which resolveWasmType maps to GC vec struct)
+    // Check if this variable has widened properties (empty obj with later prop assignments)
+    const widenedStructName = ctx.widenedVarStructMap.get(name);
+    const widenedTypeIdx = widenedStructName !== undefined ? ctx.structMap.get(widenedStructName) : undefined;
+    // #1197: i32-specialized number[] arrays get __vec_i32 instead of __vec_f64.
+    // The override is applied AFTER the standard type computation so it stacks
+    // cleanly with widened/inferred paths above (the analysis pass restricts
+    // candidates to bare `let arr: number[] = ...` so neither path applies).
+    const isI32SpecializedArray =
+      fctx.i32SpecializedArrays?.has(name) === true && (varType.flags & ts.TypeFlags.Object) !== 0;
+
+    // (#1239) If the initializer is an object literal carrying get/set
+    // accessor declarations, the variable holds a JS host object
+    // (externref) — never the inferred wasmGC struct type. Tag the var
+    // up-front so the local's wasm type and ctx.externrefAccessorVars
+    // stay in sync; later reads/writes via resolveStructNameForExpr will
+    // see the override.
+    const initIsAccessorLiteral =
+      decl.initializer !== undefined &&
+      ts.isObjectLiteralExpression(decl.initializer) &&
+      decl.initializer.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p));
+    if (initIsAccessorLiteral) {
+      ctx.externrefAccessorVars.add(name);
+    }
+
+    const wasmType: ValType = initIsAccessorLiteral
+      ? { kind: "externref" as const }
+      : isI32CoercedLocal
+        ? { kind: "i32" }
+        : isI32SpecializedArray
+          ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
+          : widenedTypeIdx !== undefined
+            ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
+            : (inferredVecType ??
+              (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
+                ? { kind: "externref" as const }
+                : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
+                  ? { kind: "externref" as const }
+                  : resolveWasmType(ctx, varType)));
+
+    // If this var/let/const was already pre-hoisted at function entry, reuse that slot.
+    // For let/const: the pre-pass (hoistLetConstWithTdz) always pre-allocates a slot
+    // regardless of whether a TDZ flag is also allocated, so we check only the localMap.
+    const existingIdx = fctx.localMap.get(name);
+    // #1177: `using`/`await using` declarations are NOT `var` — they have
+    // block-scoped lifetimes and TDZ semantics like let/const.
+    const isVar = !(
+      decl.parent.flags &
+      (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)
+    );
+    const isHoistedLetConst = !isVar && existingIdx !== undefined && existingIdx >= fctx.params.length;
+    const localIdx =
+      (isVar || isHoistedLetConst) && existingIdx !== undefined && existingIdx >= fctx.params.length
+        ? existingIdx
+        : allocLocal(fctx, name, wasmType);
+
+    // If we reused a pre-hoisted slot but inference found a more precise type
+    // (e.g. Array<any> hoisted as vec_externref, but inferred as vec_f64),
+    // update the local's type so it matches what the initializer will produce.
+    // IMPORTANT: Do NOT retroactively change the type when it would invalidate
+    // already-emitted initialization code:
+    // - ref/ref_null → primitive: earlier struct.new would become invalid
+    // - externref → ref/ref_null: hoisted __get_undefined() can't be cast (#962)
+    if ((isVar || isHoistedLetConst) && existingIdx !== undefined && existingIdx >= fctx.params.length) {
+      const localSlot = fctx.locals[existingIdx - fctx.params.length];
+      if (
+        localSlot &&
+        (wasmType.kind !== localSlot.type.kind || (wasmType as any).typeIdx !== (localSlot.type as any).typeIdx)
+      ) {
+        const existingIsRef = localSlot.type.kind === "ref" || localSlot.type.kind === "ref_null";
+        const existingIsExternref = localSlot.type.kind === "externref";
+        const newIsPrimitive =
+          wasmType.kind === "f64" ||
+          wasmType.kind === "i32" ||
+          wasmType.kind === "i64" ||
+          wasmType.kind === "externref";
+        const newIsRef = wasmType.kind === "ref" || wasmType.kind === "ref_null";
+        if (!(existingIsRef && newIsPrimitive) && !(existingIsExternref && newIsRef)) {
+          localSlot.type = wasmType;
+        }
+      }
+    }
+
+    if (decl.initializer) {
+      // Check if the variable has a callable type (function reference).
+      // If so, compile without an externref hint to preserve the closure ref type.
+      const callSigs = varType.getCallSignatures?.();
+      const isCallable = callSigs && callSigs.length > 0 && wasmType.kind === "externref";
+      let stackType: ValType = wasmType;
+      if (isCallable) {
+        // Compile without type hint to get the actual closure/ref type
+        const actualType = compileExpression(ctx, fctx, decl.initializer);
+        const closureType = actualType ?? { kind: "externref" as const };
+        // If the result is a closure ref, update the local's type — but not
+        // if the local was pre-hoisted as externref (illegal cast, #962).
+        if (
+          (closureType.kind === "ref" || closureType.kind === "ref_null") &&
+          ctx.closureInfoByTypeIdx.has((closureType as { typeIdx: number }).typeIdx)
+        ) {
+          if (localIdx >= fctx.params.length) {
+            const localSlot = fctx.locals[localIdx - fctx.params.length];
+            if (localSlot && localSlot.type.kind !== "externref") localSlot.type = closureType;
+          }
+          stackType = closureType;
+        } else if (closureType.kind === "externref" && callSigs!.length > 0) {
+          // The initializer returned externref but the type is callable.
+          // This happens when a function returns a closure coerced to externref.
+          // Find the matching closure info by comparing the TS call signature
+          // against registered closure types and unbox (any.convert_extern + ref.cast).
+          const sig = callSigs![0]!;
+          const sigParamCount = sig.parameters.length;
+          const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
+          const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
+          const sigParamWasmTypes: ValType[] = [];
+          for (let i = 0; i < sigParamCount; i++) {
+            const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+            sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+          }
+
+          let matchedClosureInfo:
+            | { structTypeIdx: number; info: typeof ctx.closureInfoByTypeIdx extends Map<number, infer V> ? V : never }
+            | undefined;
+          for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
+            if (info.paramTypes.length !== sigParamCount) continue;
+            if (sigRetWasm === null && info.returnType !== null) continue;
+            if (sigRetWasm !== null && info.returnType === null) continue;
+            if (sigRetWasm !== null && info.returnType !== null && sigRetWasm.kind !== info.returnType.kind) continue;
+            let paramsMatch = true;
+            for (let i = 0; i < sigParamCount; i++) {
+              if (sigParamWasmTypes[i]!.kind !== info.paramTypes[i]!.kind) {
+                paramsMatch = false;
+                break;
+              }
+            }
+            if (paramsMatch) {
+              matchedClosureInfo = { structTypeIdx: typeIdx, info };
+              break;
+            }
+          }
+
+          if (matchedClosureInfo) {
+            // Convert externref back to closure struct ref (guarded to avoid illegal cast)
+            fctx.body.push({ op: "any.convert_extern" } as Instr);
+            emitGuardedRefCast(fctx, matchedClosureInfo.structTypeIdx);
+            const castType: ValType = { kind: "ref_null", typeIdx: matchedClosureInfo.structTypeIdx };
+            if (localIdx >= fctx.params.length) {
+              const localSlot = fctx.locals[localIdx - fctx.params.length];
+              // Do NOT narrow externref → ref (#962)
+              if (localSlot && localSlot.type.kind !== "externref") localSlot.type = castType;
+            }
+            stackType = castType;
+          } else {
+            stackType = closureType;
+          }
+        } else {
+          stackType = closureType;
+        }
+      } else {
+        // #1197: while compiling the initializer for an i32-specialized number[]
+        // local, set a transient flag so the array literal / Array() constructor
+        // compiler emits an i32 backing array instead of f64.
+        const ctxAny = ctx as unknown as { _i32ElemArrayOverride?: boolean };
+        const prevElemOverride = ctxAny._i32ElemArrayOverride;
+        if (isI32SpecializedArray) ctxAny._i32ElemArrayOverride = true;
+        let resultType: ValType | null;
+        try {
+          resultType = compileExpression(ctx, fctx, decl.initializer, wasmType);
+        } finally {
+          ctxAny._i32ElemArrayOverride = prevElemOverride;
+        }
+        stackType = resultType ?? wasmType;
+        // Coerce if the expression produced a type that doesn't match the local
+        if (resultType && !valTypesMatch(resultType, wasmType)) {
+          const bodyLenBeforeCoerce = fctx.body.length;
+          coerceType(ctx, fctx, resultType, wasmType);
+          // Only update stackType if coercion actually emitted instructions.
+          // If coerceType was a no-op (e.g. unrelated struct types), keep
+          // the original resultType so emitCoercedLocalSet can detect the
+          // mismatch and update the local's declared type accordingly.
+          if (fctx.body.length > bodyLenBeforeCoerce) {
+            stackType = wasmType; // after coercion, stack is wasmType
+          }
+        }
+      }
+      // #1177: If the variable was boxed by a closure constructed BEFORE this
+      // declaration ran (e.g. `function() { f(); }` constructed before
+      // `let x` is reached), `localIdx` already points to a `ref __ref_cell_T`
+      // local and a plain `local.set` would be a type mismatch. Route the
+      // assignment through `struct.set` on the ref cell so post-init mutations
+      // propagate to every closure that captured the same cell.
+      const boxedForInit = fctx.boxedCaptures?.get(name);
+      if (boxedForInit) {
+        // Coerce stack to value type if needed.
+        if (!valTypesMatch(stackType, boxedForInit.valType)) {
+          coerceType(ctx, fctx, stackType, boxedForInit.valType);
+        }
+        const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedForInit.valType);
+        fctx.body.push({ op: "local.set", index: tmpVal });
+        fctx.body.push({ op: "local.get", index: localIdx });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [] as Instr[],
+          else: [
+            { op: "local.get", index: localIdx } as Instr,
+            { op: "local.get", index: tmpVal } as Instr,
+            {
+              op: "struct.set",
+              typeIdx: boxedForInit.refCellTypeIdx,
+              fieldIdx: 0,
+            } as Instr,
+          ],
+        } as unknown as Instr);
+      } else {
+        emitCoercedLocalSet(ctx, fctx, localIdx, stackType);
+      }
+    } else if (wasmType.kind === "externref") {
+      // No initializer: `let x;` / `var x;` — in JS, uninitialized variables
+      // are `undefined`, not `null`. Emit __get_undefined() so that
+      // `x === undefined` works correctly (#737).
+      emitUndefined(ctx, fctx);
+      // #1177: If a closure captured x BEFORE this declaration ran, `localIdx`
+      // is now the boxed ref-cell ref local. Route the init through
+      // `struct.set` on the ref cell so the closure observes the same value.
+      // Without this, the post-fixup `local.set` becomes an `any.convert_extern;
+      // ref.cast null (ref __ref_cell_T)` that traps at runtime ("illegal cast"),
+      // because JS undefined is not a struct ref.
+      const boxedNoInit = fctx.boxedCaptures?.get(name);
+      if (boxedNoInit) {
+        const tmpVal = allocLocal(fctx, `__box_init_tmp_${fctx.locals.length}`, boxedNoInit.valType);
+        fctx.body.push({ op: "local.set", index: tmpVal });
+        fctx.body.push({ op: "local.get", index: localIdx });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [] as Instr[],
+          else: [
+            { op: "local.get", index: localIdx } as Instr,
+            { op: "local.get", index: tmpVal } as Instr,
+            { op: "struct.set", typeIdx: boxedNoInit.refCellTypeIdx, fieldIdx: 0 } as Instr,
+          ],
+        } as unknown as Instr);
+      } else {
+        fctx.body.push({ op: "local.set", index: localIdx });
+      }
+    }
+    // Set local TDZ flag to 1 (initialized) if this is a hoisted let/const
+    emitLocalTdzInit(fctx, name);
+  }
+}

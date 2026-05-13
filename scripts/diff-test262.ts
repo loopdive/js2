@@ -1,0 +1,347 @@
+#!/usr/bin/env npx tsx
+/**
+ * diff-test262.ts — Compare two test262 JSONL result files and report regressions/improvements.
+ *
+ * Usage:
+ *   npx tsx scripts/diff-test262.ts <baseline.jsonl> <new.jsonl>
+ *
+ * Output:
+ *   - Regressions (pass → fail/CE)
+ *   - Improvements (fail/CE → pass)
+ *   - Status transitions summary
+ *   - Net delta
+ *   - Error category breakdown for regressions
+ */
+
+import { createReadStream, readFileSync } from "fs";
+import { createInterface } from "readline";
+
+interface TestResult {
+  file: string;
+  status: string;
+  error?: string;
+  error_category?: string;
+  category?: string;
+  /**
+   * 12-char sha256 hex digest of the compiled Wasm binary (or null if no
+   * binary was produced — skip / compile_error / compile_timeout). Added in
+   * #1222 so the PR regression-gate can filter out byte-identical "regressions"
+   * that are pure CI runner noise.
+   */
+  wasm_sha?: string | null;
+}
+
+type StatusMap = Map<string, TestResult>;
+
+async function loadJsonl(path: string): Promise<StatusMap> {
+  const map: StatusMap = new Map();
+  const rl = createInterface({ input: createReadStream(path) });
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as TestResult;
+      if (entry.file) {
+        map.set(entry.file, entry);
+      }
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return map;
+}
+
+// Reads baseline metadata (baseline_generated_at, baseline_sha) from a report.json.
+// Used to warn when the committed baseline is older than 6 hours — see #1079.
+function readBaselineMeta(path: string): { generatedAt?: string; sha?: string } | null {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const json = JSON.parse(raw);
+    return {
+      generatedAt: typeof json.baseline_generated_at === "string" ? json.baseline_generated_at : undefined,
+      sha: typeof json.baseline_sha === "string" ? json.baseline_sha : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatAge(ageMs: number): string {
+  const totalMinutes = Math.max(0, Math.floor(ageMs / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+function main() {
+  const args = process.argv.slice(2);
+
+  if (args.length < 2 || args.includes("--help") || args.includes("-h")) {
+    console.log(`Usage: npx tsx scripts/diff-test262.ts <baseline.jsonl> <new.jsonl>
+
+Compare two test262 JSONL result files and report regressions/improvements.
+
+Options:
+  --verbose, -v                 Show individual test transitions (default: show up to 20)
+  --all                         Show all transitions (no limit)
+  --quiet, -q                   Only show summary counts
+  --baseline-meta <report.json> Read baseline_generated_at + baseline_sha to warn on stale baseline
+  --help, -h                    Show this help`);
+    process.exit(args.includes("--help") || args.includes("-h") ? 0 : 1);
+  }
+
+  const positional = args.filter((a, i) => {
+    if (a.startsWith("--") || a.startsWith("-")) return false;
+    const prev = args[i - 1];
+    if (prev === "--baseline-meta") return false;
+    return true;
+  });
+  const baselinePath = positional[0];
+  const newPath = positional[1];
+  const verbose = args.includes("--verbose") || args.includes("-v");
+  const showAll = args.includes("--all");
+  const quiet = args.includes("--quiet") || args.includes("-q");
+  const metaIdx = args.indexOf("--baseline-meta");
+  const baselineMetaPath = metaIdx >= 0 ? args[metaIdx + 1] : undefined;
+
+  const maxShow = showAll ? Infinity : verbose ? 50 : 20;
+
+  run(baselinePath, newPath, maxShow, quiet, baselineMetaPath);
+}
+
+async function run(baselinePath: string, newPath: string, maxShow: number, quiet: boolean, baselineMetaPath?: string) {
+  const [baseline, newer] = await Promise.all([loadJsonl(baselinePath), loadJsonl(newPath)]);
+
+  // Collect transitions
+  const regressions: {
+    file: string;
+    from: string;
+    to: string;
+    error?: string;
+    error_category?: string;
+    /**
+     * True when both base and pr have a non-null wasm_sha and the values
+     * match — i.e. the compiled binary is byte-identical, so any pass→fail
+     * transition is CI runner noise (#1222).
+     */
+    wasmUnchanged: boolean;
+  }[] = [];
+  const improvements: { file: string; from: string; to: string }[] = [];
+  const otherChanges: { file: string; from: string; to: string }[] = [];
+
+  // Count statuses
+  const baselineCounts: Record<string, number> = {};
+  const newCounts: Record<string, number> = {};
+
+  for (const [file, entry] of baseline) {
+    baselineCounts[entry.status] = (baselineCounts[entry.status] || 0) + 1;
+  }
+  for (const [file, entry] of newer) {
+    newCounts[entry.status] = (newCounts[entry.status] || 0) + 1;
+  }
+
+  // All files in either set
+  const allFiles = new Set([...baseline.keys(), ...newer.keys()]);
+
+  for (const file of allFiles) {
+    const base = baseline.get(file);
+    const cur = newer.get(file);
+
+    const baseStatus = base?.status ?? "absent";
+    const curStatus = cur?.status ?? "absent";
+
+    if (baseStatus === curStatus) continue;
+
+    if (baseStatus === "pass" && curStatus !== "pass") {
+      // #1222: if both runs produced a Wasm binary and the binaries are
+      // byte-identical, the test cannot have regressed for any compiler
+      // reason — the runtime difference is CI-runner variance (scheduling,
+      // memory pressure, GC timing). The merge gate uses
+      // `regressions_wasm_change` which excludes these.
+      const baseSha = base?.wasm_sha;
+      const curSha = cur?.wasm_sha;
+      const wasmUnchanged = typeof baseSha === "string" && typeof curSha === "string" && baseSha === curSha;
+      regressions.push({
+        file,
+        from: baseStatus,
+        to: curStatus,
+        error: cur?.error,
+        error_category: cur?.error_category,
+        wasmUnchanged,
+      });
+    } else if (baseStatus !== "pass" && curStatus === "pass") {
+      improvements.push({ file, from: baseStatus, to: curStatus });
+    } else {
+      otherChanges.push({ file, from: baseStatus, to: curStatus });
+    }
+  }
+
+  // Sort by file path for deterministic output
+  regressions.sort((a, b) => a.file.localeCompare(b.file));
+  improvements.sort((a, b) => a.file.localeCompare(b.file));
+  otherChanges.sort((a, b) => a.file.localeCompare(b.file));
+
+  // Print report
+  console.log(`\n${"=".repeat(60)}`);
+  console.log(`  test262 diff: ${baseline.size} baseline → ${newer.size} new tests`);
+  console.log(`${"=".repeat(60)}\n`);
+
+  // Status counts
+  const allStatuses = new Set([...Object.keys(baselineCounts), ...Object.keys(newCounts)]);
+  console.log("  Status        Baseline    New      Delta");
+  console.log("  " + "-".repeat(46));
+  for (const status of [
+    "pass",
+    "fail",
+    "compile_error",
+    ...[...allStatuses].filter((s) => !["pass", "fail", "compile_error"].includes(s)).sort(),
+  ]) {
+    if (!allStatuses.has(status)) continue;
+    const bCount = baselineCounts[status] || 0;
+    const nCount = newCounts[status] || 0;
+    const delta = nCount - bCount;
+    const deltaStr = delta === 0 ? "" : delta > 0 ? `+${delta}` : `${delta}`;
+    console.log(
+      `  ${status.padEnd(16)}${String(bCount).padStart(7)}  ${String(nCount).padStart(7)}  ${deltaStr.padStart(7)}`,
+    );
+  }
+  console.log();
+
+  // Regressions
+  const regColor = regressions.length > 0 ? "⚠️  " : "";
+  console.log(`${regColor}=== Regressions (pass → other): ${regressions.length} ===`);
+  if (!quiet && regressions.length > 0) {
+    const shown = regressions.slice(0, maxShow);
+    for (const r of shown) {
+      const errMsg = r.error ? ` (${truncate(r.error, 80)})` : "";
+      console.log(`  ${r.file}: pass → ${r.to}${errMsg}`);
+    }
+    if (regressions.length > maxShow) {
+      console.log(`  ... and ${regressions.length - maxShow} more`);
+    }
+  }
+  console.log();
+
+  // #1192: split regressions by destination status. compile_timeout
+  // transitions are runner-load timing noise (tests near the 30s
+  // compile-timeout boundary flap based on CI system load), not real
+  // compiler regressions. Emit separate counts so the merge gate can
+  // exclude CT noise from the ratio. The "Regressions (pass → other)"
+  // line above stays unchanged for backwards compat with existing reports.
+  const regressionsCT = regressions.filter((r) => r.to === "compile_timeout").length;
+  const regressionsReal = regressions.length - regressionsCT;
+  console.log(`=== Compile timeouts (pass → compile_timeout): ${regressionsCT} ===`);
+  console.log(`=== Regressions excluding compile_timeout: ${regressionsReal} ===`);
+
+  // #1222: filter regressions where the compiled Wasm binary is byte-identical
+  // on both base and PR. A test that compiles to the same bytes cannot have
+  // regressed due to anything in the PR — the pass→fail flip is pure CI runner
+  // variance (scheduling, memory pressure, GC timing). The merge gate prefers
+  // `regressions_wasm_change` over `regressions_real` to avoid flagging these
+  // physically-impossible "regressions". Only counts entries where wasm_sha
+  // is present on BOTH sides; if either is missing we conservatively treat
+  // the regression as real (could be a compile_error vs pass transition).
+  const noiseFiltered = regressions.filter((r) => !r.wasmUnchanged && r.to !== "compile_timeout");
+  const regressionsWasmChange = noiseFiltered.length;
+  const wasmIdenticalNoise = regressions.filter((r) => r.wasmUnchanged && r.to !== "compile_timeout").length;
+  console.log(`=== Wasm-identical noise (pass → other, same wasm_sha): ${wasmIdenticalNoise} ===`);
+  console.log(`=== Regressions with wasm-hash change: ${regressionsWasmChange} ===`);
+  console.log();
+
+  // Improvements
+  console.log(`=== Improvements (other → pass): ${improvements.length} ===`);
+  if (!quiet && improvements.length > 0) {
+    const shown = improvements.slice(0, maxShow);
+    for (const imp of shown) {
+      console.log(`  ${imp.file}: ${imp.from} → pass`);
+    }
+    if (improvements.length > maxShow) {
+      console.log(`  ... and ${improvements.length - maxShow} more`);
+    }
+  }
+  console.log();
+
+  // Other transitions
+  if (otherChanges.length > 0) {
+    console.log(`=== Other transitions: ${otherChanges.length} ===`);
+    if (!quiet) {
+      // Group by transition type
+      const groups = new Map<string, string[]>();
+      for (const c of otherChanges) {
+        const key = `${c.from} → ${c.to}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(c.file);
+      }
+      for (const [transition, files] of groups) {
+        console.log(`  ${transition}: ${files.length} tests`);
+        const shown = files.slice(0, Math.min(5, maxShow));
+        for (const f of shown) {
+          console.log(`    ${f}`);
+        }
+        if (files.length > shown.length) {
+          console.log(`    ... and ${files.length - shown.length} more`);
+        }
+      }
+    }
+    console.log();
+  }
+
+  // Regression error categories
+  if (regressions.length > 0) {
+    const errCats = new Map<string, number>();
+    for (const r of regressions) {
+      const cat = r.error_category || r.to;
+      errCats.set(cat, (errCats.get(cat) || 0) + 1);
+    }
+    console.log("=== Regression error categories ===");
+    const sorted = [...errCats.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [cat, count] of sorted) {
+      console.log(`  ${cat}: ${count}`);
+    }
+    console.log();
+  }
+
+  // Net delta
+  const basePass = baselineCounts["pass"] || 0;
+  const newPass = newCounts["pass"] || 0;
+  const delta = newPass - basePass;
+  const sign = delta >= 0 ? "+" : "";
+  console.log(`=== Net: ${sign}${delta} pass (${basePass} → ${newPass}) ===`);
+  console.log();
+
+  // Stale baseline warning — emit a PR-comment-friendly line if the
+  // committed baseline is older than 6h. See #1079.
+  if (baselineMetaPath) {
+    const meta = readBaselineMeta(baselineMetaPath);
+    if (meta?.generatedAt) {
+      const generated = new Date(meta.generatedAt);
+      if (!Number.isNaN(generated.getTime())) {
+        const ageMs = Date.now() - generated.getTime();
+        const ageText = formatAge(ageMs);
+        const shortSha = meta.sha ? meta.sha.slice(0, 7) : "unknown";
+        if (ageMs >= 6 * 3600 * 1000) {
+          console.log(
+            `⚠️  baseline is ${ageText} old (commit ${shortSha}) — consider force-refresh via workflow_dispatch before trusting these numbers`,
+          );
+        } else {
+          console.log(`baseline age: ${ageText} (commit ${shortSha})`);
+        }
+        console.log();
+      }
+    }
+  }
+
+  // Exit code: non-zero when the change is a net negative using wasm-hash-filtered regressions.
+  // Compile_timeout flaps (timing noise) and wasm-identical flips are excluded via
+  // regressionsWasmChange. Gate: improvements - regressionsWasmChange < 0.
+  const netPerTest = improvements - regressionsWasmChange;
+  if (netPerTest < 0) {
+    process.exit(1);
+  }
+}
+
+function truncate(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen - 3) + "...";
+}
+
+main();

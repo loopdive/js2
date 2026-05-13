@@ -1,0 +1,799 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * Identifier resolution, TDZ analysis, and instanceof handling.
+ */
+import { ts, forEachChild } from "../../ts-api.js";
+import { isBooleanType, isHeterogeneousUnion, isNumberType, isStringType } from "../../checker/type-mapper.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import { emitFuncRefAsClosure } from "../closures.js";
+import { emitLazyClassObjectGet } from "./extern.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import {
+  addFuncType,
+  addImport,
+  addStringConstantGlobal,
+  addUnionImports,
+  ensureExnTag,
+  localGlobalIdx,
+  resolveWasmType,
+} from "../index.js";
+import { emitNullGuardedStructGet } from "../property-access.js";
+import { coerceType, compileExpression } from "../shared.js";
+import { emitTdzCheck } from "../statements.js";
+import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
+import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
+import { isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
+
+export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: string, flagIdx: number): void {
+  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+  // If the flag has been boxed in an i32 ref cell (captured by a closure —
+  // see #1177), read it through `struct.get` so we observe mutations the
+  // outer scope made via the same ref cell.
+  const boxed = fctx.boxedTdzFlags?.get(name);
+  if (boxed) {
+    fctx.body.push({ op: "local.get", index: boxed.localIdx });
+    fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 } as Instr);
+  } else {
+    fctx.body.push({ op: "local.get", index: flagIdx });
+  }
+  fctx.body.push({ op: "i32.eqz" });
+  let then: Instr[];
+  if (throwRefErrIdx !== undefined) {
+    const msg = `${name} is not defined`;
+    addStringConstantGlobal(ctx, msg);
+    const strIdx = ctx.stringGlobalMap.get(msg)!;
+    then = [
+      { op: "global.get", index: strIdx } as Instr,
+      { op: "call", funcIdx: throwRefErrIdx } as Instr,
+      { op: "unreachable" } as unknown as Instr,
+    ];
+  } else {
+    const tagIdx = ensureExnTag(ctx);
+    then = [{ op: "ref.null.extern" } as Instr, { op: "throw", tagIdx } as unknown as Instr];
+  }
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then,
+    else: [],
+  } as unknown as Instr);
+}
+
+/**
+ * Static TDZ analysis: determine at compile time whether a let/const variable
+ * access is guaranteed to be after initialization (safe) or before (TDZ violation).
+ *
+ * Returns:
+ * - 'skip': access is after declaration in straight-line code — no check needed
+ * - 'throw': access is before declaration in straight-line code — guaranteed TDZ error
+ * - 'check': can't determine statically — keep runtime flag check
+ */
+function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
+  const symbol = ctx.checker.getSymbolAtLocation(id);
+  if (!symbol) return "check";
+  const decl = symbol.valueDeclaration;
+  if (!decl) return "check";
+
+  const accessPos = id.getStart();
+  const declEnd = decl.getEnd(); // use end of declaration (after initializer)
+
+  // Find the containing function of the access and the declaration.
+  const accessFunc = getContainingFunction(id);
+  const declFunc = getContainingFunction(decl);
+
+  if (accessFunc !== declFunc) {
+    // Access is in a nested closure. We can still prove it safe if:
+    // 1. The closure is an arrow function or function expression (not hoisted), AND
+    // 2. The closure definition starts after the variable's declaration ends, AND
+    // 3. No loop wraps both the declaration and the closure definition
+    // In that case, the closure cannot exist until after the variable is initialized,
+    // so any invocation of the closure is guaranteed to see the initialized value.
+    if (accessFunc && !ts.isFunctionDeclaration(accessFunc) && !ts.isSourceFile(accessFunc)) {
+      const closureStart = accessFunc.getStart();
+      if (closureStart >= declEnd && !isInsideLoopContaining(accessFunc as ts.Node, decl)) {
+        return "skip";
+      }
+    }
+    return "check";
+  }
+
+  // Check if the access is inside a loop that contains the declaration
+  // (back-edge could reach access before re-initialization)
+  if (isInsideLoopContaining(id, decl)) return "check";
+
+  if (accessPos >= declEnd) {
+    // Access is after the full declaration (including initializer) — safe
+    return "skip";
+  } else {
+    // Access is before declaration — guaranteed TDZ violation
+    // But only if not in a loop that wraps both (already checked above)
+    return "throw";
+  }
+}
+
+/** Walk up to find the nearest containing function (or source file for top-level). */
+function getContainingFunction(node: ts.Node): ts.Node | undefined {
+  let current = node.parent;
+  while (current) {
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isArrowFunction(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isConstructorDeclaration(current) ||
+      ts.isGetAccessorDeclaration(current) ||
+      ts.isSetAccessorDeclaration(current) ||
+      ts.isSourceFile(current)
+    ) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+/**
+ * Check if the access node is inside a loop body that also contains (or is
+ * an ancestor of) the declaration. In that case the access could run on a
+ * subsequent iteration before the declaration re-initializes the variable.
+ *
+ * Exception: if the declaration is inside the loop body (not the for-initializer)
+ * and the access is textually after the declaration, the back-edge is harmless
+ * because let/const creates a fresh binding each iteration.
+ */
+function isInsideLoopContaining(access: ts.Node, decl: ts.Node): boolean {
+  let current = access.parent;
+  while (current) {
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isArrowFunction(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isSourceFile(current)
+    ) {
+      // Reached function boundary without finding a loop
+      return false;
+    }
+    if (isLoopStatement(current)) {
+      // Check if the declaration is also inside this loop
+      if (isDescendantOf(decl, current)) {
+        // Both are inside this loop. If the decl is in the loop body
+        // (not the for-initializer/condition/incrementor) and the access
+        // is textually after the decl, the per-iteration fresh binding
+        // guarantees initialization before access on every iteration.
+        const body = getLoopBody(current);
+        if (body && isDescendantOf(decl, body) && access.getStart() >= decl.getEnd()) {
+          // Safe: loop-local let/const, access after declaration in same iteration
+          return false;
+        }
+        return true;
+      }
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+/** Get the body statement/block of a loop node. */
+function getLoopBody(loop: ts.Node): ts.Node | undefined {
+  if (ts.isForStatement(loop)) return loop.statement;
+  if (ts.isForInStatement(loop)) return loop.statement;
+  if (ts.isForOfStatement(loop)) return loop.statement;
+  if (ts.isWhileStatement(loop)) return loop.statement;
+  if (ts.isDoStatement(loop)) return loop.statement;
+  return undefined;
+}
+
+function isLoopStatement(node: ts.Node): boolean {
+  return (
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isWhileStatement(node) ||
+    ts.isDoStatement(node)
+  );
+}
+
+function isDescendantOf(node: ts.Node, ancestor: ts.Node): boolean {
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (current === ancestor) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
+ * Compile-time TDZ elision for top-level let/const variables (#906).
+ *
+ * Returns the subset of `candidates` for which TDZ tracking can be statically
+ * compiled away — i.e. every identifier reference in the source file that
+ * resolves to the candidate's declaration is provably after initialization
+ * (analyzeTdzAccess returns "skip"). For these names, the caller can skip
+ * emitting the `__tdz_<name>` global, the `global.set __tdz_<name>` writes
+ * in the module init body, and the runtime check at every read.
+ *
+ * If a candidate has *any* reference that yields "throw" or "check", it stays
+ * tracked at runtime. This preserves observable semantics for genuinely
+ * dynamic or ambiguous cases (e.g. a function declaration that reads the
+ * variable, since hoisted functions could be called before the variable's
+ * initializer runs).
+ */
+export function computeElidableTopLevelTdzNames(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  candidates: Set<string>,
+): Set<string> {
+  if (candidates.size === 0) return new Set();
+
+  // Build name → declaration map for top-level let/const candidates so we can
+  // verify that an Identifier resolves to OUR declaration (and not a shadowed
+  // local or unrelated symbol with the same name).
+  const declByName = new Map<string, ts.VariableDeclaration>();
+  for (const stmt of sourceFile.statements) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    const isLetOrConst = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+    if (!isLetOrConst) continue;
+    for (const decl of stmt.declarationList.declarations) {
+      if (ts.isIdentifier(decl.name) && candidates.has(decl.name.text)) {
+        declByName.set(decl.name.text, decl);
+      }
+    }
+  }
+  if (declByName.size === 0) return new Set();
+
+  const elidable = new Set(declByName.keys());
+
+  function walk(node: ts.Node): void {
+    if (elidable.size === 0) return;
+    if (ts.isIdentifier(node) && elidable.has(node.text)) {
+      // Skip the identifier of the declaration itself.
+      const isDeclName = ts.isVariableDeclaration(node.parent) && node.parent.name === node;
+      if (!isDeclName) {
+        // Verify this identifier resolves to OUR top-level declaration
+        // (and not a shadowed local with the same name).
+        const symbol = ctx.checker.getSymbolAtLocation(node);
+        const decl = symbol?.valueDeclaration;
+        if (decl === declByName.get(node.text)) {
+          const result = analyzeTdzAccess(ctx, node);
+          if (result !== "skip") {
+            elidable.delete(node.text);
+          }
+        }
+      }
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+
+  return elidable;
+}
+
+/**
+ * Position-based TDZ analysis for call-site capture checks.
+ * Used when we know the variable name and the call expression position,
+ * but don't have an identifier with a resolved symbol (e.g., pushing
+ * closure captures at a nested function call site).
+ */
+function analyzeTdzAccessByPos(ctx: CodegenContext, varName: string, callNode: ts.Node): "skip" | "throw" | "check" {
+  // Look up the variable's symbol via the checker
+  // We need to find the declaration to get its end position
+  const sourceFile = callNode.getSourceFile();
+  if (!sourceFile) return "check";
+
+  // Find the declaration by looking up the local symbol in scope
+  const sym = ctx.checker.getSymbolsInScope(callNode, ts.SymbolFlags.Variable).find((s) => s.name === varName);
+  if (!sym) return "check";
+  const decl = sym.valueDeclaration;
+  if (!decl) return "check";
+
+  const callPos = callNode.getStart();
+  const declEnd = decl.getEnd();
+
+  // Both must be in the same function scope (call site is in the declaring function)
+  const callFunc = getContainingFunction(callNode);
+  const declFunc = getContainingFunction(decl);
+  if (callFunc !== declFunc) return "check";
+
+  if (isInsideLoopContaining(callNode, decl)) return "check";
+
+  if (callPos >= declEnd) {
+    return "skip";
+  } else {
+    return "throw";
+  }
+}
+
+/** Emit a static TDZ throw (guaranteed violation — no flag check needed). */
+export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
+  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+  if (throwRefErrIdx !== undefined) {
+    const msg = `${name} is not defined`;
+    addStringConstantGlobal(ctx, msg);
+    const strIdx = ctx.stringGlobalMap.get(msg)!;
+    fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+    fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
+    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    return;
+  }
+  const tagIdx = ensureExnTag(ctx);
+  fctx.body.push({ op: "ref.null.extern" } as Instr);
+  fctx.body.push({ op: "throw", tagIdx });
+}
+
+function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): ValType | null {
+  const name = id.text;
+
+  // #1210: string-builder bindings are stored as a (buf, len, cap, mat)
+  // tuple of synthetic locals. The binding name is intentionally NOT in
+  // `localMap` — read access materializes a NativeString lazily and caches
+  // it in `mat`. Check this before the normal local lookup.
+  const sb = getBuilderInfo(fctx, name);
+  if (sb !== undefined) {
+    return emitStringBuilderRead(ctx, fctx, sb);
+  }
+
+  const localIdx = fctx.localMap.get(name);
+  if (localIdx !== undefined) {
+    // TDZ check for function-local let/const variables
+    const tdzFlagIdx = fctx.tdzFlagLocals?.get(name);
+    if (tdzFlagIdx !== undefined) {
+      const tdzResult = analyzeTdzAccess(ctx, id);
+      if (tdzResult === "check") {
+        emitLocalTdzCheck(ctx, fctx, name, tdzFlagIdx);
+      } else if (tdzResult === "throw") {
+        emitStaticTdzThrow(ctx, fctx, id.text);
+      }
+      // tdzResult === "skip" — no check needed, variable is guaranteed initialized
+    }
+
+    // Check if this is a boxed (ref cell) mutable capture
+    const boxed = fctx.boxedCaptures?.get(name);
+    if (boxed) {
+      // Read through ref cell: local.get → null guard → struct.get $ref_cell 0
+      // The ref cell local is ref_null — if the closure capture is uninitialized,
+      // the local is null and struct.get would trap (#702).
+      fctx.body.push({ op: "local.get", index: localIdx });
+      emitNullGuardedStructGet(
+        ctx,
+        fctx,
+        { kind: "ref_null", typeIdx: boxed.refCellTypeIdx },
+        boxed.valType,
+        boxed.refCellTypeIdx,
+        0,
+        undefined /* propName */,
+        false /* throwOnNull — ref cells use default for uninitialized captures */,
+      );
+      return boxed.valType;
+    }
+
+    fctx.body.push({ op: "local.get", index: localIdx });
+    // Determine declared type from params or locals
+    let declaredType: ValType;
+    if (localIdx < fctx.params.length) {
+      declaredType = fctx.params[localIdx]!.type;
+    } else {
+      const localDef = fctx.locals[localIdx - fctx.params.length];
+      declaredType = localDef?.type ?? { kind: "f64" };
+    }
+
+    // Narrowing: if the declared type is externref (boxed union) but the
+    // checker narrows it to a concrete type, emit an unbox call.
+    if (declaredType.kind === "externref") {
+      const narrowedType = ctx.checker.getTypeAtLocation(id);
+      const narrowed = narrowTypeToUnbox(ctx, fctx, narrowedType);
+      if (narrowed) return narrowed;
+    }
+
+    // Null narrowing: if this variable is known non-null (e.g. inside `if (x !== null)`),
+    // emit ref.as_non_null and return ref instead of ref_null to skip downstream null guards.
+    if (declaredType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {
+      fctx.body.push({ op: "ref.as_non_null" });
+      return { kind: "ref", typeIdx: (declaredType as any).typeIdx };
+    }
+
+    return declaredType;
+  }
+
+  // Check captured globals (variables promoted from enclosing scope for callbacks)
+  const capturedIdx = ctx.capturedGlobals.get(name);
+  if (capturedIdx !== undefined) {
+    // TDZ check: throw ReferenceError if let/const variable accessed before initialization
+    // Apply static analysis — captured globals are often accessed from closures,
+    // but analyzeTdzAccess handles the cross-function case correctly (returns "check")
+    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
+    if (tdzResult === "check") {
+      emitTdzCheck(ctx, fctx, name);
+    } else if (tdzResult === "throw") {
+      emitStaticTdzThrow(ctx, fctx, id.text);
+    }
+    fctx.body.push({ op: "global.get", index: capturedIdx });
+    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, capturedIdx)];
+    const gType = globalDef?.type ?? { kind: "f64" };
+    // Globals widened from ref to ref_null for null init — narrow back
+    if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
+      fctx.body.push({ op: "ref.as_non_null" });
+      return { kind: "ref", typeIdx: gType.typeIdx };
+    }
+    return gType;
+  }
+
+  // Check module-level globals (top-level let/const declarations)
+  const moduleIdx = ctx.moduleGlobals.get(name);
+  if (moduleIdx !== undefined) {
+    // TDZ check: throw ReferenceError if let/const variable accessed before initialization
+    // Apply static analysis for module-level globals
+    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
+    if (tdzResult === "check") {
+      emitTdzCheck(ctx, fctx, name);
+    } else if (tdzResult === "throw") {
+      emitStaticTdzThrow(ctx, fctx, id.text);
+    }
+    fctx.body.push({ op: "global.get", index: moduleIdx });
+    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)];
+    const mType = globalDef?.type ?? { kind: "f64" };
+    // Null narrowing for module globals
+    if (mType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {
+      fctx.body.push({ op: "ref.as_non_null" });
+      return { kind: "ref", typeIdx: (mType as any).typeIdx };
+    }
+    return mType;
+  }
+
+  // Check declared globals (e.g. document, window)
+  const globalInfo = ctx.declaredGlobals.get(name);
+  if (globalInfo) {
+    fctx.body.push({ op: "call", funcIdx: globalInfo.funcIdx });
+    return globalInfo.type;
+  }
+
+  // (#1395) Class identifier as a value — emit lazy-initialized class-object
+  // singleton, registering static-method names with the runtime's
+  // `_staticMethodNames` allowlist so `Object.getOwnPropertyDescriptor(C, "m")`
+  // returns the spec-correct descriptor for static methods. Without this,
+  // bare `C` falls through to the `ref.null.extern` graceful-default below
+  // and `getOwnPropertyDescriptor(null, "m")` returns null, breaking
+  // verifyProperty-style static-method tests under
+  // `language/{statements,expressions}/class/elements/`.
+  //
+  // For class expressions (`var C = class { ... }`), `classExprNameMap` maps
+  // the user-visible name "C" to the synthetic internal name (e.g.
+  // `__anonClass_0`). All static-prop / static-method storage is keyed on the
+  // synthetic name, so `C.f` (via property-access) reads from
+  // `__static___anonClass_0_f`. Resolving the bare `C` identifier must go
+  // through the same alias so the LHS of `C.f() === C` and the RHS read the
+  // SAME `__class_<Name>` singleton; otherwise the comparison ends up with
+  // `__class___anonClass_0` on the LHS (returned by the arrow body via the
+  // synthetic-name `enclosingClassName`) and `__class_C` on the RHS, which
+  // are distinct singletons and break identity. (#1395 Phase 1 follow-up.)
+  //
+  // Order matters: this is AFTER `localMap`, `capturedGlobals`,
+  // `moduleGlobals`, and `declaredGlobals` so user shadowing
+  // (`var C = ...; class C {}` — though unusual) takes precedence.
+  // It is BEFORE the funcMap-funcref path so a class never gets re-wrapped
+  // as a closure, and BEFORE the `ref.null.extern` fallback so we beat the
+  // null result.
+  {
+    const resolvedClassName = ctx.classExprNameMap.get(name) ?? name;
+    if (ctx.classObjectGlobals?.has(resolvedClassName)) {
+      if (emitLazyClassObjectGet(ctx, fctx, resolvedClassName)) {
+        return { kind: "externref" };
+      }
+    }
+  }
+
+  // globalThis — return the JS global object via host import
+  if (name === "globalThis") {
+    let funcIdx = ctx.funcMap.get("__get_globalThis");
+    if (funcIdx === undefined) {
+      const importsBefore = ctx.numImportFuncs;
+      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+      addImport(ctx, "env", "__get_globalThis", { kind: "func", typeIdx });
+      shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
+      funcIdx = ctx.funcMap.get("__get_globalThis")!;
+    }
+    fctx.body.push({ op: "call", funcIdx });
+    return { kind: "externref" };
+  }
+
+  // Built-in numeric constants: NaN, Infinity
+  if (name === "NaN") {
+    fctx.body.push({ op: "f64.const", value: NaN });
+    return { kind: "f64" };
+  }
+  if (name === "Infinity") {
+    fctx.body.push({ op: "f64.const", value: Infinity });
+    return { kind: "f64" };
+  }
+
+  // Function reference as value: when a known function name is used as an
+  // expression (not called), wrap it in a closure struct so it can be stored
+  // in a variable and later called via call_ref.
+  // Only wrap user-defined functions (skip internal helpers and class constructors).
+  const funcRefIdx = ctx.funcMap.get(name);
+  if (funcRefIdx !== undefined && !name.startsWith("__") && !ctx.classSet.has(name)) {
+    // Check if there's already a closure registered (e.g. from closureMap)
+    const existingClosure = ctx.closureMap.get(name);
+    if (existingClosure) {
+      // Already a closure — check if there's a module-level global for it
+      const closureModGlobal = ctx.moduleGlobals.get(name);
+      if (closureModGlobal !== undefined) {
+        fctx.body.push({ op: "global.get", index: closureModGlobal });
+        const globalDef = ctx.mod.globals[localGlobalIdx(ctx, closureModGlobal)];
+        return (
+          globalDef?.type ?? {
+            kind: "ref",
+            typeIdx: existingClosure.structTypeIdx,
+          }
+        );
+      }
+    }
+    // Wrap the plain function in a closure struct
+    const refType = emitFuncRefAsClosure(ctx, fctx, name, funcRefIdx);
+    if (refType) return refType;
+  }
+
+  // Check if this is a truly undeclared variable (no TS symbol).
+  // Accessing an undeclared variable should throw ReferenceError per JS strict mode
+  // (spec §13.10.1 / §13.11.4 — operand evaluation precedes ToPrimitive in `==`).
+  // However, known globals (Symbol, Object, Reflect, etc.) have TS symbols from
+  // lib.d.ts and should use the fallback default instead.
+  const sym = ctx.checker.getSymbolAtLocation(id);
+  if (!sym) {
+    // Truly undeclared variable — throw a proper ReferenceError instance
+    // via the `__throw_reference_error` host import. The previous emission
+    // was a raw `throw ref.null.extern`, which surfaced to JS as `null` so
+    // `e instanceof ReferenceError` was false (#1380, S11.9.1_A2.1_T3).
+    const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+    flushLateImportShifts(ctx, fctx);
+    if (throwRefErrIdx !== undefined) {
+      const msg = `${name} is not defined`;
+      addStringConstantGlobal(ctx, msg);
+      const strIdx = ctx.stringGlobalMap.get(msg)!;
+      fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
+      fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    } else {
+      // Standalone/WASI mode without `__throw_reference_error`: fall back to
+      // the raw exception-tag throw (no JS host to construct a ReferenceError).
+      const tagIdx = ensureExnTag(ctx);
+      fctx.body.push({ op: "ref.null.extern" } as Instr);
+      fctx.body.push({ op: "throw", tagIdx } as unknown as Instr);
+    }
+    return { kind: "externref" };
+  }
+
+  // Graceful fallback for known but unimplemented globals (Symbol, Object,
+  // Reflect, etc.) — emit a type-appropriate default so compilation continues.
+  const tsType = ctx.checker.getTypeAtLocation(id);
+  const wasmType = resolveWasmType(ctx, tsType);
+  if (wasmType.kind === "f64") {
+    fctx.body.push({ op: "f64.const", value: 0 });
+    return { kind: "f64" };
+  }
+  if (wasmType.kind === "i32") {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+  if (wasmType.kind === "i64") {
+    fctx.body.push({ op: "i64.const", value: 0n });
+    return { kind: "i64" };
+  }
+  fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
+}
+
+/**
+ * If the narrowed TS type indicates a concrete primitive, emit an unbox call
+ * and return the unboxed ValType. The externref value must already be on stack.
+ * Returns null if no unboxing is needed (type is still a union or externref).
+ */
+function narrowTypeToUnbox(ctx: CodegenContext, fctx: FunctionContext, narrowedType: ts.Type): ValType | null {
+  // Don't unbox if the narrowed type is still a heterogeneous union
+  if (isHeterogeneousUnion(narrowedType, ctx.checker)) return null;
+  // Don't unbox if still a union with null/undefined (stays externref)
+  if (narrowedType.isUnion()) return null;
+
+  if (isNumberType(narrowedType)) {
+    addUnionImports(ctx);
+    const funcIdx = ctx.funcMap.get("__unbox_number");
+    if (funcIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx });
+      return { kind: "f64" };
+    }
+  }
+  if (isBooleanType(narrowedType)) {
+    addUnionImports(ctx);
+    const funcIdx = ctx.funcMap.get("__unbox_boolean");
+    if (funcIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx });
+      return { kind: "i32" };
+    }
+  }
+  // String stays as externref — no unboxing needed
+  if (isStringType(narrowedType)) return null;
+
+  return null;
+}
+
+// ── instanceof (extracted to ./typeof-delete.ts) ──
+
+/**
+ * Try to resolve the right-hand side of an instanceof expression to a known
+ * class in our struct system. Returns the class name if found, undefined otherwise.
+ * This mirrors resolveInstanceOfClassName in typeof-delete.ts but is used to
+ * decide whether to use the host fallback.
+ */
+function resolveInstanceOfRHS(ctx: CodegenContext, rightExpr: ts.Expression): string | undefined {
+  if (ts.isIdentifier(rightExpr)) {
+    const name = rightExpr.text;
+    if (ctx.classTagMap.has(name)) return name;
+    const mapped = ctx.classExprNameMap.get(name);
+    if (mapped && ctx.classTagMap.has(mapped)) return mapped;
+  }
+  const tsType = ctx.checker.getTypeAtLocation(rightExpr);
+  const constructSigs = tsType.getConstructSignatures?.();
+  if (constructSigs && constructSigs.length > 0) {
+    const instanceType = constructSigs[0]!.getReturnType();
+    const symbolName = instanceType.getSymbol()?.name;
+    if (symbolName) {
+      if (ctx.classTagMap.has(symbolName)) return symbolName;
+      const mapped = ctx.classExprNameMap.get(symbolName);
+      if (mapped && ctx.classTagMap.has(mapped)) return mapped;
+    }
+  }
+  const symbolName = tsType.getSymbol()?.name;
+  if (symbolName) {
+    if (ctx.classTagMap.has(symbolName)) return symbolName;
+    const mapped = ctx.classExprNameMap.get(symbolName);
+    if (mapped && ctx.classTagMap.has(mapped)) return mapped;
+  }
+  return undefined;
+}
+
+/**
+ * Try to statically evaluate `LHS instanceof <ctorName>` using the LHS TypeScript
+ * type and the built-in type-tag registry (#1325).
+ *
+ * Returns:
+ *   - `true`  → result is provably 1
+ *   - `false` → result is provably 0
+ *   - `undefined` → cannot decide statically, fall through to runtime check
+ *
+ * This lets the compiler emit `i32.const 0/1` (after compiling LHS for side
+ * effects) without consulting the `__instanceof` JS host import — important
+ * for standalone / WASI mode where the import is unavailable.
+ */
+function tryStaticInstanceOf(ctx: CodegenContext, expr: ts.BinaryExpression, ctorName: string): boolean | undefined {
+  if (!isBuiltinTypeName(ctorName)) return undefined;
+
+  // 1. LHS is a user class? A WasmGC user-class struct is never an instance of
+  //    a JS built-in (Array / Error / Map / ...).
+  const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
+  const lhsSymbolName = leftTsType.getSymbol()?.name;
+  if (lhsSymbolName !== undefined) {
+    if (ctx.classTagMap.has(lhsSymbolName)) {
+      // (#1366a) Externref-backed subclass (e.g. `class MyError extends Error`)
+      // — the runtime instance IS a real JS instance of its built-in parent
+      // (and any super-builtin). Walk the recorded built-in parent name
+      // through the BUILTIN_PARENT chain to decide.
+      const builtinParent = ctx.classBuiltinParentMap?.get(lhsSymbolName);
+      if (builtinParent !== undefined) {
+        return isBuiltinSubtype(builtinParent, ctorName);
+      }
+      return false;
+    }
+    // 2. LHS is itself a built-in (or matches the constructor's instance-type
+    //    name) — apply hierarchy reasoning.
+    if (isBuiltinTypeName(lhsSymbolName)) {
+      return isBuiltinSubtype(lhsSymbolName, ctorName);
+    }
+  }
+
+  // 3. LHS is a numeric / boolean primitive → instanceof of any object type is
+  //    always false. (Skip strings — `"" instanceof String` is false but the
+  //    TS type may be the wrapper, so we leave that to runtime.)
+  if (isNumberType(leftTsType) || isBooleanType(leftTsType)) {
+    return false;
+  }
+
+  return undefined;
+}
+
+/**
+ * Emit a constant-result `instanceof` after still compiling the LHS for side
+ * effects. Used by `compileHostInstanceOf` when `tryStaticInstanceOf` resolves
+ * the answer at compile time.
+ */
+function emitConstantInstanceOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  result: boolean,
+): ValType {
+  const leftType = compileExpression(ctx, fctx, expr.left);
+  if (leftType) fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "i32.const", value: result ? 1 : 0 });
+  return { kind: "i32" };
+}
+
+/**
+ * Compile `expr instanceof RHS` using a host import when the RHS class is not
+ * in our struct system (e.g., TypeError, Array, Function, Promise). (#738)
+ * Passes the value as externref and the constructor name as a string constant,
+ * delegating to `__instanceof(value, ctorName) -> i32` host import which
+ * looks up the constructor on the global object.
+ *
+ * For built-in RHS (Array, Error, *Error, Map, ...), tries `tryStaticInstanceOf`
+ * first to short-circuit when the LHS TS type makes the answer compile-time
+ * obvious — important for standalone/WASI mode (#1325).
+ */
+function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
+  // Resolve constructor name from the RHS expression (simple identifiers only)
+  let ctorName: string | undefined;
+  if (ts.isIdentifier(expr.right)) {
+    ctorName = expr.right.text;
+  }
+
+  if (!ctorName) {
+    // Cannot resolve constructor name — compile both sides, emit false
+    const leftType = compileExpression(ctx, fctx, expr.left);
+    if (leftType) fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+
+  // Static fast-path: try compile-time evaluation against the built-in
+  // type-tag registry (#1325). When this resolves, we skip the host call.
+  const staticResult = tryStaticInstanceOf(ctx, expr, ctorName);
+  if (staticResult !== undefined) {
+    return emitConstantInstanceOf(ctx, fctx, expr, staticResult);
+  }
+
+  // Ensure the __instanceof host import exists
+  const instanceofIdx = ensureLateImport(
+    ctx,
+    "__instanceof",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+
+  if (instanceofIdx === undefined) {
+    const leftType = compileExpression(ctx, fctx, expr.left);
+    if (leftType) fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+
+  // Compile left operand (the value to test)
+  const leftType = compileExpression(ctx, fctx, expr.left);
+  if (!leftType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (leftType.kind === "i32" || leftType.kind === "f64") {
+    // Stack-level fast path: a primitive numeric value is never an instance of
+    // any constructor — drop and emit false. (Avoids a host call + boxing.)
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  } else if (leftType.kind !== "externref") {
+    coerceType(ctx, fctx, leftType, { kind: "externref" });
+  }
+
+  // Push constructor name as a string constant
+  addStringConstantGlobal(ctx, ctorName);
+  const strGlobalIdx = ctx.stringGlobalMap.get(ctorName);
+  if (strGlobalIdx !== undefined) {
+    fctx.body.push({ op: "global.get", index: strGlobalIdx });
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  // Call __instanceof(value, ctorName) -> i32
+  fctx.body.push({ op: "call", funcIdx: instanceofIdx });
+  return { kind: "i32" };
+}
+
+export { analyzeTdzAccessByPos, compileHostInstanceOf, compileIdentifier, narrowTypeToUnbox, resolveInstanceOfRHS };

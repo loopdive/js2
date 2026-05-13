@@ -1,0 +1,5056 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (() => {
+        const base = document.createElement("base");
+        base.href = location.hostname === "loopdive.github.io" ? "/js2wasm/" : "/";
+        document.head.appendChild(base);
+      })();
+    </script>
+    <script defer src="./frame-nav-sync.js"></script>
+    <title>JS² - Javascript compiler</title>
+    <meta
+      name="description"
+      content="js2wasm is an ahead-of-time compiler that compiles JavaScript and TypeScript to WebAssembly GC."
+    />
+    <style>
+      :root {
+        --bg: #060a14;
+        --bg-soft: #0c1220;
+        --fg: #ffffff;
+        --fg-soft: rgba(255, 255, 255, 0.68);
+        --fg-faint: rgba(255, 255, 255, 0.46);
+        --line: rgba(255, 255, 255, 0.12);
+        --line-strong: rgba(255, 255, 255, 0.22);
+        --surface: rgba(255, 255, 255, 0.05);
+        --surface-hover: rgba(255, 255, 255, 0.08);
+        --nav: rgba(6, 10, 20, 0.45);
+        --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Consolas, monospace;
+        --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        background: var(--bg);
+        color: var(--fg);
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family: var(--font);
+        overflow-x: hidden;
+        background:
+          linear-gradient(rgba(46, 32, 92, 0.34), rgba(24, 18, 44, 0.16) 26%, transparent 56%),
+          radial-gradient(circle at 24% 14%, rgba(58, 41, 110, 0.34), transparent 28%), var(--bg);
+        background-size:
+          100% 200vh,
+          100% 200vh,
+          auto;
+        background-repeat: no-repeat, no-repeat, repeat;
+      }
+
+      .puzzle-bg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        max-height: 100vh;
+        min-width: 100%;
+        z-index: 0;
+        pointer-events: none;
+        overflow: hidden;
+        display: block;
+        -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1), rgba(0, 0, 0, 0));
+        mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1), rgba(0, 0, 0, 0));
+        contain: strict;
+        opacity: 0.82;
+        transition: opacity 180ms ease;
+      }
+      .puzzle-bg.is-paused {
+        opacity: 0;
+      }
+
+      main,
+      footer {
+        position: relative;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .hero-wrap {
+        min-height: 100svh;
+        display: flex;
+        align-items: center;
+        overflow: clip;
+      }
+
+      .hero {
+        position: relative;
+        width: 100%;
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 112px 56px 88px;
+      }
+
+      .hero-logo {
+        width: 111px;
+        height: 111px;
+        display: block;
+        margin: 0 0 24px;
+        border-radius: 2px;
+        box-shadow: 0 10px 36px rgba(0, 0, 0, 0.28);
+      }
+
+      h1 {
+        max-width: 1180px;
+        margin: 0 0 34px;
+        font-size: clamp(48px, 6vw, 78px);
+        line-height: 0.95;
+        letter-spacing: -0.035em;
+        font-weight: 700;
+        position: relative;
+        z-index: 1;
+      }
+
+      .hero-title-shell {
+        display: grid;
+        align-items: start;
+      }
+
+      .hero-title-measure,
+      .hero-title-type {
+        grid-area: 1 / 1;
+        white-space: pre-wrap;
+        word-break: normal;
+      }
+
+      .hero-title-measure {
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .hero-title-type {
+        display: inline;
+      }
+
+      .hero-title-char {
+        opacity: 0;
+        transition: opacity 520ms ease;
+      }
+
+      .hero-title-char.is-visible {
+        opacity: 1;
+      }
+
+      .hero-title-type::after {
+        content: "";
+      }
+
+      .hero-title-type.is-typing {
+        animation: none;
+      }
+
+      .hero-title-type.is-typing::after {
+        opacity: 0;
+      }
+
+      .hero-title-type.is-done {
+        animation: none;
+      }
+
+      .hero-title-type.is-done::after {
+        opacity: 0;
+      }
+
+      @keyframes hero-caret-blink {
+        0%,
+        45% {
+          opacity: 1;
+        }
+
+        46%,
+        100% {
+          opacity: 0;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .hero-title-type {
+          animation: none;
+        }
+      }
+
+      .hero-sub {
+        max-width: 620px;
+        font-size: 18px;
+        line-height: 1.7;
+        color: var(--fg-soft);
+        margin-bottom: 40px;
+        position: relative;
+        z-index: 1;
+      }
+
+      .hero-sub .highlight {
+        color: var(--fg);
+        font-weight: 500;
+      }
+
+      .hero-actions {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        position: relative;
+        z-index: 1;
+      }
+
+      .btn-outline,
+      .btn-solid {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        padding: 0 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        border: 1px solid var(--line);
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease,
+          opacity 0.15s ease;
+      }
+      .btn-outline:hover {
+        background: var(--surface-hover);
+        border-color: var(--line-strong);
+      }
+      .btn-solid {
+        color: var(--bg);
+        background: var(--fg);
+        border-color: var(--fg);
+      }
+      .btn-solid:hover {
+        opacity: 0.9;
+      }
+
+      .hero-actions .btn-solid,
+      .hero-actions .btn-outline {
+        min-height: 50px;
+        padding: 0 28px;
+        font-size: 15px;
+      }
+
+      section {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 0 56px;
+      }
+
+      .section-pad {
+        padding-top: 110px;
+        padding-bottom: 110px;
+      }
+
+      .divider {
+        border: none;
+        border-top: 1px solid var(--line);
+        margin: 0;
+      }
+
+      .intro h2,
+      .code-copy h2,
+      .cta h2 {
+        font-size: clamp(38px, 5vw, 70px);
+        line-height: 0.95;
+        letter-spacing: -0.045em;
+        font-weight: 700;
+        margin: 0 0 28px;
+      }
+
+      .intro p,
+      .code-copy p,
+      .cta p {
+        max-width: 960px;
+        font-size: 18px;
+        line-height: 1.72;
+        color: var(--fg-soft);
+      }
+
+      .features-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border: 1px solid var(--line);
+        margin-top: 52px;
+      }
+
+      .feature-card {
+        padding: 48px 34px;
+        border-right: 1px solid var(--line);
+        transition: background 0.18s ease;
+      }
+
+      .feature-card:last-child {
+        border-right: none;
+      }
+
+      .feature-card:hover {
+        background: var(--surface-hover);
+      }
+
+      .feature-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 52px;
+        height: 52px;
+        margin-bottom: 28px;
+        font-size: 32px;
+        font-weight: 700;
+        line-height: 1;
+        color: #ffffff;
+        filter: grayscale(1) contrast(2.4) brightness(1.25);
+      }
+
+      .feature-icon img {
+        display: block;
+        width: 38px;
+        height: 38px;
+      }
+
+      .feature-card h3 {
+        margin: 0 0 18px;
+        font-family: var(--mono);
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .feature-card h3 .heart-mark {
+        font-size: 1.22em;
+        line-height: 0;
+        vertical-align: -0.08em;
+      }
+
+      .feature-card p {
+        margin: 0;
+        color: var(--fg-soft);
+        font-size: 15px;
+        line-height: 1.72;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border: 1px solid var(--line);
+      }
+
+      .stat-item {
+        padding: 56px 34px;
+        border-right: 1px solid var(--line);
+      }
+
+      .stat-item:last-child {
+        border-right: none;
+      }
+
+      .stat-number {
+        font-size: 70px;
+        line-height: 1;
+        letter-spacing: -0.05em;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .stat-label {
+        font-size: 14px;
+        color: var(--fg-faint);
+      }
+
+      /* Conformance diagrams */
+      .conformance-diagrams {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        margin-top: 56px;
+        align-items: start;
+        grid-template-rows: auto auto;
+      }
+
+      .diagram-panel {
+        padding: 0;
+        background: transparent;
+        position: relative;
+        overflow: visible;
+      }
+
+      .diagram-title {
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--fg-faint);
+        margin: 0 0 28px;
+      }
+      .edition-timeline-section {
+        width: 100%;
+        margin: 28px 0 0;
+        --t262-edition-font-mono: var(--mono);
+        --t262-edition-text: var(--fg);
+        --t262-edition-text-muted: var(--fg-faint);
+      }
+      .diagram-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 14px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--fg-faint);
+        letter-spacing: 0.04em;
+      }
+      .diagram-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .diagram-legend-line {
+        width: 18px;
+        height: 0;
+        border-top: 2px solid rgba(255, 255, 255, 0.9);
+      }
+      .diagram-legend-line.total {
+        border-top-width: 1px;
+        border-top-color: rgba(141, 154, 184, 1);
+        border-top-style: dotted;
+      }
+      .diagram-legend-line.passed {
+        border-top-width: 1px;
+        border-top-color: rgba(255, 255, 255, 0.82);
+      }
+
+      .host-bench-copy {
+        max-width: 860px;
+        margin-top: 18px;
+        font-size: 16px;
+        line-height: 1.75;
+        color: var(--fg-faint);
+      }
+
+      .host-bench-group {
+        margin-top: 42px;
+      }
+
+      .host-bench-group:first-of-type {
+        margin-top: 32px;
+      }
+
+      .host-bench-title {
+        font-size: 22px;
+        line-height: 1.18;
+        font-weight: 650;
+        color: var(--fg);
+        margin: 0 0 14px;
+      }
+
+      .host-bench-subcopy {
+        max-width: 780px;
+        margin: 0 0 34px;
+        font-size: 17px;
+        line-height: 1.72;
+        color: var(--fg-faint);
+      }
+      .host-bench-subcopy a {
+        color: var(--fg-soft);
+        text-decoration: underline;
+        text-decoration-color: rgba(255, 255, 255, 0.28);
+        text-underline-offset: 3px;
+      }
+
+      /* Donut and edition bar styles are now in <t262-donut> / <t262-edition-bars> shadow DOM */
+      /* Benchmark performance chart is now in <perf-benchmark-chart> shadow DOM */
+
+      /* Size/coldstart charts reuse <perf-benchmark-chart> with mode="module-size"|"coldstart" */
+
+      .edition-chart {
+        grid-column: span 1;
+      }
+
+      @media (max-width: 1120px) {
+        .conformance-diagrams {
+          grid-template-columns: 1fr;
+        }
+        .edition-chart {
+          grid-column: span 1;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .diagram-panel {
+          padding: 0;
+        }
+      }
+
+      .how-sidebyside {
+        display: grid;
+        grid-template-columns: auto auto auto;
+        gap: 0;
+        margin-top: 48px;
+        align-items: start;
+        width: fit-content;
+      }
+      .how-arrow {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 0 20px;
+        align-self: start;
+        padding-top: 120px;
+      }
+      .how-arrow-label {
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--fg-faint);
+      }
+      .how-arrow svg {
+        display: block;
+      }
+      @media (max-width: 980px) {
+        .how-sidebyside {
+          grid-template-columns: 1fr;
+        }
+        .how-arrow {
+          flex-direction: row;
+          padding: 8px 0;
+        }
+        .how-arrow svg {
+          transform: rotate(90deg);
+        }
+      }
+      .how-step {
+        position: relative;
+      }
+      .how-step-title {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        color: var(--fg-soft);
+        margin-bottom: 12px;
+      }
+      .how-step-size {
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        color: var(--fg-faint);
+        text-transform: none;
+      }
+      .how-sub {
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--fg-faint);
+        margin-bottom: 12px;
+        max-width: 720px;
+      }
+      .how-code {
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1.8;
+        color: var(--fg-soft);
+        background: var(--bg-soft);
+        border: 1px solid var(--line);
+        padding: 24px 28px;
+        overflow-x: auto;
+        white-space: pre;
+        margin: 0;
+        position: relative;
+        width: fit-content;
+      }
+      .how-code.wat {
+      }
+      .how-code.shell {
+        color: var(--fg-faint);
+      }
+      .how-code-label {
+        display: block;
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        color: var(--fg-faint);
+        text-align: left;
+        margin-top: 6px;
+        opacity: 0.5;
+      }
+
+      .approach-faq {
+        max-width: 960px;
+        margin-top: 56px;
+      }
+      .approach-faq-list {
+        border-top: 1px solid var(--line);
+      }
+      .approach-faq details {
+        border-bottom: 1px solid var(--line);
+      }
+      .approach-faq details.is-animating {
+        overflow: hidden;
+      }
+      .approach-faq summary {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 18px;
+        gap: 18px;
+        align-items: center;
+        padding: 24px 0;
+        color: var(--fg-soft);
+        cursor: pointer;
+        list-style: none;
+        transition: color 0.15s ease;
+      }
+      .approach-faq summary::-webkit-details-marker {
+        display: none;
+      }
+      .approach-faq summary::after {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-right: 2px solid var(--fg-faint);
+        border-bottom: 2px solid var(--fg-faint);
+        justify-self: end;
+        transform: rotate(45deg);
+        transition:
+          border-color 0.15s ease,
+          transform 0.2s ease;
+      }
+      .approach-faq summary:hover,
+      .approach-faq details[open] summary {
+        color: var(--fg);
+      }
+      .approach-faq summary:hover::after,
+      .approach-faq details[open] summary::after {
+        border-color: var(--fg-soft);
+      }
+      .approach-faq details[open] summary::after {
+        transform: rotate(-135deg);
+      }
+      .approach-faq-question {
+        min-width: 0;
+        font-size: 21px;
+        line-height: 1.36;
+        font-weight: 600;
+      }
+      .approach-faq-answer {
+        max-width: 820px;
+        padding: 0 42px 28px 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition:
+          opacity 0.18s ease,
+          transform 0.18s ease;
+      }
+      .approach-faq details[open] .approach-faq-answer {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .approach-faq details.is-collapsing .approach-faq-answer {
+        opacity: 0;
+        transform: translateY(-4px);
+      }
+      .approach-faq-answer p {
+        margin: 0 0 16px;
+        color: var(--fg-faint);
+        font-size: 17px;
+        line-height: 1.74;
+      }
+      .approach-faq-answer p:last-child {
+        margin-bottom: 0;
+      }
+      .approach-faq-answer a:not(.btn-solid):not(.btn-outline) {
+        color: var(--fg);
+        text-decoration: underline;
+        text-decoration-color: rgba(255, 255, 255, 0.42);
+        text-underline-offset: 3px;
+      }
+      .approach-faq-answer a:not(.btn-solid):not(.btn-outline):hover {
+        text-decoration-color: rgba(255, 255, 255, 0.64);
+      }
+      .approach-faq-answer strong {
+        color: var(--fg);
+        font-weight: 700;
+      }
+      .approach-faq-answer ul {
+        display: grid;
+        gap: 10px;
+        margin: 0 0 16px;
+        padding: 0;
+        list-style: none;
+      }
+      .approach-faq-answer li {
+        padding-left: 16px;
+        border-left: 2px solid var(--line-strong);
+        color: var(--fg-faint);
+        font-size: 17px;
+        line-height: 1.7;
+      }
+
+      .code-section {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 72px;
+        align-items: center;
+      }
+
+      .stats-inline {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px 28px;
+        margin-top: 34px;
+      }
+
+      .stat-inline {
+        font-size: 16px;
+        color: var(--fg-soft);
+      }
+
+      .stat-inline strong {
+        font-size: 28px;
+        color: var(--fg);
+        margin-right: 6px;
+      }
+
+      .code-block {
+        min-width: 0;
+        overflow-x: auto;
+        padding: 34px 38px;
+        border: 1px solid var(--line);
+        background: var(--bg-soft);
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1.8;
+        color: var(--fg-soft);
+      }
+
+      .kw {
+        color: var(--fg);
+        font-weight: 500;
+      }
+
+      .fn {
+        color: #d9ddff;
+      }
+
+      .str {
+        color: #bcb5ff;
+      }
+
+      .cm {
+        color: var(--fg-faint);
+      }
+
+      .link-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 12px;
+        margin-top: 36px;
+      }
+
+      .link-card {
+        padding: 18px 18px 20px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.025);
+        transition:
+          background 0.18s ease,
+          border-color 0.18s ease;
+      }
+
+      .link-card:hover {
+        background: var(--surface-hover);
+        border-color: var(--line-strong);
+      }
+
+      .link-card strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .link-card span {
+        color: var(--fg-soft);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      .cta-actions {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-top: 36px;
+      }
+
+      footer {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 64px 56px;
+        border-top: 1px solid var(--line);
+      }
+
+      .footer-top {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+        align-items: start;
+        gap: 44px 64px;
+        padding-bottom: 42px;
+      }
+
+      .footer-brand {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 16px;
+        min-width: 0;
+      }
+
+      .footer-brand img {
+        height: 42px;
+        width: auto;
+        display: block;
+      }
+
+      .footer-brand p {
+        margin: 0;
+        max-width: 34ch;
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--fg-faint);
+      }
+
+      .footer-cols {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 28px 40px;
+      }
+
+      .footer-col h4 {
+        margin: 0 0 18px;
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--fg-faint);
+      }
+
+      .footer-col ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .footer-col a {
+        font-size: 14px;
+        color: var(--fg-soft);
+      }
+
+      .footer-col a:hover {
+        color: var(--fg);
+      }
+
+      @media (max-width: 1120px) {
+        .features-grid,
+        .stats-grid,
+        .link-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .features-grid .feature-card:nth-child(2n),
+        .stats-grid .stat-item:nth-child(2n) {
+          border-right: none;
+        }
+      }
+
+      @media (max-width: 980px) {
+        .site-nav {
+          padding: 0 24px;
+        }
+
+        .nav-links,
+        .nav-actions .btn-outline {
+          display: none;
+        }
+
+        .hero,
+        section,
+        footer {
+          padding-left: 24px;
+          padding-right: 24px;
+        }
+
+        .hero {
+          padding-top: 104px;
+        }
+
+        .hero-logo {
+          width: 80px;
+          height: 80px;
+          margin: 14px 0 20px;
+        }
+
+        h1 {
+          font-size: clamp(42px, 8vw, 64px);
+        }
+
+        .code-section,
+        .footer-top {
+          grid-template-columns: 1fr;
+          display: grid;
+        }
+
+        .footer-cols {
+          grid-template-columns: 1fr 1fr;
+          gap: 28px 24px;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .features-grid,
+        .stats-grid,
+        .link-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .feature-card,
+        .stat-item {
+          border-right: none;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .feature-card:last-child,
+        .stat-item:last-child {
+          border-bottom: none;
+        }
+
+        .footer-cols {
+          grid-template-columns: 1fr;
+        }
+
+        .footer-brand {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+
+        .hero-actions,
+        .cta-actions {
+          gap: 12px;
+        }
+      }
+
+      /* ── Feature support tables (#972) ───────────────────────────── */
+      .feat-filter {
+        margin-top: 48px;
+        display: flex;
+        gap: 16px;
+      }
+      .feat-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--fg-faint);
+        cursor: pointer;
+      }
+      .feat-toggle input {
+        accent-color: var(--fg-soft);
+      }
+      .feat-tables.strict-only .feat-row[data-sloppy] {
+        display: none;
+      }
+      .feat-tables.strict-only .feat-section[data-sloppy] {
+        display: none;
+      }
+      .feat-tables.host-off .feat-row:has(.feat-host) {
+        opacity: 0.92;
+      }
+      .feat-tables.host-off .feat-row:has(.feat-host) .feat-name,
+      .feat-tables.host-off .feat-row:has(.feat-host) .feat-desc {
+        color: var(--fg-faint);
+      }
+      .feat-tables {
+        margin-top: 16px;
+      }
+
+      .feat-panel {
+        columns: 2;
+        column-gap: 48px;
+      }
+
+      .feat-panel-head {
+        padding: 18px 24px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .feat-panel-head-title {
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--fg-faint);
+      }
+
+      .feat-panel-count {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--fg-faint);
+        background: var(--surface);
+        padding: 2px 9px;
+        border-radius: 10px;
+      }
+
+      .feat-section {
+        break-inside: avoid;
+        margin-bottom: 24px;
+      }
+      .feat-edition {
+        font-family: var(--mono);
+        font-size: 13px;
+        letter-spacing: 0.06em;
+        color: rgba(255, 255, 255, 0.8);
+        padding: 12px 16px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .feat-edition:first-of-type {
+        padding-top: 0;
+      }
+      .feat-edition-label {
+        min-width: 0;
+      }
+      .feat-edition-passbar {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+        min-width: 160px;
+        justify-content: flex-end;
+      }
+      .feat-edition-passbar-track {
+        display: block;
+        width: 92px;
+        height: 7px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .feat-edition-passbar-fill {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, rgba(63, 185, 80, 0.82), rgba(63, 185, 80, 1));
+      }
+      .feat-edition-passbar-text {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: rgba(255, 255, 255, 0.58);
+        min-width: 42px;
+        text-align: right;
+      }
+      .feat-row {
+        display: grid;
+        grid-template-columns: 30px 1fr 24px;
+        align-items: center;
+        column-gap: 10px;
+        row-gap: 0;
+        padding: 9px 24px;
+        position: relative;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        transition: background 0.14s ease;
+      }
+
+      /* #1201 — live test262 pass-count badge alongside the feature name. */
+      .feat-row-counts {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--fg-faint);
+        margin-left: 8px;
+        font-weight: normal;
+        white-space: nowrap;
+      }
+      .feat-row-counts[data-tone="pass"] {
+        color: var(--ok, #4ade80);
+      }
+      .feat-row-counts[data-tone="partial"] {
+        color: var(--warn, #facc15);
+      }
+      .feat-row-counts[data-tone="fail"] {
+        color: var(--err, #f87171);
+      }
+
+      /* #1327 — "View test results →" link inside expanded feat-row body. */
+      .feat-report-link {
+        margin: 12px 0 4px;
+        font-size: 12px;
+      }
+      .feat-report-link a {
+        color: var(--accent, #60a5fa);
+        text-decoration: none;
+        font-family: var(--mono);
+        opacity: 0.85;
+        transition: opacity 0.14s ease;
+      }
+      .feat-report-link a:hover {
+        opacity: 1;
+        text-decoration: underline;
+      }
+
+      .feat-row:last-child {
+        border-bottom: none;
+      }
+
+      .feat-row:hover {
+        background: var(--surface);
+      }
+      .feat-row details {
+        grid-column: 2;
+      }
+      .feat-row details summary {
+        display: none;
+      }
+      .feat-row details[open] {
+        padding: 8px 0 4px;
+      }
+      .feat-row details pre {
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1.8;
+        white-space: pre;
+        max-width: 100%;
+        color: var(--fg-soft);
+        background: var(--bg-soft);
+        border: 1px solid var(--line);
+        padding: 24px 28px;
+        border-radius: 0;
+        overflow-x: auto;
+        margin: 10px 0 0;
+        position: relative;
+      }
+      .feat-row details pre::after {
+        content: "JS";
+        position: absolute;
+        bottom: 6px;
+        right: 10px;
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        color: rgba(255, 255, 255, 0.2);
+      }
+      .feat-row details pre.wat {
+        background: var(--bg-soft);
+        margin-top: 16px;
+      }
+      .feat-row details pre.wat::after {
+        content: "WAT";
+        color: rgba(190, 176, 255, 0.4);
+      }
+      .feat-row details .feat-explain {
+        font-size: 11px;
+        color: var(--fg-faint);
+        margin-top: 6px;
+        line-height: 1.4;
+      }
+      .feat-row {
+        cursor: pointer;
+      }
+      .feat-row:hover .feat-name {
+        color: #fff;
+      }
+      .feat-host {
+        font-family: var(--mono);
+        font-size: 8px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: inherit;
+        background: none;
+        padding: 0;
+        position: absolute;
+        left: 39px;
+        top: 34px;
+        transform: translateX(-50%);
+        line-height: 1.6;
+        white-space: nowrap;
+      }
+      .feat-badge.full + .feat-host {
+        color: #4ade80;
+      }
+      .feat-badge.partial + .feat-host {
+        color: #fbbf24;
+      }
+      .feat-badge.none + .feat-host {
+        color: #f87171;
+      }
+      .feat-desc {
+        grid-column: 2;
+        font-size: 11px;
+        color: var(--fg-faint);
+        line-height: 1.3;
+        margin-top: -2px;
+      }
+      /* Shiki provides inline styles for syntax highlighting */
+
+      .feat-name {
+        font-size: 15px;
+        color: rgba(255, 255, 255, 0.85);
+        line-height: 1.45;
+        display: flex;
+        align-items: center;
+      }
+      .feat-row:has(details)::after {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-right: 2px solid var(--fg-faint);
+        border-bottom: 2px solid var(--fg-faint);
+        grid-row: 1;
+        grid-column: 3;
+        align-self: center;
+        justify-self: end;
+        transform: rotate(45deg);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        margin-bottom: 4px;
+      }
+      .feat-row:has(details[open])::after {
+        transform: rotate(-135deg);
+        margin-bottom: 0;
+        margin-top: 4px;
+      }
+
+      .feat-note {
+        font-size: 11px;
+        color: var(--fg-faint);
+        grid-column: 1 / -1;
+        padding-bottom: 2px;
+        line-height: 1.4;
+      }
+      .feat-section[data-generated-edition] .feat-note {
+        display: block;
+        padding: 12px 24px 18px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .feat-badge {
+        font-size: 24px;
+        width: 30px;
+        text-align: center;
+        align-self: center;
+      }
+
+      .feat-badge.full {
+        color: #4ade80;
+      }
+
+      .feat-badge.partial {
+        color: #fbbf24;
+      }
+
+      .feat-badge.none {
+        color: #f87171;
+      }
+
+      @media (max-width: 980px) {
+        .feat-panel {
+          columns: 1;
+        }
+        .approach-faq-answer {
+          padding-right: 0;
+        }
+        .feat-row details pre,
+        .how-code {
+          white-space: pre-wrap;
+          max-width: 40ch;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas class="puzzle-bg" aria-hidden="true"></canvas>
+    <site-nav></site-nav>
+
+    <main>
+      <div class="hero-wrap">
+        <section class="hero">
+          <img class="hero-logo" src="./js2logo-squaring-the-circle-white.svg" alt="JS2 logo" />
+          <h1
+            id="hero-title"
+            data-texts='["A next generation JavaScript compiler.", "Compile JavaScript without embedding a JS engine.",
+            "JavaScript compiled ahead of time, for fast cold starts and speed.", "Reduce supply chain attack surface with module sandboxing.", "Target existing Javascript code, not a new language."]'
+          >
+            <span class="hero-title-shell">
+              <span class="hero-title-measure" aria-hidden="true"></span>
+              <span class="hero-title-type"></span>
+            </span>
+          </h1>
+          <p class="hero-sub">
+            JS
+            <sup>2</sup>
+            is a research preview of an open source compiler focused on compiling JavaScript to WebAssembly ahead of
+            time, developed at Loopdive.
+          </p>
+          <div class="hero-actions">
+            <a class="btn-solid" href="./playground/">Playground</a>
+            <a class="btn-outline" href="#goals">Compatibility</a>
+          </div>
+        </section>
+      </div>
+
+      <hr class="divider" />
+
+      <section class="section-pad" id="mission">
+        <div class="intro">
+          <h2>Mission: Next generation JavaScript.</h2>
+          <p>
+            The mission of the JS² compiler project is to make WebAssembly a drop-in deployment target for existing
+            JavaScript and npm packages, running modules without embedding a JS runtime and enabling more secure,
+            flexible dependency management.
+          </p>
+          <p>
+            The project is motivated by the idea that JavaScript, despite being a dynamic language, can be compiled
+            efficiently ahead of time without limiting it to an incompatible subset or shipping a full JS runtime like
+            V8, SpiderMonkey or JavaScriptCore.
+          </p>
+          <p>The project is guided by the following goals:</p>
+        </div>
+        <div class="features-grid">
+          <article class="feature-card">
+            <div class="feature-icon"><img src="./javascript-logo-white.svg" alt="JavaScript logo" /></div>
+            <h3>JS Ecosystem Compatible</h3>
+            <p>
+              Compile existing code without rewriting it into a restricted subset, and stay compatible with the full JS
+              ecosystem, the web, and NPM. Access Web APIs without writing glue code.
+            </p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon"><img src="./wasm-logo-white.svg" alt="WebAssembly logo" /></div>
+            <h3>No Embedded Runtime</h3>
+            <p>
+              Deploy compiled JavaScript modules in standalone WebAssembly runtimes such as Wasmtime without embedding a
+              JS engine or interpreter, reducing module size and runtime overhead.
+            </p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">🔒</div>
+            <h3>Sandbox Untrusted Code</h3>
+            <p>
+              Reduce supply chain attack surface by isolating JavaScript modules from each other inside the same
+              application and keeping filesystem, network, DOM, and globals behind explicit imports.
+            </p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon">🧩</div>
+            <h3>Plug &amp; Play</h3>
+            <p>
+              Dynamic module linking allows to make code more modular so consumers can choose implementations, control
+              upgrades, and swap dependencies for each environment.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <section class="section-pad" id="goals">
+        <div class="intro">
+          <h2>Goal: 100% JavaScript compatibility.</h2>
+          <p>
+            Which JS language features compile to WebAssembly today, which still rely on host support, and which are
+            still on the roadmap. Status is derived from ECMAScript Test262 pass rates and known compiler limitations.
+          </p>
+          <p style="margin-top: 1.25rem">
+            <a class="btn-outline" href="./benchmarks/report.html">Compatibility Test Report</a>
+          </p>
+        </div>
+        <!-- <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-number" id="compat-pass-rate">40.8%</div>
+            <div class="stat-label" id="compat-pass-rate-label">compatible with the official ECMAScript Test Suite</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number">17.5k+</div>
+            <div class="stat-label">test262 passes in the default official scope</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number">43k</div>
+            <div class="stat-label">standardized ECMAScript feature tests tracked (no proposals)</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number" id="feature-coverage">33%</div>
+            <div class="stat-label" id="feature-coverage-label">
+              JavaScript feature areas implemented (&gt;50% tests passing)
+            </div>
+          </div>
+        </div> -->
+
+        <div class="conformance-diagrams">
+          <div class="diagram-panel">
+            <div id="conformance-donut-slot">
+              <t262-donut
+                src="./benchmarks/results/test262-report.json"
+                style="--t262-bg: var(--bg, #060a14)"
+              ></t262-donut>
+            </div>
+          </div>
+          <div class="diagram-panel">
+            <h3 class="diagram-title">ECMAScript Conformance Pass Rate Over Time</h3>
+            <trend-chart id="conformance-history-chart" mode="step" height="260" x-key="time"></trend-chart>
+            <div class="diagram-legend">
+              <span class="diagram-legend-item">
+                <span class="diagram-legend-line"></span>
+                <span>Pass rate</span>
+              </span>
+              <span class="diagram-legend-item">
+                <span class="diagram-legend-line passed"></span>
+                <span>Tests passed</span>
+              </span>
+              <span class="diagram-legend-item">
+                <span class="diagram-legend-line total"></span>
+                <span>Total tests run</span>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="edition-timeline-section">
+          <t262-edition-timeline
+            id="conformance-edition-timeline"
+            src="./benchmarks/results/test262-editions.json"
+          ></t262-edition-timeline>
+        </div>
+
+        <div class="feat-filter">
+          <label class="feat-toggle">
+            <input type="checkbox" id="strict-only-toggle" />
+            <span>Strict mode</span>
+          </label>
+          <label class="feat-toggle">
+            <input type="checkbox" id="host-support-toggle" checked />
+            <span>JS host</span>
+          </label>
+        </div>
+
+        <div class="feat-tables">
+          <div class="feat-panel">
+            <div class="feat-section">
+              <div class="feat-edition">ES3 / Core</div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Primitive types (string, number, boolean, null, undefined)</span>
+                <span class="feat-desc">All primitive value types and coercion</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const s = "hello";
+const n = 42;
+const b = true;
+const x = null;</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  string.const "hello"
+  global.set $s
+  f64.const 42
+  global.set $n
+  i32.const 1           ;; true
+  global.set $b)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Operators (arithmetic, comparison, logical, bitwise)</span>
+                <span class="feat-desc">All standard operators including ternary</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const sum = a + b;
+const eq = x === y;
+const ok = a &gt; 0 &amp;&amp; b &gt; 0;
+const bits = n | 0xFF;</pre
+                  >
+                  <pre class="wat">
+(func $example (param f64 f64)
+    (result f64)
+  local.get 0
+  local.get 1
+  f64.add               ;; a + b
+)
+;; x === y → f64.eq (or ref.eq)
+;; n | 0xFF → i32.or</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">typeof / instanceof</span>
+                <span class="feat-desc">Runtime type checking operators</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+typeof x === "string";
+obj instanceof Array;</pre
+                  >
+                  <pre class="wat">
+;; typeof x === "string"
+;; compiles to tag check on struct
+local.get $x
+ref.test (ref $String)
+;; instanceof → ref.test</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">delete operator</span>
+                <span class="feat-desc">Remove object properties</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const obj = { a: 1, b: 2 };
+delete obj.b;</pre
+                  >
+                  <pre class="wat">
+;; delete obj.b
+local.get $obj
+ref.null extern
+struct.set $Obj $b</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Comma operator</span>
+                <span class="feat-desc">Evaluate expressions left to right</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>const x = (1, 2, 3); // x === 3</pre>
+                  <pre class="wat">
+f64.const 1
+drop
+f64.const 2
+drop
+f64.const 3</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Labeled statements (break / continue)</span>
+                <span class="feat-desc">Named loop targets for break and continue</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+outer: for (let i = 0; i &lt; 3; i++) {
+  for (let j = 0; j &lt; 3; j++) {
+    if (j === 1) continue outer;
+  }
+}</pre
+                  >
+                  <pre class="wat">
+(block $outer
+  (loop $outer_loop
+    (block $inner
+      (loop $inner_loop
+        ;; if j === 1
+        br $outer_loop
+      ))
+    br $outer_loop
+  ))</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="language/statements">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">for-in</span>
+                <span class="feat-desc">Iterate over object property names</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+for (const key in obj) {
+  console.log(key);
+}</pre
+                  >
+                  <pre class="wat">
+local.get $obj
+call $Object.keys
+local.set $keys
+;; iterate keys array</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="language/arguments-object" data-sloppy>
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">arguments object (full)</span>
+                <span class="feat-desc">Legacy arguments — partial, rest params preferred</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+function legacy() {
+  return arguments.length;
+}
+// prefer rest params: (...args)</pre
+                  >
+                  <div class="feat-explain">
+                    The full arguments object is partially supported. Rest parameters (...args) are preferred and fully
+                    compiled.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="language/eval-code,built-ins/eval">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">eval()</span>
+                <span class="feat-desc">Dynamic code evaluation via JS host import</span>
+                <details>
+                  <summary></summary>
+                  <pre>eval("1 + 2"); // delegated to host</pre>
+                  <div class="feat-explain">
+                    Compiles to a host import that delegates to the JS engine. Requires a JS host runtime; not available
+                    in standalone Wasm.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row" data-sloppy>
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">with statement</span>
+                <span class="feat-desc">Dynamic scope extension</span>
+                <details>
+                  <summary></summary>
+                  <pre>with (obj) { x; } // not supported</pre>
+                  <div class="feat-explain">Disallowed in strict mode. All modules run strict.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES5</div>
+              <div class="feat-row" data-t262-paths="language/block-scope">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Variables (var, let, const)</span>
+                <span class="feat-desc">Block-scoped and function-scoped variable declarations</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+let count = 1;
+const name = "hello";
+var legacy = true;</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  (local $count f64)
+  (local $name externref)
+  (local $legacy i32)
+  f64.const 1
+  local.set $count
+  string.const "hello"
+  local.set $name
+  i32.const 1
+  local.set $legacy)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="language/function-code">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Functions &amp; closures</span>
+                <span class="feat-desc">Named functions, expressions, and lexical closures</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+function greet(name) {
+  return "Hi " + name;
+}
+
+const add = (a, b) =&gt; a + b;</pre
+                  >
+                  <pre class="wat">
+(func $greet (param (ref null $str))
+    (result (ref null $str))
+  string.const "Hi "
+  local.get 0         ;; name
+  string.concat
+  return)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Control flow</span>
+                <span class="feat-desc">Branching, loops, and switch statements</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+if (x &gt; 0) {
+  handle();
+} else {
+  fallback();
+}
+
+for (let i = 0; i &lt; 10; i++) {
+  process(i);
+}</pre
+                  >
+                  <pre class="wat">
+(func $test (param f64)
+    (result f64)
+  local.get 0
+  f64.const 0
+  f64.gt
+  (if (result f64)
+    (then local.get 0 return)
+    (else local.get 0 f64.neg return)))</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">try / catch / finally</span>
+                <span class="feat-desc">Exception handling with optional finally block</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+try {
+  riskyOp();
+} catch (e) {
+  handle(e);
+} finally {
+  cleanup();
+}</pre
+                  >
+                  <pre class="wat">
+(func $safe (result f64)
+  (try
+    (do call $riskyOp)
+    (catch 0
+      local.set $e
+      f64.const -1
+      return)))</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">throw</span>
+                <span class="feat-desc">Throw custom and built-in error objects</span>
+                <details>
+                  <summary></summary>
+                  <pre>throw new Error("something went wrong");</pre>
+                  <pre class="wat">
+(func $__module_init
+  i32.const 1
+  string.const "something went wrong"
+  struct.new $Error
+  throw 0)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Object">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Objects</span>
+                <span class="feat-desc">Literals, property access, methods, and shorthand syntax</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const obj = {
+  name: "js2wasm",
+  version: 1,
+  greet() { return this.name; }
+};</pre
+                  >
+                  <pre class="wat">
+(type $obj (struct
+  (field $__tag i32)
+  (field $name externref)
+  (field $version f64)))
+
+(func $obj_greet (param (ref null $obj))
+    (result externref)
+  local.get 0
+  struct.get $obj $name
+  return)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/String">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Strings</span>
+                <span class="feat-desc">String methods, concatenation, and manipulation</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+"hello".toUpperCase();   // "HELLO"
+"a,b,c".split(",");
+"hello".slice(1, 3);      // "el"</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  ;; "hello".toUpperCase()
+  string.const "hello"
+  call $string.toUpperCase ;; host
+  ;; "hello".slice(1, 3)
+  string.const "hello"
+  i32.const 1  i32.const 3
+  string.substring)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Number">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Numbers</span>
+                <span class="feat-desc">Math operations, parseInt, Number methods</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+Math.max(1, 2);
+parseInt("42");
+(3.14).toFixed(1);</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  (local $a f64) (local $b f64)
+  f64.const 1
+  local.set $a
+  f64.const 2
+  local.set $b
+  local.get $a  local.get $b
+  f64.max
+  drop)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/JSON">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">JSON</span>
+                <span class="feat-desc">Parse and stringify JSON data</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const obj = JSON.parse('{"a": 1}');
+const str = JSON.stringify({ a: 1 });</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  global.get 0
+  call $JSON.parse
+  global.set $obj)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Error,built-ins/NativeErrors">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Error types</span>
+                <span class="feat-desc">Error, TypeError, RangeError, SyntaxError and more</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+throw new TypeError("expected string");
+throw new RangeError("out of bounds");</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  i32.const 2
+  string.const "expected string"
+  struct.new $TypeError
+  throw 0)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Array">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Arrays</span>
+                <span class="feat-desc">Array methods and iteration helpers</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const doubled = [1, 2,
+  3].map(x =&gt; x * 2);
+const sum = arr.reduce((a,
+  b) =&gt; a + b, 0);
+const found = arr.find(x =&gt; x &gt; 5);</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  ;; [1, 2, 3].map(x =&amp;gt; x...
+  f64.const 1  f64.const 2  f64.const 3
+  array.new_fixed 3
+  ref.func $callback
+  call $__arr_map</pre
+                  >
+                  <div class="feat-explain">
+                    Most built-in methods work. Some iterator edge cases and sparse array handling incomplete.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/RegExp">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Regular expressions</span>
+                <span class="feat-desc">Pattern matching and string search</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+/hello/i.test("Hello World");
+"abc123".match(/\d+/);</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  global.get $re
+  string.const "Hello World"
+  call $regexp_test)</pre
+                  >
+                  <div class="feat-explain">Basic patterns work. Named groups and lookbehind partially supported.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-name">Property accessors (get / set)</span>
+                <span class="feat-desc">Getter and setter property definitions</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const obj = {
+  _v: 0,
+  get value() { return this._v; },
+  set value(v) { this._v = v; }
+};</pre
+                  >
+                  <pre class="wat">
+(func $get_value (param (ref null $obj))
+    (result f64)
+  local.get 0
+  struct.get $obj $_v
+)
+
+(func $set_value (param (ref null $obj)) (param f64)
+  local.get 0
+  local.get 1
+  struct.set $obj $_v)</pre
+                  >
+                  <div class="feat-explain">Basic get/set works. Object.defineProperty partially supported.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Object.defineProperty (full)</span>
+                <span class="feat-desc">Full property descriptor configuration</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+Object.defineProperty(obj, "x", {
+  enumerable: false,
+  writable: false
+});</pre
+                  >
+                  <div class="feat-explain">Property descriptor system not yet fully emitted in Wasm structs.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2015</div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Arrow functions</span>
+                <span class="feat-desc">Concise function syntax with lexical this</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const add = (a, b) =&gt; a + b;
+const square = x =&gt; x * x;
+const greet = () =&gt; "hello";</pre
+                  >
+                  <pre class="wat">
+(func $add (param f64 f64)
+    (result f64)
+  local.get 0
+  local.get 1
+  f64.add)
+
+(func $square (param f64)
+    (result f64)
+  local.get 0
+  local.get 0
+  f64.mul)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Template literals</span>
+                <span class="feat-desc">String interpolation with backtick syntax</span>
+                <details>
+                  <summary></summary>
+                  <pre>const msg = `Hello ${name}, you are ${age}!`;</pre>
+                  <pre class="wat">
+(func $__module_init
+  string.const "Hello "
+  local.get $name
+  string.concat
+  string.const "!"
+  string.concat)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="language/destructuring">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Destructuring</span>
+                <span class="feat-desc">Extract values from arrays and objects</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const { name, age } = person;
+const [first, ...rest] = items;
+const { a: x = 0 } = opts;</pre
+                  >
+                  <pre class="wat">
+;; typed object → direct struct ...
+(func $__module_init
+  local.get $obj
+  struct.get $Obj $a     ;; a
+  local.get $obj
+  struct.get $Obj $b)    ;; b</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Spread / rest operators</span>
+                <span class="feat-desc">Expand iterables and collect arguments</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const merged = [...a, ...b];
+const clone = { ...original };
+function sum(...args) { }</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  ;; [...arr, 4]
+  f64.const 1  f64.const 2  f64.const 3
+  f64.const 4
+  array.new_fixed $f64arr 4)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Default parameters</span>
+                <span class="feat-desc">Fallback values for function parameters</span>
+                <details>
+                  <summary></summary>
+                  <pre>function greet(name = "world") { }</pre>
+                  <pre class="wat">
+(func $greet (param externref)
+    (result externref)
+  local.get 0
+  ref.is_null
+  (if (then
+    global.get 1
+    local.set 0))
+  local.get 0
+  return)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Computed property names</span>
+                <span class="feat-desc">Dynamic property keys in object literals</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const key = "id";
+const obj = { [key]: 42 };</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  ;; { [key]: 42 }
+  global.get $key          ;; "id"
+  f64.const 42
+  struct.new $obj)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">for-of</span>
+                <span class="feat-desc">Iterate over iterable objects</span>
+                <details>
+                  <summary></summary>
+                  <pre>for (const item of iterable) { }</pre>
+                  <pre class="wat">
+(func $__module_init
+  ;; for (const x of arr)
+  local.get $arr
+  struct.get $Vec $data
+  struct.get $Vec $len
+  (loop $for_of
+    local.get $i
+    array.get $data
+    ;; ... process x
+    br_if $for_of))</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/GeneratorFunction,built-ins/GeneratorPrototype">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Generators (function*, yield)</span>
+                <span class="feat-desc">Pausable functions that produce sequences</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+function* range(n) {
+  for (let i = 0; i &lt; n; i++) {
+    yield i;
+  }
+}</pre
+                  >
+                  <pre class="wat">
+(func $range (param f64)
+    (result (ref $Gen))
+  ;; yield values into WasmGC array
+  array.new_default $f64arr 0
+  local.set $buf
+  (loop $loop
+    local.get $i
+    local.get 0            ;; n
+    i32.lt_s
+    (if (then
+      ;; yield i → push to buffer
+      local.get $i
+      ;; i++, br $loop
+    )))
+  local.get $buf
+  struct.new $Generator)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-name">Classes</span>
+                <span class="feat-desc">Class declarations with inheritance</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+class Animal {
+  constructor(name) {
+    this.name = name;
+  }
+  speak() {
+    return this.name + " speaks";
+  }
+}
+
+class Dog extends Animal { }</pre
+                  >
+                  <pre class="wat">
+(type $Animal (struct
+  (field $__tag i32)
+  (field $name externref)))
+
+(func $Animal_new (param externref)
+    (result (ref null $Animal))
+  struct.new $Animal
+  local.get 0
+  struct.set $Animal $name)</pre
+                  >
+                  <div class="feat-explain">
+                    Constructor, methods, extends, super work. Dynamic prototype lookup is partial.
+                  </div>
+                </details>
+              </div>
+              <div
+                class="feat-row"
+                data-t262-paths="built-ins/Map,built-ins/Set,built-ins/MapIteratorPrototype,built-ins/SetIteratorPrototype"
+              >
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Map / Set</span>
+                <span class="feat-desc">Key-value and unique-value collections</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const m = new Map();
+m.set("key", 42);
+
+const s = new Set([1, 2, 3]);
+s.has(2); // true</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  call $Map_new
+  global.set $m
+  global.get $m
+  string.const "key"
+  f64.const 42
+  call $Map_set)</pre
+                  >
+                  <div class="feat-explain">Core operations work. Some iteration edge cases incomplete.</div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Symbol">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Symbol</span>
+                <span class="feat-desc">Unique, immutable primitive identifiers</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const id = Symbol("id");
+obj[id] = 42;</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  global.get $nextId
+  i32.const 1
+  i32.add
+  global.set $nextId
+  global.get $nextId
+  global.set $id)</pre
+                  >
+                  <div class="feat-explain">
+                    Creation and basic use work. Well-known symbols (Symbol.iterator) partial.
+                  </div>
+                </details>
+              </div>
+              <div
+                class="feat-row"
+                data-t262-paths="built-ins/TypedArray,built-ins/TypedArrayConstructors,built-ins/ArrayBuffer,built-ins/DataView,built-ins/Uint8Array"
+              >
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">TypedArray / ArrayBuffer</span>
+                <span class="feat-desc">Binary data buffers and typed views</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const buf = new ArrayBuffer(16);
+const view = new Int32Array(buf);
+view[0] = 42;</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  i32.const 16
+  call $ArrayBuffer_new
+  call $Int32Array_from
+  global.set $view
+  global.get $view
+  i32.const 0
+  f64.const 42
+  call $TypedArray_set)</pre
+                  >
+                  <div class="feat-explain">Int8 through Float64 arrays work. BigInt64Array not yet.</div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="language/import,language/export,language/module-code">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-name">Modules (import / export)</span>
+                <span class="feat-desc">ES module system for code organization</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+import { foo } from "./mod";
+export function bar() { return 1; }</pre
+                  >
+                  <pre class="wat">
+(func $bar (export "bar")
+    (result f64)
+  f64.const 1
+  return)</pre
+                  >
+                  <div class="feat-explain">Static imports work. Dynamic import() not yet.</div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Proxy,built-ins/Reflect">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Proxy / Reflect</span>
+                <span class="feat-desc">Object behavior interception and reflection</span>
+                <details>
+                  <summary></summary>
+                  <pre>new Proxy(target, handler); // not supported</pre>
+                  <div class="feat-explain">Requires runtime trap dispatch. Not AOT-compilable.</div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Promise">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Promise .then / .catch / .finally</span>
+                <span class="feat-desc">Promise chaining and error handling</span>
+                <details>
+                  <summary></summary>
+                  <pre>promise.then(v => v + 1); // not yet</pre>
+                  <div class="feat-explain">
+                    Compiles but async callbacks do not execute. Promise.resolve/all/race work.
+                  </div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2017</div>
+              <div
+                class="feat-row"
+                data-t262-paths="built-ins/AsyncFunction,built-ins/AsyncGeneratorFunction,built-ins/AsyncGeneratorPrototype,built-ins/AsyncIteratorPrototype,built-ins/AsyncFromSyncIteratorPrototype"
+              >
+                <span class="feat-badge full">✓</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">async / await</span>
+                <span class="feat-desc">Asynchronous functions with synchronous-style syntax</span>
+                <details>
+                  <summary></summary>
+                  <pre>const mod = await import("./module"); // not yet</pre>
+                  <pre class="wat">
+(func $fetchData (result f64)
+  f64.const 42
+  call $Promise.resolve
+  call $__await
+  return)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Object.entries / values</span>
+                <span class="feat-desc">Extract entries or values from objects</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+Object.entries({ a: 1, b: 2 });
+// [["a", 1], ["b", 2]]
+
+Object.values({ x: 10 });
+// [10]</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  f64.const 1  f64.const 2
+  struct.new $obj
+  extern.convert_any
+  call $Object.entries)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/SharedArrayBuffer,built-ins/Atomics">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">SharedArrayBuffer / Atomics</span>
+                <span class="feat-desc">Shared memory and atomic operations</span>
+                <details>
+                  <summary></summary>
+                  <pre>new SharedArrayBuffer(1024); // not supported</pre>
+                  <div class="feat-explain">Requires shared Wasm linear memory.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2018</div>
+              <div class="feat-row" data-t262-paths="built-ins/Object">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Object spread / rest</span>
+                <span class="feat-desc">Object spread in literals and rest in destructuring</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const clone = { ...original,
+  extra: 1 };
+const { a, ...rest } = obj;</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  ;; { ...original, extra: 2 }
+  local.get $original
+  struct.get $Obj $x
+  f64.const 2
+  struct.new $Clone)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Async iteration (for-await-of)</span>
+                <span class="feat-desc">Iterate over async data sources</span>
+                <details>
+                  <summary></summary>
+                  <pre>for await (const chunk of stream) { }</pre>
+                  <pre class="wat">
+(func $process (param externref)
+  local.get 0
+  call $__iterator
+  local.set $iter
+  (loop $for_await
+    local.get $iter
+    call $__iterator_next
+    ;; ... process chunk
+    br_if $for_await))</pre
+                  >
+                  <div class="feat-explain">Basic patterns work. Some async generator edge cases incomplete.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2020</div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Optional chaining (?.)</span>
+                <span class="feat-desc">Safe property access on nullable values</span>
+                <details>
+                  <summary></summary>
+                  <pre>const name = user?.profile?.name;</pre>
+                  <pre class="wat">
+(func $test (param externref)
+    (result externref)
+  local.get 0
+  ref.is_null
+  (if (result externref)
+    (then ref.null extern)
+    (else local.get 0
+          call $__extern_get_name)))</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Nullish coalescing (??)</span>
+                <span class="feat-desc">Default values for null or undefined</span>
+                <details>
+                  <summary></summary>
+                  <pre>const val = input ?? "default";</pre>
+                  <pre class="wat">
+(func $test (param f64)
+    (result f64)
+  local.get 0        ;; x
+  call $__is_nullish
+  (if (result f64)
+    (then f64.const 0)
+    (else local.get 0)))</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">globalThis</span>
+                <span class="feat-desc">Universal global object reference</span>
+                <details>
+                  <summary></summary>
+                  <pre>globalThis.console;</pre>
+                  <pre class="wat">
+(func $__module_init
+  call $__get_globalThis
+  global.set $g)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/BigInt">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">BigInt</span>
+                <span class="feat-desc">Arbitrary precision integer arithmetic</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const big = 9007199254740993n;
+const sum = big + 1n;</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  i64.const 9007199254740993
+  global.set $big
+  global.get $big
+  i64.const 1
+  i64.add
+  global.set $sum)</pre
+                  >
+                  <div class="feat-explain">Basic arithmetic works. BigInt typed arrays not yet.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Dynamic import()</span>
+                <span class="feat-desc">Load modules at runtime on demand</span>
+                <details>
+                  <summary></summary>
+                  <pre>const mod = await import("./module"); // not yet</pre>
+                  <div class="feat-explain">Requires a runtime module loader.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2021</div>
+              <div class="feat-row" data-t262-paths="built-ins/WeakRef,built-ins/FinalizationRegistry">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">WeakRef / FinalizationRegistry</span>
+                <span class="feat-desc">Weak references and GC callbacks</span>
+                <details>
+                  <summary></summary>
+                  <pre>new WeakRef(obj); // not supported</pre>
+                  <div class="feat-explain">GC-observable. Not available in standard WasmGC today.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2022</div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Class fields (public, private, static)</span>
+                <span class="feat-desc">Declarative field syntax in classes</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+class Counter {
+  count = 0;
+  #secret = 42;
+  static instances = 0;
+}</pre
+                  >
+                  <pre class="wat">
+(type $Counter (struct
+  (field $__tag i32)
+  (field $count f64)))
+
+(func $Counter_new
+    (result (ref null $Counter))
+  i32.const 0     ;; __tag
+  f64.const 0     ;; count = 0
+  struct.new $Counter)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Error.cause</span>
+                <span class="feat-desc">Chain errors with a cause property</span>
+                <details>
+                  <summary></summary>
+                  <pre>throw new Error("fail", { cause: origErr });</pre>
+                  <pre class="wat">
+(func $fail
+  i32.const 1
+  string.const "root"
+  struct.new $Error        ;; cause
+  i32.const 1
+  string.const "fail"
+  struct.new $ErrorCause
+  throw 0)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Array.at / String.at</span>
+                <span class="feat-desc">Relative indexing with negative support</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+[1, 2, 3].at(-1);  // 3
+"hello".at(0);      // "h"</pre
+                  >
+                  <pre class="wat">
+(func $__module_init
+  ;; [1,2,3].at(-1)
+  local.get $arr
+  i32.const -1
+  local.get $len
+  i32.add
+  array.get $data)         ;; → 3</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Top-level await</span>
+                <span class="feat-desc">Await at module scope without async wrapper</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const data = await fetch(url);
+export { data };</pre
+                  >
+                  <div class="feat-explain">Requires module-level async execution model. Not yet supported.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2016</div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Array.prototype.includes</span>
+                <span class="feat-desc">Check if array contains a value</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>[1, 2, 3].includes(2); // true</pre>
+                  <pre class="wat">
+;; linear scan over WasmGC array
+local.get $arr
+struct.get $Vec $data
+(loop $scan
+  array.get $data
+  local.get $target
+  f64.eq
+  br_if $found
+  br $scan)</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Exponentiation operator (**)</span>
+                <span class="feat-desc">Power operator as infix syntax</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>const sq = 2 ** 10; // 1024</pre>
+                  <pre class="wat">
+f64.const 2
+f64.const 10
+call $Math.pow</pre
+                  >
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2019</div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Optional catch binding</span>
+                <span class="feat-desc">Omit the error parameter in catch</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+try { riskyOp(); }
+catch { handleError(); }</pre
+                  >
+                  <pre class="wat">
+(try
+  (do call $riskyOp)
+  (catch_all
+    call $handleError))</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Array.prototype.flat / flatMap</span>
+                <span class="feat-desc">Flatten nested arrays</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+[[1, 2], [3]].flat();
+// → [1, 2, 3]</pre
+                  >
+                  <div class="feat-explain">
+                    Basic flat() works via host import. Deep flattening and flatMap partial.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Object.fromEntries</span>
+                <span class="feat-desc">Create object from key-value pairs</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const obj = Object.fromEntries(
+  [["a", 1], ["b", 2]]
+);</pre
+                  >
+                  <div class="feat-explain">Uses host import to construct object from entries array.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2023</div>
+              <div class="feat-row">
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Array.findLast / findLastIndex</span>
+                <span class="feat-desc">Search arrays from the end</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+[1, 2, 3,
+  2].findLast(x =&gt; x === 2);
+// → 2 (last match)</pre
+                  >
+                  <div class="feat-explain">Iterates WasmGC array from end. Callback via host import.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Change array by copy (toSorted, toReversed, toSpliced)</span>
+                <span class="feat-desc">Immutable array transformations</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const sorted = arr.toSorted();
+const rev = arr.toReversed();</pre
+                  >
+                  <div class="feat-explain">
+                    Immutable array operations not yet implemented. Requires new array allocation + copy.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge full">✓</span>
+                <span class="feat-name">Hashbang (#!) comments</span>
+                <span class="feat-desc">Unix shebang line support</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+#!/usr/bin/env node
+console.log("hello");</pre
+                  >
+                  <pre class="wat">
+;; hashbang stripped at parse time
+;; no Wasm output for comments</pre
+                  >
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2024</div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Promise.withResolvers</span>
+                <span class="feat-desc">Create Promise with external resolve/reject</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const { promise, resolve, reject }
+  = Promise.withResolvers();</pre
+                  >
+                  <div class="feat-explain">Static Promise method not yet implemented. Requires host import.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Resizable ArrayBuffer</span>
+                <span class="feat-desc">Growable and shrinkable buffers</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const buf = new ArrayBuffer(8,
+  { maxByteLength: 16 });
+buf.resize(16);</pre
+                  >
+                  <div class="feat-explain">
+                    Growable buffers not yet supported. Requires linear memory integration.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">RegExp v flag</span>
+                <span class="feat-desc">Set notation in character classes</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>/[\p{Letter}--[a-z]]/v.test("A");</pre>
+                  <div class="feat-explain">
+                    Unicode set notation in character classes. Requires updated regex host.
+                  </div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">ES2025</div>
+              <div class="feat-row" data-t262-paths="built-ins/Set">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Set methods (union, intersection, difference)</span>
+                <span class="feat-desc">Built-in set operations</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const a = new Set([1, 2, 3]);
+const b = new Set([2, 3, 4]);
+a.union(b); // {1,2,3,4}</pre
+                  >
+                  <div class="feat-explain">ES2025 Set methods. Requires host import for Set operations.</div>
+                </details>
+              </div>
+              <div class="feat-row" data-t262-paths="built-ins/Iterator">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-host">host</span>
+                <span class="feat-name">Iterator helpers (map, filter, take)</span>
+                <span class="feat-desc">Lazy iterator transformations</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+function* nums() { yield 1; yield 2; yield 3; }
+nums().filter(x =&gt; x &gt; 1)
+      .take(1)
+      .toArray();</pre
+                  >
+                  <div class="feat-explain">Lazy iterator protocol. Requires iterator helper host imports.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">RegExp duplicate named groups</span>
+                <span class="feat-desc">Same group name in alternatives</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+/(?&lt;v&gt;a)|(?&lt;v&gt;b)/.exec("b");
+// v === "b"</pre
+                  >
+                  <div class="feat-explain">Same named group in alternatives. Requires regex engine update.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section" data-sloppy>
+              <div class="feat-edition">Legacy / Deprecated</div>
+              <div class="feat-row" data-sloppy>
+                <span class="feat-badge partial">⚠</span>
+                <span class="feat-name">var hoisting</span>
+                <span class="feat-desc">Function-scoped variable declarations hoisted to top</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+console.log(x); // undefined
+var x = 5;</pre
+                  >
+                  <pre class="wat">
+;; var hoisted to function scope
+(local $x f64)
+f64.const 0
+local.set $x
+;; ... later
+f64.const 5
+local.set $x</pre
+                  >
+                </details>
+              </div>
+              <div class="feat-row" data-sloppy>
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">arguments.callee</span>
+                <span class="feat-desc">Reference to currently executing function</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+function f() {
+  return arguments.callee;
+}</pre
+                  >
+                  <div class="feat-explain">Forbidden in strict mode. All modules run strict.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">__proto__ accessor</span>
+                <span class="feat-desc">Legacy prototype chain manipulation</span>
+                <details>
+                  <summary></summary>
+                  <pre>obj.__proto__ = parent;</pre>
+                  <div class="feat-explain">
+                    Dynamic prototype assignment not supported. Use Object.create() or class extends.
+                  </div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">String.prototype.substr</span>
+                <span class="feat-desc">Deprecated substring extraction</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+"hello".substr(1, 3); // "ell"
+// use .slice() or .substring()</pre
+                  >
+                  <div class="feat-explain">Deprecated. Use .slice() which is fully supported.</div>
+                </details>
+              </div>
+              <div class="feat-row" data-sloppy>
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Octal literals (0777)</span>
+                <span class="feat-desc">Legacy octal number syntax</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+const n = 0777;
+const ok = 0o777;</pre
+                  >
+                  <div class="feat-explain">Legacy octal forbidden in strict mode. ES2015 0o prefix works.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">escape() / unescape()</span>
+                <span class="feat-desc">Deprecated string encoding globals</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+escape("hello world");
+// use encodeURIComponent()</pre
+                  >
+                  <div class="feat-explain">Deprecated globals. Use encodeURIComponent / decodeURIComponent.</div>
+                </details>
+              </div>
+              <div class="feat-row" data-sloppy>
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Function.prototype.caller</span>
+                <span class="feat-desc">Access calling function reference</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+function f() {
+  return f.caller;
+}</pre
+                  >
+                  <div class="feat-explain">Forbidden in strict mode. Not available in Wasm.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">HTML string methods (.bold(), .anchor())</span>
+                <span class="feat-desc">Deprecated HTML wrapper string methods</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+"text".bold();   // deprecated
+"text".anchor("name");</pre
+                  >
+                  <div class="feat-explain">Annex B legacy methods. Not implemented.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">RegExp.$1 static properties</span>
+                <span class="feat-desc">Legacy RegExp match result globals</span>
+                <details>
+                  <summary></summary>
+                  <pre>
+/(\d+)/.exec("abc123");
+RegExp.$1; // "123" — deprecated</pre
+                  >
+                  <div class="feat-explain">Legacy static properties. Use match result array instead.</div>
+                </details>
+              </div>
+            </div>
+            <div class="feat-section">
+              <div class="feat-edition">Proposals</div>
+              <div class="feat-row" data-t262-paths="built-ins/Temporal">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Temporal</span>
+                <span class="feat-desc">Modern date and time API</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+const now = Temporal.Now.instant();
+const date = Temporal.PlainDate
+  .from("2026-04-06");</pre
+                  >
+                  <div class="feat-explain">Stage 3 proposal. Large API surface — not yet in scope.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Decorators</span>
+                <span class="feat-desc">Class and method metadata annotations</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+@logged
+class MyClass {
+  @bound method() { }
+}</pre
+                  >
+                  <div class="feat-explain">Stage 3 proposal. Requires compile-time decorator application.</div>
+                </details>
+              </div>
+              <div class="feat-row">
+                <span class="feat-badge none">✗</span>
+                <span class="feat-name">Pattern matching</span>
+                <span class="feat-desc">Structural matching expressions</span>
+
+                <details>
+                  <summary></summary>
+                  <pre>
+match (value) {
+  when ({ x, y }): return x + y;
+  when (String): return value.length;
+  default: return 0;
+}</pre
+                  >
+                  <div class="feat-explain">Stage 1 proposal. Structural pattern matching not yet in scope.</div>
+                </details>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <section class="section-pad" id="benchmarks">
+        <div class="intro">
+          <h2>Tiny modules that load and run fast.</h2>
+          <p>
+            When running outside of a JS engine like found in browsers or Node.js, compatibility today typically means
+            embedding a JS interpreter inside the WebAssembly module. This increases module size and slows execution.
+          </p>
+        </div>
+
+        <div class="host-bench-group">
+          <h3 class="host-bench-title">JavaScript host (V8, JIT enabled)</h3>
+          <p class="host-bench-subcopy">
+            A benchmark comparing JavaScript in its native environment to the exact same source code compiled with JS²
+            as a WebAssembly module. Offline snapshots are run in a headless browser through Playwright. Press the
+            button to rerun the benchmark in your current browser.
+          </p>
+          <div class="conformance-diagrams">
+            <div class="diagram-panel">
+              <perf-benchmark-chart
+                src="./benchmarks/results/playground-benchmark-sidebar.json"
+                mode="runtime"
+                rerun-src="./benchmarks/results/loadtime-benchmarks.json"
+                rerun-label="Run Browser Benchmark"
+                title="Runtime"
+                baseline-label="JS in V8"
+                show-delta
+                delta-kind="runtime"
+                legend="Median Wasm runtime per benchmark. JS lines show the same benchmark in JavaScript."
+              ></perf-benchmark-chart>
+            </div>
+          </div>
+        </div>
+
+        <div class="host-bench-group" id="wasmtime-bench-group" style="display: none">
+          <h3 class="host-bench-title">WebAssembly host (Wasmtime, JIT disabled)</h3>
+          <p class="host-bench-subcopy">
+            This test case approximates a multi-tenant Wasm native serverless environment. 5 small
+            <a href="./benchmarks/competitive/programs/">JavaScript programs</a>
+            are run as WebAssembly in three different setups: 1. compiled ahead of time with JS², 2. interpreted by a
+            separate dynamically linked interpreter module, 3. interpreted by a bundled JS engine (preinitialized +
+            partial AOT evaluation). As a baseline we show the same code running in its native environment inside a V8
+            engine in Node.js with JIT enabled, spawning a fresh runtime process.
+          </p>
+          <div class="conformance-diagrams">
+            <div
+              class="diagram-panel"
+              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+              style="display: none"
+            >
+              <perf-benchmark-chart
+                src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                mode="absolute-lower-better"
+                title="Runtime"
+                baseline-label="JS in V8"
+                show-delta
+                delta-kind="runtime"
+                legend="Geometric mean of repeated calls inside one fresh process after module load."
+              ></perf-benchmark-chart>
+            </div>
+            <div
+              class="diagram-panel"
+              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size.json"
+              style="display: none"
+            >
+              <perf-benchmark-chart
+                src="./benchmarks/results/wasm-host-wasmtime-module-size.json"
+                mode="absolute-lower-better"
+                title="Module Size"
+                baseline-label="JS source (minified)"
+                show-delta
+                delta-kind="size"
+                legend="Geometric mean of raw deployable module size; JS source counts only the minified benchmark .js files. Parenthetical interpreter payload is not included in the bar or delta."
+              ></perf-benchmark-chart>
+            </div>
+            <div
+              class="diagram-panel"
+              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-coldstart.json"
+              style="display: none"
+            >
+              <perf-benchmark-chart
+                src="./benchmarks/results/wasm-host-wasmtime-coldstart.json"
+                mode="absolute-lower-better"
+                title="Cold Start"
+                baseline-label="JS in V8"
+                show-delta
+                delta-kind="runtime"
+                legend="Geometric mean of a fresh JS source process or fresh precompiled WebAssembly artifact process through first invocation."
+              ></perf-benchmark-chart>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <section class="section-pad" id="approach">
+        <div class="intro">
+          <h2>Compiled ahead of time, no interpreter.</h2>
+          <p>
+            Write regular JavaScript. The compiler produces a .wasm binary that runs in any WebAssembly host with GC
+            support &mdash; browser, server, edge. No interpreter embedded; garbage collection is handled by the host
+            via WasmGC. When deployed with explicit imports, the module boundary can reduce ambient access and limit
+            supply-chain attack surface.
+          </p>
+          <p>
+            The goal is 100% compatibility with the JavaScript and npm ecosystem while adding a module security and
+            module composition layer around compiled units.
+          </p>
+        </div>
+
+        <div class="how-sidebyside">
+          <div class="how-step">
+            <h3 class="how-step-title">
+              <span>JavaScript</span>
+              <span class="how-step-size" id="how-fib-js-size">(0.1 KB gzipped)</span>
+            </h3>
+            <pre class="how-code js" data-generated-example="how-fib-js">
+function fibonacci(n) {
+  if (n &lt;= 1) return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+export function run() {
+  return fibonacci(10);
+}</pre
+            >
+            <span class="how-code-label">app.js</span>
+          </div>
+          <div class="how-arrow">
+            <svg width="40" height="16" viewBox="0 0 40 16">
+              <path d="M0 8h32m0 0l-6-5m6 5l-6 5" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" fill="none" />
+            </svg>
+            <span class="how-arrow-label">compile</span>
+          </div>
+          <div class="how-step">
+            <h3 class="how-step-title">
+              <span>WebAssembly</span>
+              <span class="how-step-size" id="how-fib-wasm-size">(0.2 KB gzipped)</span>
+            </h3>
+            <pre class="how-code wat" data-generated-example="how-fib-wat">
+(module
+  (import "string_constants" "fibonacci" (global $fibonacci externref))
+  (import "string_constants" "run" (global $run externref))
+  (import "string_constants" "" (global $ externref))
+  (func $fibonacci (param f64) (result f64)
+    local.get 0
+    f64.const 1
+    f64.le
+    (if
+      (then
+      local.get 0
+      return
+      )
+      (else
+      local.get 0
+      f64.const 1
+      f64.sub
+      call 0
+      local.get 0
+      f64.const 2
+      f64.sub
+      call 0
+      f64.add
+      return
+      )
+    )
+    unreachable
+  )
+  (func $run (result f64)
+    f64.const 10
+    call 0
+    return
+  )
+  (export "run" (func 1))
+)</pre
+            >
+            <span class="how-code-label">app.wat</span>
+          </div>
+        </div>
+        <div class="how-step" style="margin-top: 48px">
+          <h3 class="how-step-title">Using DOM and JS APIs</h3>
+          <p class="how-sub">
+            DOM access and browser APIs compile to typed host imports. The compiler generates the bindings &mdash; you
+            just write normal JavaScript.
+          </p>
+          <div class="how-sidebyside">
+            <div class="how-step">
+              <h3 class="how-step-title">
+                <span>JavaScript</span>
+                <span class="how-step-size" id="how-dom-js-size">(0.1 KB gzipped)</span>
+              </h3>
+              <pre class="how-code js" data-generated-example="how-dom-js">
+const el = document.createElement("div");
+el.textContent = "Hello from Wasm";
+el.style.color = "blue";
+document.body.appendChild(el);</pre
+              >
+              <span class="how-code-label">dom.js</span>
+            </div>
+            <div class="how-arrow">
+              <svg width="40" height="16" viewBox="0 0 40 16">
+                <path d="M0 8h32m0 0l-6-5m6 5l-6 5" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" fill="none" />
+              </svg>
+              <span class="how-arrow-label">compile</span>
+            </div>
+            <div class="how-step">
+              <h3 class="how-step-title">
+                <span>WebAssembly</span>
+                <span class="how-step-size" id="how-dom-wasm-size">(0.3 KB gzipped)</span>
+              </h3>
+              <pre class="how-code wat" data-generated-example="how-dom-wat">
+(module
+  (type $type4 (func (param externref) (result externref)))
+  (type $type12 (func (param externref externref) (result externref)))
+  (type $type13 (func (result externref)))
+  (type $type15 (func (param externref externref externref) (result externref)))
+  (type $type19 (func (param externref externref)))
+  (import "env" "global_document" (func $global_document_import (type 3)))
+  (import "env" "Document_createElement" (func $Document_createElement_import (type 4)))
+  (import "env" "Element_set_textContent" (func $Element_set_textContent_import (type 5)))
+  (import "env" "CSSStyleDeclaration_set_color" (func $CSSStyleDeclaration_set_color_import (type 5)))
+  (import "env" "HTMLElement_get_style" (func $HTMLElement_get_style_import (type 0)))
+  (import "env" "Node_appendChild" (func $Node_appendChild_import (type 2)))
+  (import "env" "Document_get_body" (func $Document_get_body_import (type 0)))
+  (import "string_constants" "div" (global $div externref))
+  (import "string_constants" "Hello from Wasm" (global $Hello from Wasm externref))
+  (import "string_constants" "blue" (global $blue externref))
+  (import "string_constants" "" (global $ externref))
+  (import "env" "__get_undefined" (func $__get_undefined_import (type 3)))
+  (global $__mod_el (mut externref) (ref.null extern))
+  (func $__module_init
+    (local $__extern_assign_0 externref)
+    (local $__extern_assign_1 externref)
+    call 0
+    global.get 0
+    call 7
+    call 1
+    global.set 4
+    global.get 4
+    global.get 1
+    local.tee 0
+    call 2
+    global.get 4
+    call 4
+    global.get 2
+    local.tee 1
+    call 3
+    call 0
+    call 6
+    global.get 4
+    call 5
+    drop
+  )
+  (start 8)
+)</pre
+              >
+              <span class="how-code-label">dom.wat</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="how-step" style="margin-top: 56px">
+          <h3 class="how-step-title">Compile and run</h3>
+          <pre class="how-code js">
+// Compile from JavaScript source
+import { compile } from "js2wasm";
+import { buildImports } from "js2wasm/runtime";
+
+const result = compile(sourceCode, {
+  fileName: "app.js"
+});
+
+// Instantiate the compiled module
+const imports = buildImports(
+  result.imports, undefined, result.stringPool
+);
+const { instance } = await WebAssembly
+  .instantiate(result.binary, imports);
+console.log(instance.exports.run()); // &rarr; 55</pre
+          >
+          <span class="how-code-label">run.ts</span>
+          <p class="how-sub" style="margin-top: 12px">
+            <code>compile()</code>
+            produces a
+            <code>.wasm</code>
+            binary and import manifest. Use
+            <code>buildImports()</code>
+            to create the host import object, then instantiate with the standard WebAssembly API.
+          </p>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <section class="section-pad" id="faq">
+        <div class="intro">
+          <h2 id="faq-title">Frequently asked questions.</h2>
+          <p>
+            How JS
+            <sup>2</sup>
+            treats compatibility, runtime boundaries, architecture decisions, and the difference between compilation and
+            bundling a JavaScript runtime.
+          </p>
+        </div>
+
+        <div class="approach-faq" aria-labelledby="faq-title">
+          <div class="approach-faq-list">
+            <details>
+              <summary>
+                <span class="approach-faq-question">Why not just use a JavaScript engine or interpreter?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  Good question! JavaScript engines like V8 are highly optimized multi-tier streaming JIT compilers that
+                  often run code two magnitudes faster than interpreters - within reach of native performance - and have
+                  a mature battle tested sandbox. WebAssembly has an edge in some scenarios, but overall it is not
+                  always faster or even on par. Interpreters like QuickJS on the other hand trade simplicity for
+                  performance.
+                </p>
+                <h3>Runtime overhead</h3>
+                <p>
+                  However, in
+                  <strong>constrained environments</strong>
+                  like multi-tenant function as a service - aka. "
+                  <strong>serverless</strong>
+                  " - or
+                  <strong>embedded</strong>
+                  environments a JS host might simply be too heavy-weight and costly. It may result in a slow
+                  interpreter path and having to ship a JS interpreter or engine with JIT disabled (which typically
+                  results in a 10x slowdown) alongside the binary in the Megabyte range. On desktop this might even mean
+                  shipping a full browser or server runtime with 100 MB or more in the case of Electron.
+                </p>
+                <ul>
+                  <li>
+                    <strong>Bundled interpreters</strong>
+                    package a JavaScript interpreter into the Wasm module and run the user's program inside it. That can
+                    provide broad compatibility, but each deployed module pays the interpreter/runtime cost.
+                  </li>
+                  <li>
+                    <strong>Bundled engines</strong>
+                    inherit mature JavaScript engine semantics, but also inherit the size, startup, integration,
+                    sandboxing, and runtime code-generation tradeoffs of shipping an engine.
+                  </li>
+                </ul>
+                <h3>Dependency management</h3>
+                <p>
+                  NPM dependencies are fragile and hard to manage. If you upgrade one module globally in a project, this
+                  often forces a cascade of updates across the project which may take weeks, break things loudly,
+                  introduce silent bugs, and you may sometimes end up in situations where one dependency already needs a
+                  newer version while another still depends on an older version, hindering upgrades. In contrast,
+                  WebAssembly modules declare their imports, and you can satisfy them on a module by module basis that
+                  do not force to keep the version of a module in lock step across modules.
+                </p>
+                <h3>Supply Chain Attacks</h3>
+                <p>
+                  Running untrusted code in JavaScript exposes the process to the risk of supply chain attacks: 95% of
+                  JavaScript code is a third party dependency. A single malicious or buggy module can take over the
+                  whole JavaScript process and extract sensitive information or in Node.js even access the file system
+                  or start programs with user rights. While isolation techniques exists they are rarely used in practice
+                  due their overhead, complexity, or ecosystem fragmentation. Supply chain attacks have become a real
+                  threat including high profile incidents in cornerstone dependencies such as
+                  <a href="https://github.com/axios/axios/issues/10636">axios</a>
+                  or
+                  <a
+                    href="https://semgrep.dev/blog/2025/chalk-debug-and-color-on-npm-compromised-in-new-supply-chain-attack/"
+                  >
+                    chalk
+                  </a>
+                  .
+                </p>
+                <p>
+                  JavaScript engines are highly complex and expose a large attack surface. Despite decades of hardening
+                  hackers and engine developers are in an arms race finding and fixing zero day vulnerabilities, and AI
+                  agents find vulnerabilities in high volumes (e.g. Anthropic's glasswing found
+                  <a href="https://blog.mozilla.org/en/firefox/ai-security-zero-day-vulnerabilities/">
+                    271 vulnerabilities in Firefox
+                  </a>
+                  ) . If your code ships with a full browser and Node depdendency like in the case of Electron, you need
+                  to maintain manual patches for security vulnerabilities.
+                </p>
+                <p>
+                  WebAssembly has a simpler execution and deny by default security model in which access is granted
+                  explicitly, limiting the blast radius of incidents significantly.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <span class="approach-faq-question">Why target ECMAScript, not a language subset or superset?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <ul>
+                  <li>
+                    <strong>Following the ECMAScript standard</strong>
+                    as the north star maintains full compatibility with the JS and NPM ecosystem. TypeScript annotations
+                    are only treated as optimization hints where types can be proven, not as ground truth and do not
+                    affect JavaScript runtime behavior.
+                  </li>
+                  <li>
+                    <strong>Subsets, supersets, and new languages</strong>
+                    make compilation easier by subtly breaking the language contract: unsupported dynamic JavaScript is
+                    excluded, custom APIs are introduced, or the language is designed around Wasm from the start.
+                  </li>
+                </ul>
+                <p>
+                  JavaScript is the most widely used programming language. It is easy to use, familiar to millions, and
+                  with NPM has the largest ecosystem in the world. It runs everywhere from browsers (e.g. Chrome,
+                  Firefox, Safari) to servers (e.g. Node, Deno, Bun) and even on desktop (Electron), mobile, or embedded
+                  devices.
+                </p>
+                <p>
+                  While it is not a perfect language due to its legacy and its dynamic nature makes it hard to optimize,
+                  it simply is what everyone uses and changing the language - even slightly - would break compatibility
+                  with existing codebases and fragment the ecosystem. We think chosing the right tool for the job should
+                  not require switching languages or porting code.
+                </p>
+              </div>
+            </details>
+
+            <details>
+              <summary>
+                <span class="approach-faq-question">Do you plan to support all dynamic parts of the language?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  We are intending to push the boundaries of what is possible here. The assumption is most code today is
+                  actually using very little of the dynamic features, so the goal is to isolate the cost of dynamic
+                  language features to the code paths that actually need them. We aim for a seamless experience so the
+                  user does not have to think about if code falls within a supported subset. Dynamic features may
+                  require guards, boxed representations, host fallbacks, or separately compiled units. You can track our
+                  progress in the ECMAScript compatibility reports.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <span class="approach-faq-question">How do you support host APIs like the DOM?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  We see these as platform APIs that are imported using safe adapters from the host if in a browser or
+                  Node.js environment or polyfilled (e.g. using WASI). In browsers we auto generate adapters for Web
+                  APIs and JS builtins from their TypeScript definitions. Providing alternative implementations e.g. in
+                  standalone mode is possible by swapping out the import (e.g.
+                  <a href="https://edgejs.org/">Edge.js</a>
+                  emulates Node.js APIs WASIX).
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <span class="approach-faq-question">Why do you depend on Wasm GC?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  In supported WebAssembly 3.0 runtime a portable garbarge collector (GC) is provided by the host, so
+                  runtimes no longer need to implement their own GC in linear memory. They can now build on top of a
+                  built-in implementation, making modules leaner and interop with the host environment and across
+                  components more seamless. WasmGC gives the compiler host-managed structs, arrays, references, and
+                  function references that can represent many JavaScript object shapes more directly.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <span class="approach-faq-question">What are your guiding principles?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  Architecture Decision Records document the non-obvious choices behind JS
+                  <sup>2</sup>
+                  &mdash; why WasmGC over linear memory, why ahead-of-time compilation over a JIT, how closures and
+                  objects are laid out, and how the compiler keeps JavaScript semantics auditable as it grows.
+                </p>
+                <p>
+                  <a class="btn-solid" href="./docs/adr/">Architecture Decisions</a>
+                </p>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <hr class="divider" />
+
+      <section class="section-pad cta" id="roadmap">
+        <h2>Project roadmap.</h2>
+        <p>
+          The roadmap is to first establish compatibility with existing code, then expand host support, optimize
+          performance, and strengthen security.
+        </p>
+        <div class="cta-actions">
+          <a class="btn-solid" href="https://github.com/loopdive/js2wasm/blob/main/ROADMAP.md">Roadmap</a>
+          <a class="btn-outline" href="https://github.com/loopdive/js2wasm">View Source</a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="footer-top">
+        <div class="footer-brand">
+          <img src="./js2logo-squaring-the-circle-white.svg" alt="JS² logo" />
+          <p>JavaScript and TypeScript ahead-of-time compilation for WebAssembly GC.</p>
+        </div>
+        <div class="footer-cols">
+          <div class="footer-col">
+            <h4>Explore</h4>
+            <ul>
+              <li><a href="./playground/">Playground</a></li>
+              <li><a href="#roadmap">Roadmap</a></li>
+              <li><a href="./benchmarks/report.html">Conformance Report</a></li>
+              <li><a href="#goals">Compatibility</a></li>
+            </ul>
+          </div>
+          <div class="footer-col">
+            <h4>Inspect</h4>
+            <ul>
+              <li><a href="./wasm-treemap.html">Wasm Treemap</a></li>
+              <li><a href="./benchmarks/spec-compliance.html">ECMAScript Spec Compliance</a></li>
+              <li><a href="https://github.com/loopdive/js2wasm">GitHub</a></li>
+              <li><a href="#approach">Approach</a></li>
+              <li><a href="#faq">FAQ</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script type="module" src="./components/site-nav.js"></script>
+    <script type="module" src="./components/t262-charts.js"></script>
+    <script type="module" src="./components/perf-benchmark-chart.js"></script>
+    <script>
+      (async () => {
+        const group = document.getElementById("wasmtime-bench-group");
+        if (!(group instanceof HTMLElement)) return;
+        const panels = Array.from(group.querySelectorAll("[data-benchmark-src]"));
+        let visibleCount = 0;
+        await Promise.all(
+          panels.map(async (panel) => {
+            if (!(panel instanceof HTMLElement)) return;
+            const src = panel.dataset.benchmarkSrc;
+            if (!src) return;
+            try {
+              const resp = await fetch(src);
+              if (!resp.ok) return;
+              const data = await resp.json();
+              if (Array.isArray(data) && data.length > 0) {
+                panel.style.display = "";
+                visibleCount += 1;
+              }
+            } catch {
+              // Leave unavailable benchmark panels hidden.
+            }
+          }),
+        );
+        if (visibleCount > 0) {
+          group.style.display = "";
+        }
+      })();
+    </script>
+    <script src="./components/trend-chart.js"></script>
+
+    <script>
+      (function hydrateFaqAccordions() {
+        const items = document.querySelectorAll(".approach-faq details");
+        if (!items.length) return;
+
+        const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+        const timing = { duration: 240, easing: "cubic-bezier(0.2, 0, 0, 1)" };
+
+        const clearAnimationState = (details) => {
+          details.classList.remove("is-animating", "is-collapsing");
+          details.style.height = "";
+          delete details.dataset.animating;
+        };
+
+        const animateOpen = (details) => {
+          const startHeight = `${details.offsetHeight}px`;
+          details.open = true;
+          const endHeight = `${details.offsetHeight}px`;
+
+          details.dataset.animating = "true";
+          details.classList.add("is-animating");
+          details.style.height = startHeight;
+
+          const animation = details.animate({ height: [startHeight, endHeight] }, timing);
+          animation.onfinish = () => clearAnimationState(details);
+          animation.oncancel = () => clearAnimationState(details);
+        };
+
+        const animateClose = (details, summary) => {
+          const startHeight = `${details.offsetHeight}px`;
+          const endHeight = `${summary.offsetHeight}px`;
+
+          details.dataset.animating = "true";
+          details.classList.add("is-animating", "is-collapsing");
+          details.style.height = startHeight;
+
+          const animation = details.animate({ height: [startHeight, endHeight] }, timing);
+          animation.onfinish = () => {
+            details.open = false;
+            clearAnimationState(details);
+          };
+          animation.oncancel = () => clearAnimationState(details);
+        };
+
+        items.forEach((details) => {
+          const summary = details.querySelector("summary");
+          if (!(summary instanceof HTMLElement)) return;
+
+          summary.addEventListener("click", (event) => {
+            if (prefersReducedMotion.matches) return;
+            event.preventDefault();
+            if (details.dataset.animating) return;
+
+            if (details.open) {
+              animateClose(details, summary);
+            } else {
+              animateOpen(details);
+            }
+          });
+        });
+      })();
+
+      (function mountPuzzleBackground() {
+        const canvas = document.querySelector(".puzzle-bg");
+        if (!(canvas instanceof HTMLCanvasElement)) {
+          return;
+        }
+        const gl = canvas.getContext("webgl", {
+          alpha: true,
+          antialias: true,
+          depth: false,
+          stencil: false,
+          preserveDrawingBuffer: false,
+          powerPreference: "low-power",
+        });
+        if (!gl) return;
+
+        const basePieceWidth = 220;
+        const basePieceHeight = 228;
+        const mobilePieceWidth = 200;
+        const mobilePieceAspect = basePieceHeight / basePieceWidth;
+        const seedBase = 37;
+        const tabsize = 20;
+        const jitter = 4;
+        const cycleDuration = 25.8;
+        const activePortion = 0.7;
+        const targetFrameMs = 1000 / 30;
+        const desktopLineHalfWidth = 3.4;
+        const mobileLineHalfWidth = 2.7;
+        const segmentSteps = 12;
+
+        let seed = seedBase;
+        let a = 0;
+        let b = 0;
+        let c = 0;
+        let d = 0;
+        let e = 0;
+        let t = 0;
+        let j = 0;
+        let flip = false;
+        let xi = 0;
+        let yi = 0;
+        let xn = 0;
+        let yn = 0;
+        let vertical = false;
+        let width = 0;
+        let height = 0;
+        let deviceWidth = 0;
+        let deviceHeight = 0;
+        let raf = 0;
+        let lastFrameMs = 0;
+        let isInView = true;
+        let isVisible = document.visibilityState !== "hidden";
+        let shouldAnimate = true;
+        let vertexCount = 0;
+        let currentLineHalfWidth = desktopLineHalfWidth;
+
+        const random = () => {
+          const x = Math.sin(seed) * 10000;
+          seed += 1;
+          return x - Math.floor(x);
+        };
+        const uniform = (min, max) => min + random() * (max - min);
+        const rbool = () => random() > 0.5;
+        const sl = () => (vertical ? height / yn : width / xn);
+        const sw = () => (vertical ? width / xn : height / yn);
+        const ol = () => sl() * (vertical ? yi : xi);
+        const ow = () => sw() * (vertical ? xi : yi);
+        const l = (v) => Math.round((ol() + sl() * v) * 100) / 100;
+        const w = (v) => Math.round((ow() + sw() * v * (flip ? -1 : 1)) * 100) / 100;
+        const p0l = () => l(0.0);
+        const p0w = () => w(0.0);
+        const p1l = () => l(0.2);
+        const p1w = () => w(a);
+        const p2l = () => l(0.5 + b + d);
+        const p2w = () => w(-t + c);
+        const p3l = () => l(0.5 - t + b);
+        const p3w = () => w(t + c);
+        const p4l = () => l(0.5 - 2.0 * t + b - d);
+        const p4w = () => w(3.0 * t + c);
+        const p5l = () => l(0.5 + 2.0 * t + b - d);
+        const p5w = () => w(3.0 * t + c);
+        const p6l = () => l(0.5 + t + b);
+        const p6w = () => w(t + c);
+        const p7l = () => l(0.5 + b + d);
+        const p7w = () => w(-t + c);
+        const p8l = () => l(0.8);
+        const p8w = () => w(e);
+        const p9l = () => l(1.0);
+        const p9w = () => w(0.0);
+        const segmentPoints = (isVertical) => {
+          const pts = isVertical
+            ? [
+                { x: p0w(), y: p0l() },
+                { x: p1w(), y: p1l() },
+                { x: p2w(), y: p2l() },
+                { x: p3w(), y: p3l() },
+                { x: p4w(), y: p4l() },
+                { x: p5w(), y: p5l() },
+                { x: p6w(), y: p6l() },
+                { x: p7w(), y: p7l() },
+                { x: p8w(), y: p8l() },
+                { x: p9w(), y: p9l() },
+              ]
+            : [
+                { x: p0l(), y: p0w() },
+                { x: p1l(), y: p1w() },
+                { x: p2l(), y: p2w() },
+                { x: p3l(), y: p3w() },
+                { x: p4l(), y: p4w() },
+                { x: p5l(), y: p5w() },
+                { x: p6l(), y: p6w() },
+                { x: p7l(), y: p7w() },
+                { x: p8l(), y: p8w() },
+                { x: p9l(), y: p9w() },
+              ];
+          return pts;
+        };
+        const first = () => {
+          e = uniform(-j, j);
+          next();
+        };
+        const next = () => {
+          const flipold = flip;
+          flip = rbool();
+          a = flip === flipold ? -e : e;
+          b = uniform(-j, j);
+          c = uniform(-j, j);
+          d = uniform(-j, j);
+          e = uniform(-j, j);
+        };
+        const cubicPoint = (p0, p1, p2, p3, u) => {
+          const omu = 1 - u;
+          const omu2 = omu * omu;
+          const u2 = u * u;
+          return {
+            x: omu2 * omu * p0.x + 3 * omu2 * u * p1.x + 3 * omu * u2 * p2.x + u2 * u * p3.x,
+            y: omu2 * omu * p0.y + 3 * omu2 * u * p1.y + 3 * omu * u2 * p2.y + u2 * u * p3.y,
+          };
+        };
+        const sampleCurveChain = (pts) => {
+          const out = [pts[0]];
+          const appendCurve = (p0, p1, p2, p3) => {
+            for (let step = 1; step <= segmentSteps; ++step) {
+              out.push(cubicPoint(p0, p1, p2, p3, step / segmentSteps));
+            }
+          };
+          appendCurve(pts[0], pts[1], pts[2], pts[3]);
+          appendCurve(pts[3], pts[4], pts[5], pts[6]);
+          appendCurve(pts[6], pts[7], pts[8], pts[9]);
+          return out;
+        };
+        const pushVertex = (buffer, x, y, centerY, edgeCoord) => {
+          buffer.push(x, y, centerY, edgeCoord);
+        };
+        const appendPolylineTriangles = (polyline, buffer) => {
+          for (let i = 0; i < polyline.length - 1; ++i) {
+            const p0 = polyline[i];
+            const p1 = polyline[i + 1];
+            const dx = p1.x - p0.x;
+            const dy = p1.y - p0.y;
+            const len = Math.hypot(dx, dy);
+            if (!len) continue;
+            const nx = (-dy / len) * currentLineHalfWidth;
+            const ny = (dx / len) * currentLineHalfWidth;
+            pushVertex(buffer, p0.x + nx, p0.y + ny, p0.y, 1.0);
+            pushVertex(buffer, p0.x - nx, p0.y - ny, p0.y, -1.0);
+            pushVertex(buffer, p1.x + nx, p1.y + ny, p1.y, 1.0);
+            pushVertex(buffer, p1.x + nx, p1.y + ny, p1.y, 1.0);
+            pushVertex(buffer, p0.x - nx, p0.y - ny, p0.y, -1.0);
+            pushVertex(buffer, p1.x - nx, p1.y - ny, p1.y, -1.0);
+          }
+        };
+        const buildGeometry = () => {
+          const triangles = [];
+          seed = seedBase;
+          t = tabsize / 200.0;
+          j = jitter / 100.0;
+
+          vertical = false;
+          for (yi = 1; yi < yn; ++yi) {
+            xi = 0;
+            first();
+            for (; xi < xn; ++xi) {
+              appendPolylineTriangles(sampleCurveChain(segmentPoints(false)), triangles);
+              next();
+            }
+          }
+
+          vertical = true;
+          for (xi = 1; xi < xn; ++xi) {
+            yi = 0;
+            first();
+            for (; yi < yn; ++yi) {
+              appendPolylineTriangles(sampleCurveChain(segmentPoints(true)), triangles);
+              next();
+            }
+          }
+
+          return new Float32Array(triangles);
+        };
+
+        const createShader = (type, source) => {
+          const shader = gl.createShader(type);
+          if (!shader) return null;
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error(gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+          }
+          return shader;
+        };
+        const vertexShader = createShader(
+          gl.VERTEX_SHADER,
+          `
+            attribute vec2 aPosition;
+            attribute float aCenterY;
+            attribute float aEdgeCoord;
+            uniform vec2 uResolution;
+            varying vec2 vUv;
+            varying float vEdgeCoord;
+            void main() {
+              vec2 zeroToOne = aPosition / uResolution;
+              vec2 clip = zeroToOne * 2.0 - 1.0;
+              gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+              vUv = vec2(zeroToOne.x, aCenterY / uResolution.y);
+              vEdgeCoord = aEdgeCoord;
+            }
+          `,
+        );
+        const fragmentShader = createShader(
+          gl.FRAGMENT_SHADER,
+          `
+            precision mediump float;
+            uniform float uTime;
+            uniform float uCycleDuration;
+            uniform float uActivePortion;
+            varying vec2 vUv;
+            varying float vEdgeCoord;
+            float hash(float n) {
+              return fract(sin(n) * 43758.5453123);
+            }
+            void main() {
+              float cycle = fract(uTime / uCycleDuration);
+              float sweep = min(cycle / uActivePortion, 1.0);
+              float center = mix(-0.16, 1.16, sweep);
+              float strike = center;
+              float frontAnchor = strike + 0.22;
+              float frontGlowDist = abs(vUv.y - frontAnchor);
+              float frontDelta = frontAnchor - vUv.y;
+              float front =
+                smoothstep(-0.05, 0.0, frontDelta) *
+                (1.0 - smoothstep(0.0, 0.085, frontDelta));
+              float frontGlow = smoothstep(0.095, 0.0, frontGlowDist);
+              float behind = frontAnchor - vUv.y;
+              float afterglow =
+                (1.0 - smoothstep(0.02, 0.56, behind)) *
+                step(0.0, behind);
+              float cometLane = floor(vUv.x * 6.0);
+              float cometPhase = fract(vUv.x * 6.0);
+              float cometHead = smoothstep(0.16, 0.0, abs(cometPhase - 0.5));
+              float cometTrail =
+                (1.0 - smoothstep(0.0, 0.32, 0.5 - cometPhase)) *
+                step(cometPhase, 0.5);
+              float cometGlow = smoothstep(0.42, 0.0, abs(cometPhase - 0.5));
+              float cometStrength = 0.75 + 0.25 * hash(cometLane + floor(uTime * 2.0) * 11.0);
+              float comet = (cometHead * 1.2 + cometTrail * 0.42) * cometStrength;
+              float cometBloom = cometGlow * cometStrength;
+              float alpha = afterglow * 0.2 + frontGlow * 0.18;
+              alpha += front * 0.64;
+              alpha += front * comet * 1.7;
+              alpha += frontGlow * cometBloom * 0.95;
+              float edgeT = abs(vEdgeCoord);
+              float normalEdge = 1.0 - smoothstep(0.04, 1.0, edgeT);
+              float cometEdge = 1.0 - smoothstep(0.0, 1.0, edgeT);
+              float edgeSoft = mix(normalEdge, cometEdge, clamp(cometBloom * 0.95, 0.0, 1.0));
+              alpha *= edgeSoft;
+              alpha *= smoothstep(0.0, 0.08, vUv.y);
+              alpha *= smoothstep(1.05, 0.6, vUv.y);
+              alpha *= 0.82;
+              vec3 bgTint = vec3(0.08, 0.11, 0.18);
+              vec3 glowTint = vec3(0.72, 0.79, 0.96);
+              float headMix = clamp(front * 0.95 + frontGlow * 0.45 + cometBloom * 0.55, 0.0, 1.0);
+              vec3 color = mix(bgTint, glowTint, clamp(afterglow * 0.9 + headMix, 0.0, 1.0));
+              color = mix(color, vec3(1.0), clamp(front * 0.8 + comet * 0.55, 0.0, 1.0));
+              gl_FragColor = vec4(color, alpha);
+            }
+          `,
+        );
+        if (!vertexShader || !fragmentShader) return;
+        const program = gl.createProgram();
+        if (!program) return;
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+          console.error(gl.getProgramInfoLog(program));
+          return;
+        }
+        gl.useProgram(program);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        const positionLoc = gl.getAttribLocation(program, "aPosition");
+        const centerYLoc = gl.getAttribLocation(program, "aCenterY");
+        const edgeCoordLoc = gl.getAttribLocation(program, "aEdgeCoord");
+        const resolutionLoc = gl.getUniformLocation(program, "uResolution");
+        const timeLoc = gl.getUniformLocation(program, "uTime");
+        const cycleDurationLoc = gl.getUniformLocation(program, "uCycleDuration");
+        const activePortionLoc = gl.getUniformLocation(program, "uActivePortion");
+        const buffer = gl.createBuffer();
+        if (!buffer) return;
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.enableVertexAttribArray(positionLoc);
+        gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 16, 0);
+        gl.enableVertexAttribArray(centerYLoc);
+        gl.vertexAttribPointer(centerYLoc, 1, gl.FLOAT, false, 16, 8);
+        gl.enableVertexAttribArray(edgeCoordLoc);
+        gl.vertexAttribPointer(edgeCoordLoc, 1, gl.FLOAT, false, 16, 12);
+
+        const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+        const clearFrame = () => {
+          gl.viewport(0, 0, deviceWidth, deviceHeight);
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+        };
+        const draw = (timeSeconds) => {
+          gl.viewport(0, 0, deviceWidth, deviceHeight);
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.useProgram(program);
+          gl.uniform2f(resolutionLoc, width, height);
+          gl.uniform1f(timeLoc, timeSeconds);
+          gl.uniform1f(cycleDurationLoc, cycleDuration);
+          gl.uniform1f(activePortionLoc, activePortion);
+          gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+        };
+        const frame = (nowMs) => {
+          raf = 0;
+          if (!shouldAnimate) return;
+          if (nowMs - lastFrameMs >= targetFrameMs) {
+            lastFrameMs = nowMs;
+            draw(nowMs * 0.001);
+          }
+          raf = window.requestAnimationFrame(frame);
+        };
+        const startLoop = () => {
+          if (raf || !shouldAnimate) return;
+          raf = window.requestAnimationFrame(frame);
+        };
+        const stopLoop = () => {
+          if (raf) {
+            window.cancelAnimationFrame(raf);
+            raf = 0;
+          }
+          clearFrame();
+        };
+        const updateAnimationState = () => {
+          shouldAnimate = !(prefersReducedMotion.matches || !isInView || !isVisible);
+          canvas.classList.toggle("is-paused", !shouldAnimate);
+          if (shouldAnimate) startLoop();
+          else stopLoop();
+        };
+        const render = () => {
+          width = document.documentElement.clientWidth;
+          height = window.innerHeight;
+          const dpr = Math.min(window.devicePixelRatio || 1, 3);
+          deviceWidth = Math.max(1, Math.round(width * dpr));
+          deviceHeight = Math.max(1, Math.round(height * dpr));
+          canvas.width = deviceWidth;
+          canvas.height = deviceHeight;
+          canvas.style.height = `${height}px`;
+          const isMobile = window.innerWidth <= 720;
+          const pieceWidth = isMobile ? mobilePieceWidth : basePieceWidth;
+          const pieceHeight = isMobile ? mobilePieceWidth * mobilePieceAspect : basePieceHeight;
+          currentLineHalfWidth = isMobile ? mobileLineHalfWidth : desktopLineHalfWidth;
+          xn = Math.max(2, Math.ceil(width / pieceWidth));
+          if (isMobile) {
+            const actualPieceWidth = width / xn;
+            const actualPieceHeight = actualPieceWidth * mobilePieceAspect;
+            yn = Math.max(2, Math.ceil(height / actualPieceHeight));
+          } else {
+            yn = Math.max(2, Math.ceil(height / pieceHeight));
+          }
+          const geometry = buildGeometry();
+          vertexCount = geometry.length / 4;
+          gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry, gl.STATIC_DRAW);
+          clearFrame();
+          if (shouldAnimate) draw(performance.now() * 0.001);
+        };
+
+        render();
+        updateAnimationState();
+
+        const heroWrap = document.querySelector(".hero-wrap");
+        if (heroWrap && "IntersectionObserver" in window) {
+          const observer = new IntersectionObserver(
+            ([entry]) => {
+              isInView = !!entry?.isIntersecting;
+              updateAnimationState();
+            },
+            { threshold: 0.08 },
+          );
+          observer.observe(heroWrap);
+        }
+
+        document.addEventListener("visibilitychange", () => {
+          isVisible = document.visibilityState !== "hidden";
+          updateAnimationState();
+        });
+        prefersReducedMotion.addEventListener?.("change", updateAnimationState);
+
+        window.addEventListener("resize", () => {
+          render();
+        });
+      })();
+
+      // Hero wave is WebGL-rendered and only animates while visible.
+
+      // Minimal syntax highlighter for feature code examples
+      // Syntax highlight feature examples and approach code blocks with shiki
+      (async function highlightWithShiki() {
+        try {
+          const { codeToHtml } = await import("https://esm.sh/shiki@4.0.2/bundle/web");
+          const pres = document.querySelectorAll(".feat-row pre, .how-code");
+          for (const pre of pres) {
+            const code = pre.textContent || "";
+            if (!code.trim()) continue;
+            const isWat = pre.classList.contains("wat");
+            const isShell = pre.classList.contains("shell");
+            const lang = isWat ? "wasm" : isShell ? "shellscript" : "javascript";
+            const html = await codeToHtml(code.trim(), { lang, theme: "material-theme-ocean" });
+            // Extract inner HTML from shiki's <pre><code>...</code></pre>
+            const match = html.match(/<code[^>]*>([\s\S]*)<\/code>/);
+            if (match) pre.innerHTML = match[1];
+          }
+        } catch {
+          // Shiki failed to load — keep unhighlighted code
+        }
+      })();
+
+      // Feature table toggles
+      (function () {
+        const strictToggle = document.getElementById("strict-only-toggle");
+        const hostToggle = document.getElementById("host-support-toggle");
+        const tables = document.querySelector(".feat-tables");
+        if (tables) {
+          const hostRows = Array.from(document.querySelectorAll(".feat-row")).filter((row) =>
+            row.querySelector(".feat-host"),
+          );
+          hostRows.forEach((row) => {
+            const badge = row.querySelector(".feat-badge");
+            if (!(badge instanceof HTMLElement)) return;
+            badge.dataset.origClass = Array.from(badge.classList)
+              .filter((name) => name !== "feat-badge")
+              .join(" ");
+            badge.dataset.origText = badge.textContent || "";
+          });
+          const sync = () => {
+            if (strictToggle) tables.classList.toggle("strict-only", strictToggle.checked);
+            if (hostToggle) tables.classList.toggle("host-off", !hostToggle.checked);
+            const hostEnabled = hostToggle ? hostToggle.checked : true;
+            hostRows.forEach((row) => {
+              const badge = row.querySelector(".feat-badge");
+              if (!(badge instanceof HTMLElement)) return;
+              const origClass = badge.dataset.origClass || "";
+              const origText = badge.dataset.origText || "";
+              badge.className = "feat-badge";
+              if (hostEnabled) {
+                if (origClass) badge.classList.add(...origClass.split(/\s+/).filter(Boolean));
+                badge.textContent = origText;
+              } else {
+                badge.classList.add("none");
+                badge.textContent = "×";
+              }
+            });
+            if (typeof window.updateEditionPassBars === "function") {
+              window.updateEditionPassBars();
+            }
+            if (typeof window.updateConformanceDonut === "function") {
+              window.updateConformanceDonut();
+            }
+          };
+          sync();
+          strictToggle?.addEventListener("change", sync);
+          hostToggle?.addEventListener("change", sync);
+        }
+      })();
+
+      // Toggle details on row click
+      document.querySelectorAll(".feat-row").forEach((row) => {
+        row.addEventListener("click", () => {
+          const d = row.querySelector("details");
+          if (d) d.toggleAttribute("open");
+        });
+      });
+
+      (async function hydrateCompatibilityStat() {
+        const rateEl = document.getElementById("compat-pass-rate");
+        const labelEl = document.getElementById("compat-pass-rate-label");
+        if (!rateEl || !labelEl) return;
+        try {
+          const resp = await fetch("./benchmarks/results/test262-report.json");
+          if (!resp.ok) return;
+          const report = await resp.json();
+          // Use strict-mode summary (tests compatible with ES modules) when available
+          const s = report?.strict_summary ?? report?.summary;
+          const pass = Number(s?.pass ?? 0);
+          const total = Number(s?.total ?? 0);
+          if (!Number.isFinite(pass) || !Number.isFinite(total) || total <= 0) return;
+          const pct = ((pass / total) * 100).toFixed(1);
+          rateEl.textContent = `${pct}%`;
+          labelEl.textContent = "compatible with the official ECMAScript Test Suite (strict mode)";
+        } catch {
+          // Keep the build-time fallback when the report file is unavailable.
+        }
+      })();
+
+      // Conformance diagrams are now rendered by <t262-donut> and <t262-edition-bars> web components.
+
+      (async function hydrateConformanceHistoryChart() {
+        const chart = document.getElementById("conformance-history-chart");
+        if (!chart) return;
+        try {
+          const projectStart = new Date("2026-02-27T00:00:00Z");
+          const parseRunTimestamp = (value) => {
+            const raw = String(value || "");
+            if (!raw) return null;
+            const isoDate = new Date(raw);
+            if (Number.isFinite(isoDate.getTime())) return isoDate;
+            const compact = raw.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+            if (compact) {
+              const [, y, m, d, hh, mm, ss] = compact;
+              return new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
+            }
+            return null;
+          };
+          const formatLabel = (date) =>
+            `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+          const resp = await fetch("./benchmarks/results/runs/index.json");
+          if (!resp.ok) return;
+          const runs = await resp.json();
+          if (!Array.isArray(runs)) return;
+
+          const rawPoints = runs
+            .filter((run) => Number(run?.total ?? 0) > 1 && Number(run?.pass ?? 0) >= 0)
+            .sort((a, b) => {
+              const ta = parseRunTimestamp(a.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
+              const tb = parseRunTimestamp(b.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
+              return ta - tb;
+            })
+            .map((run) => {
+              const total = Number(run.total || 0);
+              const pass = Number(run.pass || 0);
+              const ts = String(run.timestamp || "");
+              const date = parseRunTimestamp(ts);
+              return {
+                label: date ? formatLabel(date) : "",
+                timestamp: ts,
+                time: date?.getTime() ?? 0,
+                pass,
+                total,
+                rate: total > 0 ? (pass / total) * 100 : 0,
+              };
+            })
+            .filter((point) => point.total > 0 && point.rate >= 5);
+
+          const points = [];
+          for (const point of rawPoints) {
+            const prev = points.at(-1);
+            if (prev && point.total < prev.total * 0.75) continue;
+            points.push(point);
+          }
+
+          const firstPoint = points[0];
+          if (firstPoint?.timestamp) {
+            const firstDate = new Date(firstPoint.timestamp);
+            if (
+              Number.isFinite(firstDate.getTime()) &&
+              firstDate.getTime() - projectStart.getTime() > 12 * 60 * 60 * 1000
+            ) {
+              points.unshift({
+                label: formatLabel(projectStart),
+                timestamp: projectStart.toISOString(),
+                time: projectStart.getTime(),
+                pass: 0,
+                total: 0,
+                rate: 0,
+              });
+            }
+          }
+
+          const lastRun = runs
+            .filter((run) => Number(run?.total ?? 0) > 1 && Number(run?.pass ?? 0) >= 0)
+            .sort((a, b) => {
+              const ta = parseRunTimestamp(a.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
+              const tb = parseRunTimestamp(b.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
+              return ta - tb;
+            })
+            .at(-1);
+
+          if (lastRun) {
+            const ts = String(lastRun.timestamp || "");
+            const total = Number(lastRun.total || 0);
+            const pass = Number(lastRun.pass || 0);
+            const lastRate = total > 0 ? (pass / total) * 100 : 0;
+            const lastDate = ts ? new Date(ts) : null;
+            const now = new Date();
+            if (
+              Number.isFinite(lastRate) &&
+              lastRate >= 5 &&
+              lastDate instanceof Date &&
+              Number.isFinite(lastDate.getTime()) &&
+              now.getTime() - lastDate.getTime() > 12 * 60 * 60 * 1000
+            ) {
+              points.push({
+                label: formatLabel(now),
+                timestamp: now.toISOString(),
+                time: now.getTime(),
+                pass,
+                total,
+                rate: lastRate,
+              });
+            }
+          }
+
+          if (points.length === 0) {
+            const now = new Date();
+            points.push(
+              {
+                label: formatLabel(projectStart),
+                timestamp: projectStart.toISOString(),
+                time: projectStart.getTime(),
+                pass: 0,
+                total: 0,
+                rate: 0,
+              },
+              {
+                label: formatLabel(now),
+                timestamp: now.toISOString(),
+                time: now.getTime(),
+                pass: 0,
+                total: 0,
+                rate: 0,
+              },
+            );
+          }
+
+          if (points.length < 2) return;
+
+          chart.setAttribute("labels-key", "label");
+          chart.setAttribute(
+            "series",
+            JSON.stringify([
+              {
+                key: "rate",
+                color: "#ffffff",
+                fill: true,
+              },
+              {
+                key: "pass",
+                color: "rgba(255,255,255,0.82)",
+                axis: "right",
+                lineWidth: 1,
+                lineOpacity: 0.5,
+              },
+              {
+                key: "total",
+                color: "rgba(141, 154, 184, 1)",
+                axis: "right",
+                lineWidth: 1,
+                lineOpacity: 1,
+                dasharray: "1 3",
+              },
+            ]),
+          );
+          chart.data = points;
+        } catch {
+          // Leave the chart empty when the historical run index is unavailable.
+        }
+      })();
+
+      const PROPOSAL_LABEL = "Proposals";
+      const isEditionScope = (edition) =>
+        edition === "ES1" ||
+        edition === "ES2" ||
+        edition === "ES3" ||
+        edition === "≤ ES3" ||
+        edition === "ES5" ||
+        /^ES20\d{2}$/.test(edition);
+      const normalizeEditionLabel = (edition) => (edition === "≤ ES3" || edition === "ES3" ? "ES3 / Core" : edition);
+      const PUBLISHED_EDITION_RELEASE_MONTH = 6;
+      const latestPublishedEditionYear = (referenceDate = new Date()) => {
+        const date =
+          referenceDate instanceof Date && Number.isFinite(referenceDate.getTime()) ? referenceDate : new Date();
+        return date.getUTCMonth() + 1 >= PUBLISHED_EDITION_RELEASE_MONTH
+          ? date.getUTCFullYear()
+          : date.getUTCFullYear() - 1;
+      };
+      const loadEditionBuckets = (() => {
+        let pending;
+        return async () => {
+          if (!pending) {
+            pending = (async () => {
+              const editionsResp = await fetch("./benchmarks/results/test262-editions.json");
+              if (!editionsResp.ok) throw new Error("edition data unavailable");
+              const editions = await editionsResp.json();
+              if (!Array.isArray(editions) || editions.length === 0) {
+                throw new Error("edition data unavailable");
+              }
+
+              const editionList = editions
+                .filter((edition) => isEditionScope(String(edition?.edition || "")))
+                .map((edition) => ({
+                  ...edition,
+                  rawEdition: String(edition.edition || ""),
+                  normalizedEdition: normalizeEditionLabel(String(edition.edition || "")),
+                }));
+              const proposalBucket =
+                editions.find((edition) => String(edition?.edition || "") === PROPOSAL_LABEL) ?? null;
+
+              return {
+                editionList,
+                editionMap: new Map(editionList.map((edition) => [edition.normalizedEdition, edition])),
+                proposalBucket,
+              };
+            })();
+          }
+          return pending;
+        };
+      })();
+
+      (async function hydrateConformanceEditionFilter() {
+        const donutSlot = document.getElementById("conformance-donut-slot");
+        const editionTimeline = document.getElementById("conformance-edition-timeline");
+        const strictToggle = document.getElementById("strict-only-toggle");
+        const hostToggle = document.getElementById("host-support-toggle");
+        if (!donutSlot || !(editionTimeline instanceof HTMLElement)) return;
+
+        const donutStyle = "--t262-bg: var(--bg, #060a14)";
+        const renderDonut = (summary, captionMain = "ECMAScript", captionSub = "conformance") => {
+          const pass = Number(summary?.pass ?? 0);
+          const fail = Number(summary?.fail ?? 0);
+          const ce = Number(summary?.ce ?? 0);
+          const skip = Number(summary?.skip ?? 0);
+          const total = Number(summary?.total ?? pass + fail + ce + skip);
+          let donut = donutSlot.querySelector("t262-donut");
+          if (!(donut instanceof HTMLElement)) {
+            donut = document.createElement("t262-donut");
+            donutSlot.replaceChildren(donut);
+          }
+          donut.setAttribute("pass", String(pass));
+          donut.setAttribute("fail", String(fail));
+          donut.setAttribute("ce", String(ce));
+          donut.setAttribute("skip", String(skip));
+          donut.setAttribute("total", String(total));
+          donut.setAttribute("caption-main", captionMain);
+          donut.setAttribute("caption-sub", captionSub);
+          donut.setAttribute("style", donutStyle);
+        };
+        const normalizeSummary = (summary, fallback = {}) => {
+          const pass = Number(summary?.pass ?? fallback.pass ?? 0);
+          const fail = Number(summary?.fail ?? fallback.fail ?? 0);
+          const ce =
+            Number(summary?.ce ?? 0) ||
+            Number(summary?.compile_error ?? 0) + Number(summary?.compile_timeout ?? 0) ||
+            Number(fallback.ce ?? 0);
+          const skip = Number(summary?.skip ?? fallback.skip ?? 0);
+          const total = Number(summary?.total ?? fallback.total ?? pass + fail + ce + skip);
+          return { pass, fail, ce, skip, total };
+        };
+        const statusRatio = (filtered, base, key) => {
+          const baseValue = Number(base?.[key] ?? 0);
+          if (baseValue <= 0) return 1;
+          return Math.max(0, Math.min(1, Number(filtered?.[key] ?? 0) / baseValue));
+        };
+        const applySummaryRatios = (summary, ratios) => {
+          const pass = Math.round(summary.pass * ratios.pass);
+          const fail = Math.round(summary.fail * ratios.fail);
+          const ce = Math.round(summary.ce * ratios.ce);
+          const skip = Math.round(summary.skip * ratios.skip);
+          return { pass, fail, ce, skip, total: pass + fail + ce + skip };
+        };
+        const featureRowScore = (row, hostEnabled) => {
+          const badge = row.querySelector(".feat-badge");
+          if (!badge) return 0;
+          if (!hostEnabled && row.querySelector(".feat-host")) return 0;
+          const savedClasses = badge.dataset.origClass || Array.from(badge.classList).join(" ");
+          const classNames = new Set(savedClasses.split(/\s+/).filter(Boolean));
+          if (classNames.has("full")) return 1;
+          if (classNames.has("partial")) return 0.5;
+          return 0;
+        };
+        const hostOffPassScale = () => {
+          const strictOnly = strictToggle ? strictToggle.checked : false;
+          const rows = Array.from(document.querySelectorAll(".feat-row")).filter(
+            (row) => !(strictOnly && row.hasAttribute("data-sloppy")),
+          );
+          const hostOnScore = rows.reduce((sum, row) => sum + featureRowScore(row, true), 0);
+          if (hostOnScore <= 0) return 1;
+          const hostOffScore = rows.reduce((sum, row) => sum + featureRowScore(row, false), 0);
+          return Math.max(0, Math.min(1, hostOffScore / hostOnScore));
+        };
+        const applyHostMode = (summary) => {
+          const hostEnabled = hostToggle ? hostToggle.checked : true;
+          if (hostEnabled) return summary;
+          const nextPass = Math.round(summary.pass * hostOffPassScale());
+          const movedToFail = Math.max(0, summary.pass - nextPass);
+          return {
+            ...summary,
+            pass: nextPass,
+            fail: summary.fail + movedToFail,
+          };
+        };
+
+        try {
+          const reportResp = await fetch("./benchmarks/results/test262-report.json");
+          if (!reportResp.ok) throw new Error("conformance data unavailable");
+
+          const report = await reportResp.json();
+          const overallSummary = report?.summary;
+          if (!overallSummary) throw new Error("overall summary unavailable");
+
+          const overall = normalizeSummary(overallSummary);
+          const fullSummary = report?.full_summary ?? overallSummary;
+          const withProposal = normalizeSummary(fullSummary, overall);
+          const strictSummary = report?.strict_summary ? normalizeSummary(report.strict_summary, overall) : null;
+          const strictRatios = strictSummary
+            ? {
+                pass: statusRatio(strictSummary, overall, "pass"),
+                fail: statusRatio(strictSummary, overall, "fail"),
+                ce: statusRatio(strictSummary, overall, "ce"),
+                skip: statusRatio(strictSummary, overall, "skip"),
+              }
+            : null;
+          const proposalDiffers =
+            withProposal.pass !== overall.pass ||
+            withProposal.fail !== overall.fail ||
+            withProposal.ce !== overall.ce ||
+            withProposal.skip !== overall.skip ||
+            withProposal.total !== overall.total;
+
+          let lastDetail = null;
+          const conformanceOptions = () => {
+            const strictOnly = strictToggle ? strictToggle.checked : false;
+            const hostEnabled = hostToggle ? hostToggle.checked : true;
+            return {
+              strictOnly,
+              hostEnabled,
+              captionSub:
+                strictOnly && !hostEnabled
+                  ? "strict standalone estimate"
+                  : strictOnly
+                    ? "strict conformance"
+                    : hostEnabled
+                      ? "conformance"
+                      : "standalone estimate",
+            };
+          };
+          const applyConformanceOptions = (summary, { exactStrictSummary = null } = {}) => {
+            const options = conformanceOptions();
+            let next = normalizeSummary(summary);
+            if (options.strictOnly) {
+              next = exactStrictSummary
+                ? normalizeSummary(exactStrictSummary)
+                : strictRatios
+                  ? applySummaryRatios(next, strictRatios)
+                  : next;
+            }
+            return { summary: applyHostMode(next), options };
+          };
+          const applyScopeFromDetail = (detail) => {
+            if (!detail) return;
+            lastDetail = detail;
+            if (Number.isFinite(detail.publishedLimitRank)) {
+              window.__conformancePublishedLimitRank = detail.publishedLimitRank;
+            }
+
+            const currentScope = detail.scope || "overall";
+            window.__conformanceEditionScope = currentScope;
+            if (currentScope === "overall") {
+              const { summary, options } = applyConformanceOptions(overall, { exactStrictSummary: strictSummary });
+              renderDonut(summary, "ECMAScript", options.captionSub);
+              applyFeatureEditionScope("overall");
+              return;
+            }
+            if (currentScope === "overall+proposal") {
+              const { summary, options } = applyConformanceOptions(withProposal);
+              renderDonut(summary, "ECMAScript + proposals", options.captionSub);
+              applyFeatureEditionScope("overall+proposal");
+              return;
+            }
+
+            const scope = detail.scopeMap instanceof Map ? detail.scopeMap.get(currentScope) : null;
+            if (!scope) return;
+            const { summary, options } = applyConformanceOptions(scope.summary);
+            renderDonut(summary, scope.captionMain, options.captionSub);
+            applyFeatureEditionScope(currentScope);
+          };
+          window.updateConformanceDonut = () => {
+            if (lastDetail) applyScopeFromDetail(lastDetail);
+          };
+          strictToggle?.addEventListener("change", window.updateConformanceDonut);
+          hostToggle?.addEventListener("change", window.updateConformanceDonut);
+
+          editionTimeline.addEventListener("edition-change", (event) => {
+            applyScopeFromDetail(event.detail);
+          });
+
+          if (report.timestamp) {
+            editionTimeline.setAttribute("reference-timestamp", report.timestamp);
+          } else {
+            editionTimeline.removeAttribute("reference-timestamp");
+          }
+          if (proposalDiffers) {
+            editionTimeline.setAttribute("show-proposals", "");
+          } else {
+            editionTimeline.removeAttribute("show-proposals");
+          }
+          editionTimeline.setAttribute("value", "overall");
+        } catch {
+          window.__conformanceEditionScope = "overall";
+        }
+      })();
+
+      const featureEditionRank = new Map([
+        ["ES1", 0],
+        ["ES2", 1],
+        ["ES3 / Core", 2],
+        ["ES5", 3],
+        ["ES2015", 4],
+        ["ES2016", 5],
+        ["ES2017", 6],
+        ["ES2018", 7],
+        ["ES2019", 8],
+        ["ES2020", 9],
+        ["ES2021", 10],
+        ["ES2022", 11],
+        ["ES2023", 12],
+        ["ES2024", 13],
+        ["ES2025", 14],
+        ["ES2026", 15],
+        ["Legacy / Deprecated", 98],
+        ["Proposals", 99],
+      ]);
+
+      const getFeatureSectionLabel = (section) =>
+        section.querySelector(".feat-edition-label")?.textContent?.trim() ||
+        section.querySelector(".feat-edition")?.textContent?.trim() ||
+        "";
+      const isStandardFeatureEditionLabel = (label) => {
+        const rank = featureEditionRank.get(label);
+        return typeof rank === "number" && rank < 98;
+      };
+      const getFeatureScopeLimitRank = (scopeValue) => {
+        if (!scopeValue || scopeValue === "overall" || scopeValue === "overall+proposal") return null;
+        return featureEditionRank.get(normalizeEditionLabel(scopeValue)) ?? null;
+      };
+      const getPublishedFeatureLimitRank = () => {
+        const explicit = Number(window.__conformancePublishedLimitRank);
+        if (Number.isFinite(explicit)) return explicit;
+        const fallbackLabel = normalizeEditionLabel(`ES${latestPublishedEditionYear(new Date())}`);
+        return featureEditionRank.get(fallbackLabel) ?? Number.MAX_SAFE_INTEGER;
+      };
+      const applyFeatureEditionScope = (scopeValue = "overall") => {
+        if (scopeValue === "overall+proposal") {
+          document.querySelectorAll(".feat-section").forEach((section) => {
+            section.hidden = false;
+          });
+          return;
+        }
+        if (scopeValue === "overall") {
+          const publishedLimitRank = getPublishedFeatureLimitRank();
+          document.querySelectorAll(".feat-section").forEach((section) => {
+            const label = getFeatureSectionLabel(section);
+            const rank = featureEditionRank.get(label);
+            if (label === "Proposals") {
+              section.hidden = true;
+              return;
+            }
+            if (typeof rank === "number" && isStandardFeatureEditionLabel(label)) {
+              section.hidden = rank > publishedLimitRank;
+              return;
+            }
+            section.hidden = false;
+          });
+          return;
+        }
+        const limitRank = getFeatureScopeLimitRank(scopeValue);
+        document.querySelectorAll(".feat-section").forEach((section) => {
+          const label = getFeatureSectionLabel(section);
+          const rank = featureEditionRank.get(label);
+          if (typeof rank !== "number") {
+            section.hidden = true;
+            return;
+          }
+          if (!isStandardFeatureEditionLabel(label)) {
+            section.hidden = true;
+            return;
+          }
+          section.hidden = rank > limitRank;
+        });
+      };
+
+      const sortFeatureSectionsChronologically = () => {
+        document.querySelectorAll(".feat-panel").forEach((panel) => {
+          const sections = Array.from(panel.children).filter(
+            (child) => child instanceof HTMLElement && child.classList.contains("feat-section"),
+          );
+          if (sections.length < 2) return;
+
+          sections
+            .slice()
+            .sort(
+              (a, b) =>
+                (featureEditionRank.get(getFeatureSectionLabel(a)) ?? Number.MAX_SAFE_INTEGER) -
+                (featureEditionRank.get(getFeatureSectionLabel(b)) ?? Number.MAX_SAFE_INTEGER),
+            )
+            .forEach((section) => panel.appendChild(section));
+        });
+      };
+
+      sortFeatureSectionsChronologically();
+      applyFeatureEditionScope();
+
+      (function hydrateEditionPassBars() {
+        const strictToggle = document.getElementById("strict-only-toggle");
+        const hostToggle = document.getElementById("host-support-toggle");
+
+        const scoreRow = (row, hostEnabled) => {
+          const badge = row.querySelector(".feat-badge");
+          const usesHost = !!row.querySelector(".feat-host");
+          if (!badge) return 0;
+          if (usesHost && !hostEnabled) return 0;
+          if (badge.classList.contains("full")) return 1;
+          if (badge.classList.contains("partial")) return 0.5;
+          return 0;
+        };
+
+        const ensureEditionLabel = (section) => {
+          const el = section.querySelector(".feat-edition");
+          if (!(el instanceof HTMLElement)) return null;
+          let labelSpan = el.querySelector(".feat-edition-label");
+          if (!labelSpan) {
+            const label = (el.textContent || "").trim();
+            labelSpan = document.createElement("span");
+            labelSpan.className = "feat-edition-label";
+            labelSpan.textContent = label;
+            el.textContent = "";
+            el.appendChild(labelSpan);
+          }
+          return { el, labelSpan };
+        };
+
+        const ensureEditionPassBar = (header) => {
+          let bar = header.querySelector(".feat-edition-passbar");
+          if (!bar) {
+            bar = document.createElement("span");
+            bar.className = "feat-edition-passbar";
+            bar.innerHTML = `
+              <span class="feat-edition-passbar-track">
+                <span class="feat-edition-passbar-fill"></span>
+              </span>
+              <span class="feat-edition-passbar-text"></span>
+            `;
+            header.appendChild(bar);
+          }
+          return bar;
+        };
+
+        const renderHeuristicEditionPassBars = () => {
+          const strictOnly = strictToggle ? strictToggle.checked : false;
+          const hostEnabled = hostToggle ? hostToggle.checked : true;
+
+          document.querySelectorAll(".feat-section").forEach((section) => {
+            const header = ensureEditionLabel(section)?.el;
+            if (!header) return;
+            const bar = ensureEditionPassBar(header);
+
+            const rows = Array.from(section.querySelectorAll(".feat-row")).filter((row) => {
+              if (strictOnly && row.hasAttribute("data-sloppy")) return false;
+              return true;
+            });
+
+            const total = rows.length;
+            const score = rows.reduce((sum, row) => sum + scoreRow(row, hostEnabled), 0);
+            const pct = total > 0 ? Math.round((score / total) * 100) : 0;
+            const fill = bar.querySelector(".feat-edition-passbar-fill");
+            const text = bar.querySelector(".feat-edition-passbar-text");
+            if (fill) fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+            if (text) text.textContent = `${pct}%`;
+          });
+        };
+
+        const ensureGeneratedEditionSection = (panel, label) => {
+          const existing = Array.from(panel.querySelectorAll(".feat-section")).find(
+            (section) => getFeatureSectionLabel(section) === label,
+          );
+          if (existing) return existing;
+
+          const section = document.createElement("div");
+          section.className = "feat-section";
+          section.dataset.generatedEdition = "true";
+          section.innerHTML = `
+            <div class="feat-edition">${label}</div>
+            <div class="feat-note">
+              Tracked via the current Test262 edition buckets. Curated landing-page feature examples for this edition are not listed yet.
+            </div>
+          `;
+          panel.appendChild(section);
+          return section;
+        };
+
+        const updateEditionPassBars = async () => {
+          try {
+            const { editionList, editionMap, proposalBucket } = await loadEditionBuckets();
+            const panel = document.querySelector(".feat-panel");
+            if (panel instanceof HTMLElement) {
+              editionList.forEach((edition) => {
+                ensureGeneratedEditionSection(panel, edition.normalizedEdition);
+              });
+              sortFeatureSectionsChronologically();
+              applyFeatureEditionScope(window.__conformanceEditionScope || "overall");
+            }
+
+            document.querySelectorAll(".feat-section").forEach((section) => {
+              const ensured = ensureEditionLabel(section);
+              if (!ensured) return;
+              const label = ensured.labelSpan.textContent?.trim() || "";
+              const bucket = label === "Proposals" ? proposalBucket : editionMap.get(label);
+              const existingBar = ensured.el.querySelector(".feat-edition-passbar");
+
+              if (!bucket) {
+                existingBar?.remove();
+                return;
+              }
+
+              const bar = ensureEditionPassBar(ensured.el);
+              const fill = bar.querySelector(".feat-edition-passbar-fill");
+              const text = bar.querySelector(".feat-edition-passbar-text");
+              const pct = Math.max(0, Math.min(100, Number(bucket.pct ?? 0)));
+              const title = `${bucket.pass.toLocaleString()} pass, ${bucket.fail.toLocaleString()} fail, ${bucket.ce.toLocaleString()} CE, ${bucket.skip.toLocaleString()} skip (${bucket.total.toLocaleString()} total)`;
+              if (fill instanceof HTMLElement) {
+                fill.style.width = `${pct}%`;
+                fill.title = title;
+              }
+              if (text instanceof HTMLElement) {
+                text.textContent = `${pct}%`;
+                text.title = title;
+              }
+              bar.title = title;
+            });
+          } catch {
+            renderHeuristicEditionPassBars();
+          }
+        };
+
+        updateEditionPassBars();
+        window.updateEditionPassBars = updateEditionPassBars;
+      })();
+
+      (async function hydrateFeatureCoverage() {
+        const coverageEl = document.getElementById("feature-coverage");
+        const labelEl = document.getElementById("feature-coverage-label");
+        if (!coverageEl || !labelEl) return;
+        try {
+          const resp = await fetch("./benchmarks/results/test262-report.json");
+          if (!resp.ok) return;
+          const report = await resp.json();
+          const categories = report?.categories;
+          if (!Array.isArray(categories) || categories.length === 0) return;
+
+          let implemented = 0;
+          let total = 0;
+          for (const cat of categories) {
+            const t = Number(cat?.total ?? 0);
+            const s = Number(cat?.skip ?? 0);
+            const p = Number(cat?.pass ?? 0);
+            const effective = t - s;
+            if (effective <= 0) continue;
+            total++;
+            if (p / effective > 0.5) implemented++;
+          }
+          if (total <= 0) return;
+          const pct = Math.round((implemented / total) * 100);
+          coverageEl.textContent = `${pct}%`;
+          labelEl.textContent = `JavaScript feature areas implemented (${implemented}/${total} with >50% tests passing)`;
+        } catch {
+          // Keep the build-time fallback when the report file is unavailable.
+        }
+      })();
+
+      // #1201 — hydrate feature rows with live test262 pass counts.
+      // #1327 — also append "View test results →" link to the expanded
+      // feature body, deep-linking into the feature-report page.
+      //
+      // Each `.feat-row[data-t262-paths]` declares one or more depth-2
+      // test262 path prefixes (e.g. `built-ins/Array,built-ins/Map`).
+      // We sum pass/total across the listed paths and append a small
+      // `<span class="feat-row-counts">N/T</span>` next to the feature
+      // name. Falls back gracefully (no count shown) if the fetch fails
+      // or a path isn't present in the categories data — a wrong
+      // mapping is then visible as a missing count rather than a
+      // misleading number.
+      (async function hydrateFeatureRowCounts() {
+        try {
+          const resp = await fetch("./benchmarks/results/test262-categories.json");
+          if (!resp.ok) return;
+          const payload = await resp.json();
+          const categories = payload?.categories;
+          if (!Array.isArray(categories) || categories.length === 0) return;
+          const byPath = new Map();
+          for (const cat of categories) {
+            const key = cat?.path ?? cat?.name;
+            if (typeof key === "string") byPath.set(key, cat);
+          }
+          const rows = document.querySelectorAll(".feat-row[data-t262-paths]");
+          for (const row of rows) {
+            const paths = (row.getAttribute("data-t262-paths") || "")
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean);
+            let pass = 0;
+            let total = 0;
+            for (const p of paths) {
+              const cat = byPath.get(p);
+              if (!cat) continue;
+              pass += Number(cat.pass ?? 0);
+              const skip = Number(cat.skip ?? 0);
+              total += Number(cat.total ?? 0) - skip;
+            }
+            if (total <= 0) continue;
+            // Only render the count if at least one of the listed
+            // paths was found — otherwise leave the static badge alone
+            // so a stale mapping is visible rather than misleading.
+            const span = document.createElement("span");
+            span.className = "feat-row-counts feature-test-count";
+            span.textContent = `${pass} / ${total}`;
+            const ratio = pass / total;
+            if (ratio >= 0.9) span.dataset.tone = "pass";
+            else if (ratio >= 0.5) span.dataset.tone = "partial";
+            else span.dataset.tone = "fail";
+            // Append inside `.feat-name` to stay within its grid cell —
+            // the row uses a 3-col template (`30px 1fr 24px`) so any
+            // sibling span would land in column 3 (the badge column)
+            // and break alignment.
+            const nameEl = row.querySelector(".feat-name");
+            if (nameEl) nameEl.appendChild(span);
+
+            // #1327 — Inject a "View test results →" link into the
+            // expanded body. Use the first path as the `?feature=`
+            // value (the report page resolves it against
+            // testCategories in feature-examples.json).
+            const details = row.querySelector("details");
+            if (details && paths.length > 0 && !details.querySelector(".feat-report-link")) {
+              const linkWrap = document.createElement("div");
+              linkWrap.className = "feat-report-link";
+              const a = document.createElement("a");
+              a.href = `./benchmarks/feature-report.html?feature=${encodeURIComponent(paths[0])}`;
+              a.textContent = `View test results (${pass}/${total}) →`;
+              a.rel = "noopener";
+              linkWrap.appendChild(a);
+              details.appendChild(linkWrap);
+            }
+          }
+        } catch {
+          // Static badges remain — graceful fallback.
+        }
+      })();
+
+      (async function updateHowItWorksSizes() {
+        try {
+          const resp = await fetch("./benchmarks/results/size-benchmarks.json");
+          if (!resp.ok) return;
+          const data = await resp.json();
+          const { fib, dom } = data.howItWorks ?? {};
+          const el = (id) => document.getElementById(id);
+          const formatKb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
+          const setSize = (id, bytes) => {
+            const node = el(id);
+            if (!node || typeof bytes !== "number") return;
+            node.textContent = `(${formatKb(bytes)} gzipped)`;
+          };
+          if (fib) {
+            setSize("how-fib-js-size", fib.jsSizeGzip);
+            setSize("how-fib-wasm-size", fib.wasmSizeGzip);
+          }
+          if (dom) {
+            setSize("how-dom-js-size", dom.jsSizeGzip);
+            setSize("how-dom-wasm-size", dom.wasmSizeGzip);
+          }
+        } catch {
+          /* keep static fallbacks */
+        }
+      })();
+
+      (function typeHeroTitle() {
+        const title = document.getElementById("hero-title");
+        if (!(title instanceof HTMLElement)) return;
+        const typeEl = title.querySelector(".hero-title-type");
+        const measureEl = title.querySelector(".hero-title-measure");
+        if (!(typeEl instanceof HTMLElement)) return;
+        if (!(measureEl instanceof HTMLElement)) return;
+
+        let texts = [];
+        try {
+          texts = JSON.parse(title.dataset.texts ?? "[]");
+        } catch {
+          texts = [];
+        }
+        texts = texts.filter((text) => typeof text === "string" && text.length > 0);
+        if (!texts.length) {
+          const fallback = typeEl.textContent ?? "";
+          if (fallback) texts = [fallback];
+        }
+        if (!texts.length) return;
+
+        const longestText = texts.reduce((longest, text) => (text.length > longest.length ? text : longest), "");
+        measureEl.textContent = longestText;
+
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          typeEl.textContent = texts[0];
+          typeEl.classList.add("is-done");
+          return;
+        }
+
+        let textIndex = 0;
+        let activeRaf = 0;
+        let cycleTimer = 0;
+
+        const prepareChars = (fullText) => {
+          typeEl.textContent = "";
+          const spans = [];
+          for (const char of fullText) {
+            const span = document.createElement("span");
+            span.className = "hero-title-char";
+            span.textContent = char;
+            typeEl.appendChild(span);
+            spans.push(span);
+          }
+          return spans;
+        };
+
+        const startCycle = (fullText) => {
+          typeEl.classList.remove("is-done");
+          typeEl.classList.add("is-typing");
+          const chars = prepareChars(fullText);
+          let index = 0;
+          let lastStepAt = 0;
+
+          const step = (now) => {
+            if (!lastStepAt) lastStepAt = now;
+            const interval = index < 8 ? 30 : 18;
+            if (now - lastStepAt >= interval) {
+              lastStepAt = now;
+              const span = chars[index];
+              if (!span) {
+                typeEl.classList.remove("is-typing");
+                typeEl.classList.add("is-done");
+                cycleTimer = window.setTimeout(() => {
+                  textIndex = (textIndex + 1) % texts.length;
+                  startCycle(texts[textIndex]);
+                }, 5600);
+                return;
+              }
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  span.classList.add("is-visible");
+                });
+              });
+              index += 1;
+            }
+            activeRaf = window.requestAnimationFrame(step);
+          };
+
+          activeRaf = window.requestAnimationFrame(step);
+        };
+
+        cycleTimer = window.setTimeout(() => {
+          startCycle(texts[textIndex]);
+        }, 260);
+      })();
+    </script>
+  </body>
+</html>

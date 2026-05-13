@@ -1,0 +1,241 @@
+{
+  "timestamp": "2026-05-13T06:00:10.732Z",
+  "summary": {
+    "pass": 2,
+    "fail": 1,
+    "compile_error": 12556,
+    "compile_timeout": 0,
+    "skip": 0,
+    "total": 12559,
+    "compilable": 3,
+    "stale": 0
+  },
+  "official_summary": {
+    "pass": 2,
+    "fail": 1,
+    "compile_error": 12556,
+    "compile_timeout": 0,
+    "skip": 0,
+    "total": 12559,
+    "compilable": 3,
+    "stale": 0
+  },
+  "full_summary": {
+    "total": 13000,
+    "pass": 2,
+    "fail": 1,
+    "compile_error": 12556,
+    "compile_timeout": 0,
+    "skip": 441,
+    "compilable": 3,
+    "stale": 0
+  },
+  "scope_summaries": {
+    "standard": {
+      "pass": 2,
+      "fail": 1,
+      "compile_error": 12556,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 12559
+    },
+    "annex_b": {
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 0,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 0
+    },
+    "proposal": {
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 0,
+      "compile_timeout": 0,
+      "skip": 441,
+      "total": 441
+    }
+  },
+  "categories": [
+    {
+      "name": "language/arguments-object",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 263,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 263
+    },
+    {
+      "name": "language/asi",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 102,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 102
+    },
+    {
+      "name": "language/block-scope",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 145,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 145
+    },
+    {
+      "name": "language/comments",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 52,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 52
+    },
+    {
+      "name": "language/computed-property-names",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 48,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 48
+    },
+    {
+      "name": "language/destructuring",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 19,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 19
+    },
+    {
+      "name": "language/directive-prologue",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 62,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 62
+    },
+    {
+      "name": "language/eval-code",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 347,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 347
+    },
+    {
+      "name": "language/export",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 3,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 3
+    },
+    {
+      "name": "language/expressions",
+      "pass": 2,
+      "fail": 0,
+      "compile_error": 10689,
+      "compile_timeout": 0,
+      "skip": 345,
+      "total": 11036
+    },
+    {
+      "name": "language/function-code",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 217,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 217
+    },
+    {
+      "name": "language/future-reserved-words",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 55,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 55
+    },
+    {
+      "name": "language/global-code",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 42,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 42
+    },
+    {
+      "name": "language/identifier-resolution",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 14,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 14
+    },
+    {
+      "name": "language/identifiers",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 268,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 268
+    },
+    {
+      "name": "language/import",
+      "pass": 0,
+      "fail": 1,
+      "compile_error": 20,
+      "compile_timeout": 0,
+      "skip": 96,
+      "total": 117
+    },
+    {
+      "name": "language/keywords",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 25,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 25
+    },
+    {
+      "name": "language/line-terminators",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 41,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 41
+    },
+    {
+      "name": "language/literals",
+      "pass": 0,
+      "fail": 0,
+      "compile_error": 144,
+      "compile_timeout": 0,
+      "skip": 0,
+      "total": 144
+    }
+  ],
+  "error_categories": {
+    "other": 12556,
+    "type_error": 1
+  },
+  "skip_reasons": {
+    "Proposal excluded from default scope: proposal feature: import defer": 127,
+    "Proposal excluded from default scope: proposal feature: source phase imports": 218,
+    "proposal feature: import defer (no test harness)": 96
+  }
+}

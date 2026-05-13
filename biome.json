@@ -1,0 +1,48 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "organizeImports": {
+    "enabled": true
+  },
+  "files": {
+    "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
+    "ignore": ["**/node_modules/**", "**/dist/**", "**/vendor/**", "tests/test262/**"]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "complexity": {
+        "noForEach": "off",
+        "noBannedTypes": "off",
+        "useLiteralKeys": "off",
+        "useOptionalChain": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "noThenProperty": "off",
+        "noAssignInExpressions": "off",
+        "noImplicitAnyLet": "off",
+        "noGlobalIsNan": "off",
+        "noApproximativeNumericConstant": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off",
+        "useNumberNamespace": "off",
+        "useTemplate": "off",
+        "noUnusedTemplateLiteral": "off",
+        "noParameterAssign": "off",
+        "noUselessElse": "off",
+        "noInferrableTypes": "off",
+        "useSingleVarDeclarator": "off",
+        "useNodejsImportProtocol": "off",
+        "useImportType": "off",
+        "useExponentiationOperator": "off"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2
+  }
+}

@@ -1,0 +1,137 @@
+[
+  {
+    "edition": "≤ ES3",
+    "pass": 220,
+    "fail": 54,
+    "ce": 0,
+    "skip": 0,
+    "total": 274,
+    "pct": 80
+  },
+  {
+    "edition": "ES5",
+    "pass": 8652,
+    "fail": 4065,
+    "ce": 367,
+    "skip": 0,
+    "total": 13084,
+    "pct": 66
+  },
+  {
+    "edition": "ES2015",
+    "pass": 9693,
+    "fail": 5238,
+    "ce": 484,
+    "skip": 0,
+    "total": 15415,
+    "pct": 63
+  },
+  {
+    "edition": "ES2016",
+    "pass": 87,
+    "fail": 34,
+    "ce": 2,
+    "skip": 0,
+    "total": 123,
+    "pct": 71
+  },
+  {
+    "edition": "ES2017",
+    "pass": 384,
+    "fail": 236,
+    "ce": 47,
+    "skip": 0,
+    "total": 667,
+    "pct": 58
+  },
+  {
+    "edition": "ES2018",
+    "pass": 3083,
+    "fail": 1103,
+    "ce": 65,
+    "skip": 0,
+    "total": 4251,
+    "pct": 73
+  },
+  {
+    "edition": "ES2019",
+    "pass": 77,
+    "fail": 58,
+    "ce": 1,
+    "skip": 0,
+    "total": 136,
+    "pct": 57
+  },
+  {
+    "edition": "ES2020",
+    "pass": 1283,
+    "fail": 503,
+    "ce": 118,
+    "skip": 0,
+    "total": 1904,
+    "pct": 67
+  },
+  {
+    "edition": "ES2021",
+    "pass": 310,
+    "fail": 124,
+    "ce": 29,
+    "skip": 0,
+    "total": 463,
+    "pct": 67
+  },
+  {
+    "edition": "ES2022",
+    "pass": 2828,
+    "fail": 1290,
+    "ce": 116,
+    "skip": 0,
+    "total": 4234,
+    "pct": 67
+  },
+  {
+    "edition": "ES2023",
+    "pass": 203,
+    "fail": 121,
+    "ce": 10,
+    "skip": 0,
+    "total": 334,
+    "pct": 61
+  },
+  {
+    "edition": "ES2024",
+    "pass": 422,
+    "fail": 217,
+    "ce": 6,
+    "skip": 0,
+    "total": 645,
+    "pct": 65
+  },
+  {
+    "edition": "ES2025",
+    "pass": 786,
+    "fail": 467,
+    "ce": 28,
+    "skip": 0,
+    "total": 1281,
+    "pct": 61
+  },
+  {
+    "edition": "ES2026",
+    "pass": 127,
+    "fail": 220,
+    "ce": 2,
+    "skip": 0,
+    "total": 349,
+    "pct": 36
+  },
+  {
+    "edition": "Proposals",
+    "pass": 1363,
+    "fail": 3335,
+    "ce": 188,
+    "skip": 96,
+    "total": 4982,
+    "pct": 27
+  }
+]

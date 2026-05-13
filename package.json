@@ -1,0 +1,128 @@
+{
+  "name": "@loopdive/js2",
+  "version": "0.1.0",
+  "description": "Direct AOT compilation from ECMAScript and TypeScript source to WebAssembly GC",
+  "keywords": [
+    "webassembly",
+    "wasm",
+    "wasm-gc",
+    "compiler",
+    "typescript",
+    "aot",
+    "ahead-of-time",
+    "javascript"
+  ],
+  "homepage": "https://js2.loopdive.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loopdive/js2wasm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/loopdive/js2wasm/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "author": "Thomas Tränkler <git@thomas.traenkler.com>",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "js2": "./dist/cli.js",
+    "js2wasm": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
+    "./optimize": {
+      "types": "./dist/optimize.d.ts",
+      "import": "./dist/optimize.js"
+    },
+    "./cli": "./dist/cli.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "vite build --config vite.config.lib.ts",
+    "build:playground": "vite build --config website/playground/vite.config.ts",
+    "dev": "pnpm run build:compiler-bundle && vite serve --config website/playground/vite.config.ts",
+    "test": "node scripts/run-vitest.mjs run",
+    "test:watch": "node node_modules/vitest/dist/cli.js",
+    "test:262": "bash scripts/run-test262-vitest.sh",
+    "test:262:validate-baseline": "npx tsx scripts/validate-test262-baseline.ts",
+    "check:ir-fallbacks": "npx tsx scripts/check-ir-fallbacks.ts",
+    "test:diff": "npx tsx scripts/diff-test.ts",
+    "test:diff:triage": "npx tsx scripts/diff-triage.ts",
+    "test:diff:gate": "npx tsx scripts/diff-test-gate.ts",
+    "prepublishOnly": "pnpm run build",
+    "refresh:benchmarks": "npx tsx benchmarks/run.ts && pnpm run build:compiler-bundle && node scripts/generate-playground-benchmark-sidebar.mjs && pnpm run generate:size-benchmarks && node scripts/generate-browser-runtime-benchmarks.mjs",
+    "build:compiler-bundle": "esbuild scripts/compiler-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen --external:@typescript/native-preview --external:@typescript/native-preview/*",
+    "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
+    "lint": "biome lint --diagnostic-level=error",
+    "typecheck": "tsc --noEmit",
+    "generate:editions": "npx tsx scripts/generate-editions.ts",
+    "generate:feature-examples": "npx tsx scripts/generate-feature-examples.ts",
+    "generate:size-benchmarks": "npx tsx scripts/generate-size-benchmarks.ts",
+    "generate:browser-runtime-benchmarks": "node scripts/generate-browser-runtime-benchmarks.mjs",
+    "report": "npx tsx scripts/serve-report.ts",
+    "build:pages": "node scripts/run-pages-build.mjs",
+    "deploy:registry-home": "mkdir -p .registry-home && cp website/index.html .registry-home/index.html && node ../file-registry-cli/dist/bin/main.js commit .registry-home -r users/tt/projects/ts2wasm && node ../file-registry-cli/dist/bin/main.js push .registry-home -r users/tt/projects/ts2wasm --public",
+    "upload": "pnpm run build:playground && node ../file-registry-cli/dist/bin/main.js commit && node ../file-registry-cli/dist/bin/main.js push"
+  },
+  "dependencies": {
+    "binaryen": "^125.0.0",
+    "typescript": "^5.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1",
+    "@bytecodealliance/componentize-js": "^0.20.0",
+    "@types/lodash": "^4.17.24",
+    "@types/lodash-es": "^4.17.12",
+    "@types/node": "^22",
+    "@typescript/native-preview": "^7.0.0-dev.20260502.1",
+    "assemblyscript": "^0.28.16",
+    "esbuild": "^0.25.12",
+    "eslint": "^10.0.3",
+    "hono": "^4.12.16",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "lodash": "^4.18.1",
+    "lodash-es": "^4.18.1",
+    "marked": "^18.0.2",
+    "monaco-editor": "^0.55.1",
+    "playwright": "^1.59.1",
+    "porffor": "^0.61.13",
+    "prettier": "^3.8.1",
+    "shiki": "^4.0.2",
+    "ts-morph": "^27.0.2",
+    "vite": "^6",
+    "vite-plugin-dts": "^4",
+    "vitest": "^3",
+    "wabt": "^1.0.39"
+  },
+  "lint-staged": {
+    "*.{ts,js,mjs}": [
+      "prettier --write",
+      "biome lint --diagnostic-level=error --no-errors-on-unmatched"
+    ],
+    "*.json": "prettier --write"
+  },
+  "packageManager": "pnpm@10.30.2+sha512.36cdc707e7b7940a988c9c1ecf88d084f8514b5c3f085f53a2e244c2921d3b2545bc20dd4ebe1fc245feec463bb298aecea7a63ed1f7680b877dc6379d8d0cb4"
+}

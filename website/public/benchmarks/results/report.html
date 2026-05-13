@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script defer src="../../frame-nav-sync.js"></script>
+    <title>js2wasm Test262 Conformance Trend</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #060a14;
+        --surface: rgba(255, 255, 255, 0.05);
+        --surface-hover: rgba(255, 255, 255, 0.08);
+        --border: rgba(255, 255, 255, 0.12);
+        --fg: #ffffff;
+        --fg-soft: rgba(255, 255, 255, 0.68);
+        --fg-faint: rgba(255, 255, 255, 0.46);
+        --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Consolas, monospace;
+        --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --pass: #3fb950;
+        --fail: #f85149;
+        --ce: #d29922;
+        --skip: rgba(255, 255, 255, 0.4);
+        --rate: rgba(255, 255, 255, 0.75);
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--fg);
+        padding: 24px;
+        padding-top: 88px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      h1 {
+        color: var(--fg);
+        margin-bottom: 8px;
+        font-size: 24px;
+        font-weight: 600;
+      }
+      .subtitle {
+        color: var(--fg-faint);
+        margin-bottom: 24px;
+        font-size: 14px;
+      }
+      .stats-row {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+      }
+      .stat-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        padding: 16px 24px;
+        min-width: 140px;
+      }
+      .stat-card .label {
+        color: var(--fg-faint);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .stat-card .value {
+        font-size: 28px;
+        font-weight: bold;
+        margin-top: 4px;
+      }
+      .stat-card .value.pass {
+        color: var(--pass);
+      }
+      .stat-card .value.fail {
+        color: var(--fail);
+      }
+      .stat-card .value.ce {
+        color: var(--ce);
+      }
+      .stat-card .value.skip {
+        color: var(--fg-soft);
+      }
+      .stat-card .value.rate {
+        color: var(--fg);
+      }
+      .chart-container {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        padding: 24px;
+        margin-bottom: 24px;
+      }
+      .chart-container h2 {
+        color: var(--fg-soft);
+        font-size: 16px;
+        margin-bottom: 16px;
+      }
+      svg {
+        width: 100%;
+        height: auto;
+      }
+      .legend {
+        display: flex;
+        gap: 24px;
+        margin-top: 12px;
+        justify-content: center;
+      }
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--fg-faint);
+      }
+      .legend-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+      .table-container {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        padding: 24px;
+      }
+      .table-container h2 {
+        color: var(--fg-soft);
+        font-size: 16px;
+        margin-bottom: 16px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+      th {
+        color: var(--fg-faint);
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      td.num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      tr:hover {
+        background: var(--surface-hover);
+      }
+      .delta {
+        font-size: 11px;
+        margin-left: 4px;
+      }
+      .delta.up {
+        color: var(--pass);
+      }
+      .delta.down {
+        color: var(--fail);
+      }
+      #loading {
+        color: var(--fg-faint);
+        text-align: center;
+        padding: 48px;
+      }
+      .tooltip {
+        position: absolute;
+        background: rgba(6, 10, 20, 0.92);
+        border: 1px solid var(--border);
+        padding: 8px 12px;
+        font-size: 12px;
+        pointer-events: none;
+        display: none;
+        z-index: 10;
+        white-space: nowrap;
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 0.9em;
+      }
+      .donut-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .donut-container h2 {
+        width: 100%;
+      }
+      .baseline-age-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        margin-bottom: 16px;
+        border-radius: 4px;
+        border: 1px solid currentColor;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--fg-faint);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .baseline-age-badge.warn {
+        color: #d29922;
+        background: rgba(210, 153, 34, 0.08);
+      }
+      .baseline-age-badge.alarm {
+        color: #f85149;
+        background: rgba(248, 81, 73, 0.1);
+      }
+      .baseline-age-badge a {
+        color: inherit;
+        text-decoration: underline dotted;
+      }
+    </style>
+  </head>
+  <body>
+    <site-nav base="../../"></site-nav>
+    <h1>js2wasm Test262 Conformance</h1>
+    <p class="subtitle">Historical trend of test262 pass/fail/compile-error counts</p>
+    <p class="subtitle" id="run-timestamp" style="display: none"></p>
+    <div id="baseline-age-badge" class="baseline-age-badge" style="display: none"></div>
+    <label
+      style="
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 12px;
+        cursor: pointer;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.46);
+      "
+    >
+      <input type="checkbox" id="strict-toggle" checked />
+      Strict mode
+    </label>
+
+    <div id="skip-reasons-container" class="table-container" style="display: none; margin-bottom: 24px">
+      <h2>Unsupported Features (Skipped Tests)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Feature / Reason</th>
+            <th class="num">Tests Skipped</th>
+          </tr>
+        </thead>
+        <tbody id="skip-reasons-body"></tbody>
+      </table>
+    </div>
+
+    <div id="loading">Loading data...</div>
+    <div id="content" style="display: none">
+      <div class="stats-row" id="stats-row"></div>
+
+      <div class="chart-container donut-container">
+        <h2>Conformance Score</h2>
+        <t262-donut id="donut-chart"></t262-donut>
+      </div>
+
+      <div class="chart-container">
+        <h2>Conformance Trend</h2>
+        <trend-chart id="chart" mode="line" height="320" x-key="timestamp"></trend-chart>
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-dot" style="background: rgba(255, 255, 255, 0.9)"></div>
+            Pass
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: rgba(255, 255, 255, 0.4)"></div>
+            Fail
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: rgba(255, 255, 255, 0.25)"></div>
+            Compile Error
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: rgba(255, 255, 255, 0.15)"></div>
+            Skip
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: rgba(255, 255, 255, 0.65)"></div>
+            Pass Rate %
+          </div>
+        </div>
+      </div>
+      <div class="table-container">
+        <h2>Run History</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Git Hash</th>
+              <th class="num">Total</th>
+              <th class="num">Pass</th>
+              <th class="num">Fail</th>
+              <th class="num">CE</th>
+              <th class="num">Skip</th>
+              <th class="num">Pass Rate</th>
+            </tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+      const COLORS = {
+        pass: "rgba(255,255,255,0.9)",
+        fail: "rgba(255,255,255,0.4)",
+        ce: "rgba(255,255,255,0.25)",
+        skip: "rgba(255,255,255,0.15)",
+        rate: "rgba(255,255,255,0.65)",
+      };
+
+      async function loadData() {
+        for (const url of ["runs/index.json", "/benchmarks/results/runs/index.json"]) {
+          try {
+            const res = await fetch(url);
+            if (res.ok) return await res.json();
+          } catch {}
+        }
+        document.getElementById("loading").textContent =
+          "Error loading runs/index.json. Serve this directory with a local HTTP server.";
+        return null;
+      }
+
+      function formatDate(ts) {
+        const d = new Date(ts);
+        return (
+          d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+          " " +
+          d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })
+        );
+      }
+
+      function renderStats(data) {
+        const latest = data[data.length - 1];
+        const prev = data.length > 1 ? data[data.length - 2] : null;
+        const passRate = latest.total > 0 ? ((latest.pass / latest.total) * 100).toFixed(1) : "0.0";
+
+        function delta(curr, old) {
+          if (!old) return "";
+          const d = curr - old;
+          if (d === 0) return "";
+          const cls = d > 0 ? "up" : "down";
+          return `<span class="delta ${cls}">${d > 0 ? "+" : ""}${d}</span>`;
+        }
+
+        const row = document.getElementById("stats-row");
+        row.innerHTML = `
+        <div class="stat-card"><div class="label">Pass</div><div class="value pass">${latest.pass.toLocaleString()}${delta(latest.pass, prev?.pass)}</div></div>
+        <div class="stat-card"><div class="label">Fail</div><div class="value fail">${latest.fail.toLocaleString()}${delta(latest.fail, prev?.fail)}</div></div>
+        <div class="stat-card"><div class="label">Compile Error</div><div class="value ce">${latest.ce.toLocaleString()}${delta(latest.ce, prev?.ce)}</div></div>
+        <div class="stat-card"><div class="label">Skip</div><div class="value skip">${latest.skip.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="label">Pass Rate</div><div class="value rate">${passRate}%</div></div>
+      `;
+      }
+
+      function renderChart(data) {
+        if (data.length < 2) {
+          document.getElementById("chart").innerHTML =
+            '<p style="color:#8b949e;text-align:center;padding:24px">Need at least 2 data points for a chart.</p>';
+          return;
+        }
+        const chart = document.getElementById("chart");
+        chart.setAttribute(
+          "series",
+          JSON.stringify([
+            { key: "pass", color: COLORS.pass, lineWidth: 2.5 },
+            { key: "fail", color: COLORS.fail, lineWidth: 2, lineOpacity: 0.8 },
+            { key: "ce", color: COLORS.ce, lineWidth: 2, lineOpacity: 0.8 },
+            { key: "skip", color: COLORS.skip, lineWidth: 1.5, lineOpacity: 0.75 },
+            { key: "passRate", color: COLORS.rate, axis: "right", lineWidth: 2, dasharray: "6,3" },
+          ]),
+        );
+        chart.data = data.map((entry) => ({
+          ...entry,
+          passRate: entry.total > 0 ? (entry.pass / entry.total) * 100 : 0,
+        }));
+      }
+
+      function renderHistory(data) {
+        const tbody = document.getElementById("history-body");
+        // Show newest first
+        const reversed = [...data].reverse();
+        tbody.innerHTML = reversed
+          .map((d, ri) => {
+            const prev = ri < reversed.length - 1 ? reversed[ri + 1] : null;
+            const rate = d.total > 0 ? ((d.pass / d.total) * 100).toFixed(1) : "0.0";
+            function delta(curr, old, invert) {
+              if (!old) return "";
+              const diff = curr - old;
+              if (diff === 0) return "";
+              const good = invert ? diff < 0 : diff > 0;
+              return `<span class="delta ${good ? "up" : "down"}">${diff > 0 ? "+" : ""}${diff}</span>`;
+            }
+            return `<tr>
+          <td>${formatDate(d.timestamp)}</td>
+          <td><code>${d.gitHash}</code></td>
+          <td class="num">${d.total.toLocaleString()}</td>
+          <td class="num">${d.pass.toLocaleString()}${delta(d.pass, prev?.pass, false)}</td>
+          <td class="num">${d.fail.toLocaleString()}${delta(d.fail, prev?.fail, true)}</td>
+          <td class="num">${d.ce.toLocaleString()}${delta(d.ce, prev?.ce, true)}</td>
+          <td class="num">${d.skip.toLocaleString()}</td>
+          <td class="num" style="color:${COLORS.rate}">${rate}%</td>
+        </tr>`;
+          })
+          .join("");
+      }
+
+      let reportUrl = null;
+
+      async function loadReport() {
+        // Try relative path first (works when built into pages-dist),
+        // then try absolute path from repo root (works in local dev)
+        for (const url of ["test262-report.json", "/benchmarks/results/test262-report.json"]) {
+          try {
+            const res = await fetch(url);
+            if (res.ok) {
+              reportUrl = url;
+              return await res.json();
+            }
+          } catch {}
+        }
+        return null;
+      }
+
+      function renderTimestamp(report) {
+        if (!report?.timestamp) return;
+        const el = document.getElementById("run-timestamp");
+        const d = new Date(report.timestamp);
+        el.textContent = "Last run: " + d.toLocaleString();
+        el.style.display = "block";
+      }
+
+      // Render a small coloured badge with baseline age + commit SHA.
+      // Surfaces drift when the committed baseline is stale (issue #1079).
+      function renderBaselineAge(report) {
+        if (!report?.baseline_generated_at) return;
+        const el = document.getElementById("baseline-age-badge");
+        if (!el) return;
+        const generated = new Date(report.baseline_generated_at);
+        if (Number.isNaN(generated.getTime())) return;
+        const ageMs = Date.now() - generated.getTime();
+        const totalMinutes = Math.max(0, Math.floor(ageMs / 60000));
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        const ageText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+        el.classList.remove("warn", "alarm");
+        if (ageMs >= 24 * 3600 * 1000) el.classList.add("alarm");
+        else if (ageMs >= 6 * 3600 * 1000) el.classList.add("warn");
+
+        const sha = typeof report.baseline_sha === "string" ? report.baseline_sha : "";
+        const shortSha = sha ? sha.slice(0, 7) : "";
+        el.innerHTML = "";
+        el.appendChild(document.createTextNode(`Baseline age: ${ageText}`));
+        if (shortSha) {
+          el.appendChild(document.createTextNode(" · commit "));
+          if (/^[a-f0-9]{7,40}$/i.test(sha)) {
+            const a = document.createElement("a");
+            a.href = `https://github.com/loopdive/js2wasm/commit/${sha}`;
+            a.target = "_blank";
+            a.rel = "noopener";
+            a.textContent = shortSha;
+            el.appendChild(a);
+          } else {
+            el.appendChild(document.createTextNode(shortSha));
+          }
+        }
+        const tip =
+          `Baseline generated at ${generated.toISOString()}` +
+          (sha ? ` from commit ${sha}` : "") +
+          (el.classList.contains("alarm")
+            ? "\n⚠ baseline is more than 24h old — consider refreshing via workflow_dispatch"
+            : el.classList.contains("warn")
+              ? "\n⚠ baseline is more than 6h old — consider refreshing via workflow_dispatch"
+              : "");
+        el.title = tip;
+        el.style.display = "inline-flex";
+      }
+
+      function renderSkipReasons(report) {
+        if (!report?.skip_reasons) return;
+        const entries = Object.entries(report.skip_reasons).sort((a, b) => b[1] - a[1]);
+        if (entries.length === 0) return;
+        const container = document.getElementById("skip-reasons-container");
+        const tbody = document.getElementById("skip-reasons-body");
+        tbody.innerHTML = entries
+          .map(([reason, count]) => `<tr><td>${reason}</td><td class="num">${count.toLocaleString()}</td></tr>`)
+          .join("");
+        container.style.display = "block";
+      }
+
+      function applyStrictFilter(data) {
+        const strict = document.getElementById("strict-toggle").checked;
+        if (!strict) return data;
+        return data.map((d) => {
+          const sp = d.strict_pass ?? d.pass;
+          const st = d.strict_total ?? d.total;
+          const sloppy_pass = d.pass - sp;
+          const sloppy_total = d.total - st;
+          const sloppy_fail = Math.max(0, sloppy_total - sloppy_pass);
+          return {
+            ...d,
+            pass: sp,
+            fail: d.fail - sloppy_fail,
+            total: st,
+          };
+        });
+      }
+
+      (async () => {
+        const [rawData, report] = await Promise.all([loadData(), loadReport()]);
+
+        if (report) {
+          renderTimestamp(report);
+          renderBaselineAge(report);
+          renderSkipReasons(report);
+        }
+
+        document.getElementById("loading").style.display = "none";
+
+        function renderAll() {
+          const data = applyStrictFilter(rawData);
+          if (data && data.length > 0) {
+            document.getElementById("content").style.display = "block";
+            renderStats(data);
+            renderChart(data);
+            renderHistory(data);
+          }
+        }
+
+        if (rawData && rawData.length > 0) {
+          renderAll();
+
+          // Wire up the donut component
+          if (reportUrl) {
+            const donut = document.getElementById("donut-chart");
+            donut.setAttribute("src", reportUrl);
+            // Initial strict state: strict-toggle is checked by default, so no include-sloppy
+          }
+
+          document.getElementById("strict-toggle").addEventListener("change", () => {
+            const donut = document.getElementById("donut-chart");
+            if (document.getElementById("strict-toggle").checked) {
+              donut.removeAttribute("include-sloppy");
+            } else {
+              donut.setAttribute("include-sloppy", "");
+            }
+            renderAll();
+          });
+        }
+      })();
+    </script>
+    <script src="../../components/t262-charts.js"></script>
+    <script src="../../components/trend-chart.js"></script>
+    <script src="../../components/site-nav.js"></script>
+  </body>
+</html>
