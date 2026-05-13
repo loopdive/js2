@@ -323,8 +323,8 @@ copyFileIfExists(join(WEBSITE_ROOT, "frame-nav-sync.js"), join(PAGES_DIST, "fram
 // Disable Jekyll processing so all generated assets are published as-is.
 writeFileSync(join(PAGES_DIST, ".nojekyll"), "");
 
-// Emit CNAME so the GitHub Pages custom domain survives every re-deploy.
-copyFile(join(WEBSITE_ROOT, "CNAME"), join(PAGES_DIST, "CNAME"));
+// Emit CNAME when a custom domain is configured for this public export.
+copyFileIfExists(join(WEBSITE_ROOT, "CNAME"), join(PAGES_DIST, "CNAME"));
 
 // Copy web components to pages-dist root.
 const COMPONENTS_DIR = join(WEBSITE_ROOT, "components");
