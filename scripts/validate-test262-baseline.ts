@@ -248,7 +248,7 @@ async function main(): Promise<void> {
   if (failures.length > 5) console.error(`  ... ${failures.length - 5} more`);
   console.error("");
   console.error(`Refresh the committed baseline by manually triggering refresh-committed-baseline.yml on main:`);
-  console.error(`  https://github.com/loopdive/js2wasm/actions/workflows/refresh-committed-baseline.yml`);
+  console.error(`  https://github.com/loopdive/js2/actions/workflows/refresh-committed-baseline.yml`);
   console.error("");
   console.error(
     `Reproduce locally with:  PR_NUMBER=${process.env.PR_NUMBER ?? "<n>"} SAMPLE_SIZE=${SAMPLE_SIZE} npx tsx scripts/validate-test262-baseline.ts`,

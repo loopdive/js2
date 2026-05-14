@@ -295,11 +295,11 @@
 
     <p class="footer">
       Source:
-      <a href="https://github.com/loopdive/js2wasm/blob/main/reports/spec-compliance/summary.json">
+      <a href="https://github.com/loopdive/js2/blob/main/reports/spec-compliance/summary.json">
         reports/spec-compliance/summary.json
       </a>
       ·
-      <a href="https://github.com/loopdive/js2wasm/tree/main/reports/spec-compliance">per-section detail</a>
+      <a href="https://github.com/loopdive/js2/tree/main/reports/spec-compliance">per-section detail</a>
     </p>
 
     <script src="../components/site-nav.js"></script>
@@ -315,7 +315,7 @@
 
       async function load() {
         let data;
-        const attempts = ["../reports/spec-compliance/summary.json", "/reports/spec-compliance/summary.json"];
+        const attempts = ["../reports/spec-compliance/summary.json"];
         for (const url of attempts) {
           try {
             const r = await fetch(url);
@@ -381,7 +381,7 @@
           // Title
           const titleTd = document.createElement("td");
           const a = document.createElement("a");
-          a.href = "https://github.com/loopdive/js2wasm/blob/main/" + s.file;
+          a.href = "https://github.com/loopdive/js2/blob/main/" + s.file;
           a.textContent = s.title;
           titleTd.appendChild(a);
           tr.appendChild(titleTd);

@@ -264,7 +264,7 @@
   </head>
   <body>
     <nav class="nav">
-      <a href="/benchmarks/report.html">Conformance Report</a>
+      <a href="./report.html">Conformance Report</a>
     </nav>
     <h1>Feature Compatibility</h1>
     <p class="subtitle">
@@ -321,7 +321,7 @@
       async function loadData() {
         try {
           const resp = await fetch(
-            "/benchmarks/results/feature-compatibility.json",
+            "./results/feature-compatibility.json",
           );
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           data = await resp.json();

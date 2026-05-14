@@ -324,7 +324,7 @@
       };
 
       async function loadData() {
-        for (const url of ["runs/index.json", "/benchmarks/results/runs/index.json"]) {
+        for (const url of ["runs/index.json"]) {
           try {
             const res = await fetch(url);
             if (res.ok) return await res.json();
@@ -422,9 +422,8 @@
       let reportUrl = null;
 
       async function loadReport() {
-        // Try relative path first (works when built into pages-dist),
-        // then try absolute path from repo root (works in local dev)
-        for (const url of ["test262-report.json", "/benchmarks/results/test262-report.json"]) {
+        // Use a relative path so GitHub project pages keep the repository base path.
+        for (const url of ["test262-report.json"]) {
           try {
             const res = await fetch(url);
             if (res.ok) {
@@ -470,7 +469,7 @@
           el.appendChild(document.createTextNode(" · commit "));
           if (/^[a-f0-9]{7,40}$/i.test(sha)) {
             const a = document.createElement("a");
-            a.href = `https://github.com/loopdive/js2wasm/commit/${sha}`;
+            a.href = `https://github.com/loopdive/js2/commit/${sha}`;
             a.target = "_blank";
             a.rel = "noopener";
             a.textContent = shortSha;

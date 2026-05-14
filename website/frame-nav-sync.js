@@ -1,13 +1,19 @@
 (() => {
   if (window.parent === window) return;
 
-  const CHILD_BASE = "/js2wasm";
   const MESSAGE_TYPE = "js2:navigate";
+
+  function childBase() {
+    if (location.hostname !== "loopdive.github.io") return "";
+    const match = location.pathname.match(/^\/[^/]+(?=\/|$)/);
+    return match ? match[0] : "";
+  }
 
   function normalizeChildPathname(pathname) {
     let path = pathname || "/";
-    if (path.startsWith(CHILD_BASE)) {
-      path = path.slice(CHILD_BASE.length) || "/";
+    const base = childBase();
+    if (base && path.startsWith(base)) {
+      path = path.slice(base.length) || "/";
     }
     if (!path.startsWith("/")) path = `/${path}`;
     return path;

@@ -4,7 +4,7 @@
 //
 // Reason this script exists: GitHub Pages does not render .md files. The
 // landing page links to ADRs from the "Architecture" subsection, and those
-// links must resolve on the same origin (loopdive.github.io/js2wasm). So at
+// links must resolve on the same origin, including GitHub project pages. So at
 // build time we render each ADR through `marked` and wrap it in a minimal
 // HTML shell whose look matches the rest of the site (dark background, system
 // font stack, soft text colour, tasteful link hover, anchored headings).
@@ -147,7 +147,7 @@ function htmlShell({ title, body }) {
     ${body}
   </main>
   <div class="footer">
-    Source: <a href="https://github.com/loopdive/js2wasm/tree/main/website/docs/adr">website/docs/adr/</a> on GitHub.
+    Source: <a href="https://github.com/loopdive/js2/tree/main/website/docs/adr">website/docs/adr/</a> on GitHub.
   </div>
   <script src="../../components/site-nav.js"></script>
 </body>
