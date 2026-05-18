@@ -10,18 +10,18 @@
   },
   {
     "edition": "ES5",
-    "pass": 8622,
-    "fail": 4070,
-    "ce": 392,
+    "pass": 8624,
+    "fail": 4062,
+    "ce": 398,
     "skip": 0,
     "total": 13084,
     "pct": 66
   },
   {
     "edition": "ES2015",
-    "pass": 9670,
+    "pass": 9675,
     "fail": 5247,
-    "ce": 498,
+    "ce": 493,
     "skip": 0,
     "total": 15415,
     "pct": 63
@@ -46,17 +46,17 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3083,
+    "pass": 3084,
     "fail": 1102,
-    "ce": 66,
+    "ce": 65,
     "skip": 0,
     "total": 4251,
     "pct": 73
   },
   {
     "edition": "ES2019",
-    "pass": 78,
-    "fail": 57,
+    "pass": 77,
+    "fail": 58,
     "ce": 1,
     "skip": 0,
     "total": 136,
@@ -64,8 +64,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1279,
-    "fail": 502,
+    "pass": 1278,
+    "fail": 503,
     "ce": 123,
     "skip": 0,
     "total": 1904,
@@ -82,26 +82,26 @@
   },
   {
     "edition": "ES2022",
-    "pass": 2829,
-    "fail": 1288,
-    "ce": 117,
+    "pass": 2830,
+    "fail": 1289,
+    "ce": 115,
     "skip": 0,
     "total": 4234,
     "pct": 67
   },
   {
     "edition": "ES2023",
-    "pass": 204,
-    "fail": 121,
-    "ce": 9,
+    "pass": 205,
+    "fail": 118,
+    "ce": 11,
     "skip": 0,
     "total": 334,
     "pct": 61
   },
   {
     "edition": "ES2024",
-    "pass": 421,
-    "fail": 216,
+    "pass": 420,
+    "fail": 217,
     "ce": 8,
     "skip": 0,
     "total": 645,
@@ -110,26 +110,26 @@
   {
     "edition": "ES2025",
     "pass": 698,
-    "fail": 503,
-    "ce": 80,
+    "fail": 500,
+    "ce": 83,
     "skip": 0,
     "total": 1281,
     "pct": 54
   },
   {
     "edition": "ES2026",
-    "pass": 100,
-    "fail": 245,
-    "ce": 4,
+    "pass": 99,
+    "fail": 247,
+    "ce": 3,
     "skip": 0,
     "total": 349,
-    "pct": 29
+    "pct": 28
   },
   {
     "edition": "Proposals",
-    "pass": 1362,
-    "fail": 3337,
-    "ce": 187,
+    "pass": 1361,
+    "fail": 3339,
+    "ce": 186,
     "skip": 96,
     "total": 4982,
     "pct": 27
