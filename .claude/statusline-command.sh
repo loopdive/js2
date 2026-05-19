@@ -222,14 +222,49 @@ if [ -z "$in_worktree" ]; then
       else              { fill="48;5;196"; fg=37 }
       width = 12
       filled = int(p * width / 100)
-      label = sprintf(" s%d %d/%d", n, done, total)
+      label = sprintf(" %d/%d s%d", done, total, n)
       bar = ""
       for (i = 0; i < width; i++) bar = bar " "
       bar = label substr(bar, length(label) + 1)
+      # Always show at least the label in fill color so bar is visible even at 0%
+      if (filled < length(label)) filled = length(label)
       filled_part = substr(bar, 1, filled)
       empty_part  = substr(bar, filled + 1)
       printf " \033[%s;%sm%s\033[48;5;237;37m%s\033[00m", fill, fg, filled_part, empty_part
     }' /dev/null
+  fi
+  # Agent activity bar: busy (active) vs total agents
+  agent_status_dir="/workspace/.claude/agent-status"
+  if [ -d "$agent_status_dir" ]; then
+    now_sec=$(date +%s)
+    total_agents=0
+    busy_agents=0
+    for f in "$agent_status_dir"/*.json; do
+      [ -f "$f" ] || continue
+      since=$(jq -r '.since // 0' "$f" 2>/dev/null)
+      state=$(jq -r '.state // empty' "$f" 2>/dev/null)
+      age=$((now_sec - since))
+      [ "$age" -gt 10800 ] && continue  # skip stale (>3h)
+      total_agents=$((total_agents + 1))
+      [ "$state" = "active" ] && busy_agents=$((busy_agents + 1))
+    done
+    if [ "$total_agents" -gt 0 ]; then
+      awk -v busy="$busy_agents" -v total="$total_agents" 'BEGIN {
+        pct = busy * 100 / total
+        if (pct >= 67)      { fill=42;         fg=30 }
+        else if (pct >= 33) { fill=43;         fg=30 }
+        else                { fill="48;5;196"; fg=37 }
+        width = 10
+        filled = int(pct * width / 100)
+        label = sprintf(" %d/%d busy", busy, total)
+        bar = ""
+        for (i = 0; i < width; i++) bar = bar " "
+        bar = label substr(bar, length(label) + 1)
+        filled_part = substr(bar, 1, filled)
+        empty_part  = substr(bar, filled + 1)
+        printf " \033[%s;%sm%s\033[48;5;237;37m%s\033[00m", fill, fg, filled_part, empty_part
+      }' /dev/null
+    fi
   fi
 fi
 if [ -n "$precompiling" ]; then
