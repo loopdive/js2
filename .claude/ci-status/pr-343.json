@@ -1,0 +1,22 @@
+{
+  "pr": 343,
+  "conclusion": "success",
+  "head_branch": "issue-1087-walk-instructions-iterative",
+  "head_sha": "a34a30e3e4f3964ea571a17d5c28c9c0aa4bf51d",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26128506555",
+  "timestamp": "2026-05-19T22:49:12Z",
+  "pass": 20624,
+  "fail": 16636,
+  "compile_error": 4561,
+  "snapshot_delta": -7523,
+  "net_per_test": -7786,
+  "regressions": 8567,
+  "regressions_real": 8562,
+  "regressions_wasm_change": 8562,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 5,
+  "improvements": 776,
+  "baseline_sha": "a34a30e3e4f3964ea571a17d5c28c9c0aa4bf51d",
+  "baseline_staleness_commits": 8430,
+  "baseline_stale": true
+}

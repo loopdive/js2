@@ -1951,7 +1951,15 @@ export function compileArrayDestructuring(
       fctx.body.push({ op: "local.get", index: tmpLocal });
       fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // get data from vec
       fctx.body.push({ op: "i32.const", value: i });
-      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elemType);
+      // (#1396) When this element has a default initializer AND the source-array
+      // element type is externref, request the JS `undefined` sentinel for OOB
+      // reads so `__extern_is_undefined` returns 1 and the default fires. With
+      // the default `ref.null.extern` sentinel, OOB surfaces as JS `null` →
+      // `__extern_is_undefined` returns 0 → default never fires (~320 fails in
+      // `for-of/dstr`, ~171 in `assignment/dstr`).
+      const wantUndefinedSentinel =
+        element.initializer !== undefined && (elemType.kind === "externref" || elemType.kind === "ref_extern");
+      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elemType, ctx, wantUndefinedSentinel);
 
       // Handle default value: `const [a = defaultVal] = arr`
       if (element.initializer) {

@@ -1,0 +1,22 @@
+{
+  "pr": 351,
+  "conclusion": "success",
+  "head_branch": "issue-1438-keyed-collections",
+  "head_sha": "3e627ae2cd59985adc24831ebaedaaf8cbe5f688",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26129810823",
+  "timestamp": "2026-05-19T23:25:48Z",
+  "pass": 28147,
+  "fail": 13739,
+  "compile_error": 1192,
+  "snapshot_delta": -6,
+  "net_per_test": 55,
+  "regressions": 59,
+  "regressions_real": 11,
+  "regressions_wasm_change": 11,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 48,
+  "improvements": 66,
+  "baseline_sha": "3e627ae2cd59985adc24831ebaedaaf8cbe5f688",
+  "baseline_staleness_commits": 28,
+  "baseline_stale": false
+}

@@ -74,7 +74,11 @@ import {
   finalizeUnifiedCollector,
   unifiedVisitNode,
 } from "./declarations.js";
-import { destructureParamArray, destructureParamObject } from "./destructuring-params.js";
+import {
+  destructureParamArray,
+  destructureParamObject,
+  destructureParamObjectExternref,
+} from "./destructuring-params.js";
 import {
   emitTestRuntimeStringHelpers,
   ensureNativeStringExternBridge,
@@ -90,6 +94,7 @@ export {
   compileClassBodies,
   destructureParamArray,
   destructureParamObject,
+  destructureParamObjectExternref,
   ensureAnyHelpers,
   ensureAnyValueType,
   ensureNativeStringExternBridge,
@@ -729,6 +734,10 @@ export function generateModule(
     if (sourceContainsClass(ast.sourceFile)) {
       const regProtoTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
       addImport(ctx, "env", "__register_prototype", { kind: "func", typeIdx: regProtoTypeIdx });
+      // (#1395) Same rationale for the class-object registry — must be
+      // registered up-front so `emitLazyClassObjectGet` finds it in funcMap.
+      const regClassTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
+      addImport(ctx, "env", "__register_class_object", { kind: "func", typeIdx: regClassTypeIdx });
     }
 
     // Emit inline Wasm implementations for Math methods (after all imports are registered)
@@ -851,8 +860,15 @@ export function generateModule(
       // Only request IR compilation for functions we successfully built
       // overrides for (the selector may have claimed more, but if we
       // couldn't map types safely we leave them to legacy).
+      //
+      // #1370 Phase B: thread `classMembers` through to the integration
+      // loop. Class methods don't go through `overrideMap` (they're
+      // typed via the class shape, not the TypeMap-derived overrides);
+      // the integration's class-member walk consults `classShapes`
+      // directly. Pass the set unmodified.
       const safeSelection = {
         funcs: new Set<string>([...selection.funcs].filter((n) => overrideMap.has(n))),
+        classMembers: selection.classMembers,
       };
       const report = compileIrPathFunctions(ctx, ast.sourceFile, safeSelection, overrideMap, classShapes);
       // Slice 12 (#1169o) — IR-path failures are NOT compile errors. The
@@ -980,6 +996,21 @@ export function generateModule(
 
     // Emit __call_fn_1 export for calling one-arg closures from JS (#1090)
     emitClosureCallExport1(ctx);
+
+    // Emit __call_fn_2 export for calling two-arg closures from JS (#1382)
+    // Required for Array.from(iter, mapFn) where mapFn is a Wasm closure —
+    // host `Array.from` invokes mapFn with `(value, index)`, so the JS-side
+    // wrapper needs a 2-arg dispatcher to route into the closure.
+    emitClosureCallExport2(ctx);
+
+    // Emit __call_fn_3 / __call_fn_4 exports (#1382 Phase 2). Required for
+    // `Array.prototype.{forEach,map,filter,every,some,find,...}.call(obj, cb)`
+    // dispatched through the host `__proto_method_call` — the host invokes
+    // the callback with `(value, index, array)` (arity 3) or, for reduce,
+    // `(acc, value, index, array)` (arity 4). The dispatchers iterate
+    // closures of arity ≤ N; lower-arity closures see extra args dropped.
+    emitClosureCallExport3(ctx);
+    emitClosureCallExport4(ctx);
 
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch (#866)
     emitToPrimitiveMethodExports(ctx);
@@ -1790,6 +1821,275 @@ function emitClosureCallExport1(ctx: CodegenContext): void {
 
   mod.exports.push({
     name: "__call_fn_1",
+    desc: { kind: "func", index: funcIdx },
+  });
+}
+
+/**
+ * Emit __call_fn_2 export — wraps the generic N-arg helper at arity 2.
+ * Kept as a thin alias so the call-site name in `compile()` stays
+ * descriptive when reading the dispatch sequence.
+ */
+function emitClosureCallExport2(ctx: CodegenContext): void {
+  emitClosureCallExportN(ctx, 2);
+}
+
+/**
+ * Emit __call_fn_3 export (#1382 Phase 2): call a three-arg WasmGC closure
+ * from JS. Same dispatch as __call_fn_2 but with one extra positional
+ * arg, matching Array HOF callbacks `(value, index, array)`.
+ */
+function emitClosureCallExport3(ctx: CodegenContext): void {
+  emitClosureCallExportN(ctx, 3);
+}
+
+/**
+ * Emit __call_fn_4 export (#1382 Phase 2): call a four-arg WasmGC closure
+ * from JS. Used for `Array.prototype.reduce(cb, initial)` which invokes
+ * `cb(accumulator, currentValue, currentIndex, array)`.
+ */
+function emitClosureCallExport4(ctx: CodegenContext): void {
+  emitClosureCallExportN(ctx, 4);
+}
+
+/**
+ * Emit __call_fn_<arity> export (#1382): call an N-arg WasmGC closure from
+ * JS. Takes (externref closure, externref arg0, ..., externref arg<arity-1>)
+ * and returns externref. Used by `__array_from`, `__proto_method_call`, and
+ * other host shims that pass Wasm closures as JS callbacks.
+ *
+ * Dispatch: iterate ALL closure types whose user arity ≤ N. For each
+ * matching closure, push only as many args as it declared (matches JS
+ * spec's "extra args ignored" semantics for over-arity calls). Funcref-
+ * type dispatch is required because V8 isorecursive canonicalization
+ * collapses base wrapper struct types — only funcref types remain
+ * distinct per signature.
+ *
+ * Locals layout:
+ *   0..arity-1 = positional externref params (closure + user args)
+ *   arity      = anyref (__any) — converted closure externref
+ *   arity+1    = (ref null $baseWrapper) (__struct)
+ *   arity+2    = funcref (__funcref)
+ *
+ * Returns early when no closures of arity ≤ N exist (no export emitted).
+ */
+function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
+  const mod = ctx.mod;
+  const exportName = `__call_fn_${arity}`;
+
+  // Local index conventions for the dispatcher body. `arity` positional
+  // params (closure + user args 0..arity-1) come first; auxiliary locals
+  // are appended after the params.
+  //
+  //   0           = closure externref
+  //   1..arity-1  = user arg externrefs
+  //   anyLocal    = anyref (closure-as-anyref after extern.convert_any)
+  //   structLocal = (ref null $baseWrapper) for the cast struct
+  //   funcLocal   = funcref extracted from struct field 0
+  const anyLocal = arity + 1;
+  const structLocal = arity + 2;
+  const funcLocal = arity + 3;
+
+  let baseWrapperIdx: number | undefined;
+  const seenFuncTypeIdx = new Set<number>();
+  // Each entry tracks how many user args the closure declared
+  // (closureArity ≤ arity). The host always invokes the dispatcher with
+  // `arity` user args; when a closure declared fewer, the dispatch arm
+  // drops the extra args. Matches JS spec's "extra args ignored at call
+  // time" semantics.
+  const entries: {
+    funcTypeIdx: number;
+    returnType: ValType | null;
+    selfTypeIdx: number;
+    closureArity: number;
+  }[] = [];
+
+  for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
+    if (info.paramTypes.length > arity) continue;
+
+    const typeDef = mod.types[typeIdx];
+    if (!typeDef || typeDef.kind !== "struct") continue;
+
+    if (typeDef.superTypeIdx === -1 && baseWrapperIdx === undefined) {
+      baseWrapperIdx = typeIdx;
+    }
+
+    if (!seenFuncTypeIdx.has(info.funcTypeIdx)) {
+      seenFuncTypeIdx.add(info.funcTypeIdx);
+      const funcTypeDef = mod.types[info.funcTypeIdx];
+      const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
+      const selfTypeIdx =
+        selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
+          ? (selfParam as { typeIdx: number }).typeIdx
+          : typeIdx;
+      entries.push({
+        funcTypeIdx: info.funcTypeIdx,
+        returnType: info.returnType,
+        selfTypeIdx,
+        closureArity: info.paramTypes.length,
+      });
+    }
+  }
+
+  if (entries.length === 0) return;
+
+  // Fallback to any base wrapper if none was found at the target arity.
+  // V8 isorecursive canonicalization collapses single-funcref-field
+  // base structs to the same type regardless of arity, so any base
+  // wrapper works for the initial ref.test + struct.get.
+  if (baseWrapperIdx === undefined) {
+    for (const [typeIdx] of ctx.closureInfoByTypeIdx) {
+      const typeDef = mod.types[typeIdx];
+      if (typeDef && typeDef.kind === "struct" && typeDef.superTypeIdx === -1) {
+        baseWrapperIdx = typeIdx;
+        break;
+      }
+    }
+  }
+  if (baseWrapperIdx === undefined) {
+    for (const [typeIdx] of ctx.closureInfoByTypeIdx) {
+      if (ctx.closureInfoByTypeIdx.get(typeIdx)!.paramTypes.length === arity) {
+        baseWrapperIdx = typeIdx;
+        break;
+      }
+    }
+  }
+  if (baseWrapperIdx === undefined) return;
+
+  addUnionImports(ctx);
+  const boxNumberIdx = ctx.funcMap.get("__box_number");
+
+  // __call_fn_<arity>(closure: externref, arg0: externref, ..., arg<arity-1>: externref) → externref
+  const params: ValType[] = [];
+  for (let i = 0; i < arity + 1; i++) params.push({ kind: "externref" });
+  const exportFuncTypeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `$${exportName}_type`);
+  const funcIdx = ctx.numImportFuncs + mod.functions.length;
+  const bwIdx = baseWrapperIdx;
+
+  const body: Instr[] = [];
+  body.push({ op: "local.get", index: 0 });
+  body.push({ op: "any.convert_extern" } as Instr);
+  body.push({ op: "local.set", index: anyLocal } as Instr);
+
+  let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" } as Instr];
+
+  for (const entry of entries) {
+    const funcTypeDef = mod.types[entry.funcTypeIdx];
+
+    const buildArgConversion = (argLocalIdx: number, paramType: ValType | undefined): Instr[] => {
+      const ops: Instr[] = [{ op: "local.get", index: argLocalIdx } as Instr];
+      if (paramType) {
+        if (paramType.kind === "f64") {
+          const unboxIdx = ctx.funcMap.get("__unbox_number");
+          if (unboxIdx !== undefined) {
+            ops.push({ op: "call", funcIdx: unboxIdx } as Instr);
+          }
+        } else if (paramType.kind === "i32") {
+          const unboxIdx = ctx.funcMap.get("__unbox_number");
+          if (unboxIdx !== undefined) {
+            ops.push({ op: "call", funcIdx: unboxIdx } as Instr);
+            ops.push({ op: "i32.trunc_f64_s" } as unknown as Instr);
+          }
+        }
+        // externref: no conversion
+      }
+      return ops;
+    };
+
+    // Push self + user args 0..closureArity-1. Args beyond the closure's
+    // declared arity are dropped (no `local.get` emitted for them).
+    const argInstrs: Instr[] = [];
+    for (let i = 0; i < entry.closureArity; i++) {
+      const paramType =
+        funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
+      argInstrs.push(...buildArgConversion(i + 1, paramType));
+    }
+
+    const callBody: Instr[] = [
+      { op: "local.get", index: anyLocal } as Instr,
+      { op: "ref.cast", typeIdx: entry.selfTypeIdx } as Instr,
+      ...argInstrs,
+      { op: "local.get", index: funcLocal } as Instr,
+      { op: "ref.cast", typeIdx: entry.funcTypeIdx } as Instr,
+      { op: "call_ref", typeIdx: entry.funcTypeIdx } as Instr,
+    ];
+
+    // Coerce result to externref.
+    if (entry.returnType) {
+      if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
+        callBody.push({ op: "extern.convert_any" } as Instr);
+      } else if (entry.returnType.kind === "f64") {
+        if (boxNumberIdx !== undefined) {
+          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
+        } else {
+          callBody.push({ op: "drop" } as Instr);
+          callBody.push({ op: "ref.null.extern" } as Instr);
+        }
+      } else if (entry.returnType.kind === "i32") {
+        if (boxNumberIdx !== undefined) {
+          callBody.push({ op: "f64.convert_i32_s" } as Instr);
+          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
+        } else {
+          callBody.push({ op: "drop" } as Instr);
+          callBody.push({ op: "ref.null.extern" } as Instr);
+        }
+      } else if (entry.returnType.kind === "i64") {
+        if (boxNumberIdx !== undefined) {
+          callBody.push({ op: "f64.convert_i64_s" } as Instr);
+          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
+        } else {
+          callBody.push({ op: "drop" } as Instr);
+          callBody.push({ op: "ref.null.extern" } as Instr);
+        }
+      }
+    } else {
+      callBody.push({ op: "ref.null.extern" } as Instr);
+    }
+
+    funcrefDispatch = [
+      { op: "local.get", index: funcLocal } as Instr,
+      { op: "ref.test", typeIdx: entry.funcTypeIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: callBody,
+        else: funcrefDispatch,
+      } as Instr,
+    ];
+  }
+
+  const structExtractAndDispatch: Instr[] = [
+    { op: "local.get", index: anyLocal } as Instr,
+    { op: "ref.cast", typeIdx: bwIdx } as Instr,
+    { op: "local.tee", index: structLocal } as Instr,
+    { op: "struct.get", typeIdx: bwIdx, fieldIdx: 0 } as Instr,
+    { op: "local.set", index: funcLocal } as Instr,
+    ...funcrefDispatch,
+  ];
+
+  body.push({ op: "local.get", index: anyLocal } as Instr);
+  body.push({ op: "ref.test", typeIdx: bwIdx } as Instr);
+  body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: structExtractAndDispatch,
+    else: [{ op: "ref.null.extern" } as Instr],
+  } as Instr);
+
+  mod.functions.push({
+    name: exportName,
+    typeIdx: exportFuncTypeIdx,
+    locals: [
+      { name: "__any", type: { kind: "anyref" } },
+      { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
+      { name: "__funcref", type: { kind: "funcref" } },
+    ],
+    body,
+    exported: true,
+  } as WasmFunction);
+
+  mod.exports.push({
+    name: exportName,
     desc: { kind: "func", index: funcIdx },
   });
 }
@@ -2754,6 +3054,7 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
   // Check if source uses console.log/warn/error, process.exit, or node:fs functions
   let needsFdWrite = false;
   let needsProcExit = false;
+  let needsRandomGet = false;
 
   // ctx.wasiNodeFsFuncs is populated from the original source before import preprocessing
   // (see detectNodeFsImports in compiler.ts)
@@ -2775,6 +3076,14 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
         propAccess.name.text === "exit"
       ) {
         needsProcExit = true;
+      }
+      // #1322: Math.random() in WASI mode uses random_get for entropy
+      if (
+        ts.isIdentifier(propAccess.expression) &&
+        propAccess.expression.text === "Math" &&
+        propAccess.name.text === "random"
+      ) {
+        needsRandomGet = true;
       }
     }
     forEachChild(node, visit);
@@ -2801,6 +3110,15 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
     const procExitType = addFuncType(ctx, [{ kind: "i32" }], [], "$wasi_proc_exit");
     addImport(ctx, "wasi_snapshot_preview1", "proc_exit", { kind: "func", typeIdx: procExitType });
     ctx.wasiProcExitIdx = ctx.funcMap.get("proc_exit")!;
+  }
+
+  // #1322: random_get(buf_ptr: i32, buf_len: i32) -> errno (i32)
+  // Used by `Math_random` (emitted in math-helpers.ts:emitInlineMathFunctions).
+  // Registered HERE — before any defined helpers — so the late-import shift
+  // bug (CLAUDE.md "addUnionImports" note) doesn't break `__str_*` indices.
+  if (needsRandomGet) {
+    const randomGetType = addFuncType(ctx, [{ kind: "i32" }, { kind: "i32" }], [{ kind: "i32" }], "$wasi_random_get");
+    addImport(ctx, "wasi_snapshot_preview1", "random_get", { kind: "func", typeIdx: randomGetType });
   }
 
   // path_open(fd: i32, dirflags: i32, path: i32, path_len: i32, oflags: i32,
@@ -3359,6 +3677,12 @@ export function addStringImports(ctx: CodegenContext): void {
     for (const pb of ctx.parentBodiesStack) {
       shiftFuncIndices(pb);
     }
+    // (#1384) Walk all live (allocated but not yet attached to mod.functions)
+    // FunctionContext bodies — covers cbFctx.body / liftedFctx.body during
+    // their captures-extraction + param-coercion setup phases.
+    for (const lb of ctx.liveBodies) {
+      shiftFuncIndices(lb);
+    }
     for (const elem of ctx.mod.elements) {
       if (elem.funcIndices) {
         for (let i = 0; i < elem.funcIndices.length; i++) {
@@ -3719,9 +4043,15 @@ function collectMathImports(ctx: CodegenContext, sourceFile: ts.SourceFile): voi
 
   for (const method of needed) {
     if (method === "random") {
-      // Math.random requires entropy — must remain a host import
-      const typeIdx = addFuncType(ctx, [], [{ kind: "f64" }]);
-      addImport(ctx, "env", `Math_${method}`, { kind: "func", typeIdx });
+      // #1322: in WASI/standalone mode, route random through WASI random_get
+      // (the import is registered early by registerWasiImports). In JS-host
+      // mode keep the host import.
+      if (ctx.wasi) {
+        ctx.pendingMathMethods.add(method);
+      } else {
+        const typeIdx = addFuncType(ctx, [], [{ kind: "f64" }]);
+        addImport(ctx, "env", `Math_${method}`, { kind: "func", typeIdx });
+      }
     } else {
       // All other math methods get pure Wasm implementations
       ctx.pendingMathMethods.add(method);
@@ -4040,7 +4370,32 @@ function collectPromiseImports(ctx: CodegenContext, sourceFile: ts.SourceFile): 
       node.expression.expression.text === "Promise"
     ) {
       const method = node.expression.name.text;
-      if (method === "all" || method === "race" || method === "resolve" || method === "reject") {
+      // (#1368) include allSettled/any so they get pre-registered with the 2-arg
+      // aggregator signature alongside all/race.
+      if (
+        method === "all" ||
+        method === "race" ||
+        method === "allSettled" ||
+        method === "any" ||
+        method === "resolve" ||
+        method === "reject"
+      ) {
+        needed.add(method);
+      }
+    }
+    // (#1368) Detect `Promise.METHOD.call(...)` patterns so their imports get
+    // registered (otherwise the late path would see the existing-but-wrong-arity
+    // pre-registration that was implicit before this fix).
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "call" &&
+      ts.isPropertyAccessExpression(node.expression.expression) &&
+      ts.isIdentifier(node.expression.expression.expression) &&
+      node.expression.expression.expression.text === "Promise"
+    ) {
+      const method = node.expression.expression.name.text;
+      if (method === "all" || method === "race" || method === "allSettled" || method === "any") {
         needed.add(method);
       }
     }
@@ -4084,7 +4439,11 @@ function collectPromiseImports(ctx: CodegenContext, sourceFile: ts.SourceFile): 
   for (const method of needed) {
     const importName = `Promise_${method}`;
     if (!ctx.funcMap.has(importName)) {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+      // (#1368) Aggregators (all/race/allSettled/any) take (thisArg, iterable);
+      // resolve/reject keep their original 1-arg signature.
+      const isAggregator = method === "all" || method === "race" || method === "allSettled" || method === "any";
+      const params: ValType[] = isAggregator ? [{ kind: "externref" }, { kind: "externref" }] : [{ kind: "externref" }];
+      const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
       addImport(ctx, "env", importName, { kind: "func", typeIdx });
     }
   }
@@ -4643,6 +5002,13 @@ export function addUnionImports(ctx: CodegenContext): void {
     }
     for (const pb of ctx.parentBodiesStack) {
       shiftFuncIndices(pb);
+    }
+    // (#1384) Walk all live (allocated but not yet attached to mod.functions)
+    // FunctionContext bodies — covers cbFctx.body / liftedFctx.body during
+    // their captures-extraction + param-coercion setup phases, BEFORE the
+    // savedFunc swap puts them on funcStack/parentBodiesStack.
+    for (const lb of ctx.liveBodies) {
+      shiftFuncIndices(lb);
     }
     if (ctx.pendingInitBody) {
       shiftFuncIndices(ctx.pendingInitBody);
@@ -5494,6 +5860,14 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     }
     // Check named structs (interfaces, type aliases)
     if (name && name !== "__type" && name !== "__object" && ctx.structMap.has(name)) {
+      // (#1366a) Externref-backed user classes (e.g. `class Sub extends Error`)
+      // have their instance live as a real JS object; the registered struct
+      // type exists for tag/registry bookkeeping only. Wasm-typed values for
+      // these types must be externref so callers see what `<className>_new`
+      // actually returns.
+      if (ctx.classExternrefBackedSet.has(name)) {
+        return { kind: "externref" };
+      }
       return { kind: "ref", typeIdx: ctx.structMap.get(name)! };
     }
     // Check anonymous type registry

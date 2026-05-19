@@ -306,7 +306,8 @@ jobs:
               benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-editions.json
-            git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass [skip ci]" --allow-empty
+            git diff --cached --quiet && exit 0
+            git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass [skip ci]"
           fi
           git push
 

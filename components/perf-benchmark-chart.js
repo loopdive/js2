@@ -2,10 +2,12 @@
  * <perf-benchmark-chart> — animated Wasm vs JS comparison chart.
  *
  * Attributes:
- *   src     — URL to playground-benchmark-sidebar.json
- *   title   — chart heading (default: "Benchmark Performance (Wasm vs JS)")
- *   legend  — legend text (default: "WASM runtime performance relative to JS (larger is better)")
- *   mode    — perf | size | coldstart | loadtime | absolute-lower-better
+ *   src        — URL to playground-benchmark-sidebar.json
+ *   rerun-src  — optional full benchmark manifest used for requested live refresh
+ *   rerun-label — optional label for the live benchmark button
+ *   title      — chart heading (default: "Benchmark Performance (Wasm vs JS)")
+ *   legend     — legend text (default: "WASM runtime performance relative to JS (larger is better)")
+ *   mode       — perf | runtime | module-size | size | coldstart | loadtime | absolute-lower-better
  *
  * Usage:
  *   <perf-benchmark-chart src="./benchmarks/results/playground-benchmark-sidebar.json"></perf-benchmark-chart>
@@ -13,7 +15,20 @@
 
 class PerfBenchmarkChart extends HTMLElement {
   static get observedAttributes() {
-    return ["src", "title", "legend", "mode", "benchmark", "browser-runtime-src", "baseline-label"];
+    return [
+      "src",
+      "rerun-src",
+      "rerun-label",
+      "title",
+      "legend",
+      "mode",
+      "benchmark",
+      "browser-runtime-src",
+      "baseline-label",
+      "compare-from-baseline",
+      "show-delta",
+      "delta-kind",
+    ];
   }
 
   static _measurementQueue = Promise.resolve();
@@ -45,6 +60,7 @@ class PerfBenchmarkChart extends HTMLElement {
     const title = this.getAttribute("title") || "Benchmark Performance (Wasm vs JS)";
     const legend = this.getAttribute("legend") || "WASM runtime performance relative to JS (larger is better)";
     const baselineLabel = this.getAttribute("baseline-label") || "JS";
+    const mode = this.getAttribute("mode") || "perf";
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -60,6 +76,11 @@ class PerfBenchmarkChart extends HTMLElement {
           text-transform: uppercase;
           color: var(--fg-faint, rgba(255,255,255,0.35));
           margin: 0 0 28px;
+        }
+
+        .chart-title-note {
+          letter-spacing: 0;
+          text-transform: none;
         }
 
         .bars-wrap {
@@ -101,11 +122,16 @@ class PerfBenchmarkChart extends HTMLElement {
           gap: 16px;
         }
 
+        .bench-row-has-factor {
+          grid-template-columns: 112px minmax(0, 1fr) var(--bench-factor-width, max-content);
+        }
+
         .bench-name {
           font-family: var(--mono, ui-monospace, monospace);
           font-size: 13px;
           color: var(--fg-soft, rgba(255,255,255,0.55));
-          text-align: right;
+          text-align: left;
+          min-width: 0;
           white-space: nowrap;
         }
 
@@ -115,6 +141,7 @@ class PerfBenchmarkChart extends HTMLElement {
           border-radius: 4px;
           overflow: visible;
           position: relative;
+          min-width: 0;
         }
 
         .bench-track-bg {
@@ -131,6 +158,11 @@ class PerfBenchmarkChart extends HTMLElement {
           border-radius: 4px;
           position: absolute;
           top: 0;
+          z-index: 2;
+        }
+
+        .bench-extra-fill {
+          z-index: 2;
         }
 
         .bench-errorbar {
@@ -162,6 +194,36 @@ class PerfBenchmarkChart extends HTMLElement {
           right: 0;
         }
 
+        .bench-row-baseline {
+          position: absolute;
+          top: -5px;
+          bottom: -5px;
+          width: 3px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.78);
+          z-index: 3;
+          opacity: 0;
+          filter:
+            drop-shadow(0 0 1px rgba(0,0,0,0.95))
+            drop-shadow(0 0 6px rgba(255,255,255,0.2));
+        }
+
+        .bench-row-baseline-label {
+          position: absolute;
+          top: -24px;
+          transform: translateX(-50%);
+          font-family: var(--mono, ui-monospace, monospace);
+          font-size: 12px;
+          font-weight: 600;
+          color: rgba(255,255,255,0.68);
+          white-space: nowrap;
+          text-shadow:
+            0 1px 1px rgba(6, 10, 20, 0.9),
+            0 0 10px rgba(6, 10, 20, 0.6);
+          opacity: 0;
+          z-index: 4;
+        }
+
         .bench-value {
           font-family: var(--mono, ui-monospace, monospace);
           font-size: 12px;
@@ -170,11 +232,22 @@ class PerfBenchmarkChart extends HTMLElement {
           position: absolute;
           top: 50%;
           transform: translateY(-50%);
-          z-index: 4;
+          z-index: 5;
           white-space: nowrap;
           text-shadow:
             0 1px 1px rgba(6, 10, 20, 0.85),
             0 0 10px rgba(6, 10, 20, 0.45);
+        }
+
+        .bench-factor {
+          font-family: var(--mono, ui-monospace, monospace);
+          font-size: 12px;
+          font-weight: 600;
+          color: rgba(255,255,255,0.62);
+          white-space: nowrap;
+          text-align: left;
+          width: var(--bench-factor-width, auto);
+          min-width: var(--bench-factor-width, auto);
         }
 
         .legend {
@@ -183,28 +256,105 @@ class PerfBenchmarkChart extends HTMLElement {
           color: var(--fg-faint, rgba(255,255,255,0.35));
         }
 
+        .chart-actions {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-top: 16px;
+          flex-wrap: wrap;
+        }
+
+        .chart-actions[hidden] {
+          display: none;
+        }
+
+        .rerun-button {
+          appearance: none;
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.08);
+          color: var(--fg-soft, rgba(255,255,255,0.72));
+          font: 600 12px/1 var(--font, ui-sans-serif, system-ui, sans-serif);
+          min-height: 34px;
+          padding: 0 12px;
+          cursor: pointer;
+          transition:
+            background 0.15s ease,
+            border-color 0.15s ease,
+            opacity 0.15s ease;
+        }
+
+        .rerun-button:hover {
+          background: rgba(255, 255, 255, 0.12);
+          border-color: rgba(255, 255, 255, 0.28);
+        }
+
+        .rerun-button:disabled {
+          cursor: progress;
+          opacity: 0.58;
+        }
+
+        .chart-status {
+          font-size: 12px;
+          color: var(--fg-faint, rgba(255,255,255,0.35));
+        }
+
         @media (max-width: 720px) {
           .bench-row {
-            grid-template-columns: 70px 1fr;
-            gap: 8px;
+            grid-template-columns: minmax(86px, 30%) minmax(0, 1fr);
+            column-gap: 8px;
+            row-gap: 6px;
+          }
+
+          .bench-row-has-factor {
+            grid-template-columns: minmax(86px, 30%) minmax(36px, 1fr) var(--bench-factor-width, max-content);
+          }
+
+          .bench-name {
+            font-size: 11px;
+            line-height: 1.15;
+            white-space: normal;
+            overflow-wrap: anywhere;
+          }
+
+          .bench-factor {
+            font-size: 11px;
           }
         }
       </style>
 
-      <h3 class="chart-title"></h3>
+      <h3 class="chart-title">
+        <span class="chart-title-label"></span><span class="chart-title-note" hidden> (lower is better)</span>
+      </h3>
       <div class="bars-wrap">
         <div class="js-label"></div>
         <div class="js-line"></div>
         <div class="bench-bars"></div>
       </div>
       <p class="legend"></p>
+      <div class="chart-actions" hidden>
+        <button type="button" class="rerun-button"></button>
+        <span class="chart-status" role="status" aria-live="polite"></span>
+      </div>
     `;
 
-    this.shadowRoot.querySelector(".chart-title").textContent = title;
+    this.shadowRoot.querySelector(".chart-title-label").textContent = title;
+    this.shadowRoot.querySelector(".chart-title-note").hidden = !this._isLowerBetterMode(mode);
     this.shadowRoot.querySelector(".js-label").textContent = baselineLabel;
     this.shadowRoot.querySelector(".legend").textContent = legend;
+    const actions = this.shadowRoot.querySelector(".chart-actions");
+    const rerunButton = this.shadowRoot.querySelector(".rerun-button");
+    if (this.getAttribute("rerun-src") && actions && rerunButton) {
+      actions.hidden = false;
+      rerunButton.textContent = this.getAttribute("rerun-label") || "Run browser benchmark";
+      rerunButton.addEventListener("click", () => this._rerunBrowserRuntime(src));
+    }
 
     this._load(src);
+  }
+
+  _isLowerBetterMode(mode) {
+    return mode === "runtime" || mode === "module-size" || mode === "absolute-lower-better";
   }
 
   async _measureJsModuleLoad(jsUrl, rounds = 3) {
@@ -293,14 +443,16 @@ class PerfBenchmarkChart extends HTMLElement {
 
   _snapshotBodyState() {
     return {
-      innerHTML: document.body.innerHTML,
+      children: new Set(Array.from(document.body.children)),
       cssText: document.body.style.cssText,
     };
   }
 
   _restoreBodyState(state) {
-    document.body.innerHTML = state.innerHTML;
     document.body.style.cssText = state.cssText;
+    for (const child of Array.from(document.body.children)) {
+      if (!state.children.has(child)) child.remove();
+    }
   }
 
   async _loadJsRuntimeFunction(jsUrl, exportName) {
@@ -330,7 +482,17 @@ class PerfBenchmarkChart extends HTMLElement {
       entry.stringPool ?? [],
     );
     const wasmBytes = new Uint8Array(await (await fetch(wasmUrl, { cache: "no-store" })).arrayBuffer());
-    const wasmResult = await runtimeHelpers.instantiateWasm(wasmBytes, imports.env, imports.string_constants);
+    if (typeof runtimeHelpers.optimizeWasm !== "function") {
+      throw new Error("in-page wasm-opt helper not found");
+    }
+    const wasmOptStart = performance.now();
+    const wasmOptResult = await runtimeHelpers.optimizeWasm(wasmBytes, { level: 4 });
+    const wasmOptMs = performance.now() - wasmOptStart;
+    if (!wasmOptResult?.optimized) {
+      throw new Error(wasmOptResult?.warning || "in-page wasm-opt did not produce an optimized module");
+    }
+    const optimizedWasmBytes = wasmOptResult.binary;
+    const wasmResult = await runtimeHelpers.instantiateWasm(optimizedWasmBytes, imports.env, imports.string_constants);
     if (imports.setExports) imports.setExports(wasmResult.instance.exports);
     const wasmFn = wasmResult.instance.exports?.[exportName];
     if (typeof wasmFn !== "function") {
@@ -373,6 +535,9 @@ class PerfBenchmarkChart extends HTMLElement {
         ratioStd: this._stddev(ratioSamples),
         warmupRounds,
         measuredRounds,
+        wasmOptMs,
+        wasmOptInputBytes: wasmBytes.byteLength,
+        wasmOptOutputBytes: optimizedWasmBytes.byteLength,
       };
     } finally {
       this._restoreBodyState(bodyState);
@@ -413,13 +578,493 @@ class PerfBenchmarkChart extends HTMLElement {
     return run;
   }
 
-  async _load(src) {
+  _shortBenchmarkLabel(row) {
+    const raw = row?.label || row?.name || row?.path || "unknown";
+    return String(raw)
+      .replace(/^examples\/(?:benchmarks|dom)\//, "")
+      .replace(/\.ts$/, "");
+  }
+
+  _formatMetric(value) {
+    if (value >= 100) return String(Math.round(value));
+    if (value >= 10) return value.toFixed(1);
+    return value.toFixed(2).replace(/\.?0+$/, "");
+  }
+
+  _formatBytes(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return "0 B";
+    if (value >= 1024 * 1024) return `${this._formatMetric(value / (1024 * 1024))} MB`;
+    if (value >= 1024) return `${this._formatMetric(value / 1024)} kB`;
+    return `${Math.round(value)} B`;
+  }
+
+  _formatDurationUs(us) {
+    const value = Number(us);
+    if (!Number.isFinite(value) || value <= 0) return "0 us";
+    if (value >= 1000) return `${this._formatMetric(value / 1000)} ms`;
+    return `${this._formatMetric(value)} us`;
+  }
+
+  _formatSignedPercent(value) {
+    if (!Number.isFinite(value) || value <= 0) return "";
+    return Math.round(value).toLocaleString("en-US");
+  }
+
+  _formatFactorDelta(value, baseline, kind) {
+    const metricValue = Number(value);
+    const baselineValue = Number(baseline);
+    if (!Number.isFinite(metricValue) || !Number.isFinite(baselineValue) || baselineValue <= 0) return "";
+    if (metricValue <= 0) return "";
+    if (Math.abs(metricValue - baselineValue) <= Math.max(0.0001, baselineValue * 0.0005)) {
+      return "0%";
+    }
+    const percentDiff = ((metricValue - baselineValue) / baselineValue) * 100;
+    return `${percentDiff > 0 ? "+" : "-"}${this._formatSignedPercent(Math.abs(percentDiff))}%`;
+  }
+
+  _valueLabel(label, value) {
+    return label || `${Number(value).toFixed(1)}`;
+  }
+
+  _factorDeltaLabel(value, baseline, showDelta, kind) {
+    if (!showDelta) return "";
+    return this._formatFactorDelta(value, baseline, kind);
+  }
+
+  _rowBaselineValue(row) {
+    return Number(row?.baselineValue ?? row?.jsUs ?? row?.baselineUs ?? 0);
+  }
+
+  _renderAbsoluteRows(absoluteRows) {
+    const shadow = this.shadowRoot;
+    const container = shadow.querySelector(".bench-bars");
+    const jsLabelEl = shadow.querySelector(".js-label");
+    const jsLineEl = shadow.querySelector(".js-line");
+    const baselineLabel = this.getAttribute("baseline-label") || "JS";
+    const deltaKind =
+      this.getAttribute("delta-kind") || (this.getAttribute("mode") === "module-size" ? "size" : "runtime");
+
+    if (!container || !jsLabelEl || !jsLineEl || !Array.isArray(absoluteRows) || absoluteRows.length === 0) return;
+
+    container.replaceChildren();
+
+    const baselineValues = absoluteRows.map((row) => this._rowBaselineValue(row)).filter((value) => value > 0);
+    const firstBaseline = baselineValues[0] ?? 0;
+    const hasSharedBaseline =
+      firstBaseline > 0 &&
+      baselineValues.length === absoluteRows.length &&
+      baselineValues.every((value) => Math.abs(value - firstBaseline) <= Math.max(0.001, firstBaseline * 0.001));
+    const baselineValue = hasSharedBaseline ? firstBaseline : 0;
+    const absoluteMax = Math.max(...absoluteRows.map((row) => row.value + Math.max(0, Number(row.extraValue ?? 0))), 1);
+    const baselineMax = Math.max(...baselineValues, 0);
+    const maxValue = Math.max(absoluteMax, baselineMax > 0 ? baselineMax * 1.08 : 0, 1);
+    const baselinePct = baselineValue > 0 ? (baselineValue / maxValue) * 100 : 0;
+
+    if (baselineValue > 0) {
+      jsLabelEl.style.display = "";
+      jsLineEl.style.display = "";
+      jsLabelEl.textContent = baselineLabel;
+    } else {
+      jsLabelEl.style.display = "none";
+      jsLineEl.style.display = "none";
+    }
+
+    const duration = 3293;
+    const ease = (t) => 1 - (1 - t) * (1 - t);
+    const barData = [];
+    const baselineLinePct = baselineValue > 0 ? Math.min(100, Math.max(0, baselinePct)) : 0;
+    const baselineLabelPct = baselineValue > 0 ? Math.min(94, Math.max(6, baselinePct)) : 0;
+    const forceRowBaseline = absoluteRows.some((row) => row.compareFromBaseline);
+    const showDelta = this.hasAttribute("show-delta");
+    if (forceRowBaseline && baselineValue > 0) {
+      jsLabelEl.style.display = "none";
+      jsLineEl.style.display = "none";
+    }
+
+    const preparedRows = absoluteRows.map((row, index) => {
+      const label = row.name || "unknown";
+      const rowBaselineValue = !hasSharedBaseline || forceRowBaseline ? this._rowBaselineValue(row) : 0;
+      const rowExtraValue = Math.max(0, Number(row.extraValue ?? 0));
+      const rowTotalValue = row.value + rowExtraValue;
+      const scalePerRow = row.scalePerRow ?? !hasSharedBaseline;
+      const rowScaleMax = rowBaselineValue > 0 && scalePerRow ? Math.max(rowTotalValue, rowBaselineValue, 1) : maxValue;
+      const rowDeltaBaselineValue = rowBaselineValue > 0 ? rowBaselineValue : baselineValue;
+      const targetValueLeft = (rowTotalValue / rowScaleMax) * 100;
+      const targetBaselineLeft = rowBaselineValue > 0 ? (rowBaselineValue / rowScaleMax) * 100 : 0;
+      const compareFromBaseline = Boolean(row.compareFromBaseline && rowBaselineValue > 0);
+      const targetLeft = compareFromBaseline ? Math.min(targetBaselineLeft, targetValueLeft) : 0;
+      const targetWidth = compareFromBaseline
+        ? Math.abs(targetValueLeft - targetBaselineLeft)
+        : (row.value / rowScaleMax) * 100;
+      const targetExtraWidth = compareFromBaseline ? 0 : (rowExtraValue / rowScaleMax) * 100;
+      const valueIsBelowBaseline = compareFromBaseline && rowTotalValue < rowBaselineValue;
+      const gradientDirection = valueIsBelowBaseline ? "to left" : "to right";
+      const targetBaselineLabelLeft = targetBaselineLeft > 0 ? Math.min(94, Math.max(6, targetBaselineLeft)) : 0;
+      const rowBaselineLabel = rowBaselineValue > 0 && index === 0 ? row.baselineLabel || baselineLabel : "";
+      const valueLabel = this._valueLabel(row.label, rowTotalValue);
+      const factorLabel = this._factorDeltaLabel(
+        rowTotalValue,
+        rowDeltaBaselineValue,
+        showDelta || Boolean(row.showDelta),
+        row.deltaKind || deltaKind,
+      );
+      return {
+        compareFromBaseline,
+        factorLabel,
+        gradientDirection,
+        label,
+        rowBaselineLabel,
+        rowBaselineValue,
+        rowTotalValue,
+        targetBaselineLabelLeft,
+        targetBaselineLeft,
+        targetExtraWidth,
+        targetLeft,
+        targetWidth,
+        valueIsBelowBaseline,
+        valueLabel,
+      };
+    });
+
+    const factorWidth = Math.max(...preparedRows.map((row) => row.factorLabel.length), 0);
+    if (factorWidth > 0) {
+      container.style.setProperty("--bench-factor-width", `${factorWidth + 1}ch`);
+    } else {
+      container.style.removeProperty("--bench-factor-width");
+    }
+
+    for (const row of preparedRows) {
+      const rowEl = document.createElement("div");
+      rowEl.className = row.factorLabel ? "bench-row bench-row-has-factor" : "bench-row";
+      rowEl.innerHTML = `
+        <span class="bench-name">${row.label}</span>
+        <div class="bench-track">
+          <div class="bench-track-bg" style="width: 100%"></div>
+          <div class="bench-fill" style="left: ${row.compareFromBaseline ? row.targetBaselineLeft : 0}%; width: 0%; background: linear-gradient(${row.gradientDirection}, rgba(255,255,255,0.1), rgba(255,255,255,0.9)); border-radius: 4px; position: absolute; height: 100%; top: 0"></div>
+          <div class="bench-extra-fill" style="left: 0%; width: 0%; background: rgba(255,255,255,0.22); border-radius: 0 4px 4px 0; position: absolute; height: 100%; top: 0"></div>
+          <div class="bench-row-baseline" style="left: ${row.targetBaselineLeft}%"></div>
+          <span class="bench-row-baseline-label" style="left: ${row.targetBaselineLabelLeft}%">${row.rowBaselineLabel}</span>
+          <div class="bench-errorbar" style="display: none"></div>
+          <span class="bench-value" style="left: 10px; color: rgba(255,255,255,0)">${row.valueLabel}</span>
+        </div>
+        ${row.factorLabel ? `<span class="bench-factor">${row.factorLabel}</span>` : ""}
+      `;
+      container.appendChild(rowEl);
+      barData.push({
+        compareFromBaseline: row.compareFromBaseline,
+        targetLeft: row.targetLeft,
+        targetWidth: row.targetWidth,
+        targetExtraWidth: row.targetExtraWidth,
+        targetBaselineLeft: row.targetBaselineLeft,
+        targetBaselineLabelLeft: row.targetBaselineLabelLeft,
+        valueIsBelowBaseline: row.valueIsBelowBaseline,
+        showRowBaseline: row.rowBaselineValue > 0,
+        showRowBaselineLabel: Boolean(row.rowBaselineLabel),
+        customLabel: row.valueLabel,
+        fillEl: rowEl.querySelector(".bench-fill"),
+        extraFillEl: rowEl.querySelector(".bench-extra-fill"),
+        rowBaselineEl: rowEl.querySelector(".bench-row-baseline"),
+        rowBaselineLabelEl: rowEl.querySelector(".bench-row-baseline-label"),
+        valueEl: rowEl.querySelector(".bench-value"),
+      });
+    }
+
+    function animateAbsoluteBars(ts) {
+      if (!animateAbsoluteBars._start) animateAbsoluteBars._start = ts;
+      const elapsed = ts - animateAbsoluteBars._start;
+      const progress = Math.min(elapsed / duration, 1);
+      const t = ease(progress);
+
+      for (const d of barData) {
+        const curWidth = t * d.targetWidth;
+        const curExtraWidth = t * d.targetExtraWidth;
+        const curLeft = d.compareFromBaseline ? d.targetBaselineLeft + t * (d.targetLeft - d.targetBaselineLeft) : 0;
+        const curTotalWidth = curLeft + curWidth + curExtraWidth;
+        d.fillEl.style.left = `${curLeft}%`;
+        d.fillEl.style.width = `${curWidth}%`;
+        d.extraFillEl.style.left = `${curLeft + curWidth}%`;
+        d.extraFillEl.style.width = `${curExtraWidth}%`;
+        d.rowBaselineEl.style.left = `${d.targetBaselineLeft}%`;
+        d.rowBaselineEl.style.opacity = d.showRowBaseline ? `${0.25 + 0.65 * t}` : "0";
+        d.rowBaselineLabelEl.style.left = `${d.targetBaselineLabelLeft}%`;
+        d.rowBaselineLabelEl.style.opacity = d.showRowBaselineLabel ? `${0.25 + 0.65 * t}` : "0";
+        const valueAnchor = d.valueIsBelowBaseline ? curLeft : curTotalWidth;
+        d.valueEl.style.left = d.valueIsBelowBaseline
+          ? `max(calc(${valueAnchor}% + 10px), 12%)`
+          : `min(calc(${valueAnchor}% + 10px), calc(100% - 12ch))`;
+        d.valueEl.style.color = `rgba(255,255,255,${(0.4 + t * 0.6).toFixed(2)})`;
+        d.valueEl.textContent = d.customLabel;
+      }
+
+      if (progress < 1) requestAnimationFrame(animateAbsoluteBars);
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            observer.disconnect();
+            requestAnimationFrame(animateAbsoluteBars);
+          }
+        }
+      },
+      { threshold: 0.3 },
+    );
+    observer.observe(this);
+
+    const positionAbsoluteBaseline = () => {
+      const track = container.querySelector(".bench-track");
+      const wrap = shadow.querySelector(".bars-wrap");
+      if (baselineValue > 0 && track && wrap && jsLabelEl && jsLineEl) {
+        const wrapRect = wrap.getBoundingClientRect();
+        const trackRect = track.getBoundingClientRect();
+        const lineX = trackRect.left + (trackRect.width * baselineLinePct) / 100 - wrapRect.left;
+        const rawLabelX = trackRect.left + (trackRect.width * baselineLabelPct) / 100 - wrapRect.left;
+        const labelX = Math.min(
+          Math.max(rawLabelX, trackRect.left - wrapRect.left + 8),
+          trackRect.right - wrapRect.left - 8,
+        );
+        jsLabelEl.style.left = `${labelX}px`;
+        jsLabelEl.style.transform = "translateX(-50%)";
+        jsLineEl.style.left = `${lineX}px`;
+      }
+    };
+    requestAnimationFrame(positionAbsoluteBaseline);
+    window.addEventListener("resize", positionAbsoluteBaseline);
+  }
+
+  _renderRatioRows(ratios) {
     const shadow = this.shadowRoot;
     const container = shadow.querySelector(".bench-bars");
     const jsLabelEl = shadow.querySelector(".js-label");
     const jsLineEl = shadow.querySelector(".js-line");
     const baselineLabel = this.getAttribute("baseline-label") || "JS";
 
+    if (!container || !jsLabelEl || !jsLineEl || !Array.isArray(ratios) || ratios.length === 0) return;
+
+    container.replaceChildren();
+    jsLabelEl.style.display = "";
+    jsLineEl.style.display = "";
+    jsLabelEl.textContent = baselineLabel;
+
+    const maxRatio = Math.max(...ratios.map((r) => r.ratio), 1.5);
+    const maxPct = Math.ceil(maxRatio * 100);
+    const scaleMax = Math.ceil(maxPct / 100) * 100;
+    const jsPos = (100 / scaleMax) * 100; // JS baseline as % of track width
+
+    // Build bar rows (start at 0, animate later)
+    const barData = [];
+    for (const row of ratios) {
+      const ratio = row.ratio;
+      const label = row.name || row.path?.replace(/^examples\/benchmarks\//, "").replace(/\.ts$/, "") || "unknown";
+
+      let targetLeft, targetWidth;
+      if (ratio >= 1) {
+        targetLeft = jsPos;
+        targetWidth = ((ratio - 1) / (scaleMax / 100 - 1)) * (100 - jsPos);
+      } else {
+        const wasmPos = (ratio / (scaleMax / 100)) * 100;
+        targetLeft = wasmPos;
+        targetWidth = jsPos - wasmPos;
+      }
+
+      const dist = Math.abs(ratio - 1) / Math.max(maxRatio - 1, 1);
+      const edgeOpacity = (0.1 + dist * 0.9).toFixed(2);
+      const baseOpacity = "0.1";
+      const gradDir = ratio >= 1 ? "to right" : "to left";
+      const textOpacity = (0.4 + dist * 0.6).toFixed(2);
+
+      const rowEl = document.createElement("div");
+      rowEl.className = "bench-row";
+      rowEl.innerHTML = `
+        <span class="bench-name">${label}</span>
+        <div class="bench-track">
+          <div class="bench-track-bg" style="width: ${jsPos}%"></div>
+          <div class="bench-fill" style="left: ${jsPos}%; width: 0%; background: linear-gradient(${gradDir}, rgba(255,255,255,${baseOpacity}), rgba(255,255,255,0.1)); border-radius: 4px; position: absolute; height: 100%; top: 0"></div>
+          <div class="bench-errorbar" style="left: ${jsPos}%; width: 0%"></div>
+          <span class="bench-value" style="left: ${jsPos}%; padding-left: 6px; color: rgba(255,255,255,0)">0.0x</span>
+        </div>
+      `;
+      container.appendChild(rowEl);
+
+      barData.push({
+        ratio,
+        customLabel: row.label || null,
+        targetLeft,
+        targetWidth,
+        gradDir,
+        baseOpacity,
+        edgeOpacity,
+        textOpacity,
+        ratioStd: Number(row.ratioStd ?? 0),
+        fillEl: rowEl.querySelector(".bench-fill"),
+        errorEl: rowEl.querySelector(".bench-errorbar"),
+        valueEl: rowEl.querySelector(".bench-value"),
+      });
+    }
+
+    // Animation
+    const duration = 3293;
+    const ease = (t) => 1 - (1 - t) * (1 - t);
+
+    function animateBars(ts) {
+      if (!animateBars._start) animateBars._start = ts;
+      const elapsed = ts - animateBars._start;
+      const progress = Math.min(elapsed / duration, 1);
+      const t = ease(progress);
+
+      for (const d of barData) {
+        const curWidth = t * d.targetWidth;
+        const curLeft = d.ratio >= 1 ? d.targetLeft : jsPos - t * (jsPos - d.targetLeft);
+        const curRatio = t * d.ratio;
+        const scoreText = d.customLabel
+          ? d.customLabel
+          : curRatio >= 10
+            ? `${Math.round(curRatio)}x`
+            : `${curRatio.toFixed(1)}x`;
+
+        const curEdgeOp = (0.1 + t * (parseFloat(d.edgeOpacity) - 0.1)).toFixed(2);
+        const curTextOp = (t * parseFloat(d.textOpacity)).toFixed(2);
+
+        d.fillEl.style.left = curLeft + "%";
+        d.fillEl.style.width = curWidth + "%";
+        d.fillEl.style.background = `linear-gradient(${d.gradDir}, rgba(255,255,255,${d.baseOpacity}), rgba(255,255,255,${curEdgeOp}))`;
+
+        const stdRatio = Math.min(d.ratioStd || 0, Math.max(d.ratio - 0.01, 0), Math.max(scaleMax / 100 - d.ratio, 0));
+        if (stdRatio > 0) {
+          const stdLeft = (Math.max(d.ratio - stdRatio, 0.01) / (scaleMax / 100)) * 100;
+          const stdRight = (Math.min(d.ratio + stdRatio, scaleMax / 100) / (scaleMax / 100)) * 100;
+          const currentStdLeft = jsPos + t * (stdLeft - jsPos);
+          const currentStdRight = jsPos + t * (stdRight - jsPos);
+          d.errorEl.style.left = `${Math.min(currentStdLeft, currentStdRight)}%`;
+          d.errorEl.style.width = `${Math.abs(currentStdRight - currentStdLeft)}%`;
+          d.errorEl.style.opacity = `${0.25 + 0.55 * t}`;
+        } else {
+          d.errorEl.style.opacity = "0";
+        }
+
+        const barEnd = d.ratio >= 1 ? curLeft + curWidth : curLeft;
+        if (d.ratio >= 1) {
+          d.valueEl.style.left = `min(calc(${barEnd}% + 10px), calc(100% - 3.6ch))`;
+          d.valueEl.style.removeProperty("right");
+          d.valueEl.style.paddingLeft = "0";
+          d.valueEl.style.paddingRight = "";
+        } else {
+          d.valueEl.style.left = `max(calc(${barEnd}% + 10px), 12%)`;
+          d.valueEl.style.removeProperty("right");
+          d.valueEl.style.paddingLeft = "0";
+          d.valueEl.style.paddingRight = "";
+        }
+        d.valueEl.style.color = `rgba(255,255,255,${curTextOp})`;
+        d.valueEl.textContent = scoreText;
+      }
+
+      if (progress < 1) requestAnimationFrame(animateBars);
+    }
+
+    // Trigger animation on scroll into view
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            observer.disconnect();
+            requestAnimationFrame(animateBars);
+          }
+        }
+      },
+      { threshold: 0.3 },
+    );
+    observer.observe(this);
+
+    // Position JS baseline line/label
+    const positionBaseline = () => {
+      const track = container.querySelector(".bench-track");
+      const wrap = shadow.querySelector(".bars-wrap");
+      if (track && wrap && jsLabelEl && jsLineEl) {
+        const wrapRect = wrap.getBoundingClientRect();
+        const trackRect = track.getBoundingClientRect();
+        const jsX = trackRect.left + (trackRect.width * jsPos) / 100 - wrapRect.left;
+        jsLabelEl.style.left = jsX + "px";
+        jsLabelEl.style.transform = "translateX(-50%)";
+        jsLineEl.style.left = jsX + "px";
+      }
+    };
+    requestAnimationFrame(positionBaseline);
+    window.addEventListener("resize", positionBaseline);
+  }
+
+  async _rerunBrowserRuntime(snapshotSrc) {
+    if (this._rerunInFlight) return;
+    this._rerunInFlight = true;
+    const rerunSrc = this.getAttribute("rerun-src") || snapshotSrc;
+    const rerunButton = this.shadowRoot.querySelector(".rerun-button");
+    const status = this.shadowRoot.querySelector(".chart-status");
+    if (rerunButton) rerunButton.disabled = true;
+    if (status) status.textContent = "Running full browser benchmark with in-page wasm-opt...";
+    try {
+      const measuredRows = await this._runSerialMeasurement(async () => {
+        const manifestUrl = new URL(rerunSrc, window.location.href);
+        const resp = await fetch(manifestUrl.href, { cache: "no-store" });
+        if (!resp.ok) return [];
+
+        const json = await resp.json();
+        const benchmarks = json?.benchmarks ?? json;
+        if (!Array.isArray(benchmarks) || benchmarks.length === 0) return [];
+
+        const runtimeUrl = new URL("./loadtime/runtime.js", manifestUrl).href;
+        const runtimeHelpers = await import(/* @vite-ignore */ runtimeUrl);
+        const measured = [];
+        for (const bench of benchmarks) {
+          if (!bench?.jsUrl || !bench?.wasmUrl) continue;
+          try {
+            const jsUrl = new URL(bench.jsUrl, manifestUrl).href;
+            const wasmUrl = new URL(bench.wasmUrl, manifestUrl).href;
+            const row = await this._measureBrowserRuntime(bench, jsUrl, wasmUrl, runtimeHelpers);
+            if (row.wasmUs <= 0 || row.jsUs <= 0) continue;
+            measured.push({
+              ...row,
+              ratio: row.jsUs / row.wasmUs,
+              ratioStd: Number(row.ratioStd ?? 0),
+              label: `${(row.jsUs / row.wasmUs).toFixed(1)}x`,
+            });
+            await new Promise((resolve) => setTimeout(resolve, 80));
+          } catch (error) {
+            console.warn("[perf-benchmark-chart] browser runtime benchmark skipped", bench?.name, error);
+          }
+        }
+        return measured;
+      });
+
+      if (this.isConnected && measuredRows.length > 0) {
+        this.style.display = "";
+        if ((this.getAttribute("mode") || "perf") === "runtime") {
+          this._renderAbsoluteRows(
+            measuredRows.map((row) => ({
+              name: this._shortBenchmarkLabel(row),
+              value: row.wasmUs,
+              baselineValue: row.jsUs,
+              label: this._formatDurationUs(row.wasmUs),
+            })),
+          );
+        } else {
+          this._renderRatioRows(measuredRows);
+        }
+        if (status)
+          status.textContent = `Updated with ${measuredRows.length} live browser benchmarks after in-page wasm-opt.`;
+      } else if (status) {
+        status.textContent = "No live browser benchmarks completed after in-page wasm-opt.";
+      }
+    } catch (error) {
+      console.warn("[perf-benchmark-chart] browser runtime rerun failed", error);
+      if (status) status.textContent = "Live browser benchmark failed.";
+    } finally {
+      if (rerunButton) rerunButton.disabled = false;
+      this._rerunInFlight = false;
+    }
+  }
+
+  async _load(src) {
     try {
       const resp = await fetch(src);
       if (!resp.ok) {
@@ -452,6 +1097,43 @@ class PerfBenchmarkChart extends HTMLElement {
             ratio: jsRow.medianMs / row.medianMs,
             label: (jsRow.medianMs / row.medianMs).toFixed(1) + "x",
           }));
+      } else if (mode === "runtime") {
+        let rows = Array.isArray(json) ? json : [];
+        if (benchmarkFilter) {
+          rows = rows.filter((row) => {
+            const path = String(row?.path || "");
+            const shortPath = path.replace(/^examples\/benchmarks\//, "").replace(/\.ts$/, "");
+            const shortName = String(row?.name || "");
+            return shortPath === benchmarkFilter || shortName === benchmarkFilter || path === benchmarkFilter;
+          });
+        }
+        if (rows.length === 0) {
+          this.style.display = "none";
+          return;
+        }
+        absoluteRows = rows
+          .map((row) => ({
+            name: this._shortBenchmarkLabel(row),
+            value: Number(row?.wasmUs ?? 0),
+            baselineValue: Number(row?.jsUs ?? 0),
+            label: this._formatDurationUs(row?.wasmUs),
+          }))
+          .filter((row) => row.value > 0);
+      } else if (mode === "module-size") {
+        const benchmarks = json?.benchmarks ?? json;
+        if (!Array.isArray(benchmarks) || benchmarks.length === 0) {
+          this.style.display = "none";
+          return;
+        }
+        absoluteRows = benchmarks
+          .map((b) => ({
+            name: b.label || b.name,
+            value: Number(b.wasmSizeGzip ?? 0),
+            baselineValue: Number(b.jsSizeGzip ?? 0),
+            scalePerRow: false,
+            label: this._formatBytes(b.wasmSizeGzip),
+          }))
+          .filter((row) => row.value > 0);
       } else if (mode === "size") {
         const benchmarks = json?.benchmarks ?? json;
         if (!Array.isArray(benchmarks) || benchmarks.length === 0) {
@@ -459,10 +1141,10 @@ class PerfBenchmarkChart extends HTMLElement {
           return;
         }
         ratios = benchmarks.map((b) => {
-          const wasmBytes = b.wasmTotalGzip ?? b.wasmSizeGzip;
+          const wasmBytes = b.wasmSizeGzip;
           const jsBytes = b.jsSizeGzip;
           const ratio = wasmBytes / Math.max(jsBytes, 1);
-          return { name: b.name, ratio, label: ratio.toFixed(1) + "x" };
+          return { name: b.label || b.name, ratio, label: ratio.toFixed(1) + "x" };
         });
       } else if (mode === "coldstart") {
         const benchmarks = json?.benchmarks ?? json;
@@ -531,7 +1213,10 @@ class PerfBenchmarkChart extends HTMLElement {
           .map((row) => ({
             name: row.name,
             value: Number(row?.wasmUs ?? row?.value ?? 0),
+            extraValue: Number(row?.extraValue ?? row?.sharedValue ?? 0),
             jsUs: Number(row?.jsUs ?? row?.baselineUs ?? 0),
+            compareFromBaseline: this.hasAttribute("compare-from-baseline") || Boolean(row?.compareFromBaseline),
+            scalePerRow: typeof row?.scalePerRow === "boolean" ? row.scalePerRow : undefined,
             label: row.label || null,
           }))
           .filter((row) => row.value > 0);
@@ -558,7 +1243,8 @@ class PerfBenchmarkChart extends HTMLElement {
           ratios.push({ ...row, ratio: jsUs / wasmUs, ratioStd: Number(row?.ratioStd ?? 0) });
         }
       }
-      if (mode === "absolute-lower-better") {
+      const isAbsoluteMode = mode === "absolute-lower-better" || mode === "runtime" || mode === "module-size";
+      if (isAbsoluteMode) {
         if (!absoluteRows || absoluteRows.length === 0) {
           this.style.display = "none";
           return;
@@ -568,247 +1254,12 @@ class PerfBenchmarkChart extends HTMLElement {
         return;
       }
 
-      if (mode === "absolute-lower-better") {
-        const baselineValue = absoluteRows.reduce((value, row) => {
-          const candidate = Number(row?.jsUs ?? row?.baselineUs ?? 0);
-          return candidate > 0 ? candidate : value;
-        }, 0);
-        const absoluteMax = Math.max(...absoluteRows.map((row) => row.value), 1);
-        const maxValue = Math.max(absoluteMax, baselineValue > 0 ? baselineValue * 1.08 : 0, 1);
-        const baselinePct = baselineValue > 0 ? (baselineValue / maxValue) * 100 : 0;
-
-        if (baselineValue > 0) {
-          jsLabelEl.style.display = "";
-          jsLineEl.style.display = "";
-          jsLabelEl.textContent = baselineLabel;
-        } else {
-          jsLabelEl.style.display = "none";
-          jsLineEl.style.display = "none";
-        }
-
-        const duration = 3293;
-        const ease = (t) => 1 - (1 - t) * (1 - t);
-        const barData = [];
-        const baselineInsetPct = baselineValue > 0 ? Math.min(94, Math.max(6, baselinePct)) : 0;
-
-        for (const row of absoluteRows) {
-          const label = row.name || "unknown";
-          const targetWidth = (row.value / maxValue) * 100;
-          const rowEl = document.createElement("div");
-          rowEl.className = "bench-row";
-          rowEl.innerHTML = `
-            <span class="bench-name">${label}</span>
-            <div class="bench-track">
-              <div class="bench-track-bg" style="width: 100%"></div>
-              <div class="bench-fill" style="left: 0%; width: 0%; background: linear-gradient(to right, rgba(255,255,255,0.1), rgba(255,255,255,0.9)); border-radius: 4px; position: absolute; height: 100%; top: 0"></div>
-              <div class="bench-errorbar" style="display: none"></div>
-              <span class="bench-value" style="left: 10px; color: rgba(255,255,255,0)">${row.label ?? ""}</span>
-            </div>
-          `;
-          container.appendChild(rowEl);
-          barData.push({
-            targetWidth,
-            customLabel: row.label || `${row.value.toFixed(1)}`,
-            fillEl: rowEl.querySelector(".bench-fill"),
-            valueEl: rowEl.querySelector(".bench-value"),
-          });
-        }
-
-        function animateAbsoluteBars(ts) {
-          if (!animateAbsoluteBars._start) animateAbsoluteBars._start = ts;
-          const elapsed = ts - animateAbsoluteBars._start;
-          const progress = Math.min(elapsed / duration, 1);
-          const t = ease(progress);
-
-          for (const d of barData) {
-            const curWidth = t * d.targetWidth;
-            d.fillEl.style.width = `${curWidth}%`;
-            d.valueEl.style.left = `min(calc(${curWidth}% + 10px), calc(100% - 7ch))`;
-            d.valueEl.style.color = `rgba(255,255,255,${(0.4 + t * 0.6).toFixed(2)})`;
-            d.valueEl.textContent = d.customLabel;
-          }
-
-          if (progress < 1) requestAnimationFrame(animateAbsoluteBars);
-        }
-
-        const observer = new IntersectionObserver(
-          (entries) => {
-            for (const entry of entries) {
-              if (entry.isIntersecting) {
-                observer.disconnect();
-                requestAnimationFrame(animateAbsoluteBars);
-              }
-            }
-          },
-          { threshold: 0.3 },
-        );
-        observer.observe(this);
-        const positionAbsoluteBaseline = () => {
-          const track = container.querySelector(".bench-track");
-          const wrap = shadow.querySelector(".bars-wrap");
-          if (baselineValue > 0 && track && wrap && jsLabelEl && jsLineEl) {
-            const wrapRect = wrap.getBoundingClientRect();
-            const trackRect = track.getBoundingClientRect();
-            const rawX = trackRect.left + (trackRect.width * baselineInsetPct) / 100 - wrapRect.left;
-            const x = Math.min(Math.max(rawX, trackRect.left - wrapRect.left + 8), trackRect.right - wrapRect.left - 8);
-            jsLabelEl.style.left = `${x}px`;
-            jsLabelEl.style.transform = "translateX(-50%)";
-            jsLineEl.style.left = `${x}px`;
-          }
-        };
-        requestAnimationFrame(positionAbsoluteBaseline);
-        window.addEventListener("resize", positionAbsoluteBaseline);
+      if (isAbsoluteMode) {
+        this._renderAbsoluteRows(absoluteRows);
         return;
       }
 
-      const maxRatio = Math.max(...ratios.map((r) => r.ratio), 1.5);
-      const maxPct = Math.ceil(maxRatio * 100);
-      const scaleMax = Math.ceil(maxPct / 100) * 100;
-      const jsPos = (100 / scaleMax) * 100; // JS baseline as % of track width
-
-      // Build bar rows (start at 0, animate later)
-      const barData = [];
-      for (const row of ratios) {
-        const ratio = row.ratio;
-        const label = row.name || row.path?.replace(/^examples\/benchmarks\//, "").replace(/\.ts$/, "") || "unknown";
-
-        let targetLeft, targetWidth;
-        if (ratio >= 1) {
-          targetLeft = jsPos;
-          targetWidth = ((ratio - 1) / (scaleMax / 100 - 1)) * (100 - jsPos);
-        } else {
-          const wasmPos = (ratio / (scaleMax / 100)) * 100;
-          targetLeft = wasmPos;
-          targetWidth = jsPos - wasmPos;
-        }
-
-        const dist = Math.abs(ratio - 1) / Math.max(maxRatio - 1, 1);
-        const edgeOpacity = (0.1 + dist * 0.9).toFixed(2);
-        const baseOpacity = "0.1";
-        const gradDir = ratio >= 1 ? "to right" : "to left";
-        const textOpacity = (0.4 + dist * 0.6).toFixed(2);
-
-        const rowEl = document.createElement("div");
-        rowEl.className = "bench-row";
-        rowEl.innerHTML = `
-          <span class="bench-name">${label}</span>
-          <div class="bench-track">
-            <div class="bench-track-bg" style="width: ${jsPos}%"></div>
-            <div class="bench-fill" style="left: ${jsPos}%; width: 0%; background: linear-gradient(${gradDir}, rgba(255,255,255,${baseOpacity}), rgba(255,255,255,0.1)); border-radius: 4px; position: absolute; height: 100%; top: 0"></div>
-            <div class="bench-errorbar" style="left: ${jsPos}%; width: 0%"></div>
-            <span class="bench-value" style="left: ${jsPos}%; padding-left: 6px; color: rgba(255,255,255,0)">0.0x</span>
-          </div>
-        `;
-        container.appendChild(rowEl);
-
-        barData.push({
-          ratio,
-          customLabel: row.label || null,
-          targetLeft,
-          targetWidth,
-          gradDir,
-          baseOpacity,
-          edgeOpacity,
-          textOpacity,
-          ratioStd: Number(row.ratioStd ?? 0),
-          fillEl: rowEl.querySelector(".bench-fill"),
-          errorEl: rowEl.querySelector(".bench-errorbar"),
-          valueEl: rowEl.querySelector(".bench-value"),
-        });
-      }
-
-      // Animation
-      const duration = 3293;
-      const ease = (t) => 1 - (1 - t) * (1 - t);
-
-      function animateBars(ts) {
-        if (!animateBars._start) animateBars._start = ts;
-        const elapsed = ts - animateBars._start;
-        const progress = Math.min(elapsed / duration, 1);
-        const t = ease(progress);
-
-        for (const d of barData) {
-          const curWidth = t * d.targetWidth;
-          const curLeft = d.ratio >= 1 ? d.targetLeft : jsPos - t * (jsPos - d.targetLeft);
-          const curRatio = t * d.ratio;
-          const scoreText = d.customLabel
-            ? d.customLabel
-            : curRatio >= 10
-              ? `${Math.round(curRatio)}x`
-              : `${curRatio.toFixed(1)}x`;
-
-          const curEdgeOp = (0.1 + t * (parseFloat(d.edgeOpacity) - 0.1)).toFixed(2);
-          const curTextOp = (t * parseFloat(d.textOpacity)).toFixed(2);
-
-          d.fillEl.style.left = curLeft + "%";
-          d.fillEl.style.width = curWidth + "%";
-          d.fillEl.style.background = `linear-gradient(${d.gradDir}, rgba(255,255,255,${d.baseOpacity}), rgba(255,255,255,${curEdgeOp}))`;
-
-          const stdRatio = Math.min(
-            d.ratioStd || 0,
-            Math.max(d.ratio - 0.01, 0),
-            Math.max(scaleMax / 100 - d.ratio, 0),
-          );
-          if (stdRatio > 0) {
-            const stdLeft = (Math.max(d.ratio - stdRatio, 0.01) / (scaleMax / 100)) * 100;
-            const stdRight = (Math.min(d.ratio + stdRatio, scaleMax / 100) / (scaleMax / 100)) * 100;
-            const currentStdLeft = jsPos + t * (stdLeft - jsPos);
-            const currentStdRight = jsPos + t * (stdRight - jsPos);
-            d.errorEl.style.left = `${Math.min(currentStdLeft, currentStdRight)}%`;
-            d.errorEl.style.width = `${Math.abs(currentStdRight - currentStdLeft)}%`;
-            d.errorEl.style.opacity = `${0.25 + 0.55 * t}`;
-          } else {
-            d.errorEl.style.opacity = "0";
-          }
-
-          const barEnd = d.ratio >= 1 ? curLeft + curWidth : curLeft;
-          if (d.ratio >= 1) {
-            d.valueEl.style.left = `min(calc(${barEnd}% + 10px), calc(100% - 3.6ch))`;
-            d.valueEl.style.removeProperty("right");
-            d.valueEl.style.paddingLeft = "0";
-            d.valueEl.style.paddingRight = "";
-          } else {
-            d.valueEl.style.left = `max(calc(${barEnd}% + 10px), 12%)`;
-            d.valueEl.style.removeProperty("right");
-            d.valueEl.style.paddingLeft = "0";
-            d.valueEl.style.paddingRight = "";
-          }
-          d.valueEl.style.color = `rgba(255,255,255,${curTextOp})`;
-          d.valueEl.textContent = scoreText;
-        }
-
-        if (progress < 1) requestAnimationFrame(animateBars);
-      }
-
-      // Trigger animation on scroll into view
-      const observer = new IntersectionObserver(
-        (entries) => {
-          for (const entry of entries) {
-            if (entry.isIntersecting) {
-              observer.disconnect();
-              requestAnimationFrame(animateBars);
-            }
-          }
-        },
-        { threshold: 0.3 },
-      );
-      observer.observe(this);
-
-      // Position JS baseline line/label
-      const positionBaseline = () => {
-        const track = container.querySelector(".bench-track");
-        const wrap = shadow.querySelector(".bars-wrap");
-        if (track && wrap && jsLabelEl && jsLineEl) {
-          const wrapRect = wrap.getBoundingClientRect();
-          const trackRect = track.getBoundingClientRect();
-          const jsX = trackRect.left + (trackRect.width * jsPos) / 100 - wrapRect.left;
-          jsLabelEl.style.left = jsX + "px";
-          jsLabelEl.style.transform = "translateX(-50%)";
-          jsLineEl.style.left = jsX + "px";
-        }
-      };
-      requestAnimationFrame(positionBaseline);
-      window.addEventListener("resize", positionBaseline);
+      this._renderRatioRows(ratios);
     } catch (error) {
       console.error("[perf-benchmark-chart] render failed", error);
       this.style.display = "none";

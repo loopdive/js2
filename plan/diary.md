@@ -1,5 +1,17 @@
 # Project Diary
 
+## 2026-05-20 — Sprint 51 close / Sprint 52 start
+
+**Sprint 51 closed** (2026-05-08 → 2026-05-20, 12 days including a week-long pause from context limit + Codex restructuring overlap).
+
+**Results**: 26,777 → 28,147 pass (**+1,370 net**, 65.2%). 70 PRs merged. 34/50 issues done. 16 carried to S52.
+
+**Key wins**: IR retirement gate (#1376) now enforced in CI. Spec-gap wave (#1358–#1382) closed array callbacks, string methods, iterator helpers, promise combinators, class builtins. IR slices #1370–#1374 retired class methods, extern whitelist, destructuring params. Branch audit recovered 10 unmerged PRs (#341–350) now in CI queue.
+
+**Process issues**: Codex force-pushed to origin/main mid-sprint (rolled back); sprint file status drift (4 issues marked wrong); 10 issue files existed only in labs. Labs migration done this session: js2wasm-labs/main now = labs/ (private) + public/ (subtree).
+
+**Sprint 52 started** (2026-05-20). Theme: spec-completeness continuation + wasm closure bridge. 7 dev agents dispatched day 1 on #1396 (+400 passes), #1431–#1434, #1437–#1438. 10 audit PRs in CI. Baseline: 28,147 / 43,160 (65.2%). Target: +1,500 → ~29,650.
+
 ## 2026-05-07 — Sprint 49 close / Sprint 50 start
 
 **Sprint 49 closed.** 4-day sprint (2026-05-03 → 2026-05-07). 8 issues merged.
@@ -145,3 +157,28 @@ Single-day sprint running on ~15% remaining weekly budget. Focus: WebAssembly.Ex
 **Infrastructure**: agent idle counter in statusline; CI-wait fast-path for test-only PRs; variance escalation pattern calibrated.
 
 **Deferred to S49**: lodash Tier 2 (#1292), closure/virtual-dispatch gap fixes (#1299–#1304), Hono Tier 5 (#1297), GitHub Pages Wasm dogfood (#1296). Hard issues (#1126 int32 inference, #1199 linear-memory) → backlog.
+
+---
+
+## Sprint 50 — 2026-05-07 → 2026-05-08
+
+Sprint 50 ran as a transition sprint: began as "closure/call dispatch wave 2" but pivoted into a large spec-completeness audit. Ended at ~28,140 test262 passes (~58.5%).
+
+**Key work landed**:
+- #1311–#1319 wave: await passthrough, closure stack underflow, error message context, Symbol.toPrimitive, import.defer early error
+- #1321 Number.prototype formatting — pure Wasm (eliminated JS host)
+- #1322 Math.random() — WASI random_get in standalone mode
+- #1327 Landing page: per-feature test stats + playground deep-link
+- #1334 Spec compliance audit: architect-s51 reviewed all ECMAScript sections, filed 17 targeted spec-gap issues + 7 IR retirement tasks → becomes sprint 51 backbone
+- #1343 Boolean/Symbol coercion TypeErrors, #1344 Date formatters, #1347 for-of IteratorClose
+- Timeout raised 8s → 30s: eliminates ~36 false compile_timeout regressions per PR
+
+**Infrastructure wins**:
+- Per-test compile timeout increased from 8s to 30s (eliminates false CI noise)
+- `sprint/50` tag pushed; `sprint-51/begin` tag pushed
+
+**Carry-overs** (blocked or regressions):
+- #1311 (PR #264 -5 net), #1312 (PR #257 38 real regressions — function-index shift bug), #1324, #1325, #1326 (CI failures)
+- Structural issue #1382 filed: Wasm closures not JS-callable from host (blocks #1338, #1339, #1358)
+
+**Sprint 51 begins**: 25 issues, theme = spec-completeness wave + IR retirement gate. Target: +1,500–1,800 net passes.

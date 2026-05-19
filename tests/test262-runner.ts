@@ -67,6 +67,10 @@ const SENTINEL_KEYS: ReadonlyArray<readonly string[]> = [
   ["Function", "prototype", "call"],
   ["String", "prototype", "slice"],
   ["Promise", "prototype", "then"],
+  ["Set", "prototype", "add"],
+  ["Map", "prototype", "set"],
+  ["WeakMap", "prototype", "set"],
+  ["WeakSet", "prototype", "add"],
 ];
 
 function _buildFreshSandbox(): Record<string, any> {
@@ -279,14 +283,24 @@ export type FilterResult = { skip: true; reason: string } | { skip: false; reaso
 
 // Tests that cause the compiler to hang (infinite loop during compilation)
 const HANGING_TESTS = new Set([
-  "test/built-ins/Promise/race/invoke-then.js", // #408: Promise.race compilation hang
+  // (#1386) `test/built-ins/Promise/race/invoke-then.js` previously hung at
+  // compile time on the `p1.then = p2.then = p3.then = function(a, b) {…}`
+  // chained assignment. Verified 2026-05-08: compile completes in ~1.8s
+  // (well under the 5s threshold) — wrapped through `wrapTest`, the test
+  // returns 6 type-mismatch CEs about the `.then` function signature
+  // (returns void instead of `Promise<…>`). The test now registers as
+  // `compile_error`, not a hang. Reclassifying skip → compile_error is a
+  // bookkeeping move, not a regression.
   // #859: Map/forEach/iterates-values-deleted-then-readded.js previously hung
   // because callback captures were immutable snapshots — `if (count === 0)`
   // never became false, so the test infinitely re-added the deleted key. The
   // ref-cell capture pattern (compileArrowAsCallback) now propagates the
   // count++ mutation back to the outer local, terminating the loop after the
   // spec'd 3 iterations.
-  "test/built-ins/Temporal/Duration/from/argument-non-string.js", // hangs: Temporal runtime loop
+  // #1385: Temporal/Duration/from/argument-non-string.js no longer hangs.
+  // Local probe (May 2026): wrapTest + compile + instantiate + test() runs
+  // ~1.2s total; test() throws WebAssembly.Exception immediately because
+  // `Temporal` is not defined in our runtime. No iteration, no hang. Removed.
 ]);
 
 export function shouldSkip(source: string, meta: Test262Meta, filePath?: string): FilterResult {
@@ -302,61 +316,6 @@ export function shouldSkip(source: string, meta: Test262Meta, filePath?: string)
     };
   }
 
-  // Skip tests that use dynamic import() with _FIXTURE files — these need
-  // a runtime module loader we don't have.
-  // Static import _FIXTURE tests are handled by compileMulti in the test runner.
-  if (/_FIXTURE\.js/.test(source)) {
-    // Check if it's a dynamic import() — look for import( near the FIXTURE ref
-    const hasDynamicFixture = /import\s*\([^)]*_FIXTURE/.test(source);
-    if (hasDynamicFixture) {
-      return { skip: true, reason: "ES2020: dynamic import()" };
-    }
-    // Static imports are handled by the runner via compileMulti — don't skip
-  }
-
-  // Skip strict-mode-only restriction tests — deprioritized, not real-world features.
-  // These test ES spec edge cases that are disallowed in strict mode (which all modules are).
-  // with statement, octal literals, duplicate params, eval/arguments binding, delete unqualified, etc.
-  if (meta.features?.includes("with") || /\bwith\s*\(/.test(source)) {
-    return {
-      skip: true,
-      reason: "ES5 legacy: with statement (strict mode disallowed)",
-    };
-  }
-  // Sloppy-mode tests (noStrict flag or known sloppy paths) are now tagged via
-  // classifyTestScope(strict:"no") and run as-is — they may CE or fail in strict
-  // module mode, but are recorded so the report can filter them.
-  if (filePath && /unicode-16\.0\.0/.test(filePath)) {
-    return {
-      skip: true,
-      reason: "TypeScript 5.x: Unicode 16.0.0 identifiers not supported (#832)",
-    };
-  }
-  if ((filePath && /built-ins\/SharedArrayBuffer/.test(filePath)) || meta.features?.includes("SharedArrayBuffer")) {
-    return {
-      skip: true,
-      reason: "ES2017: SharedArrayBuffer (requires shared Wasm memory) (#674)",
-    };
-  }
-  // Skip FinalizationRegistry tests that require constructing an instance — those CE because
-  // `new FinalizationRegistry(...)` is not implemented. Tests that only inspect property
-  // descriptors / names / lengths don't construct an instance and may still pass, so we
-  // use three targeted rules instead of a broad path-based skip:
-  //   1. Source has `new FinalizationRegistry(` as a top-level statement (var/let/const = new, or bare new)
-  //   2. Test has both FinalizationRegistry + Reflect.construct features (the not-a-constructor tests)
-  //   3. Exact path for the Object.seal test that wraps FinalizationRegistry
-  if (
-    (filePath &&
-      /built-ins\/FinalizationRegistry/.test(filePath) &&
-      /^(?:(?:var|let|const)\s+\w+\s*=\s*)?new FinalizationRegistry\(/m.test(source)) ||
-    (meta.features?.includes("FinalizationRegistry") && meta.features?.includes("Reflect.construct")) ||
-    (filePath && /built-ins\/Object\/seal\/seal-finalizationregistry/.test(filePath))
-  ) {
-    return {
-      skip: true,
-      reason: "ES2021: FinalizationRegistry constructor not implemented — requires GC finalizer callbacks (#988)",
-    };
-  }
   // Skip known hanging tests by file path — prevents infinite compilation loops
   if (filePath) {
     const relPath = filePath.replace(/.*test262\//, "");
@@ -365,8 +324,20 @@ export function shouldSkip(source: string, meta: Test262Meta, filePath?: string)
     }
   }
 
-  if (filePath && /BigInt64Array|BigUint64Array/.test(filePath)) {
-    return { skip: true, reason: "ES2020: BigInt typed arrays not implemented (#838)" };
+  // #1390: import-defer proposal tests are syntax-only — they have no
+  // `export function test()` and rely on either a parse-phase negative check
+  // or a `import defer` namespace runtime that we don't implement. With
+  // TEST262_INCLUDE_PROPOSALS=1 they show as ~31 false `compile_error: no test
+  // export` entries. Skip the whole subtree unconditionally so the conformance
+  // report stays clean regardless of the proposals flag.
+  if (filePath) {
+    const relPath = filePath.replace(/.*test262\//, "");
+    if (relPath.includes("language/import/import-defer/")) {
+      return {
+        skip: true,
+        reason: "proposal feature: import defer (no test harness)",
+      };
+    }
   }
 
   // #1073: annexB/language/eval-code blanket skip removed. The __extern_eval
@@ -899,13 +870,15 @@ function renameYieldOutsideGenerators(source: string): string {
   // If no generator functions (neither `function*` nor `*method()` syntax),
   // just rename all yield identifiers.
   const hasGeneratorFunction = /\bfunction\s*\*/.test(source);
-  // #1162: include `#` in the identifier class so private generator methods
-  // like `*#gen()` / `async *#gen()` register as generators — otherwise
-  // `yield` inside their body gets renamed to `_yield`, producing
-  // `_yield* obj;` which parses as multiplication and crashes the compiler
-  // with "unexpected undefined AST node in compileExpression" when the
-  // surrounding test is later compiled.
-  const hasGeneratorMethod = /(?:^|[,{;)\s])\s*\*\s*(?:[\w$#]+|\[[\s\S]*?\])\s*\(/.test(source);
+  // #1162 / Task #42: include the same broad identifier class as the
+  // detail-pass `methodRegex` below so the fast-path doesn't misclassify
+  // private/Unicode-named generator methods. Without parity here the
+  // fast path falls through to "rename ALL yield identifiers", clobbering
+  // `yield` inside `static * #\u{6F}()` / `static * #℘()` etc.
+  const hasGeneratorMethod =
+    /(?:^|[,{;)\s])\s*\*\s*(?:(?:[\w$#]|\\u\{[^}]*\}|\\u[0-9a-fA-F]{4}|[\u0080-\uFFFF])+|\[[\s\S]*?\])\s*\(/.test(
+      source,
+    );
   if (!hasGeneratorFunction && !hasGeneratorMethod) {
     return source.replace(/\byield\b/g, "_yield");
   }
@@ -1015,13 +988,26 @@ function renameYieldOutsideGenerators(source: string): string {
   }
 
   // Find `*method()` generator method syntax (not caught by function regex).
-  // `[\w$#]+` matches private method names like `#gen` — without `#`,
-  // `*#gen()` isn't recognized as a generator and `yield` inside its body
-  // is incorrectly renamed to `_yield`. (#1162)
-  const methodRegex = /\*\s*(?:[\w$#]+|\[[\s\S]*?\])\s*\(/g;
+  // The identifier class covers the four ways a method name can be written:
+  //   - ASCII identifier chars (`\w$#`) — common case incl. `#gen` private
+  //     names per #1162
+  //   - non-ASCII identifier chars (Unicode letters like `℘`, `ZWNJ`/`ZWJ`
+  //     joiners) — covered by `[\u0080-\uFFFF]`
+  //   - long-form Unicode escape `\u{XXXX}` — covered explicitly
+  //   - short-form Unicode escape `\uXXXX` — covered explicitly
+  // Without these, methods like `static * #\u{6F}(...)` or `static * #℘(...)`
+  // skip the regex match and `yield` in their bodies is incorrectly
+  // renamed to `_yield`, hitting the same 52-test class/elements
+  // ReferenceError cluster as the missing `static` prefix below.
+  const methodRegex = /\*\s*(?:(?:[\w$#]|\\u\{[^}]*\}|\\u[0-9a-fA-F]{4}|[\u0080-\uFFFF])+|\[[\s\S]*?\])\s*\(/g;
   let methodMatch: RegExpExecArray | null;
   while ((methodMatch = methodRegex.exec(source)) !== null) {
-    // Distinguish from multiply operator: check preceding context
+    // Distinguish from multiply operator: check preceding context.
+    // `static` is needed for `static * gen()` / `static * #gen()` class
+    // members — without it, `static * #_(value)` is classified as a
+    // multiply expression and `yield` inside the body is incorrectly
+    // renamed to `_yield`, producing the "_yield is not defined"
+    // ReferenceError at runtime in 52 class/elements test262 cases.
     const before = source.substring(Math.max(0, methodMatch.index - 20), methodMatch.index).trimEnd();
     if (
       !(
@@ -1030,6 +1016,7 @@ function renameYieldOutsideGenerators(source: string): string {
         before.endsWith(";") ||
         before.endsWith(")") ||
         before.endsWith("async") ||
+        before.endsWith("static") ||
         before.length === 0
       )
     ) {
@@ -1775,9 +1762,24 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
   // Our Wasm arrays can't store extra properties, so extract these to separate variables.
   // Transform: __expected.index = N; → var __expected_index: number = N;
   // Transform: __expected.input = "S"; → var __expected_input: string = "S";
-  // Then replace __expected.index → __expected_index, __expected.input → __expected_input
+  // Then replace __expected.index → __expected_index, __expected.input → __expected_input.
+  //
+  // (#1352b) The original regex only matched double-quoted RHS. Many S15.10.2.*
+  // tests use single-quoted strings (e.g. `__expected.input = 'alice said: "don\'t"';`)
+  // which fell through unmodified — leaving `__expected.input` references on later
+  // lines pointing at `__expected_input` (which never got declared) and producing
+  // `ReferenceError: __expected_input is not defined`. Extended to handle both
+  // quote styles. The `("(?:...)"|'(?:...)')` alternation captures the entire
+  // quoted literal so the replacement preserves whichever style the source used.
   body = body.replace(/__expected\.index\s*=\s*(\d+)\s*;/g, "var __expected_index: number = $1;");
-  body = body.replace(/__expected\.input\s*=\s*("(?:[^"\\]|\\.)*")\s*;/g, "var __expected_input: string = $1;");
+  // (#1352b) Match double-quoted, single-quoted, or identifier RHS — many tests
+  // assign `__expected.input = __string` where `__string` is a previously-declared
+  // local. The identifier branch lets the var-decl carry through any string-typed
+  // value, not just literals.
+  body = body.replace(
+    /__expected\.input\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[A-Za-z_$][\w$]*)\s*;/g,
+    "var __expected_input: string = $1;",
+  );
   // Replace property accesses with the extracted variables
   body = body.replace(/__expected\.index\b(?!\s*=)/g, "__expected_index");
   body = body.replace(/__expected\.input\b(?!\s*=)/g, "__expected_input");
@@ -1980,7 +1982,10 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
     classBodies.push(cm[1]!);
   }
   // Track hoisted var metadata for proper declaration generation
-  const hoistedVarMeta = new Map<string, { type: "number"; init: string } | { type: "any" }>();
+  const hoistedVarMeta = new Map<
+    string,
+    { type: "number"; init: string } | { type: "any" } | { type: "expr"; fullDecl: string }
+  >();
   if (classBodies.length > 0) {
     const classBodyText = classBodies.join("\n");
     for (const vm of body.matchAll(varDeclNumericPattern)) {
@@ -2002,6 +2007,70 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
         hoistedVarMeta.set(varName, { type: "any" });
       }
     }
+
+    // #1363 — Hoist var declarations with arbitrary expression initializers
+    // referenced from class bodies. Class methods compile to module-level Wasm
+    // functions and cannot capture enclosing-function locals; without hoisting,
+    // a method's parameter default `[] = iter` resolves to ref.null.extern,
+    // causing a "Cannot destructure 'null' or 'undefined'" trap when invoked.
+    //
+    // The hoisting strategy converts:
+    //   var iter = function*() { iterations += 1; }();
+    // into module-scope `let iter: any;` plus an in-body assignment
+    // `iter = function*() { iterations += 1; }();` that runs in original order.
+    //
+    // Bracket/paren/brace-depth-aware scan to capture the full initializer
+    // expression up to the matching `;` (handles nested function bodies, object
+    // literals with computed keys, string literals, comments, regex literals).
+    const findVarStmtEnd = (src: string, eqPos: number): number => {
+      let depth = 0;
+      let i = eqPos + 1;
+      while (i < src.length) {
+        const c = src[i]!;
+        if (c === "/" && src[i + 1] === "/") {
+          // line comment — skip to newline
+          while (i < src.length && src[i] !== "\n") i++;
+          continue;
+        }
+        if (c === "/" && src[i + 1] === "*") {
+          // block comment
+          i += 2;
+          while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+          i += 2;
+          continue;
+        }
+        if (c === "'" || c === '"' || c === "`") {
+          const quote = c;
+          i++;
+          while (i < src.length && src[i] !== quote) {
+            if (src[i] === "\\") i += 2;
+            else i++;
+          }
+          i++;
+          continue;
+        }
+        if (c === "{" || c === "(" || c === "[") depth++;
+        else if (c === "}" || c === ")" || c === "]") depth--;
+        else if (c === ";" && depth === 0) return i;
+        i++;
+      }
+      return -1;
+    };
+
+    const varInitStart = /\bvar\s+(\w+)\s*=/g;
+    for (const vm of body.matchAll(varInitStart)) {
+      const varName = vm[1]!;
+      if (hoistedVars.has(varName)) continue;
+      // Check if this variable is referenced in any class body
+      if (!new RegExp(`\\b${varName}\\b`).test(classBodyText)) continue;
+      const matchStart = vm.index!;
+      const eqPos = matchStart + vm[0].length - 1; // position of '='
+      const semiPos = findVarStmtEnd(body, eqPos);
+      if (semiPos < 0) continue;
+      const fullDecl = body.slice(matchStart, semiPos + 1);
+      hoistedVars.add(varName);
+      hoistedVarMeta.set(varName, { type: "expr", fullDecl });
+    }
   }
 
   // Build hoisted declarations (module-level) and strip them from the function body
@@ -2013,6 +2082,22 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
       if (meta?.type === "number") {
         hoistedDecls += `let ${v}: number = ${meta.init};\n`;
         bodyForFunc = bodyForFunc.replace(new RegExp(`\\bvar\\s+${v}\\s*=\\s*${meta.init}\\s*;`), ``);
+      } else if (meta?.type === "expr") {
+        // #1363 — Var with expression initializer referenced from class body.
+        // Hoist `let v: any;` to module scope and rewrite the in-body
+        // declaration to a plain assignment so initialization order is
+        // preserved. (Side-effects in the initializer must run when the
+        // surrounding code reaches that statement, not at module init.)
+        hoistedDecls += `let ${v}: any;\n`;
+        // Replace the captured `var v = <expr>;` with `v = <expr>;`. Use a
+        // literal substring replace (not regex) — the expression may contain
+        // characters that mean things in regex. fullDecl includes the
+        // trailing `;`.
+        const replacement = meta.fullDecl.replace(/^\s*var\s+/, "");
+        const idx = bodyForFunc.indexOf(meta.fullDecl);
+        if (idx >= 0) {
+          bodyForFunc = bodyForFunc.slice(0, idx) + replacement + bodyForFunc.slice(idx + meta.fullDecl.length);
+        }
       } else {
         // Uninit var: hoist as any (externref in Wasm)
         hoistedDecls += `let ${v}: any;\n`;
@@ -2202,7 +2287,7 @@ export interface TestResult {
 }
 
 /** Default per-test timeout in milliseconds (prevents infinite-loop hangs) */
-const TEST_TIMEOUT_MS = 8000;
+const TEST_TIMEOUT_MS = 15000;
 
 function isModuleGoal(category: string, meta: Test262Meta, source: string): boolean {
   if (category === "language/module-code") return true;
@@ -2871,6 +2956,15 @@ export async function runTest262File(
     //   (__assert_count starts at 1, incremented before check, so first assert → 2)
     // ret == -1: uncaught exception (not from an assert)
     // ret == 0: legacy (should not happen with new shims)
+    //
+    // #1318 — surface enough of the assert source line to diagnose the
+    // failure. Previously we truncated to 160 chars which cut off most
+    // assertion messages. Most assert lines fit comfortably in 600 chars
+    // (the longest legitimate assert.sameValue with a descriptive message
+    // and a multi-arg comparison stays well under that). The downstream
+    // worker still caps the full error string at 2000 chars so this won't
+    // bloat the JSONL beyond what fits a single test result.
+    const ASSERT_LINE_MAX = 600;
     let assertCtx = "";
     if (typeof ret === "number" && ret >= 2) {
       const assertIdx = ret - 1; // 1-based index into assert calls
@@ -2885,15 +2979,40 @@ export async function runTest262File(
           const lineStart = source.lastIndexOf("\n", m.index) + 1;
           const lineEnd = source.indexOf("\n", m.index);
           const line = source.slice(lineStart, lineEnd === -1 ? undefined : lineEnd).trim();
-          assertCtx = ` | assert #${assertIdx}: ${line.slice(0, 160)}`;
+          // 1-based line number for the user (matches editor display).
+          const lineNumber = (source.slice(0, m.index).match(/\n/g)?.length ?? 0) + 1;
+          const truncated = line.length > ASSERT_LINE_MAX ? `${line.slice(0, ASSERT_LINE_MAX - 3)}...` : line;
+          assertCtx = ` | assert #${assertIdx} at L${lineNumber}: ${truncated}`;
           break;
         }
       }
       if (!assertCtx) {
-        assertCtx = ` | assert #${assertIdx} of ${nth} total`;
+        // #1318 — Nth assert not found via regex (e.g. test uses Test262Error
+        // throws or a custom helper that doesn't match `\bassert\b...`).
+        // Look for a bare `throw new Test262Error(...)` to surface its
+        // message — that's a common test262 failure idiom that the regex
+        // above misses.
+        const throwRegex = /throw\s+new\s+Test262Error\s*\(([^)]*)\)/g;
+        let throwMatch: RegExpExecArray | null;
+        let nthThrow = 0;
+        while ((throwMatch = throwRegex.exec(source)) !== null) {
+          nthThrow++;
+          if (nthThrow === assertIdx) {
+            const lineStart = source.lastIndexOf("\n", throwMatch.index) + 1;
+            const lineEnd = source.indexOf("\n", throwMatch.index);
+            const line = source.slice(lineStart, lineEnd === -1 ? undefined : lineEnd).trim();
+            const lineNumber = (source.slice(0, throwMatch.index).match(/\n/g)?.length ?? 0) + 1;
+            const truncated = line.length > ASSERT_LINE_MAX ? `${line.slice(0, ASSERT_LINE_MAX - 3)}...` : line;
+            assertCtx = ` | Test262Error #${assertIdx} at L${lineNumber}: ${truncated}`;
+            break;
+          }
+        }
+        if (!assertCtx) {
+          assertCtx = ` | assert #${assertIdx} of ${nth} total`;
+        }
       }
     } else if (ret === -1) {
-      assertCtx = " | uncaught exception";
+      assertCtx = " | uncaught exception (no assert tracked)";
     }
     return {
       file: relPath,

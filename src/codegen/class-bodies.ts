@@ -7,6 +7,7 @@
 import { ts } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
+import { isHostConstructibleBuiltin } from "./builtin-tags.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
@@ -90,6 +91,16 @@ export function collectClassDeclaration(
           parentFields = ctx.structFields.get(parentClassName) ?? [];
           // Record parent-child relationship
           ctx.classParentMap.set(className, parentClassName);
+          // (#1366a) Detect built-in parent that is host-constructible (Error
+          // family). Such subclasses get an externref-backed instance: the
+          // constructor returns externref and `super(...)` lowers to
+          // `__new_<Parent>(...)`. We deliberately keep parentStructTypeIdx
+          // undefined so the existing "root struct" path still fires for any
+          // user-class collection bookkeeping (struct registration, tag).
+          if (parentStructTypeIdx === undefined && isHostConstructibleBuiltin(parentClassName)) {
+            ctx.classBuiltinParentMap.set(className, parentClassName);
+            ctx.classExternrefBackedSet.add(className);
+          }
           // Mark parent struct as non-final so it can be extended
           if (parentStructTypeIdx !== undefined) {
             const parentTypeDef = ctx.mod.types[parentStructTypeIdx] as StructTypeDef;
@@ -211,6 +222,22 @@ export function collectClassDeclaration(
     ctx.protoGlobals.set(className, protoGlobalIdx);
   }
 
+  // (#1395) Register a class-object singleton global (externref, lazily
+  // initialized). The bare class identifier `C` resolves to this global,
+  // giving `Object.getOwnPropertyDescriptor(C, "m")` a real receiver to
+  // inspect. Skip for externref-backed builtin subclasses (#1366a) — those
+  // don't have a `$ClassName` WasmGC struct.
+  if (!ctx.classBuiltinParentMap.has(className)) {
+    const classObjectGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: `__class_${className}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.classObjectGlobals.set(className, classObjectGlobalIdx);
+  }
+
   // Register constructor function: takes ctor params, returns (ref $structTypeIdx)
   const ctorParams: ValType[] = [];
   const ctorName = `${className}_new`;
@@ -247,7 +274,13 @@ export function collectClassDeclaration(
       }
     }
   }
-  const ctorResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
+  // (#1366a) Externref-backed subclasses (extends Error/TypeError/...) have
+  // a host-created instance, so the constructor returns externref instead of
+  // a (ref $struct).
+  const isExternrefBackedClass = ctx.classExternrefBackedSet.has(className);
+  const ctorResults: ValType[] = isExternrefBackedClass
+    ? [{ kind: "externref" }]
+    : [{ kind: "ref", typeIdx: structTypeIdx }];
   const ctorTypeIdx = addFuncType(ctx, ctorParams, ctorResults, `${className}_new_type`);
   const ctorFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   ctx.funcMap.set(ctorName, ctorFuncIdx);
@@ -520,6 +553,30 @@ export function collectClassDeclaration(
     ctx.classMethodNames.set(className, protoMethodNames);
   }
 
+  // (#1395) Collect own static method names — analog of the prototype loop
+  // above. Used by `_staticMethodNames` allowlist so
+  // `Object.getOwnPropertyDescriptor(C, "m")` returns the spec descriptor for
+  // static methods. Inherited statics are intentionally excluded — spec
+  // §8.10.6 says `getOwnPropertyDescriptor` returns descriptors only for OWN
+  // properties. Static accessors (`static get m()`) are excluded for now —
+  // their descriptor shape differs (`get`/`set` vs `value`/`writable`) and
+  // they're out of Phase 1 scope.
+  {
+    const staticMethodNames: string[] = [];
+    const seenStatic = new Set<string>();
+    for (const member of decl.members) {
+      if (!hasStaticModifier(member)) continue;
+      if (!ts.isMethodDeclaration(member)) continue;
+      if (!member.name) continue;
+      const n = resolveClassMemberName(ctx, member.name);
+      if (n === undefined) continue;
+      if (seenStatic.has(n)) continue;
+      seenStatic.add(n);
+      staticMethodNames.push(n);
+    }
+    ctx.classStaticMethodNames.set(className, staticMethodNames);
+  }
+
   // Register static properties as module globals
   for (const member of decl.members) {
     if (ts.isPropertyDeclaration(member) && member.name && hasStaticModifier(member)) {
@@ -566,11 +623,16 @@ export function collectClassDeclaration(
       });
       ctx.staticProps.set(fullName, globalIdx);
 
-      // Store initializer expression for later compilation
+      // Store initializer expression for later compilation. (#1395) Carrying
+      // `className` lets the init compile loop set `enclosingClassName` +
+      // `isStaticContext` on the per-initializer fctx so `this` inside
+      // (e.g. `static f = () => this`) resolves to the class-object singleton
+      // via `emitLazyClassObjectGet`, NOT to `undefined`.
       if (member.initializer) {
         ctx.staticInitExprs.push({
           globalIdx,
           initializer: member.initializer,
+          className,
         });
       }
     }
@@ -695,12 +757,17 @@ export function compileClassBodies(
       }
     }
 
+    // (#1366a) Externref-backed subclasses (`class Sub extends Error`) have
+    // their instance created by a host import inside `super(...)`; `__self` is
+    // an externref slot and we skip the WasmGC `struct.new` initialization.
+    const isExternrefBacked = ctx.classExternrefBackedSet.has(className);
+
     const fctx: FunctionContext = {
       name: ctorName,
       params,
       locals: [],
       localMap: new Map(),
-      returnType: { kind: "ref", typeIdx: structTypeIdx },
+      returnType: isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx },
       body: [],
       blockDepth: 0,
       breakStack: [],
@@ -716,7 +783,9 @@ export function compileClassBodies(
     // classes may have resolved to externref during the collection phase.
     {
       const resolvedParams = params.map((p) => p.type);
-      const resolvedResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
+      const resolvedResults: ValType[] = isExternrefBacked
+        ? [{ kind: "externref" }]
+        : [{ kind: "ref", typeIdx: structTypeIdx }];
       const updatedTypeIdx = addFuncType(ctx, resolvedParams, resolvedResults, `${ctorName}_type`);
       if (updatedTypeIdx !== func.typeIdx) {
         func.typeIdx = updatedTypeIdx;
@@ -727,37 +796,46 @@ export function compileClassBodies(
       fctx.localMap.set(params[i]!.name, i);
     }
 
-    // Allocate a local for the struct instance
-    const selfLocal = allocLocal(fctx, "__self", {
-      kind: "ref",
-      typeIdx: structTypeIdx,
-    });
+    // Allocate a local for the struct instance (externref for host-backed subclasses)
+    const selfLocal = allocLocal(
+      fctx,
+      "__self",
+      isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx },
+    );
 
-    // Push default values for all fields, then struct.new
-    for (const field of fields) {
-      if (field.name === "__tag") {
-        // Push the class-specific tag value for instanceof discrimination
-        const tagValue = ctx.classTagMap.get(className) ?? 0;
-        fctx.body.push({ op: "i32.const", value: tagValue });
-      } else if (field.type.kind === "f64") {
-        fctx.body.push({ op: "f64.const", value: 0 });
-      } else if (field.type.kind === "i32") {
-        fctx.body.push({ op: "i32.const", value: 0 });
-      } else if (field.type.kind === "externref") {
-        fctx.body.push({ op: "ref.null.extern" });
-      } else if (field.type.kind === "ref" || field.type.kind === "ref_null") {
-        fctx.body.push({ op: "ref.null", typeIdx: field.type.typeIdx });
-      } else if ((field.type as any).kind === "i64") {
-        fctx.body.push({ op: "i64.const", value: 0n });
-      } else if ((field.type as any).kind === "eqref") {
-        fctx.body.push({ op: "ref.null.eq" });
-      } else {
-        // Fallback for any unhandled type — push i32 0
-        fctx.body.push({ op: "i32.const", value: 0 });
+    if (isExternrefBacked) {
+      // No struct.new; `__self` starts as null externref and is set by the
+      // explicit `super(...)` call (compileSuperCall) or by the implicit
+      // super-call we emit below for default-constructor subclasses.
+      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "local.set", index: selfLocal });
+    } else {
+      // Push default values for all fields, then struct.new
+      for (const field of fields) {
+        if (field.name === "__tag") {
+          // Push the class-specific tag value for instanceof discrimination
+          const tagValue = ctx.classTagMap.get(className) ?? 0;
+          fctx.body.push({ op: "i32.const", value: tagValue });
+        } else if (field.type.kind === "f64") {
+          fctx.body.push({ op: "f64.const", value: 0 });
+        } else if (field.type.kind === "i32") {
+          fctx.body.push({ op: "i32.const", value: 0 });
+        } else if (field.type.kind === "externref") {
+          fctx.body.push({ op: "ref.null.extern" });
+        } else if (field.type.kind === "ref" || field.type.kind === "ref_null") {
+          fctx.body.push({ op: "ref.null", typeIdx: field.type.typeIdx });
+        } else if ((field.type as any).kind === "i64") {
+          fctx.body.push({ op: "i64.const", value: 0n });
+        } else if ((field.type as any).kind === "eqref") {
+          fctx.body.push({ op: "ref.null.eq" });
+        } else {
+          // Fallback for any unhandled type — push i32 0
+          fctx.body.push({ op: "i32.const", value: 0 });
+        }
       }
+      fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+      fctx.body.push({ op: "local.set", index: selfLocal });
     }
-    fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
-    fctx.body.push({ op: "local.set", index: selfLocal });
 
     // __proto__ initialization: deferred to #802 (dynamic prototype support)
 
@@ -845,10 +923,33 @@ export function compileClassBodies(
       }
     }
 
+    // (#1366a) For externref-backed subclasses, the parent-chain field-walk
+    // path is irrelevant (no struct fields to copy). When there's no explicit
+    // ctor, emit an implicit `super(args[0])`-equivalent: forward the first
+    // declared parameter to `__new_<ParentBuiltin>(...)`. With no params, we
+    // call `__new_<Parent>(null)`.
+    if (!ctor && isExternrefBacked) {
+      const parentName = ctx.classBuiltinParentMap.get(className);
+      if (parentName) {
+        const importName = `__new_${parentName}`;
+        // No constructor → no params to forward; pass null externref.
+        fctx.body.push({ op: "ref.null.extern" });
+        const funcIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+        } else {
+          // Standalone (no host import): the externref message is already on
+          // stack; treat that as the instance (best-effort fallback).
+        }
+        fctx.body.push({ op: "local.set", index: selfLocal });
+      }
+    }
+
     // When a child class has no explicit constructor, run inherited field
     // initializers from the parent chain (implicit super() semantics).
     // This must happen before own field initializers.
-    if (!ctor) {
+    if (!ctor && !isExternrefBacked) {
       const parentClassName = ctx.classParentMap.get(className);
       if (parentClassName) {
         // Walk the parent chain (grandparent first) and compile field initializers
@@ -912,15 +1013,20 @@ export function compileClassBodies(
     }
 
     // Compile field initializers from property declarations (e.g., x: number = 42, #x: number = 42)
-    for (const member of decl.members) {
-      if (ts.isPropertyDeclaration(member) && member.name && member.initializer && !hasStaticModifier(member)) {
-        const fieldName = resolveClassMemberName(ctx, member.name);
-        if (fieldName === undefined) continue; // dynamic computed name — skip
-        const fieldIdx = fields.findIndex((f) => f.name === fieldName);
-        if (fieldIdx !== -1) {
-          fctx.body.push({ op: "local.get", index: selfLocal });
-          compileExpression(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
-          fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+    // (#1366a) Skip for externref-backed classes — they have no WasmGC struct
+    // fields; user `prop = ...` declarations inside `class Sub extends Error`
+    // would need to be installed via host setters, which is out of scope.
+    if (!isExternrefBacked) {
+      for (const member of decl.members) {
+        if (ts.isPropertyDeclaration(member) && member.name && member.initializer && !hasStaticModifier(member)) {
+          const fieldName = resolveClassMemberName(ctx, member.name);
+          if (fieldName === undefined) continue; // dynamic computed name — skip
+          const fieldIdx = fields.findIndex((f) => f.name === fieldName);
+          if (fieldIdx !== -1) {
+            fctx.body.push({ op: "local.get", index: selfLocal });
+            compileExpression(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
+            fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+          }
         }
       }
     }
@@ -1015,6 +1121,12 @@ export function compileClassBodies(
         labelMap: new Map(),
         savedBodies: [],
         isGenerator: isGeneratorMethod,
+        enclosingClassName: className,
+        // (#1395) Static methods: `this` resolves to the class constructor
+        // object (the `__class_<Name>` singleton). Without `isStaticContext`,
+        // bare `this` inside a static method would fall through to
+        // `emitUndefined` because static methods have no `this` param.
+        isStaticContext: isStatic ? true : undefined,
       };
 
       // Re-resolve the function type now that all class struct types are registered.
@@ -1455,6 +1567,39 @@ export function compileSuperCall(
 ): void {
   const parentClassName = ctx.classParentMap.get(childClassName);
   if (!parentClassName) return;
+
+  // (#1366a) Externref-backed subclass (extends Error / TypeError / ...).
+  // `super(msg)` lowers to `__self = __new_<Parent>(msg)`. The host import
+  // produces a real JS Error object whose internal slots (.name/.message/
+  // .stack) are correctly populated, and whose [[Prototype]] is set by the
+  // JS runtime — which is the most behaviour we can capture without a
+  // newTarget-threading helper (deferred to #1366b/c).
+  const builtinParent = ctx.classBuiltinParentMap.get(childClassName);
+  if (builtinParent) {
+    const args = callExpr.arguments;
+    const hasSpread = args.some((a) => ts.isSpreadElement(a));
+    if (hasSpread || args.length === 0) {
+      // Spread or zero-arg: pass null (best-effort; #1366b refines spread).
+      fctx.body.push({ op: "ref.null.extern" });
+    } else {
+      // Single message arg coerced to externref.
+      const argResult = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+      if (argResult && argResult.kind !== "externref") {
+        coerceType(ctx, fctx, argResult, { kind: "externref" });
+      }
+    }
+    const importName = `__new_${builtinParent}`;
+    const funcIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (funcIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx });
+    }
+    // If the import is unavailable (standalone/WASI), the message externref
+    // is already on the stack; treating it as the instance is the documented
+    // standalone fallback (architect spec, risk #2).
+    fctx.body.push({ op: "local.set", index: selfLocal });
+    return;
+  }
 
   const parentFields = ctx.structFields.get(parentClassName) ?? [];
   const structTypeIdx = ctx.structMap.get(childClassName)!;

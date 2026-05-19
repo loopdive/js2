@@ -146,6 +146,17 @@ export interface FunctionContext {
   hoistedFuncs?: Set<string>;
   /** Enclosing class name — propagated to closures for super keyword resolution */
   enclosingClassName?: string;
+  /**
+   * (#1395) True when compiling a static class member context (static field
+   * initializer, static method body, or a closure spawned from inside one).
+   * In a static context, `this` resolves to the class constructor object
+   * (the `__class_<Name>` singleton), NOT to a per-instance struct. Per
+   * ECMA-262 §15.7.1.1 step 5.b, DefineField is called with the class as
+   * receiver for static fields, so `this` inside `static f = () => this`
+   * is the class itself. Propagated through closure spawning the same way
+   * `enclosingClassName` is.
+   */
+  isStaticContext?: boolean;
   /** Set of variable names known to be non-null in the current scope (type narrowing) */
   narrowedNonNull?: Set<string>;
   /**
@@ -345,8 +356,14 @@ export interface CodegenContext {
   staticMethodSet: Set<string>;
   /** Map from "ClassName_propName" → global index for static properties */
   staticProps: Map<string, number>;
-  /** Static property initializer expressions to compile into __module_init */
-  staticInitExprs: { globalIdx: number; initializer: ts.Expression }[];
+  /**
+   * Static property initializer expressions to compile into __module_init.
+   * `className` (#1395) is the owning class name — used to set
+   * `enclosingClassName` + `isStaticContext` on the initFctx so `this`
+   * inside the initializer (and any closures it spawns) resolves to the
+   * class-object singleton via `emitLazyClassObjectGet`.
+   */
+  staticInitExprs: { globalIdx: number; initializer: ts.Expression; className?: string }[];
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /** Map from local variable name → closure metadata (for call_ref dispatch) */
@@ -431,6 +448,20 @@ export interface CodegenContext {
   >;
   /** Map from child className → parent className (for local class inheritance) */
   classParentMap: Map<string, string>;
+  /**
+   * (#1366a) Map from child className → built-in JS parent name when the parent
+   * is a host-constructible builtin (Error / TypeError / RangeError / ...).
+   * Subclass instances are externref-backed; `super(args)` lowers to
+   * `__new_<Parent>(args)` instead of the field-walk path.
+   */
+  classBuiltinParentMap: Map<string, string>;
+  /**
+   * (#1366a) Set of class names whose runtime instance representation is
+   * externref (NOT a WasmGC struct). Constructor return type, `new` result
+   * type, and `instanceof` routing all consult this set. Currently populated
+   * for subclasses of host-constructible builtins.
+   */
+  classExternrefBackedSet: Set<string>;
   /** Counter for assigning unique class tags (for instanceof support) */
   classTagCounter: number;
   /** Map from class name → unique tag value (for instanceof support) */
@@ -480,6 +511,8 @@ export interface CodegenContext {
   templateCacheCounter: number;
   /** Type index for template vec struct */
   templateVecTypeIdx: number;
+  /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
+  errorStructTypeIdx: number;
   /** Extra properties for empty object variables */
   widenedTypeProperties: Map<string, { name: string; type: ValType }[]>;
   /** Map from widened variable name to its registered struct name */
@@ -520,6 +553,13 @@ export interface CodegenContext {
   symbolCounterGlobalIdx: number;
   /** Stack of in-progress parent function bodies for index shifting during closure compilation */
   parentBodiesStack: Instr[][];
+  /** All live (allocated but not yet attached to ctx.mod.functions) FunctionContext bodies.
+   *  Walked by addUnionImports / shiftLateImportIndices to ensure call-funcIdx values
+   *  in nested function bodies under construction (e.g. `cbFctx.body` in
+   *  compileArrowAsCallback during its captures-extraction / param-coercion setup
+   *  phase, BEFORE the savedFunc swap puts it on funcStack) are still shifted on
+   *  late import addition. (#1384) */
+  liveBodies: Set<Instr[]>;
   /** Hash-based lookup for anonymous struct deduplication */
   anonStructHash: Map<string, string>;
   /** Pending late import shift state */
@@ -530,6 +570,21 @@ export interface CodegenContext {
   classMethodNames: Map<string, string[]>;
   /** Map from class name → global idx of the method-name CSV string constant (see #1047) */
   classMethodsCsvGlobal: Map<string, number>;
+  /** Map from class name → global index of the class-object externref singleton (#1395). Used so `C` resolves to a real object whose static-method descriptors are queryable. */
+  classObjectGlobals: Map<string, number>;
+  /** Map from class name → own static method names (for the static method allowlist; #1395) */
+  classStaticMethodNames: Map<string, string[]>;
+  /** Map from class name → global idx of the static-method-name CSV string constant (#1395) */
+  classStaticMethodsCsvGlobal: Map<string, number>;
+  /** (#1394) Map from `${className}_${methodName}` → global idx of the cached
+   *  externref singleton closure for the method. Lazily allocated on first
+   *  property-access of `C.prototype.<method>` or `instance.<method>` (as
+   *  value). Reused on every subsequent access so `c.m === C.prototype.m`
+   *  holds (verifyProperty identity assertions across ~478 class/elements
+   *  tests). The companion canonical trampoline is named
+   *  `__obj_meth_tramp_${className}_${methodName}_cached` and is also reused
+   *  across all access sites to avoid bloating mod.functions. */
+  methodClosureGlobals: Map<string, number>;
   /** Whether targeting WASI */
   wasi: boolean;
   /** WASI import indices */

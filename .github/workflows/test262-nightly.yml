@@ -53,6 +53,11 @@ jobs:
       - name: Run test262
         run: pnpm run test:262 -- --include-proposals
 
+      - name: Capture committed baseline
+        run: |
+          mkdir -p /tmp/js2wasm-before-refresh
+          cp benchmarks/results/test262-current.jsonl /tmp/js2wasm-before-refresh/test262-current.jsonl 2>/dev/null || true
+
       - name: Promote results to stable filename
         # build-pages.js reads benchmarks/results/test262-current.* — copy the
         # latest run there so the next deploy picks it up. Stable names so we
@@ -82,6 +87,14 @@ jobs:
             public/benchmarks/results/test262-editions.json
           if git diff --cached --quiet; then
             echo "No changes to commit."
+            exit 0
+          fi
+          if [ -f /tmp/js2wasm-before-refresh/test262-current.jsonl ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type jsonl \
+              --baseline /tmp/js2wasm-before-refresh/test262-current.jsonl \
+              --candidate benchmarks/results/test262-current.jsonl; then
+            echo "Only volatile test262 metadata/timing changed — skipping commit."
             exit 0
           fi
           PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('benchmarks/results/test262-current.json','utf8')).summary.pass)")

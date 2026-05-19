@@ -20,7 +20,7 @@ import {
 } from "../index.js";
 import { emitBoundsGuardedArraySet } from "../property-access.js";
 import { coerceType, compileExpression } from "../shared.js";
-import { defaultValueInstrs, emitSafeExternrefToF64 } from "../type-coercion.js";
+import { defaultValueInstrs } from "../type-coercion.js";
 import { emitThrowString, getFuncParamTypes } from "./helpers.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName, tryStaticToNumber } from "./misc.js";
@@ -30,6 +30,37 @@ function unwrapParens(node: ts.Expression): ts.Expression {
     node = node.expression;
   }
   return node;
+}
+
+/**
+ * Emit a ToNumeric coercion for an externref operand of `++`/`--` (#1379).
+ *
+ * UpdateExpressions (ECMA-262 §13.4) call ToNumeric on the operand before
+ * the +1/-1 step. ToNumeric calls ToPrimitive(NUMBER_HINT) then ToNumber
+ * (BigInt is split out — see #1349). For ++/-- the routing is:
+ *   - null      → 0
+ *   - undefined → NaN
+ *   - true/false→ 1/0
+ *   - "1"       → 1     (whitespace-trimmed numeric string parse)
+ *   - ""        → 0
+ *   - "abc"     → NaN
+ *   - {valueOf:()=>"5"} → 5    (valueOf → ToNumber chain)
+ *   - {} / fn   → NaN          ([object Object]/function source → NaN)
+ *
+ * The host import `__unbox_number` (registered by `addUnionImports`) maps
+ * to the runtime "unbox/number" intent which performs exactly this
+ * ToPrimitive→Number chain via `_toPrimitive` + `_hostToPrimitive` (#1319),
+ * so a direct call is correct here. The previous implementation used
+ * `emitSafeExternrefToF64` which short-circuited any non-`typeof===number`
+ * value to NaN — that was a defensive path from before the WasmGC
+ * struct ToPrimitive support landed.
+ *
+ * Expects one externref on the stack; leaves one f64.
+ */
+function emitToNumericForUpdate(ctx: CodegenContext, fctx: FunctionContext): void {
+  addUnionImports(ctx);
+  const unboxIdx = ctx.funcMap.get("__unbox_number")!;
+  fctx.body.push({ op: "call", funcIdx: unboxIdx });
 }
 
 /**
@@ -429,20 +460,21 @@ function compilePrefixUnary(
       }
       const operandType = compileExpression(ctx, fctx, expr.operand);
       if (operandType?.kind === "externref") {
-        // String → number: use __unbox_number (Number() semantics, not parseFloat)
-        // Number("") = 0, Number("123") = 123, Number("abc") = NaN
-        // parseFloat("") = NaN which is wrong for unary +
-        const unboxIdx = ctx.funcMap.get("__unbox_number");
-        if (unboxIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: unboxIdx });
-          return { kind: "f64" };
-        }
-        // Fallback to parseFloat if __unbox_number not available
-        const pfIdx = ctx.funcMap.get("parseFloat");
-        if (pfIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: pfIdx });
-          return { kind: "f64" };
-        }
+        // ToNumber (ECMA-262 §7.1.4): route through `__unbox_number` (#1434).
+        // This is the centralized ToNumber funnel — it implements
+        // ToPrimitive → Number for objects (including WasmGC struct
+        // valueOf/toString/@@toPrimitive via _toPrimitive #1319) and
+        // delegates to `Number(v)` for primitives. Critically, `Number()`
+        // throws TypeError on Symbol and BigInt operands per spec, and
+        // since #1434 the runtime no longer swallows that exception.
+        //
+        // The previous fallback to `parseFloat` was incorrect:
+        //   parseFloat("")  = NaN  (spec: Number("")  = 0)
+        //   parseFloat(Symbol()) ≠ throw (spec: TypeError)
+        // Use coerceType which auto-registers the import via
+        // addUnionImports if it wasn't already loaded.
+        coerceType(ctx, fctx, operandType, { kind: "f64" });
+        return { kind: "f64" };
       }
       // Struct ref → f64: coerce via valueOf (JS ToNumber semantics)
       if (operandType && (operandType.kind === "ref" || operandType.kind === "ref_null")) {
@@ -623,7 +655,7 @@ function compilePrefixUnary(
           }
           if (localType?.kind === "externref") {
             fctx.body.push({ op: "local.get", index: idx });
-            emitSafeExternrefToF64(ctx, fctx);
+            emitToNumericForUpdate(ctx, fctx);
             fctx.body.push({ op: "f64.const", value: 1 });
             fctx.body.push({ op: "f64.add" });
             addUnionImports(ctx);
@@ -664,7 +696,7 @@ function compilePrefixUnary(
           if (ppModGlobalDef?.type.kind === "externref") {
             // externref global: safe unbox to f64, add 1, box back
             fctx.body.push({ op: "global.get", index: ppModIdx });
-            emitSafeExternrefToF64(ctx, fctx);
+            emitToNumericForUpdate(ctx, fctx);
             fctx.body.push({ op: "f64.const", value: 1 });
             fctx.body.push({ op: "f64.add" });
             addUnionImports(ctx);
@@ -701,7 +733,7 @@ function compilePrefixUnary(
           const ppCapGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, ppCapIdx)];
           if (ppCapGlobalDef?.type.kind === "externref") {
             fctx.body.push({ op: "global.get", index: ppCapIdx });
-            emitSafeExternrefToF64(ctx, fctx);
+            emitToNumericForUpdate(ctx, fctx);
             fctx.body.push({ op: "f64.const", value: 1 });
             fctx.body.push({ op: "f64.add" });
             addUnionImports(ctx);
@@ -834,7 +866,7 @@ function compilePrefixUnary(
           }
           if (localType?.kind === "externref") {
             fctx.body.push({ op: "local.get", index: idx });
-            emitSafeExternrefToF64(ctx, fctx);
+            emitToNumericForUpdate(ctx, fctx);
             fctx.body.push({ op: "f64.const", value: 1 });
             fctx.body.push({ op: arithOp });
             addUnionImports(ctx);
@@ -874,7 +906,7 @@ function compilePrefixUnary(
           const mmModGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, mmModIdx)];
           if (mmModGlobalDef?.type.kind === "externref") {
             fctx.body.push({ op: "global.get", index: mmModIdx });
-            emitSafeExternrefToF64(ctx, fctx);
+            emitToNumericForUpdate(ctx, fctx);
             fctx.body.push({ op: "f64.const", value: 1 });
             fctx.body.push({ op: arithOp });
             addUnionImports(ctx);
@@ -910,7 +942,7 @@ function compilePrefixUnary(
           const mmCapGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, mmCapIdx)];
           if (mmCapGlobalDef?.type.kind === "externref") {
             fctx.body.push({ op: "global.get", index: mmCapIdx });
-            emitSafeExternrefToF64(ctx, fctx);
+            emitToNumericForUpdate(ctx, fctx);
             fctx.body.push({ op: "f64.const", value: 1 });
             fctx.body.push({ op: arithOp });
             addUnionImports(ctx);
@@ -984,7 +1016,7 @@ function compilePostfixUnary(
         if (postModGlobalDef?.type.kind === "externref") {
           // externref global: safe unbox old value, compute new, box and store back
           fctx.body.push({ op: "global.get", index: postModIdx });
-          emitSafeExternrefToF64(ctx, fctx);
+          emitToNumericForUpdate(ctx, fctx);
           const postOldTmp = allocLocal(fctx, `__post_old_${fctx.locals.length}`, { kind: "f64" });
           fctx.body.push({ op: "local.tee", index: postOldTmp });
           fctx.body.push({ op: "f64.const", value: 1 });
@@ -1018,7 +1050,7 @@ function compilePostfixUnary(
         const postCapGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, postCapIdx)];
         if (postCapGlobalDef?.type.kind === "externref") {
           fctx.body.push({ op: "global.get", index: postCapIdx });
-          emitSafeExternrefToF64(ctx, fctx);
+          emitToNumericForUpdate(ctx, fctx);
           const postCapOldTmp = allocLocal(fctx, `__post_cap_old_${fctx.locals.length}`, { kind: "f64" });
           fctx.body.push({ op: "local.tee", index: postCapOldTmp });
           fctx.body.push({ op: "f64.const", value: 1 });
@@ -1143,7 +1175,7 @@ function compilePostfixUnary(
 
     if (localType?.kind === "externref") {
       fctx.body.push({ op: "local.get", index: idx });
-      emitSafeExternrefToF64(ctx, fctx);
+      emitToNumericForUpdate(ctx, fctx);
       const tmpOld = allocLocal(fctx, `__postfix_old_${fctx.locals.length}`, {
         kind: "f64",
       });

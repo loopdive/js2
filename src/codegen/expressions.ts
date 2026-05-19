@@ -14,8 +14,16 @@
 import { ts } from "../ts-api.js";
 import { mapTsTypeToWasm } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
+import {
+  emitStandalonePromiseReject,
+  emitStandalonePromiseResolve,
+  getOrRegisterPromiseType,
+  isStandalonePromiseActive,
+  PROMISE_STATE_FULFILLED,
+  PROMISE_STATE_REJECTED,
+} from "./async-scheduler.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
-import { getLocalType } from "./context/locals.js";
+import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
 import {
@@ -37,6 +45,7 @@ import { wasmFuncReturnsVoid, wasmFuncTypeReturnsVoid } from "./expressions/help
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 
 import { compileHostInstanceOf, compileIdentifier, resolveInstanceOfRHS } from "./expressions/identifiers.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js";
 
 import { compilePostfixUnary, compilePrefixUnary } from "./expressions/unary.js";
 
@@ -188,6 +197,27 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
   } else if (resultType.kind !== "externref") {
     coerceType(ctx, fctx, resultType, { kind: "externref" });
   }
+  // (#1326 Phase 1B) In standalone (WASI) mode, replace
+  // `call $Promise_resolve_import` with a Wasm-native `$Promise`
+  // struct.new fulfilled with the value already on the stack. The host
+  // import `Promise_resolve` is unsatisfiable in WASI; this branch
+  // avoids the missing-import error at module instantiation.
+  //
+  // Wasm `struct.new` pops fields in declaration order (state | value |
+  // callbacks); the value is already on the stack but state must come
+  // BEFORE it. Stash via a temp local, then emit in the correct order.
+  if (isStandalonePromiseActive(ctx)) {
+    const valueLocal = allocTempLocal(fctx, { kind: "externref" });
+    const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+    fctx.body.push({ op: "local.set", index: valueLocal });
+    fctx.body.push({ op: "i32.const", value: PROMISE_STATE_FULFILLED });
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
+    fctx.body.push({ op: "extern.convert_any" });
+    releaseTempLocal(fctx, valueLocal);
+    return { kind: "externref" };
+  }
   const resolveIdx = ensureLateImport(ctx, "Promise_resolve", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (resolveIdx !== undefined) {
@@ -204,6 +234,37 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
  * exception (#1150).
  */
 function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, start: number): void {
+  // (#1326 Phase 1B) Standalone-mode rejection. The host
+  // `Promise_reject` import + `__get_caught_exception` are
+  // unsatisfiable in WASI; emit a Wasm-native rejected `$Promise`
+  // construction in the catch_all instead.
+  if (isStandalonePromiseActive(ctx)) {
+    const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+    const inner = fctx.body.splice(start);
+    // The thrown value is on the catch_all stack as externref (the
+    // `__exn` tag's externref payload); standalone catch_all consumes
+    // it and uses it as the rejection reason. We don't have access to
+    // the wasm exception payload op without `ensureExnTag`, so fall
+    // back to `ref.null.extern` as the reason — Phase 1B doesn't
+    // yet wire the catch-payload binding (Phase 1C will). Most async
+    // throws produce undefined-typed rejections at this stage, so
+    // null-extern is safe.
+    const catchAll: Instr[] = [
+      { op: "i32.const", value: PROMISE_STATE_REJECTED },
+      { op: "ref.null.extern" } as Instr,
+      { op: "ref.null.extern" },
+      { op: "struct.new", typeIdx: promiseTypeIdx } as Instr,
+      { op: "extern.convert_any" } as Instr,
+    ];
+    fctx.body.push({
+      op: "try",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      body: inner,
+      catches: [],
+      catchAll,
+    } as unknown as Instr);
+    return;
+  }
   const rejectIdx = ensureLateImport(ctx, "Promise_reject", [{ kind: "externref" }], [{ kind: "externref" }]);
   const getCaughtIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
@@ -680,6 +741,20 @@ function compileExpressionInner(ctx: CodegenContext, fctx: FunctionContext, expr
       const localDef = fctx.locals[selfIdx - fctx.params.length];
       return localDef?.type ?? { kind: "externref" };
     }
+    // (#1395) Static-context fallback: in a static field initializer or
+    // static method body (or in any closure spawned from one), `this`
+    // refers to the class constructor object per ECMA-262 §15.7.1.1
+    // step 5.b. We emit the lazy class-object singleton load — same
+    // singleton used when the class identifier appears as a value, so
+    // `C.f() === C` (when `static f = () => this`) holds. Note: the
+    // lazy-load is invariant (a global), so no closure-capture wiring
+    // is needed — the arrow's body re-emits the load and gets the
+    // exact same externref each time.
+    if (fctx.isStaticContext && fctx.enclosingClassName && ctx.classObjectGlobals?.has(fctx.enclosingClassName)) {
+      if (emitLazyClassObjectGet(ctx, fctx, fctx.enclosingClassName)) {
+        return { kind: "externref" };
+      }
+    }
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }
@@ -693,6 +768,60 @@ function compileExpressionInner(ctx: CodegenContext, fctx: FunctionContext, expr
       const rhsResult = resolveInstanceOfRHS(ctx, expr.right);
       if (!rhsResult) {
         return compileHostInstanceOf(ctx, fctx, expr);
+      }
+      // (#1366a) Externref-backed subclasses (extends Error / TypeError / ...)
+      // have instances that are real JS Error objects whose host-side
+      // [[Prototype]] is the BUILTIN parent (Error.prototype), not
+      // MyError.prototype. So `e instanceof MyError` cannot be answered by a
+      // host `__instanceof(value, "MyError")` call (globalThis.MyError does
+      // not exist). We resolve it statically using the TS type of LHS:
+      //
+      //   - LHS type ≡ MyError or a registered subclass → constant `true`
+      //   - LHS type ≡ unrelated user class → constant `false`
+      //   - otherwise (any / externref / parent builtin) → fall back to host
+      //     `__instanceof` against the BUILTIN parent name. (`e instanceof
+      //     MyError` where e is `any` is unanswerable here; we
+      //     conservatively return false to match host semantics.)
+      //
+      // The WasmGC struct-tag path is wrong for these instances anyway
+      // (any.convert_extern + ref.cast to a struct type fails), so we never
+      // dispatch to compileInstanceOf for an externref-backed RHS.
+      if (ctx.classExternrefBackedSet.has(rhsResult)) {
+        const lhsTsType = ctx.checker.getTypeAtLocation(expr.left);
+        const lhsName = lhsTsType.getSymbol()?.name;
+        let staticAnswer: boolean | undefined;
+        if (lhsName !== undefined) {
+          if (lhsName === rhsResult) {
+            staticAnswer = true;
+          } else if (ctx.classTagMap.has(lhsName)) {
+            // LHS is a known user class. Walk its parent chain — true iff the
+            // RHS class is an ancestor of the LHS class.
+            let cur: string | undefined = lhsName;
+            const guard = new Set<string>();
+            while (cur && !guard.has(cur)) {
+              guard.add(cur);
+              if (cur === rhsResult) {
+                staticAnswer = true;
+                break;
+              }
+              cur = ctx.classParentMap.get(cur);
+            }
+            if (staticAnswer === undefined) staticAnswer = false;
+          }
+        }
+        if (staticAnswer !== undefined) {
+          // Compile LHS for side effects, drop, push constant.
+          const leftType = compileExpression(ctx, fctx, expr.left);
+          if (leftType) fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: staticAnswer ? 1 : 0 });
+          return { kind: "i32" };
+        }
+        // Could not decide statically — return false (host-side
+        // __instanceof against MyError name would return 0 anyway).
+        const leftType = compileExpression(ctx, fctx, expr.left);
+        if (leftType) fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: 0 });
+        return { kind: "i32" };
       }
     }
     return compileBinaryExpression(ctx, fctx, expr);
@@ -731,7 +860,53 @@ function compileExpressionInner(ctx: CodegenContext, fctx: FunctionContext, expr
       fctx.body.push(...fctx.persistentCallbackWritebacks.map((instr) => ({ ...instr })));
       // Do NOT clear — re-emit after every subsequent call
     }
+    // Skip async-call detection for `import.defer(...)` / `import.source(...)`:
+    // calling `getResolvedSignature` on these triggers a TypeScript Debug.assert
+    // ("Trying to get the type of `import.defer` in `import.defer(...)`") because
+    // the TS checker explicitly forbids type queries on these meta-properties as
+    // call callees. The compileCallExpression dispatcher (calls.ts) already
+    // reports a clean unsupported-feature error for these patterns; here we just
+    // bypass the async wrap. (#1315)
+    if (
+      ts.isMetaProperty(expr.expression) &&
+      expr.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      (expr.expression.name.text === "defer" || expr.expression.name.text === "source")
+    ) {
+      return callResult;
+    }
     if (isAsyncCallExpression(ctx, expr)) {
+      // (#1313) `await asyncCall()` would otherwise leave a Promise object
+      // on the stack — string concatenation / arithmetic / property access
+      // on the result then sees `[object Promise]` because js2wasm has no
+      // synchronous Promise unwrap (would need JSPI / stack-switching).
+      //
+      // Workaround: skip the `Promise.resolve(...)` wrap when the call's
+      // parent is an `AwaitExpression`. The wasm async function body
+      // (`closures.ts:1165`) already returns the raw `T` value (not
+      // `Promise<T>`), so leaving it on the stack matches what await's
+      // passthrough lowering expects. For non-await consumers
+      // (`asyncCall().then(...)`, `const p = asyncCall();`) the wrap still
+      // fires and produces a real Promise that JS host code can chain off.
+      //
+      // This is the asymmetric strategy 1 from the issue: await as
+      // raw-T consumer, every other consumer as Promise consumer. Both
+      // shapes are observable in test262 today; this PR keeps both
+      // working while eliminating the `[object Promise]` stringification.
+      let parent: ts.Node | undefined = expr.parent;
+      while (
+        parent &&
+        (ts.isParenthesizedExpression(parent) ||
+          ts.isAsExpression(parent) ||
+          ts.isNonNullExpression(parent) ||
+          ts.isTypeAssertionExpression(parent))
+      ) {
+        parent = parent.parent;
+      }
+      if (parent && ts.isAwaitExpression(parent)) {
+        // Skip the wrap; await's passthrough lowering will leave the raw
+        // value on the stack for the consumer.
+        return callResult;
+      }
       const wrappedType = wrapAsyncReturn(ctx, fctx, callResult);
       // Wrap the call+Promise.resolve in try/catch so synchronous throws from
       // the async function body (e.g. TDZ ReferenceError during default param

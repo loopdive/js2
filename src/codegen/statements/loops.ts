@@ -1087,7 +1087,15 @@ function compileForOfDestructuring(
         fctx.body.push({ op: "local.get", index: elemLocal });
         fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 1 });
         fctx.body.push({ op: "i32.const", value: i });
-        emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType);
+        // (#1396) Pass `useUndefinedSentinel: true` when this element has a
+        // default initializer AND the source-array element type is externref.
+        // The OOB else-branch must produce JS `undefined` (not `null`) so
+        // `emitDefaultValueCheck` → `__extern_is_undefined` returns 1 and
+        // the initializer fires for empty/short arrays.
+        const wantUndefinedSentinel =
+          element.initializer !== undefined &&
+          (innerElemType.kind === "externref" || innerElemType.kind === "ref_extern");
+        emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType, ctx, wantUndefinedSentinel);
 
         if (!valTypesMatch(innerElemType, bindingWasmType)) {
           coerceType(ctx, fctx, innerElemType, bindingWasmType);
@@ -2988,13 +2996,27 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
 
   if (returnIdx !== undefined) {
     // Wrap in try/catch_all: on exception, call iterator.return() then rethrow.
+    //
+    // Per ES §7.4.6 IteratorClose step 6: when the outer completion is
+    // throw, IteratorClose returns the original throw — any error from
+    // GetMethod / iterator.return() is suppressed. We model this by
+    // wrapping the inner __iterator_return call in a nested try/catch_all
+    // whose catchAll is empty (drops any exception). The outer catch_all
+    // then `rethrow 0` re-raises the ORIGINAL exception. (#1347)
+    const innerCloseTry: Instr = {
+      op: "try",
+      blockType: { kind: "empty" },
+      body: [{ op: "local.get", index: iterLocal } as Instr, { op: "call", funcIdx: returnIdx } as Instr],
+      catches: [],
+      catchAll: [], // suppress any error from GetMethod / return() per spec step 6
+    } as unknown as Instr;
     const catchAllBody: Instr[] = [
       { op: "local.get", index: doneFlag } as Instr,
       { op: "i32.eqz" } as Instr,
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: iterLocal } as Instr, { op: "call", funcIdx: returnIdx } as Instr],
+        then: [innerCloseTry],
         else: [],
       } as unknown as Instr,
       { op: "rethrow", depth: 0 } as unknown as Instr,

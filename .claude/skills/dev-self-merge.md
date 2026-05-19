@@ -5,11 +5,25 @@ description: Algorithmic gate for self-merging a PR. Reads CI JSON, applies 4 ha
 
 # /dev-self-merge \<N\>
 
-Run this after `.claude/ci-status/pr-<N>.json` exists with a SHA matching your branch HEAD.
+## Waiting for CI — how to poll
+
+The CI feed commits `pr-<N>.json` to **origin/main** (not your branch). Your
+worktree never sees it until you fetch. While waiting for CI, poll with:
+
+```bash
+git fetch origin
+git show origin/main:.claude/ci-status/pr-<N>.json 2>/dev/null
+```
+
+Run this every few minutes. When output appears and the `head_sha` matches
+`git rev-parse HEAD`, CI is done — proceed to Step 0 below.
+
+Do NOT `git merge origin/main` just to check — `git show` reads the remote ref
+without touching your working tree.
 
 ## Step 0 — fast-path for non-test262 PRs
 
-If `.claude/ci-status/pr-<N>.json` does not exist, check whether Test262 was
+If `git show origin/main:.claude/ci-status/pr-<N>.json 2>/dev/null` returns nothing, check whether Test262 was
 required for this PR:
 
 ```bash
@@ -35,7 +49,8 @@ If `src/**` changes exist but no status file: CI is still in-flight. Wait.
 ## Step 1 — read the feed
 
 ```bash
-cat .claude/ci-status/pr-<N>.json
+git fetch origin
+git show origin/main:.claude/ci-status/pr-<N>.json
 ```
 
 If `test262_skipped: true` in the JSON, this was a test-only / docs-only PR
@@ -45,7 +60,31 @@ If `test262_skipped: true` in the JSON, this was a test-only / docs-only PR
 
 Extract: `head_sha`, `net_per_test`, `regressions`, `regressions_real`,
 `regressions_wasm_change`, `wasm_identical_noise`, `compile_timeouts`,
-`improvements`, `run_url`.
+`improvements`, `run_url`, `baseline_stale`, `baseline_staleness_commits`.
+
+### Step 1a — baseline staleness short-circuit (#1391)
+
+If `baseline_stale: true` is set on the feed, the regression count is
+contaminated by drift on main (tests that flipped between when the baseline
+was last refreshed and the PR's CI run). Continuing through the criteria
+below would falsely block PRs whose actual same-run-main diff is clean.
+
+```bash
+stale=$(jq -r '.baseline_stale // false' .claude/ci-status/pr-<N>.json)
+if [ "$stale" = "true" ]; then
+  drift=$(jq -r '.baseline_staleness_commits // 0' .claude/ci-status/pr-<N>.json)
+  echo "ESCALATE — baseline is stale ($drift commits behind main HEAD)."
+  exit 1
+fi
+```
+
+Output (when triggered):
+
+> **ESCALATE — baseline is stale (N commits behind main HEAD). The CI feed's regression counts are inflated by drift, not by this PR. Tech lead should sanity-check by diffing branch-merged vs main-merged artifacts from the same CI run before merging.**
+
+Skip the rest of the algorithm. Do not merge. The tech lead may override after
+confirming via artifact comparison; the staleness threshold (50 commits) is
+conservative and most PRs will not be flagged.
 
 `regressions_wasm_change` (added by #1222) = regressions where the
 compiled Wasm binary differs between base and PR (excluding

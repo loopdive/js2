@@ -23,7 +23,7 @@ import {
   compileLogicalAssignment,
   isCompoundAssignment,
 } from "./expressions/assignment.js";
-import { emitThrowString } from "./expressions/helpers.js";
+import { emitThrowString, resolveDeclaringClassForPrivateName } from "./expressions/helpers.js";
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
 import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from "./expressions/logical-ops.js";
 import { tryStaticToNumber } from "./expressions/misc.js";
@@ -414,6 +414,40 @@ export function compileBinaryExpression(
 
   // `key in obj` — compile-time property existence check
   if (op === ts.SyntaxKind.InKeyword) {
+    // #1365 — `#x in obj` is a RUNTIME brand check, not a compile-time
+    // property-name lookup. Per ES2022 §12.10.3 (RelationalExpression :
+    // PrivateIdentifier `in` ShiftExpression), the result is `true` iff
+    // `obj` carries the brand of the class that lexically declared `#x`,
+    // and `false` otherwise (no throw, even when obj isn't an object).
+    //
+    // Today the generic `in` path returns a compile-time `i32.const` based
+    // on whether the receiver type's struct happens to have `__priv_<name>`
+    // as a field. That conflates two unrelated classes both declaring a
+    // private named the same — `#x in instanceOfDifferentClass` returns
+    // true when it should return false.
+    //
+    // Fix: emit a runtime `ref.test` against the declaring class's struct.
+    // Falls through to the legacy path if the resolver can't find the
+    // declaring class (defensive — well-formed source always finds it).
+    if (ts.isPrivateIdentifier(expr.left)) {
+      const declared = resolveDeclaringClassForPrivateName(ctx, expr.left);
+      if (declared) {
+        // Compile the receiver. Coerce externref → anyref so ref.test sees
+        // a concrete heap-typed value. Class refs are already eqref-rooted.
+        const objResult = compileExpression(ctx, fctx, expr.right);
+        if (objResult?.kind === "externref") {
+          fctx.body.push({ op: "any.convert_extern" } as Instr);
+        }
+        // Note: ref.test against the struct typeIdx returns 0 even for
+        // null refs (per Wasm GC spec), matching the spec's "no throw,
+        // returns false" behavior.
+        fctx.body.push({ op: "ref.test", typeIdx: declared.structTypeIdx } as Instr);
+        return { kind: "i32" };
+      }
+      // No declaring class found — fall through to the legacy compile-time
+      // path. The compile-time bool will be wrong but at least won't trap.
+    }
+
     const rightType = ctx.checker.getTypeAtLocation(expr.right);
     const rightWasm = resolveWasmType(ctx, rightType);
 
@@ -677,41 +711,50 @@ export function compileBinaryExpression(
       fctx.body.push({ op: isLooseEq ? "f64.eq" : "f64.ne" });
       return { kind: "i32" };
     }
-    // string == number / number == string: coerce string to number via parseFloat
-    if ((leftIsStr && rightIsNum) || (leftIsNum && rightIsStr)) {
-      const pfIdx = ctx.funcMap.get("parseFloat");
-      if (pfIdx !== undefined) {
-        if (leftIsStr) {
-          // left is string, right is number
-          compileExpression(ctx, fctx, expr.left);
-          fctx.body.push({ op: "call", funcIdx: pfIdx });
-          compileExpression(ctx, fctx, expr.right, { kind: "f64" });
-        } else {
-          // left is number, right is string
-          compileExpression(ctx, fctx, expr.left, { kind: "f64" });
-          compileExpression(ctx, fctx, expr.right);
-          fctx.body.push({ op: "call", funcIdx: pfIdx });
-        }
-        fctx.body.push({ op: isLooseEq ? "f64.eq" : "f64.ne" });
-        return { kind: "i32" };
+    // (#1134) string == number / number == string and string == boolean /
+    // boolean == string: route through `__host_loose_eq` (JS `==`).
+    //
+    // The previous codegen called `parseFloat(string)` then `f64.eq`, but
+    // parseFloat doesn't match ECMA-262 §7.2.15 + §7.1.4 ToNumber semantics:
+    //   parseFloat("0xff") === NaN     // hex strings: parseFloat fails
+    //   parseFloat("")     === NaN     // empty string: parseFloat fails
+    //   Number("0xff")     === 255     // ToNumber parses hex
+    //   Number("")         === 0       // ToNumber treats empty as 0
+    // So `255 == "0xff"`, `0 == ""`, `false == ""` etc. silently returned
+    // false. Routing through the host gets JS `==` for free.
+    if (
+      (leftIsStr && rightIsNum) ||
+      (leftIsNum && rightIsStr) ||
+      (leftIsStr && rightIsBool) ||
+      (leftIsBool && rightIsStr)
+    ) {
+      compileExpression(ctx, fctx, expr.left);
+      if (!leftIsStr) {
+        coerceType(ctx, fctx, leftIsBool ? { kind: "i32" } : { kind: "f64" }, { kind: "externref" });
       }
-    }
-    // string == boolean / boolean == string: coerce both to number
-    if ((leftIsStr && rightIsBool) || (leftIsBool && rightIsStr)) {
-      const pfIdx = ctx.funcMap.get("parseFloat");
-      if (pfIdx !== undefined) {
-        if (leftIsStr) {
-          compileExpression(ctx, fctx, expr.left);
-          fctx.body.push({ op: "call", funcIdx: pfIdx });
-          compileExpression(ctx, fctx, expr.right);
-          fctx.body.push({ op: "f64.convert_i32_s" });
-        } else {
-          compileExpression(ctx, fctx, expr.left);
-          fctx.body.push({ op: "f64.convert_i32_s" });
-          compileExpression(ctx, fctx, expr.right);
-          fctx.body.push({ op: "call", funcIdx: pfIdx });
-        }
-        fctx.body.push({ op: isLooseEq ? "f64.eq" : "f64.ne" });
+      const tmpL = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: tmpL });
+      compileExpression(ctx, fctx, expr.right);
+      if (!rightIsStr) {
+        coerceType(ctx, fctx, rightIsBool ? { kind: "i32" } : { kind: "f64" }, { kind: "externref" });
+      }
+      const tmpR2 = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: tmpR2 });
+      fctx.body.push({ op: "local.get", index: tmpL });
+      fctx.body.push({ op: "local.get", index: tmpR2 });
+      releaseTempLocal(fctx, tmpR2);
+      releaseTempLocal(fctx, tmpL);
+      const hostIdx = ensureLateImport(
+        ctx,
+        "__host_loose_eq",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const finalHostIdx = ctx.funcMap.get("__host_loose_eq") ?? hostIdx;
+      if (finalHostIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalHostIdx });
+        if (isLooseNeq) fctx.body.push({ op: "i32.eqz" });
         return { kind: "i32" };
       }
     }
@@ -1150,6 +1193,69 @@ export function compileBinaryExpression(
           if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
           return { kind: "i32" };
         }
+        // (#1395) Mixed ref + externref strict equality: bridge via anyref so
+        // identity is preserved. This fires for cases like a static method
+        // that returns `this` (typed as `(ref null $C)`) compared against the
+        // bare class identifier (typed as externref of the `__class_<Name>`
+        // singleton). Both reference the SAME underlying struct allocation,
+        // so `ref.eq` produces the right answer once we get both sides into
+        // eqref. Without this bridge, the catch-all below dropped both
+        // operands and emitted `i32.const 0`, breaking
+        // `static m() { return this; } … C.m() === C` and similar
+        // `this`-returns-class-object tests.
+        //
+        // Uses the same `EQ_HEAP_TYPE = -19` constant + ref.test guard as the
+        // externref-vs-externref identity fast-path further down (see comment
+        // at line ~1517). When the externref isn't eqref-shaped (e.g. a host
+        // string, a number externref), we conservatively return 0 for === or
+        // 1 for !== — those cases shouldn't conflate identity anyway.
+        const otherType = leftIsRef ? rightType : leftType;
+        if (otherType.kind === "externref") {
+          const EQ_HEAP_TYPE_BR = -19;
+          // Stack: [left, right]. Save right (as anyref), then handle left.
+          const tmpRightAny = allocTempLocal(fctx, { kind: "anyref" });
+          if (rightIsRef) {
+            fctx.body.push({ op: "local.set", index: tmpRightAny });
+          } else {
+            fctx.body.push({ op: "any.convert_extern" });
+            fctx.body.push({ op: "local.set", index: tmpRightAny });
+          }
+          // Now stack: [left]. Convert left to anyref.
+          if (leftIsRef) {
+            // left is (ref T) — already anyref-compatible by subtyping.
+          } else {
+            fctx.body.push({ op: "any.convert_extern" });
+          }
+          // Stack: [leftAnyref]. Save and probe.
+          const tmpLeftAny = allocTempLocal(fctx, { kind: "anyref" });
+          fctx.body.push({ op: "local.tee", index: tmpLeftAny });
+          fctx.body.push({ op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr);
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              { op: "local.get", index: tmpRightAny } as Instr,
+              { op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [
+                  { op: "local.get", index: tmpLeftAny } as Instr,
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+                  { op: "local.get", index: tmpRightAny } as Instr,
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+                  { op: "ref.eq" } as Instr,
+                ],
+                else: [{ op: "i32.const", value: 0 } as Instr],
+              } as unknown as Instr,
+            ],
+            else: [{ op: "i32.const", value: 0 } as Instr],
+          } as unknown as Instr);
+          releaseTempLocal(fctx, tmpLeftAny);
+          releaseTempLocal(fctx, tmpRightAny);
+          if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
+          return { kind: "i32" };
+        }
         // Strict equality with one ref and one primitive → always false (===) or true (!==)
         // since objects and primitives are different types in JS strict equality
         fctx.body.push({ op: "drop" });
@@ -1366,10 +1472,40 @@ export function compileBinaryExpression(
     }
 
     const eitherIsString = leftIsString || rightIsString;
+    const bothAreStrings = leftIsString && rightIsString;
+    // (#1134) For LOOSE equality where exactly ONE side is a string and the
+    // other is a primitive, route through `__host_loose_eq` instead of
+    // `wasm:js-string equals`. The wasm equals does strict string===string
+    // and never coerces — it silently returns false for `1 == "1"`,
+    // `255 == "0xff"`, `0 == ""`, etc.
+    if (eitherIsString && !isStrict && !bothAreStrings) {
+      if (rightType.kind !== "externref") {
+        coerceType(ctx, fctx, rightType, { kind: "externref" });
+      }
+      if (leftType.kind !== "externref") {
+        const tmpR = allocTempLocal(fctx, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: tmpR });
+        coerceType(ctx, fctx, leftType, { kind: "externref" });
+        fctx.body.push({ op: "local.get", index: tmpR });
+        releaseTempLocal(fctx, tmpR);
+      }
+      const hostIdx = ensureLateImport(
+        ctx,
+        "__host_loose_eq",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const finalHostIdx = ctx.funcMap.get("__host_loose_eq") ?? hostIdx;
+      if (finalHostIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalHostIdx });
+        if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
+        return { kind: "i32" };
+      }
+    }
     if (eitherIsString) {
-      // Ensure both operands are externref before calling equals.
-      // One side might be f64 (e.g. from a mistyped addition like new String("1") + new String("1"))
-      // or i32 (from boolean). Coerce non-externref operands to externref first.
+      // Both strings (or strict equality where one is string): use
+      // `wasm:js-string equals` — fast string-string compare.
       if (rightType.kind !== "externref") {
         coerceType(ctx, fctx, rightType, { kind: "externref" });
       }

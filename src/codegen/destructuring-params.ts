@@ -6,6 +6,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { shiftLateImportIndices } from "./expressions/late-imports.js";
@@ -26,28 +27,33 @@ import {
 import { buildVecFromExternref, getVecInfo } from "./type-coercion.js";
 
 /**
- * #1158 — Detect array binding patterns whose every element is itself an
- * "empty-only" pattern (no `IteratorStep` would be required by §13.3.3.6).
- * Used to short-circuit `__array_from_iter` materialization for patterns like
- * `[]`, `[, ,]` (elision-only), or `[[], []]` (nested empties without
- * defaults).
+ * Detect array binding patterns that, per ECMA-262 §13.3.3.6, perform no
+ * iterator observation at all. Per spec:
  *
- * Conservative — returns `false` for any element that needs to actually
- * read iterator state: rest elements, defaults, identifier bindings, and
- * non-array nested patterns. The caller still routes those through the
- * existing materializing paths.
+ *   ArrayBindingPattern : [ ]
+ *     1. Return NormalCompletion(empty).        ← NO IteratorStep
+ *
+ *   ArrayBindingPattern : [ Elision ]            ← each `,` calls IteratorStep
+ *   ArrayBindingPattern : [ BindingElementList ] ← each element calls IteratorStep
+ *
+ * So the ONLY pattern that skips iterator observation entirely is the
+ * truly-empty pattern `[]`. Elisions (`[,]`, `[, ,]`) and nested empties
+ * (`[[]]`, `[[], []]`) each still consume one IteratorStep per top-level
+ * element — they must NOT short-circuit, otherwise:
+ *
+ *   - `function f([,] = throwingIter) {}; f()` fails to propagate the
+ *     iterator's `.next()` throw (#1432 — `dflt-ary-ptrn-elision-step-err`).
+ *   - `function f([[]] = iter) {}; f()` fails to advance the iterator,
+ *     observably wrong for any iterator with side-effects.
+ *
+ * #1158 had broadened this short-circuit to cover patterns whose elements
+ * were all themselves "empty-only" (`[, ,]`, `[[]]`, `[[], []]`). That was
+ * a spec violation: those patterns DO observe the iterator. The narrower
+ * definition below restores spec compliance — the truly-empty `[]` is the
+ * only pattern that bypasses iteration. (#1432)
  */
 function isPatternEmptyOnly(pattern: ts.ArrayBindingPattern): boolean {
-  if (pattern.elements.length === 0) return true;
-  for (const el of pattern.elements) {
-    if (ts.isOmittedExpression(el)) continue;
-    if (!ts.isBindingElement(el)) return false;
-    if (el.dotDotDotToken) return false; // rest must consume
-    if (el.initializer) return false; // default may need a real slot
-    if (ts.isArrayBindingPattern(el.name) && isPatternEmptyOnly(el.name)) continue;
-    return false;
-  }
-  return true;
+  return pattern.elements.length === 0;
 }
 
 /**
@@ -727,16 +733,29 @@ export function destructureParamArray(
         // Build the fast-path body by swapping fctx.body so a recursive
         // destructureParamArray call emits into the conditional branch instead
         // of the outer function.
-        const savedBody = fctx.body;
-        const fastPathInstrs: Instr[] = [];
-        fctx.body = fastPathInstrs;
-        fctx.body.push({ op: "local.get", index: anyTmp } as Instr);
-        fctx.body.push({ op: "ref.cast", typeIdx: ti });
-        fctx.body.push({ op: "local.set", index: tupleLocal });
-        destructureParamArray(ctx, fctx, tupleLocal, pattern, tupType);
-        fctx.body.push({ op: "i32.const", value: 1 } as Instr);
-        fctx.body.push({ op: "local.set", index: dstrDoneLocal });
-        fctx.body = savedBody;
+        //
+        // #1314 — use pushBody/popBody (instead of a manual `fctx.body =`
+        // swap with `savedBody` held only as a JS local) so the outer buffer
+        // is registered in `fctx.savedBodies` for the duration of the swap.
+        // Without this, `shiftLateImportIndices` (triggered when the recursive
+        // emit calls `compileExpression(initializer)` with a function-call
+        // default like `[x = g()]`) walks `fctx.body` (= fastPathInstrs) and
+        // `fctx.savedBodies` but misses the JS-local outer buffer. Calls
+        // already emitted into the outer buffer keep stale `funcIdx` and
+        // start pointing to whatever shifted in (typically an extern import,
+        // which has the wrong arity → "not enough arguments on the stack").
+        const savedBody = pushBody(fctx);
+        const fastPathInstrs = fctx.body;
+        try {
+          fctx.body.push({ op: "local.get", index: anyTmp } as Instr);
+          fctx.body.push({ op: "ref.cast", typeIdx: ti });
+          fctx.body.push({ op: "local.set", index: tupleLocal });
+          destructureParamArray(ctx, fctx, tupleLocal, pattern, tupType);
+          fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+          fctx.body.push({ op: "local.set", index: dstrDoneLocal });
+        } finally {
+          popBody(fctx, savedBody);
+        }
 
         // Gate on dstrDone == 0 so later tuple-struct checks (and the main
         // externref logic below) don't re-run once one match has succeeded.
@@ -765,9 +784,16 @@ export function destructureParamArray(
       // dstrDone == 0. If the fast path already destructured, skip all of it.
       // We redirect fctx.body to a buffer; after the existing code finishes, we
       // wrap the buffer in `if dstrDone == 0 { ... }` and append to the real body.
-      const externrefLegacyBody: Instr[] = [];
-      const realBody = fctx.body;
-      fctx.body = externrefLegacyBody;
+      //
+      // #1314 — same fix as the tuple-struct swap above: use pushBody so the
+      // outer `realBody` is registered in `fctx.savedBodies` and visible to
+      // `shiftLateImportIndices`. The downstream `ensureLateImport` calls
+      // (lines below for `__extern_length`, `__extern_get_idx`,
+      // `__array_from_iter`) trigger shifts that walk the savedBodies stack;
+      // without pushBody, calls already emitted into `realBody` retained
+      // stale `funcIdx` and pointed to the wrong function after the shift.
+      const realBody = pushBody(fctx);
+      const externrefLegacyBody = fctx.body;
 
       // Try direct cast to __vec_externref first (cheapest path)
       fctx.body.push({ op: "local.get", index: anyTmp });
@@ -988,7 +1014,8 @@ export function destructureParamArray(
       // Close the #862 tuple-struct fast-path gate: wrap everything since the
       // dstrDone sentinel was initialised in `if dstrDone == 0 { ... }` and
       // splice back into the real body.
-      fctx.body = realBody;
+      // #1314 — popBody mirrors the pushBody above (was: `fctx.body = realBody`).
+      popBody(fctx, realBody);
       fctx.body.push({ op: "local.get", index: dstrDoneLocal } as Instr);
       fctx.body.push({ op: "i32.eqz" } as Instr);
       fctx.body.push({

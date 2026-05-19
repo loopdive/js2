@@ -87,4 +87,4 @@ const [r, g, b] = interpolateColor(pct);
 const colored = `\x1b[38;2;${r};${g};${b}m`;
 const reset = "\x1b[0m";
 
-process.stdout.write(`${colored}sprint ${sprint}  ${pctInt}%${reset}`);
+process.stdout.write(`${colored}s${sprint} ${done}/${total}${reset}`);

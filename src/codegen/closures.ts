@@ -25,6 +25,7 @@ import {
   addFuncType,
   destructureParamArray,
   destructureParamObject,
+  destructureParamObjectExternref,
   ensureExnTag,
   ensureStructForType,
   getArrTypeIdxFromVec,
@@ -1000,9 +1001,51 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
         // Fall through to host-callback path on any checker error
       }
     }
-    // For method calls (property access), check if the method is known array HOF
-    // (filter, map, etc.) — those have dedicated inline compilation and ARE handled
-    // as closure calls. For other property accesses, treat as host callback.
+    // For method calls (property access), check if the method is on a
+    // user-defined class. User-defined methods receive the closure as the
+    // GC-struct shape (`__fn_wrap_N_struct`) and may store it for later
+    // dispatch (e.g. `app.routes.set(path, handler)`). Routing through
+    // `__make_callback` here produces a JS-wrapped externref that fails the
+    // dispatch-site `ref.cast` and null-derefs at `struct.get`. (#1311)
+    if (ts.isPropertyAccessExpression(parent.expression)) {
+      const propAccess = parent.expression;
+      const methodName = propAccess.name.text;
+      try {
+        const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+        // Search the receiver type's symbol chain for a class name that
+        // matches a user-defined method `${ClassName}_${methodName}`. We
+        // check both the receiver's own symbol (instance methods) and the
+        // type itself (handles `(typeof Foo).method` for statics).
+        const candidates = new Set<string>();
+        const recSym = receiverType.getSymbol?.();
+        const recName = recSym?.getName?.();
+        if (recName) candidates.add(recName);
+        // Walk base types so inherited user-defined methods are detected
+        const baseTypes = receiverType.getBaseTypes?.();
+        if (baseTypes) {
+          for (const bt of baseTypes) {
+            const bs = bt.getSymbol?.()?.getName?.();
+            if (bs) candidates.add(bs);
+          }
+        }
+        for (const className of candidates) {
+          const fullName = `${className}_${methodName}`;
+          const funcIdx = ctx.funcMap.get(fullName);
+          if (funcIdx !== undefined && funcIdx >= ctx.numImportFuncs) {
+            // User-defined method on a user-defined class — closure path
+            return false;
+          }
+        }
+        // Note: we deliberately don't fall back to a "param has call sig"
+        // heuristic for non-user-defined methods — host array HOFs
+        // (forEach, map, filter, etc.) have dedicated inline compilation
+        // and other host method callbacks (Promise.then, etc.) need a
+        // JS-callable externref via __make_callback. Only user-defined
+        // methods on user-defined classes get the closure path here.
+      } catch {
+        // Fall through to host-callback path on any checker error
+      }
+    }
     return true;
   }
   // NewExpression: `new Promise(executor)`, `new Map(comparator)`, etc.
@@ -1526,8 +1569,20 @@ export function compileArrowAsClosure(
     labelMap: new Map(),
     savedBodies: [],
     enclosingClassName: fctx.enclosingClassName ?? resolveEnclosingClassName(fctx),
+    // (#1395) Propagate static-context flag so `this` inside an arrow
+    // captured from a static initializer / static method resolves to the
+    // class-object singleton rather than `undefined`.
+    isStaticContext: fctx.isStaticContext,
     isGenerator,
   };
+
+  // (#1384) Track liftedFctx.body in liveBodies BEFORE any emission so
+  // addUnionImports / shiftLateImportIndices can shift any `call funcIdx`
+  // instructions that get emitted during the captures-extraction prologue
+  // (lines 1589-1635) and the TDZ-flag-extraction prologue (lines 1648-1660),
+  // BOTH of which run BEFORE the savedFunc swap below that would otherwise
+  // expose liftedFctx.body via ctx.currentFunc / funcStack to the shifter.
+  ctx.liveBodies.add(liftedFctx.body);
 
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -1841,7 +1896,20 @@ export function compileArrowAsClosure(
     } else if (ts.isObjectBindingPattern(param.name)) {
       // Object destructuring: function({a, b}) { ... }
       let handled = false;
-      if (paramType.kind === "ref" || paramType.kind === "ref_null") {
+
+      // Externref params (e.g. callback from JS host or `: any`-typed) need
+      // the host-import-driven extraction path that mirrors the array case
+      // above. Without this, the object pattern's binding locals get
+      // allocated but never written, so any code reading w/x/y/z sees the
+      // default-zero/null value of the local instead of the property pulled
+      // off the argument object. (#43 cluster — function-expression dstr
+      // on `any` params)
+      if (paramType.kind === "externref") {
+        destructureParamObjectExternref(ctx, liftedFctx, paramIdx, param.name);
+        handled = true;
+      }
+
+      if (!handled && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
         const typeIdx = paramType.typeIdx;
         const typeDef = ctx.mod.types[typeIdx];
         if (typeDef && typeDef.kind === "struct") {
@@ -2078,6 +2146,9 @@ export function compileArrowAsClosure(
     body: liftedFctx.body,
     exported: false,
   });
+  // (#1384) liftedFctx.body is now reachable via ctx.mod.functions[].body —
+  // remove from liveBodies to keep it tight (the regular walker dedupes anyway).
+  ctx.liveBodies.delete(liftedFctx.body);
   ctx.funcMap.set(closureName, liftedFuncIdx);
 
   // 7. At the creation site, emit struct.new with funcref + captured values
@@ -2335,7 +2406,18 @@ export function compileArrowAsCallback(
     labelMap: new Map(),
     savedBodies: [],
     enclosingClassName: fctx.enclosingClassName ?? resolveEnclosingClassName(fctx),
+    // (#1395) Same propagation as the lifted-arrow path above so callbacks
+    // spawned inside static initializers / static methods resolve `this`
+    // to the class-object singleton.
+    isStaticContext: fctx.isStaticContext,
   };
+
+  // (#1384) Track cbFctx.body in liveBodies BEFORE any emission so addUnionImports
+  // / shiftLateImportIndices can shift any `call funcIdx` instructions that get
+  // emitted into it during the captures-extraction (step 4) and param-coercion
+  // (step 4b) phases — both run BEFORE the savedFunc swap at step 5 that would
+  // otherwise expose cbFctx via ctx.currentFunc / funcStack to the shifter.
+  ctx.liveBodies.add(cbFctx.body);
 
   // Register params as locals (param 0 = __captures, [1 = __this if needsThis], then arrow params)
   for (let i = 0; i < cbFctx.params.length; i++) {
@@ -2487,6 +2569,11 @@ export function compileArrowAsCallback(
     body: cbFctx.body,
     exported: true,
   });
+  // (#1384) cbFctx.body is now reachable via ctx.mod.functions[].body — the
+  // regular shifter walker covers it from here on. Remove from liveBodies to
+  // avoid double-traversal (the walker dedupes via its `shifted` set anyway,
+  // but keeping liveBodies tight is cheaper).
+  ctx.liveBodies.delete(cbFctx.body);
   ctx.funcMap.set(cbName, cbFuncIdx);
   ctx.mod.exports.push({
     name: cbName,
@@ -2755,7 +2842,22 @@ export function emitFuncRefAsClosure(
 
     // Emit: struct.new with fields: func, cap0, cap1, ..., __tdz_*..., ...
     fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
-    for (const cap of nestedCaptures) {
+    // (#1312) Self-reference inside the lifted body of `funcName` itself —
+    // e.g. `function next() { return call(next); }`. The captures are
+    // already in scope as the leading params [0..numCaptures-1] of the
+    // lifted fn (mutable captures arrive as boxed ref cells, immutable as
+    // raw values). We re-push them by param index instead of trying to
+    // dereference `cap.outerLocalIdx`, which points into a different
+    // (outer) scope and yields garbage / null when reused inside the
+    // current lifted body.
+    const isSelfRef = fctx.name === funcName;
+    for (let i = 0; i < nestedCaptures.length; i++) {
+      const cap = nestedCaptures[i]!;
+      if (isSelfRef) {
+        // Captures arrive at param index `i` in the lifted fn (#1312).
+        fctx.body.push({ op: "local.get", index: i });
+        continue;
+      }
       if (cap.mutable && cap.valType) {
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
         if (fctx.boxedCaptures?.has(cap.name)) {
@@ -2786,7 +2888,15 @@ export function emitFuncRefAsClosure(
     // or cross-fctx transitive) push `i32.const 1` (treat as initialized) —
     // matches pre-#1205 behavior where the lifted body had no flag check.
     if (numTdzFlags > 0) {
-      for (const cap of tdzFlaggedNested) {
+      for (let ti = 0; ti < tdzFlaggedNested.length; ti++) {
+        const cap = tdzFlaggedNested[ti]!;
+        if (isSelfRef) {
+          // (#1312) Self-reference inside the lifted body — the TDZ-flag
+          // boxed refs arrive as params at index `numCaptures + ti` (after
+          // all value captures). Re-push from there.
+          fctx.body.push({ op: "local.get", index: numCaptures + ti });
+          continue;
+        }
         const existingBox = fctx.boxedTdzFlags?.get(cap.name);
         if (existingBox) {
           fctx.body.push({ op: "local.get", index: existingBox.localIdx });
@@ -2929,6 +3039,112 @@ export function emitObjectMethodAsClosure(
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+/**
+ * (#1394) Emit a cached singleton closure for a class method, preserving
+ * identity: every emit of `C.prototype.<method>` (or `instance.<method>`
+ * as a value) returns the same externref so JS's `===` works (e.g.
+ * `c.m === C.prototype.m`). 478 tests under
+ * `language/{expressions,statements}/class/elements/*` exercise this
+ * exact assertion via `verifyProperty(C.prototype, "m", { value: m })`.
+ *
+ * The cache is a per-class-method module-level externref global,
+ * lazily initialised on first access (matches the existing
+ * `emitLazyProtoGet` pattern). The canonical trampoline is registered
+ * once per method too — its name is
+ * `__obj_meth_tramp_${methodName}_cached`, distinct from the legacy
+ * per-call-site `__obj_meth_tramp_${methodName}_${counter}` that
+ * `emitObjectMethodAsClosure` emits.
+ *
+ * Returns `true` if the access was emitted; `false` if the method's
+ * signature couldn't be resolved (caller should fall back).
+ */
+export function emitCachedMethodClosureAccess(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  methodName: string,
+  methodFuncIdx: number,
+  objStructTypeIdx: number,
+): boolean {
+  // Resolve the user-visible signature so we know the wrapper struct's
+  // funcref shape. Method signature is [(ref null objStruct), ...userParams]
+  // → results; strip the leading `this` to derive the closure-callable
+  // user signature.
+  const sig = getFuncSignature(ctx, methodFuncIdx);
+  if (!sig || sig.params.length === 0) return false;
+  const userParams = sig.params.slice(1);
+  const results = sig.results;
+
+  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
+  if (!wrapperTypes) return false;
+  const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+
+  // Reuse the canonical trampoline if one was already registered for
+  // this method; otherwise build it once.
+  const trampolineName = `__obj_meth_tramp_${methodName}_cached`;
+  let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
+  if (trampolineFuncIdx === undefined) {
+    // Trampoline body: drop the closure-self arg (param 0), push
+    // `ref.null <objStruct>` for the method's `this` (matches the
+    // per-call-site emitObjectMethodAsClosure semantics — JS strict
+    // mode `var fn = c.m; fn();` calls with `this = undefined`, so a
+    // null receiver propagates the spec-mandated TypeError on
+    // `this.field` access), then forward user params, then call the
+    // method.
+    const trampolineBody: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx } as Instr];
+    for (let i = 0; i < userParams.length; i++) {
+      trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
+    }
+    trampolineBody.push({ op: "call", funcIdx: methodFuncIdx } as Instr);
+    trampolineFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.mod.functions.push({
+      name: trampolineName,
+      typeIdx: liftedFuncTypeIdx,
+      locals: [],
+      body: trampolineBody,
+      exported: false,
+    });
+    ctx.funcMap.set(trampolineName, trampolineFuncIdx);
+    ctx.mod.declaredFuncRefs.push(trampolineFuncIdx);
+  }
+
+  // Reuse or allocate the cache global. Type is externref so the value
+  // is stable across access sites (the closure-struct ref is converted
+  // via `extern.convert_any` once at init).
+  let cacheGlobalIdx = ctx.methodClosureGlobals.get(methodName);
+  if (cacheGlobalIdx === undefined) {
+    cacheGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: `__method_closure_${methodName}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.methodClosureGlobals.set(methodName, cacheGlobalIdx);
+  }
+
+  // Emit the lazy-init access (mirrors `emitLazyProtoGet`):
+  //   global.get $cache
+  //   ref.is_null
+  //   if (then: build closure, store in $cache)
+  //   global.get $cache
+  const initBody: Instr[] = [
+    { op: "ref.func", funcIdx: trampolineFuncIdx } as Instr,
+    { op: "struct.new", typeIdx: structTypeIdx } as Instr,
+    { op: "extern.convert_any" } as Instr,
+    { op: "global.set", index: cacheGlobalIdx } as Instr,
+  ];
+  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: initBody,
+    else: [],
+  } as unknown as Instr);
+  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
+  return true;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

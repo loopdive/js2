@@ -176,6 +176,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p benchmarks/results
+          mkdir -p /tmp/js2wasm-before-refresh
+          cp benchmarks/results/test262-current.jsonl /tmp/js2wasm-before-refresh/test262-current.jsonl 2>/dev/null || true
           cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
 
       - name: Commit and push refreshed JSONL
@@ -187,6 +189,14 @@ jobs:
           git add -f benchmarks/results/test262-current.jsonl
           if git diff --cached --quiet; then
             echo "JSONL unchanged — nothing to commit."
+            exit 0
+          fi
+          if [ -f /tmp/js2wasm-before-refresh/test262-current.jsonl ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type jsonl \
+              --baseline /tmp/js2wasm-before-refresh/test262-current.jsonl \
+              --candidate benchmarks/results/test262-current.jsonl; then
+            echo "Only volatile test262 metadata/timing changed — skipping commit."
             exit 0
           fi
           PASS=${{ steps.sanity.outputs.pass }}
@@ -202,9 +212,18 @@ jobs:
             git rebase --abort 2>/dev/null || true
             git fetch origin main
             git reset --hard origin/main
+            git show HEAD:benchmarks/results/test262-current.jsonl > /tmp/js2wasm-before-refresh/test262-current.after-reset.jsonl 2>/dev/null || true
             cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
             git add -f benchmarks/results/test262-current.jsonl
             git diff --cached --quiet && exit 0
+            if [ -f /tmp/js2wasm-before-refresh/test262-current.after-reset.jsonl ] && \
+              node scripts/compare-test262-artifact.mjs \
+                --type jsonl \
+                --baseline /tmp/js2wasm-before-refresh/test262-current.after-reset.jsonl \
+                --candidate benchmarks/results/test262-current.jsonl; then
+              echo "Only volatile test262 metadata/timing changed after rebase — skipping commit."
+              exit 0
+            fi
             git commit -m "chore(test262): refresh committed JSONL baseline — ${PASS}/${TOTAL} pass [skip ci]"
           fi
           git push

@@ -500,7 +500,26 @@ export type IrBinop =
  * NaN→0 and out-of-range values gracefully (no trap), matching what
  * test262's array-indexing patterns expect.
  */
-export type IrUnop = "f64.neg" | "i32.eqz" | "i32.trunc_sat_f64_s";
+export type IrUnop =
+  | "f64.neg"
+  | "i32.eqz"
+  | "i32.trunc_sat_f64_s"
+  // (#1371) Math.* unary ops that map 1:1 to a Wasm f64 instruction.
+  // The IR's `case "unary"` lowerer already passes the `op` tag through
+  // verbatim (lower.ts line 770), so we only need to extend the type
+  // and the from-ast lowering surface.
+  | "f64.abs"
+  | "f64.sqrt"
+  | "f64.floor"
+  | "f64.ceil"
+  | "f64.trunc"
+  // (#1392) `ref.is_null` — tests whether a Wasm reference is null. Result
+  // is i32 (1 if null, 0 otherwise). Used by the optional-chain lowering
+  // to short-circuit `recv?.prop` when `recv` is null. The Wasm op is
+  // valid for `ref` / `ref_null` / externref / funcref operands; the IR
+  // type carrier on `IrInstrUnary.rand` must be a `val`-kind IrType
+  // wrapping one of those.
+  | "ref.is_null";
 
 export interface IrInstrBinary extends IrInstrBase {
   readonly kind: "binary";
@@ -526,6 +545,92 @@ export interface IrInstrSelect extends IrInstrBase {
   readonly condition: IrValueId;
   readonly whenTrue: IrValueId;
   readonly whenFalse: IrValueId;
+}
+
+/**
+ * (#1392) Value-producing if/else expression. UNLIKE `select`, this
+ * SHORT-CIRCUITS — only one branch's instructions are executed. Used by
+ * the optional-chain lowering (`recv?.prop`) where the right-hand side
+ * (`recv.prop`) MUST NOT execute when `recv` is null.
+ *
+ * The two arm buffers (`then` / `else`) are self-contained instruction
+ * lists collected via `IrFunctionBuilder.collectBodyInstrs(...)`. They
+ * may reference SSA values defined OUTSIDE the if-instr (those are
+ * available through Wasm locals), but values defined INSIDE one arm are
+ * NOT visible to the other arm or to instructions following the if.
+ *
+ * The carrier values are `thenValue` / `elseValue` — IrValueIds defined
+ * inside the corresponding arm. The lowerer emits a Wasm
+ * `if (result T) ... else ... end` block where each arm leaves its
+ * carrier value on the stack; the post-block `local.set` binds the
+ * result to the if-instr's `result` SSA value.
+ *
+ * Both arms must produce values of `resultType`. The verifier rejects
+ * shape mismatches.
+ */
+export interface IrInstrIf extends IrInstrBase {
+  readonly kind: "if";
+  readonly cond: IrValueId;
+  readonly then: readonly IrInstr[];
+  readonly thenValue: IrValueId;
+  readonly else: readonly IrInstr[];
+  readonly elseValue: IrValueId;
+}
+
+/**
+ * (#1373 Phase B) `await <expr>` — suspend the current async function until
+ * `expr`'s Promise settles, then resume with the resolved value. The IR
+ * node carries the operand whose evaluation produces a Promise (or a
+ * non-Promise value that must be wrapped in `Promise.resolve` before
+ * suspension per spec §27.2.1.4).
+ *
+ * Phase B (this slice) defines the type only — no lowering. Phase C
+ * (CPS transform, follow-up #1373b) splits the function at each await
+ * point, lifts the post-await tail into a continuation closure, and
+ * emits microtask-queue calls (`__promise_then(promise, continuation)`)
+ * to schedule resumption.
+ *
+ * The result IrValueId carries the resolved value. Its IrType must
+ * match the surrounding expression context (typically the unwrapped
+ * `T` from `Promise<T>`).
+ */
+export interface IrInstrAwait extends IrInstrBase {
+  readonly kind: "await";
+  readonly operand: IrValueId;
+}
+
+/**
+ * (#1373 Phase B) `return <value>` from an async function body. UNLIKE
+ * `IrTerminatorReturn`, which produces the bare value, this wraps the
+ * value in `Promise.resolve(value)` per the async function spec
+ * §15.8.5.5. The IR node defines the wrap intent; lowering (Phase C)
+ * emits the wrap via the existing `Promise_resolve` host import in
+ * JS-host mode or via the standalone `$Promise` struct.new in WASI
+ * mode (the latter wired in #1326 Phase 1B).
+ *
+ * Used in tail position only — non-tail `return` inside an async
+ * function flows through the IR's normal block terminator, which the
+ * Phase C lowerer recognises and routes through the same wrap.
+ */
+export interface IrInstrAsyncReturn extends IrInstrBase {
+  readonly kind: "async.return";
+  readonly value: IrValueId;
+}
+
+/**
+ * (#1373 Phase B) Synchronous throw inside an async function body.
+ * UNLIKE `IrInstrThrow`, which propagates as a Wasm exception, this
+ * wraps the thrown value in `Promise.reject(reason)` so the async
+ * function's outer Promise settles in the rejected state. Lowering
+ * (Phase C) emits the wrap via `Promise_reject` (host) or `$Promise`
+ * struct.new with `state = REJECTED` (standalone, #1326 Phase 1B).
+ *
+ * Currently NOT emitted by from-ast — Phase C wires it from
+ * `ts.ThrowStatement` nodes inside async function bodies.
+ */
+export interface IrInstrAsyncThrow extends IrInstrBase {
+  readonly kind: "async.throw";
+  readonly reason: IrValueId;
 }
 
 /**
@@ -1599,6 +1704,8 @@ export type IrInstr =
   | IrInstrBinary
   | IrInstrUnary
   | IrInstrSelect
+  // (#1392) Value-producing short-circuiting if/else — used by optional-chain.
+  | IrInstrIf
   | IrInstrRawWasm
   | IrInstrBox
   | IrInstrUnbox
@@ -1647,7 +1754,12 @@ export type IrInstr =
   | IrInstrRegExpLiteral
   // Slice 12 (#1280) — generic structured loops.
   | IrInstrWhileLoop
-  | IrInstrForLoop;
+  | IrInstrForLoop
+  // (#1373 Phase B) Async / await IR nodes. Currently type-only —
+  // Phase C (CPS transform, follow-up #1373b) wires lowering.
+  | IrInstrAwait
+  | IrInstrAsyncReturn
+  | IrInstrAsyncThrow;
 
 // ---------------------------------------------------------------------------
 // Slot definitions (#1169e — IR Phase 4 Slice 6)

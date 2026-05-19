@@ -154,6 +154,41 @@ async function main(): Promise<void> {
   const startMs = Date.now();
   const failures: { file: string; expected: string; observed: string; reason?: string }[] = [];
 
+  // Snapshot global built-in prototype methods that test262 tests may clobber.
+  // Some tests mutate globalThis.Set.prototype, Array.prototype, etc. in ways
+  // that survive test isolation (especially when runTest262File is invoked in
+  // the same process rather than a worker). Restore after each test so
+  // subsequent runner preprocessing (which uses `new Set()` etc.) still works.
+  const _savedGlobals: Array<[object, PropertyKey, PropertyDescriptor | undefined]> = [
+    [Set.prototype, "add", Object.getOwnPropertyDescriptor(Set.prototype, "add")],
+    [Set.prototype, "has", Object.getOwnPropertyDescriptor(Set.prototype, "has")],
+    [Set.prototype, "delete", Object.getOwnPropertyDescriptor(Set.prototype, "delete")],
+    [Set.prototype, "clear", Object.getOwnPropertyDescriptor(Set.prototype, "clear")],
+    [Map.prototype, "set", Object.getOwnPropertyDescriptor(Map.prototype, "set")],
+    [Map.prototype, "get", Object.getOwnPropertyDescriptor(Map.prototype, "get")],
+    [Map.prototype, "has", Object.getOwnPropertyDescriptor(Map.prototype, "has")],
+    [Array.prototype, "push", Object.getOwnPropertyDescriptor(Array.prototype, "push")],
+    [Array.prototype, "pop", Object.getOwnPropertyDescriptor(Array.prototype, "pop")],
+    [Object.prototype, "hasOwnProperty", Object.getOwnPropertyDescriptor(Object.prototype, "hasOwnProperty")],
+  ];
+  function restoreGlobals(): void {
+    for (const [obj, key, desc] of _savedGlobals) {
+      if (desc) Object.defineProperty(obj, key, desc);
+    }
+    // Remove any numeric-index getter/accessor properties that a test may have
+    // installed on Array.prototype in-process (e.g. Object.defineProperty(
+    // Array.prototype, "1", {get: fn})). These survive test isolation and cause
+    // "Cannot set property N of [object Array] which has only a getter" on the
+    // next array index-write inside the validator itself.
+    for (const key of Object.getOwnPropertyNames(Array.prototype)) {
+      if (/^\d+$/.test(key)) {
+        try {
+          delete (Array.prototype as Record<string, unknown>)[key];
+        } catch {}
+      }
+    }
+  }
+
   for (let i = 0; i < sample.length; i++) {
     const entry = sample[i]!;
     const cat = categoryFor(entry.file);
@@ -181,6 +216,11 @@ async function main(): Promise<void> {
         observed: "runner_error",
         reason: (e as Error).message?.slice(0, 160) ?? String(e),
       });
+    } finally {
+      // Restore globals in case the test polluted prototype chains in this
+      // process (the sandbox vm-realm guards the *sandbox* built-ins, but
+      // a test could still reach the real globalThis via leaked imports).
+      restoreGlobals();
     }
     if ((i + 1) % 10 === 0) {
       const pct = Math.round(((i + 1) / sample.length) * 100);

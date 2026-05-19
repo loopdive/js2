@@ -71,8 +71,15 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  group: test262-sharded
-  cancel-in-progress: false
+  # PR branches: per-PR group so a new push cancels the old run for that PR only.
+  # Push to main: shared queue (cancel-in-progress: false) so rapid merges queue
+  #   rather than each evicting the previous — baseline always gets updated.
+  # workflow_dispatch: unique group so manual runs never cancel each other.
+  group: >-
+    ${{ github.event_name == 'push' && 'test262-sharded-main'
+     || github.event_name == 'pull_request' && format('test262-sharded-pr-{0}', github.ref)
+     || format('test262-sharded-dispatch-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test262-shard:
@@ -395,6 +402,8 @@ jobs:
       - name: Promote merged artifacts to stable baseline
         run: |
           mkdir -p benchmarks/results
+          mkdir -p /tmp/js2wasm-before-refresh
+          cp benchmarks/results/test262-current.json /tmp/js2wasm-before-refresh/test262-current.json 2>/dev/null || true
           rm -f benchmarks/results/test262-current.jsonl \
             benchmarks/results/test262-current.json \
             benchmarks/results/test262-report.json \
@@ -431,11 +440,21 @@ jobs:
 
           # Clone baselines repo (shallow — only need latest state)
           git clone --depth=1 git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+          cp /tmp/js2wasm-baselines/test262-current.jsonl /tmp/js2wasm-baselines/test262-current.before.jsonl 2>/dev/null || true
 
           # Copy fresh artifacts
           cp shard-artifacts/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-current.jsonl
           cp shard-artifacts/test262-report-merged.json   /tmp/js2wasm-baselines/test262-current.json
           cp shard-artifacts/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-results.jsonl
+
+          if [ -f /tmp/js2wasm-baselines/test262-current.before.jsonl ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type jsonl \
+              --baseline /tmp/js2wasm-baselines/test262-current.before.jsonl \
+              --candidate /tmp/js2wasm-baselines/test262-current.jsonl; then
+            echo "Baseline JSONL semantic content unchanged — skipping baselines repo push."
+            exit 0
+          fi
 
           # Update runs/index.json (trend graph history)
           node -e "
@@ -496,11 +515,20 @@ jobs:
             echo "No JSON changes to commit."
             exit 0
           fi
+          if [ -f /tmp/js2wasm-before-refresh/test262-current.json ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type report \
+              --baseline /tmp/js2wasm-before-refresh/test262-current.json \
+              --candidate benchmarks/results/test262-current.json; then
+            echo "Only volatile test262 report metadata changed — skipping commit."
+            exit 0
+          fi
           git commit -m "chore(test262): refresh sharded baseline — ${PASS}/${TOTAL} pass [skip ci]"
           if ! GIT_LFS_SKIP_SMUDGE=1 git pull --rebase --autostash origin main; then
             git rebase --abort 2>/dev/null || true
             git fetch origin main
             GIT_LFS_SKIP_SMUDGE=1 git reset --hard origin/main
+            git show HEAD:benchmarks/results/test262-current.json > /tmp/js2wasm-before-refresh/test262-current.after-reset.json 2>/dev/null || true
             cp shard-artifacts/test262-report-merged.json benchmarks/results/test262-current.json
             cp shard-artifacts/test262-report-merged.json benchmarks/results/test262-report.json
             cp shard-artifacts/test262-report-merged.json public/benchmarks/results/test262-report.json
@@ -509,7 +537,16 @@ jobs:
               benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-editions.json
-            git commit -m "chore(test262): refresh sharded baseline — ${PASS}/${TOTAL} pass [skip ci]" --allow-empty
+            git diff --cached --quiet && exit 0
+            if [ -f /tmp/js2wasm-before-refresh/test262-current.after-reset.json ] && \
+              node scripts/compare-test262-artifact.mjs \
+                --type report \
+                --baseline /tmp/js2wasm-before-refresh/test262-current.after-reset.json \
+                --candidate benchmarks/results/test262-current.json; then
+              echo "Only volatile test262 report metadata changed after rebase — skipping commit."
+              exit 0
+            fi
+            git commit -m "chore(test262): refresh sharded baseline — ${PASS}/${TOTAL} pass [skip ci]"
           fi
           GIT_LFS_SKIP_SMUDGE=1 git push
 
