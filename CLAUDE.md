@@ -3,7 +3,8 @@
 TypeScript-to-WebAssembly compiler using WasmGC.
 
 ## Running Tests
-- Run all tests: `npm test` (vitest — may OOM on full suite in constrained envs)
+- Run all tests: `npm test` (vitest). Historical OOM warning lifted — the
+  container now has enough memory; report regressions if they recur.
 - Run a specific test file: `npm test -- tests/issue-277.test.ts`
 - Run equivalence tests only: `npm test -- tests/equivalence.test.ts`
 - Test262: `pnpm run test:262` — vitest-based runner, creates its own worktree, writes to `benchmarks/results/`. Default 3 workers.
@@ -24,8 +25,11 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 - **Worktree cleanup after merge**: after a dev self-merges their PR, they remove their own worktree (`git worktree remove /workspace/.claude/worktrees/<branch>`) before claiming the next task. Tech-lead only removes worktrees for suspended or abandoned branches.
 
 ## Architecture Principles
-- **Dual-mode: JS host optional** — the compiler supports two modes: JS host mode (uses host imports for performance/completeness) and standalone mode (pure Wasm, no JS runtime). New features should have Wasm-native implementations for standalone mode; JS host imports are acceptable as a fast path when a JS runtime is available. Don't add new host imports without a standalone fallback.
+- **Dual-mode: JS host optional** — the compiler supports two modes: JS host mode (uses host imports for performance/completeness) and standalone mode (pure Wasm, no JS runtime). New features should have Wasm-native implementations for standalone mode; JS host imports are acceptable as a fast path when a JS runtime is available. Don't add new host imports without a standalone fallback. **Enforcement is tracked by #1524** (strict mode + CI gate).
 - This follows the pattern of #679 (dual string backend) and #682 (dual RegExp backend).
+- **Two orthogonal axes in codegen** (see #1527 for the adoption strategy):
+  - **Backend lowering**: `src/codegen/` (WasmGC) vs `src/codegen-linear/` (linear memory). These are **alternatives, not one superseding the other** — the choice depends on target (browser/WasmGC vs WASI/linear) and tradeoffs. Both stay.
+  - **Front-end**: direct AST→Wasm (legacy, accumulated hacks) vs IR (`src/ir/`, typed representation). IR **replaces the hacks**; it does **not** compete with the backend choice. IR adopts AST node kinds step by step, only for parts that do not yet need to decide between linear and WasmGC lowering. IR-path failures currently demote to a warning channel (#1530 phases this fallback out).
 
 ## Project Structure
 - Codegen: `src/codegen/expressions.ts`, `src/codegen/index.ts`, `src/codegen/statements.ts`, `src/codegen/type-coercion.ts`, `src/codegen/peephole.ts`
@@ -51,7 +55,7 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 - `VOID_RESULT` sentinel in expressions.ts — `InnerResult = ValType | null | typeof VOID_RESULT`
 - Ref cells for mutable closure captures — `struct (field $value (mut T))`
 - FunctionContext must include `labelMap: new Map()` and `isGenerator?: boolean` in all object literals
-- `as unknown as Instr` for Wasm ops not yet in the Instr union (f64.copysign, f64.min/max) — 158 occurrences, tracked for cleanup
+- `as unknown as Instr` for Wasm ops not yet in the Instr union (f64.copysign, f64.min/max) — currently ~379 occurrences (up from 158 baseline); audit + budget gate tracked in #1526
 - f64.promote_f32 IS now in the Instr union (added for Math.fround)
 - `return_call` / `return_call_ref` for tail call optimization in return position
 - Peephole pass removes redundant `ref.as_non_null` after `ref.cast`
@@ -89,12 +93,18 @@ The committed JSONL must be kept in sync with the JSON; otherwise the dev-self-m
 
 To validate the committed JSONL on demand, run `pnpm run test:262:validate-baseline` (uses a deterministic seed; pass `PR_NUMBER=N` to reproduce a specific CI run, or `SAMPLE_SIZE=10 SEED=12345` for a quicker check). Set `SAMPLE_SIZE=50` to match CI exactly. The validator fails fast on the first 5 most-affected entries with a pointer to `refresh-committed-baseline.yml`.
 
-## IR Fallback Budget (#1376)
+## IR Fallback Budget (#1376) — being phased out (#1530)
 
 The IR retirement gate `pnpm run check:ir-fallbacks` walks every `.ts` file
 under `playground/examples/` with `trackFallbacks: true` and aggregates
 rejection reasons against `scripts/ir-fallback-baseline.json`. CI fails when
 any **unintended** bucket grows.
+
+**Direction**: this budget is a transitional safety net, not a permanent
+ceiling. #1530 prioritises ratcheting the unintended buckets to zero so the
+IR path becomes the only path for the affected node kinds. Once a bucket
+hits zero, the demote-to-warning code in `src/compiler.ts:889–896` is
+removed for that class.
 
 | Reason                       | Category   | Reduces with                         |
 |------------------------------|------------|--------------------------------------|
@@ -152,19 +162,19 @@ Spawn dedicated agents when:
 - The role needs sustained back-and-forth with the user (e.g., PO during planning)
 - The role accumulates context that's hard to capture in a skill (e.g., SM during retro discussion)
 
-**IMPORTANT: Always use teammates, not subagents.** Spawn agents via `TeamCreate` + `Agent` with `team_name` parameter. Never use bare `Agent` spawns — subagents can't coordinate, causing OOM from concurrent test runs and duplicate work. Teammates communicate via `SendMessage` to serialize test runs and coordinate on file conflicts.
+**IMPORTANT: Always use teammates, not subagents.** Spawn agents via `TeamCreate` + `Agent` with `team_name` parameter. Never use bare `Agent` spawns — subagents can't coordinate, causing duplicate work and contention. Teammates communicate via `SendMessage` to serialize test runs and coordinate on file conflicts. (The historical OOM constraint that drove this rule has been relaxed; coordination is still required.)
 
 **IMPORTANT: Always use team name `"js2wasm"`** — this is the single permanent team. Never create ad-hoc team names (e.g. `"wasi-conflicts"`, `"s52-wave2"`). One team, one task queue, always.
 
-**Key numbers**: 16GB RAM + 16GB swap (container, set in `.devcontainer/devcontainer.json`). `free -m` may report ~20GB but Docker enforces 16GB hard limit. **Up to 8 dev teammates** (no local test262 — CI handles it). All agents use `bypassPermissions` mode + worktree isolation. Work driven by `plan/log/dependency-graph.md`.
+**Key numbers**: 16GB RAM + 16GB swap (container, set in `.devcontainer/devcontainer.json`). The historical OOM ceiling has largely lifted in practice — `npm test` and local test262 runs no longer hit the previous hard cap. CI still runs the full test262 conformance sweep (sharded) regardless. **Up to 8 dev teammates**. All agents use `bypassPermissions` mode + worktree isolation. Work driven by `plan/log/dependency-graph.md`.
 
 **RAM monitoring**: Use `free -m` "available" column (not "free"). "free" excludes reclaimable disk cache. Hooks check "available" before allowing agent spawns.
 
-**Memory budget** (measured peaks via `/proc/[pid]/status` VmHWM):
+**Memory budget** (historical peaks via `/proc/[pid]/status` VmHWM — informational; the previous hard ceiling has been relaxed):
 - Fixed: Cursor ~1,400MB + system ~1,200MB + tech lead ~1,400MB = **~4,000MB**
-- Dev agent: ~700MB peak (no local test262)
-- Test262 (CI only): ~4,300MB peak per shard — runs in GitHub Actions, not locally
-- **Max 8 devs** (~9.6GB headroom). Check `free -m` available before spawning.
+- Dev agent: ~700MB peak
+- Test262 sharded: ~4,300MB peak per shard (CI; local also feasible on current containers)
+- **Max 8 devs**. Check `free -m` available before spawning if running heavy work in parallel.
 
 ### Agent lifecycle — when to spawn, skill, or terminate
 
@@ -248,7 +258,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 - **Dev self-merge**: when `.claude/ci-status/pr-<N>.json` has matching SHA, `net_per_test > 0`, ratio <10%, no bucket >50 — run `gh pr merge <N> --admin --merge`. Escalate to tech lead only when criteria fail. See `.claude/skills/dev-self-merge.md`.
 - **Tech lead reading ci-status files**: always verify `head_sha` matches current PR HEAD (`gh pr view N --json headRefOid`) before interpreting `net_per_test` or regression counts. A SHA mismatch means CI ran on a stale commit — the numbers are misleading. Also check `baseline_staleness_commits` > 0 as a secondary signal.
 - **Devs contact tech lead for**: TaskList empty, blocked >30 min, CI ESCALATE result (immediately — do not wait to be asked), net < 0 result.
-- Dev agents do NOT run full test262 locally — scoped checks only, CI validates conformance.
+- Dev agents typically run scoped checks locally and let CI run the full sharded test262 (faster feedback, less duplication). Full local runs are permitted now that the container memory ceiling has been raised — use judgement.
 
 ### Controlling agents
 - **Pause (between tasks)**: create a task with `[PAUSE]` in the subject. Agents stop when they reach it and wait idle.

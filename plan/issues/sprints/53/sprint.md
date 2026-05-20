@@ -145,6 +145,18 @@ include them as new work.
 
 _Generated from issue files. Update issue `status`, then rerun `node scripts/sync-sprint-issue-tables.mjs`._
 
-No issues currently assigned to this sprint.
+### Ready
+
+| Issue | Title | Priority | Status |
+|---|---|---|---|
+| #1522 | Automate conformance number propagation after each test262 run | high | ready |
+| #1523 | Phase out sprint-current.md; sprint docs generated programmatically; ID/folder consistency gate | high | ready |
+| #1524 | Enforce dual-mode architecture: --no-host-imports flag + CI gate | critical | ready |
+| #1525 | Enable GitHub branch protection on main with required status checks | high | ready |
+| #1526 | Audit `as unknown as Instr` cast budget — restore type safety on Wasm ops | medium | ready |
+| #1527 | IR adoption strategy: replace codegen hacks, preserve linear/GC backend split | high | ready |
+| #1528 | Move 15 MB test262-current.jsonl baseline to js2wasm-baselines repo | medium | ready |
+| #1529 | Rename repository loopdive/js2wasm → loopdive/js2 and align branding | medium | ready |
+| #1530 | Prioritise IR fallback phase-out: ratchet the budget to zero | high | ready |
 
 <!-- GENERATED_ISSUE_TABLES_END -->

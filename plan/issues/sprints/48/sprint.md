@@ -10,6 +10,7 @@ wrap_checklist:
   diary_updated: true
   end_tag_pushed: true
   begin_tag_pushed: true
+retro_link: plan/log/retrospectives/sprint-48.md
 ---
 
 # Sprint 48

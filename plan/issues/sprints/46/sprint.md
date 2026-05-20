@@ -7,10 +7,11 @@ groomed: 2026-04-30
 started: 2026-04-30
 wrap_checklist:
   status_closed: true
-  retro_written: false
+  retro_written: true
   diary_updated: true
   end_tag_pushed: false
   begin_tag_pushed: false
+retro_link: plan/log/retrospectives/sprint-46.md
 carry_overs:
   - id: 742
     status: blocked

@@ -5,10 +5,11 @@ created: 2026-05-20
 started: 2026-05-20
 wrap_checklist:
   status_closed: false
-  retro_written: false
+  retro_written: true
   diary_updated: false
   end_tag_pushed: false
   begin_tag_pushed: true
+retro_link: plan/log/retrospectives/sprint-52.md
 ---
 
 # Sprint 52
@@ -44,7 +45,6 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | Issue | Title | Priority | Status |
 |---|---|---|---|
 | #1373b | IR async Phase C: CPS lowering for await + async-return + async-throw | medium | blocked |
-| #1521 | wasi: Native Messaging host example (Chrome extension integration) | medium | blocked |
 
 ### Ready
 
@@ -52,7 +52,6 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 |---|---|---|---|
 | #1373 | IR: claim async functions (async/await through IR path) | medium | ready |
 | #1387 | feat: implement `with` statement — architect exploration of dynamic-scope compilation strategies | medium | ready |
-| #1400 | npm: compile ESLint package entry to valid Wasm | high | ready |
 
 ### In Progress
 
@@ -72,7 +71,6 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 |---|---|---|---|
 | #1364 | spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails) | high | review |
 | #1382 | structural: Wasm closures not JS-callable from host imports — bridge gap | high | review |
-| #1394 | class method-closure caching: C.prototype.method returns stable singleton closure | high | review |
 | #1433 | spec gap: DisposableStack and AsyncDisposableStack lifecycle semantics | medium | review |
 | #1435 | spec gap: lexical grammar and syntax-directed early errors | medium | review |
 | #1436 | spec gap: global object descriptors and global function coercion/URI semantics | medium | review |
@@ -89,7 +87,6 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1452 | spec gap: for-loop init binding patterns — declared names not visible in loop body | high | review |
 | #1453 | spec gap: per-iteration fresh let/const binding in for-statements | medium | review |
 | #1454 | spec gap: iterator protocol — error propagation and IteratorClose during destructuring | medium | review |
-| #1455 | spec gap: subclassing builtins — instanceof and prototype chain (class Sub extends Map / Float32Array / WeakMap / …) | medium | review |
 | #1456 | spec gap: private-reference assignment to readonly accessor / method throws TypeError | medium | review |
 | #1460 | spec gap: Object.defineProperty / defineProperties descriptor fidelity | high | review |
 | #1461 | spec gap: Array.prototype.* called on array-like / exotic receivers | high | review |
@@ -102,14 +99,11 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1468 | for-of/dstr: obj-ptrn-id-init undefined-key + array-elem-trlg iterator close | medium | review |
 | #1470 | host-independence: eliminate JS host string ops for standalone Wasm | high | review |
 | #1480 | wasi: console.error and console.warn should write to stderr (fd=2) | high | review |
-| #1481 | wasi: support reading stdin via fd_read | high | review |
 | #1482 | wasi: wire process.env to environ_get / environ_sizes_get | high | review |
 | #1483 | wasi: route Date.now and performance.now to clock_time_get | high | review |
 | #1484 | wasi: provide standalone setTimeout/setInterval via poll_oneoff (or fail loud) | high | review |
 | #1490 | nodejs: runtime access to process.argv and process.env | medium | review |
-| #1491 | nodejs: fs.readFileSync/writeFileSync as JS-host imports (non-WASI) | medium | review |
 | #1492 | nodejs: crypto.randomBytes / randomUUID host imports | medium | review |
-| #1493 | nodejs: console.error / console.warn → stderr (fd=2) in WASI mode | medium | review |
 | #1494 | nodejs: __dirname / __filename / import.meta.url for compiled modules | medium | review |
 | #1500 | browser: fetch() host import with Response bridge | medium | review |
 | #1501 | browser: setTimeout/setInterval/clearTimeout/clearInterval host imports | medium | review |
@@ -131,11 +125,18 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 
 | Issue | Title | Priority | Status |
 |---|---|---|---|
+| #1394 | class method-closure caching: C.prototype.method returns stable singleton closure | high | done |
 | #1397 | codegen: static method dispatch ignores runtime property reassignment on typed receivers | medium | done |
 | #1398 | report: edition filter on category table — per-category edition breakdown | low | done |
+| #1400 | npm: compile ESLint package entry to valid Wasm | high | done |
 | #1431 | spec gap: assignment operators — destructuring completion, defaults, and compound side effects | medium | done |
 | #1432 | spec gap: parameter lists — rest/destructuring iterator semantics and default initializers | medium | done |
 | #1434 | spec gap: ToNumber/ToNumeric coercion and unary operator edge cases | medium | done |
 | #1437 | spec gap: Math numeric edge cases beyond random source | low | done |
+| #1455 | spec gap: subclassing builtins — instanceof and prototype chain (class Sub extends Map / Float32Array / WeakMap / …) | medium | done |
+| #1481 | wasi: support reading stdin via fd_read | high | done |
+| #1491 | nodejs: fs.readFileSync/writeFileSync as JS-host imports (non-WASI) | medium | done |
+| #1493 | nodejs: console.error / console.warn → stderr (fd=2) in WASI mode | medium | done |
+| #1521 | test262 CI speedup: cross-PR cache sharing + path-scoped test selection | high | done |
 
 <!-- GENERATED_ISSUE_TABLES_END -->
