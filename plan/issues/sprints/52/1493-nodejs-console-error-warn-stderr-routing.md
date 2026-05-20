@@ -2,7 +2,7 @@
 id: 1493
 sprint: 52
 title: "nodejs: console.error / console.warn → stderr (fd=2) in WASI mode"
-status: in-progress
+status: done
 created: 2026-05-20
 priority: medium
 feasibility: medium
@@ -114,3 +114,44 @@ asserts each lands in the right stream.
 - `src/runtime.ts:4870` — verify polyfill (already correct).
 - `tests/equivalence.test.ts` or new `tests/wasi-stderr.test.ts` — assert
   stream routing.
+
+## Suspended Work (dev-1493, 2026-05-20)
+
+- **PR**: #402 — https://github.com/loopdive/js2wasm/pull/402
+- **Branch**: `issue-1493-nodejs-console-stderr`
+- **Worktree**: `/workspace/.claude/worktrees/issue-1493-nodejs-console-stderr/`
+- **HEAD SHA**: `065683d3b2ae4c06349768f81f0bd186b0499617`
+  (team-lead merged origin/main into the branch after my push)
+- **State**: ci-wait — PR open, fully implemented + tested, awaiting CI
+
+### What was implemented
+
+1. **`src/codegen/index.ts`** — extended the WASI-import visitor to set a
+   new `needsConsoleStderr` flag when `console.warn` / `console.error` is
+   detected. Emits `__wasi_write_string_stderr` helper (fd=2) only when
+   needed (size optimisation — pure-log binaries stay minimal).
+2. **`src/codegen/expressions/builtins.ts`** —
+   - `compileConsoleCallWasi` now picks the helper by method:
+     `log/info/debug` → `__wasi_write_string` (fd=1, existing);
+     `warn/error` → `__wasi_write_string_stderr` (fd=2, new).
+   - `ensureWasiWriteI32Helper` / `ensureWasiWriteF64Helper` gained a
+     `useStderr` flag. Stderr variants (`__wasi_write_i32_stderr` /
+     `__wasi_write_f64_stderr`) route formatted bytes through the stderr
+     string helper. Numbers / NaN / Infinity all land on fd=2 for
+     `console.error(42)` etc.
+3. **`src/runtime.ts`** — no change needed; `buildWasiPolyfill` already
+   routes fd=2 → `console.error`.
+4. **`tests/issue-1493.test.ts`** — 6 tests covering: helper emission for
+   warn/error, helper omission for log-only (size-opt), mixed log+error,
+   end-to-end stdout/stderr separation through `buildWasiPolyfill`, and
+   number-arg routing.
+
+### Resume steps
+
+1. Wait for `.claude/ci-status/pr-402.json` with `head_sha = 065683d3b2ae4c06349768f81f0bd186b0499617`
+2. Run `/dev-self-merge 402`
+3. On MERGE: `gh pr merge 402 --merge --admin`
+4. After merge: `rm /workspace/.claude/agent-status/issue-1493-nodejs-console-stderr.json`,
+   `git worktree remove /workspace/.claude/worktrees/issue-1493-nodejs-console-stderr`,
+   `TaskUpdate(57, status: completed)`, set issue `status: done` in
+   frontmatter.

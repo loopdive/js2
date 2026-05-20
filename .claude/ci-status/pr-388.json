@@ -1,0 +1,23 @@
+{
+  "pr": 388,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "issue-1518-annex-b",
+  "head_sha": "123822ebc54fcf8b26368ae65e3dc9d3ec9fda9d",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/388",
+  "timestamp": "2026-05-20T16:25:33Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

@@ -1,0 +1,22 @@
+{
+  "pr": 366,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1364-class-descriptors",
+  "head_sha": "a3a9ce90b53bab9f456c077e7e9f8edf58748d25",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26150984181",
+  "timestamp": "2026-05-20T09:56:30Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

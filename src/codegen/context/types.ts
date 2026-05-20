@@ -42,8 +42,11 @@ export interface CodegenOptions {
   experimentalIR?: boolean;
   /** Node builtin modules detected during import preprocessing (#1044) */
   nodeBuiltins?: import("../../import-resolver.js").NodeBuiltinImport[];
-  /** Set of function names imported from node:fs (detected pre-preprocessing) */
+  /** Set of function names imported from node:fs (detected pre-preprocessing).
+   *  Used by both the WASI fs syscall path (#1035) and the JS-host fs imports (#1491). */
   wasiNodeFsFuncs?: Set<string>;
+  /** Allow `node:fs` JS-host imports for non-WASI targets (#1491). Default: false. */
+  allowFs?: boolean;
 }
 
 /** Info about an externally declared class. */
@@ -587,12 +590,15 @@ export interface CodegenContext {
   wasi: boolean;
   /** WASI import indices */
   wasiFdWriteIdx: number;
+  wasiFdReadIdx?: number;
   wasiProcExitIdx: number;
   wasiPathOpenIdx: number;
   wasiFdCloseIdx: number;
   wasiBumpPtrGlobalIdx: number;
-  /** Set of node:fs functions used in WASI mode */
+  /** Set of node:fs functions used in this compilation unit (both WASI and JS-host fs paths). */
   wasiNodeFsFuncs: Set<string>;
+  /** Whether `node:fs` JS-host imports are permitted (non-WASI target only, #1491). */
+  allowFs: boolean;
   /** Map from let/const module global variable name → TDZ flag global index */
   tdzGlobals: Map<string, number>;
   /** Set of let/const module global variable names */

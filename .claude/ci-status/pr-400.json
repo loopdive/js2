@@ -1,0 +1,22 @@
+{
+  "pr": 400,
+  "conclusion": "success",
+  "head_branch": "issue-1481-wasi-stdin",
+  "head_sha": "04ade449ed5d31390ec7347a8d9c75115e2b3968",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26164979134",
+  "timestamp": "2026-05-20T14:53:06Z",
+  "pass": 28172,
+  "fail": 13719,
+  "compile_error": 1191,
+  "snapshot_delta": 4,
+  "net_per_test": 48,
+  "regressions": 53,
+  "regressions_real": 11,
+  "regressions_wasm_change": 11,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 42,
+  "improvements": 59,
+  "baseline_sha": "04ade449ed5d31390ec7347a8d9c75115e2b3968",
+  "baseline_staleness_commits": 41,
+  "baseline_stale": false
+}

@@ -1,0 +1,22 @@
+{
+  "pr": 348,
+  "conclusion": "success",
+  "head_branch": "issue-1379-tonumeric-coercion",
+  "head_sha": "10268ffc530f75743b00e9b77c2c60849c999f32",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26132726446",
+  "timestamp": "2026-05-20T08:54:31Z",
+  "pass": 28166,
+  "fail": 13717,
+  "compile_error": 1193,
+  "snapshot_delta": -2,
+  "net_per_test": 44,
+  "regressions": 55,
+  "regressions_real": 7,
+  "regressions_wasm_change": 7,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 48,
+  "improvements": 51,
+  "baseline_sha": "10268ffc530f75743b00e9b77c2c60849c999f32",
+  "baseline_staleness_commits": 38,
+  "baseline_stale": false
+}

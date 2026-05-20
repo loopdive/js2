@@ -2,7 +2,7 @@
 id: 1462
 sprint: 52
 title: "spec gap: Object.getOwnPropertyDescriptor + Object.create descriptor surface"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium

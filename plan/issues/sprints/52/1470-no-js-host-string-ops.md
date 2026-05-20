@@ -2,7 +2,7 @@
 id: 1470
 sprint: 52
 title: "host-independence: eliminate JS host string ops for standalone Wasm"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium

@@ -968,6 +968,21 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     return compileOptionalCallExpression(ctx, fctx, expr);
   }
 
+  // #1481: readStdin() builtin under --target wasi → call __wasi_read_stdin_all
+  if (
+    ctx.wasi &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "readStdin" &&
+    ctx.wasiFdReadIdx !== undefined &&
+    ctx.wasiFdReadIdx >= 0
+  ) {
+    const helperIdx = ctx.funcMap.get("__wasi_read_stdin_all");
+    if (helperIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: helperIdx } as Instr);
+      return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
+    }
+  }
+
   // RegExp(pattern, flags) called without `new` — per spec, equivalent to
   // `new RegExp(pattern, flags)` (unless pattern is already a RegExp with
   // flags undefined, an edge case we accept). Emit the RegExp_new host call
@@ -5148,6 +5163,81 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         }
       }
     }
+  }
+
+  // #1491 — non-WASI fs.readFileSync / writeFileSync as JS-host imports.
+  // Gated behind `--allow-fs` (CompileOptions.allowFs) to prevent accidental
+  // capability leakage. The corresponding host imports are bound at runtime via
+  // the `node_builtin_fn` ImportIntent. Initial scope: 2-arg shapes only —
+  // readFileSync(path, "utf-8") returns string, writeFileSync(path, data)
+  // returns void. Buffer-shaped reads are deferred to a follow-up.
+  if (
+    !ctx.wasi &&
+    ts.isIdentifier(expr.expression) &&
+    ctx.wasiNodeFsFuncs.has(expr.expression.text) &&
+    (expr.expression.text === "readFileSync" || expr.expression.text === "writeFileSync")
+  ) {
+    const fnName = expr.expression.text;
+    if (!ctx.allowFs) {
+      const { line, character } = expr.getSourceFile().getLineAndCharacterOfPosition(expr.getStart());
+      ctx.errors.push({
+        message:
+          `'node:fs' call to '${fnName}' requires the --allow-fs flag (or { allowFs: true } ` +
+          `in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import ` +
+          `to prevent accidental capability leakage.`,
+        line: line + 1,
+        column: character + 1,
+        severity: "error",
+      });
+      // Drop args, emit a safe placeholder so codegen can continue.
+      for (const arg of expr.arguments) {
+        const t = compileExpression(ctx, fctx, arg);
+        if (t) fctx.body.push({ op: "drop" });
+      }
+      if (fnName === "writeFileSync") return VOID_RESULT;
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+
+    // Lazily register the host import. Both fns are (externref, externref) -> externref|void.
+    // Use ensureLateImport so late additions correctly shift existing function
+    // indices (export tables, call instructions, etc.) — calling raw addImport
+    // here would otherwise misalign the exported function indices.
+    const importName = `__node_fs_${fnName}`;
+    const params: ValType[] = [{ kind: "externref" }, { kind: "externref" }];
+    const results: ValType[] = fnName === "writeFileSync" ? [] : [{ kind: "externref" }];
+    const funcIdx = ensureLateImport(ctx, importName, params, results);
+    if (funcIdx === undefined) {
+      // Should be unreachable — emit a defensive placeholder.
+      for (const arg of expr.arguments) {
+        const t = compileExpression(ctx, fctx, arg);
+        if (t) fctx.body.push({ op: "drop" });
+      }
+      if (fnName === "writeFileSync") return VOID_RESULT;
+      fctx.body.push({ op: "ref.null.extern" } as Instr);
+      return { kind: "externref" };
+    }
+    flushLateImportShifts(ctx, fctx);
+
+    // Compile 2 args as externref (pad missing with ref.null.extern so the call
+    // typechecks even when the user under-supplied args).
+    const argCount = Math.min(2, expr.arguments.length);
+    for (let i = 0; i < argCount; i++) {
+      compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
+    }
+    for (let i = argCount; i < 2; i++) {
+      fctx.body.push({ op: "ref.null.extern" } as Instr);
+    }
+    // Drop extra args (e.g. callback overload) without emitting them — Initial
+    // scope is sync 2-arg shapes only.
+    for (let i = 2; i < expr.arguments.length; i++) {
+      const t = compileExpression(ctx, fctx, expr.arguments[i]!);
+      if (t) fctx.body.push({ op: "drop" });
+    }
+
+    fctx.body.push({ op: "call", funcIdx });
+    if (fnName === "writeFileSync") return VOID_RESULT;
+    return { kind: "externref" };
   }
 
   // WASI mode: writeFileSync(path, data) → __wasi_write_file_sync(pathPtr, pathLen, dataPtr, dataLen)

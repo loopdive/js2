@@ -18,7 +18,14 @@ import { join, relative } from "path";
 import { createHash } from "crypto";
 import { availableParallelism } from "os";
 import { CompilerPool, type PoolResult } from "./compiler-pool.js";
-import { findTestFiles, parseMeta, wrapTest, shouldSkip, TEST_CATEGORIES } from "../tests/test262-runner.js";
+import {
+  findTestFiles,
+  matchesPathFilter,
+  parseMeta,
+  shouldSkip,
+  TEST_CATEGORIES,
+  wrapTest,
+} from "../tests/test262-runner.js";
 
 const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
 const CACHE_DIR = join(import.meta.dirname ?? ".", "..", ".test262-cache");
@@ -82,6 +89,24 @@ function buildCompilerHash(): string {
 }
 
 const compilerHash = buildCompilerHash();
+
+// #1521 — Current bundle hash for cross-PR cache reuse.
+// Cache entries restored from a different bundle (via the loose
+// `test262-cache-v2-` restore-keys fallback) carry a stale `bundle_hash`
+// field; we treat those as cache misses and recompile. Same algorithm as
+// the worker's BUNDLE_HASH so they match for same-bundle cross-PR hits.
+function computeCurrentBundleHash(): string {
+  const fromEnv = process.env.TEST262_BUNDLE_HASH;
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  try {
+    const buf = readFileSync(join(import.meta.dirname ?? ".", "compiler-bundle.mjs"));
+    return createHash("sha256").update(buf).digest("hex").slice(0, 16);
+  } catch {
+    return "no-bundle";
+  }
+}
+const CURRENT_BUNDLE_HASH = computeCurrentBundleHash();
+
 const POOL_SIZE = parseInt(process.env.COMPILER_POOL_SIZE || String(Math.max(1, availableParallelism() - 2)), 10);
 const NUM_BATCHES = parseInt(process.env.COMPILER_BATCHES || "8", 10);
 
@@ -146,6 +171,14 @@ async function processBatch(tests: typeof allTests, pool: CompilerPool) {
 
     const job = (async () => {
       try {
+        // #1521 — Path-scoped filter. Early skip before source read so
+        // narrowly-scoped PRs avoid the I/O entirely.
+        if (!matchesPathFilter(relPath)) {
+          skipped++;
+          releaseSlot();
+          return;
+        }
+
         const source = await readFile(filePath, "utf-8");
         const meta = parseMeta(source);
         const filter = shouldSkip(source, meta, filePath);
@@ -174,6 +207,14 @@ async function processBatch(tests: typeof allTests, pool: CompilerPool) {
           await access(cachePath);
           await access(metaPath);
           const cachedMeta = JSON.parse(await readFile(metaPath, "utf-8"));
+          // #1521 — Reject entries written by a different compiler bundle.
+          // Cross-PR restores via the loose `test262-cache-v2-` restore-keys
+          // fallback in CI pull in entries whose `bundle_hash` no longer
+          // matches; treating those as misses + recompiling is safer than
+          // returning stale "pass" / "compile_error" decisions.
+          if (cachedMeta.bundle_hash && cachedMeta.bundle_hash !== CURRENT_BUNDLE_HASH) {
+            throw new Error("stale bundle_hash");
+          }
           if (cachedMeta.ok === false) {
             recordCompileResult(relPath, category, "cached_error", cachedMeta.error, cachedMeta.compileMs);
           } else {

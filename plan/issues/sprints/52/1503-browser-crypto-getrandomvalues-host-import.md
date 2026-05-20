@@ -2,7 +2,7 @@
 id: 1503
 sprint: 52
 title: "browser: crypto.getRandomValues / crypto.randomUUID host imports"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium
@@ -182,3 +182,23 @@ Pass means:
   demand.
 - The fallback to `Math.random()` for `getRandomValues` is **forbidden**
   per RFC and would create a false-security trap. Throw instead.
+
+## Suspended Work
+
+- **PR**: #407 — https://github.com/loopdive/js2wasm/pull/407
+- **Branch**: `issue-1503-browser-crypto`
+- **Worktree**: `/workspace/.claude/worktrees/issue-1503-browser-crypto/`
+- **HEAD SHA**: `8274ab1a2a53a7d79eeca2b84e73b077a4fe559d`
+- **State**: PR open, in CI-wait. 5/5 local tests pass.
+
+### Implemented (commit 8274ab1a)
+- `src/codegen/expressions/calls.ts` — detect `crypto.randomUUID()` and `crypto.getRandomValues(buf)`. For the buffer arg, emit `extern.convert_any` directly (bypassing `coerceType`'s `__make_iterable` wrapping that strips vec identity).
+- `src/codegen/index.ts` — new `__vec_set_byte(externref vec, i32 idx, i32 byte) -> ()` export with vec-type dispatch (f64 vec → f64.convert_i32_u, i32/i32_byte vec → direct array.set). Gated on `__crypto_get_random_values` being imported. Widened `emitVecAccessExports` gate to co-emit `__vec_len`.
+- `src/runtime.ts` — `__crypto_random_uuid` and `__crypto_get_random_values` resolvers. Prefer `globalThis.crypto.*`; fall back to `require('node:crypto').{randomUUID,randomFillSync}` for older Node. Throw (no Math.random) on standalone hosts.
+- `tests/issue-1503.test.ts` — 5 tests: randomUUID shape/uniqueness, getRandomValues entropy + byte readback, return-value chaining.
+
+### Resume steps
+1. Monitor `.claude/ci-status/pr-407.json` for HEAD-SHA match (`8274ab1a...`).
+2. Run `/dev-self-merge 407`.
+3. If MERGE: `gh pr merge 407 --admin --merge`; mark task #59 completed; remove worktree.
+4. If ESCALATE: message tech lead with criterion + values.

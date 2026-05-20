@@ -672,7 +672,19 @@ function tryStaticInstanceOf(ctx: CodegenContext, expr: ts.BinaryExpression, cto
   // 1. LHS is a user class? A WasmGC user-class struct is never an instance of
   //    a JS built-in (Array / Error / Map / ...).
   const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
-  const lhsSymbolName = leftTsType.getSymbol()?.name;
+  let lhsSymbolName = leftTsType.getSymbol()?.name;
+  // (#1455) Resolve TypeScript's synthetic `__class` symbol name for
+  // anonymous class expressions (`const Sub = class extends Map {}`) via the
+  // type string + classExprNameMap so subclass-of-builtin reasoning works.
+  if (lhsSymbolName === "__class") {
+    const typeStr = ctx.checker.typeToString(leftTsType);
+    const mapped = ctx.classExprNameMap.get(typeStr);
+    if (mapped !== undefined) {
+      lhsSymbolName = mapped;
+    } else if (ctx.classTagMap.has(typeStr)) {
+      lhsSymbolName = typeStr;
+    }
+  }
   if (lhsSymbolName !== undefined) {
     if (ctx.classTagMap.has(lhsSymbolName)) {
       // (#1366a) Externref-backed subclass (e.g. `class MyError extends Error`)
@@ -735,6 +747,14 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   let ctorName: string | undefined;
   if (ts.isIdentifier(expr.right)) {
     ctorName = expr.right.text;
+    // (#1455) Resolve anonymous class-expression aliases. `const Sub = class extends Map {}`
+    // registers the class as a synthetic name like `__anonClass_N`; the
+    // constructor tags instances with that synthetic name, so the host check
+    // must compare against it (not the user-facing binding name).
+    const mapped = ctx.classExprNameMap.get(ctorName);
+    if (mapped !== undefined && ctx.classTagMap.has(mapped)) {
+      ctorName = mapped;
+    }
   }
 
   if (!ctorName) {

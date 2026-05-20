@@ -1028,14 +1028,23 @@ function compileDateMethodCall(
   return { kind: "f64" };
 }
 
-/** WASI mode: compile console.log/warn/error by writing UTF-8 to stdout via fd_write */
+/**
+ * WASI mode: compile console.log/warn/error by writing UTF-8 via fd_write.
+ *
+ * #1493: warn/error route to fd=2 (stderr) via __wasi_write_string_stderr.
+ * log/info/debug stay on fd=1 (stdout) via __wasi_write_string. This makes
+ * `command > out.txt 2> err.txt` and `2>&1` work for js2wasm-compiled binaries
+ * (Unix tooling expectation, matches Node/V8 semantics).
+ */
 function compileConsoleCallWasi(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
-  _method: string,
+  method: string,
 ): InnerResult {
-  const writeStringIdx = ctx.funcMap.get("__wasi_write_string");
+  const useStderr = method === "warn" || method === "error";
+  const helperName = useStderr ? "__wasi_write_string_stderr" : "__wasi_write_string";
+  const writeStringIdx = ctx.funcMap.get(helperName);
   if (writeStringIdx === undefined) return VOID_RESULT;
 
   let first = true;
@@ -1067,7 +1076,7 @@ function compileConsoleCallWasi(
       for (const span of arg.templateSpans) {
         // Compile the expression and convert to string output
         const exprType = compileExpression(ctx, fctx, span.expression);
-        emitWasiValueToStdout(ctx, fctx, exprType, span.expression);
+        emitWasiValueToStdout(ctx, fctx, exprType, span.expression, useStderr);
         if (span.literal.text) {
           const litData = wasiAllocStringData(ctx, span.literal.text);
           fctx.body.push({ op: "i32.const", value: litData.offset } as Instr);
@@ -1079,7 +1088,7 @@ function compileConsoleCallWasi(
       // For non-literal arguments, compile the expression and handle by type
       const argType = ctx.checker.getTypeAtLocation(arg);
       const exprType = compileExpression(ctx, fctx, arg);
-      emitWasiValueToStdout(ctx, fctx, exprType, arg);
+      emitWasiValueToStdout(ctx, fctx, exprType, arg, useStderr);
     }
   }
 
@@ -1115,8 +1124,11 @@ function emitWasiValueToStdout(
   fctx: FunctionContext,
   exprType: InnerResult,
   _node: ts.Node,
+  useStderr: boolean = false,
 ): void {
-  const writeStringIdx = ctx.funcMap.get("__wasi_write_string");
+  // #1493: pick stdout (fd=1) or stderr (fd=2) helper based on call site.
+  const writeStringName = useStderr ? "__wasi_write_string_stderr" : "__wasi_write_string";
+  const writeStringIdx = ctx.funcMap.get(writeStringName);
   if (writeStringIdx === undefined) return;
 
   if (exprType === VOID_RESULT || exprType === null) {
@@ -1126,7 +1138,7 @@ function emitWasiValueToStdout(
 
   if (exprType.kind === "f64") {
     // Number: use __wasi_write_f64 helper (emit inline if not yet registered)
-    const writeF64Idx = ensureWasiWriteF64Helper(ctx);
+    const writeF64Idx = ensureWasiWriteF64Helper(ctx, useStderr);
     if (writeF64Idx >= 0) {
       fctx.body.push({ op: "call", funcIdx: writeF64Idx });
     } else {
@@ -1134,7 +1146,7 @@ function emitWasiValueToStdout(
     }
   } else if (exprType.kind === "i32") {
     // Boolean or i32: write "true"/"false" or the integer
-    const writeI32Idx = ensureWasiWriteI32Helper(ctx);
+    const writeI32Idx = ensureWasiWriteI32Helper(ctx, useStderr);
     if (writeI32Idx >= 0) {
       fctx.body.push({ op: "call", funcIdx: writeI32Idx });
     } else {
@@ -1150,19 +1162,28 @@ function emitWasiValueToStdout(
   }
 }
 
-/** Ensure the __wasi_write_i32 helper exists and return its function index */
-function ensureWasiWriteI32Helper(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get("__wasi_write_i32");
+/**
+ * Ensure the __wasi_write_i32 helper exists and return its function index.
+ *
+ * #1493: when `useStderr` is true, registers/uses a `__wasi_write_i32_stderr`
+ * variant that routes the formatted digits through __wasi_write_string_stderr
+ * (fd=2) instead of __wasi_write_string (fd=1).
+ */
+function ensureWasiWriteI32Helper(ctx: CodegenContext, useStderr: boolean = false): number {
+  const helperName = useStderr ? "__wasi_write_i32_stderr" : "__wasi_write_i32";
+  const writeStringHelperName = useStderr ? "__wasi_write_string_stderr" : "__wasi_write_string";
+
+  const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
 
-  const writeStringIdx = ctx.funcMap.get("__wasi_write_string");
+  const writeStringIdx = ctx.funcMap.get(writeStringHelperName);
   if (writeStringIdx === undefined) return -1;
 
   // Simple i32 to decimal string conversion
   // Uses bump allocator to write digits to linear memory
   const funcTypeIdx = addFuncType(ctx, [{ kind: "i32" }], []);
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-  ctx.funcMap.set("__wasi_write_i32", funcIdx);
+  ctx.funcMap.set(helperName, funcIdx);
 
   // Algorithm: handle negative, then extract digits in reverse, then write forward
   // Locals: 0=value, 1=buf_start, 2=buf_pos, 3=is_neg, 4=digit
@@ -1297,7 +1318,7 @@ function ensureWasiWriteI32Helper(ctx: CodegenContext): number {
   );
 
   ctx.mod.functions.push({
-    name: "__wasi_write_i32",
+    name: helperName,
     typeIdx: funcTypeIdx,
     locals: [
       { name: "buf_start", type: { kind: "i32" } },
@@ -1313,20 +1334,28 @@ function ensureWasiWriteI32Helper(ctx: CodegenContext): number {
   return funcIdx;
 }
 
-/** Ensure the __wasi_write_f64 helper exists and return its function index */
-function ensureWasiWriteF64Helper(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get("__wasi_write_f64");
+/**
+ * Ensure the __wasi_write_f64 helper exists and return its function index.
+ *
+ * #1493: when `useStderr` is true, registers/uses a `__wasi_write_f64_stderr`
+ * variant that routes through the stderr i32/string helpers (fd=2).
+ */
+function ensureWasiWriteF64Helper(ctx: CodegenContext, useStderr: boolean = false): number {
+  const helperName = useStderr ? "__wasi_write_f64_stderr" : "__wasi_write_f64";
+  const writeStringHelperName = useStderr ? "__wasi_write_string_stderr" : "__wasi_write_string";
+
+  const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
 
-  const writeI32Idx = ensureWasiWriteI32Helper(ctx);
-  const writeStringIdx = ctx.funcMap.get("__wasi_write_string");
+  const writeI32Idx = ensureWasiWriteI32Helper(ctx, useStderr);
+  const writeStringIdx = ctx.funcMap.get(writeStringHelperName);
   if (writeStringIdx === undefined || writeI32Idx < 0) return -1;
 
   // Simple f64 output: truncate to i32 and print as integer
   // For NaN, Infinity, -Infinity, handle specially
   const funcTypeIdx = addFuncType(ctx, [{ kind: "f64" }], []);
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-  ctx.funcMap.set("__wasi_write_f64", funcIdx);
+  ctx.funcMap.set(helperName, funcIdx);
 
   // Allocate data segments for special values
   const nanData = wasiAllocStringData(ctx, "NaN");
@@ -1386,7 +1415,7 @@ function ensureWasiWriteF64Helper(ctx: CodegenContext): number {
   ];
 
   ctx.mod.functions.push({
-    name: "__wasi_write_f64",
+    name: helperName,
     typeIdx: funcTypeIdx,
     locals: [],
     body,

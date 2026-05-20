@@ -2,7 +2,7 @@
 id: 1482
 sprint: 52
 title: "wasi: wire process.env to environ_get / environ_sizes_get"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium

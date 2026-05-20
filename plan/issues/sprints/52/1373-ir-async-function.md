@@ -2,8 +2,9 @@
 id: 1373
 sprint: 52
 title: "IR: claim async functions (async/await through IR path)"
-status: ready
+status: done
 created: 2026-05-08
+closed: 2026-05-20
 priority: medium
 feasibility: hard
 reasoning_effort: max
@@ -13,6 +14,65 @@ language_feature: async
 goal: ir-full-coverage
 ---
 # #1373 — IR: async function support
+
+## Joint architect spec (S53)
+
+Phase A+B of this issue (selector bucket + IR node types) is **done** and
+provides the IR contract that the S53 async cluster builds on. The joint
+spec at `plan/issues/sprints/53/async-cluster-architect-spec.md` treats this
+issue's `IrInstrAwait` / `IrInstrAsyncReturn` / `IrInstrAsyncThrow` node
+types as the **authoritative** state-machine representation. #1042's AST
+lowering and #1373b's CPS pass both target these nodes.
+
+## Resolution (2026-05-20)
+
+This umbrella issue is **done**; remaining work has been split into follow-ups:
+
+- **Phase A — selector + IR fallback bucket separation** — shipped in PR #328
+  (commit `ba7c69ecf`). `src/ir/select.ts:79` introduces the new
+  `"async-function"` fallback reason distinct from `"async-generator"`, and
+  the body-shape/method checks at `src/ir/select.ts:463-481` bucket plain
+  `async function` / `async` class methods into it.
+
+- **Phase B — IR node types** — shipped alongside Phase A.
+  `src/ir/nodes.ts:597,615,631` declares `IrInstrAwait`, `IrInstrAsyncReturn`,
+  and `IrInstrAsyncThrow`. `src/ir/lower.ts:1773-1778` has the switch arms
+  in place; they currently throw with a "Phase C / #1373b — not yet
+  implemented" marker so accidental construction surfaces clearly.
+
+- **Phase C — CPS lowering (the actual gate flip)** — tracked separately as
+  **#1373b** (`status: blocked`). Phase C depends on **#1326c Phase 1C-B**
+  (`emitStandalonePromiseThen` standalone wiring); #1326c Phase 1C-A
+  (microtask queue + drain) is in CI as PR #405 but the `.then` integration
+  is explicitly deferred to a follow-up PR. The PENDING-await continuation
+  wrapper interacts non-trivially with the GC closure infrastructure (per
+  the #1326c commit message and the #1373b issue file's "harder than
+  estimated" note), so the right time to design it is after Phase 1C-B
+  lands a stable `Promise.then` foundation.
+
+No further work belongs in this issue. New scope flows into #1373b.
+
+## Joint spec pointer (S53 architect — 2026-05-20)
+
+The full implementation plan covering this umbrella + #1373b + #1042
+is in **`1373b-ir-async-cps-lowering.md`** under
+`## Implementation Plan (S53 architect — joint spec for #1042 / #1373 / #1373b)`.
+
+Key points relevant to #1373's scope:
+
+- **Phase A (selector + IR fallback bucket)** — done in PR #328
+  (`ba7c69ecf`). The `async-function` bucket count in
+  `scripts/ir-fallback-baseline.json` is the gating metric: it goes to
+  zero when #1373b Slice 3 (gate-flip) lands.
+- **Phase B (IR node types)** — done in PR #328. `IrInstrAwait`,
+  `IrInstrAsyncReturn`, `IrInstrAsyncThrow` exist; from-ast does NOT
+  emit them yet (Slice 1b in #1373b adds the wiring).
+- **Phase C (CPS lowering)** — split into Slice 1 (done, gate=false),
+  Slice 1b (from-ast emission), Slice 2 (PENDING-path state machine),
+  Slice 3 (gate flip). See #1373b for detailed file:line targets and
+  Wasm IR patterns.
+
+This issue stays `status: done` — all umbrella tracking is in #1373b.
 
 ## Problem
 

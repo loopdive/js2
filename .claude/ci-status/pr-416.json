@@ -1,0 +1,23 @@
+{
+  "pr": 416,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "issue-1526-bigint-promise-typeerrors",
+  "head_sha": "f588e06165cb58729a404a7632e14fe59c3c2e39",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/416",
+  "timestamp": "2026-05-20T19:56:00Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

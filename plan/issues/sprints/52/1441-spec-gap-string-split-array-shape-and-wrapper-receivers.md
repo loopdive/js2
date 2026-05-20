@@ -2,7 +2,7 @@
 id: 1441
 sprint: 52
 title: "spec gap: String.prototype.split — Array result shape + String wrapper receivers"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium

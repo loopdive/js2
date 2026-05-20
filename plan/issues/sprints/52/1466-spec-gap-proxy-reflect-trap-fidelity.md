@@ -2,7 +2,7 @@
 id: 1466
 sprint: 52
 title: "spec gap: Proxy + Reflect trap / operation fidelity"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: hard

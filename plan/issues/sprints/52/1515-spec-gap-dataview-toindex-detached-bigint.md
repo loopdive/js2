@@ -2,7 +2,7 @@
 id: 1515
 sprint: 52
 title: "spec gap: DataView — ToIndex(byteOffset), detached-buffer TypeError, BigInt setter coercion"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium

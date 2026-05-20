@@ -154,6 +154,8 @@ Spawn dedicated agents when:
 
 **IMPORTANT: Always use teammates, not subagents.** Spawn agents via `TeamCreate` + `Agent` with `team_name` parameter. Never use bare `Agent` spawns — subagents can't coordinate, causing OOM from concurrent test runs and duplicate work. Teammates communicate via `SendMessage` to serialize test runs and coordinate on file conflicts.
 
+**IMPORTANT: Always use team name `"js2wasm"`** — this is the single permanent team. Never create ad-hoc team names (e.g. `"wasi-conflicts"`, `"s52-wave2"`). One team, one task queue, always.
+
 **Key numbers**: 16GB RAM + 16GB swap (container, set in `.devcontainer/devcontainer.json`). `free -m` may report ~20GB but Docker enforces 16GB hard limit. **Up to 8 dev teammates** (no local test262 — CI handles it). All agents use `bypassPermissions` mode + worktree isolation. Work driven by `plan/log/dependency-graph.md`.
 
 **RAM monitoring**: Use `free -m` "available" column (not "free"). "free" excludes reclaimable disk cache. Hooks check "available" before allowing agent spawns.

@@ -91,6 +91,25 @@ const _wasmSealedObjs = new WeakSet<object>();
 const _wasmNonExtensibleObjs = new WeakSet<object>();
 
 /**
+ * User-class instanceof support for subclasses of builtins (#1455).
+ *
+ * When the compiler emits `class Sub extends Map {}`, the constructor calls
+ * `__new_Map(arg)` to produce a real JS Map instance (externref). The instance
+ * does NOT have `Sub.prototype` in its `[[Prototype]]` chain, so the natural
+ * `v instanceof Sub` would return false. We tag each constructed instance via
+ * `__tag_user_class(instance, "Sub", parentTag)` and consult the tag chain
+ * inside the modified `__instanceof` host check.
+ *
+ * - `_userClassTags` — innermost user-class name attached to each externref
+ *   instance (only set for externref-backed user subclasses).
+ * - `_userClassParents` — user-class parent chain. When a user subclass
+ *   extends another user subclass (e.g. `class A extends B extends Map`),
+ *   walking the chain from "A" via parents finds "B" → null.
+ */
+const _userClassTags = new WeakMap<object, string>();
+const _userClassParents = new Map<string, string | null>();
+
+/**
  * DataView subview metadata (#1064).
  *
  * The compiler emits `new DataView(buffer, byteOffset, byteLength)` as the raw
@@ -1852,6 +1871,19 @@ function resolveImport(
           RegExp,
           ArrayBuffer,
           DataView,
+          // (#1455) TypedArray constructors for subclass-builtins host
+          // construction (`class Sub extends Float32Array {}` etc.).
+          Int8Array,
+          Uint8Array,
+          Uint8ClampedArray,
+          Int16Array,
+          Uint16Array,
+          Int32Array,
+          Uint32Array,
+          Float32Array,
+          Float64Array,
+          ...(typeof BigInt64Array !== "undefined" ? { BigInt64Array } : {}),
+          ...(typeof BigUint64Array !== "undefined" ? { BigUint64Array } : {}),
           Error,
           TypeError,
           RangeError,
@@ -1889,11 +1921,42 @@ function resolveImport(
         // not "" (which new String() with no args produces).
         const isWrapperCtor =
           intent.className === "String" || intent.className === "Number" || intent.className === "Boolean";
+        // (#1455) DataView / TypedArray constructors expect a real JS
+        // ArrayBuffer, but our compiler emits `new ArrayBuffer(N)` as a
+        // wasm-vec struct. When the first arg is a wasm-vec carrying byte
+        // data, convert it to a real ArrayBuffer using the exported
+        // `__dv_byte_*` accessors before invoking the host constructor.
+        const isBufferConsumer =
+          intent.className === "DataView" ||
+          intent.className === "Int8Array" ||
+          intent.className === "Uint8Array" ||
+          intent.className === "Uint8ClampedArray" ||
+          intent.className === "Int16Array" ||
+          intent.className === "Uint16Array" ||
+          intent.className === "Int32Array" ||
+          intent.className === "Uint32Array" ||
+          intent.className === "Float32Array" ||
+          intent.className === "Float64Array" ||
+          intent.className === "BigInt64Array" ||
+          intent.className === "BigUint64Array";
         return (...args: any[]) => {
           if (!isWrapperCtor) {
             let len = args.length;
             while (len > 0 && args[len - 1] == null) len--;
             args = args.slice(0, len);
+          }
+          if (isBufferConsumer && args.length > 0 && _isWasmStruct(args[0])) {
+            const exports = callbackState?.getExports();
+            const dvLen = exports?.__dv_byte_len as ((v: any) => number) | undefined;
+            const dvGet = exports?.__dv_byte_get as ((v: any, i: number) => number) | undefined;
+            if (typeof dvLen === "function" && typeof dvGet === "function") {
+              const bufLen = dvLen(args[0]);
+              if (bufLen >= 0) {
+                const bytes = new Uint8Array(bufLen);
+                for (let i = 0; i < bufLen; i++) bytes[i] = dvGet(args[0], i) & 0xff;
+                args[0] = bytes.buffer;
+              }
+            }
           }
           return new Ctor(...args);
         };
@@ -4448,10 +4511,36 @@ assert._isSameValue = isSameValue;
         return (v: any, ctorName: string) => {
           try {
             const ctor = (globalThis as any)[ctorName];
-            if (typeof ctor !== "function") return 0;
-            return v instanceof ctor ? 1 : 0;
+            if (typeof ctor === "function" && v instanceof ctor) return 1;
           } catch {
-            return 0;
+            /* fall through to user-class tag check */
+          }
+          // (#1455) User-class instanceof for subclasses of builtins. The
+          // constructor tags the instance with the innermost class name; walk
+          // the parent chain looking for `ctorName`.
+          if (v != null && (typeof v === "object" || typeof v === "function")) {
+            let tag: string | null | undefined = _userClassTags.get(v as object);
+            const guard = new Set<string>();
+            while (tag != null && !guard.has(tag)) {
+              if (tag === ctorName) return 1;
+              guard.add(tag);
+              tag = _userClassParents.get(tag) ?? null;
+            }
+          }
+          return 0;
+        };
+      // (#1455) Tag an externref-backed user-class instance with the innermost
+      // user-class name and register its user-class parent (or null if the
+      // direct parent is a builtin like Map).
+      if (name === "__tag_user_class")
+        return (instance: any, className: string, parentName: string | null | undefined) => {
+          if (instance == null) return;
+          if (typeof instance !== "object" && typeof instance !== "function") return;
+          _userClassTags.set(instance as object, className);
+          // Register the parent edge (idempotent). Null parent indicates the
+          // direct parent is a builtin, so the chain terminates.
+          if (!_userClassParents.has(className)) {
+            _userClassParents.set(className, parentName == null ? null : parentName);
           }
         };
       // parseInt / parseFloat host imports
@@ -4676,6 +4765,31 @@ assert._isSameValue = isSameValue;
       }
       return () => {};
     }
+    case "node_builtin_fn": {
+      // #1491 — Bind a named function of a Node.js builtin module as a host import.
+      // E.g. `node_builtin_fn { moduleName: "fs", name: "readFileSync" }` resolves
+      // to `require("fs").readFileSync`, bound to the module object so it works
+      // when called with externref-typed args.
+      const modName = intent.moduleName;
+      const fnName = intent.name;
+      const depMod = deps?.[modName];
+      if (depMod !== undefined) {
+        const fn = (depMod as Record<string, unknown>)[fnName];
+        if (typeof fn === "function") return (fn as Function).bind(depMod);
+        return () => undefined;
+      }
+      const req = _getNodeRequire();
+      if (req) {
+        try {
+          const mod = req(modName);
+          const fn = mod?.[fnName];
+          if (typeof fn === "function") return (fn as Function).bind(mod);
+        } catch {
+          // fall through to no-op
+        }
+      }
+      return () => undefined;
+    }
     case "proxy_create":
       return (target: any, handler: any) => {
         // Wrap the Wasm struct target in a real JS Proxy with the given handler.
@@ -4869,16 +4983,58 @@ function wrapWithContainment(
  */
 export function buildWasiPolyfill(): {
   fd_write: (fd: number, iovs: number, iovs_len: number, nwritten: number) => number;
+  fd_read: (fd: number, iovs: number, iovs_len: number, nread: number) => number;
   proc_exit: (code: number) => void;
   setMemory: (mem: WebAssembly.Memory) => void;
+  setStdin: (data: Uint8Array | string) => void;
 } {
   let memory: WebAssembly.Memory | undefined;
   // Partial line buffer per fd for data not ending in newline
   const lineBuffers: Record<number, string> = {};
+  // Buffered stdin bytes; consumed by fd_read until EOF (length 0).
+  // Tests/harnesses can preload bytes via setStdin().
+  let stdinBuf: Uint8Array = new Uint8Array(0);
+  let stdinPos = 0;
 
   return {
     setMemory(mem: WebAssembly.Memory) {
       memory = mem;
+    },
+
+    /** Preload stdin bytes for the next sequence of fd_read calls. */
+    setStdin(data: Uint8Array | string) {
+      stdinBuf = typeof data === "string" ? new TextEncoder().encode(data) : data;
+      stdinPos = 0;
+    },
+
+    /**
+     * Minimal fd_read for fd=0 (stdin). Reads from the preloaded buffer
+     * (see setStdin); returns 0 bytes (EOF) once exhausted. fd != 0 yields
+     * EBADF-like behavior by writing nread=0 and returning 0.
+     */
+    fd_read(fd: number, iovs: number, iovs_len: number, nread: number): number {
+      if (!memory) return -1;
+      const view = new DataView(memory.buffer);
+      let totalRead = 0;
+
+      if (fd === 0) {
+        for (let i = 0; i < iovs_len; i++) {
+          const ptr = view.getUint32(iovs + i * 8, true);
+          const len = view.getUint32(iovs + i * 8 + 4, true);
+          if (len === 0) continue;
+          const remaining = stdinBuf.length - stdinPos;
+          if (remaining <= 0) break;
+          const take = Math.min(len, remaining);
+          const dest = new Uint8Array(memory.buffer, ptr, take);
+          dest.set(stdinBuf.subarray(stdinPos, stdinPos + take));
+          stdinPos += take;
+          totalRead += take;
+          if (take < len) break; // partial fill = drained
+        }
+      }
+
+      view.setUint32(nread, totalRead, true);
+      return 0; // __WASI_ERRNO_SUCCESS
     },
 
     fd_write(fd: number, iovs: number, iovs_len: number, nwritten: number): number {

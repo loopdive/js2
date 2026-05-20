@@ -283,3 +283,40 @@ jobs:
           git commit -m "chore(ci-status): feed PR #${{ steps.pr.outputs.pr }} result — ${{ github.event.workflow_run.conclusion }} [skip ci]"
           git pull --rebase origin main || true
           git push
+
+      - name: Send ntfy push notification
+        if: ${{ steps.pr.outputs.pr != '' && github.event.workflow_run.conclusion != 'cancelled' }}
+        env:
+          PR: ${{ steps.pr.outputs.pr }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+        run: |
+          [ -z "$NTFY_URL" ] && exit 0
+          out=".claude/ci-status/pr-$PR.json"
+          net=$(jq '.net_per_test // "null"' "$out")
+          rw=$(jq '.regressions_wasm_change // 999' "$out")
+          pass=$(jq '.pass // "null"' "$out")
+          stale=$(jq -r '.baseline_stale' "$out")
+
+          if [ "$CONCLUSION" = "success" ] && \
+             [ "$net" != "null" ] && [ "$net" -gt 0 ] 2>/dev/null && \
+             [ "$rw" -lt 50 ] 2>/dev/null && [ "$stale" != "true" ]; then
+            MSG="✅ PR #$PR ready to merge | net=+${net} pass=${pass} rw=${rw} | ${HEAD_BRANCH}"
+            PRIORITY="default"
+          elif [ "$CONCLUSION" = "failure" ]; then
+            MSG="❌ PR #$PR CI failed | ${HEAD_BRANCH}"
+            PRIORITY="high"
+          elif [ "$CONCLUSION" = "success" ]; then
+            MSG="⚠️ PR #$PR needs review | net=${net} rw=${rw} stale=${stale} | ${HEAD_BRANCH}"
+            PRIORITY="high"
+          else
+            exit 0
+          fi
+
+          curl -s --max-time 10 \
+            -H "Title: js2wasm CI" \
+            -H "Priority: $PRIORITY" \
+            -H "Tags: robot" \
+            -d "$MSG" \
+            "$NTFY_URL" >/dev/null 2>&1 || true

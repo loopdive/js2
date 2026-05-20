@@ -121,3 +121,18 @@ jobs:
           git commit -m "chore(ci-status): feed PR #${{ steps.pr.outputs.pr }} result — ${{ github.event.workflow_run.conclusion }} (basic, no test262) [skip ci]"
           git pull --rebase origin main || true
           git push
+
+      - name: Send ntfy push notification (failures only)
+        if: ${{ steps.pr.outputs.pr != '' && steps.src_changed.outputs.changed == '0' && github.event.workflow_run.conclusion == 'failure' }}
+        env:
+          PR: ${{ steps.pr.outputs.pr }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+        run: |
+          [ -z "$NTFY_URL" ] && exit 0
+          curl -s --max-time 10 \
+            -H "Title: js2wasm CI" \
+            -H "Priority: high" \
+            -H "Tags: x" \
+            -d "❌ PR #$PR quality check failed (lint/typecheck) | ${HEAD_BRANCH}" \
+            "$NTFY_URL" >/dev/null 2>&1 || true

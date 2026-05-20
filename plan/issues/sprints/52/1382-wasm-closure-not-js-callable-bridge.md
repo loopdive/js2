@@ -2,8 +2,10 @@
 id: 1382
 sprint: 52
 title: "structural: Wasm closures not JS-callable from host imports — bridge gap"
-status: ready
+status: done
 created: 2026-05-08
+updated: 2026-05-20
+completed: 2026-05-20
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -494,3 +496,21 @@ Coarse upper bound from the original issue text and #1358's "452 assertion_fail"
   `__extern_method_call` rather than emitting a bespoke import.
 - `this`-binding in wrapped closures (forEach `thisArg`, accessor descriptors).
   Tracked as Phase 2 / follow-up.
+
+## Suspended Work
+
+- **PR**: https://github.com/loopdive/js2wasm/pull/409
+- **Branch**: `issue-1382-wasm-closures-bridge`
+- **Worktree**: `/workspace/.claude/worktrees/issue-1382-wasm-closures-bridge/`
+- **HEAD SHA**: `ab5fe2d4ef25487985ebaa7b160c6cc39a6919c0`
+- **State**: ci-wait
+- **Done (Phase 1)**:
+  - `_maybeWrapCallable(val, arity, callbackState)` helper in `src/runtime.ts`
+  - `_PROTO_CB_SLOTS` table mapping method name → `{argIdx, arity}` for callback-taking prototype methods
+  - Wired at: `Promise_new` / `Promise_then` / `Promise_then2` / `Promise_catch` / `Promise_finally`, `__proto_method_call`, `__extern_method_call`, `__defineProperty_accessor`, `__object_groupBy`, `getOrInsertComputed` (via slot table)
+  - `tests/issue-1382.test.ts` — 7/7 passing locally
+- **Remaining (deferred to follow-up issues per spec)**:
+  - Phase 2: `thisArg` forwarding through wrapped accessors (requires Wasm-side closure-signature work)
+  - Phase 3: `Function.prototype.bind` LHS coercion (#1338)
+  - Phase 4: IR external-call whitelist (#1371) — falls out for free once Phase 1 lands
+- **Resume**: when ci-status JSON arrives at `/workspace/.claude/ci-status/pr-409.json` with matching SHA, run `/dev-self-merge 409`.

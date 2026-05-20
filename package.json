@@ -1,6 +1,6 @@
 {
   "name": "@loopdive/js2",
-  "version": "0.1.0",
+  "version": "0.52.0",
   "description": "Direct AOT compilation from JavaScript and TypeScript to WebAssembly GC",
   "keywords": [
     "webassembly",
@@ -101,6 +101,7 @@
     "@types/lodash-es": "^4.17.12",
     "@types/node": "^22",
     "@typescript/native-preview": "^7.0.0-dev.20260502.1",
+    "axios": "^1.16.1",
     "esbuild": "^0.25.12",
     "eslint": "^10.0.3",
     "hono": "^4.12.16",
@@ -111,6 +112,7 @@
     "marked": "^18.0.2",
     "monaco-editor": "^0.55.1",
     "prettier": "^3.8.1",
+    "react": "^19.2.6",
     "shiki": "^4.0.2",
     "ts-morph": "^27.0.2",
     "vite": "^6",

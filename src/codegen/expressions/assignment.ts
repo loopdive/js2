@@ -1319,18 +1319,14 @@ function compileExternrefArrayDestructuringAssignment(
   const tmpLocal = allocLocal(fctx, `__ext_arr_destruct_${fctx.locals.length}`, resultType);
   fctx.body.push({ op: "local.set", index: tmpLocal });
 
-  // Null check — throw TypeError for null/undefined (#783).
-  // Skip for empty `[] = val` patterns (#225).
-  if (resultType.kind === "externref" && target.elements.length > 0) {
-    const throwInstrs = buildDestructureNullThrow(ctx, fctx);
-    fctx.body.push({ op: "local.get", index: tmpLocal });
-    fctx.body.push({ op: "ref.is_null" } as Instr);
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: throwInstrs,
-      else: [],
-    });
+  // Null/undefined guard — throw TypeError per spec §13.15.5.2 step 2
+  // (GetIterator requires the value to be object-coercible). Even empty
+  // `[] = null` / `[] = undefined` must throw (#1431). The earlier carve-out
+  // for empty patterns (#225) was applied uniformly but is only correct for
+  // OBJECT assignment patterns — array assignment patterns always call
+  // GetIterator so they always throw on null/undefined.
+  if (resultType.kind === "externref") {
+    emitExternrefAssignDestructureGuard(ctx, fctx, tmpLocal);
   }
 
   // Ensure __extern_get is available
@@ -1414,6 +1410,14 @@ function compileExternrefArrayDestructuringAssignment(
       emitAssignToTarget(ctx, fctx, element, tmpElem, elemType);
     } else if (ts.isBinaryExpression(element) && element.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       // Default value: [a = default] = arr
+      // Per spec §13.15.5.5 AssignmentElement step 4: the default fires ONLY
+      // when the resolved value is `undefined` (never for `null`). Earlier
+      // versions used `ref.is_null` which fires for both — that broke
+      // `[a=1] = [null]` (default fired, a became 1 instead of null). Use
+      // `__extern_is_undefined` instead, which the runtime maps to a strict
+      // `=== undefined` check. Fall back to `ref.is_null` only when the host
+      // import is unavailable (standalone mode) — imperfect but better than
+      // never firing the default (#1431).
       const assignTarget = element.left;
       const defaultExpr = element.right;
       if (ts.isIdentifier(assignTarget)) {
@@ -1423,8 +1427,19 @@ function compileExternrefArrayDestructuringAssignment(
           localIdx = allocLocal(fctx, localName, elemType);
         }
         const tmpElem = allocLocal(fctx, `__ext_dflt_${fctx.locals.length}`, elemType);
-        fctx.body.push({ op: "local.tee", index: tmpElem });
-        fctx.body.push({ op: "ref.is_null" } as Instr);
+        // Pre-ensure `__extern_is_undefined` so any late-import funcIdx shift
+        // happens while fctx.body is authoritative (the saved-swap pattern
+        // inside the if-then below detaches the slice from fctx).
+        const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+        flushLateImportShifts(ctx, fctx);
+        fctx.body.push({ op: "local.set", index: tmpElem });
+        if (undefIdx !== undefined) {
+          fctx.body.push({ op: "local.get", index: tmpElem });
+          fctx.body.push({ op: "call", funcIdx: undefIdx });
+        } else {
+          fctx.body.push({ op: "local.get", index: tmpElem });
+          fctx.body.push({ op: "ref.is_null" } as Instr);
+        }
         const localType = getLocalType(fctx, localIdx);
         fctx.body.push({
           op: "if",

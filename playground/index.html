@@ -3,6 +3,11 @@
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <link rel="icon" href="../js2logo.svg" type="image/svg+xml" />
+    <!-- Prevent ReferenceError when public/node_modules/vite/dist/client/env.mjs is served
+         as a static file (no Vite __DEFINES__ substitution applied to publicDir assets). -->
+    <script>
+      if (typeof __DEFINES__ === "undefined") window.__DEFINES__ = {};
+    </script>
     <script defer src="../frame-nav-sync.js"></script>
     <title>js2wasm playground</title>
     <style>
