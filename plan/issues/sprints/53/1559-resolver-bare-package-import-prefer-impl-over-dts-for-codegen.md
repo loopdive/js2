@@ -324,3 +324,138 @@ status: needs-spec  →  status: ready
 feasibility: hard   →  feasibility: medium
 reasoning_effort: max →  reasoning_effort: high
 ```
+
+---
+
+## Architect review — 2026-05-20 (confirmation pass)
+
+Re-read `src/resolve.ts` end-to-end against the spec above. Findings:
+
+### Confirmations
+
+1. **Decision point verified.** The redirect is at `src/resolve.ts:155`
+   inside `ModuleResolver.resolve()`. The current trigger
+   `/[/\\]@types[/\\]/.test(resolved)` is the ONLY mechanism for
+   switching from a `.d.ts` to an implementation body. Extending the
+   condition with `|| resolved.endsWith(".d.ts")` is the minimal
+   correct fix.
+
+2. **`findImplementationBody` is callsite-safe for bare specifiers.**
+   For `specifier === "eslint"` and `pkgName === "eslint"`,
+   `afterPkg === ""` and `probeImplementationPath` reads
+   `pkg.module ?? pkg.main` (line 255). ESLint's `package.json`
+   has `main: "./lib/api.js"` (no `module`), so we get
+   `.../node_modules/eslint/lib/api.js`, which is exactly the impl
+   entry the package author marked as canonical.
+
+3. **The walk-up algorithm correctly handles the entry-outside-pkg
+   case.** `containingFile` here is the user's `entry.ts` (e.g.
+   `/workspace/entry.ts`). The walk-up loop hits
+   `/workspace/node_modules/eslint`, `stat`s the dir, and probes
+   the impl path. No pnpm / hoisting wrinkle — ESLint is a regular
+   top-level dependency.
+
+4. **Resolve cache invariance.** `this.resolveCache` is keyed by
+   `${containingFile}::${specifier}`. The redirect happens before
+   caching (line 163), so subsequent resolutions return the impl
+   path consistently. No stale-`.d.ts` risk.
+
+### Clarifications (call out to the implementer)
+
+1. **The fix is a single conjunctive extension, not a new code path.**
+   Do NOT introduce a parallel `if (resolved.endsWith(".d.ts"))`
+   branch. Keep the `findImplementationBody` call shared so future
+   changes to the impl-finding logic apply to both triggers.
+
+2. **`pkgName` MUST be non-null.** `getBarePackageName` returns
+   `null` for relative/absolute paths. Relative imports like
+   `import "./types.d.ts"` (rare but legal) MUST NOT be redirected
+   — they are file-local references the user explicitly wrote, and
+   we have no `node_modules/<pkgName>` to probe. The existing
+   guard `if (pkgName && ...)` already covers this; the
+   `.d.ts`-suffix extension goes INSIDE that pkgName guard.
+
+3. **Subpath specifiers with declaration-only entries
+   (e.g. `eslint/rules`).** Looking at the ESLint `exports` map:
+   `"./rules": { "types": "./lib/types/rules.d.ts" }` — there is
+   NO `default` condition. If a consumer writes
+   `import x from "eslint/rules"`, TS resolves to
+   `lib/types/rules.d.ts`, we trigger the redirect, then
+   `probeImplementationPath` tries the direct path
+   `lib/types/rules` — which does not exist as `.js`/`.mjs`/`.cjs`.
+   It returns `null`, and we keep the `.d.ts`. The fallback chain
+   is correct — declaration-only subpaths gracefully degrade to
+   extern, no regression. Add a regression test case for this
+   (test plan case 7 below).
+
+4. **Tier 1a stress test currently passes without the fix.**
+   Re-read `tests/stress/eslint-tier1.test.ts:70-87`: Tier 1a
+   asserts `r.success === true`. ESLint compiles successfully today
+   because `__new_Linter` extern is added as a fallback. The
+   assertion that catches the bug is the absence of `__new_Linter`
+   in `r.imports`. Add this assertion to Tier 1a (and Tier 1b) as
+   part of the fix — this is the regression gate.
+
+### Updated test plan — extra cases
+
+Add to the existing six cases:
+
+7. **Declaration-only subpath (regression guard for ESLint
+   `./rules`-style exports).** Fixture:
+   ```
+   package.json: {
+     "exports": {
+       ".": { "types": "./types.d.ts", "default": "./impl.js" },
+       "./decls": { "types": "./decls.d.ts" }
+     }
+   }
+   decls.d.ts: export declare const x: number;
+   ```
+   Compile entry with `import { x } from "foo/decls"`. Assert:
+   resolves to `decls.d.ts` (extern fallback), `r.success` is true.
+   This pins the "subpath has no impl → keep `.d.ts`" behavior.
+
+8. **`module` field preferred over `main` (regression guard).**
+   Fixture with `package.json: { "main": "./cjs.js", "module":
+   "./esm.mjs" }`. Compile entry with `import x from "foo"`.
+   Assert resolved file is `esm.mjs`. (Already covered by
+   `probeImplementationPath` line 255; this test pins behavior.)
+
+### Regression gate (run before merge)
+
+The implementer MUST run these locally and verify all pass:
+
+```bash
+npm test -- tests/resolve.test.ts
+npm test -- tests/import-resolver.test.ts
+npm test -- tests/issue-1060.test.ts      # if present
+npm test -- tests/issue-1287.test.ts      # if present
+npm test -- tests/issue-1559.test.ts      # new
+npm test -- tests/issue-1560.test.ts      # positive regression guard
+npm test -- tests/stress/lodash-tier1.test.ts
+npm test -- tests/stress/lodash-tier2.test.ts
+npm test -- tests/stress/hono-tier1.test.ts
+npm test -- tests/stress/hono-tier5.test.ts   # class App with method re-exports
+npm test -- tests/stress/eslint-tier1.test.ts # Tier 1a/1b must still pass
+```
+
+The Hono Tier 5 and lodash Tier 1/2 tests are the strongest gates
+— they exercise real npm packages with self-typed declarations and
+will surface any over-eager redirect.
+
+### One last sanity check — `.d.ts` in user source
+
+If a user has a hand-written `.d.ts` inside their own project
+(e.g. `src/types/foo.d.ts`) and imports it relatively
+(`import { X } from "./types/foo"`), the resolved path will end in
+`.d.ts` BUT `pkgName` will be `null` (relative specifier). The
+`pkgName &&` guard already excludes this case. **No regression.**
+
+If the same user has `node_modules/foo/index.d.ts` (a
+declaration-only dependency), the redirect fires, `pkg.main` is
+absent (only `types` field), `probeImplementationPath` falls back
+to `index.{js,mjs,cjs,ts}` probes (line 270-274), finds nothing,
+returns `null`, and we keep the `.d.ts`. **No regression.**
+
+The spec is approved. Flip frontmatter to `status: ready`,
+`feasibility: medium`, `reasoning_effort: high`.

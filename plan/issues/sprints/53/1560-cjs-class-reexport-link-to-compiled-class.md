@@ -192,3 +192,153 @@ Until #1559 lands, this issue cannot be confirmed live. The current
 regression test in `tests/issue-1560.test.ts` remains as a positive
 guard for local-file CJS class re-exports — that pattern must
 continue to work.
+
+---
+
+## Implementation Plan
+
+### Root cause (revised after 2026-05-20 finding)
+
+The local-file CJS class re-export chain ALREADY WORKS on current
+main (`leaf.js → middle.js → entry.ts` with `module.exports =
+{ Foo }` at every hop). `tests/issue-1560.test.ts` confirms this
+end-to-end: `r.imports` has no `__new_Foo` extern and `new
+Foo().hello()` returns 42.
+
+The originally observed symptom (`__new_Linter` in `r.imports`
+after `import { Linter } from "eslint"`) is **caused by the #1559
+resolver bug**: TypeScript's `ts.resolveModuleName` picks
+ESLint's `./lib/types/index.d.ts` (the `types` condition of the
+`exports` map) and codegen receives a `.d.ts` file as if it were
+the implementation. The `.d.ts` only contains `declare class
+Linter`, so codegen falls through to extern. The CJS re-export
+plumbing is never exercised in the ESLint path.
+
+### Action — DEFER, GATE ON #1559
+
+This issue is **gated entirely on #1559**. No code change is
+proposed under #1560 until we have empirical evidence that
+something is still broken after #1559 lands.
+
+### Procedure (executed after #1559 merges)
+
+1. **Confirm #1559 is merged on main** (commit landed,
+   `tests/issue-1559.test.ts` green in CI).
+
+2. **Smoke-test ESLint Tier 1a with the resolver fix in place:**
+   ```bash
+   cd /workspace
+   npm test -- tests/stress/eslint-tier1.test.ts
+   ```
+   If Tier 1a's new assertion (`r.imports` does NOT contain
+   `__new_Linter`) is green → the residual bug imagined by #1560
+   does not exist. Close #1560 as "covered by #1559" with a
+   reference to the merged PR.
+
+3. **If `__new_Linter` is still present after #1559:** the
+   residual bug IS in the bare-package CJS class re-export hop.
+   Reopen / proceed with the investigation below.
+
+### If reopened — investigation steps
+
+The reduced repro that already passes uses **relative-path**
+imports. The failing case (hypothetically) would use
+**bare-package + `node_modules`-resolved** paths. Differences to
+probe:
+
+1. **Module key normalization.** When resolveAllImports
+   (`src/resolve.ts:360`) populates the `Map<string, string>`,
+   relative-path repros end up with file paths under the entry's
+   directory; `node_modules` paths end up under the package's
+   own directory. The `module.exports` lowering keys exports by
+   absolute file path. If the consumer's TypeScript-resolved path
+   (`.../node_modules/eslint/lib/api.js`) differs from the path
+   recorded by `resolveAllImports` (e.g. via symlink resolution
+   in `host.realpath`), the binding lookup misses.
+   - **Check**: log `allFiles.keys()` and the resolver output for
+     `eslint` next to each other and assert path equality
+     (compare via `path.resolve` AND `fs.realpathSync`).
+
+2. **CJS rewrite scope.** `rewriteCjsRequire` (line 381 of
+   resolve.ts) is applied to ALL files including those under
+   `node_modules`. Confirm that `eslint/lib/api.js`'s
+   `module.exports = { Linter, ... }` pattern is rewritten the
+   same way the reduced repro's `pkg/leaf.js` is rewritten.
+   - **Check**: dump `rewriteCjsRequire(fs.readFileSync(
+     ".../node_modules/eslint/lib/api.js", "utf-8"))` and diff
+     against the test fixture's `module.exports = { Foo }` after
+     rewrite.
+
+3. **Multi-hop re-export depth.** ESLint's chain is three hops
+   (`api.js` → `linter/index.js` → `linter/linter.js`), the
+   reduced repro is two hops (`middle.js` → `leaf.js`). If the
+   class identity survives the first hop but not the second, the
+   issue is hop-count related.
+   - **Check**: extend `tests/issue-1560.test.ts` with a
+     three-hop variant (`leaf.js` → `mid1.js` → `mid2.js` →
+     `entry.ts`). If this still passes locally but the ESLint
+     case fails, the bug is bare-package specific (e.g. a
+     `node_modules` path-normalization quirk).
+
+4. **`.d.ts` ambient declaration interference.** Even after
+   #1559 redirects codegen to `lib/api.js`, the TypeScript
+   checker still sees `lib/types/index.d.ts`. If type info from
+   the `.d.ts` shadows the class type from `api.js` in the
+   binding table, the class identity is lost during binding
+   resolution.
+   - **Check**: grep `src/codegen/index.ts` for places where
+     binding lookup consults the type-checker's class shape
+     versus the runtime export shape. If they disagree, the
+     `.d.ts`-derived shape is winning.
+
+### If the bug is real — proposed fix locations
+
+(These are exploratory pointers. Do NOT implement until step 3
+above confirms the bug exists.)
+
+- `src/codegen/index.ts` — the module-export propagation logic
+  for CJS re-exports. Search for `module.exports`,
+  `exportBindings`, or `cjsExports` to find where the binding
+  table is populated from `module.exports = { Foo }` patterns.
+- `src/cjs-rewrite.ts` — the AST rewrite that turns
+  `module.exports = { Foo }` into ESM-equivalent
+  `export { Foo }`. Verify that bare-package paths produce
+  identical output to relative paths.
+
+### Acceptance criteria (only relevant if reopened)
+
+1. Three-hop class re-export from a `node_modules`-resolved
+   bare-package import produces no `__new_Linter` (or
+   `__new_Foo` in the synthetic case) in `r.imports`.
+2. ESLint Tier 1a `r.imports` has no `__new_Linter`.
+3. The existing local-file repro in `tests/issue-1560.test.ts`
+   continues to pass.
+
+### Regression gate
+
+Even though no code change is proposed pre-#1559, when this
+issue's status is finalized (closed or fixed) run:
+
+```bash
+npm test -- tests/issue-1560.test.ts
+npm test -- tests/stress/eslint-tier1.test.ts
+npm test -- tests/stress/lodash-tier1.test.ts
+npm test -- tests/stress/lodash-tier2.test.ts
+npm test -- tests/stress/hono-tier5.test.ts   # class App method re-exports
+```
+
+### Frontmatter changes
+
+Apply now (independent of #1559 outcome):
+
+```yaml
+status: ready → blocked
+depends_on: [1559]   # already present, keep
+```
+
+Apply after #1559 merges (depending on outcome):
+
+- If ESLint Tier 1a is clean → `status: blocked → done` with
+  resolution `covered-by: 1559`.
+- If `__new_Linter` still appears → `status: blocked → ready`
+  and dispatch a dev to execute the investigation above.
