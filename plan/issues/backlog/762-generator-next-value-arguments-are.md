@@ -1,5 +1,6 @@
 ---
 id: 762
+sprint: backlog
 title: "- Generator .next(value) arguments are silently ignored"
 status: blocked
 created: 2026-03-22

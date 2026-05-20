@@ -1,5 +1,6 @@
 ---
 id: 804
+sprint: backlog
 title: "Extract new expressions from expressions.ts → new-expression.ts"
 status: ready
 created: 2026-03-26

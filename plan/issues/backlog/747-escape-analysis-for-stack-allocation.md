@@ -1,5 +1,6 @@
 ---
 id: 747
+sprint: backlog
 title: "Escape analysis for stack allocation"
 status: blocked
 created: 2026-03-22

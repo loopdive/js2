@@ -1,5 +1,6 @@
 ---
 id: 685
+sprint: backlog
 title: "Interprocedural type flow: track return types across call sites"
 status: ready
 created: 2026-03-20

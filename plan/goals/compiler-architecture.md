@@ -20,11 +20,11 @@ compilation boundaries, and simpler runtime/compiler interfaces.
 | # | Title | Sprint | Status | Priority |
 |---|-------|--------|--------|----------|
 | **68** | Issue 68: DOM containment — scope wasm module access to a subtree | 0 | done |  |
-| **746** | Inline property tables: struct-based property access for inferred shapes | Backlog | blocked | medium |
+| **746** | Inline property tables: struct-based property access for inferred shapes | backlog | blocked | medium |
 | **773** | Monomorphize functions: compile with call-site types, not generic externref | 45 | ready | critical |
-| **905** | Support versioned shapes for compile-time-known prototype mutation | Backlog | ready | medium |
+| **905** | Support versioned shapes for compile-time-known prototype mutation | backlog | ready | medium |
 | **1041** | Pre-bundled single-file stress test scaffold — closed, superseded by #1046 | 41 | wont-fix | low |
-| **1046** | Separate ES-module compilation with consumer-driven import/export type specialization | Backlog | ready | medium |
+| **1046** | Separate ES-module compilation with consumer-driven import/export type specialization | backlog | ready | medium |
 | **1058** | Compile the TypeScript compiler itself to Wasm — self-hosting stress test | 45 | ready | high |
 | **1124** | Audit current codegen IR and, if needed, define a minimal SSA middle-end | 42 | done | high |
 | **1131** | Middle-end SSA IR: implementation plan | 43 | ready | high |

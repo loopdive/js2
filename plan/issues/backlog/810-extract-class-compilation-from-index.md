@@ -1,5 +1,6 @@
 ---
 id: 810
+sprint: backlog
 title: "Extract class compilation from index.ts → class-codegen.ts"
 status: ready
 created: 2026-03-26

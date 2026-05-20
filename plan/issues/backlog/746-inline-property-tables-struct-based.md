@@ -1,5 +1,6 @@
 ---
 id: 746
+sprint: backlog
 title: "Inline property tables: struct-based property access for inferred shapes"
 status: blocked
 created: 2026-03-22

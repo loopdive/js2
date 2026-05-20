@@ -210,9 +210,9 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1389 | fix: false CE — var + function-declaration same name at top-level scope | medium | done |
 | #1390 | fix: import-defer proposal tests fail as CE (no test export) when TEST262_INCLUDE_PROPOSALS=1 | low | done |
 | #1391 | infra: CI feed baseline staleness detection — warn when baseline_sha diverges from current main | high | done |
-| #1392 | IR: null-safe access primitives — ref.is_null IrUnop + value-producing if/else IR node | high | done |
 | #1393 | infra: content-hash CI cache + GitHub Merge Queue — eliminate baseline drift and redundant re-runs | high | done |
 | #1395 | class static method descriptors: class identifier resolves to string_constant, not constructor object | medium | done |
 | #1396 | fix: for-of/dstr default initializers don't fire on OOB extern-array reads — null vs undefined sentinel | high | done |
+| #1580 | IR: null-safe access primitives — ref.is_null IrUnop + value-producing if/else IR node | high | done |
 
 <!-- GENERATED_ISSUE_TABLES_END -->

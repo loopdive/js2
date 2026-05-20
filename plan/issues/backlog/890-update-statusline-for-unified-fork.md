@@ -1,5 +1,6 @@
 ---
 id: 890
+sprint: backlog
 title: "Update statusline for unified fork test262 runner"
 status: ready
 created: 2026-03-31

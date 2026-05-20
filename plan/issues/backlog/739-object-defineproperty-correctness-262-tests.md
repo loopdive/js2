@@ -1,5 +1,6 @@
 ---
 id: 739
+sprint: backlog
 title: "- Object.defineProperty correctness (262 tests)"
 status: ready
 created: 2026-03-22

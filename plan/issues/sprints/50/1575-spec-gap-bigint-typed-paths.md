@@ -1,5 +1,5 @@
 ---
-id: 1349
+id: 1575
 sprint: 50
 title: "spec gap: BigInt typed-path eager f64 assumptions (47 test262 fails, 4 illegal_cast + 13 runtime)"
 status: ready
@@ -69,3 +69,5 @@ in tests that round-trip).
 - `test262/test/built-ins/BigInt/data-type-mixing-throw-typeerror.js`
 - `test262/test/built-ins/BigInt/from-string-numeric-syntax-error.js`
 - `test262/test/built-ins/BigInt/asIntN-asUintN-bits.js`
+
+> Renamed from #1349 2026-05-20 — see #1523 (consistency gate).

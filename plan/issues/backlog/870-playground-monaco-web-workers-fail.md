@@ -1,5 +1,6 @@
 ---
 id: 870
+sprint: backlog
 title: "Playground: Monaco web workers fail to load, UI freezes"
 status: ready
 created: 2026-03-29

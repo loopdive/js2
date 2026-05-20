@@ -1,5 +1,6 @@
 ---
 id: 1265
+sprint: backlog
 title: "eval tier 5: sloppy-mode direct eval — full local boxing + funcref globals"
 status: backlog
 created: 2026-05-02

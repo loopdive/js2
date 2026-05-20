@@ -1,5 +1,6 @@
 ---
 id: 642
+sprint: backlog
 title: "Deno/Cloudflare loader plugins"
 status: ready
 created: 2026-03-19

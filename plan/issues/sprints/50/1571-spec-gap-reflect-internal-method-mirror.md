@@ -1,5 +1,5 @@
 ---
-id: 1345
+id: 1571
 sprint: 50
 title: "spec gap: Reflect.* invariant checks mirror internal-method bugs (83 test262 fails)"
 status: ready
@@ -75,3 +75,5 @@ typed-struct objects don't expose Symbol keys at all (they have no Symbol-keyed 
 
 - `test262/test/built-ins/Reflect/defineProperty/symbol-key.js`
 - `test262/test/built-ins/Reflect/ownKeys/return-on-corresponding-order-large-index.js`
+
+> Renamed from #1345 2026-05-20 — see #1523 (consistency gate).

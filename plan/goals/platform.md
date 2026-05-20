@@ -40,31 +40,31 @@ WASI HTTP enables serverless edge functions.
 | **599** | - Self-contained WasmGC strings: eliminate wasm:js-string dependency | 0 | done | critical |
 | **600** | Component Model output: WIT interfaces from TypeScript types | 0 | done | high |
 | **636** | Extract createCodegenContext() factory (fixes WASI multi-module bug) | 22 | done | high |
-| **639** | Full Component Model adapter (canonical ABI) | Backlog | ready | critical |
-| **640** | WASI HTTP handler (unlocks serverless edge) | Backlog | ready | high |
-| **641** | Shopify Functions template | Backlog | ready | medium |
-| **642** | Deno/Cloudflare loader plugins | Backlog | ready | low |
+| **639** | Full Component Model adapter (canonical ABI) | backlog | ready | critical |
+| **640** | WASI HTTP handler (unlocks serverless edge) | backlog | ready | high |
+| **641** | Shopify Functions template | backlog | ready | medium |
+| **642** | Deno/Cloudflare loader plugins | backlog | ready | low |
 | **665** | Native Wasm Date implementation | 14 | done | high |
 | **679** | Dual string backend: js-host mode vs standalone mode | 14 | done | high |
 | **704** | Wasm validation: immutable global set (284 CE) | 0 | done | high |
 | **799** | - Prototype chain subsystem (~2,500 tests) | 38 | done | critical |
-| **807** | Extract Date/Math/console built-ins from expressions.ts → builtins.ts | Backlog | ready | medium |
+| **807** | Extract Date/Math/console built-ins from expressions.ts → builtins.ts | backlog | ready | medium |
 | **837** | Stage 3: Map/WeakMap upsert — getOrInsert, getOrInsertComputed | 50 | done | low |
 | **863** | decodeURI/encodeURI failures: #0-0 error pattern (70 FAIL) | 35 | done | low |
-| **865** | Console wrapper for fd_write in JavaScript environments | Backlog | ready | medium |
+| **865** | Console wrapper for fd_write in JavaScript environments | backlog | ready | medium |
 | **885** | README: update with real conformance numbers, architecture diagram, comparison table | 33 | done | high |
 | **887** | Project roadmap document for STF funding application | 33 | done | high |
 | **910** | Split expressions.ts into syntax-family modules | 39 | done | high |
 | **937** | Add console.info() and console.debug() as aliases for console.log() | 37 | done | low |
 | **940** | Add String.fromCodePoint to WASI/standalone string helpers | 37 | done | low |
 | **949** | Research: Integrate Chris Fallin's JS-to-Wasm Blog Series into Documentation | 37 | done | medium |
-| **1029** | Migrate to TypeScript 7.x (Go rewrite / typescript-go) when compiler API stabilizes | Backlog | backlog | low |
+| **1029** | Migrate to TypeScript 7.x (Go rewrite / typescript-go) when compiler API stabilizes | backlog | backlog | low |
 | **1045** | DOM globals as extern classes (DOM_HOST_GLOBALS, queueMicrotask, requestAnimationFrame) | 45 | ready | high |
-| **1066** | Support eval in standalone mode via host-compiled Wasm child module | Backlog | ready | medium |
+| **1066** | Support eval in standalone mode via host-compiled Wasm child module | backlog | ready | medium |
 | **1096** | Isolate environment adapters — remove top-level await and browser/Node probing from core modules | 45 | done | medium |
 | **1099** | Standalone execution demo — compile and run a program on Wasmtime with zero JS host | 45 | ready | high |
 | **1132** | Publish compiler as @loopdive/js2 on npm + JSR | 42 | in-progress | high |
-| **1134** | __any_eq loose equality missing cross-tag coercion — null==undefined, bool==number all return false | Backlog | done | medium |
+| **1134** | __any_eq loose equality missing cross-tag coercion — null==undefined, bool==number all return false | backlog | done | medium |
 | **1136** | Array.prototype.flat() and flatMap() not implemented | 42 | done | medium |
 | **1137** | ES2023 array methods: toReversed, toSorted, toSpliced, with — not implemented | 42 | done | medium |
 | **1147** | Add a public Docs page to the site | 45 | ready | medium |
@@ -76,8 +76,8 @@ WASI HTTP enables serverless edge functions.
 | **1181** | IR Phase 4 Slice 6 part 2 — AST→IR bridge for vec for-of (#1169e follow-up) | 45 | done | high |
 | **1187** | test-runtime: add JS-string → native-string coercion helper for dual-run testing in nativeStrings mode | 46 | done | medium |
 | **1244** | npm stress test: compile Hono web framework to Wasm | 47 | done | high |
-| **1254** | Reference platform scenario: capability-safe DOM wrapper with explicit subtree authority | Backlog | ready | high |
-| **1255** | Reference platform scenario: run a Node-oriented example on Wasmtime via Edge.js | Backlog | ready | high |
+| **1254** | Reference platform scenario: capability-safe DOM wrapper with explicit subtree authority | backlog | ready | high |
+| **1255** | Reference platform scenario: run a Node-oriented example on Wasmtime via Edge.js | backlog | ready | high |
 | **1288** | TypeScript 7 (@typescript/native-preview) support under --ts7 feature flag | 47 | done | medium |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->

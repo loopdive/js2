@@ -1,5 +1,6 @@
 ---
 id: 671
+sprint: backlog
 title: "with statement support"
 status: backlog
 created: 2026-03-20

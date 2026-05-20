@@ -1,5 +1,6 @@
 ---
 id: 641
+sprint: backlog
 title: "Shopify Functions template"
 status: ready
 created: 2026-03-19

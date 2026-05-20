@@ -1,5 +1,6 @@
 ---
 id: 1287
+sprint: backlog
 title: "ESLint entry-point compileProject emits invalid Wasm (`Type index 10 is out of bounds`)"
 status: done
 created: 2026-05-03

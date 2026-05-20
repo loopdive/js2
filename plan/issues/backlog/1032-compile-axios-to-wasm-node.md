@@ -1,5 +1,6 @@
 ---
 id: 1032
+sprint: backlog
 title: "Compile axios to Wasm — Node builtins routed as host imports; harvest error patterns"
 status: ready
 created: 2026-04-11

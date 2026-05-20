@@ -1,5 +1,6 @@
 ---
 id: 741
+sprint: backlog
 title: "Split index.ts (13,282 lines) into smaller modules"
 status: ready
 created: 2026-03-22

@@ -1,5 +1,6 @@
 ---
 id: 652
+sprint: backlog
 title: "Compile-time ARC: static lifetime analysis for linear memory mode"
 status: ready
 created: 2026-03-20

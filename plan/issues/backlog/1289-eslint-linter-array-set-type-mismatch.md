@@ -1,6 +1,6 @@
 ---
 id: 1289
-sprint: 47
+sprint: backlog
 title: "ESLint linter.js direct compile: array.set type mismatch in FileReport_addRuleMessage"
 status: done
 created: 2026-05-03

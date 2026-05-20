@@ -1,5 +1,6 @@
 ---
 id: 868
+sprint: backlog
 title: "Playground: lazy-load test262 tree and file contents on demand"
 status: ready
 created: 2026-03-29

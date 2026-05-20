@@ -1,5 +1,6 @@
 ---
-id: 1154
+id: 1553
+sprint: backlog
 title: "test262 worker: Array.prototype poisoning leaks into TypeScript compiler — Array.from fails at compile time (~378 test262 regressions)"
 status: ready
 created: 2026-04-21
@@ -66,3 +67,5 @@ Recommend layer 1 (full descriptor snapshot) as the immediate fix; layer 3 as th
 - Running the full test262 suite produces 0 occurrences of `%Array%.from requires that the property of the first argument` in the error log.
 - `scripts/test262-worker.mjs` has explicit snapshot+restore coverage for `Array.prototype`, `Object.prototype`, and `Symbol.iterator` descriptors.
 - No regressions in compile time (restore overhead should be < 2ms per test).
+
+> Renamed from #1154 2026-05-20 — see #1523 (consistency gate).

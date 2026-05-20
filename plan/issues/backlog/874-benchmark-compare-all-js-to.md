@@ -1,5 +1,6 @@
 ---
 id: 874
+sprint: backlog
 title: "Benchmark: compare all JS-to-Wasm engines on standard performance benchmarks"
 status: ready
 created: 2026-03-30

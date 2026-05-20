@@ -1,5 +1,6 @@
 ---
 id: 1151
+sprint: backlog
 title: "Async function synchronous throws bypass Promise.reject wrapping"
 status: ready
 created: 2026-04-21

@@ -1,5 +1,5 @@
 ---
-id: 1335
+id: 1561
 sprint: 50
 title: "spec gap: Object.assign drops getters / Symbol keys (27 of 38 test262 fails)"
 status: ready
@@ -85,3 +85,5 @@ type carries an accessor), pick the slow path.
 - `test262/test/built-ins/Object/assign/source-own-prop-error.js`
 - `test262/test/built-ins/Object/assign/target-set-symbol.js`
 - `test262/test/built-ins/Object/assign/source-own-prop-keys-error.js`
+
+> Renamed from #1335 2026-05-20 — see #1523 (consistency gate).

@@ -58,6 +58,9 @@ jobs:
       - name: IR fallback gate (#1376)
         run: pnpm run check:ir-fallbacks
 
+      - name: Sprint/issue consistency gate (#1523)
+        run: pnpm run check:sprint-consistency
+
       - name: Fetch runs/index.json from baselines repo
         if: github.event_name == 'push'
         continue-on-error: true

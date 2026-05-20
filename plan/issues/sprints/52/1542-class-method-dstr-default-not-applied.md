@@ -1,5 +1,6 @@
 ---
 id: 1542
+sprint: 52
 title: "Class method destructured-pattern param default not applied; throws \"Cannot destructure null\" instead"
 status: ready
 created: 2026-05-20

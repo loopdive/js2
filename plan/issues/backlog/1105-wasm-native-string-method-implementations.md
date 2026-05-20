@@ -1,5 +1,6 @@
 ---
 id: 1105
+sprint: backlog
 title: "Wasm-native String method implementations for standalone mode"
 status: ready
 created: 2026-04-12

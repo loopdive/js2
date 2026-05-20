@@ -1,5 +1,6 @@
 ---
 id: 684
+sprint: backlog
 title: "Any-typed variable inference from usage patterns"
 status: ready
 created: 2026-03-20

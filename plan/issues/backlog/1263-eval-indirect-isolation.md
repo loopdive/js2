@@ -1,5 +1,6 @@
 ---
 id: 1263
+sprint: backlog
 title: "eval tier 3: indirect eval (0,eval)(...) — no local boxing, global scope only"
 status: backlog
 created: 2026-05-02

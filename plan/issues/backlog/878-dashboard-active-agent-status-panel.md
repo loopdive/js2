@@ -1,5 +1,6 @@
 ---
 id: 878
+sprint: backlog
 title: "Dashboard: active agent status panel with current task and uptime"
 status: ready
 created: 2026-03-30

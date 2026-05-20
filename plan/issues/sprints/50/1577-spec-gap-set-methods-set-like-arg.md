@@ -1,5 +1,5 @@
 ---
-id: 1351
+id: 1577
 sprint: 50
 title: "spec gap: Set methods (union/intersection/etc.) accept any set-like argument (101 test262 fails)"
 status: ready
@@ -82,3 +82,5 @@ than `this.size`, iterate the argument; otherwise iterate `this`. This is also a
 - `test262/test/built-ins/Set/prototype/union/set-like-arg.js`
 - `test262/test/built-ins/Set/prototype/intersection/setlike-with-non-callable-keys.js`
 - `test262/test/built-ins/Set/prototype/difference/setlike-with-throwing-has.js`
+
+> Renamed from #1351 2026-05-20 — see #1523 (consistency gate).

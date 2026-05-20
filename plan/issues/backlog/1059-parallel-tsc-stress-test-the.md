@@ -1,5 +1,6 @@
 ---
 id: 1059
+sprint: backlog
 title: "Parallel tsc — stress test the inter-module coordination primitive"
 status: ready
 created: 2026-04-11

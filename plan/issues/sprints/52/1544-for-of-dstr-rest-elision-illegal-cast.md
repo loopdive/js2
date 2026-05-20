@@ -1,5 +1,6 @@
 ---
 id: 1544
+sprint: 52
 title: "for-of / for-await-of destructuring of iterator results throws illegal cast"
 status: ready
 created: 2026-05-20

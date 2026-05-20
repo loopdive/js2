@@ -1,5 +1,6 @@
 ---
 id: 682
+sprint: backlog
 title: "RegExp standalone mode: native engine or embedded library for non-JS targets"
 status: ready
 created: 2026-03-20

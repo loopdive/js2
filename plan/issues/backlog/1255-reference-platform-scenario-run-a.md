@@ -1,5 +1,6 @@
 ---
 id: 1255
+sprint: backlog
 title: "Reference platform scenario: run a Node-oriented example on Wasmtime via Edge.js"
 status: ready
 created: 2026-04-20

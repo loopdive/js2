@@ -1,5 +1,6 @@
 ---
 id: 891
+sprint: backlog
 title: "Apply test262 infrastructure learnings to equivalence tests"
 status: ready
 created: 2026-03-31

@@ -1,5 +1,6 @@
 ---
 id: 640
+sprint: backlog
 title: "WASI HTTP handler (unlocks serverless edge)"
 status: ready
 created: 2026-03-19

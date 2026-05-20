@@ -1,5 +1,5 @@
 ---
-id: 1343
+id: 1569
 sprint: 50
 title: "spec gap: Boolean wrapper + Symbol coercion TypeErrors (24 + 45 test262 fails)"
 status: ready
@@ -96,3 +96,5 @@ For Symbol coercion:
 - `test262/test/built-ins/Boolean/prototype/toString/this-val-non-boolean.js`
 - `test262/test/built-ins/Symbol/prototype/toString/symbol-thisvalue.js`
 - `test262/test/built-ins/Symbol/for/registry.js`
+
+> Renamed from #1343 2026-05-20 — see #1523 (consistency gate).

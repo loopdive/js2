@@ -1,5 +1,6 @@
 ---
 id: 1042
+sprint: backlog
 title: "async/await state-machine lowering (AwaitExpression is currently a no-op)"
 status: ready
 created: 2026-04-11

@@ -1,5 +1,6 @@
 ---
 id: 881
+sprint: backlog
 title: "Dashboard: real-time resource monitoring — memory graphs, agent widgets, test progress"
 status: ready
 created: 2026-03-30

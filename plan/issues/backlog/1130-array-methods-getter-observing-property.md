@@ -1,5 +1,6 @@
 ---
 id: 1130
+sprint: backlog
 title: "Array methods — getter-observing property access on indices and length"
 status: ready
 created: 2026-04-20

@@ -1,5 +1,6 @@
 ---
 id: 1264
+sprint: backlog
 title: "eval tier 4: strict-mode direct eval — optimistic unboxed locals + shadow scope deopt"
 status: backlog
 created: 2026-05-02

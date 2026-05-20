@@ -1,5 +1,6 @@
 ---
 id: 888
+sprint: backlog
 title: "Competitive benchmark matrix: js2wasm vs StarlingMonkey, Javy, and native Node.js"
 status: ready
 created: 2026-03-28

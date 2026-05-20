@@ -1,5 +1,5 @@
 ---
-id: 1396
+id: 1581
 sprint: 52
 title: "for-of/dstr + assignment/dstr default initializers don't fire on OOB extenref-array reads"
 status: done
@@ -190,3 +190,5 @@ Then re-run for-of/dstr cluster: target +200 to +320 passes.
 
 Combined: 400-500 net test262 passes if all extern-array OOB cases
 share this root cause.
+
+> Renamed from #1396 2026-05-20 — see #1523 (consistency gate).

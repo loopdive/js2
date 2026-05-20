@@ -1,5 +1,6 @@
 ---
 id: 904
+sprint: backlog
 title: "Add link-time specialization after separate compilation"
 status: ready
 created: 2026-04-02

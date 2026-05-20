@@ -1,5 +1,5 @@
 ---
-id: 1340
+id: 1567
 sprint: 50
 title: "spec gap: Iterator.prototype helpers wasm_compile errors (89 of 245 fails)"
 status: ready
@@ -14,7 +14,7 @@ goal: spec-completeness
 parent: 1328
 related: 1320, 1323
 ---
-# #1340 — Iterator.prototype helper methods: wasm_compile failures
+# #1341 — Iterator.prototype helper methods: wasm_compile failures
 
 ## Problem
 
@@ -77,3 +77,5 @@ benchmarks.
 - `test262/test/built-ins/Iterator/prototype/drop/argumenttype-undefined.js`
 - `test262/test/built-ins/Iterator/prototype/map/callable-fn.js`
 - `test262/test/built-ins/Iterator/prototype/flatMap/inner-generator-throw.js`
+
+> Renamed from #1341 2026-05-20 — see #1523 (consistency gate).

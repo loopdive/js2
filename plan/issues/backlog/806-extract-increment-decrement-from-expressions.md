@@ -1,5 +1,6 @@
 ---
 id: 806
+sprint: backlog
 title: "Extract increment/decrement from expressions.ts → unary-update.ts"
 status: ready
 created: 2026-03-26

@@ -193,21 +193,39 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1331 | RegExp host-mode: Symbol.split protocol spec compliance (123 fails) | medium | ready |
 | #1332 | RegExp host-mode: prototype method edge cases (exec, test, flag accessors, RegExpStringIterator) | low | ready |
 | #1333 | RegExp host-mode: Pre-ES6 (S15.10) tests + annexB legacy accessors | low | ready |
-| #1335 | Number.prototype formatting in pure Wasm: integer toString(radix), then Ryu for floats (standalone) | medium | ready |
+| #1335 | spec gap: Object.defineProperty — descriptor attribute fidelity (664 test262 fails, biggest single bucket) | high | ready |
 | #1337 | spec gap: Function.prototype.bind/toString + Function/internals (175 + 7 test262 fails) | medium | ready |
-| #1338 | spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant) | medium | ready |
+| #1338 | spec gap: Function.prototype.bind/toString + Function/internals (175 + 7 test262 fails) | medium | ready |
 | #1339 | spec gap: AggregateError + SuppressedError errors-iterable + cause coercion (37 test262 fails) | medium | ready |
 | #1340 | spec gap: AggregateError + SuppressedError errors-iterable + cause coercion (37 test262 fails) | medium | ready |
-| #1341 | spec gap: Iterator.prototype helpers wasm_compile errors (89 of 245 fails) | high | ready |
-| #1343 | spec gap: Boolean wrapper + Symbol coercion TypeErrors (24 + 45 test262 fails) | medium | ready |
-| #1344 | spec gap: Date.prototype string formatters and parsers (174 of 485 test262 fails) | medium | ready |
+| #1341 | spec gap: JSON.stringify replacer/toJSON/property-list (49 of 66 test262 fails) | medium | ready |
+| #1343 | spec gap: Date.prototype string formatters and parsers (174 of 485 test262 fails) | medium | ready |
+| #1344 | spec gap: Generator/AsyncIterator prototype receiver TypeErrors + return/throw (52 + 12 test262 fails) | medium | ready |
 | #1345 | spec gap: Generator/AsyncIterator prototype receiver TypeErrors + return/throw (52 + 12 test262 fails) | medium | ready |
 | #1346 | spec gap: Reflect.* invariant checks mirror internal-method bugs (83 test262 fails) | medium | ready |
 | #1347 | spec gap: for-of doesn't IteratorClose on body throw (portion of 389 fails) | high | ready |
-| #1349 | spec gap: BigInt typed-path eager f64 assumptions (47 test262 fails, 4 illegal_cast + 13 runtime) | medium | ready |
+| #1349 | spec gap: class static initialization order + private field semantics (significant share of 1500+ class fails) | high | ready |
 | #1350 | spec gap: ArrayBuffer resizable + TypedArray detached-buffer guards (100 + 39 test262 fails) | medium | ready |
 | #1351 | spec gap: ArrayBuffer resizable + TypedArray detached-buffer guards (100 + 39 test262 fails) | medium | ready |
 | #1353 | JSON.stringify (objects/arrays) + JSON.parse: architect spec for Wasm shape-walking and recursive-descent parser | medium | ready |
+| #1560 | Number.prototype formatting in pure Wasm: integer toString(radix), then Ryu for floats (standalone) | medium | ready |
+| #1561 | spec gap: Object.assign drops getters / Symbol keys (27 of 38 test262 fails) | medium | ready |
+| #1562 | spec gap: Object.create(proto, descriptors) ignores descriptor map (162 test262 fails) | medium | ready |
+| #1563 | spec gap: Object.create(proto, descriptors) ignores descriptor map (162 test262 fails) | medium | ready |
+| #1564 | spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant) | medium | ready |
+| #1565 | spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant) | medium | ready |
+| #1566 | spec gap: Iterator.prototype helpers wasm_compile errors (89 of 245 fails) | high | ready |
+| #1567 | spec gap: Iterator.prototype helpers wasm_compile errors (89 of 245 fails) | high | ready |
+| #1568 | spec gap: Boolean wrapper + Symbol coercion TypeErrors (24 + 45 test262 fails) | medium | ready |
+| #1569 | spec gap: Boolean wrapper + Symbol coercion TypeErrors (24 + 45 test262 fails) | medium | ready |
+| #1570 | spec gap: Date.prototype string formatters and parsers (174 of 485 test262 fails) | medium | ready |
+| #1571 | spec gap: Reflect.* invariant checks mirror internal-method bugs (83 test262 fails) | medium | ready |
+| #1572 | spec gap: yield in nested try/finally + yield expression evaluation order (46 test262 fails) | medium | ready |
+| #1573 | spec gap: yield in nested try/finally + yield expression evaluation order (46 test262 fails) | medium | ready |
+| #1574 | spec gap: class static initialization order + private field semantics (significant share of 1500+ class fails) | high | ready |
+| #1575 | spec gap: BigInt typed-path eager f64 assumptions (47 test262 fails, 4 illegal_cast + 13 runtime) | medium | ready |
+| #1576 | spec gap: BigInt typed-path eager f64 assumptions (47 test262 fails, 4 illegal_cast + 13 runtime) | medium | ready |
+| #1577 | spec gap: Set methods (union/intersection/etc.) accept any set-like argument (101 test262 fails) | medium | ready |
 
 ### In Progress
 
@@ -258,7 +276,10 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1316 | illegal cast error: add expected type and actual value context (142 opaque runtime failures) | medium | done |
 | #1317 | null dereference error: add expression / variable context (573 opaque runtime failures) | medium | done |
 | #1324 | JSON.stringify and JSON.parse: implement in pure Wasm, eliminate JS host dependency | medium | done |
-| #1334 | ECMAScript spec compliance audit: section-by-section review, gap issues, HTML report | high | done |
+| #1334 | spec gap: Object.defineProperty — descriptor attribute fidelity (664 test262 fails, biggest single bucket) | high | done |
+| #1555 | lodash Tier 2 stress test — memoize, flow, partial application | medium | done |
+| #1558 | test262 global contamination: vm.createContext sandbox isolation | medium | done |
+| #1559 | ECMAScript spec compliance audit: section-by-section review, gap issues, HTML report | high | done |
 
 <!-- GENERATED_ISSUE_TABLES_END -->
 

@@ -1,5 +1,5 @@
 ---
-id: 1292
+id: 1555
 sprint: 50
 title: "lodash Tier 2 stress test — memoize, flow, partial application"
 status: done
@@ -105,3 +105,5 @@ the predicate flip.
   count for the file is now 0.
 - `plan/issues/sprints/50/1308-wasm-closure-not-js-callable.md` — new
   follow-up issue covering the residual gap.
+
+> Renamed from #1292 2026-05-20 — see #1523 (consistency gate).

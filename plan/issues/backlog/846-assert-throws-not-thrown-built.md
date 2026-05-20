@@ -1,5 +1,6 @@
 ---
 id: 846
+sprint: backlog
 title: "assert.throws not thrown: built-in methods accept invalid arguments silently (2,799 tests)"
 status: ready
 created: 2026-03-28

@@ -1,5 +1,6 @@
 ---
 id: 1230
+sprint: backlog
 title: "investigate post-dispatch fork starvation in test262 CompilerPool (73 phantom timeouts)"
 status: ready
 created: 2026-05-01

@@ -1,5 +1,6 @@
 ---
 id: 860
+sprint: backlog
 title: "Promise executor and property-assigned functions not compiled as host callbacks"
 status: ready
 created: 2026-03-28

@@ -1,6 +1,6 @@
 ---
 id: 1253
-sprint: 47
+sprint: backlog
 title: "OrdinaryToPrimitive returns undefined instead of throwing TypeError (§7.1.1.1 step 6)"
 status: done
 created: 2026-04-17

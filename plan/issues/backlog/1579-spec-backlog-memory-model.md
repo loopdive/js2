@@ -1,5 +1,5 @@
 ---
-id: 1353
+id: 1579
 sprint: backlog
 title: "spec backlog: §29 Memory Model implementation (multi-thread Wasm)"
 status: backlog
@@ -48,3 +48,5 @@ Without shared memory, there is no observable memory-model behavior to test. Unt
 this remains backlog. Listed as Not Implemented in §29 of the audit (`spec-compliance/sec-29.md`).
 
 Test262 baseline: 0 tests directly target §29 — observability is via Atomics and SAB.
+
+> Renamed from #1353 2026-05-20 — see #1523 (consistency gate).

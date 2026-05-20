@@ -1,5 +1,6 @@
 ---
 id: 805
+sprint: backlog
 title: "Extract assignment/destructuring from expressions.ts → assignments.ts"
 status: ready
 created: 2026-03-26

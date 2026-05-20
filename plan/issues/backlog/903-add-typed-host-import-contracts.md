@@ -1,5 +1,6 @@
 ---
 id: 903
+sprint: backlog
 title: "Add typed host import contracts and effect summaries"
 status: ready
 created: 2026-04-02

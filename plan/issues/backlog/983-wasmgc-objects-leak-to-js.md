@@ -1,5 +1,6 @@
 ---
 id: 983
+sprint: backlog
 title: "WasmGC objects leak to JS host as opaque values (1,087 FAIL)"
 status: ready
 created: 2026-04-06

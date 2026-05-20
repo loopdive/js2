@@ -1,5 +1,6 @@
 ---
 id: 838
+sprint: backlog
 title: "BigInt64Array / BigUint64Array typed arrays"
 status: ready
 created: 2026-03-28

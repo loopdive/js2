@@ -1,5 +1,5 @@
 ---
-id: 1338
+id: 1565
 sprint: 50
 title: "spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant)"
 status: ready
@@ -13,7 +13,7 @@ language_feature: array
 goal: spec-completeness
 parent: 1328
 ---
-# #1338 — Array.from / Array.of: subclassing + iterable bridge
+# #1339 — Array.from / Array.of: subclassing + iterable bridge
 
 ## Problem
 
@@ -73,3 +73,5 @@ For Array.of — same dispatch.
 - `test262/test/built-ins/Array/from/iter-set-length.js`
 - `test262/test/built-ins/Array/from/calling-from-valid-1-noStrict.js`
 - `test262/test/built-ins/Array/of/proto-from-ctor-realm.js`
+
+> Renamed from #1339 2026-05-20 — see #1523 (consistency gate).

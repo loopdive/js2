@@ -1,5 +1,6 @@
 ---
 id: 1100
+sprint: backlog
 title: "Wasm-native Proxy: meta-object protocol without JS host"
 status: ready
 created: 2026-04-12

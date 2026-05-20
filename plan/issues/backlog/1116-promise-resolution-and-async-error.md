@@ -1,5 +1,6 @@
 ---
 id: 1116
+sprint: backlog
 title: "Promise resolution and async error handling (210 tests)"
 status: ready
 created: 2026-04-04

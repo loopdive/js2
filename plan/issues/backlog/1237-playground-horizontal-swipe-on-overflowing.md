@@ -1,5 +1,6 @@
 ---
 id: 1237
+sprint: backlog
 title: "playground: horizontal swipe on overflowing tab bar drags tab instead of scrolling (mobile)"
 status: done
 created: 2026-05-01

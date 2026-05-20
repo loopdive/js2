@@ -1,5 +1,6 @@
 ---
 id: 1029
+sprint: backlog
 title: "Migrate to TypeScript 7.x (Go rewrite / typescript-go) when compiler API stabilizes"
 status: backlog
 created: 2026-04-11

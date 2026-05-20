@@ -1,5 +1,6 @@
 ---
 id: 880
+sprint: backlog
 title: "Dashboard: issue flow visualization — time from ready to done per issue"
 status: ready
 created: 2026-03-30

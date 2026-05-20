@@ -1,5 +1,6 @@
 ---
 id: 872
+sprint: backlog
 title: "Test262 report data should only update on complete runs"
 status: ready
 created: 2026-03-29

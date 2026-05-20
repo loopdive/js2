@@ -1,5 +1,6 @@
 ---
 id: 1066
+sprint: backlog
 title: "Support eval in standalone mode via host-compiled Wasm child module"
 status: ready
 created: 2026-04-11

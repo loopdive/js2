@@ -1,5 +1,6 @@
 ---
 id: 802
+sprint: backlog
 title: "- Dynamic prototype support (Object.setPrototypeOf, Object.create with dynamic proto)"
 status: ready
 created: 2026-03-26

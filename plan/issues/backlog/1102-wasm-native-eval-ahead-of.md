@@ -1,5 +1,6 @@
 ---
 id: 1102
+sprint: backlog
 title: "Wasm-native eval: ahead-of-time compilation strategy for eval() and Function()"
 status: ready
 created: 2026-04-12

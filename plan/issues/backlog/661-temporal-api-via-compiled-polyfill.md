@@ -1,5 +1,6 @@
 ---
 id: 661
+sprint: backlog
 title: "Temporal API via compiled polyfill or minimal implementation"
 status: ready
 created: 2026-03-20

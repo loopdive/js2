@@ -1,5 +1,6 @@
 ---
 id: 674
+sprint: backlog
 title: "SharedArrayBuffer and Atomics"
 status: ready
 created: 2026-03-20

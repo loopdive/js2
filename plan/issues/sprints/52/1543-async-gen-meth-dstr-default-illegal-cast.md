@@ -1,5 +1,6 @@
 ---
 id: 1543
+sprint: 52
 title: "Async-generator method with destructured default params throws illegal cast instead of expected error"
 status: ready
 created: 2026-05-20

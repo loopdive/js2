@@ -1,5 +1,6 @@
 ---
 id: 807
+sprint: backlog
 title: "Extract Date/Math/console built-ins from expressions.ts → builtins.ts"
 status: ready
 created: 2026-03-26

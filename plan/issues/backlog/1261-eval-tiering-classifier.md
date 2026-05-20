@@ -1,5 +1,6 @@
 ---
 id: 1261
+sprint: backlog
 title: "eval tiering: classify eval sites into 5 tiers at compile time"
 status: backlog
 created: 2026-05-02

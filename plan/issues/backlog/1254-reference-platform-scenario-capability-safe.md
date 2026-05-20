@@ -1,5 +1,6 @@
 ---
 id: 1254
+sprint: backlog
 title: "Reference platform scenario: capability-safe DOM wrapper with explicit subtree authority"
 status: ready
 created: 2026-04-20

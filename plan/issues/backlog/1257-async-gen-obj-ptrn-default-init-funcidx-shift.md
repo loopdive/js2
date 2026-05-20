@@ -1,5 +1,6 @@
 ---
 id: 1257
+sprint: backlog
 title: "async-gen + obj-ptrn default-init throws: funcIdx shift misses detached thenInstrs"
 status: backlog
 created: 2026-04-19

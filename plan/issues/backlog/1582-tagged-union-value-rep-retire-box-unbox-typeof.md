@@ -1,5 +1,5 @@
 ---
-id: 1552
+id: 1582
 sprint: backlog
 title: "Tagged-union value representation: retire __box_*, __unbox_*, __typeof, __is_truthy"
 status: backlog
@@ -66,3 +66,5 @@ Codegen-level — likely a small reduction once `__box_*` import shims are remov
 
 ## Builds on
 #1471 (already in flight for some box/unbox retirement).
+
+> Renamed from #1552 2026-05-20 — see #1523 (consistency gate).

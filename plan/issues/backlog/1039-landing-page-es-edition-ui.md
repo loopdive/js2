@@ -1,5 +1,6 @@
 ---
 id: 1039
+sprint: backlog
 title: "Landing page ES edition UI: circular progress prefix + per-feature error list"
 status: ready
 created: 2026-04-11

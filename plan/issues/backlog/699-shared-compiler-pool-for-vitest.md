@@ -1,5 +1,6 @@
 ---
 id: 699
+sprint: backlog
 title: "Shared compiler pool for vitest test262 runner"
 status: ready
 created: 2026-03-20

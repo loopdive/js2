@@ -1,5 +1,6 @@
 ---
 id: 786
+sprint: backlog
 title: "- Multi-assertion failures: returned N > 2 (~1,183 tests)"
 status: ready
 created: 2026-03-25

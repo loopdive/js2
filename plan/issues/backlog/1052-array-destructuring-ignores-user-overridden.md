@@ -1,5 +1,6 @@
 ---
 id: 1052
+sprint: backlog
 title: "Array destructuring ignores user-overridden Array.prototype[Symbol.iterator]"
 status: in-review
 created: 2026-04-11

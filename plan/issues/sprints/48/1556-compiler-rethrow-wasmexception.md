@@ -1,5 +1,5 @@
 ---
-id: 1295
+id: 1556
 sprint: 48
 title: "compiler.ts: re-throw WebAssembly.Exception from internal catch blocks"
 status: done
@@ -89,3 +89,5 @@ All four need the same one-line guard.
 
 ~568 fewer `compile_error` rows, reclassified as `fail` (or `pass` for
 tests with clean fork state).
+
+> Renamed from #1295 2026-05-20 — see #1523 (consistency gate).

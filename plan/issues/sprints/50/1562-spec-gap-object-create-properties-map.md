@@ -1,5 +1,5 @@
 ---
-id: 1337
+id: 1562
 sprint: 50
 title: "spec gap: Object.create(proto, descriptors) ignores descriptor map (162 test262 fails)"
 status: ready
@@ -13,7 +13,7 @@ language_feature: object
 goal: spec-completeness
 parent: 1328
 ---
-# #1337 — Object.create: descriptor map handling
+# #1336 — Object.create: descriptor map handling
 
 ## Problem
 
@@ -27,7 +27,7 @@ Spec §20.1.2.2 (Object.create) requires:
 3. Return O.
 
 When called with two args, the descriptor-map handling currently falls through to the same
-broken Object.defineProperty path (#1335) — losing all attribute flags.
+broken Object.defineProperty path (#1334) — losing all attribute flags.
 
 ## Acceptance criteria
 
@@ -48,8 +48,8 @@ Object.create + descriptor map is implemented by lowering to:
 1. Allocate object with prototype.
 2. For each key in descriptors, call `Object.defineProperty(O, key, descriptors[key])`.
 
-Step 2 inherits the descriptor-attribute fidelity bug from #1335. This issue is fixed
-by completing #1335 first — but additional Object.create-specific bugs remain:
+Step 2 inherits the descriptor-attribute fidelity bug from #1334. This issue is fixed
+by completing #1334 first — but additional Object.create-specific bugs remain:
 
 - The descriptor map iteration uses `Object.keys` which excludes Symbol keys; spec says
   Object.create must use OwnPropertyKeys (own enumerable) which includes Symbols.
@@ -58,8 +58,8 @@ by completing #1335 first — but additional Object.create-specific bugs remain:
 
 ### Approach
 
-1. Block this issue on #1335 landing.
-2. After #1335: verify Object.create-specific tests now pass; if not, fix prototype-trap counting.
+1. Block this issue on #1334 landing.
+2. After #1334: verify Object.create-specific tests now pass; if not, fix prototype-trap counting.
 3. Use `Reflect.ownKeys(descriptors)` (which returns string + Symbol own keys) instead of
    `Object.keys`.
 
@@ -67,3 +67,5 @@ by completing #1335 first — but additional Object.create-specific bugs remain:
 
 - `test262/test/built-ins/Object/create/15.2.3.5-4-2.js`
 - `test262/test/built-ins/Object/create/proto-from-ctor-realm.js`
+
+> Renamed from #1336 2026-05-20 — see #1523 (consistency gate).

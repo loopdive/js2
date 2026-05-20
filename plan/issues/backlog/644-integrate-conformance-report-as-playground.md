@@ -1,5 +1,6 @@
 ---
 id: 644
+sprint: backlog
 title: "Integrate conformance report as playground panel"
 status: ready
 created: 2026-03-19

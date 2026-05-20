@@ -1,5 +1,6 @@
 ---
 id: 1383
+sprint: backlog
 title: "narrower typeof-gated strict-equality fix (follow-up to closed PR #272 / #1380)"
 status: in-review
 created: 2026-05-08

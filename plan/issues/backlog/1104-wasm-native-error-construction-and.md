@@ -1,5 +1,6 @@
 ---
 id: 1104
+sprint: backlog
 title: "Wasm-native Error construction and stack traces without JS host"
 status: suspended
 created: 2026-04-12

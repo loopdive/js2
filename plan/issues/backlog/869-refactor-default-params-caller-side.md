@@ -1,5 +1,6 @@
 ---
 id: 869
+sprint: backlog
 title: "Refactor default params: caller-side insertion instead of sNaN sentinel"
 status: ready
 created: 2026-03-29

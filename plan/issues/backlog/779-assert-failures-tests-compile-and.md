@@ -1,5 +1,6 @@
 ---
 id: 779
+sprint: backlog
 title: "Assert failures: tests compile and run but produce wrong values (8,674 tests)"
 status: ready
 created: 2026-03-23

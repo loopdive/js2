@@ -1,5 +1,6 @@
 ---
 id: 1154
+sprint: 50
 title: "test262 worker: Array.prototype poisoning leaks into TypeScript compiler — Array.from fails at compile time (~378 test262 regressions)"
 status: done
 created: 2026-04-21

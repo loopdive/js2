@@ -1,5 +1,6 @@
 ---
 id: 1199
+sprint: backlog
 
 title: "perf: linear-memory backing for typed numeric arrays (`Array<number>` with i32-only ops → `i32.load`/`i32.store`)"
 status: ready

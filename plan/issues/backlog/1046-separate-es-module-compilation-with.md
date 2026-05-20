@@ -1,5 +1,6 @@
 ---
 id: 1046
+sprint: backlog
 title: "Separate ES-module compilation with consumer-driven import/export type specialization"
 status: ready
 created: 2026-04-11

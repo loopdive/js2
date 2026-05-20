@@ -1,5 +1,6 @@
 ---
 id: 865
+sprint: backlog
 title: "Console wrapper for fd_write in JavaScript environments"
 status: ready
 created: 2026-03-29

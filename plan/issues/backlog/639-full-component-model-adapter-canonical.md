@@ -1,5 +1,6 @@
 ---
 id: 639
+sprint: backlog
 title: "Full Component Model adapter (canonical ABI)"
 status: ready
 created: 2026-03-19

@@ -1,5 +1,6 @@
 ---
 id: 687
+sprint: backlog
 title: "Live-streaming report with run selector and progress indicator"
 status: ready
 created: 2026-03-20

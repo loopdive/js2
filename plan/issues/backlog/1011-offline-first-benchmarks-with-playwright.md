@@ -1,5 +1,6 @@
 ---
 id: 1011
+sprint: backlog
 title: "Offline-first benchmarks with Playwright DOM measurement and Run Live button"
 status: ready
 created: 2026-04-10

@@ -1,5 +1,6 @@
 ---
 id: 735
+sprint: backlog
 title: "- Async iteration correctness (329 tests)"
 status: blocked
 created: 2026-03-22

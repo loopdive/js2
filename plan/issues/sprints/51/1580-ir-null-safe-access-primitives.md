@@ -1,5 +1,5 @@
 ---
-id: 1392
+id: 1580
 sprint: 51
 title: "IR: null-safe access primitives — ref.is_null IrUnop + value-producing if/else IR node"
 status: done
@@ -704,3 +704,5 @@ if (expr.questionDotToken && isIrTypeNullable(recvType)) {
 
 The same shape works for `obj?.method()` (replace the property access in
 the else arm with a method call). All primitives are in place.
+
+> Renamed from #1392 2026-05-20 — see #1523 (consistency gate).

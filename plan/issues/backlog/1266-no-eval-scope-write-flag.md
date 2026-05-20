@@ -1,5 +1,6 @@
 ---
 id: 1266
+sprint: backlog
 title: "compiler flag --no-eval-scope-write: TypeError instead of shadow scope deopt"
 status: backlog
 created: 2026-05-02

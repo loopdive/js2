@@ -1,5 +1,6 @@
 ---
 id: 1009
+sprint: backlog
 title: "Investigate report-page benchmark outliers where Wasm is much slower than JS"
 status: ready
 created: 2026-04-09

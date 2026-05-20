@@ -1,5 +1,6 @@
 ---
 id: 680
+sprint: backlog
 title: "Wasm-native generators (state machines) with optional JS host fallback"
 status: ready
 created: 2026-03-20

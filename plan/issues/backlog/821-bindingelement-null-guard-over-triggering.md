@@ -1,5 +1,6 @@
 ---
 id: 821
+sprint: backlog
 title: "BindingElement null guard over-triggering"
 status: ready
 created: 2026-03-27

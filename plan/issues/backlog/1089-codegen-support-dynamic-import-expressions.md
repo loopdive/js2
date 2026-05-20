@@ -1,5 +1,6 @@
 ---
 id: 1089
+sprint: backlog
 title: "codegen: support dynamic import() expressions — 429 test262 tests skipped"
 status: ready
 created: 2026-04-12

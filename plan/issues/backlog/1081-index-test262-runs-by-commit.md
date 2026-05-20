@@ -1,5 +1,6 @@
 ---
 id: 1081
+sprint: backlog
 title: "Index test262 runs by commit hash — enable merge-base comparisons without re-running"
 status: ready
 created: 2026-04-11

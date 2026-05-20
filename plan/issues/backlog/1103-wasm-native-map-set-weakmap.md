@@ -1,5 +1,6 @@
 ---
 id: 1103
+sprint: backlog
 title: "Wasm-native Map, Set, WeakMap, WeakSet using WasmGC structs and arrays"
 status: ready
 created: 2026-04-12

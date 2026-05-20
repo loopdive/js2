@@ -1,5 +1,5 @@
 ---
-id: 1348
+id: 1574
 sprint: 50
 title: "spec gap: class static initialization order + private field semantics (significant share of 1500+ class fails)"
 status: ready
@@ -80,3 +80,5 @@ Each sub-task is medium-sized; consider creating sub-issues if devs prefer.
 - `test262/test/language/expressions/class/elements/private-field-as-instance.js`
 - `test262/test/language/statements/class/subclass/builtin-objects/Array/super-must-be-called-1.js`
 - `test262/test/language/statements/class/static-block-private-name.js`
+
+> Renamed from #1348 2026-05-20 — see #1523 (consistency gate).

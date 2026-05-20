@@ -1,5 +1,6 @@
 ---
 id: 1240
+sprint: backlog
 title: "perf: per-iteration eval compile budget for `comments/S7.4_A6.js` (still ~25s with #1229 cache)"
 status: ready
 created: 2026-05-02

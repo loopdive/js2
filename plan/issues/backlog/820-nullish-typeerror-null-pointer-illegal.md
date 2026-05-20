@@ -1,5 +1,6 @@
 ---
 id: 820
+sprint: backlog
 title: "Nullish TypeError / null-pointer / illegal-cast umbrella (6,993 FAIL)"
 status: ready
 created: 2026-03-28

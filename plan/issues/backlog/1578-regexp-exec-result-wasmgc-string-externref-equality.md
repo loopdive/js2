@@ -1,6 +1,6 @@
 ---
-id: 1352
-sprint: ~
+id: 1578
+sprint: backlog
 title: "RegExp exec result: wasmGC string struct ≠ externref string in strict equality (S15.10.2 cluster)"
 status: backlog
 created: 2026-05-08
@@ -79,3 +79,5 @@ See also: `#983 — wasmGC objects leak to JS` (related cross-boundary equivalen
 
 Filed from #1333 triage (architect-regexp, 2026-05-08). The S15.10.2 cluster was explicitly
 deferred out of #1333 scope to avoid scope creep. Fix here unlocks ~40 tests.
+
+> Renamed from #1352 2026-05-20 — see #1523 (consistency gate).

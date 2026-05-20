@@ -1,5 +1,6 @@
 ---
 id: 926
+sprint: backlog
 title: "Fixture tests not supported in unified mode (172 CE)"
 status: ready
 created: 2026-04-03

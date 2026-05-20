@@ -1,5 +1,5 @@
 ---
-id: 1310
+id: 1558
 title: "test262 global contamination: vm.createContext sandbox isolation"
 status: done
 priority: medium
@@ -38,3 +38,5 @@ in the implementation.
 ## Merged
 
 PR #232 — 2026-05-07
+
+> Renamed from #1310 2026-05-20 — see #1523 (consistency gate).

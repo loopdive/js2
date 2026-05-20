@@ -1,5 +1,6 @@
 ---
 id: 803
+sprint: backlog
 title: "Extract call dispatch from expressions.ts → calls.ts"
 status: ready
 created: 2026-03-26

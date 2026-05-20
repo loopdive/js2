@@ -1,5 +1,6 @@
 ---
 id: 808
+sprint: backlog
 title: "Extract string/import infrastructure from index.ts → imports.ts"
 status: ready
 created: 2026-03-26

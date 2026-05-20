@@ -1,5 +1,6 @@
 ---
 id: 1007
+sprint: backlog
 title: "Re-run historical test262 checkpoints with the current harness for comparable conformance history"
 status: ready
 created: 2026-04-09

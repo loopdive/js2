@@ -1,5 +1,6 @@
 ---
 id: 892
+sprint: backlog
 title: "Playground crashes: binaryen dependency not resolved by Vite"
 status: ready
 created: 2026-03-31

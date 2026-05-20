@@ -1,5 +1,6 @@
 ---
 id: 1165
+sprint: backlog
 title: "Track Wasm JIT interface proposal (func.new) — native runtime codegen"
 status: ready
 created: 2026-04-22

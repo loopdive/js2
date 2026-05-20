@@ -1,5 +1,6 @@
 ---
 id: 871
+sprint: backlog
 title: "Playground: default example throws WebAssembly.Exception at runtime"
 status: ready
 created: 2026-03-29

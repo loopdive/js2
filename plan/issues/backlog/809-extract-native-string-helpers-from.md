@@ -1,5 +1,6 @@
 ---
 id: 809
+sprint: backlog
 title: "Extract native string helpers from index.ts → native-strings.ts"
 status: ready
 created: 2026-03-26

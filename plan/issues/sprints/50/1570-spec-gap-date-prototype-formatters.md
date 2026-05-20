@@ -1,5 +1,5 @@
 ---
-id: 1344
+id: 1570
 sprint: 50
 title: "spec gap: Date.prototype string formatters and parsers (174 of 485 test262 fails)"
 status: ready
@@ -74,3 +74,5 @@ env var. Some tests also call `Date.prototype[Symbol.toPrimitive]` directly; we 
 - `test262/test/built-ins/Date/prototype/toISOString/15.9.5.43-0-1.js`
 - `test262/test/built-ins/Date/prototype/Symbol.toPrimitive/this-val-non-obj.js`
 - `test262/test/built-ins/Date/prototype/toJSON/invoke-tojson-result-throws.js`
+
+> Renamed from #1344 2026-05-20 — see #1523 (consistency gate).

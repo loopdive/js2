@@ -1,5 +1,6 @@
 ---
 id: 1252
+sprint: backlog
 title: "SameValue for DefineProperty f64 comparison uses f64.ne — wrong for NaN and ±0"
 status: done
 created: 2026-04-17

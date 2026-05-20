@@ -1,5 +1,6 @@
 ---
 id: 1033
+sprint: backlog
 title: "Compile React to Wasm — UI library stress test; DOM as host imports; harvest closure/hook/Symbol patterns"
 status: ready
 created: 2026-04-11

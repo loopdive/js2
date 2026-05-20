@@ -1,5 +1,6 @@
 ---
 id: 833
+sprint: backlog
 title: "Consider sloppy mode support for legacy octal escapes and non-strict code"
 status: ready
 created: 2026-03-28

@@ -1,5 +1,5 @@
 ---
-id: 1334
+id: 1559
 sprint: 50
 title: "ECMAScript spec compliance audit: section-by-section review, gap issues, HTML report"
 status: done
@@ -168,3 +168,5 @@ Focus on sections with the most test262 test coverage first (highest impact):
   entirely into memory.
 - Start with the highest test-count categories to maximize issue impact per hour.
 - This is an architect task: do NOT implement fixes in this issue. File issues, write docs.
+
+> Renamed from #1334 2026-05-20 — see #1523 (consistency gate).

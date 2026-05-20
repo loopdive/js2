@@ -1,5 +1,6 @@
 ---
 id: 905
+sprint: backlog
 title: "Support versioned shapes for compile-time-known prototype mutation"
 status: ready
 created: 2026-04-02

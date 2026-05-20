@@ -1,5 +1,6 @@
 ---
 id: 824
+sprint: backlog
 title: "Timeout umbrella is stale: replace old 10s compile-timeout bucket with current 30s worker-timeout model"
 status: ready
 created: 2026-03-29

@@ -1,5 +1,6 @@
 ---
 id: 889
+sprint: backlog
 title: "Test262 two-phase runner: compile all first, then execute with GC cleanup"
 status: ready
 created: 2026-03-31

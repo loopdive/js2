@@ -1,5 +1,6 @@
 ---
 id: 908
+sprint: backlog
 title: "Remove redundant codegen in inlined top-level numeric loops"
 status: ready
 created: 2026-04-02

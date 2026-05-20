@@ -1,5 +1,6 @@
 ---
 id: 1101
+sprint: backlog
 title: "Wasm-native WeakRef and FinalizationRegistry via WasmGC weak references"
 status: ready
 created: 2026-04-12

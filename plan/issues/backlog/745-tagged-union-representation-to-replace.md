@@ -1,5 +1,6 @@
 ---
 id: 745
+sprint: backlog
 title: "Tagged union representation to replace externref boxing"
 status: ready
 created: 2026-03-22

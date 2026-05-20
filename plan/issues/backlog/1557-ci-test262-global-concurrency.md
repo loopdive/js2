@@ -1,9 +1,9 @@
 ---
-id: 1307
+id: 1557
 title: "ci: serialize Test262 Sharded across PRs to eliminate runner-pool contention"
 status: in-progress
 priority: medium
-sprint: 50
+sprint: backlog
 created: 2026-05-07
 ---
 
@@ -60,3 +60,5 @@ Two-part change:
 - Reported by dev-1302 during S50 while PR #225 waited 45+ min.
 - Low risk change — only affects scheduling, not test logic.
 - Small PR, good candidate for a dev to pick up between tasks.
+
+> Renamed from #1307 2026-05-20 — see #1523 (consistency gate).

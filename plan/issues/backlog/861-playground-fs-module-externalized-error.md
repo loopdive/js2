@@ -1,5 +1,6 @@
 ---
 id: 861
+sprint: backlog
 title: "Playground: fs module externalized error in browser"
 status: ready
 created: 2026-03-28

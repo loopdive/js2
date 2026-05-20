@@ -1,5 +1,6 @@
 ---
 id: 879
+sprint: backlog
 title: "Dashboard: process health metrics — checklist compliance, merge protocol, hook blocks"
 status: ready
 created: 2026-03-30

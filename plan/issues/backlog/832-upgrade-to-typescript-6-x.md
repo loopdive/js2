@@ -1,5 +1,6 @@
 ---
 id: 832
+sprint: backlog
 title: "Upgrade to TypeScript 6.x to support Unicode 16.0.0 identifiers"
 status: ready
 created: 2026-03-28

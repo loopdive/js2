@@ -1,5 +1,6 @@
 ---
 id: 681
+sprint: backlog
 title: "Pure Wasm iterator protocol (eliminate 5 host imports)"
 status: ready
 created: 2026-03-20

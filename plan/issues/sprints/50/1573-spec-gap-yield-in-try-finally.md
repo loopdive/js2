@@ -1,5 +1,5 @@
 ---
-id: 1346
+id: 1573
 sprint: 50
 title: "spec gap: yield in nested try/finally + yield expression evaluation order (46 test262 fails)"
 status: ready
@@ -13,7 +13,7 @@ language_feature: generators
 goal: spec-completeness
 parent: 1328
 ---
-# #1346 — yield expression: try/finally + evaluation order
+# #1347 — yield expression: try/finally + evaluation order
 
 ## Problem
 
@@ -83,3 +83,5 @@ the outer's `.return(value)` and `.throw(error)` to the inner — it just propag
 - `test262/test/language/expressions/yield/star-rhs-iter-rtrn-meth-throws.js`
 - `test262/test/language/expressions/yield/star-iterable.js`
 - `test262/test/language/expressions/yield/yield-as-yield-operand-in-fn-arg.js`
+
+> Renamed from #1347 2026-05-20 — see #1523 (consistency gate).

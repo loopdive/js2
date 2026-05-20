@@ -1,5 +1,5 @@
 ---
-id: 1335
+id: 1560
 sprint: 50
 title: "Number.prototype formatting in pure Wasm: integer toString(radix), then Ryu for floats (standalone)"
 status: ready
@@ -82,3 +82,5 @@ Phase 1 is tractable for a single dev (all integer arithmetic, no algorithm rese
 - ECMA-262 §21.1.3.5 — toPrecision
 - ECMA-262 §21.1.3.2 — toExponential
 - Ulf Adams, "Ryu: Fast Float-to-String Conversion" (PLDI 2018)
+
+> Renamed from #1335 2026-05-20 — see #1523 (consistency gate).

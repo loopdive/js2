@@ -1,5 +1,6 @@
 ---
 id: 485
+sprint: backlog
 title: "Well-known Symbols for RegExp protocol (87 tests)"
 status: ready
 created: 2026-03-18
