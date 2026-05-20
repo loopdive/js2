@@ -2,7 +2,7 @@
 id: 1493
 sprint: 52
 title: "nodejs: console.error / console.warn → stderr (fd=2) in WASI mode"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

@@ -2,7 +2,7 @@
 id: 1503
 sprint: 52
 title: "browser: crypto.getRandomValues / crypto.randomUUID host imports"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

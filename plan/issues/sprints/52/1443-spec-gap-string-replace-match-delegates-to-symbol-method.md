@@ -2,7 +2,7 @@
 id: 1443
 sprint: 52
 title: "spec gap: String.prototype.replace/replaceAll/match/search delegate to argument's Symbol.* method"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium
@@ -93,3 +93,57 @@ the built-in fast path instead of the user method.
 - `src/codegen/property-access.ts` (computed lookup by symbol id)
 - `src/codegen/type-coercion.ts` (`IsCallable` / `GetMethod` helper)
 - `tests/issue-1443.test.ts`
+
+## Implementation notes (in-progress)
+
+Landed in this PR — infrastructure for Symbol.* dispatch:
+
+1. **Codegen (`src/codegen/string-ops.ts`, `declarations.ts`, `index.ts`)** —
+   `replace`/`replaceAll`/`split` only use the native `__str_*` helpers when
+   the first argument is statically string-like (string, string literal, or
+   String wrapper object). Any other static type (RegExp, boolean, number,
+   object) is routed to the JS host import `string_<method>` which performs
+   spec-correct Symbol.* dispatch via the host runtime.
+
+2. **Codegen import registration** — both
+   `collectStringMethodImports` copies in `declarations.ts` and `index.ts`
+   register `string_<method>` whenever the first argument is non-string,
+   ensuring the host import is available even when the native helper would
+   otherwise be sole.
+
+3. **Runtime (`src/runtime.ts:string_method`)** — for the Symbol-dispatching
+   methods (`replace`, `replaceAll`, `match`, `matchAll`, `search`, `split`),
+   wasm-struct first arguments are wrapped via `_wrapForHost` (Proxy) rather
+   than coerced via `ToPrimitive`. This lets JS's native
+   `String.prototype.<method>` perform `arg[Symbol.<method>]` lookups
+   through the proxy — primitives still coerce as before.
+
+### Known limitations (deferred to follow-up issues)
+
+- **Object literal `{ [Symbol.replace]: fn }`** — the compiler stores the
+  function as a struct field (`@@replace`). V8's isorecursive type
+  canonicalization collapses single-funcref structs into the same canonical
+  type, so the `__sget_@@<name>` getter can return the wrong field on a
+  same-shape struct (e.g. `IsRegExp` would mis-report `true` on an object
+  defining only `@@replace`). The safe path used here only reads from the
+  sidecar; the literal-as-search case requires additional compiler work
+  (sidecar mirror, or per-symbol tag fields) to disambiguate canonical
+  types. See #1382 (closure callability) and #1439 (well-known symbol
+  infrastructure) for the broader plumbing required.
+
+- **Wasm closures stored as JS object properties** — JS sees them as
+  `typeof === "object"`, so `IsCallable` returns false and the dispatch
+  silently falls back to default replace semantics. Blocked on #1382.
+
+### Test results
+
+`tests/issue-1443.test.ts` (5/5 pass):
+- native fast path preserved for string search values ✓
+- native `replaceAll` fast path preserved ✓
+- native `split` fast path preserved ✓
+- RegExp search values route through host (existing) ✓
+- primitive search values (number) do not dispatch Symbol.replace ✓
+
+No regressions in `tests/regexp.test.ts` (10/10), `tests/symbol-iterator-protocol.test.ts` (4/4),
+`tests/closures.test.ts`. Pre-existing failures in `tests/array-methods.test.ts` (2 type errors)
+unrelated to this change.

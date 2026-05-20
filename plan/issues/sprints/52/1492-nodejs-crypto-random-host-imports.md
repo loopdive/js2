@@ -2,7 +2,7 @@
 id: 1492
 sprint: 52
 title: "nodejs: crypto.randomBytes / randomUUID host imports"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

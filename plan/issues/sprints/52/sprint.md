@@ -43,7 +43,6 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 
 | Issue | Title | Priority | Status |
 |---|---|---|---|
-| #1364 | spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails) | high | blocked |
 | #1373b | IR async Phase C: CPS lowering for await + async-return + async-throw | medium | blocked |
 
 ### Ready
@@ -60,24 +59,19 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1440 | spec gap: Date setters ToNumber coercion + Invalid Date (NaN) propagation | high | ready |
 | #1441 | spec gap: String.prototype.split — Array result shape + String wrapper receivers | high | ready |
 | #1442 | spec gap: String.prototype methods — RequireObjectCoercible + ToString on this value | medium | ready |
-| #1443 | spec gap: String.prototype.replace/replaceAll/match/search delegate to argument's Symbol.* method | medium | ready |
 | #1444 | spec gap: RegExp named groups (unmatched + duplicate) and lookbehind edge cases | medium | ready |
-| #1445 | spec gap: String.raw + String.prototype.* argument coercion (ToInteger / ToPrimitive) | medium | ready |
-| #1450 | spec gap: NamedEvaluation — anonymous fn/class names from binding identifiers in destructuring defaults | high | ready |
 | #1451 | spec gap: class/object-literal method parameter destructuring with non-trivial defaults | high | ready |
 | #1452 | spec gap: for-loop init binding patterns — declared names not visible in loop body | high | ready |
 | #1453 | spec gap: per-iteration fresh let/const binding in for-statements | medium | ready |
 | #1454 | spec gap: iterator protocol — error propagation and IteratorClose during destructuring | medium | ready |
 | #1455 | spec gap: subclassing builtins — instanceof and prototype chain (class Sub extends Map / Float32Array / WeakMap / …) | medium | ready |
 | #1456 | spec gap: private-reference assignment to readonly accessor / method throws TypeError | medium | ready |
-| #1460 | spec gap: Object.defineProperty / defineProperties descriptor fidelity | high | ready |
 | #1461 | spec gap: Array.prototype.* called on array-like / exotic receivers | high | ready |
 | #1462 | spec gap: Object.getOwnPropertyDescriptor + Object.create descriptor surface | high | ready |
 | #1463 | spec gap: Function.prototype.bind / toString / Symbol.hasInstance fidelity | medium | ready |
 | #1464 | spec gap: Iterator.prototype helpers + Iterator.zip / Iterator.concat (ES2025) | medium | ready |
 | #1465 | spec gap: Promise.all / allSettled / any / race iterable + subclass fidelity | medium | ready |
 | #1466 | spec gap: Proxy + Reflect trap / operation fidelity | medium | ready |
-| #1467 | spec gap: Error / AggregateError / Symbol prototype protocol | medium | ready |
 | #1470 | host-independence: eliminate JS host string ops for standalone Wasm | high | ready |
 | #1471 | host-independence: eliminate JS host boxing/unboxing for standalone Wasm | high | ready |
 | #1472 | host-independence: eliminate JS host object/property ops for standalone Wasm | high | ready |
@@ -99,27 +93,33 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1503 | browser: crypto.getRandomValues / crypto.randomUUID host imports | medium | ready |
 | #1504 | browser: marshal compiled export return values (structs/arrays) to plain JS | medium | ready |
 | #1510 | spec gap: for-await-of destructuring — await on IteratorStep + binding initialization | high | ready |
-| #1511 | spec gap: arguments object — mapped semantics, descriptors, trailing-comma length | high | ready |
 | #1512 | spec gap: dynamic import — early SyntaxErrors for nested syntactic contexts | medium | ready |
-| #1513 | spec gap: Reflect — TypeError on non-object/Symbol target + abrupt-completion propagation | high | ready |
-| #1514 | spec gap: Set.prototype.{union,intersection,difference,…} accept set-like protocol | medium | ready |
-| #1515 | spec gap: DataView — ToIndex(byteOffset), detached-buffer TypeError, BigInt setter coercion | medium | ready |
-| #1516 | spec gap: GeneratorPrototype — this-value coercion + name/length/property descriptors | medium | ready |
 | #1517 | spec gap: Array.fromAsync — ES2024 async-iteration constructor | medium | ready |
 | #1518 | spec gap: Annex B.3.2 — sloppy-mode function-in-block hoisting (`var` shadow) | medium | ready |
-| #1519 | spec gap: `new` expression — non-literal spread + non-constructor TypeError + new.target via apply/call | medium | ready |
 
 ### In Progress
 
 | Issue | Title | Priority | Status |
 |---|---|---|---|
+| #1364 | spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails) | high | in-progress |
 | #1431 | spec gap: assignment operators — destructuring completion, defaults, and compound side effects | medium | in-progress |
 | #1433 | spec gap: DisposableStack and AsyncDisposableStack lifecycle semantics | medium | in-progress |
 | #1435 | spec gap: lexical grammar and syntax-directed early errors | medium | in-progress |
 | #1436 | spec gap: global object descriptors and global function coercion/URI semantics | medium | in-progress |
 | #1438 | spec gap: Map, WeakMap, and WeakSet residual collection semantics | medium | in-progress |
+| #1443 | spec gap: String.prototype.replace/replaceAll/match/search delegate to argument's Symbol.* method | medium | in-progress |
+| #1445 | spec gap: String.raw + String.prototype.* argument coercion (ToInteger / ToPrimitive) | medium | in-progress |
+| #1450 | spec gap: NamedEvaluation — anonymous fn/class names from binding identifiers in destructuring defaults | high | in-progress |
+| #1460 | spec gap: Object.defineProperty / defineProperties descriptor fidelity | high | in-progress |
+| #1467 | spec gap: Error / AggregateError / Symbol prototype protocol | medium | in-progress |
 | #1468 | for-of/dstr: obj-ptrn-id-init undefined-key + array-elem-trlg iterator close | medium | in-progress |
 | #1505 | spec audit: comprehensive ECMAScript implementation gap analysis | high | in-progress |
+| #1511 | spec gap: arguments object — mapped semantics, descriptors, trailing-comma length | high | in-progress |
+| #1513 | spec gap: Reflect — TypeError on non-object/Symbol target + abrupt-completion propagation | high | in-progress |
+| #1514 | spec gap: Set.prototype.{union,intersection,difference,…} accept set-like protocol | medium | in-progress |
+| #1515 | spec gap: DataView — ToIndex(byteOffset), detached-buffer TypeError, BigInt setter coercion | medium | in-progress |
+| #1516 | spec gap: GeneratorPrototype — this-value coercion + name/length/property descriptors | medium | in-progress |
+| #1519 | spec gap: `new` expression — non-literal spread + non-constructor TypeError + new.target via apply/call | medium | in-progress |
 
 ### Done
 

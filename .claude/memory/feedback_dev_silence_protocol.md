@@ -4,15 +4,20 @@ description: Devs must be silent during CI-wait and idle — no idle_notificatio
 type: feedback
 originSessionId: 0ffbd21c-b73d-429a-a76d-4fb742ea9794
 ---
-Devs must not send `idle_notification` messages or any status chatter to the tech lead. They are silent until they have a blocker, a decision needed, or a completed merge.
+Silence = no `idle_notification` ping-loops. It does NOT mean suppress all communication when action is required.
 
-**Why:** The tech lead's job is to keep the task queue full and step in on escalations. Idle pings are noise that interrupt the user. The TaskList is the communication channel for task state — not SendMessage.
+**Why the distinction matters:** The rule was over-applied in S51, causing agents to stay silent even after CI landed with catastrophic regressions (net -264) — blocking the sprint instead of escalating. The silence rule kills polling noise, not legitimate signals.
 
-**Tech lead behavior:** Do not respond to or acknowledge idle_notifications. Only respond if the message contains a genuine question or escalation. Do not write "Ignoring." — just don't reply.
+**What devs must NOT send:**
+- `idle_notification` pings
+- Unprompted "I'm still waiting / CI pending / progress update" messages
 
-**Exceptions (three valid reasons to message):**
-1. Claiming a task: `"Claiming #N — <title>. Queue: X tasks still pending."` (X excludes the claimed task)
-2. After merge, TaskList empty: `"#N merged. TaskList empty — need next task."`
-3. Cannot proceed: blocked >30 min, CI failing with unresolvable regressions, or any situation where forward progress is impossible without a decision.
+**What devs MUST send (immediately, no waiting to be asked):**
+1. Claiming a task: include queue count
+2. TaskList empty after merge
+3. CI landed → ESCALATE (ratio >10%, or net <0): message with criterion + values
+4. CI landed → catastrophic failure (net <0 or >50 in single bucket): message immediately
+5. Blocked >30 min: include what was tried
+6. Direct question from tech lead: always reply once
 
-**How to apply:** If a dev sends idle_notification messages mid-task or during CI-wait, remind them once, then update `.claude/agents/developer.md` to reinforce the rule. During CI-wait, devs block on Monitor (zero token burn) and wake only when CI_READY — they do not ping the tech lead.
+**Tech lead behavior:** Ignore idle_notification pings. Always respond to genuine escalations. After fixing the silence rule, send corrective messages to agents who were blocked by it.

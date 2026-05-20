@@ -244,7 +244,8 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 - **Tech lead populates TaskList** — devs self-serve from it. No per-task dispatch messages needed.
 - **Dev loop**: claim task from TaskList → implement → push PR → wait for CI → self-merge if green → mark completed → claim next task.
 - **Dev self-merge**: when `.claude/ci-status/pr-<N>.json` has matching SHA, `net_per_test > 0`, ratio <10%, no bucket >50 — run `gh pr merge <N> --admin --merge`. Escalate to tech lead only when criteria fail. See `.claude/skills/dev-self-merge.md`.
-- **Devs contact tech lead only for**: TaskList empty, blocked >30 min, escalated merge criteria.
+- **Tech lead reading ci-status files**: always verify `head_sha` matches current PR HEAD (`gh pr view N --json headRefOid`) before interpreting `net_per_test` or regression counts. A SHA mismatch means CI ran on a stale commit — the numbers are misleading. Also check `baseline_staleness_commits` > 0 as a secondary signal.
+- **Devs contact tech lead for**: TaskList empty, blocked >30 min, CI ESCALATE result (immediately — do not wait to be asked), net < 0 result.
 - Dev agents do NOT run full test262 locally — scoped checks only, CI validates conformance.
 
 ### Controlling agents

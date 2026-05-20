@@ -31,12 +31,17 @@ Message **specific agents only** — no broadcasts unless claiming a shared file
 **Message another dev only for:**
 - Direct file/function conflict: `"Claiming compileCallExpression in expressions.ts for #512 — are you in that file?"`
 
-**Never message anyone for:** task completion, CI status, progress updates, "ready for merge", idle state, CI-wait state. TaskList and CI feed handle those. **Never send `idle_notification` messages** — they are silently discarded.
+**Never send `idle_notification` messages** — they create ping-loops and are discarded. Silence = no unprompted status chatter. It does NOT mean silence when action is required.
 
-**Three exceptions — message tech lead only for:**
-1. **Claiming a task**: `"Claiming #N — <title>. Queue: X tasks still pending."` where X excludes the one you just claimed.
-2. **TaskList empty after merge**: `"#N merged. TaskList empty — need next task."` Then wait silently.
-3. **Cannot proceed**: blocked >30 min, CI failing with regressions you can't resolve, or any situation where you know you cannot move forward without a decision. Include what you tried and what's stopping you.
+**Message tech lead for any of these:**
+1. **Claiming a task**: `"Claiming #N — <title>. Queue: X tasks still pending."`
+2. **TaskList empty after merge**: `"#N merged. TaskList empty — need next task."`
+3. **CI landed → ESCALATE**: `/dev-self-merge` output ESCALATE — message immediately with criterion + values. Do not wait to be asked.
+4. **CI landed → net < 0 or catastrophic regressions**: message immediately, do not merge.
+5. **Blocked >30 min**: include what you tried and what's stopping you.
+6. **Direct question from tech lead**: always reply. One reply per request, not a loop.
+
+**Never message for:** periodic "I'm still waiting", "CI is pending", "just checking in", or any unprompted progress update when you have nothing actionable to report.
 
 ## Workflow
 
@@ -90,9 +95,12 @@ Message **specific agents only** — no broadcasts unless claiming a shared file
    ```
    If `src_changes > 0`, submit the standard wait loop instead:
    ```bash
+   _sf="/workspace/.claude/agent-status/issue-{N}-{slug}.json"
    until [ -f /workspace/.claude/ci-status/pr-<N>.json ] && \
-     [ "$(jq -r '.head_sha' /workspace/.claude/ci-status/pr-<N>.json)" = "<HEAD_SHA>" ]; \
-     do sleep 60; done
+     [ "$(jq -r '.head_sha' /workspace/.claude/ci-status/pr-<N>.json)" = "<HEAD_SHA>" ]; do
+     [ -f "$_sf" ] && jq --argjson t "$(date +%s)" '. + {last_seen: $t}' "$_sf" > "$_sf.tmp" && mv "$_sf.tmp" "$_sf"
+     sleep 60
+   done
    ```
    Replace `<N>` with the PR number and `<HEAD_SHA>` with the full commit SHA from `gh pr view`.
    Your turn ends the moment you submit this call. **Do NOT send any messages. Do NOT send idle_notifications. Do NOT do anything else.** The system notifies you when the loop exits; that is your signal to proceed to step 6.

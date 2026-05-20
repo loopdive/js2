@@ -2,7 +2,7 @@
 id: 1502
 sprint: 52
 title: "browser: localStorage / sessionStorage host imports with standalone fallback"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium
