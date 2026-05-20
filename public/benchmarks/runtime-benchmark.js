@@ -128,23 +128,92 @@ async function measureEntry(entry, runtimeHelpers, manifestUrl) {
   }
 }
 
+// Per-benchmark progress trace exposed so the driving Node script can poll the
+// page state between Playwright `eval` invocations (see #1392). Each entry has
+// {ts, type: "start"|"done"|"error", name, message?}. The driver uses this to
+// detect per-benchmark hangs and identify which entry stalled.
+window.__ts2wasmBenchmarkProgress = [];
+window.__ts2wasmBenchmarkState = { running: false, done: false, error: null, result: null };
+
+function recordProgress(event) {
+  try {
+    window.__ts2wasmBenchmarkProgress.push({ ts: Date.now(), ...event });
+    if (typeof console !== "undefined") {
+      console.log(`[bench-progress] ${event.type} ${event.name ?? ""}`);
+    }
+  } catch {
+    // Never let progress logging break a benchmark run.
+  }
+}
+
 export async function runBrowserRuntimeBenchmarks() {
+  window.__ts2wasmBenchmarkProgress = [];
+  window.__ts2wasmBenchmarkState = { running: true, done: false, error: null, result: null };
+  recordProgress({ type: "start", name: "__manifest__" });
   setStatus("Loading runtime benchmark manifest...");
   const manifestUrl = new URL(MANIFEST_URL, window.location.href);
   const manifest = await fetch(manifestUrl, { cache: "no-store" }).then((res) => res.json());
   const entries = (manifest?.benchmarks ?? []).filter((entry) => entry?.runtimeEnvironment === "browser");
   const runtimeHelpers = await importFreshModule(new URL("./results/loadtime/runtime.js", window.location.href).href);
+  recordProgress({ type: "done", name: "__manifest__", count: entries.length });
 
   const results = [];
   for (const entry of entries) {
     setStatus(`Measuring ${entry.name}...`);
-    results.push(await measureEntry(entry, runtimeHelpers, manifestUrl));
+    recordProgress({ type: "start", name: entry.name });
+    try {
+      const row = await measureEntry(entry, runtimeHelpers, manifestUrl);
+      results.push(row);
+      recordProgress({ type: "done", name: entry.name });
+    } catch (error) {
+      const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
+      recordProgress({ type: "error", name: entry.name, message });
+      window.__ts2wasmBenchmarkState.error = `Benchmark ${entry.name} failed: ${message}`;
+      window.__ts2wasmBenchmarkState.running = false;
+      window.__ts2wasmBenchmarkState.done = true;
+      throw error;
+    }
   }
 
   setStatus(`Done. Measured ${results.length} browser runtime benchmark${results.length === 1 ? "" : "s"}.`);
   const json = JSON.stringify(results, null, 2);
   if (resultEl) resultEl.textContent = json;
+  window.__ts2wasmBenchmarkState.result = results;
+  window.__ts2wasmBenchmarkState.running = false;
+  window.__ts2wasmBenchmarkState.done = true;
   return results;
 }
 
 window.__ts2wasmRunBrowserRuntimeBenchmarks = runBrowserRuntimeBenchmarks;
+
+// Fire-and-forget kick-off used by the Node driver. Stores the in-flight
+// promise on the window so the driver can poll progress with subsequent eval
+// calls without ever blocking inside a single Playwright invocation (#1392).
+window.__ts2wasmStartBrowserRuntimeBenchmarks = function startBrowserRuntimeBenchmarks() {
+  if (window.__ts2wasmBenchmarkPromise) {
+    return "already-running";
+  }
+  window.__ts2wasmBenchmarkPromise = runBrowserRuntimeBenchmarks().catch((error) => {
+    const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
+    window.__ts2wasmBenchmarkState.error = message;
+    window.__ts2wasmBenchmarkState.running = false;
+    window.__ts2wasmBenchmarkState.done = true;
+  });
+  return "started";
+};
+
+window.__ts2wasmPollBrowserRuntimeBenchmarks = function pollBrowserRuntimeBenchmarks() {
+  return JSON.stringify({
+    progress: window.__ts2wasmBenchmarkProgress,
+    state: {
+      running: window.__ts2wasmBenchmarkState.running,
+      done: window.__ts2wasmBenchmarkState.done,
+      error: window.__ts2wasmBenchmarkState.error,
+      hasResult: window.__ts2wasmBenchmarkState.result != null,
+    },
+  });
+};
+
+window.__ts2wasmCollectBrowserRuntimeBenchmarks = function collectBrowserRuntimeBenchmarks() {
+  return JSON.stringify(window.__ts2wasmBenchmarkState.result ?? []);
+};

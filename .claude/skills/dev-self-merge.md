@@ -190,8 +190,14 @@ gh pr merge <N> --merge --admin \
 ```
 
 Then:
-1. `TaskUpdate taskId=<your-task> status=completed`
-2. `TaskList` → claim next unowned task
+1. Set `status: done` in the issue file:
+   ```bash
+   issue_num=$(echo "<branch>" | grep -oE '[0-9]+' | head -1)
+   file=$(find /workspace/plan/issues -name "${issue_num}-*.md" | head -1)
+   sed -i "s/^status: .*/status: done/" "$file"
+   ```
+2. `TaskUpdate taskId=<your-task> status=completed`
+3. `TaskList` → claim next unowned task
 
 ## What ESCALATE means
 

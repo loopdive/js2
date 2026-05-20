@@ -75,48 +75,26 @@ Message **specific agents only** — no broadcasts unless claiming a shared file
    ```
    Then open the PR:
    `gh pr create --base main --title "fix(#N): <description>" --body "..."`
-5. **Wait for CI — IMMEDIATELY after `gh pr create` returns, before doing anything else:**
-   Update your status file to ci-wait so the tech lead's statusline shows you:
-   ```bash
-   _branch=$(git -C /workspace/.claude/worktrees/issue-{N}-{slug} branch --show-current 2>/dev/null | sed 's/^issue-//')
-   printf '{"name":"%s","state":"ci-wait","issue":"#{N}","pr":<PR>,"since":%s}\n' "${_branch:-dev}" "$(date +%s)" \
-     > "/workspace/.claude/agent-status/issue-{N}-{slug}.json"
-   ```
-   **Fast-path for test/docs-only PRs** (no `src/**` changes): Test262 Sharded does not run,
-   so the ci-status file never appears. Instead, poll for basic CI completion:
-   ```bash
-   src_changes=$(gh pr view <N> --json files --jq '[.files[].path | select(startswith("src/"))] | length')
-   ```
-   If `src_changes == 0`, submit this wait loop as a single `Bash` call with `run_in_background: true`:
-   ```bash
-   until gh pr checks <N> --json name,status,conclusion 2>/dev/null | \
-     jq -e '[.[] | select(.conclusion != null)] | length > 0 and ([.[] | select(.conclusion == "FAILURE")] | length == 0)' \
-     > /dev/null 2>&1; do sleep 60; done
-   ```
-   If `src_changes > 0`, submit the standard wait loop instead:
-   ```bash
-   _sf="/workspace/.claude/agent-status/issue-{N}-{slug}.json"
-   until [ -f /workspace/.claude/ci-status/pr-<N>.json ] && \
-     [ "$(jq -r '.head_sha' /workspace/.claude/ci-status/pr-<N>.json)" = "<HEAD_SHA>" ]; do
-     [ -f "$_sf" ] && jq --argjson t "$(date +%s)" '. + {last_seen: $t}' "$_sf" > "$_sf.tmp" && mv "$_sf.tmp" "$_sf"
-     sleep 60
-   done
-   ```
-   Replace `<N>` with the PR number and `<HEAD_SHA>` with the full commit SHA from `gh pr view`.
-   Your turn ends the moment you submit this call. **Do NOT send any messages. Do NOT send idle_notifications. Do NOT do anything else.** The system notifies you when the loop exits; that is your signal to proceed to step 6.
-6. Run `/dev-self-merge <N>` — outputs MERGE or ESCALATE
-7. On MERGE: `gh pr merge <N> --merge --admin`
-8. On ESCALATE: message tech lead with which criterion failed + values
-9. After merge:
+5. **After `gh pr create` returns — do NOT wait for CI:**
+   CI monitoring and merging is the tech lead's job. Your job ends when the PR is open.
+   - Update your status file to show the open PR:
+     ```bash
+     printf '{"name":"issue-{N}-{slug}","state":"pr-open","issue":"#{N}","pr":<PR>,"since":%s}\n' "$(date +%s)" \
+       > "/workspace/.claude/agent-status/issue-{N}-{slug}.json"
+     ```
+   - Then immediately proceed to step 6 (next task or terminate).
+6. After opening the PR:
    - `rm -f "/workspace/.claude/agent-status/issue-{N}-{slug}.json"` — clear your status
    - `git worktree remove /workspace/.claude/worktrees/<branch>` — clean up your own worktree
    - `TaskUpdate(status: completed)`
-   - `TaskList` → claim next task, or shut down if queue is empty
+   - `TaskList` → look for the lowest-ID task with no owner and status pending/ready
+     - If found: claim it (`TaskUpdate owner: "your-name"`, status: in_progress) → start implementing
+     - If **no unowned task exists** (queue empty OR all tasks already owned): `tmux kill-pane -t $TMUX_PANE` immediately — do not idle, do not ping, do not wait
 
 ### Pause / Suspend / Shutdown
 - **PAUSE message from tech lead**: stop immediately, kill running tests. Reply: `"Paused on #N."` Wait for RESUME.
-- **SUSPEND message from tech lead**: commit WIP, write `## Suspended Work` section to issue file (worktree path, branch, done, remaining, resume steps), reply: `"Suspended #N."`, then terminate.
-- **`shutdown_request` from tech lead**: acknowledge with a brief final summary, then **stop responding entirely**. Do not wait for input. Do not send idle notifications. The session will close when you stop.
+- **SUSPEND message from tech lead**: commit WIP, write `## Suspended Work` section to issue file (worktree path, branch, done, remaining, resume steps), reply: `"Suspended #N."`, then run `tmux kill-pane -t $TMUX_PANE`.
+- **`shutdown_request` from tech lead**: acknowledge with a brief final summary, run `tmux kill-pane -t $TMUX_PANE` as your last Bash call, then stop responding.
 
 ## Validation pattern
 

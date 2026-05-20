@@ -2,7 +2,7 @@
 id: 1453
 sprint: 52
 title: "spec gap: per-iteration fresh let/const binding in for-statements"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: hard

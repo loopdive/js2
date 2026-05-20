@@ -23,25 +23,23 @@ Local validation happens AFTER merging main into your branch, but **full test262
 ## Finalize
 
 5. [ ] Issue file updated with implementation notes
-6. [ ] Issue status set to `review` in frontmatter
+6. [ ] Issue status set to `in-review` in frontmatter
 7. [ ] File locks removed from `plan/method/file-locks.md`
 8. [ ] Branch pushed to `origin`
 9. [ ] PR opened against `main`
 10. [ ] PR is the canonical place for full validation — wait for GitHub Actions `test262` results there
 
-## Wait for CI and self-merge
+## Terminate after PR open
 
-11. [ ] Monitor `.claude/ci-status/pr-<N>.json` until it appears with SHA matching your branch HEAD (poll every 60s)
-12. [ ] Read result: `net_per_test`, `regressions`, `improvements`
-    - `net_per_test > 0`, ratio <10%, no bucket >50 → `gh pr merge <N> --admin --merge`
-    - regressions: fix on branch, push, loop back to step 11
-    - escalate to tech lead only if: regressions >10, bucket >50, or judgment call
-13. [ ] After merge: mark task `completed` in TaskList, claim next task
+11. [ ] Write agent-status file with `state: ci-wait, pr: N` so the dispatch loop sees you as in-flight
+12. [ ] **Terminate** — the monitor watches CI and auto-merges when green. You do not need to wait.
+    - If CI comes back red and needs a fix, the tech lead will respawn you with context from the issue file
+    - Do NOT poll ci-status yourself — the monitor owns that
 
 ## What NOT to do
 
 - Do NOT open a PR before merging `origin/main` into your branch
-- Do NOT move on to the next task while waiting for CI — wait, then self-merge
+- Do NOT wait for CI after opening a PR — terminate immediately
 - Do NOT use `git rebase` — use `git merge origin/main` instead
 - Do NOT resolve compiler source conflicts (`src/`) inline — create a `[CONFLICT]` priority task for a senior-developer (Opus)
 - Do NOT leave uncommitted changes on your branch

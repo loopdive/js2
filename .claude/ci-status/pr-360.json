@@ -1,0 +1,22 @@
+{
+  "pr": 360,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1435-class-strict-reserved",
+  "head_sha": "3a1e8b2ff48616449c1b1e6fff19d3764ea3dbb3",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26150893636",
+  "timestamp": "2026-05-20T09:14:53Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

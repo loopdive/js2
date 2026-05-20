@@ -1,0 +1,22 @@
+{
+  "pr": 402,
+  "conclusion": "success",
+  "head_branch": "issue-1493-nodejs-console-stderr",
+  "head_sha": "42f83a5e854fea51af2189e8f0ca92780f41a2e9",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26165070687",
+  "timestamp": "2026-05-20T15:22:07Z",
+  "pass": 28174,
+  "fail": 13715,
+  "compile_error": 1190,
+  "snapshot_delta": 6,
+  "net_per_test": 38,
+  "regressions": 44,
+  "regressions_real": 7,
+  "regressions_wasm_change": 7,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 37,
+  "improvements": 45,
+  "baseline_sha": "42f83a5e854fea51af2189e8f0ca92780f41a2e9",
+  "baseline_staleness_commits": 77,
+  "baseline_stale": true
+}

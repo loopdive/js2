@@ -23,10 +23,17 @@ jobs:
         run: |
           git fetch origin main
           if ! git merge-base --is-ancestor origin/main HEAD; then
-            echo "::error::Branch is missing commits from origin/main. Run 'git merge origin/main' and push again."
-            exit 1
+            missing_non_skip=$(git log HEAD..origin/main --oneline | grep -v '\[skip ci\]' | wc -l)
+            if [ "$missing_non_skip" -eq 0 ]; then
+              echo "✓ origin/main only has [skip ci] commits not in branch (auto-generated metadata, safe to skip)"
+              git log HEAD..origin/main --oneline
+            else
+              echo "::error::Branch is missing non-[skip ci] commits from origin/main. Run 'git merge origin/main' and push again."
+              exit 1
+            fi
+          else
+            echo "✓ origin/main is an ancestor of this branch"
           fi
-          echo "✓ origin/main is an ancestor of this branch"
 
       - uses: actions/setup-node@v6
         with:

@@ -79,12 +79,59 @@ describe("#1394 — class method-closure caching (identity invariant)", () => {
     expect((wasm as any).test()).toBe(1);
   });
 
-  // Deferred — see note above on dual-class-registration. Instance-side
-  // method access (`c.gen` / `c.asyncM` / `c.asyncGen`) returns null
-  // externref under this PR, so cross-kind instance-vs-prototype identity
-  // can't be observed yet. Proto-only identity for each kind is covered
-  // by the singleton-on-repeated-access test above.
-  it.todo("identity holds across method kinds — deferred to dual-reg fix");
+  // (#1394) Activated by the dual-reg bridge that landed in 4edc9d357 —
+  // each method kind (regular, generator, async, async-generator) now
+  // hits the same `${syntheticName}_${methodName}` cache global on both
+  // the instance and prototype access paths.
+  it("identity holds across method kinds (regular, gen, async, asyncGen)", async () => {
+    const wasm = await compileToWasm(`
+      class C {
+        m(): number { return 1; }
+        *g(): Generator<number> { yield 1; }
+        async a(): Promise<number> { return 1; }
+        async *ag(): AsyncGenerator<number> { yield 1; }
+      }
+      export function test(): number {
+        const c = new C();
+        if (c.m !== C.prototype.m) return 1;
+        if (c.g !== C.prototype.g) return 2;
+        if (c.a !== C.prototype.a) return 3;
+        if (c.ag !== C.prototype.ag) return 4;
+        return 0;
+      }
+    `);
+    expect((wasm as any).test()).toBe(0);
+  });
+
+  // (#1394) Cache identity must hold across element-access and dot-access
+  // spellings — `C.prototype['m'] === C.prototype.m` is the test262
+  // shape for computed method names (`class/elements/syntax/valid/grammar-*`).
+  it("C.prototype['m'] === C.prototype.m (element-access identity)", async () => {
+    const wasm = await compileToWasm(`
+      class C { m(): number { return 1; } }
+      export function test(): number {
+        if (C.prototype["m"] !== C.prototype.m) return 999;
+        return 1;
+      }
+    `);
+    expect((wasm as any).test()).toBe(1);
+  });
+
+  // (#1394) Inherited methods must resolve to the owning class's cache
+  // entry, not the subclass's — `(new D()).m === C.prototype.m` where
+  // D extends C and only C defines m.
+  it("inherited method: (new D()).m === C.prototype.m", async () => {
+    const wasm = await compileToWasm(`
+      class C { m(): number { return 1; } }
+      class D extends C {}
+      export function test(): number {
+        const d = new D();
+        if (d.m !== C.prototype.m) return 999;
+        return 1;
+      }
+    `);
+    expect((wasm as any).test()).toBe(1);
+  });
 
   it("two classes with same method name keep distinct identities", async () => {
     const wasm = await compileToWasm(`

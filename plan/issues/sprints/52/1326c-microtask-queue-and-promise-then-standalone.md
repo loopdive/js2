@@ -983,3 +983,24 @@ unchanged.
 - `test/language/expressions/await/async-await-interleaved.js` — await
   passthrough still works after .then plumbing
 
+
+## Suspended Work
+
+- **PR**: https://github.com/loopdive/js2wasm/pull/405
+- **Branch**: `issue-1326c-microtask-standalone`
+- **Worktree**: `/workspace/.claude/worktrees/issue-1326c-microtask-standalone/`
+- **HEAD SHA**: `29b8726c3cb1ed67540b81a765f600986e74030a`
+- **State**: ci-wait
+- **Done (Phase 1C-A)**:
+  - Replaced Phase 1A throwing stubs `emitMicrotaskEnqueue` / `emitDrainMicrotasks` with real Wasm bodies
+  - Two parallel WasmGC arrays (`funcref` + `externref` captures + `externref` args), lazy first-alloc, grow-by-doubling
+  - `__microtask_grow` / `__microtask_enqueue` / `__drain_microtasks` Wasm-defined helpers
+  - `__drain_microtasks` export (gated on queue actually being registered)
+  - WASI `_start` wrapper auto-appends drain call after entry
+  - `tests/issue-1326c.test.ts` — 4/4 passing; `tests/issue-1326.test.ts` updated to reflect new behavior
+- **Remaining (Phase 1C-B — separate PR)**:
+  - `emitStandalonePromiseThen` real body — synthesised continuation wrappers closing over user closure struct + chained $Promise
+  - `.then` call-site dispatch in `src/codegen/expressions/calls.ts`
+  - `$Promise.callbacks` field upgrade to typed pending-continuation list
+  - Acceptance criteria #2 (chained .then ordering) + #3 (rejection propagation)
+- **Resume**: when ci-status JSON arrives at `/workspace/.claude/ci-status/pr-405.json` with matching SHA, run `/dev-self-merge 405`. After merge, create issue #1326d (Phase 1C-B) referencing the Phase 1C-B marker left in `emitStandalonePromiseThen`'s throw.

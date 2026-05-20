@@ -2,7 +2,7 @@
 id: 1468
 sprint: 52
 title: "for-of/dstr: obj-ptrn-id-init undefined-key + array-elem-trlg iterator close"
-status: in-progress
+status: in-review
 created: 2026-05-09
 priority: medium
 feasibility: medium

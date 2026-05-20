@@ -2,7 +2,7 @@
 id: 1431
 sprint: 52
 title: "spec gap: assignment operators — destructuring completion, defaults, and compound side effects"
-status: in-progress
+status: done
 created: 2026-05-11
 updated: 2026-05-11
 priority: medium

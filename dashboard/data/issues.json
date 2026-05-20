@@ -1,14 +1,104 @@
 {
   "backlog": [
     {
-      "id": "1383",
-      "title": "narrower typeof-gated strict-equality fix (follow-up to closed PR #272 / #1380)",
+      "id": "1541",
+      "title": "Opt-in icu_normalizer (icu4x) for String.prototype.normalize",
+      "priority": "low",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1539",
+      "title": "Opt-in Wasm-native RegExp engine via regress (ES2018 syntax)",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1538",
+      "title": "Wasm-native JSON.parse and JSON.stringify (standalone, no host)",
       "priority": "medium",
       "feasibility": "medium",
       "depends_on": [],
-      "goal": "spec-completeness",
+      "goal": "standalone-wasm",
       "status": "backlog",
-      "sprint": ""
+      "sprint": "backlog"
+    },
+    {
+      "id": "1537",
+      "title": "Wasm-native number formatting (Ryū port): toString/toFixed/toPrecision/toExponential",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1536",
+      "title": "Wasm-native exception types: $Error WasmGC struct + throw / try_table / catch_ref",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1529",
+      "title": "codegen: 'illegal cast' umbrella at closure & destructuring parameter boundaries",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1527",
+      "title": "module-code: ambiguous-export & re-export tests fail with 'no test export'",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1524",
+      "title": "test262 harness: TypedArray `ctors` fixture not visible in resizable-buffer tests",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1523",
+      "title": "test262 harness: provide `$262` host-object API (createRealm / detachArrayBuffer / agent / global)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1522",
+      "title": "codegen: invalid Wasm binary at type-boundary coercion (extern/anyref + struct ref types)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
     },
     {
       "id": "1357",
@@ -129,16 +219,6 @@
       "sprint": ""
     },
     {
-      "id": "1052",
-      "title": "Array destructuring ignores user-overridden Array.prototype[Symbol.iterator]",
-      "priority": "low",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "test-infrastructure",
-      "status": "backlog",
-      "sprint": ""
-    },
-    {
       "id": "1029",
       "title": "Migrate to TypeScript 7.x (Go rewrite / typescript-go) when compiler API stabilizes",
       "priority": "low",
@@ -161,6 +241,19 @@
   ],
   "blocked": [
     {
+      "id": "1530",
+      "title": "wasi: Native Messaging host example (Chrome extension integration)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [
+        "1480",
+        "1481"
+      ],
+      "goal": "wasi-completeness",
+      "status": "blocked",
+      "sprint": "52"
+    },
+    {
       "id": "1373b",
       "title": "IR async Phase C: CPS lowering for await + async-return + async-throw",
       "priority": "medium",
@@ -170,7 +263,7 @@
       ],
       "goal": "ir-full-coverage",
       "status": "blocked",
-      "sprint": "51"
+      "sprint": "52"
     },
     {
       "id": "1166",
@@ -245,26 +338,176 @@
   ],
   "ready": [
     {
-      "id": "1395",
-      "title": "class static method descriptors: class identifier resolves to string_constant, not constructor object",
+      "id": "1554",
+      "title": "cli: --standalone should reject --allow-fs (logically mutually exclusive flags)",
+      "priority": "low",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1552",
+      "title": "spec gap: catch parameter destructuring (`try/dstr`) — share dstr-binding helper with function decls",
       "priority": "medium",
-      "feasibility": "hard",
+      "feasibility": "easy",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "51"
+      "sprint": "52"
     },
     {
-      "id": "1394",
-      "title": "class method-closure caching: C.prototype.method returns stable singleton closure",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [
-        "1388"
-      ],
+      "id": "1551",
+      "title": "spec gap: SuperCall — argument-list evaluation order, spread getter side-effects, uninitialized-this PutValue",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "51"
+      "sprint": "52"
+    },
+    {
+      "id": "1550",
+      "title": "spec gap: dstr-binding default initializer evaluated when value is non-undefined (`init-skipped` pattern)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1544",
+      "title": "for-of / for-await-of destructuring of iterator results throws illegal cast",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1543",
+      "title": "Async-generator method with destructured default params throws illegal cast instead of expected error",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1542",
+      "title": "Class method destructured-pattern param default not applied; throws \\\"Cannot destructure null\\\" instead",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "suspended",
+      "sprint": "52"
+    },
+    {
+      "id": "1540",
+      "title": "JSX runtime: bind _jsx/_jsxs/_Fragment as host import (default) and standalone stub",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [
+        "1531"
+      ],
+      "goal": "npm-library-support",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1531",
+      "title": "JSX syntax is not parsed when compiling .tsx/.jsx input",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1528",
+      "title": "spec gap: non-constructor TypeError — Promise.all / allSettled species and executor paths",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1526",
+      "title": "spec gap: BigInt + Number mixed arithmetic should throw spec TypeError, not host error",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1525",
+      "title": "spec gap: built-in coercion paths throw 'Cannot convert object to primitive value' eagerly",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1474",
+      "title": "host-independence: eliminate JS host RegExp for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1473",
+      "title": "host-independence: eliminate JS host error/exception ops for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1472",
+      "title": "host-independence: eliminate JS host object/property ops for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1471",
+      "title": "host-independence: eliminate JS host boxing/unboxing for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1399",
+      "title": "chore: fix 9 biome lint errors in src/runtime.ts",
+      "priority": "low",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": "null"
     },
     {
       "id": "1387",
@@ -274,27 +517,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "moved-to-s52",
-      "sprint": "51"
-    },
-    {
-      "id": "1382",
-      "title": "structural: Wasm closures not JS-callable from host imports — bridge gap",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "ir-full-coverage",
-      "status": "ready",
-      "sprint": "51"
-    },
-    {
-      "id": "1373",
-      "title": "IR: claim async functions (async/await through IR path)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "ir-full-coverage",
-      "status": "ready",
-      "sprint": "51"
+      "sprint": "52"
     },
     {
       "id": "1353",
@@ -513,38 +736,6 @@
       "feasibility": "medium",
       "depends_on": [],
       "goal": "npm-library-support",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1326c",
-      "title": "Async standalone Phase 1C: microtask queue + Promise.then chained-resolution (follow-up to #1326 Phase 1B)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [
-        "1326"
-      ],
-      "goal": "standalone-mode",
-      "status": "ready",
-      "sprint": "51"
-    },
-    {
-      "id": "1326",
-      "title": "Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host",
-      "priority": "low",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "standalone-mode",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1323",
-      "title": "Iterator protocol bridging: implement $IteratorResult struct in pure Wasm, eliminate host bridge",
-      "priority": "medium",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "standalone-mode",
       "status": "ready",
       "sprint": "50"
     },
@@ -862,16 +1053,6 @@
       "feasibility": "medium",
       "depends_on": [],
       "goal": "core-semantics",
-      "status": "ready",
-      "sprint": "45"
-    },
-    {
-      "id": "1095",
-      "title": "Eliminate `as unknown as Instr` casts — extend Instr union to cover all emitted opcodes",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "maintainability",
       "status": "ready",
       "sprint": "45"
     },
@@ -1824,29 +2005,59 @@
   ],
   "inprogress": [
     {
-      "id": "1381",
-      "title": "spec gap: String.prototype.{substring,slice,indexOf,search,charAt,charCodeAt,codePointAt,at,includes,startsWith,endsWith,trim,concat} edge cases (~128 fails)",
+      "id": "1534",
+      "title": "test: Web API host import unit tests (fetch, timers, localStorage, crypto.getRandomValues)",
       "priority": "medium",
-      "feasibility": "easy",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "browser-support",
+      "status": "in-progress",
+      "sprint": "52"
+    },
+    {
+      "id": "1533",
+      "title": "test: Node.js API host import unit tests (fs, crypto, process, console)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "in-progress",
+      "sprint": "52"
+    },
+    {
+      "id": "1532",
+      "title": "test: WASI syscall unit test suite (fd_write, environ_get, clock_time_get, fd_read, proc_exit)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "in-progress",
+      "sprint": "52"
+    },
+    {
+      "id": "1520",
+      "title": "docs: architectural comparison — Static Hermes (native) vs js2wasm (WasmGC AOT)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "developer-experience",
+      "status": "in-progress",
+      "sprint": "52"
+    },
+    {
+      "id": "1505",
+      "title": "spec audit: comprehensive ECMAScript implementation gap analysis",
+      "priority": "high",
+      "feasibility": "medium",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "in-progress",
-      "sprint": "51"
+      "sprint": "52"
     },
     {
       "id": "1378",
       "title": "spec gap: try/catch/finally — error type fidelity, finally completion override, dstr-binding (~85 fails)",
       "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "in-progress",
-      "sprint": "51"
-    },
-    {
-      "id": "1364",
-      "title": "spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails)",
-      "priority": "high",
       "feasibility": "medium",
       "depends_on": [],
       "goal": "spec-completeness",
@@ -1892,6 +2103,18 @@
       "goal": "spec-completeness",
       "status": "in-progress",
       "sprint": "50"
+    },
+    {
+      "id": "1326c",
+      "title": "Async standalone Phase 1C: microtask queue + Promise.then chained-resolution (follow-up to #1326 Phase 1B)",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [
+        "1326"
+      ],
+      "goal": "standalone-mode",
+      "status": "in-progress",
+      "sprint": "52"
     },
     {
       "id": "1325",
@@ -1944,17 +2167,710 @@
       "sprint": "42"
     }
   ],
-  "review": [],
+  "review": [
+    {
+      "id": "1519",
+      "title": "spec gap: `new` expression — non-literal spread + non-constructor TypeError + new.target via apply/call",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1518",
+      "title": "spec gap: Annex B.3.2 — sloppy-mode function-in-block hoisting (`var` shadow)",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1517",
+      "title": "spec gap: Array.fromAsync — ES2024 async-iteration constructor",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1516",
+      "title": "spec gap: GeneratorPrototype — this-value coercion + name/length/property descriptors",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1515",
+      "title": "spec gap: DataView — ToIndex(byteOffset), detached-buffer TypeError, BigInt setter coercion",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1514",
+      "title": "spec gap: Set.prototype.{union,intersection,difference,…} accept set-like protocol",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1513",
+      "title": "spec gap: Reflect — TypeError on non-object/Symbol target + abrupt-completion propagation",
+      "priority": "high",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1512",
+      "title": "spec gap: dynamic import — early SyntaxErrors for nested syntactic contexts",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1511",
+      "title": "spec gap: arguments object — mapped semantics, descriptors, trailing-comma length",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1510",
+      "title": "spec gap: for-await-of destructuring — await on IteratorStep + binding initialization",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1504",
+      "title": "browser: marshal compiled export return values (structs/arrays) to plain JS",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "browser-support",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1503",
+      "title": "browser: crypto.getRandomValues / crypto.randomUUID host imports",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "browser-support",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1502",
+      "title": "browser: localStorage / sessionStorage host imports with standalone fallback",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "browser-support",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1501",
+      "title": "browser: setTimeout/setInterval/clearTimeout/clearInterval host imports",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "browser-support",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1500",
+      "title": "browser: fetch() host import with Response bridge",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "browser-support",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1494",
+      "title": "nodejs: __dirname / __filename / import.meta.url for compiled modules",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1492",
+      "title": "nodejs: crypto.randomBytes / randomUUID host imports",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1490",
+      "title": "nodejs: runtime access to process.argv and process.env",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1484",
+      "title": "wasi: provide standalone setTimeout/setInterval via poll_oneoff (or fail loud)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "wasi-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1483",
+      "title": "wasi: route Date.now and performance.now to clock_time_get",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "wasi-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1482",
+      "title": "wasi: wire process.env to environ_get / environ_sizes_get",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "wasi-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1480",
+      "title": "wasi: console.error and console.warn should write to stderr (fd=2)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "wasi-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1470",
+      "title": "host-independence: eliminate JS host string ops for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1468",
+      "title": "for-of/dstr: obj-ptrn-id-init undefined-key + array-elem-trlg iterator close",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1467",
+      "title": "spec gap: Error / AggregateError / Symbol prototype protocol",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1466",
+      "title": "spec gap: Proxy + Reflect trap / operation fidelity",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1465",
+      "title": "spec gap: Promise.all / allSettled / any / race iterable + subclass fidelity",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1464",
+      "title": "spec gap: Iterator.prototype helpers + Iterator.zip / Iterator.concat (ES2025)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1463",
+      "title": "spec gap: Function.prototype.bind / toString / Symbol.hasInstance fidelity",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1462",
+      "title": "spec gap: Object.getOwnPropertyDescriptor + Object.create descriptor surface",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1461",
+      "title": "spec gap: Array.prototype.* called on array-like / exotic receivers",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1460",
+      "title": "spec gap: Object.defineProperty / defineProperties descriptor fidelity",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1456",
+      "title": "spec gap: private-reference assignment to readonly accessor / method throws TypeError",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1454",
+      "title": "spec gap: iterator protocol — error propagation and IteratorClose during destructuring",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1453",
+      "title": "spec gap: per-iteration fresh let/const binding in for-statements",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1452",
+      "title": "spec gap: for-loop init binding patterns — declared names not visible in loop body",
+      "priority": "high",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1451",
+      "title": "spec gap: class/object-literal method parameter destructuring with non-trivial defaults",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1450",
+      "title": "spec gap: NamedEvaluation — anonymous fn/class names from binding identifiers in destructuring defaults",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1445",
+      "title": "spec gap: String.raw + String.prototype.* argument coercion (ToInteger / ToPrimitive)",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1444",
+      "title": "spec gap: RegExp named groups (unmatched + duplicate) and lookbehind edge cases",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1443",
+      "title": "spec gap: String.prototype.replace/replaceAll/match/search delegate to argument's Symbol.* method",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1442",
+      "title": "spec gap: String.prototype methods — RequireObjectCoercible + ToString on this value",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1441",
+      "title": "spec gap: String.prototype.split — Array result shape + String wrapper receivers",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1440",
+      "title": "spec gap: Date setters ToNumber coercion + Invalid Date (NaN) propagation",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1439",
+      "title": "spec gap: RegExp.prototype Symbol.* protocol methods (replace/match/split/matchAll/search)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1438",
+      "title": "spec gap: Map, WeakMap, and WeakSet residual collection semantics",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1436",
+      "title": "spec gap: global object descriptors and global function coercion/URI semantics",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1435",
+      "title": "spec gap: lexical grammar and syntax-directed early errors",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1433",
+      "title": "spec gap: DisposableStack and AsyncDisposableStack lifecycle semantics",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": "52"
+    },
+    {
+      "id": "1383",
+      "title": "narrower typeof-gated strict-equality fix (follow-up to closed PR #272 / #1380)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "review",
+      "sprint": ""
+    },
+    {
+      "id": "1326",
+      "title": "Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host",
+      "priority": "low",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "standalone-mode",
+      "status": "review",
+      "sprint": "50"
+    },
+    {
+      "id": "1323",
+      "title": "Iterator protocol bridging: implement $IteratorResult struct in pure Wasm, eliminate host bridge",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "standalone-mode",
+      "status": "review",
+      "sprint": "50"
+    },
+    {
+      "id": "1095",
+      "title": "Eliminate `as unknown as Instr` casts — extend Instr union to cover all emitted opcodes",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "maintainability",
+      "status": "review",
+      "sprint": "45"
+    },
+    {
+      "id": "1052",
+      "title": "Array destructuring ignores user-overridden Array.prototype[Symbol.iterator]",
+      "priority": "low",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "test-infrastructure",
+      "status": "review",
+      "sprint": ""
+    }
+  ],
   "done": [
     {
+      "id": "1535",
+      "title": "research: JS host dependency audit — identify gaps and evaluate standalone Wasm/JS replacements",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1521",
+      "title": "test262 CI speedup: cross-PR cache sharing + path-scoped test selection",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1493",
+      "title": "nodejs: console.error / console.warn → stderr (fd=2) in WASI mode",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1491",
+      "title": "nodejs: fs.readFileSync/writeFileSync as JS-host imports (non-WASI)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1481",
+      "title": "wasi: support reading stdin via fd_read",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "wasi-completeness",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1455",
+      "title": "spec gap: subclassing builtins — instanceof and prototype chain (class Sub extends Map / Float32Array / WeakMap / …)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1437",
+      "title": "spec gap: Math numeric edge cases beyond random source",
+      "priority": "low",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1434",
+      "title": "spec gap: ToNumber/ToNumeric coercion and unary operator edge cases",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1432",
+      "title": "spec gap: parameter lists — rest/destructuring iterator semantics and default initializers",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1431",
+      "title": "spec gap: assignment operators — destructuring completion, defaults, and compound side effects",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1400",
+      "title": "npm: compile ESLint package entry to valid Wasm",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1398",
+      "title": "report: edition filter on category table — per-category edition breakdown",
+      "priority": "low",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1397",
+      "title": "codegen: static method dispatch ignores runtime property reassignment on typed receivers",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
       "id": "1396",
-      "title": "for-of/dstr + assignment/dstr default initializers don't fire on OOB extenref-array reads",
+      "title": "fix: for-of/dstr default initializers don't fire on OOB extern-array reads — null vs undefined sentinel",
       "priority": "high",
       "feasibility": "medium",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "done",
       "sprint": "51"
+    },
+    {
+      "id": "1395",
+      "title": "class static method descriptors: class identifier resolves to string_constant, not constructor object",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "51"
+    },
+    {
+      "id": "1394",
+      "title": "class method-closure caching: C.prototype.method returns stable singleton closure",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [
+        "1388"
+      ],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
     },
     {
       "id": "1393",
@@ -2047,6 +2963,26 @@
       "sprint": "51"
     },
     {
+      "id": "1382",
+      "title": "structural: Wasm closures not JS-callable from host imports — bridge gap",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "ir-full-coverage",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1381",
+      "title": "spec gap: String.prototype.{substring,slice,indexOf,search,charAt,charCodeAt,codePointAt,at,includes,startsWith,endsWith,trim,concat} edge cases (~128 fails)",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "51"
+    },
+    {
       "id": "1380",
       "title": "spec gap: equality (==, !=, ===, !==) — Symbol/BigInt coercion + ReferenceError propagation (~55 fails)",
       "priority": "medium",
@@ -2105,6 +3041,16 @@
       "goal": "ir-full-coverage",
       "status": "done",
       "sprint": "51"
+    },
+    {
+      "id": "1373",
+      "title": "IR: claim async functions (async/await through IR path)",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "ir-full-coverage",
+      "status": "done",
+      "sprint": "52"
     },
     {
       "id": "1372",
@@ -2195,6 +3141,16 @@
       "goal": "spec-completeness",
       "status": "done",
       "sprint": "51"
+    },
+    {
+      "id": "1364",
+      "title": "spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
     },
     {
       "id": "1363",

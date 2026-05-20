@@ -15,6 +15,15 @@ test262_fail: 210
 ---
 # #1116 -- Promise resolution and async error handling (210 tests)
 
+## Joint architect spec (S53)
+
+This issue is one of five in the S53 async cluster. The unified architecture,
+phase ordering, file map, and risk register live in
+`plan/issues/sprints/53/async-cluster-architect-spec.md`. The v2 work-item
+plan below is adopted **verbatim** by that spec as **Phase 1B**. Read the
+joint spec for cross-issue context (especially the v1-regression discipline
+rule — type overrides only at `compileVariableStatement`, never at hoisting).
+
 ## Problem
 
 210 tests fail with promise_error. These tests involve Promise resolution, async/await error handling, and async generator interactions. The error category indicates the test's async completion callback was never called or was called with an error.

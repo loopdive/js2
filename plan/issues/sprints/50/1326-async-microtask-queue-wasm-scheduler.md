@@ -2,7 +2,7 @@
 id: 1326
 sprint: 50
 title: "Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host"
-status: ready
+status: in-review
 created: 2026-05-07
 updated: 2026-05-07
 priority: low

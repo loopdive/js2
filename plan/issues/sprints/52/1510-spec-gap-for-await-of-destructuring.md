@@ -2,7 +2,7 @@
 id: 1510
 sprint: 52
 title: "spec gap: for-await-of destructuring — await on IteratorStep + binding initialization"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: hard

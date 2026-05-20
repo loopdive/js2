@@ -32,6 +32,9 @@ Compile a TypeScript file to WebAssembly (GC proposal).
 Options:
   -o, --out <dir>   Output directory (default: same as input)
   --target <t>      Compilation target: gc (default), linear, wasi
+  --allow-fs        Allow node:fs JS-host imports (readFileSync, writeFileSync)
+                    for non-WASI targets (#1491). Off by default to prevent
+                    accidental capability leakage.
   --wat             Emit only WAT (no binary)
   --no-wat          Skip WAT output
   --no-dts          Skip .d.ts output
@@ -69,6 +72,7 @@ let watOnly = false;
 let optimize: boolean | 1 | 2 | 3 | 4 = false;
 let target: "gc" | "linear" | "wasi" | undefined;
 let emitWit = false;
+let allowFs = false;
 const defines: Record<string, string> = {};
 
 for (let i = 0; i < args.length; i++) {
@@ -91,6 +95,8 @@ for (let i = 0; i < args.length; i++) {
     emitDts = false;
   } else if (arg === "--wit") {
     emitWit = true;
+  } else if (arg === "--allow-fs") {
+    allowFs = true;
   } else if (arg === "-O" || arg === "--optimize") {
     optimize = true;
   } else if (/^-O[1-4]$/.test(arg)) {
@@ -147,6 +153,7 @@ const result = compile(source, {
   ...(optimize ? { optimize } : {}),
   ...(target ? { target } : {}),
   ...(emitWit ? { wit: true } : {}),
+  ...(allowFs ? { allowFs: true } : {}),
   ...(Object.keys(defines).length > 0 ? { define: defines } : {}),
 });
 

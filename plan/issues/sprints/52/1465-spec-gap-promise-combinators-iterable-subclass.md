@@ -2,7 +2,7 @@
 id: 1465
 sprint: 52
 title: "spec gap: Promise.all / allSettled / any / race iterable + subclass fidelity"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium

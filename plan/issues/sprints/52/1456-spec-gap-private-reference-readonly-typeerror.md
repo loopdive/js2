@@ -2,7 +2,7 @@
 id: 1456
 sprint: 52
 title: "spec gap: private-reference assignment to readonly accessor / method throws TypeError"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium

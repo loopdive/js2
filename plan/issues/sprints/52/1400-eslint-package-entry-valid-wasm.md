@@ -2,9 +2,9 @@
 id: 1400
 sprint: 52
 title: "npm: compile ESLint package entry to valid Wasm"
-status: ready
+status: done
 created: 2026-05-11
-updated: 2026-05-11
+updated: 2026-05-20
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -140,3 +140,79 @@ tracks current progress:
 3. Fix the `Config_new` duplicate `extern.convert_any` validation bug.
 4. Unskip Tier 1d, then Tier 1e, and record any newly exposed runtime blocker as
    a follow-up only if it is outside this milestone.
+
+## Partial Resolution — Sprint 52 / PR (Config_new fix)
+
+This PR resolves **Missing piece #3** (the `Config_new` duplicate
+`extern.convert_any` validation bug). The other three missing pieces
+(package `exports` resolution, CJS class export linkage, Tier 1d/1e
+unskip) are deferred to follow-up issues because they each surface
+independent next blockers.
+
+### Root cause
+
+The single-module pipeline (`generateModule` in `src/codegen/index.ts`)
+invokes `fixupExternConvertAny(ctx)` AFTER `stackBalance(mod)` at line
+1053 specifically to scrub redundant / invalid `extern.convert_any`
+ops. The multi-module pipeline (`generateMultiModule`, used by
+`compileProject` for CJS / `.js` graphs) called `stackBalance(mod)` but
+**never invoked `fixupExternConvertAny`** — so when
+`fixCallArgTypesInBody` walked backward from a multi-arg host call
+(`__extern_set(externref, externref, externref)`) and queued multiple
+coercion insertions per pass, the resulting 2–4 consecutive
+`extern.convert_any` ops survived all the way to the binary.
+
+The bug surfaces because `extern.convert_any` requires an `anyref`
+input — `externref` is NOT a subtype of `anyref`. So the second
+`fb 1b` after the first one fails Wasm validation with:
+
+```text
+extern.convert_any[0] expected type anyref,
+  found extern.convert_any of type externref @+...
+```
+
+### Fix
+
+Mirror the single-module pipeline by calling `fixupExternConvertAny(ctx)`
+after `stackBalance(mod)` in `generateMultiModule` (`src/codegen/index.ts`
+~line 2951). The existing late-fixup pass already implements the correct
+removal logic — it just wasn't being invoked on the multi-module path.
+
+### Regression coverage
+
+`tests/issue-1400.test.ts` pins three scenarios:
+
+1. Minimal reproducer: `this.r = c.a[x]` in a class constructor.
+2. Config-shaped constructor with destructuring + chained accesses.
+3. Binary-level invariant: scans the produced binary for the
+   `fb 1b fb 1b` byte signature (two consecutive `extern.convert_any`)
+   and fails if any function body contains it.
+
+### Verified
+
+- `tests/issue-1400.test.ts` — 3/3 passing.
+- `tests/stress/eslint-tier1.test.ts` — Tier 1a/1b/1c still green; 1d/1e
+  still skipped (next blockers below).
+- Spot-checked equivalence tests (class / object / closure / array
+  prototype / nested classes / IR slice-4 classes) — all green.
+
+### Next blockers (follow-up issues recommended)
+
+With the duplicate-`extern.convert_any` bug gone, `compileProject` on
+`eslint/lib/config/config.js` and `eslint/lib/linter/linter.js` now
+exposes further validation errors that were previously masked by
+`Config_new` failing first:
+
+- `config.js` direct compile fails inside
+  `__obj_meth_tramp___anon_0_validate_16` with
+  `not enough arguments on the stack for call (need 2, got 1)`.
+- `linter.js` direct compile fails inside `Linter_verifyAndFix` with
+  `f64.eq[0] expected type f64, found call of type i32`.
+
+Both should be filed as their own sprint-52/53 issues so they can be
+debugged with the same minimal-reproducer methodology used for #1400.
+
+The remaining acceptance criteria (bare-package `Linter` resolution,
+CJS class export linkage, Tier 1d/1e) depend on resolving these next
+blockers AND on the resolver / CJS-class-linkage work in items #1 and
+#2 of this issue — neither of which is in scope for this PR.

@@ -2,7 +2,7 @@
 id: 1491
 sprint: 52
 title: "nodejs: fs.readFileSync/writeFileSync as JS-host imports (non-WASI)"
-status: in-progress
+status: done
 created: 2026-05-20
 priority: medium
 feasibility: medium
@@ -133,3 +133,20 @@ and verify the output matches.
 - `src/cli.ts` — add `--allow-fs` flag.
 - `src/codegen/index.ts` — propagate `allowFs` through `CompileOptions`.
 - `tests/equivalence.test.ts` — new "fs host imports" block.
+
+## Suspended Work
+
+- **PR**: https://github.com/loopdive/js2wasm/pull/399
+- **Branch**: `issue-1491-nodejs-fs`
+- **Worktree**: `/workspace/.claude/worktrees/issue-1491-nodejs-fs/`
+- **HEAD SHA**: `19793b8555c1b698b9a747c7edd97b2bde1fd195`
+- **State**: ci-wait
+- **Done**:
+  - `node_builtin_fn` `ImportIntent` variant in `src/index.ts`
+  - Runtime resolver in `src/runtime.ts` binds `require(moduleName)[name]`
+  - Classify `__node_fs_*` in `src/compiler/import-manifest.ts`
+  - Non-WASI call-site dispatch in `src/codegen/expressions/calls.ts` (uses `ensureLateImport` so export indices stay aligned)
+  - `--allow-fs` CLI flag + `CompileOptions.allowFs` threaded through `CodegenContext`
+  - `wasiNodeFsFuncs` populated for both WASI and non-WASI compiles
+  - `tests/issue-1491.test.ts` — 5/5 passing locally
+- **Resume**: when ci-status JSON arrives at `/workspace/.claude/ci-status/pr-399.json` with matching SHA, run `/dev-self-merge 399`.

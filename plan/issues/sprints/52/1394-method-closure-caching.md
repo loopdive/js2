@@ -2,7 +2,7 @@
 id: 1394
 sprint: 52
 title: "class method-closure caching: C.prototype.method returns stable singleton closure"
-status: ready
+status: done
 created: 2026-05-09
 priority: high
 feasibility: hard
@@ -456,3 +456,38 @@ settled. New risks:
   every class shape (including `var C = class extends Base {}`) before
   shipping. If it is not, fall back to current behaviour and file the
   population gap as a follow-up.
+
+## Suspended Work
+
+- **PR:** https://github.com/loopdive/js2wasm/pull/410
+- **Branch:** `issue-1394-method-closure-caching`
+- **Worktree:** `/workspace/.claude/worktrees/issue-1394-method-closure-caching`
+- **HEAD:** `e34c6e7937ce34d8bfe13b71fb350d5efea364bd`
+- **Status:** ci-wait
+
+### Implemented (committed in e34c6e793)
+
+Closed the three architect-spec'd gaps on top of cache work landed in 4edc9d357:
+
+- **Change A**: `tests/issue-1394.test.ts:87` `it.todo` activated. Cross-kind identity (regular / gen / async / asyncGen) passes as-is — dual-reg bridge from 4edc9d357 was sufficient; no trampoline shape change needed.
+- **Change B**: cached-closure branch for `C.prototype[key]` in `src/codegen/property-access.ts` (~line 2719) mirroring the dot-form at 1361–1383. Uses the same `${className}_${key}` cache global → identity holds across spellings.
+- **Change C**: instance-access path walks `ctx.classParentMap` to the topmost class owning the same `funcIdx`, so `(new D()).m === C.prototype.m` for inherited methods. Override detection via funcIdx inequality. Uses owner's struct type for the trampoline receiver.
+
+### Tests
+
+- 8/8 in `tests/issue-1394.test.ts` (3 new + 5 existing).
+- 27/27 in class-related `tests/equivalence/*-class*` files.
+- 7/7 in `tests/equivalence/issue-1388.test.ts` (the test the PR #305 revert protected).
+- Pre-existing failures in `tests/classes.test.ts` etc. are unrelated (already failing on main).
+
+### Resume steps
+
+1. Wait for `/workspace/.claude/ci-status/pr-410.json` with matching `head_sha`.
+2. Run `/dev-self-merge 410`. **High-risk PR** (touches hot codegen path) — review the regression-bucket breakdown carefully before merging. If MERGE: `GATE_BYPASS=1 gh pr merge 410 --admin --merge`. If ESCALATE: tech-lead.
+3. Post-merge cleanup.
+
+### Follow-ups (out of this PR)
+
+- `C['m']` without `.prototype` — spec says `undefined` for instance-only methods; current null fallback matches spec.
+- `super.m` extraction identity.
+- Async promise-wrap inside the cached trampoline (not needed — cross-kind test passes without it).

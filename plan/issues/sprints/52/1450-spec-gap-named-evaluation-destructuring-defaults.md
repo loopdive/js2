@@ -2,7 +2,7 @@
 id: 1450
 sprint: 52
 title: "spec gap: NamedEvaluation — anonymous fn/class names from binding identifiers in destructuring defaults"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium

@@ -157,17 +157,22 @@ free_bar() {
   }'
 }
 
-# Agent summary (only on main workspace — state counts from agent-status/*.json)
+# Agent summary (only on tech-lead/main — state counts from agent-status/*.json)
 # Shows: Nactive Mci-wait, colored by freshness via last_seen heartbeat where available.
-if [ -z "$in_worktree" ] && [ -d "/workspace/.claude/agent-status" ]; then
+if [ -z "$in_worktree" ] && [ "$branch" = "main" ] && [ -d "/workspace/.claude/agent-status" ]; then
   _now=$(date +%s)
   _n_active=0; _n_ciwait=0; _n_stale=0
   for _f in /workspace/.claude/agent-status/*.json; do
     [ -f "$_f" ] || continue
+    [ "$(basename "$_f")" = "tech-lead.json" ] && continue
     _state=$(jq -r '.state // empty' "$_f" 2>/dev/null)
     [ -z "$_state" ] && continue
-    # Freshness: prefer last_seen heartbeat; fall back to "not stale" if no heartbeat yet
+    # Freshness: prefer last_seen heartbeat; fall back to since if no heartbeat written yet
     _ls=$(jq -r '.last_seen // empty' "$_f" 2>/dev/null)
+    if [ -z "$_ls" ]; then
+      _ls=$(jq -r '.since // empty' "$_f" 2>/dev/null)
+      case "$_ls" in *T*Z) _ls=$(date -d "$_ls" +%s 2>/dev/null || echo "") ;; esac
+    fi
     _fresh=1
     if [ -n "$_ls" ]; then
       _age=$(( _now - _ls ))
@@ -183,14 +188,14 @@ if [ -z "$in_worktree" ] && [ -d "/workspace/.claude/agent-status" ]; then
   done
   _total=$(( _n_active + _n_ciwait + _n_stale ))
   if [ "$_total" -gt 0 ]; then
-    [ "$_n_active" -gt 0 ] && printf ' \033[00;32m%d↻\033[00m' "$_n_active"
-    [ "$_n_ciwait" -gt 0 ] && printf ' \033[00;33m%d⟳\033[00m' "$_n_ciwait"
-    [ "$_n_stale"  -gt 0 ] && printf ' \033[00;90m%d?\033[00m'  "$_n_stale"
+    [ "$_n_active" -gt 0 ] && printf ' \033[00;32m%d▶\033[00m' "$_n_active"
+    [ "$_n_ciwait" -gt 0 ] && printf ' \033[00;33m%d⏸\033[00m' "$_n_ciwait"
+    [ "$_n_stale"  -gt 0 ] && printf ' \033[00;90m%d✕\033[00m'  "$_n_stale"
   fi
 fi
 
-# Sprint progress bar (only on main workspace, not in worktrees)
-if [ -z "$in_worktree" ]; then
+# Sprint progress bar, idle indicator, days bar (only on tech-lead/main)
+if [ -z "$in_worktree" ] && [ "$branch" = "main" ]; then
   sprint_n=""
   sprint_done=0
   sprint_total=0
@@ -275,44 +280,6 @@ if [ -z "$in_worktree" ]; then
       empty_part  = substr(bar, filled + 1)
       printf " \033[%s;%sm%s\033[48;5;237;37m%s\033[00m", fill, fg, filled_part, empty_part
     }' /dev/null
-  fi
-  # Agent activity bar: busy (active) vs total agents
-  agent_status_dir="/workspace/.claude/agent-status"
-  if [ -d "$agent_status_dir" ]; then
-    now_sec=$(date +%s)
-    total_agents=0
-    busy_agents=0
-    for f in "$agent_status_dir"/*.json; do
-      [ -f "$f" ] || continue
-      since=$(jq -r '.since // 0' "$f" 2>/dev/null)
-      state=$(jq -r '.state // empty' "$f" 2>/dev/null)
-      # since may be an ISO string in some files; convert to epoch or default to 0
-      case "$since" in
-        *T*Z) since=$(date -d "$since" +%s 2>/dev/null || echo 0) ;;
-        ''|null) since=0 ;;
-      esac
-      age=$((now_sec - since))
-      [ "$age" -gt 10800 ] && continue  # skip stale (>3h)
-      total_agents=$((total_agents + 1))
-      [ "$state" = "active" ] && busy_agents=$((busy_agents + 1))
-    done
-    if [ "$total_agents" -gt 0 ]; then
-      awk -v busy="$busy_agents" -v total="$total_agents" 'BEGIN {
-        pct = busy * 100 / total
-        if (pct >= 67)      { fill=42;         fg=30 }
-        else if (pct >= 33) { fill=43;         fg=30 }
-        else                { fill="48;5;196"; fg=37 }
-        width = 10
-        filled = int(pct * width / 100)
-        label = sprintf(" %d/%d busy", busy, total)
-        bar = ""
-        for (i = 0; i < width; i++) bar = bar " "
-        bar = label substr(bar, length(label) + 1)
-        filled_part = substr(bar, 1, filled)
-        empty_part  = substr(bar, filled + 1)
-        printf " \033[%s;%sm%s\033[48;5;237;37m%s\033[00m", fill, fg, filled_part, empty_part
-      }' /dev/null
-    fi
   fi
 fi
 if [ -n "$precompiling" ]; then

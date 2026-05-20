@@ -2,7 +2,7 @@
 id: 1513
 sprint: 52
 title: "spec gap: Reflect — TypeError on non-object/Symbol target + abrupt-completion propagation"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: easy

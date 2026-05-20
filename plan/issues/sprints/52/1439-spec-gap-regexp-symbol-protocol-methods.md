@@ -2,7 +2,7 @@
 id: 1439
 sprint: 52
 title: "spec gap: RegExp.prototype Symbol.* protocol methods (replace/match/split/matchAll/search)"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium
