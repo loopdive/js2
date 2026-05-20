@@ -1,0 +1,23 @@
+{
+  "pr": 441,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "issue-1373b-ir-async-cps",
+  "head_sha": "20f57ccc33c67a0acc4248076d0ad10515a23873",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/441",
+  "timestamp": "2026-05-20T21:55:09Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

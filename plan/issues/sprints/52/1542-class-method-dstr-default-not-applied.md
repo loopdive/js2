@@ -1,14 +1,47 @@
 ---
 id: 1542
 title: "Class method destructured-pattern param default not applied; throws \"Cannot destructure null\" instead"
-status: ready
+status: suspended
 created: 2026-05-20
 parent: 820
 priority: high
-feasibility: medium
+feasibility: hard
 goal: test262-conformance
 test262_fail: 134
 ---
+
+## Suspended Work
+
+**Suspended**: 2026-05-20 by dev-equiv-tests after smoke-testing.
+
+**Worktree**: `/workspace/.claude/worktrees/issue-1542-class-method-dstr-default` (branch
+`issue-1542-class-method-dstr-default`). Clean — no commits.
+
+**Status**: Minimal repros all PASS on current main:
+- `method({ x = 1 } = {})` → 1 ✓
+- `method([,] = g())` with `function* g() { yield; }` → "ok" ✓
+- Side-effect tracking with `let first/second` → matches JS ✓
+- Private method `#m([,] = g())` ✓
+- Static method `static m({ x = 5 } = { x: 10 })` ✓
+
+But the baseline still shows 102+ failures (`Cannot destructure 'null' or 'undefined'`
+across `C_method`, `C___priv_method`, `__anonClass_0___priv_method`). The failures
+must require specific test262-harness shape that the simple repros don't trigger.
+
+**Hand-off notes for senior-developer**:
+- Architect spec at line 105+ proposes a `coerceType` branch for externref → vec
+  via `__array_from_iter`. The fall-through at line 1019-1048 of
+  `src/codegen/type-coercion.ts` is where opaque externrefs lose their iterable
+  nature (today emits `ref.null` in the else of `ref.test`).
+- Need to compile actual failing test262 file shape (with harness wrap) and
+  trace the param-default code path to find the bug.
+- One incidental observation while probing: array-elision `[,]` over a generator
+  appears to advance the iterator one extra time (second=1 vs expected 0). This
+  may or may not be a related bug.
+
+Reprioritized to `feasibility: hard` because reproduction requires harness
+shape; the architect's proposed `coerceType` change is the right hypothesis but
+needs validation against the actual failing tests.
 
 # #1542 — Class method destructured-pattern param default not applied
 
