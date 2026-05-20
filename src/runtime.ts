@@ -4704,25 +4704,68 @@ assert._isSameValue = isSameValue;
     case "extern_set":
       return _safeSet;
     case "host_eq":
-      // #1065 — strict equality for two externref operands that the GC path
-      // could not compare via ref.eq (e.g. host functions like `Array === Array`).
-      return (a: any, b: any) => (a === b ? 1 : 0);
     case "host_loose_eq":
-      // #1134 — loose equality for two externref operands (§7.2.15).
-      // Handles null == undefined → true and other JS coercion rules.
-      // eslint-disable-next-line eqeqeq
-      return (a: any, b: any) => (a == b ? 1 : 0);
-    case "same_value_zero":
+    case "same_value_zero": {
+      // (#1352) Normalise a wasmGC opaque struct to a string primitive when its
+      // ToPrimitive("string") yields a string, so a wasmGC string struct with
+      // content "42" compares equal to a V8 externref string "42" under JS
+      // strict / loose equality. Returns the original value when normalisation
+      // is not applicable (non-object, non-wasm-struct, or ToPrimitive yields
+      // a non-string / throws).
+      const _normalizeForHostEq = (v: any): any => {
+        if (v == null) return v;
+        if (typeof v !== "object") return v;
+        if (!_isWasmStruct(v)) return v;
+        try {
+          const prim = _toPrimitive(v, "string", callbackState);
+          if (typeof prim === "string") return prim;
+        } catch {
+          // ToPrimitive threw — fall through and return original.
+        }
+        return v;
+      };
+      if (intent.type === "host_eq") {
+        // #1065 — strict equality for two externref operands that the GC path
+        // could not compare via ref.eq (e.g. host functions like `Array === Array`).
+        // #1352 — normalise wasmGC opaque operands to string primitives first.
+        return (a: any, b: any) => {
+          if (a === b) return 1;
+          const na = _normalizeForHostEq(a);
+          const nb = _normalizeForHostEq(b);
+          return na === nb ? 1 : 0;
+        };
+      }
+      if (intent.kind === "host_loose_eq") {
+        // #1134 — loose equality for two externref operands (§7.2.15).
+        // Handles null == undefined → true and other JS coercion rules.
+        // #1352 — normalise wasmGC opaque operands first.
+        return (a: any, b: any) => {
+          // eslint-disable-next-line eqeqeq
+          if (a == b) return 1;
+          const na = _normalizeForHostEq(a);
+          const nb = _normalizeForHostEq(b);
+          // eslint-disable-next-line eqeqeq
+          return na == nb ? 1 : 0;
+        };
+      }
+      // same_value_zero
       // #1360 — SameValueZero comparison (§7.2.11).
       // Same as Strict Equality except NaN === NaN is true.
       // +0 and -0 compare equal (unlike SameValue / Object.is).
       // Used by Array.prototype.includes for array-like receivers.
+      // #1352 — normalise wasmGC opaque operands first.
       return (a: any, b: any) => {
         if (a === b) return 1;
         // eslint-disable-next-line no-self-compare
         if (typeof a === "number" && typeof b === "number" && a !== a && b !== b) return 1;
+        const na = _normalizeForHostEq(a);
+        const nb = _normalizeForHostEq(b);
+        if (na === nb) return 1;
+        // eslint-disable-next-line no-self-compare
+        if (typeof na === "number" && typeof nb === "number" && na !== na && nb !== nb) return 1;
         return 0;
       };
+    }
     case "date_new":
       return () => new Date();
     case "date_now":
