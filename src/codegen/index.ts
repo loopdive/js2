@@ -6256,7 +6256,19 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
       // method's typeIdx flips between the two, breaking trampolines.
       const retType = ctx.checker.getReturnTypeOfSignature(sig);
       const retStr = retType ? ctx.checker.typeToString(retType) : "void";
-      methodSigParts.push(`${prop.name}#${sig.parameters.length}->${retStr}`);
+      // (#1557) Prefer the AST MethodDeclaration's parameter count over
+      // the TS callable signature's. For JS files typed via JSDoc like
+      // ESLint's flat-config-schema (`@property {Function|string} validate`),
+      // TS infers the same callable signature for every `validate(...)` method
+      // regardless of the actual AST parameter count — so `validate()` and
+      // `validate(value)` literals hash to the same anon struct, then their
+      // method bodies overwrite each other's typeIdx at the shared funcMap
+      // entry. Hashing on the AST arity keeps differently-shaped literals
+      // in distinct anon structs (and thus distinct placeholder funcs).
+      const propDecl = prop.valueDeclaration;
+      const astArity =
+        propDecl && ts.isMethodDeclaration(propDecl) ? propDecl.parameters.length : sig.parameters.length;
+      methodSigParts.push(`${prop.name}#${astArity}->${retStr}`);
     }
   }
 
@@ -6319,16 +6331,25 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     if (ctx.funcMap.has(fullName)) continue; // already registered
 
     const sig = callSigs[0]!;
-    // Build parameter types: self (ref $structTypeIdx) + declared params
+    // Build parameter types: self (ref $structTypeIdx) + declared params.
+    // (#1557) Iterate the MethodDeclaration's AST parameters rather than the
+    // TS callable signature's. The AST is the authoritative source for the
+    // arity that literals.ts will compile the body against — for JS files
+    // typed via JSDoc unions like `@property {Function|string} validate`,
+    // sig.parameters can disagree with the AST and produce a placeholder
+    // whose param count doesn't match the eventual method body, leaving
+    // any trampoline emitted between the placeholder and the body
+    // misaligned (need N, got N-k).
     const methodParams: ValType[] = [{ kind: "ref", typeIdx }];
-    for (const param of sig.parameters) {
-      const paramDecl = param.valueDeclaration;
-      if (paramDecl) {
-        const pt = ctx.checker.getTypeAtLocation(paramDecl);
-        methodParams.push(resolveWasmType(ctx, pt));
-      } else {
-        methodParams.push({ kind: "f64" });
+    for (const param of decl.parameters) {
+      const pt = ctx.checker.getTypeAtLocation(param);
+      let paramType = resolveWasmType(ctx, pt);
+      // Match literals.ts widening: optional or defaulted ref params widen
+      // to ref_null so callers can pass ref.null sentinel for "use default".
+      if ((param.initializer || param.questionToken) && paramType.kind === "ref") {
+        paramType = { kind: "ref_null", typeIdx: (paramType as { kind: "ref"; typeIdx: number }).typeIdx };
       }
+      methodParams.push(paramType);
     }
     // Check if this is a generator method (*method() { ... })
     const isGenMethod = ts.isMethodDeclaration(decl) && decl.asteriskToken !== undefined;

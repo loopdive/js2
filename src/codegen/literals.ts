@@ -915,6 +915,83 @@ export function compileObjectLiteralForStruct(
     return null;
   }
 
+  // (#1557) Per-literal method fork: when struct dedup collapses multiple
+  // literals with differently-shaped methods into the same anon struct
+  // (e.g. ESLint's flat-config-schema, where many `{merge, validate}`
+  // schemas share a `ObjectPropertySchema`-shaped TS type via JSDoc unions
+  // like `@property {Function|string} validate`, but the actual AST methods
+  // differ in arity — `validate(value)` vs `validate()`), the pre-pass
+  // placeholder registered by `ensureStructForType` is shared across all
+  // of them. If a previous literal's body is already in the placeholder,
+  // this literal's trampoline (emitted next in the field-fill loop below
+  // via `emitObjectMethodAsClosure`) would reference the wrong signature;
+  // then this literal's body compile would overwrite the previous body —
+  // corrupting trampolines for both.
+  //
+  // Fork the placeholder when needed: allocate a fresh funcIdx whose
+  // signature and (later) body are tied to THIS literal's methods, and
+  // re-point `funcMap[fullName]` so both the trampoline emitted in the
+  // field-fill loop and the body compiled in the method-body loop further
+  // down reference the fresh func. The previous funcIdx remains valid for
+  // any caller that already captured it (its body stays intact).
+  for (const prop of expr.properties) {
+    if (!ts.isMethodDeclaration(prop) || !prop.name) continue;
+    let forkMethodName: string | undefined;
+    if (ts.isIdentifier(prop.name)) forkMethodName = prop.name.text;
+    else if (ts.isStringLiteral(prop.name)) forkMethodName = prop.name.text;
+    else if (ts.isNumericLiteral(prop.name)) forkMethodName = prop.name.text;
+    if (forkMethodName === undefined) continue;
+    const forkFullName = `${typeName}_${forkMethodName}`;
+    const forkExisting = ctx.funcMap.get(forkFullName);
+    if (forkExisting === undefined) continue;
+    const forkLocalIdx = forkExisting - ctx.numImportFuncs;
+    if (forkLocalIdx < 0 || forkLocalIdx >= ctx.mod.functions.length) continue;
+    const forkExistingFunc = ctx.mod.functions[forkLocalIdx]!;
+    // Only fork when the placeholder is already claimed by a prior literal
+    // (body non-empty). Empty body = fresh pre-pass placeholder; the
+    // method-body loop in this very call will fill it correctly.
+    if (forkExistingFunc.body.length === 0) continue;
+
+    // Compute this literal's method signature. Mirrors the methodParams /
+    // methodResults logic in the method-body loop further down (lines
+    // ~1288-1324) — keep in sync.
+    const forkParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
+    for (const param of prop.parameters) {
+      const paramType = ctx.checker.getTypeAtLocation(param);
+      let wasmType = resolveWasmType(ctx, paramType);
+      if (param.initializer && wasmType.kind === "ref") {
+        wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
+      }
+      forkParams.push(wasmType);
+    }
+    const forkIsGenerator = prop.asteriskToken !== undefined;
+    const forkIsAsync = prop.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+    const forkSig = ctx.checker.getSignatureFromDeclaration(prop);
+    let forkRetType = forkSig ? ctx.checker.getReturnTypeOfSignature(forkSig) : undefined;
+    if (forkIsAsync && !forkIsGenerator && forkRetType) {
+      forkRetType = unwrapPromiseType(forkRetType, ctx.checker);
+    }
+    const forkResults: ValType[] = forkIsGenerator
+      ? [{ kind: "externref" }]
+      : forkRetType && !isVoidType(forkRetType)
+        ? [resolveWasmType(ctx, forkRetType)]
+        : [];
+
+    const forkTypeIdx = addFuncType(ctx, forkParams, forkResults, `${forkFullName}_type`);
+    const forkFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.mod.functions.push({
+      name: forkFullName,
+      typeIdx: forkTypeIdx,
+      locals: [],
+      body: [],
+      exported: false,
+    });
+    // Re-point the funcMap so subsequent lookups (trampoline emission in
+    // the field-fill loop, body installation in the method-body loop) hit
+    // the fresh func.
+    ctx.funcMap.set(forkFullName, forkFuncIdx);
+  }
+
   // Check if there are any spread assignments — if so, compile spread sources into locals
   const spreadSources: { local: number; srcStructTypeIdx: number; srcFields: { name: string }[] }[] = [];
   for (const prop of expr.properties) {
