@@ -1363,9 +1363,25 @@ export function compileBinaryExpression(
     leftType.kind !== "externref" &&
     rightType.kind !== "externref"
   ) {
+    // (#1558) Left's TS type is `number` but its lowered Wasm type may be
+    // i32 — e.g. `arr.length`, a typed-as-number value returned by a host
+    // helper, or a property getter that fast-paths to i32. If we'd hit the
+    // i32+i32 case we can stay in i32 land for equality / comparison ops.
+    if (leftType.kind === "i32" && rightType.kind === "i32" && isNumericOp) {
+      return compileI32BinaryOp(ctx, fctx, op, expr);
+    }
     // Ensure right operand is also f64 (may be i32 from boolean context)
     if (rightType.kind === "i32") {
       fctx.body.push({ op: "f64.convert_i32_s" });
+    }
+    // Ensure left operand is also f64. Right is now on top — save, convert
+    // left, restore. (#1558)
+    if (leftType.kind === "i32") {
+      const tmpR = allocTempLocal(fctx, { kind: "f64" });
+      fctx.body.push({ op: "local.set", index: tmpR });
+      fctx.body.push({ op: "f64.convert_i32_s" });
+      fctx.body.push({ op: "local.get", index: tmpR });
+      releaseTempLocal(fctx, tmpR);
     }
     return compileNumericBinaryOp(ctx, fctx, op, expr);
   }

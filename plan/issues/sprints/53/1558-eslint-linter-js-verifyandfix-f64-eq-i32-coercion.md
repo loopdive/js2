@@ -2,7 +2,7 @@
 id: 1558
 sprint: 53
 title: "ESLint linter.js direct compile: Linter_verifyAndFix f64.eq missing i32→f64 coercion on call result"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: high
 feasibility: medium
