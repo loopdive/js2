@@ -1,36 +1,6 @@
 {
   "backlog": [
     {
-      "id": "1582",
-      "title": "Tagged-union value representation: retire __box_*, __unbox_*, __typeof, __is_truthy",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "standalone-wasm",
-      "status": "backlog",
-      "sprint": "backlog"
-    },
-    {
-      "id": "1579",
-      "title": "spec backlog: §29 Memory Model implementation (multi-thread Wasm)",
-      "priority": "low",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "backlog",
-      "sprint": "backlog"
-    },
-    {
-      "id": "1578",
-      "title": "RegExp exec result: wasmGC string struct ≠ externref string in strict equality (S15.10.2 cluster)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "backlog",
-      "sprint": "backlog"
-    },
-    {
       "id": "1541",
       "title": "Opt-in icu_normalizer (icu4x) for String.prototype.normalize",
       "priority": "low",
@@ -180,7 +150,7 @@
       ],
       "goal": "performance",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1265",
@@ -192,7 +162,7 @@
       ],
       "goal": "compatibility",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1264",
@@ -204,7 +174,7 @@
       ],
       "goal": "performance",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1263",
@@ -216,7 +186,7 @@
       ],
       "goal": "performance",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1261",
@@ -226,7 +196,7 @@
       "depends_on": [],
       "goal": "performance",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1257",
@@ -236,7 +206,7 @@
       "depends_on": [],
       "goal": "error-model",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1133",
@@ -246,7 +216,7 @@
       "depends_on": [],
       "goal": "contributor-readiness",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1029",
@@ -256,7 +226,7 @@
       "depends_on": [],
       "goal": "platform",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "671",
@@ -266,7 +236,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "backlog",
-      "sprint": "backlog"
+      "sprint": ""
     }
   ],
   "blocked": [
@@ -318,7 +288,7 @@
       ],
       "goal": "async-model",
       "status": "blocked",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "747",
@@ -328,7 +298,7 @@
       "depends_on": [],
       "goal": "performance",
       "status": "blocked",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "746",
@@ -338,7 +308,7 @@
       "depends_on": [],
       "goal": "compiler-architecture",
       "status": "blocked",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "742",
@@ -363,190 +333,10 @@
       ],
       "goal": "async-model",
       "status": "blocked",
-      "sprint": "backlog"
+      "sprint": ""
     }
   ],
   "ready": [
-    {
-      "id": "1577",
-      "title": "spec gap: Set methods (union/intersection/etc.) accept any set-like argument (101 test262 fails)",
-      "priority": "medium",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1576",
-      "title": "spec gap: BigInt typed-path eager f64 assumptions (47 test262 fails, 4 illegal_cast + 13 runtime)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1575",
-      "title": "spec gap: BigInt typed-path eager f64 assumptions (47 test262 fails, 4 illegal_cast + 13 runtime)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1574",
-      "title": "spec gap: class static initialization order + private field semantics (significant share of 1500+ class fails)",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1573",
-      "title": "spec gap: yield in nested try/finally + yield expression evaluation order (46 test262 fails)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1572",
-      "title": "spec gap: yield in nested try/finally + yield expression evaluation order (46 test262 fails)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1571",
-      "title": "spec gap: Reflect.* invariant checks mirror internal-method bugs (83 test262 fails)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1570",
-      "title": "spec gap: Date.prototype string formatters and parsers (174 of 485 test262 fails)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1569",
-      "title": "spec gap: Boolean wrapper + Symbol coercion TypeErrors (24 + 45 test262 fails)",
-      "priority": "medium",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1568",
-      "title": "spec gap: Boolean wrapper + Symbol coercion TypeErrors (24 + 45 test262 fails)",
-      "priority": "medium",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1567",
-      "title": "spec gap: Iterator.prototype helpers wasm_compile errors (89 of 245 fails)",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1566",
-      "title": "spec gap: Iterator.prototype helpers wasm_compile errors (89 of 245 fails)",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1565",
-      "title": "spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1564",
-      "title": "spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1563",
-      "title": "spec gap: Object.create(proto, descriptors) ignores descriptor map (162 test262 fails)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1562",
-      "title": "spec gap: Object.create(proto, descriptors) ignores descriptor map (162 test262 fails)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1561",
-      "title": "spec gap: Object.assign drops getters / Symbol keys (27 of 38 test262 fails)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1560",
-      "title": "Number.prototype formatting in pure Wasm: integer toString(radix), then Ryu for floats (standalone)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "standalone-mode",
-      "status": "ready",
-      "sprint": "50"
-    },
     {
       "id": "1554",
       "title": "cli: --standalone should reject --allow-fs (logically mutually exclusive flags)",
@@ -556,18 +346,6 @@
       "goal": "host-independence",
       "status": "ready",
       "sprint": "52"
-    },
-    {
-      "id": "1553",
-      "title": "test262 worker: Array.prototype poisoning leaks into TypeScript compiler — Array.from fails at compile time (~378 test262 regressions)",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [
-        "1119"
-      ],
-      "goal": "async-model",
-      "status": "ready",
-      "sprint": "backlog"
     },
     {
       "id": "1552",
@@ -623,10 +401,10 @@
       "id": "1542",
       "title": "Class method destructured-pattern param default not applied; throws \\\"Cannot destructure null\\\" instead",
       "priority": "high",
-      "feasibility": "medium",
+      "feasibility": "hard",
       "depends_on": [],
       "goal": "test262-conformance",
-      "status": "ready",
+      "status": "suspended",
       "sprint": "52"
     },
     {
@@ -729,7 +507,7 @@
       "depends_on": [],
       "goal": "",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": "null"
     },
     {
       "id": "1387",
@@ -739,16 +517,6 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "moved-to-s52",
-      "sprint": "52"
-    },
-    {
-      "id": "1373",
-      "title": "IR: claim async functions (async/await through IR path)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "ir-full-coverage",
-      "status": "ready",
       "sprint": "52"
     },
     {
@@ -783,9 +551,9 @@
     },
     {
       "id": "1349",
-      "title": "spec gap: class static initialization order + private field semantics (significant share of 1500+ class fails)",
-      "priority": "high",
-      "feasibility": "hard",
+      "title": "spec gap: BigInt typed-path eager f64 assumptions (47 test262 fails, 4 illegal_cast + 13 runtime)",
+      "priority": "medium",
+      "feasibility": "medium",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
@@ -823,16 +591,6 @@
     },
     {
       "id": "1344",
-      "title": "spec gap: Generator/AsyncIterator prototype receiver TypeErrors + return/throw (52 + 12 test262 fails)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "50"
-    },
-    {
-      "id": "1343",
       "title": "spec gap: Date.prototype string formatters and parsers (174 of 485 test262 fails)",
       "priority": "medium",
       "feasibility": "medium",
@@ -842,10 +600,20 @@
       "sprint": "50"
     },
     {
-      "id": "1341",
-      "title": "spec gap: JSON.stringify replacer/toJSON/property-list (49 of 66 test262 fails)",
+      "id": "1343",
+      "title": "spec gap: Boolean wrapper + Symbol coercion TypeErrors (24 + 45 test262 fails)",
       "priority": "medium",
-      "feasibility": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "50"
+    },
+    {
+      "id": "1341",
+      "title": "spec gap: Iterator.prototype helpers wasm_compile errors (89 of 245 fails)",
+      "priority": "high",
+      "feasibility": "hard",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
@@ -873,7 +641,7 @@
     },
     {
       "id": "1338",
-      "title": "spec gap: Function.prototype.bind/toString + Function/internals (175 + 7 test262 fails)",
+      "title": "spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant)",
       "priority": "medium",
       "feasibility": "medium",
       "depends_on": [],
@@ -893,11 +661,11 @@
     },
     {
       "id": "1335",
-      "title": "spec gap: Object.defineProperty — descriptor attribute fidelity (664 test262 fails, biggest single bucket)",
-      "priority": "high",
+      "title": "Number.prototype formatting in pure Wasm: integer toString(radix), then Ryu for floats (standalone)",
+      "priority": "medium",
       "feasibility": "hard",
       "depends_on": [],
-      "goal": "spec-completeness",
+      "goal": "standalone-mode",
       "status": "ready",
       "sprint": "50"
     },
@@ -1039,7 +807,7 @@
       "depends_on": [],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1254",
@@ -1049,7 +817,7 @@
       "depends_on": [],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1240",
@@ -1059,7 +827,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1230",
@@ -1069,7 +837,7 @@
       "depends_on": [],
       "goal": "contributor-readiness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1199",
@@ -1081,7 +849,7 @@
       ],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1172",
@@ -1130,7 +898,7 @@
       ],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1151",
@@ -1140,7 +908,7 @@
       "depends_on": [],
       "goal": "async-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1147",
@@ -1172,7 +940,7 @@
       "depends_on": [],
       "goal": "property-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1129",
@@ -1182,7 +950,7 @@
       "depends_on": [],
       "goal": "core-semantics",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1122",
@@ -1204,7 +972,7 @@
       ],
       "goal": "async-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1105",
@@ -1214,7 +982,7 @@
       "depends_on": [],
       "goal": "standalone-mode",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1104",
@@ -1224,7 +992,7 @@
       "depends_on": [],
       "goal": "standalone-mode",
       "status": "suspended",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1103",
@@ -1234,7 +1002,7 @@
       "depends_on": [],
       "goal": "iterator-protocol",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1102",
@@ -1244,7 +1012,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1101",
@@ -1254,7 +1022,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1100",
@@ -1264,7 +1032,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1099",
@@ -1306,7 +1074,7 @@
       "depends_on": [],
       "goal": "async-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1081",
@@ -1318,7 +1086,7 @@
       ],
       "goal": "ci-hardening",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1075",
@@ -1345,7 +1113,7 @@
       ],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1059",
@@ -1357,7 +1125,7 @@
       ],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1058",
@@ -1381,7 +1149,7 @@
       "depends_on": [],
       "goal": "compiler-architecture",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1045",
@@ -1417,7 +1185,7 @@
       ],
       "goal": "async-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1039",
@@ -1427,7 +1195,7 @@
       "depends_on": [],
       "goal": "developer-experience",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1033",
@@ -1440,7 +1208,7 @@
       ],
       "goal": "npm-library-support",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1032",
@@ -1452,7 +1220,7 @@
       ],
       "goal": "npm-library-support",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1011",
@@ -1462,7 +1230,7 @@
       "depends_on": [],
       "goal": "observability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1009",
@@ -1472,7 +1240,7 @@
       "depends_on": [],
       "goal": "contributor-readiness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1008",
@@ -1495,7 +1263,7 @@
       ],
       "goal": "test-infrastructure",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1004",
@@ -1537,7 +1305,7 @@
       "depends_on": [],
       "goal": "async-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "926",
@@ -1547,7 +1315,7 @@
       "depends_on": [],
       "goal": "test-infrastructure",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "908",
@@ -1560,7 +1328,7 @@
       ],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "905",
@@ -1573,7 +1341,7 @@
       ],
       "goal": "compiler-architecture",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "904",
@@ -1586,7 +1354,7 @@
       ],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "903",
@@ -1596,7 +1364,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "893",
@@ -1606,7 +1374,7 @@
       "depends_on": [],
       "goal": "test-infrastructure",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "892",
@@ -1616,7 +1384,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "891",
@@ -1626,7 +1394,7 @@
       "depends_on": [],
       "goal": "test-infrastructure",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "890",
@@ -1636,7 +1404,7 @@
       "depends_on": [],
       "goal": "test-infrastructure",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "889",
@@ -1646,7 +1414,7 @@
       "depends_on": [],
       "goal": "contributor-readiness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "888",
@@ -1656,7 +1424,7 @@
       "depends_on": [],
       "goal": "developer-experience",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "881",
@@ -1668,7 +1436,7 @@
       ],
       "goal": "observability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "880",
@@ -1680,7 +1448,7 @@
       ],
       "goal": "observability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "879",
@@ -1692,7 +1460,7 @@
       ],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "878",
@@ -1704,7 +1472,7 @@
       ],
       "goal": "developer-experience",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "874",
@@ -1714,7 +1482,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "872",
@@ -1724,7 +1492,7 @@
       "depends_on": [],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "871",
@@ -1736,7 +1504,7 @@
       ],
       "goal": "error-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "870",
@@ -1748,7 +1516,7 @@
       ],
       "goal": "developer-experience",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "869",
@@ -1758,7 +1526,7 @@
       "depends_on": [],
       "goal": "maintainability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "868",
@@ -1770,7 +1538,7 @@
       ],
       "goal": "developer-experience",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "867",
@@ -1782,7 +1550,7 @@
       ],
       "goal": "developer-experience",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "865",
@@ -1792,7 +1560,7 @@
       "depends_on": [],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "861",
@@ -1802,7 +1570,7 @@
       "depends_on": [],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "860",
@@ -1812,7 +1580,7 @@
       "depends_on": [],
       "goal": "async-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "846",
@@ -1822,7 +1590,7 @@
       "depends_on": [],
       "goal": "core-semantics",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "838",
@@ -1832,7 +1600,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "833",
@@ -1842,7 +1610,7 @@
       "depends_on": [],
       "goal": "contributor-readiness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "832",
@@ -1852,7 +1620,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "824",
@@ -1862,7 +1630,7 @@
       "depends_on": [],
       "goal": "iterator-protocol",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "821",
@@ -1872,7 +1640,7 @@
       "depends_on": [],
       "goal": "core-semantics",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "820",
@@ -1882,7 +1650,7 @@
       "depends_on": [],
       "goal": "async-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "810",
@@ -1892,7 +1660,7 @@
       "depends_on": [],
       "goal": "maintainability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "809",
@@ -1902,7 +1670,7 @@
       "depends_on": [],
       "goal": "standalone-mode",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "808",
@@ -1912,7 +1680,7 @@
       "depends_on": [],
       "goal": "async-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "807",
@@ -1922,7 +1690,7 @@
       "depends_on": [],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "806",
@@ -1932,7 +1700,7 @@
       "depends_on": [],
       "goal": "maintainability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "805",
@@ -1942,7 +1710,7 @@
       "depends_on": [],
       "goal": "core-semantics",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "804",
@@ -1952,7 +1720,7 @@
       "depends_on": [],
       "goal": "maintainability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "803",
@@ -1962,7 +1730,7 @@
       "depends_on": [],
       "goal": "maintainability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "802",
@@ -1972,7 +1740,7 @@
       "depends_on": [],
       "goal": "property-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "786",
@@ -1982,7 +1750,7 @@
       "depends_on": [],
       "goal": "core-semantics",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "779",
@@ -1992,7 +1760,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "773",
@@ -2014,7 +1782,7 @@
       "depends_on": [],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "744",
@@ -2037,7 +1805,7 @@
       "depends_on": [],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "741",
@@ -2047,7 +1815,7 @@
       "depends_on": [],
       "goal": "maintainability",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "739",
@@ -2057,7 +1825,7 @@
       "depends_on": [],
       "goal": "property-model",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "699",
@@ -2069,7 +1837,7 @@
       ],
       "goal": "test-infrastructure",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "687",
@@ -2079,7 +1847,7 @@
       "depends_on": [],
       "goal": "test-infrastructure",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "685",
@@ -2089,7 +1857,7 @@
       "depends_on": [],
       "goal": "performance",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "684",
@@ -2099,7 +1867,7 @@
       "depends_on": [],
       "goal": "builtin-methods",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "682",
@@ -2109,7 +1877,7 @@
       "depends_on": [],
       "goal": "standalone-mode",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "681",
@@ -2121,7 +1889,7 @@
       ],
       "goal": "iterator-protocol",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "680",
@@ -2131,7 +1899,7 @@
       "depends_on": [],
       "goal": "standalone-mode",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "674",
@@ -2141,7 +1909,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "661",
@@ -2151,7 +1919,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "652",
@@ -2161,7 +1929,7 @@
       "depends_on": [],
       "goal": "standalone-mode",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "644",
@@ -2171,7 +1939,7 @@
       "depends_on": [],
       "goal": "standalone-mode",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "642",
@@ -2183,7 +1951,7 @@
       ],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "641",
@@ -2196,7 +1964,7 @@
       ],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "640",
@@ -2208,7 +1976,7 @@
       ],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "639",
@@ -2220,7 +1988,7 @@
       ],
       "goal": "platform",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "485",
@@ -2232,20 +2000,10 @@
       ],
       "goal": "symbol-protocol",
       "status": "ready",
-      "sprint": "backlog"
+      "sprint": ""
     }
   ],
   "inprogress": [
-    {
-      "id": "1557",
-      "title": "ci: serialize Test262 Sharded across PRs to eliminate runner-pool contention",
-      "priority": "medium",
-      "feasibility": "",
-      "depends_on": [],
-      "goal": "",
-      "status": "in-progress",
-      "sprint": "backlog"
-    },
     {
       "id": "1534",
       "title": "test: Web API host import unit tests (fetch, timers, localStorage, crypto.getRandomValues)",
@@ -2410,16 +2168,6 @@
     }
   ],
   "review": [
-    {
-      "id": "1583",
-      "title": "Update stale lodash-tier1 stress test — resolver fixed, clamp/add behavior changed",
-      "priority": "low",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "npm-library-support",
-      "status": "review",
-      "sprint": "47"
-    },
     {
       "id": "1519",
       "title": "spec gap: `new` expression — non-literal spread + non-constructor TypeError + new.target via apply/call",
@@ -2918,7 +2666,7 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "review",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1326",
@@ -2958,74 +2706,10 @@
       "depends_on": [],
       "goal": "test-infrastructure",
       "status": "review",
-      "sprint": "backlog"
+      "sprint": ""
     }
   ],
   "done": [
-    {
-      "id": "1581",
-      "title": "for-of/dstr + assignment/dstr default initializers don't fire on OOB extenref-array reads",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "done",
-      "sprint": "52"
-    },
-    {
-      "id": "1580",
-      "title": "IR: null-safe access primitives — ref.is_null IrUnop + value-producing if/else IR node",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "ir-full-coverage",
-      "status": "done",
-      "sprint": "51"
-    },
-    {
-      "id": "1559",
-      "title": "ECMAScript spec compliance audit: section-by-section review, gap issues, HTML report",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "npm-library-support",
-      "status": "done",
-      "sprint": "50"
-    },
-    {
-      "id": "1558",
-      "title": "test262 global contamination: vm.createContext sandbox isolation",
-      "priority": "medium",
-      "feasibility": "",
-      "depends_on": [],
-      "goal": "",
-      "status": "done",
-      "sprint": "50"
-    },
-    {
-      "id": "1556",
-      "title": "compiler.ts: re-throw WebAssembly.Exception from internal catch blocks",
-      "priority": "high",
-      "feasibility": "easy",
-      "depends_on": [
-        "1294"
-      ],
-      "goal": "conformance",
-      "status": "done",
-      "sprint": "48"
-    },
-    {
-      "id": "1555",
-      "title": "lodash Tier 2 stress test — memoize, flow, partial application",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [
-        "1291"
-      ],
-      "goal": "npm-library-support",
-      "status": "done",
-      "sprint": "50"
-    },
     {
       "id": "1535",
       "title": "research: JS host dependency audit — identify gaps and evaluate standalone Wasm/JS replacements",
@@ -3200,13 +2884,13 @@
     },
     {
       "id": "1392",
-      "title": "infra: refresh:benchmarks hangs in browser runtime Playwright eval",
+      "title": "IR: null-safe access primitives — ref.is_null IrUnop + value-producing if/else IR node",
       "priority": "high",
-      "feasibility": "medium",
+      "feasibility": "hard",
       "depends_on": [],
-      "goal": "developer-experience",
+      "goal": "ir-full-coverage",
       "status": "done",
-      "sprint": "52"
+      "sprint": "51"
     },
     {
       "id": "1391",
@@ -3357,6 +3041,16 @@
       "goal": "ir-full-coverage",
       "status": "done",
       "sprint": "51"
+    },
+    {
+      "id": "1373",
+      "title": "IR: claim async functions (async/await through IR path)",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "ir-full-coverage",
+      "status": "done",
+      "sprint": "52"
     },
     {
       "id": "1372",
@@ -3520,11 +3214,11 @@
     },
     {
       "id": "1334",
-      "title": "spec gap: Object.defineProperty — descriptor attribute fidelity (664 test262 fails, biggest single bucket)",
+      "title": "ECMAScript spec compliance audit: section-by-section review, gap issues, HTML report",
       "priority": "high",
-      "feasibility": "hard",
+      "feasibility": "medium",
       "depends_on": [],
-      "goal": "spec-completeness",
+      "goal": "npm-library-support",
       "status": "done",
       "sprint": "50"
     },
@@ -3734,11 +3428,13 @@
     },
     {
       "id": "1295",
-      "title": "lodash transitive init: start-function throws WebAssembly.Exception during instantiate (clamp/add)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "npm-library-support",
+      "title": "compiler.ts: re-throw WebAssembly.Exception from internal catch blocks",
+      "priority": "high",
+      "feasibility": "easy",
+      "depends_on": [
+        "1294"
+      ],
+      "goal": "conformance",
       "status": "done",
       "sprint": "48"
     },
@@ -3806,7 +3502,7 @@
       "depends_on": [],
       "goal": "npm-library-support",
       "status": "done",
-      "sprint": "backlog"
+      "sprint": "47"
     },
     {
       "id": "1288",
@@ -3826,7 +3522,7 @@
       "depends_on": [],
       "goal": "npm-library-support",
       "status": "done",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1286",
@@ -4105,7 +3801,7 @@
       ],
       "goal": "error-model",
       "status": "done",
-      "sprint": "backlog"
+      "sprint": "47"
     },
     {
       "id": "1252",
@@ -4115,7 +3811,7 @@
       "depends_on": [],
       "goal": "error-model",
       "status": "done",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1251",
@@ -4258,7 +3954,7 @@
       "depends_on": [],
       "goal": "developer-experience",
       "status": "done",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1236",
@@ -5459,7 +5155,7 @@
       "depends_on": [],
       "goal": "platform",
       "status": "done",
-      "sprint": "backlog"
+      "sprint": ""
     },
     {
       "id": "1128",
