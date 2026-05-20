@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import ts from "typescript";
+import { ts } from "./ts-api.js";
 import {
   analyzeFiles,
   analyzeMultiSource,
@@ -29,6 +29,7 @@ import { WasmEncoder } from "./emit/encoder.js";
 import { generateSourceMap } from "./emit/sourcemap.js";
 import { emitWat } from "./emit/wat.js";
 import { applyDefineSubstitutions } from "./compiler/define-substitution.js";
+import { rewriteCjsRequire } from "./cjs-rewrite.js";
 import { preprocessImports } from "./import-resolver.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinary } from "./optimize.js";
@@ -43,16 +44,16 @@ const HARD_TS_DIAG_CODES = new Set([
 
 /**
  * #862: TypeScript infers `function f([,])` as `function f([,]: [any?])` — a tuple type.
- * A call like `f(iter)` where `iter` is a Generator/Iterable then trips TS2345.
- * In JS/TS, a binding-pattern parameter destructures any iterable per §13.3.3.6.
- * Suppress 2345 when the target parameter uses an array/object binding pattern
- * and lacks an explicit type annotation.
+ * A call site like `f(generator)` then trips TS2345 even though, in JS/TS at runtime,
+ * a binding-pattern parameter destructures any iterable per ECMA-262 §13.3.3.6
+ * (IteratorBindingInitialization). Suppress 2345 when the target parameter uses an
+ * array/object binding pattern and lacks an explicit type annotation — the inferred
+ * tuple type is a TypeScript fiction that does not reflect runtime semantics.
  */
 function isBindingPatternFalsePositive(diag: ts.Diagnostic, checker: ts.TypeChecker): boolean {
   if (diag.code !== 2345) return false;
   const file = diag.file;
   if (!file || diag.start === undefined) return false;
-  // Find the narrowest node at the diagnostic position
   const pos = diag.start;
   function findNode(node: ts.Node): ts.Node | undefined {
     if (pos < node.getStart(file) || pos >= node.getEnd()) return undefined;
@@ -64,15 +65,12 @@ function isBindingPatternFalsePositive(diag: ts.Diagnostic, checker: ts.TypeChec
     return found;
   }
   let n: ts.Node | undefined = findNode(file);
-  // Walk up to find the call expression whose argument we're in
   while (n && !ts.isCallExpression(n) && !ts.isNewExpression(n)) {
     n = n.parent;
   }
   if (!n || !(ts.isCallExpression(n) || ts.isNewExpression(n))) return false;
-  const callOrNew = n;
-  const args = callOrNew.arguments;
+  const args = n.arguments;
   if (!args) return false;
-  // Find the argument index containing the diagnostic position
   let argIdx = -1;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
@@ -82,7 +80,7 @@ function isBindingPatternFalsePositive(diag: ts.Diagnostic, checker: ts.TypeChec
     }
   }
   if (argIdx < 0) return false;
-  const sig = checker.getResolvedSignature(callOrNew);
+  const sig = checker.getResolvedSignature(n);
   if (!sig) return false;
   const paramDecl = sig.getDeclaration()?.parameters?.[argIdx];
   if (!paramDecl) return false;
@@ -140,14 +138,21 @@ export function compileSource(
   // Step 0a: Apply compile-time define substitutions (#1043)
   const definedSource = options.define ? applyDefineSubstitutions(source, options.define) : source;
 
+  // Step 0a.5: Rewrite CommonJS `const X = require('Y')` patterns to ESM `import`
+  // declarations (#1279). This must run before preprocessImports so the resulting
+  // import statements get the same declare-stub treatment as user-written imports,
+  // and before `detectNodeFsImports` so `const fs = require('node:fs')` is picked
+  // up as a node:fs import for WASI mode.
+  const cjsRewritten = rewriteCjsRequire(definedSource);
+
   // Step 0b: Pre-process imports (replace import * as X with declare namespace)
   // #1054: rewrite eval("...super()...") to a throwing IIFE so early-error
   // rules for PerformEval fire at runtime.
   //
   // Before preprocessing strips import declarations, detect node:fs imports
   // for WASI mode (preprocessing replaces them with declare stubs).
-  const wasiNodeFsFuncs = options.target === "wasi" ? detectNodeFsImports(definedSource) : undefined;
-  const preprocessed = preprocessImports(rewriteEvalSuperCall(definedSource));
+  const wasiNodeFsFuncs = options.target === "wasi" ? detectNodeFsImports(cjsRewritten) : undefined;
+  const preprocessed = preprocessImports(rewriteEvalSuperCall(cjsRewritten));
   const processedSource = preprocessed.source;
 
   // Step 1: Parse and type-check
@@ -332,7 +337,14 @@ export function compileSource(
         sourceMap: emitSourceMap,
         fast: options.fast,
         nativeStrings: options.nativeStrings,
+        testRuntime: options.testRuntime,
         wasi: options.target === "wasi",
+        // Phase 2 (#1131): default experimentalIR to on so recursive
+        // numeric kernels (fib, factorial, etc.) compile without the
+        // boxing roundtrip the legacy path emits for untyped JS
+        // parameters. Pass `experimentalIR: false` to force legacy path
+        // for bit-by-bit divergence tests or emergency revert.
+        experimentalIR: options.experimentalIR !== false,
         nodeBuiltins: preprocessed.nodeBuiltins,
         wasiNodeFsFuncs,
       });
@@ -362,6 +374,12 @@ export function compileSource(
       }
     }
   } catch (e) {
+    if (
+      typeof WebAssembly !== "undefined" &&
+      (WebAssembly as unknown as { Exception?: Function }).Exception &&
+      e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
+    )
+      throw e;
     pushSourceAnchoredDiagnostic(
       errors,
       ast.sourceFile,
@@ -421,6 +439,12 @@ export function compileSource(
       binary = emitBinary(mod);
     }
   } catch (e) {
+    if (
+      typeof WebAssembly !== "undefined" &&
+      (WebAssembly as unknown as { Exception?: Function }).Exception &&
+      e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
+    )
+      throw e;
     pushSourceAnchoredDiagnostic(
       errors,
       ast.sourceFile,
@@ -512,9 +536,14 @@ export function compileMultiSource(
   const emitWatOutput = options.emitWat !== false;
 
   // Apply define substitutions to all source files (#1043)
-  const processedFiles = options.define
+  const definedFiles = options.define
     ? Object.fromEntries(Object.entries(files).map(([k, v]) => [k, applyDefineSubstitutions(v, options.define!)]))
     : files;
+
+  // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` (#1279) across
+  // every input file. This runs before TypeScript's analyzer so the require() calls
+  // are seen as proper module imports during cross-file resolution.
+  const processedFiles = Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)]));
 
   const multiAst = analyzeMultiSource(processedFiles, entryFile, undefined, {
     allowJs: options.allowJs,
@@ -601,6 +630,7 @@ export function compileMultiSource(
         sourceMap: emitSourceMap,
         fast: options.fast,
         nativeStrings: options.nativeStrings,
+        testRuntime: options.testRuntime,
         wasi: options.target === "wasi",
       });
       mod = result.module;
@@ -629,6 +659,12 @@ export function compileMultiSource(
       }
     }
   } catch (e) {
+    if (
+      typeof WebAssembly !== "undefined" &&
+      (WebAssembly as unknown as { Exception?: Function }).Exception &&
+      e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
+    )
+      throw e;
     pushSourceAnchoredDiagnostic(
       errors,
       multiAst.entryFile,
@@ -680,6 +716,12 @@ export function compileMultiSource(
       binary = emitBinary(mod);
     }
   } catch (e) {
+    if (
+      typeof WebAssembly !== "undefined" &&
+      (WebAssembly as unknown as { Exception?: Function }).Exception &&
+      e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
+    )
+      throw e;
     pushSourceAnchoredDiagnostic(
       errors,
       multiAst.entryFile,
@@ -832,6 +874,7 @@ export function compileFilesSource(entryPath: string, options: CompileOptions = 
         sourceMap: emitSourceMap,
         fast: options.fast,
         nativeStrings: options.nativeStrings,
+        testRuntime: options.testRuntime,
         wasi: options.target === "wasi",
       });
       mod = result.module;
@@ -859,6 +902,12 @@ export function compileFilesSource(entryPath: string, options: CompileOptions = 
       }
     }
   } catch (e) {
+    if (
+      typeof WebAssembly !== "undefined" &&
+      (WebAssembly as unknown as { Exception?: Function }).Exception &&
+      e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
+    )
+      throw e;
     pushSourceAnchoredDiagnostic(
       errors,
       multiAst.entryFile,
@@ -904,6 +953,12 @@ export function compileFilesSource(entryPath: string, options: CompileOptions = 
       binary = emitBinary(mod);
     }
   } catch (e) {
+    if (
+      typeof WebAssembly !== "undefined" &&
+      (WebAssembly as unknown as { Exception?: Function }).Exception &&
+      e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
+    )
+      throw e;
     pushSourceAnchoredDiagnostic(
       errors,
       multiAst.entryFile,

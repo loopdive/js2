@@ -27,6 +27,7 @@ export type ImportIntent =
   | { type: "declared_global"; name: string }
   | { type: "host_eq" }
   | { type: "host_loose_eq" }
+  | { type: "same_value_zero" }
   | { type: "dynamic_import" }
   | { type: "proxy_create" }
   | { type: "node_builtin"; moduleName: string };
@@ -101,6 +102,11 @@ export interface CompileOptions {
    *  Enabled automatically when fast: true or target: "wasi".
    *  Required for non-browser runtimes (wasmtime, wasmer, etc.) */
   nativeStrings?: boolean;
+  /** Test-only: emit `__test_str_from_externref` and `__test_str_to_externref`
+   *  exports so test code can pass JS strings to/from native-string params (#1187).
+   *  Has no effect unless `nativeStrings` is also true. Production builds should
+   *  leave this unset — when off, the helpers are absent from the module entirely. */
+  testRuntime?: boolean;
   /** Enable SIMD-accelerated string/array helpers (requires engine SIMD support) */
   simd?: boolean;
   /** Enable safe mode — reject unsafe TypeScript patterns at compile time */
@@ -139,6 +145,12 @@ export interface CompileOptions {
    *  Requires either the 'binaryen' npm package or wasm-opt on PATH.
    *  Set to true for -O3 defaults, or pass a number (1-4) for a specific level. */
   optimize?: boolean | 1 | 2 | 3 | 4;
+  /**
+   * Experimental: route a narrow set of functions through the middle-end IR
+   * (see `src/ir/`). Defaults to off. Ship as off until the IR reaches
+   * parity with the legacy direct-emission path.
+   */
+  experimentalIR?: boolean;
   /** Compile-time constant definitions. Substitutes identifiers/dotted paths with literal values
    *  before TypeScript parsing. Example: `{ "process.env.NODE_ENV": '"production"' }`.
    *  Values must be valid JS expression literals (strings need inner quotes).

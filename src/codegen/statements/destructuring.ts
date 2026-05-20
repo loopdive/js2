@@ -3,13 +3,19 @@
  * Destructuring declaration lowering.
  * Handles object destructuring, array destructuring, and string destructuring patterns.
  */
-import ts from "typescript";
+import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { shiftLateImportIndices } from "../expressions/late-imports.js";
-import { ensureNativeStringHelpers, ensureStructForType, nativeStringType, resolveWasmType } from "../index.js";
+import {
+  ensureLetConstBindingPatternTdzFlags,
+  ensureNativeStringHelpers,
+  ensureStructForType,
+  nativeStringType,
+  resolveWasmType,
+} from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { buildDestructureNullThrow } from "../destructuring-params.js";
 import { addImport, addStringConstantGlobal, localGlobalIdx } from "../registry/imports.js";
@@ -25,6 +31,7 @@ import {
   VOID_RESULT,
 } from "../shared.js";
 import { collectInstrs } from "./shared.js";
+import { emitLocalTdzInit } from "./tdz.js";
 
 export function ensureBindingLocals(ctx: CodegenContext, fctx: FunctionContext, pattern: ts.BindingPattern): void {
   for (const element of pattern.elements) {
@@ -375,6 +382,14 @@ export function compileObjectDestructuring(
 
   const pattern = decl.name as ts.ObjectBindingPattern;
 
+  // #1128: for let/const destructuring, (re-)allocate TDZ flags per binding.
+  // The function-level pre-pass (walkStmtForLetConst) may have allocated these,
+  // but block-scope shadowing wipes them when we enter an inner block.
+  const isLetConst = (decl.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+  if (isLetConst) {
+    ensureLetConstBindingPatternTdzFlags(ctx, fctx, pattern);
+  }
+
   // Save body length so we can rollback if struct lookup fails
   const bodyLenBefore = fctx.body.length;
 
@@ -625,6 +640,8 @@ export function compileObjectDestructuring(
               fctx.body.push({ op: "global.get", index: excludedStrIdx });
               fctx.body.push({ op: "call", funcIdx: restObjIdx });
               fctx.body.push({ op: "local.set", index: restIdx });
+              // #1128: mark the rest binding as initialized (TDZ flag)
+              emitLocalTdzInit(fctx, element.name.text);
             }
           }
         }
@@ -656,6 +673,8 @@ export function compileObjectDestructuring(
       } else {
         fctx.body.push({ op: "local.set", index: localIdx });
       }
+      // #1128: mark the binding as initialized (TDZ flag) immediately after its store
+      emitLocalTdzInit(fctx, localName);
     }
   }); // end null guard
 
@@ -1077,6 +1096,15 @@ export function compileArrayDestructuring(
   if (!decl.initializer) return;
 
   const pattern = decl.name as ts.ArrayBindingPattern;
+
+  // #1128: for let/const destructuring, (re-)allocate TDZ flags per binding.
+  // The function-level pre-pass (walkStmtForLetConst) may have allocated these,
+  // but block-scope shadowing wipes them when we enter an inner block.
+  const isLetConst = (decl.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+  if (isLetConst) {
+    ensureLetConstBindingPatternTdzFlags(ctx, fctx, pattern);
+  }
+
   const bodyLenBefore = fctx.body.length;
 
   // When the pattern has rest elements, force vec mode for the initializer so
@@ -1944,7 +1972,15 @@ export function compileArrayDestructuring(
       fctx.body.push({ op: "local.get", index: tmpLocal });
       fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // get data from vec
       fctx.body.push({ op: "i32.const", value: i });
-      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elemType);
+      // (#1396) When this element has a default initializer AND the source-array
+      // element type is externref, request the JS `undefined` sentinel for OOB
+      // reads so `__extern_is_undefined` returns 1 and the default fires. With
+      // the default `ref.null.extern` sentinel, OOB surfaces as JS `null` →
+      // `__extern_is_undefined` returns 0 → default never fires (~320 fails in
+      // `for-of/dstr`, ~171 in `assignment/dstr`).
+      const wantUndefinedSentinel =
+        element.initializer !== undefined && (elemType.kind === "externref" || elemType.kind === "ref_extern");
+      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elemType, ctx, wantUndefinedSentinel);
 
       // Handle default value: `const [a = defaultVal] = arr`
       if (element.initializer) {

@@ -6,7 +6,7 @@
  * modules do not need to import the monolithic `codegen/index.ts` file just
  * to reference context/state shapes.
  */
-import ts from "typescript";
+import { ts } from "../../ts-api.js";
 import type { FieldDef, Instr, LocalDef, SourcePos, ValType, WasmModule } from "../../ir/types.js";
 
 export interface CodegenError {
@@ -30,8 +30,16 @@ export interface CodegenOptions {
   fast?: boolean;
   /** Use WasmGC-native strings instead of wasm:js-string imports */
   nativeStrings?: boolean;
+  /** Test-only: emit `__test_str_from_externref` / `__test_str_to_externref` exports (#1187). */
+  testRuntime?: boolean;
   /** WASI target: emit WASI imports (fd_write, proc_exit) instead of JS host imports */
   wasi?: boolean;
+  /**
+   * Experimental: route a narrow set of functions through the middle-end IR
+   * (see `src/ir/`). Defaults to off. Leave off in production until the IR
+   * reaches parity with the legacy direct-emission path.
+   */
+  experimentalIR?: boolean;
   /** Node builtin modules detected during import preprocessing (#1044) */
   nodeBuiltins?: import("../../import-resolver.js").NodeBuiltinImport[];
   /** Set of function names imported from node:fs (detected pre-preprocessing) */
@@ -138,6 +146,17 @@ export interface FunctionContext {
   hoistedFuncs?: Set<string>;
   /** Enclosing class name — propagated to closures for super keyword resolution */
   enclosingClassName?: string;
+  /**
+   * (#1395) True when compiling a static class member context (static field
+   * initializer, static method body, or a closure spawned from inside one).
+   * In a static context, `this` resolves to the class constructor object
+   * (the `__class_<Name>` singleton), NOT to a per-instance struct. Per
+   * ECMA-262 §15.7.1.1 step 5.b, DefineField is called with the class as
+   * receiver for static fields, so `this` inside `static f = () => this`
+   * is the class itself. Propagated through closure spawning the same way
+   * `enclosingClassName` is.
+   */
+  isStaticContext?: boolean;
   /** Set of variable names known to be non-null in the current scope (type narrowing) */
   narrowedNonNull?: Set<string>;
   /**
@@ -146,12 +165,43 @@ export interface FunctionContext {
    */
   safeIndexedArrays?: Set<string>;
   /**
+   * #1120: Set of let/const locals whose lifecycle is fully constrained
+   * to int32 by explicit `| 0` (or other bitwise) coercion. These get
+   * allocated as i32 instead of f64, and the binary-op layer can use
+   * native i32 arithmetic for `(a + b) | 0`-style updates without the
+   * heavy f64 -> ToInt32 -> f64 round-trip.
+   */
+  i32CoercedLocals?: Set<string>;
+  /**
+   * #1197: Set of let/const locals declared as `number[]` whose element
+   * storage can safely lower to `i32` instead of `f64` (every write site is
+   * provably i32-shaped, every use is a whitelisted access pattern, no
+   * closure capture). The variable-declaration codegen consults this set
+   * to pick the `__vec_i32` vec type at allocation time.
+   */
+  i32SpecializedArrays?: Set<string>;
+  /**
    * Free list for temporary locals, keyed by ValType key string.
    * Used by allocTempLocal/releaseTempLocal to reuse locals of the same type.
    */
   tempFreeList?: Map<string, number[]>;
   /** Map from let/const local variable name → local index of its i32 TDZ flag (0 = uninitialized) */
   tdzFlagLocals?: Map<string, number>;
+  /**
+   * For TDZ flag locals that have been boxed in an i32 ref cell so that
+   * mutations propagate to closures that captured the flag (#1177).
+   *
+   * Each entry records the ref-cell struct type idx and the local index of
+   * the ref-cell ref. Once a name is in this map, ALL set/get of its TDZ
+   * flag must go through `struct.get` / `struct.set` on the ref cell —
+   * `emitLocalTdzCheck` and `emitLocalTdzInit` detect this map before
+   * falling back to raw i32 local access.
+   *
+   * Note: when an entry exists here, `tdzFlagLocals[name]` continues to
+   * point at the SAME local index (the boxed ref-cell ref local).  We
+   * preserve the old map so call-site checks (calls.ts) keep firing.
+   */
+  boxedTdzFlags?: Map<string, { refCellTypeIdx: number; localIdx: number }>;
   /**
    * Stack of catch rethrow info. Each entry tracks a catch variable name and the
    * current depth (number of block-like structures) from the catch boundary.
@@ -190,6 +240,30 @@ export interface FunctionContext {
     paramOffset: number;
     paramTypes: ValType[];
   };
+  /**
+   * #1210: bindings detected as `let s = ""; for (...) s += <expr>` builders
+   * whose storage should be rewritten to a doubling i16-array buffer at
+   * compile time. Populated by `detectStringBuilders` during the
+   * function-body pre-scan, BEFORE `hoistLetConstWithTdz` runs (so the
+   * hoist pass can skip pre-allocating these decls' locals).
+   */
+  pendingStringBuilders?: Set<ts.VariableDeclaration>;
+  /**
+   * #1210: live string-builder bindings keyed by binding name. While
+   * present, `s += <expr>` routes to `compileStringBuilderAppend`
+   * (in-place buffer write), and identifier reads materialize a fresh
+   * `$NativeString` view of the current buffer state via
+   * `emitStringBuilderRead`.
+   */
+  stringBuilders?: Map<
+    string,
+    {
+      bufLocalIdx: number; // ref_null $__str_data — the growable i16 buffer
+      lenLocalIdx: number; // i32 — current logical length
+      capLocalIdx: number; // i32 — current physical capacity (== buf.length)
+      materializedLocalIdx: number; // ref_null $AnyString — reserved for future cache
+    }
+  >;
 }
 
 /** Context shared across all codegen. */
@@ -220,6 +294,16 @@ export interface CodegenContext {
   lastKnownNode: ts.Node | null;
   /** Registry of external declared classes */
   externClasses: Map<string, ExternClassInfo>;
+  /** #1238 — pseudo-extern-class registry for built-ins like String / Array
+   *  that don't have host-import-backed constructors / methods. These exist
+   *  purely as metadata for the IR's method-dispatch lookup
+   *  (`resolveMethodDispatchTarget`). They are NOT consumed by
+   *  `compileNewExpression`, `collectUsedExternImports`, the `__new_<name>`
+   *  interceptor, or the `mod.externClasses` populator — keeping them out
+   *  of `ctx.externClasses` ensures legacy code paths for `new Array(...)`
+   *  / `new String(...)` are unchanged. Downstream slices (#1232, #1233)
+   *  consult this map via `getPseudoExternClassInfo`. */
+  pseudoExternClasses: Map<string, ExternClassInfo>;
   /** Optional parameter info per function */
   funcOptionalParams: Map<string, OptionalParamInfo[]>;
   /** Map from anonymous ts.Type → generated struct name */
@@ -272,8 +356,14 @@ export interface CodegenContext {
   staticMethodSet: Set<string>;
   /** Map from "ClassName_propName" → global index for static properties */
   staticProps: Map<string, number>;
-  /** Static property initializer expressions to compile into __module_init */
-  staticInitExprs: { globalIdx: number; initializer: ts.Expression }[];
+  /**
+   * Static property initializer expressions to compile into __module_init.
+   * `className` (#1395) is the owning class name — used to set
+   * `enclosingClassName` + `isStaticContext` on the initFctx so `this`
+   * inside the initializer (and any closures it spawns) resolves to the
+   * class-object singleton via `emitLazyClassObjectGet`.
+   */
+  staticInitExprs: { globalIdx: number; initializer: ts.Expression; className?: string }[];
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /** Map from local variable name → closure metadata (for call_ref dispatch) */
@@ -310,6 +400,13 @@ export interface CodegenContext {
   exnTagIdx: number;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
+  /**
+   * #1121: Function names whose return type was promoted from implicit-`any`
+   * to a concrete numeric type (f64) by inferNumericReturnTypes. Used by
+   * collectDeclarations to override the TS-derived return type when the
+   * recursive numeric kernel pattern is detected.
+   */
+  numericReturnTypes?: Map<string, ValType>;
   /** Set of function names that are async (for .d.ts generation) */
   asyncFunctions: Set<string>;
   /** Set of function names that are generators (function*) */
@@ -324,9 +421,47 @@ export interface CodegenContext {
   /** Module-level variable initializers (compiled into __module_init) */
   moduleInitStatements: ts.Statement[];
   /** Nested function capture info. */
-  nestedFuncCaptures: Map<string, { name: string; outerLocalIdx: number; mutable?: boolean; valType?: ValType }[]>;
+  nestedFuncCaptures: Map<
+    string,
+    {
+      name: string;
+      outerLocalIdx: number;
+      mutable?: boolean;
+      valType?: ValType;
+      /**
+       * #1205: Whether this capture's TDZ flag must be propagated to the lifted
+       * function as an extra leading param. When true, the lifted fn signature
+       * gains a trailing flag-ref-cell param after all value captures and the
+       * call site (calls.ts) prepends the boxed flag ref. Mirrors the arrow-
+       * function Stage 3 wiring in `compileArrowAsClosure`.
+       */
+      hasTdzFlag?: boolean;
+      /**
+       * #1205: At-construction-time outer-fctx flag local index. May point
+       * to either the raw i32 flag local (must be wrapped at the call site)
+       * or an already-boxed ref-cell local (passed through directly). Stored
+       * as metadata so the call site can re-resolve via `fctx.tdzFlagLocals`
+       * / `fctx.boxedTdzFlags` at call time.
+       */
+      outerTdzFlagIdx?: number;
+    }[]
+  >;
   /** Map from child className → parent className (for local class inheritance) */
   classParentMap: Map<string, string>;
+  /**
+   * (#1366a) Map from child className → built-in JS parent name when the parent
+   * is a host-constructible builtin (Error / TypeError / RangeError / ...).
+   * Subclass instances are externref-backed; `super(args)` lowers to
+   * `__new_<Parent>(args)` instead of the field-walk path.
+   */
+  classBuiltinParentMap: Map<string, string>;
+  /**
+   * (#1366a) Set of class names whose runtime instance representation is
+   * externref (NOT a WasmGC struct). Constructor return type, `new` result
+   * type, and `instanceof` routing all consult this set. Currently populated
+   * for subclasses of host-constructible builtins.
+   */
+  classExternrefBackedSet: Set<string>;
   /** Counter for assigning unique class tags (for instanceof support) */
   classTagCounter: number;
   /** Map from class name → unique tag value (for instanceof support) */
@@ -354,6 +489,10 @@ export interface CodegenContext {
   nativeStrHelpersEmitted: boolean;
   /** Whether native string host bridge helpers have been emitted */
   nativeStrExternBridgeEmitted: boolean;
+  /** Whether the testRuntime string helpers (#1187) have been emitted */
+  testRuntimeStringHelpersEmitted: boolean;
+  /** Test-only: emit testRuntime string-coercion exports (#1187). */
+  testRuntime: boolean;
   /** Map from native string helper name → function index */
   nativeStrHelpers: Map<string, number>;
   /** Map from value type kind → ref cell struct type index */
@@ -372,10 +511,24 @@ export interface CodegenContext {
   templateCacheCounter: number;
   /** Type index for template vec struct */
   templateVecTypeIdx: number;
+  /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
+  errorStructTypeIdx: number;
   /** Extra properties for empty object variables */
   widenedTypeProperties: Map<string, { name: string; type: ValType }[]>;
   /** Map from widened variable name to its registered struct name */
   widenedVarStructMap: Map<string, string>;
+  /**
+   * (#1239) Variable names whose initializer is an object literal carrying
+   * `get`/`set` accessors. Such variables are stored as plain JS host
+   * objects (via `__new_plain_object` + `__defineProperty_accessor`) and
+   * must NEVER be treated as a wasmGC struct ref — every read/write goes
+   * through the externref host path so V8's accessor descriptor fires.
+   *
+   * Populated in `compileObjectLiteralWithAccessors` (literals.ts) and
+   * consulted by `resolveStructNameForExpr` and `resolveEffectiveStructName`
+   * to short-circuit the struct-resolution chain back to `undefined`.
+   */
+  externrefAccessorVars: Set<string>;
   /** Math methods that need inline Wasm implementations */
   pendingMathMethods: Set<string>;
   /** True if Math.clz32 or Math.imul is used — requires ToUint32 Wasm helper */
@@ -398,6 +551,13 @@ export interface CodegenContext {
   symbolCounterGlobalIdx: number;
   /** Stack of in-progress parent function bodies for index shifting during closure compilation */
   parentBodiesStack: Instr[][];
+  /** All live (allocated but not yet attached to ctx.mod.functions) FunctionContext bodies.
+   *  Walked by addUnionImports / shiftLateImportIndices to ensure call-funcIdx values
+   *  in nested function bodies under construction (e.g. `cbFctx.body` in
+   *  compileArrowAsCallback during its captures-extraction / param-coercion setup
+   *  phase, BEFORE the savedFunc swap puts it on funcStack) are still shifted on
+   *  late import addition. (#1384) */
+  liveBodies: Set<Instr[]>;
   /** Hash-based lookup for anonymous struct deduplication */
   anonStructHash: Map<string, string>;
   /** Pending late import shift state */
@@ -408,6 +568,21 @@ export interface CodegenContext {
   classMethodNames: Map<string, string[]>;
   /** Map from class name → global idx of the method-name CSV string constant (see #1047) */
   classMethodsCsvGlobal: Map<string, number>;
+  /** Map from class name → global index of the class-object externref singleton (#1395). Used so `C` resolves to a real object whose static-method descriptors are queryable. */
+  classObjectGlobals: Map<string, number>;
+  /** Map from class name → own static method names (for the static method allowlist; #1395) */
+  classStaticMethodNames: Map<string, string[]>;
+  /** Map from class name → global idx of the static-method-name CSV string constant (#1395) */
+  classStaticMethodsCsvGlobal: Map<string, number>;
+  /** (#1394) Map from `${className}_${methodName}` → global idx of the cached
+   *  externref singleton closure for the method. Lazily allocated on first
+   *  property-access of `C.prototype.<method>` or `instance.<method>` (as
+   *  value). Reused on every subsequent access so `c.m === C.prototype.m`
+   *  holds (verifyProperty identity assertions across ~478 class/elements
+   *  tests). The companion canonical trampoline is named
+   *  `__obj_meth_tramp_${className}_${methodName}_cached` and is also reused
+   *  across all access sites to avoid bloating mod.functions. */
+  methodClosureGlobals: Map<string, number>;
   /** Whether targeting WASI */
   wasi: boolean;
   /** WASI import indices */

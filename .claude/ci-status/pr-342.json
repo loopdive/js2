@@ -1,0 +1,22 @@
+{
+  "pr": 342,
+  "conclusion": "success",
+  "head_branch": "issue-1383-typeof-eq-gate",
+  "head_sha": "4b7c1411756b9af0ac8a1bf010a0ff42a86285bb",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26128505341",
+  "timestamp": "2026-05-19T22:45:38Z",
+  "pass": 27734,
+  "fail": 14182,
+  "compile_error": 1164,
+  "snapshot_delta": -413,
+  "net_per_test": -373,
+  "regressions": 505,
+  "regressions_real": 462,
+  "regressions_wasm_change": 462,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 43,
+  "improvements": 89,
+  "baseline_sha": "4b7c1411756b9af0ac8a1bf010a0ff42a86285bb",
+  "baseline_staleness_commits": 154,
+  "baseline_stale": true
+}

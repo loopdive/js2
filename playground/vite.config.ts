@@ -1,19 +1,33 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { copyFileSync, existsSync } from "node:fs";
 import { test262Plugin } from "./vite-plugin-test262.js";
 import { compilerBundlePlugin } from "./vite-plugin-compiler-bundle.js";
+import { adrPlugin } from "./vite-plugin-adr.js";
+import { dashboardPlugin } from "./vite-plugin-dashboard.js";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 const dashboardPluginPath = resolve(import.meta.dirname, "vite-plugin-dashboard.ts");
 const hasDashboardData =
   existsSync(resolve(projectRoot, "dashboard", "index.html")) && existsSync(resolve(projectRoot, "plan", "issues"));
 
+function frameNavSyncPlugin(): Plugin {
+  let outDir = resolve(projectRoot, "dist/playground");
+  return {
+    name: "frame-nav-sync",
+    apply: "build",
+    configResolved(config) {
+      outDir = resolve(projectRoot, config.build.outDir);
+    },
+    closeBundle() {
+      copyFileSync(resolve(projectRoot, "frame-nav-sync.js"), resolve(outDir, "frame-nav-sync.js"));
+    },
+  };
+}
+
 export default defineConfig(async () => {
-  const plugins = [compilerBundlePlugin(), test262Plugin()];
+  const plugins = [compilerBundlePlugin(), test262Plugin(), adrPlugin(), frameNavSyncPlugin()];
   if (hasDashboardData && existsSync(dashboardPluginPath)) {
-    const { dashboardPlugin } = await import(pathToFileURL(dashboardPluginPath).href);
     plugins.push(dashboardPlugin());
   }
 
@@ -38,6 +52,7 @@ export default defineConfig(async () => {
         "node:fs": resolve(import.meta.dirname, "stubs/node-fs-stub.js"),
         "node:child_process": resolve(import.meta.dirname, "stubs/node-stub.js"),
         "node:os": resolve(import.meta.dirname, "stubs/node-stub.js"),
+        "node:module": resolve(import.meta.dirname, "stubs/node-module-stub.js"),
       },
     },
     server: {
@@ -54,14 +69,14 @@ export default defineConfig(async () => {
           "**/test262/**",
           "**/node_modules/**",
           "**/.test262-cache/**",
-          "**/pages-dist/**",
-          "**/playground-dist/**",
+          "**/dist/pages/**",
+          "**/dist/playground/**",
           "**/benchmarks/results/test262-results-*.jsonl",
         ],
       },
     },
     build: {
-      outDir: "playground-dist",
+      outDir: "dist/playground",
       emptyOutDir: true,
       target: "esnext",
       rollupOptions: {

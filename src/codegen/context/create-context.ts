@@ -5,7 +5,7 @@
  * This module constructs a fresh CodegenContext and performs the minimal
  * upfront registry bootstrap that generateModule/generateMultiModule rely on.
  */
-import ts from "typescript";
+import { ts } from "../../ts-api.js";
 import type { WasmModule } from "../../ir/types.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
@@ -29,6 +29,7 @@ export function createCodegenContext(
     errors: [],
     lastKnownNode: null,
     externClasses: new Map(),
+    pseudoExternClasses: new Map(),
     funcOptionalParams: new Map(),
     anonTypeMap: new Map(),
     anonTypeCounter: 0,
@@ -75,6 +76,8 @@ export function createCodegenContext(
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),
     classParentMap: new Map(),
+    classBuiltinParentMap: new Map(),
+    classExternrefBackedSet: new Set(),
     classTagCounter: 0,
     classTagMap: new Map(),
     classExprNameMap: new Map(),
@@ -84,12 +87,14 @@ export function createCodegenContext(
     tupleTypeMap: new Map(),
     fast: options?.fast ?? false,
     nativeStrings: options?.nativeStrings ?? options?.fast ?? options?.wasi ?? false,
+    testRuntime: options?.testRuntime ?? false,
     nativeStrDataTypeIdx: -1,
     anyStrTypeIdx: -1,
     nativeStrTypeIdx: -1,
     consStrTypeIdx: -1,
     nativeStrHelpersEmitted: false,
     nativeStrExternBridgeEmitted: false,
+    testRuntimeStringHelpersEmitted: false,
     nativeStrHelpers: new Map(),
     refCellTypeMap: new Map(),
     anyValueTypeIdx: -1,
@@ -98,8 +103,10 @@ export function createCodegenContext(
     shapeMap: new Map(),
     templateCacheCounter: 0,
     templateVecTypeIdx: -1,
+    errorStructTypeIdx: -1,
     widenedTypeProperties: new Map(),
     widenedVarStructMap: new Map(),
+    externrefAccessorVars: new Set(),
     pendingMathMethods: new Set(),
     needsToUint32: false,
     classDeclarationMap: new Map(),
@@ -111,12 +118,17 @@ export function createCodegenContext(
     inlinableFunctions: new Map(),
     symbolCounterGlobalIdx: -1,
     parentBodiesStack: [],
+    liveBodies: new Set(),
     anonStructHash: new Map(),
     funcTypeCache: new Map(),
     pendingLateImportShift: null,
     protoGlobals: new Map(),
     classMethodNames: new Map(),
     classMethodsCsvGlobal: new Map(),
+    classObjectGlobals: new Map(),
+    classStaticMethodNames: new Map(),
+    classStaticMethodsCsvGlobal: new Map(),
+    methodClosureGlobals: new Map(),
     wasi: options?.wasi ?? false,
     wasiFdWriteIdx: -1,
     wasiProcExitIdx: -1,

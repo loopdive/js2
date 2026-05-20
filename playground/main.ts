@@ -919,6 +919,9 @@ function bindInputModelPersistence(model: monaco.editor.ITextModel): void {
     runBtn.disabled = false;
     benchBtn.disabled = true;
     downloadWasmBtn.disabled = true;
+    for (const f of files) {
+      if (f.folder === "output") f.model.setValue("");
+    }
   });
 }
 
@@ -1974,8 +1977,8 @@ const benchmarkExamples: BenchmarkExample[] = [
   {
     name: "loop.ts",
     path: "examples/benchmarks/loop.ts",
-    title: "Loop: sum 1..1M",
-    description: "Tight numeric loop, no allocations",
+    title: "Loop: 1M Int32 sum",
+    description: "Tight i32 loop with explicit | 0 wrap, no allocations",
     benchmarkFunction: "bench_loop",
   },
   {
@@ -2187,16 +2190,21 @@ function t262BuildTree(cats: T262CategorySummary[]): T262TreeNode {
 }
 
 const t262ExpandedFolders = new Set<string>(["__ex_dom__"]);
+let t262RenderGeneration = 0;
 
 async function t262Render() {
   const listEl = test262Panel.querySelector(".t262-list") as HTMLElement;
   if (!listEl) return;
-  listEl.innerHTML = "";
+  const renderGeneration = ++t262RenderGeneration;
+  const isStaleRender = () => renderGeneration !== t262RenderGeneration;
+  const listFragment = document.createDocumentFragment();
 
   await ensureBenchmarkSidebarSnapshot();
+  if (isStaleRender()) return;
 
   // Load test262 results report
   const report = await t262LoadReport();
+  if (isStaleRender()) return;
 
   const filter = t262Filter.toLowerCase();
 
@@ -2357,13 +2365,13 @@ async function t262Render() {
     const exHeader = document.createElement("div");
     exHeader.className = "t262-section-header";
     exHeader.textContent = "EXAMPLES";
-    listEl.appendChild(exHeader);
+    listFragment.appendChild(exHeader);
 
     for (const group of exampleGroups) {
       const groupMatches =
         !filter || group.folder.includes(filter) || group.files.some((f) => f.name.toLowerCase().includes(filter));
       if (!groupMatches) continue;
-      await renderTopFolder(group.folder, `__ex_${group.folder}__`, listEl, (container) => {
+      await renderTopFolder(group.folder, `__ex_${group.folder}__`, listFragment, (container) => {
         const filesEl = document.createElement("div");
         filesEl.className = "t262-files";
         filesEl.style.paddingLeft = "22px";
@@ -2376,6 +2384,7 @@ async function t262Render() {
         }
         container.appendChild(filesEl);
       });
+      if (isStaleRender()) return;
     }
   }
 
@@ -2383,7 +2392,7 @@ async function t262Render() {
   const unitHeader = document.createElement("div");
   unitHeader.className = "t262-section-header";
   unitHeader.textContent = "UNIT TESTS";
-  listEl.appendChild(unitHeader);
+  listFragment.appendChild(unitHeader);
 
   // Count total files in a tree node (recursively)
   function nodeFileCount(node: T262TreeNode): number {
@@ -2581,7 +2590,7 @@ async function t262Render() {
   async function renderTopFolder(
     name: string,
     folderKey: string,
-    parent: HTMLElement,
+    parent: HTMLElement | DocumentFragment,
     renderContents: (container: HTMLElement) => void | Promise<void>,
     summaryHtml?: string,
     onOpen?: () => void | Promise<void>,
@@ -2625,7 +2634,7 @@ async function t262Render() {
     await renderTopFolder(
       "js2wasm Test Suite",
       "__js2wasm__",
-      listEl,
+      listFragment,
       (container) => {
         const filesEl = document.createElement("div");
         filesEl.className = "t262-files";
@@ -2657,22 +2666,25 @@ async function t262Render() {
       },
       buildEquivSummaryHtml(equivTests.length),
     );
+    if (isStaleRender()) return;
   }
 
   // ── test262 folder ──
   const cats = await t262LoadIndex();
+  if (isStaleRender()) return;
   const tree = t262BuildTree(cats);
   const t262Matches = !filter || nodeMatchesFilter(tree, filter) || "ecmascript test suite".includes(filter);
   if (t262Matches) {
     await renderTopFolder(
       "ECMAScript Test Suite",
       "__test262__",
-      listEl,
+      listFragment,
       async (container) => {
         await renderNode(tree, container, 1);
       },
       report ? buildT262SummaryHtml(report.summary) : "",
     );
+    if (isStaleRender()) return;
   }
 
   // ── BENCHMARKS section ──
@@ -2692,9 +2704,9 @@ async function t262Render() {
     benchHeader.appendChild(benchTitle);
     benchBtn.classList.add("bench-section-btn");
     benchHeader.appendChild(benchBtn);
-    listEl.appendChild(benchHeader);
+    listFragment.appendChild(benchHeader);
 
-    await renderTopFolder("js2wasm Benchmark Suite", "__benchmarks__", listEl, (container) => {
+    await renderTopFolder("js2wasm Benchmark Suite", "__benchmarks__", listFragment, (container) => {
       const filesEl = document.createElement("div");
       filesEl.className = "t262-files";
       filesEl.style.paddingLeft = "22px";
@@ -2704,7 +2716,10 @@ async function t262Render() {
       }
       container.appendChild(filesEl);
     });
+    if (isStaleRender()) return;
   }
+
+  listEl.replaceChildren(listFragment);
 }
 
 // Wire up the search input
@@ -4008,14 +4023,13 @@ function buildEnv(
 
 async function runOnly() {
   if (!lastResult) return;
-  let result = lastResult;
-  let synthesizedMain = false;
+  const result = lastResult;
 
   consolePre.textContent = "";
   errorsPre.textContent = "";
   previewPanel.innerHTML = "";
 
-  // Use compile-time metadata to determine execution intent
+  // Use compile-time metadata to determine execution intent (#907)
   const hasMain = result.hasMain === true;
   const hasTopLevel = result.hasTopLevelStatements === true;
 
@@ -4025,39 +4039,10 @@ async function runOnly() {
     return;
   }
 
-  if (!hasMain && hasTopLevel) {
-    // Top-level statements exist but no main().
-    // The compiler now emits _start for module-init-only programs (#907),
-    // so no synthesized main() is needed. For programs with other exports,
-    // the __init_done guard triggers init on first export call — fall back
-    // to synthesized main() only if neither _start nor guard is available.
-    const source = inputFile.model.getValue();
-    if (!hasTopLevelMainDeclaration(source)) {
-      // result was already compiled as-is; _start will be in exports if
-      // there are no user-exported functions. If there ARE exports but no
-      // main, the guard handles init — but we still need an entry point,
-      // so synthesize main() as before.
-      // Check: does the binary have _start? We can't peek at Wasm exports
-      // before instantiation, so use a simple heuristic: if hasMain is
-      // false and the source has no `export` keywords, _start is emitted.
-      const hasExportKeyword = /\bexport\b/.test(source);
-      if (hasExportKeyword) {
-        // Has exports but no main() — guard handles init, synthesize main
-        const runtimeSource = `${source}\n\nexport function main(): void {}\n`;
-        const runtimeResult = buildCompileResultForEditorSource(runtimeSource);
-        if (!runtimeResult.success) {
-          errorsPre.textContent = runtimeResult.errors
-            .map((e) => `L${e.line}:${e.column} [${e.severity}] ${e.message}`)
-            .join("\n");
-          showOutputPanel("errors");
-          return;
-        }
-        result = runtimeResult;
-        synthesizedMain = true;
-      }
-      // else: no exports → _start is emitted, use result as-is
-    }
-  }
+  // For non-WASI programs without main(), top-level code is wired into the
+  // Wasm `start` section by the compiler (#907). It runs automatically during
+  // `WebAssembly.instantiate()` — no need for a synthesized main() or an
+  // explicit `_start` call from the host.
 
   const usesDom = detectDomUsage(result);
   const logs: string[] = [];
@@ -4082,15 +4067,17 @@ async function runOnly() {
     wasmExports = instance.exports as Record<string, any>;
     setExports(wasmExports as Record<string, Function>);
     if (typeof wasmExports.main === "function") {
-      if (synthesizedMain) {
-        logs.push("Executed top-level statements via synthesized main().");
-      }
       const returnValue = wasmExports.main();
       if (returnValue !== undefined) logs.push(`→ ${returnValue}`);
     } else if (typeof wasmExports._start === "function") {
-      // Module-init-only program: _start is the direct init entry (#907)
+      // WASI-target binaries export `_start` as their entry point — call it
+      // explicitly. Non-WASI module-init programs run init via the start
+      // section during instantiation and don't expose `_start`.
       wasmExports._start();
       logs.push("Executed top-level statements via _start().");
+    } else if (hasTopLevel) {
+      // Top-level code already executed during instantiation via start section.
+      logs.push("Executed top-level statements during module instantiation.");
     } else {
       logs.push("No exported main() or _start() found in Wasm module.");
     }
@@ -4467,8 +4454,93 @@ mobileLayoutMedia.addEventListener("change", (event) => {
   syncResponsiveEditorOptions();
 });
 
-// Auto-compile and run on page load
-compileOnly();
-requestAnimationFrame(() => {
-  void runOnly();
-});
+// #1327 — Deep-link support: ?t262=<path>&error=<encoded-message>
+// Loads a test262 file by URL path (e.g. ?t262=test/built-ins/Array/from/iter-cstm-ctor.js
+// or ?t262=built-ins/Array/from/iter-cstm-ctor.js) into the input editor and
+// shows the error message (if any) in a banner. Falls through silently if the
+// file can't be fetched — the test262 corpus is large and only files referenced
+// by the JSONL baseline are bundled into the GitHub Pages artifact.
+async function loadDeepLinkFromUrl(): Promise<boolean> {
+  const params = new URLSearchParams(location.search);
+  const t262Path = params.get("t262");
+  if (!t262Path) return false;
+  const errorParam = params.get("error");
+
+  try {
+    const source = await t262LoadFile(t262Path);
+    if (!source) {
+      showT262DeepLinkBanner(`Could not load test262 file: ${t262Path}`, "warn");
+      return false;
+    }
+    const virtualPath = t262Path.startsWith("test/") ? t262Path : `test/${t262Path}`;
+    setInputSourceModel(virtualPath, source);
+    revealSourceTab();
+  } catch {
+    showT262DeepLinkBanner(`Failed to fetch test262 file: ${t262Path}`, "warn");
+    return false;
+  }
+
+  if (errorParam) {
+    // Show error as an overlay banner below the editor — inline decoration
+    // would require knowing the line number, which the JSONL `error` field
+    // doesn't always include in a parseable form.
+    showT262DeepLinkBanner(`Reported error: ${errorParam}`, "fail");
+  }
+  return true;
+}
+
+function showT262DeepLinkBanner(message: string, tone: "fail" | "warn"): void {
+  const existing = document.getElementById("t262-deep-link-banner");
+  if (existing) existing.remove();
+  const banner = document.createElement("div");
+  banner.id = "t262-deep-link-banner";
+  banner.setAttribute("role", "status");
+  banner.style.cssText = [
+    "position:fixed",
+    "top:54px",
+    "right:16px",
+    "max-width:520px",
+    "z-index:100",
+    "padding:10px 14px",
+    "border-radius:0",
+    "border:1px solid",
+    `border-color:${tone === "fail" ? "rgba(248,113,113,0.5)" : "rgba(250,204,21,0.5)"}`,
+    `background:${tone === "fail" ? "rgba(248,113,113,0.12)" : "rgba(250,204,21,0.12)"}`,
+    `color:${tone === "fail" ? "#fca5a5" : "#fde68a"}`,
+    "font-family:ui-monospace, SFMono-Regular, Menlo, monospace",
+    "font-size:12px",
+    "line-height:1.5",
+    "white-space:pre-wrap",
+    "box-shadow:0 8px 22px rgba(0,0,0,0.3)",
+  ].join(";");
+  const closeBtn = document.createElement("button");
+  closeBtn.textContent = "×";
+  closeBtn.style.cssText = [
+    "float:right",
+    "margin-left:12px",
+    "background:transparent",
+    "border:none",
+    "color:inherit",
+    "font-size:16px",
+    "line-height:1",
+    "cursor:pointer",
+    "padding:0",
+  ].join(";");
+  closeBtn.addEventListener("click", () => banner.remove());
+  banner.appendChild(closeBtn);
+  const text = document.createElement("span");
+  text.textContent = message;
+  banner.appendChild(text);
+  document.body.appendChild(banner);
+}
+
+// Auto-compile and run on page load (or load test262 deep-link first).
+(async () => {
+  const deepLinked = await loadDeepLinkFromUrl();
+  compileOnly();
+  if (!deepLinked) {
+    requestAnimationFrame(() => {
+      void runOnly();
+    });
+  }
+})();

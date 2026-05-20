@@ -14,17 +14,18 @@
  *   - getFuncSignature, getOrCreateFuncRefWrapperTypes, emitFuncRefAsClosure
  */
 
-import ts from "typescript";
+import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 import { pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
   destructureParamArray,
   destructureParamObject,
+  destructureParamObjectExternref,
   ensureExnTag,
   ensureStructForType,
   getArrTypeIdxFromVec,
@@ -54,27 +55,166 @@ import {
 } from "./statements.js";
 import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
 import { buildDestructureNullThrow, isNullOrUndefinedLiteral } from "./destructuring-params.js";
+import { detectStringBuilders } from "./string-builder.js";
 
 // ── Arrow function callbacks ──────────────────────────────────────────
 
-/** Collect all identifiers referenced in a node */
-export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>): void {
+/** True for nodes that introduce a new function scope (params + body locals). */
+function isFunctionScopeBoundary(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  );
+}
+
+/**
+ * Collect names that are LOCALLY DECLARED inside a function-like node's scope.
+ * Used to compute the shadow set for free-variable analysis.
+ *
+ * Includes:
+ *   - parameter binding identifiers (function-scoped)
+ *   - `var` declarations anywhere in the body (function-scoped)
+ *   - top-level `function`/`class` declarations in the body
+ *
+ * Does NOT cross nested function boundaries.
+ *
+ * Conservatively excludes block-scoped `let`/`const` since they only shadow
+ * within their block, and adding them to the function-wide shadow set would
+ * incorrectly mask legitimate outer captures.
+ */
+export function collectFunctionOwnLocals(funcLike: ts.Node, out: Set<string>): void {
+  if (!isFunctionScopeBoundary(funcLike)) return;
+  const decl = funcLike as ts.SignatureDeclaration;
+  // Params (including destructuring binding identifiers)
+  if (decl.parameters) {
+    for (const p of decl.parameters) {
+      if (ts.isIdentifier(p.name)) {
+        out.add(p.name.text);
+      } else if (ts.isObjectBindingPattern(p.name) || ts.isArrayBindingPattern(p.name)) {
+        collectBindingPatternNames(p.name, out);
+      }
+    }
+  }
+  // Body var/function/class decls. Concise arrow bodies are expressions — no decls.
+  const body = (decl as { body?: ts.Node | undefined }).body;
+  if (body && ts.isBlock(body)) {
+    for (const stmt of body.statements) {
+      collectVarAndTopLevelDecls(stmt, out, /*atTopLevel=*/ true);
+    }
+  }
+}
+
+/**
+ * Recursively collect `var` declarations (function-scoped) and top-level
+ * `function`/`class` declarations from a node tree, without crossing nested
+ * function scope boundaries.
+ */
+function collectVarAndTopLevelDecls(node: ts.Node, out: Set<string>, atTopLevel: boolean): void {
+  if (isFunctionScopeBoundary(node)) return; // do not cross
+  if (ts.isVariableStatement(node)) {
+    const isVar = !(node.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+    if (isVar) {
+      for (const d of node.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) out.add(d.name.text);
+        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
+          collectBindingPatternNames(d.name, out);
+        }
+      }
+    }
+    // Initializers may contain nested functions — keep walking but we won't
+    // descend into their bodies (boundary check above).
+    for (const d of node.declarationList.declarations) {
+      if (d.initializer) collectVarAndTopLevelDecls(d.initializer, out, false);
+    }
+    return;
+  }
+  if (ts.isForStatement(node) && node.initializer && ts.isVariableDeclarationList(node.initializer)) {
+    const isVar = !(node.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+    if (isVar) {
+      for (const d of node.initializer.declarations) {
+        if (ts.isIdentifier(d.name)) out.add(d.name.text);
+        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
+          collectBindingPatternNames(d.name, out);
+        }
+      }
+    }
+  }
+  if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && ts.isVariableDeclarationList(node.initializer)) {
+    const isVar = !(node.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+    if (isVar) {
+      for (const d of node.initializer.declarations) {
+        if (ts.isIdentifier(d.name)) out.add(d.name.text);
+        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
+          collectBindingPatternNames(d.name, out);
+        }
+      }
+    }
+  }
+  if (ts.isFunctionDeclaration(node) && node.name && atTopLevel) {
+    out.add(node.name.text);
+    return; // do not recurse into nested function body
+  }
+  if (ts.isClassDeclaration(node) && node.name && atTopLevel) {
+    out.add(node.name.text);
+    return;
+  }
+  forEachChild(node, (c) => collectVarAndTopLevelDecls(c, out, false));
+}
+
+/**
+ * Collect all identifiers referenced in a node.
+ *
+ * If `shadowed` is provided, identifiers in that set are NOT collected. The
+ * walker also detects nested function scopes and augments the shadow set with
+ * each nested function's own locals so that references inside them to names
+ * shadowed by nested var/param decls aren't incorrectly attributed to the
+ * outer scope.
+ *
+ * Callers analyzing free variables of a function-like body should compute the
+ * function's own locals via `collectFunctionOwnLocals` and pass them as the
+ * initial `shadowed` set, since the walker enters the body without crossing
+ * the boundary itself.
+ */
+export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, shadowed?: ReadonlySet<string>): void {
   if (ts.isIdentifier(node)) {
-    names.add(node.text);
+    if (!shadowed || !shadowed.has(node.text)) names.add(node.text);
+    return;
   }
   // Track `this` keyword references so arrow functions can capture the
   // enclosing scope's `this` through the normal closure mechanism.
   if (node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.SuperKeyword) {
-    names.add("this");
+    if (!shadowed || !shadowed.has("this")) names.add("this");
+    return;
   }
-  ts.forEachChild(node, (child) => collectReferencedIdentifiers(child, names));
+  if (isFunctionScopeBoundary(node)) {
+    // Augment shadow set with this nested function's own locals before
+    // recursing into its body. Function/method names declared by nested
+    // FunctionExpressions/ArrowFunctions don't leak out, so we don't add the
+    // node's own name to the OUTER shadow set; we add it (the named func
+    // expr's own name) to the inner shadow so self-references aren't treated
+    // as outer captures.
+    const merged = new Set<string>(shadowed ?? []);
+    collectFunctionOwnLocals(node, merged);
+    if (ts.isFunctionExpression(node) && node.name) merged.add(node.name.text);
+    forEachChild(node, (child) => collectReferencedIdentifiers(child, names, merged));
+    return;
+  }
+  forEachChild(node, (child) => collectReferencedIdentifiers(child, names, shadowed));
 }
 
 /**
  * Collect identifiers that are WRITTEN to within a node tree.
  * Detects: assignment (=, +=, etc.), ++, --.
+ *
+ * Scope-aware in the same sense as `collectReferencedIdentifiers`: writes to
+ * names shadowed by nested function scopes are not collected.
  */
-export function collectWrittenIdentifiers(node: ts.Node, names: Set<string>): void {
+export function collectWrittenIdentifiers(node: ts.Node, names: Set<string>, shadowed?: ReadonlySet<string>): void {
   if (ts.isBinaryExpression(node)) {
     const op = node.operatorToken.kind;
     // Assignment operators
@@ -97,18 +237,25 @@ export function collectWrittenIdentifiers(node: ts.Node, names: Set<string>): vo
       op === ts.SyntaxKind.QuestionQuestionEqualsToken
     ) {
       if (ts.isIdentifier(node.left)) {
-        names.add(node.left.text);
+        if (!shadowed || !shadowed.has(node.left.text)) names.add(node.left.text);
       }
     }
   } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
     const op = node.operator;
     if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
       if (ts.isIdentifier(node.operand)) {
-        names.add(node.operand.text);
+        if (!shadowed || !shadowed.has(node.operand.text)) names.add(node.operand.text);
       }
     }
   }
-  ts.forEachChild(node, (child) => collectWrittenIdentifiers(child, names));
+  if (isFunctionScopeBoundary(node)) {
+    const merged = new Set<string>(shadowed ?? []);
+    collectFunctionOwnLocals(node, merged);
+    if (ts.isFunctionExpression(node) && node.name) merged.add(node.name.text);
+    forEachChild(node, (child) => collectWrittenIdentifiers(child, names, merged));
+    return;
+  }
+  forEachChild(node, (child) => collectWrittenIdentifiers(child, names, shadowed));
 }
 
 /**
@@ -129,12 +276,22 @@ export function promoteAccessorCapturesToGlobals(
   ctx: CodegenContext,
   fctx: FunctionContext,
   accessorBody: ts.Block | undefined,
+  extraNodes?: readonly ts.Node[],
 ): void {
-  if (!accessorBody) return;
+  if (!accessorBody && (!extraNodes || extraNodes.length === 0)) return;
 
   const referencedNames = new Set<string>();
-  for (const stmt of accessorBody.statements) {
-    collectReferencedIdentifiers(stmt, referencedNames);
+  if (accessorBody) {
+    for (const stmt of accessorBody.statements) {
+      collectReferencedIdentifiers(stmt, referencedNames);
+    }
+  }
+  // Param-default initializers (#1161) also reference captured variables;
+  // scan them here so defaults like `[] = iter` can resolve `iter`.
+  if (extraNodes) {
+    for (const node of extraNodes) {
+      collectReferencedIdentifiers(node, referencedNames);
+    }
   }
 
   for (const name of referencedNames) {
@@ -201,8 +358,16 @@ export function promoteAccessorCapturesToGlobals(
         mutable: true,
         init: [{ op: "i32.const", value: 0 }],
       });
-      // Copy current TDZ flag value to the global
-      fctx.body.push({ op: "local.get", index: tdzFlagLocalIdx });
+      // Copy current TDZ flag value to the global. If the flag has been
+      // boxed in an i32 ref cell (because a closure captured it — #1177),
+      // read it through `struct.get` instead of as a raw i32 local.
+      const boxed = fctx.boxedTdzFlags?.get(name);
+      if (boxed) {
+        fctx.body.push({ op: "local.get", index: boxed.localIdx });
+        fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 } as Instr);
+      } else {
+        fctx.body.push({ op: "local.get", index: tdzFlagLocalIdx });
+      }
       fctx.body.push({ op: "global.set", index: tdzGlobalIdx });
       ctx.tdzGlobals.set(name, tdzGlobalIdx);
     }
@@ -576,25 +741,23 @@ function emitParamDefaultCheckInline(
   thenInstrs: Instr[],
 ): void {
   if (paramType.kind === "externref") {
-    // JS semantics: defaults fire on missing arg OR explicit undefined.
-    // Must check __extern_is_undefined in addition to ref.is_null — callers
-    // may pass __get_undefined() which is an externref-wrapped JS undefined,
-    // not Wasm null. Without this, destructure guards throw TypeError first
-    // (#1135 follow-up).
+    // Per JS spec, parameter defaults fire ONLY when the arg is `undefined`
+    // (omitted or explicit), never for `null`. Callers pad missing args with
+    // `__get_undefined()` (externref-wrapped undefined), so
+    // `__extern_is_undefined` catches both "omitted" and "explicit undefined".
+    // Using `ref.is_null` in addition would wrongly fire the default when the
+    // caller passed explicit `null` (#1025 / #1021).
     const undefIdx = ensureLateImportShared(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
     flushLateImportShiftsShared(ctx, fctx);
+    fctx.body.push({ op: "local.get", index: paramIdx });
     if (undefIdx !== undefined) {
-      fctx.body.push({ op: "local.get", index: paramIdx });
-      fctx.body.push({ op: "ref.is_null" });
-      fctx.body.push({ op: "local.get", index: paramIdx });
       fctx.body.push({ op: "call", funcIdx: undefIdx } as Instr);
-      fctx.body.push({ op: "i32.or" } as Instr);
-      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs });
     } else {
-      fctx.body.push({ op: "local.get", index: paramIdx });
+      // Fallback (standalone mode): ref.is_null is imprecise — treats null
+      // as undefined.
       fctx.body.push({ op: "ref.is_null" });
-      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs });
     }
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs });
   } else if (paramType.kind === "ref_null" || paramType.kind === "ref") {
     fctx.body.push({ op: "local.get", index: paramIdx });
     fctx.body.push({ op: "ref.is_null" });
@@ -820,10 +983,69 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
         // User-defined function — use closure path, not host callback
         return false;
       }
+      // (#1300) The callee is an identifier but not in funcMap — typically a
+      // function-typed parameter or local. The receiving function expects
+      // the GC-struct closure shape (`__fn_wrap_N_struct`) and will
+      // `ref.cast` the externref it gets. Routing through the host
+      // `__make_callback` path here produces a JS-wrapped externref that
+      // fails the cast and null-derefs at the receiver's `struct.get`.
+      // Detect via TypeScript's call-signature lookup on the identifier's
+      // type and use the closure path if the callee is callable.
+      try {
+        const calleeType = ctx.checker.getTypeAtLocation(parent.expression);
+        const callSigs = calleeType?.getCallSignatures?.();
+        if (callSigs && callSigs.length > 0) {
+          return false;
+        }
+      } catch {
+        // Fall through to host-callback path on any checker error
+      }
     }
-    // For method calls (property access), check if the method is known array HOF
-    // (filter, map, etc.) — those have dedicated inline compilation and ARE handled
-    // as closure calls. For other property accesses, treat as host callback.
+    // For method calls (property access), check if the method is on a
+    // user-defined class. User-defined methods receive the closure as the
+    // GC-struct shape (`__fn_wrap_N_struct`) and may store it for later
+    // dispatch (e.g. `app.routes.set(path, handler)`). Routing through
+    // `__make_callback` here produces a JS-wrapped externref that fails the
+    // dispatch-site `ref.cast` and null-derefs at `struct.get`. (#1311)
+    if (ts.isPropertyAccessExpression(parent.expression)) {
+      const propAccess = parent.expression;
+      const methodName = propAccess.name.text;
+      try {
+        const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+        // Search the receiver type's symbol chain for a class name that
+        // matches a user-defined method `${ClassName}_${methodName}`. We
+        // check both the receiver's own symbol (instance methods) and the
+        // type itself (handles `(typeof Foo).method` for statics).
+        const candidates = new Set<string>();
+        const recSym = receiverType.getSymbol?.();
+        const recName = recSym?.getName?.();
+        if (recName) candidates.add(recName);
+        // Walk base types so inherited user-defined methods are detected
+        const baseTypes = receiverType.getBaseTypes?.();
+        if (baseTypes) {
+          for (const bt of baseTypes) {
+            const bs = bt.getSymbol?.()?.getName?.();
+            if (bs) candidates.add(bs);
+          }
+        }
+        for (const className of candidates) {
+          const fullName = `${className}_${methodName}`;
+          const funcIdx = ctx.funcMap.get(fullName);
+          if (funcIdx !== undefined && funcIdx >= ctx.numImportFuncs) {
+            // User-defined method on a user-defined class — closure path
+            return false;
+          }
+        }
+        // Note: we deliberately don't fall back to a "param has call sig"
+        // heuristic for non-user-defined methods — host array HOFs
+        // (forEach, map, filter, etc.) have dedicated inline compilation
+        // and other host method callbacks (Promise.then, etc.) need a
+        // JS-callable externref via __make_callback. Only user-defined
+        // methods on user-defined classes get the closure path here.
+      } catch {
+        // Fall through to host-callback path on any checker error
+      }
+    }
     return true;
   }
   // NewExpression: `new Promise(executor)`, `new Map(comparator)`, etc.
@@ -841,6 +1063,75 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
     return true;
   }
   return false;
+}
+
+/**
+ * #1177: Returns true if the closure (`arrow`) is provably constructed AFTER
+ * the let/const/using declaration of `name` AND the closure is NOT inside a
+ * loop that wraps the declaration. In that case, we don't need to force-box
+ * the value — the variable is already initialized when the closure is built,
+ * and no closure invocation can observe TDZ.
+ *
+ * Critical for for-let-iter: `for (let i = 0; ...) { closures.push(() => i); }`
+ * — each iteration's closure is built AFTER `i` is initialized in that
+ * iteration. Force-boxing here would break per-iteration semantics (all
+ * closures would share the same Wasm box slot, observing the final value).
+ */
+function closureProvablyAfterLetDecl(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): boolean {
+  const sym = ctx.checker.getSymbolsInScope(arrow, ts.SymbolFlags.Variable).find((s) => s.name === name);
+  if (!sym) return false;
+  const decl = sym.valueDeclaration;
+  if (!decl) return false;
+
+  const closureStart = arrow.getStart();
+  const declEnd = decl.getEnd();
+
+  // closureStart < declEnd: closure is textually before the decl — TDZ risk.
+  if (closureStart < declEnd) return false;
+
+  // Walk up from the closure to find an enclosing loop. If a loop wraps the
+  // closure AND the decl is inside that loop's initializer (for-let case) or
+  // outside the body, force-boxing would break per-iteration semantics. Stop
+  // at function boundaries.
+  let cur: ts.Node | undefined = arrow.parent;
+  while (cur) {
+    if (
+      ts.isFunctionDeclaration(cur) ||
+      ts.isFunctionExpression(cur) ||
+      ts.isArrowFunction(cur) ||
+      ts.isMethodDeclaration(cur) ||
+      ts.isSourceFile(cur)
+    ) {
+      // Reached function boundary without finding a wrapping loop.
+      return true;
+    }
+    if (
+      ts.isForStatement(cur) ||
+      ts.isForInStatement(cur) ||
+      ts.isForOfStatement(cur) ||
+      ts.isWhileStatement(cur) ||
+      ts.isDoStatement(cur)
+    ) {
+      // Check if decl is descendant of this loop.
+      let d: ts.Node | undefined = decl;
+      while (d) {
+        if (d === cur) {
+          // Decl is inside (or part of) this loop. The loop wraps both
+          // the decl and the closure — per-iteration semantics apply,
+          // closure runs after decl in each iteration, no TDZ risk.
+          return true;
+        }
+        d = d.parent;
+      }
+      // Loop doesn't wrap decl — keep walking up.
+    }
+    cur = cur.parent;
+  }
+  return true;
 }
 
 export function compileArrowFunction(
@@ -943,24 +1234,32 @@ export function compileArrowAsClosure(
     }
   }
 
-  // 2. Analyze captured variables
+  // 2. Analyze captured variables. Use scope-aware collection so that nested
+  //    `var` declarations and parameter bindings inside the closure body shadow
+  //    outer references — otherwise a closure with its own `var i;` would be
+  //    treated as capturing the outer `i` (#995/#996).
+  const ownLocals = new Set<string>();
+  collectFunctionOwnLocals(arrow, ownLocals);
+  if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
+
   const referencedNames = new Set<string>();
   if (ts.isBlock(body)) {
     for (const stmt of body.statements) {
-      collectReferencedIdentifiers(stmt, referencedNames);
+      collectReferencedIdentifiers(stmt, referencedNames, ownLocals);
     }
   } else {
-    collectReferencedIdentifiers(body, referencedNames);
+    collectReferencedIdentifiers(body, referencedNames, ownLocals);
   }
 
   // Transitively add captures needed by called nested functions.
   // E.g. if this closure calls g() and g has nestedFuncCaptures {first, second},
   // this closure must also capture first and second so it can pass ref cells to g.
   for (const name of [...referencedNames]) {
+    if (ownLocals.has(name)) continue;
     const transitiveCaptures = ctx.nestedFuncCaptures.get(name);
     if (transitiveCaptures) {
       for (const cap of transitiveCaptures) {
-        referencedNames.add(cap.name);
+        if (!ownLocals.has(cap.name)) referencedNames.add(cap.name);
       }
     }
   }
@@ -969,10 +1268,10 @@ export function compileArrowAsClosure(
   const writtenInClosure = new Set<string>();
   if (ts.isBlock(body)) {
     for (const stmt of body.statements) {
-      collectWrittenIdentifiers(stmt, writtenInClosure);
+      collectWrittenIdentifiers(stmt, writtenInClosure, ownLocals);
     }
   } else {
-    collectWrittenIdentifiers(body, writtenInClosure);
+    collectWrittenIdentifiers(body, writtenInClosure, ownLocals);
   }
 
   // Also detect variables written in the enclosing scope (not just the closure).
@@ -1028,7 +1327,7 @@ export function compileArrowAsClosure(
                 outerWrites.add(name);
               }
             }
-            ts.forEachChild(node, collectOuterWrites);
+            forEachChild(node, collectOuterWrites);
           };
           if (ts.isBlock(outerBody)) {
             for (const stmt of outerBody.statements) {
@@ -1047,26 +1346,87 @@ export function compileArrowAsClosure(
     }
   }
 
-  const captures: { name: string; type: ValType; localIdx: number; mutable: boolean; alreadyBoxed: boolean }[] = [];
+  const captures: {
+    name: string;
+    type: ValType;
+    localIdx: number;
+    mutable: boolean;
+    alreadyBoxed: boolean;
+    /**
+     * #1177: Whether this capture's TDZ flag must be propagated through the
+     * closure. Set when `fctx.tdzFlagLocals?.has(name)` at capture-analysis time.
+     * Forces value-boxing too — the value at construction time may be the default
+     * (uninit), so the closure must see post-init mutations through the ref cell.
+     */
+    hasTdzFlag: boolean;
+  }[] = [];
   for (const name of referencedNames) {
-    const localIdx = fctx.localMap.get(name);
+    let localIdx = fctx.localMap.get(name);
+    let tdzFlagIdxFromScan: number | undefined;
+    if (localIdx === undefined) {
+      // #1177: The block-scope shadow manager (saveBlockScopedShadows) deletes
+      // localMap entries for block-scoped let/const names that were pre-hoisted
+      // by hoistLetConstWithTdz. Inside the block, before the let-decl runs,
+      // the slot still exists in fctx.locals — find it by name. This restores
+      // the ability of closures constructed inside the block to capture the
+      // hoisted slot, which is essential for TDZ-through-closure to fire.
+      for (let i = 0; i < fctx.locals.length; i++) {
+        const slot = fctx.locals[i]!;
+        if (slot.name === name) {
+          localIdx = fctx.params.length + i;
+          break;
+        }
+      }
+    }
     if (localIdx === undefined) continue;
     if (ctx.funcMap.has(name)) continue;
     // Skip if the name is the arrow's own parameter (including destructuring bindings)
     if (isOwnParamName(arrow, name)) continue;
     // Skip if the name is a named function expression's own name (self-reference)
     if (ts.isFunctionExpression(arrow) && arrow.name && arrow.name.text === name) continue;
+    // #1177: Also fall back to scanning for a `__tdz_<name>` slot when
+    // tdzFlagLocals was cleared by block-scope shadow management.
+    if (!fctx.tdzFlagLocals?.has(name)) {
+      const tdzSlotName = `__tdz_${name}`;
+      for (let i = 0; i < fctx.locals.length; i++) {
+        if (fctx.locals[i]!.name === tdzSlotName) {
+          tdzFlagIdxFromScan = fctx.params.length + i;
+          break;
+        }
+      }
+    }
     const type =
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type
         : (fctx.locals[localIdx - fctx.params.length]?.type ?? { kind: "f64" });
     // A capture is mutable if the closure writes to it OR the outer scope writes to it.
     // Both cases require a ref cell so mutations are visible across scope boundaries.
-    const isMutable = writtenInClosure.has(name) || writtenInOuter.has(name);
+    // #1177: Also force-box when the variable has a TDZ flag — the captured value
+    // at construction time may be the uninitialized default (e.g. `let x` declared
+    // after the closure is built), so post-init mutations must flow through the
+    // ref cell for the closure to observe them.
+    //
+    // BUT: only force-box if the closure is in a position where TDZ is actually
+    // possible. For for-let-iter where the closure is inside the loop body (and
+    // the let-decl is the for-init), the variable is initialized BEFORE every
+    // iteration's closure construction. Force-boxing breaks per-iteration
+    // semantics: each iteration would share the same box (single Wasm slot),
+    // so all closures see the final value of the loop variable.
+    const tdzFlagPresent = !!fctx.tdzFlagLocals?.has(name) || tdzFlagIdxFromScan !== undefined;
+    const hasTdzFlag = tdzFlagPresent && !closureProvablyAfterLetDecl(ctx, arrow, name);
+    const isMutable = writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag;
     // Check if the variable is already boxed from a previous closure capture.
     // If so, the local already holds a ref cell — don't wrap it again.
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
-    captures.push({ name, type, localIdx, mutable: isMutable, alreadyBoxed });
+    // #1177: If we found the TDZ flag via fctx.locals scan (block-scope shadow
+    // cleared tdzFlagLocals), seed fctx.tdzFlagLocals so downstream emit code
+    // (including the construction-time emit below and the call-site TDZ check)
+    // routes through the boxed flag mechanism.
+    if (tdzFlagIdxFromScan !== undefined) {
+      if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+      if (!fctx.tdzFlagLocals.has(name)) fctx.tdzFlagLocals.set(name, tdzFlagIdxFromScan);
+    }
+    captures.push({ name, type, localIdx, mutable: isMutable, alreadyBoxed, hasTdzFlag });
   }
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
@@ -1128,6 +1488,22 @@ export function compileArrowAsClosure(
         };
       }),
     ];
+
+    // #1177: Append a TDZ-flag ref-cell field for every capture that carries
+    // a TDZ flag in the outer fctx. The flag is shared by reference so the
+    // outer scope and the closure observe the same initialization status.
+    // Field layout: [funcref, ...value_fields, ...tdz_flag_fields].
+    const tdzFlaggedCaptures = captures.filter((c) => c.hasTdzFlag);
+    if (tdzFlaggedCaptures.length > 0) {
+      const i32RefCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "i32" });
+      for (const c of tdzFlaggedCaptures) {
+        structFields.push({
+          name: `__tdz_${c.name}`,
+          type: { kind: "ref_null" as const, typeIdx: i32RefCellTypeIdx },
+          mutable: false,
+        });
+      }
+    }
 
     // For closures with captures (but not named func exprs), make the struct
     // a subtype of the shared wrapper struct so ref.cast at call sites succeeds.
@@ -1193,8 +1569,20 @@ export function compileArrowAsClosure(
     labelMap: new Map(),
     savedBodies: [],
     enclosingClassName: fctx.enclosingClassName ?? resolveEnclosingClassName(fctx),
+    // (#1395) Propagate static-context flag so `this` inside an arrow
+    // captured from a static initializer / static method resolves to the
+    // class-object singleton rather than `undefined`.
+    isStaticContext: fctx.isStaticContext,
     isGenerator,
   };
+
+  // (#1384) Track liftedFctx.body in liveBodies BEFORE any emission so
+  // addUnionImports / shiftLateImportIndices can shift any `call funcIdx`
+  // instructions that get emitted during the captures-extraction prologue
+  // (lines 1589-1635) and the TDZ-flag-extraction prologue (lines 1648-1660),
+  // BOTH of which run BEFORE the savedFunc swap below that would otherwise
+  // expose liftedFctx.body via ctx.currentFunc / funcStack to the shifter.
+  ctx.liveBodies.add(liftedFctx.body);
 
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -1256,6 +1644,34 @@ export function compileArrowAsClosure(
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
       liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 1 });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
+    }
+  }
+
+  // #1177: For TDZ-flagged captures, also extract the boxed flag ref into a
+  // local in the lifted fctx and register it in `boxedTdzFlags` +
+  // `tdzFlagLocals`. This makes existing TDZ-check call sites (calls.ts,
+  // identifiers.ts) automatically route through `struct.get` on the ref cell.
+  // Field-layout invariant: TDZ flag fields come AFTER all value fields,
+  // i.e. fieldIdx = 1 + captures.length + tdzCaptureIndex.
+  {
+    const tdzFlaggedCapturesForPrologue = captures.filter((c) => c.hasTdzFlag);
+    if (tdzFlaggedCapturesForPrologue.length > 0) {
+      const i32RefCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "i32" });
+      const flagRefType: ValType = { kind: "ref_null", typeIdx: i32RefCellTypeIdx };
+      for (let ti = 0; ti < tdzFlaggedCapturesForPrologue.length; ti++) {
+        const cap = tdzFlaggedCapturesForPrologue[ti]!;
+        const tdzFieldIdx = 1 + captures.length + ti;
+        const flagBoxLocal = allocLocal(liftedFctx, `__tdz_box_${cap.name}`, flagRefType);
+        liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
+        liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: tdzFieldIdx });
+        liftedFctx.body.push({ op: "local.set", index: flagBoxLocal });
+        if (!liftedFctx.boxedTdzFlags) liftedFctx.boxedTdzFlags = new Map();
+        liftedFctx.boxedTdzFlags.set(cap.name, { refCellTypeIdx: i32RefCellTypeIdx, localIdx: flagBoxLocal });
+        // Re-aim tdzFlagLocals so existing TDZ-check helpers detect the flag.
+        // (boxedTdzFlags drives the actual struct.get/set routing.)
+        if (!liftedFctx.tdzFlagLocals) liftedFctx.tdzFlagLocals = new Map();
+        liftedFctx.tdzFlagLocals.set(cap.name, flagBoxLocal);
+      }
     }
   }
 
@@ -1480,7 +1896,20 @@ export function compileArrowAsClosure(
     } else if (ts.isObjectBindingPattern(param.name)) {
       // Object destructuring: function({a, b}) { ... }
       let handled = false;
-      if (paramType.kind === "ref" || paramType.kind === "ref_null") {
+
+      // Externref params (e.g. callback from JS host or `: any`-typed) need
+      // the host-import-driven extraction path that mirrors the array case
+      // above. Without this, the object pattern's binding locals get
+      // allocated but never written, so any code reading w/x/y/z sees the
+      // default-zero/null value of the local instead of the property pulled
+      // off the argument object. (#43 cluster — function-expression dstr
+      // on `any` params)
+      if (paramType.kind === "externref") {
+        destructureParamObjectExternref(ctx, liftedFctx, paramIdx, param.name);
+        handled = true;
+      }
+
+      if (!handled && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
         const typeIdx = paramType.typeIdx;
         const typeDef = ctx.mod.types[typeIdx];
         if (typeDef && typeDef.kind === "struct") {
@@ -1578,6 +2007,13 @@ export function compileArrowAsClosure(
   }
 
   let conciseBodyHasValue = false;
+
+  // #1210: detect string-builder patterns BEFORE hoisting so the hoist
+  // pass can skip pre-allocating the matched binding's local.
+  if (ts.isBlock(body) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    const builders = detectStringBuilders(ctx, body);
+    if (builders.size > 0) liftedFctx.pendingStringBuilders = builders;
+  }
 
   // Pre-hoist let/const with TDZ flags for the closure body so that
   // accesses before the declaration site throw ReferenceError (#790).
@@ -1710,6 +2146,9 @@ export function compileArrowAsClosure(
     body: liftedFctx.body,
     exported: false,
   });
+  // (#1384) liftedFctx.body is now reachable via ctx.mod.functions[].body —
+  // remove from liveBodies to keep it tight (the regular walker dedupes anyway).
+  ctx.liveBodies.delete(liftedFctx.body);
   ctx.funcMap.set(closureName, liftedFuncIdx);
 
   // 7. At the creation site, emit struct.new with funcref + captured values
@@ -1738,6 +2177,42 @@ export function compileArrowAsClosure(
       fctx.body.push({ op: "local.get", index: cap.localIdx });
     }
   }
+
+  // #1177: After all value fields, push the boxed TDZ flag refs (one per
+  // TDZ-flagged capture). For freshly captured flags, allocate the box now
+  // and re-aim the outer fctx's `tdzFlagLocals` + `boxedTdzFlags` so
+  // subsequent set/get of the flag in the outer scope routes through the
+  // same ref cell that the closure holds.
+  {
+    const tdzFlaggedCapturesAtConstruct = captures.filter((c) => c.hasTdzFlag);
+    if (tdzFlaggedCapturesAtConstruct.length > 0) {
+      const i32RefCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "i32" });
+      for (const cap of tdzFlaggedCapturesAtConstruct) {
+        const existingBox = fctx.boxedTdzFlags?.get(cap.name);
+        if (existingBox) {
+          // Already boxed by an enclosing closure construction — reuse.
+          fctx.body.push({ op: "local.get", index: existingBox.localIdx });
+        } else {
+          // Fresh box: read current i32 flag, struct.new an i32 ref cell,
+          // tee into a new outer-fctx local, and re-aim the flag entry.
+          const oldFlagIdx = fctx.tdzFlagLocals!.get(cap.name)!;
+          fctx.body.push({ op: "local.get", index: oldFlagIdx });
+          fctx.body.push({ op: "struct.new", typeIdx: i32RefCellTypeIdx });
+          const flagBoxLocal = allocLocal(fctx, `__tdz_box_${cap.name}`, {
+            kind: "ref_null",
+            typeIdx: i32RefCellTypeIdx,
+          });
+          fctx.body.push({ op: "local.tee", index: flagBoxLocal });
+          if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
+          fctx.boxedTdzFlags.set(cap.name, { refCellTypeIdx: i32RefCellTypeIdx, localIdx: flagBoxLocal });
+          // Re-aim tdzFlagLocals so subsequent emitLocalTdzInit/Check in
+          // fctx routes through the boxed path (set/get flag in ref cell).
+          fctx.tdzFlagLocals!.set(cap.name, flagBoxLocal);
+        }
+      }
+    }
+  }
+
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 
   // 8. Register closure info so call sites can emit call_ref
@@ -1792,24 +2267,28 @@ export function compileArrowAsCallback(
   const cbName = `__cb_${cbId}`;
   const body = arrow.body;
 
-  // 1. Analyze captured variables
+  // 1. Analyze captured variables (scope-aware so own params/var-decls shadow)
+  const ownLocals = new Set<string>();
+  collectFunctionOwnLocals(arrow, ownLocals);
+  if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
+
   const referencedNames = new Set<string>();
   if (ts.isBlock(body)) {
     for (const stmt of body.statements) {
-      collectReferencedIdentifiers(stmt, referencedNames);
+      collectReferencedIdentifiers(stmt, referencedNames, ownLocals);
     }
   } else {
-    collectReferencedIdentifiers(body, referencedNames);
+    collectReferencedIdentifiers(body, referencedNames, ownLocals);
   }
 
   // Detect which captured variables are written inside the callback body (#859)
   const writtenInCallback = new Set<string>();
   if (ts.isBlock(body)) {
     for (const stmt of body.statements) {
-      collectWrittenIdentifiers(stmt, writtenInCallback);
+      collectWrittenIdentifiers(stmt, writtenInCallback, ownLocals);
     }
   } else {
-    collectWrittenIdentifiers(body, writtenInCallback);
+    collectWrittenIdentifiers(body, writtenInCallback, ownLocals);
   }
 
   const captures: { name: string; type: ValType; localIdx: number; mutable: boolean; alreadyBoxed: boolean }[] = [];
@@ -1927,7 +2406,18 @@ export function compileArrowAsCallback(
     labelMap: new Map(),
     savedBodies: [],
     enclosingClassName: fctx.enclosingClassName ?? resolveEnclosingClassName(fctx),
+    // (#1395) Same propagation as the lifted-arrow path above so callbacks
+    // spawned inside static initializers / static methods resolve `this`
+    // to the class-object singleton.
+    isStaticContext: fctx.isStaticContext,
   };
+
+  // (#1384) Track cbFctx.body in liveBodies BEFORE any emission so addUnionImports
+  // / shiftLateImportIndices can shift any `call funcIdx` instructions that get
+  // emitted into it during the captures-extraction (step 4) and param-coercion
+  // (step 4b) phases — both run BEFORE the savedFunc swap at step 5 that would
+  // otherwise expose cbFctx via ctx.currentFunc / funcStack to the shifter.
+  ctx.liveBodies.add(cbFctx.body);
 
   // Register params as locals (param 0 = __captures, [1 = __this if needsThis], then arrow params)
   for (let i = 0; i < cbFctx.params.length; i++) {
@@ -2079,6 +2569,11 @@ export function compileArrowAsCallback(
     body: cbFctx.body,
     exported: true,
   });
+  // (#1384) cbFctx.body is now reachable via ctx.mod.functions[].body — the
+  // regular shifter walker covers it from here on. Remove from liveBodies to
+  // avoid double-traversal (the walker dedupes via its `shifted` set anyway,
+  // but keeping liveBodies tight is cheaper).
+  ctx.liveBodies.delete(cbFctx.body);
   ctx.funcMap.set(cbName, cbFuncIdx);
   ctx.mod.exports.push({
     name: cbName,
@@ -2250,17 +2745,36 @@ export function emitFuncRefAsClosure(
     // Functions with captures: create a closure struct that stores the capture values.
     // The trampoline extracts captures from the struct and passes them to the original function. (#857)
     const numCaptures = nestedCaptures.length;
-    const userParams = sig.params.slice(numCaptures);
+    // #1205 Stage 3: TDZ-flag captures get extra ref-cell fields after the
+    // value captures, mirroring the leading-param layout of the lifted fn.
+    const tdzFlaggedNested = nestedCaptures.filter((c) => c.hasTdzFlag);
+    const numTdzFlags = tdzFlaggedNested.length;
+    // The lifted fn's signature is [valueCaps..., tdzFlagBoxes..., userParams...].
+    const userParams = sig.params.slice(numCaptures + numTdzFlags);
     const results = sig.results;
 
     const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
     if (!wrapperTypes) return null;
 
-    // Create a custom struct with func + capture fields (subtype of the base wrapper)
+    // Create a custom struct with func + capture fields + TDZ-flag fields
+    // (subtype of the base wrapper).
     const captureFields: FieldDef[] = nestedCaptures.map((_cap, i) => {
       const capParamType = sig.params[i]!;
       return { name: `cap${i}`, type: capParamType, mutable: false };
     });
+    // #1205 Stage 3: append TDZ-flag ref-cell fields after the value captures
+    // so the trampoline's struct.get of the flag uses the correct field index.
+    let i32RefCellTypeIdxForFlags = -1;
+    if (numTdzFlags > 0) {
+      i32RefCellTypeIdxForFlags = getOrRegisterRefCellType(ctx, { kind: "i32" });
+      for (const cap of tdzFlaggedNested) {
+        captureFields.push({
+          name: `__tdz_${cap.name}`,
+          type: { kind: "ref" as const, typeIdx: i32RefCellTypeIdxForFlags },
+          mutable: false,
+        });
+      }
+    }
     const closureName = `__fn_cap_${funcName}_${ctx.closureCounter++}`;
     const structTypeIdx = ctx.mod.types.length;
     ctx.mod.types.push({
@@ -2277,7 +2791,10 @@ export function emitFuncRefAsClosure(
     const trampolineBody: Instr[] = [];
     const trampolineLocals: { name: string; type: ValType }[] = [];
 
-    if (numCaptures > 1) {
+    // We always need the casted-self local when we have either >1 value captures
+    // OR any TDZ-flag fields, because each requires a separate `struct.get`.
+    const totalCapFields = numCaptures + numTdzFlags;
+    if (totalCapFields > 1) {
       trampolineLocals.push({ name: "__casted_self", type: { kind: "ref", typeIdx: structTypeIdx } });
     }
     const castedSelfLocal = 1 + userParams.length;
@@ -2286,11 +2803,15 @@ export function emitFuncRefAsClosure(
     trampolineBody.push({ op: "local.get", index: 0 } as Instr);
     trampolineBody.push({ op: "ref.cast", typeIdx: structTypeIdx } as unknown as Instr);
 
-    if (numCaptures === 1) {
+    if (totalCapFields === 1) {
+      // Exactly one capture field (a value capture; TDZ-flag-only with zero
+      // value captures is impossible because each flag is paired with a value).
       trampolineBody.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 1 } as Instr);
     } else {
       trampolineBody.push({ op: "local.set", index: castedSelfLocal } as Instr);
-      for (let i = 0; i < numCaptures; i++) {
+      // Push value captures first, then TDZ-flag captures, mirroring the
+      // lifted fn's leading-param order.
+      for (let i = 0; i < totalCapFields; i++) {
         trampolineBody.push({ op: "local.get", index: castedSelfLocal } as Instr);
         trampolineBody.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 1 } as Instr);
       }
@@ -2319,15 +2840,31 @@ export function emitFuncRefAsClosure(
     };
     ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
 
-    // Emit: struct.new with fields: func, cap0, cap1, ...
+    // Emit: struct.new with fields: func, cap0, cap1, ..., __tdz_*..., ...
     fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
-    for (const cap of nestedCaptures) {
+    // (#1312) Self-reference inside the lifted body of `funcName` itself —
+    // e.g. `function next() { return call(next); }`. The captures are
+    // already in scope as the leading params [0..numCaptures-1] of the
+    // lifted fn (mutable captures arrive as boxed ref cells, immutable as
+    // raw values). We re-push them by param index instead of trying to
+    // dereference `cap.outerLocalIdx`, which points into a different
+    // (outer) scope and yields garbage / null when reused inside the
+    // current lifted body.
+    const isSelfRef = fctx.name === funcName;
+    for (let i = 0; i < nestedCaptures.length; i++) {
+      const cap = nestedCaptures[i]!;
+      if (isSelfRef) {
+        // Captures arrive at param index `i` in the lifted fn (#1312).
+        fctx.body.push({ op: "local.get", index: i });
+        continue;
+      }
       if (cap.mutable && cap.valType) {
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
         if (fctx.boxedCaptures?.has(cap.name)) {
           const currentLocalIdx = fctx.localMap.get(cap.name)!;
           fctx.body.push({ op: "local.get", index: currentLocalIdx });
         } else {
+          // Stage 1 localMap-first lookup reverted — see calls.ts comment.
           fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
           fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
           const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
@@ -2341,6 +2878,54 @@ export function emitFuncRefAsClosure(
         }
       } else {
         fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+      }
+    }
+    // #1205 Stage 3: after all value captures, push the boxed TDZ flag refs
+    // (one per TDZ-flagged capture). Sourcing rules mirror calls.ts — see
+    // the FNDECL-A4 cap-prepend block there for the full rationale. The
+    // short version: only trust the LIVE `fctx.tdzFlagLocals[name]` lookup
+    // when it points to an i32 in the current fctx. Otherwise (block-shadow
+    // or cross-fctx transitive) push `i32.const 1` (treat as initialized) —
+    // matches pre-#1205 behavior where the lifted body had no flag check.
+    if (numTdzFlags > 0) {
+      for (let ti = 0; ti < tdzFlaggedNested.length; ti++) {
+        const cap = tdzFlaggedNested[ti]!;
+        if (isSelfRef) {
+          // (#1312) Self-reference inside the lifted body — the TDZ-flag
+          // boxed refs arrive as params at index `numCaptures + ti` (after
+          // all value captures). Re-push from there.
+          fctx.body.push({ op: "local.get", index: numCaptures + ti });
+          continue;
+        }
+        const existingBox = fctx.boxedTdzFlags?.get(cap.name);
+        if (existingBox) {
+          fctx.body.push({ op: "local.get", index: existingBox.localIdx });
+        } else {
+          const liveFlagIdx = fctx.tdzFlagLocals?.get(cap.name);
+          const liveType = liveFlagIdx !== undefined ? getLocalType(fctx, liveFlagIdx) : undefined;
+          const liveOk = liveType?.kind === "i32";
+          if (liveOk && liveFlagIdx !== undefined) {
+            fctx.body.push({ op: "local.get", index: liveFlagIdx });
+            fctx.body.push({ op: "struct.new", typeIdx: i32RefCellTypeIdxForFlags });
+          } else {
+            fctx.body.push({ op: "i32.const", value: 1 });
+            fctx.body.push({ op: "struct.new", typeIdx: i32RefCellTypeIdxForFlags });
+          }
+          const flagBoxLocal = allocLocal(fctx, `__tdz_box_${cap.name}`, {
+            kind: "ref",
+            typeIdx: i32RefCellTypeIdxForFlags,
+          });
+          fctx.body.push({ op: "local.tee", index: flagBoxLocal });
+          if (liveOk) {
+            if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
+            fctx.boxedTdzFlags.set(cap.name, {
+              refCellTypeIdx: i32RefCellTypeIdxForFlags,
+              localIdx: flagBoxLocal,
+            });
+            if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+            fctx.tdzFlagLocals.set(cap.name, flagBoxLocal);
+          }
+        }
       }
     }
     fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
@@ -2383,6 +2968,185 @@ export function emitFuncRefAsClosure(
   return { kind: "ref", typeIdx: structTypeIdx };
 }
 
+/**
+ * #1118: Emit an object-literal method as a first-class closure value.
+ *
+ * Object-literal methods are compiled as Wasm functions with signature
+ * `(self_obj, ...userParams) → ret`. When the method is read as a value
+ * (e.g. `var f = obj.m;` or stored in the obj's own struct field), we
+ * need a closure-struct ref whose funcref takes `(closure_self, …userParams)`.
+ *
+ * The two signatures differ in their first param: the method expects the
+ * object's struct ref, the closure value passes its own closure struct.
+ * We bridge them with a trampoline that drops `closure_self` and pushes
+ * `ref.null <objStruct>` for the method's `self_obj` slot, then forwards
+ * the user params and tail-calls the method.
+ *
+ * The trampoline implements method extraction with unbound `this` — JS
+ * spec says `var f = obj.m; f();` invokes `m` with `this = undefined`
+ * (strict mode) or `this = globalThis` (sloppy). For methods that don't
+ * reference `this` (the common test262 yield-star pattern), the null
+ * `self_obj` is fine; methods that DO use `this` will trap inside the
+ * body, mirroring spec semantics.
+ *
+ * Returns the closure-struct ref ValType (which the caller can convert
+ * to externref via `extern.convert_any` if the field type expects it).
+ */
+export function emitObjectMethodAsClosure(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  methodName: string,
+  methodFuncIdx: number,
+  objStructTypeIdx: number,
+): ValType | null {
+  const sig = getFuncSignature(ctx, methodFuncIdx);
+  if (!sig) return null;
+  // Method signature: [(ref null objStruct), ...userParams] → results.
+  // Strip the leading self_obj to derive the closure value's user-visible
+  // signature.
+  if (sig.params.length === 0) return null;
+  const userParams = sig.params.slice(1);
+  const results = sig.results;
+
+  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
+  if (!wrapperTypes) return null;
+  const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+
+  // Create the trampoline. Signature matches the wrapper's lifted func
+  // type: (closure_self, ...userParams) → ret. We ignore closure_self,
+  // push ref.null <objStruct> for the method's self_obj, then forward
+  // the user params.
+  const trampolineName = `__obj_meth_tramp_${methodName}_${ctx.closureCounter++}`;
+  const trampolineBody: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx } as Instr];
+  for (let i = 0; i < userParams.length; i++) {
+    // Skip closure_self at param 0; user params start at index 1
+    trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
+  }
+  trampolineBody.push({ op: "call", funcIdx: methodFuncIdx } as Instr);
+
+  const trampolineFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.mod.functions.push({
+    name: trampolineName,
+    typeIdx: liftedFuncTypeIdx,
+    locals: [],
+    body: trampolineBody,
+    exported: false,
+  });
+  ctx.funcMap.set(trampolineName, trampolineFuncIdx);
+
+  // Emit: ref.func $trampoline, struct.new $closure_struct
+  fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
+  fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+
+  return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+/**
+ * (#1394) Emit a cached singleton closure for a class method, preserving
+ * identity: every emit of `C.prototype.<method>` (or `instance.<method>`
+ * as a value) returns the same externref so JS's `===` works (e.g.
+ * `c.m === C.prototype.m`). 478 tests under
+ * `language/{expressions,statements}/class/elements/*` exercise this
+ * exact assertion via `verifyProperty(C.prototype, "m", { value: m })`.
+ *
+ * The cache is a per-class-method module-level externref global,
+ * lazily initialised on first access (matches the existing
+ * `emitLazyProtoGet` pattern). The canonical trampoline is registered
+ * once per method too — its name is
+ * `__obj_meth_tramp_${methodName}_cached`, distinct from the legacy
+ * per-call-site `__obj_meth_tramp_${methodName}_${counter}` that
+ * `emitObjectMethodAsClosure` emits.
+ *
+ * Returns `true` if the access was emitted; `false` if the method's
+ * signature couldn't be resolved (caller should fall back).
+ */
+export function emitCachedMethodClosureAccess(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  methodName: string,
+  methodFuncIdx: number,
+  objStructTypeIdx: number,
+): boolean {
+  // Resolve the user-visible signature so we know the wrapper struct's
+  // funcref shape. Method signature is [(ref null objStruct), ...userParams]
+  // → results; strip the leading `this` to derive the closure-callable
+  // user signature.
+  const sig = getFuncSignature(ctx, methodFuncIdx);
+  if (!sig || sig.params.length === 0) return false;
+  const userParams = sig.params.slice(1);
+  const results = sig.results;
+
+  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
+  if (!wrapperTypes) return false;
+  const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+
+  // Reuse the canonical trampoline if one was already registered for
+  // this method; otherwise build it once.
+  const trampolineName = `__obj_meth_tramp_${methodName}_cached`;
+  let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
+  if (trampolineFuncIdx === undefined) {
+    // Trampoline body: drop the closure-self arg (param 0), push
+    // `ref.null <objStruct>` for the method's `this` (matches the
+    // per-call-site emitObjectMethodAsClosure semantics — JS strict
+    // mode `var fn = c.m; fn();` calls with `this = undefined`, so a
+    // null receiver propagates the spec-mandated TypeError on
+    // `this.field` access), then forward user params, then call the
+    // method.
+    const trampolineBody: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx } as Instr];
+    for (let i = 0; i < userParams.length; i++) {
+      trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
+    }
+    trampolineBody.push({ op: "call", funcIdx: methodFuncIdx } as Instr);
+    trampolineFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.mod.functions.push({
+      name: trampolineName,
+      typeIdx: liftedFuncTypeIdx,
+      locals: [],
+      body: trampolineBody,
+      exported: false,
+    });
+    ctx.funcMap.set(trampolineName, trampolineFuncIdx);
+    ctx.mod.declaredFuncRefs.push(trampolineFuncIdx);
+  }
+
+  // Reuse or allocate the cache global. Type is externref so the value
+  // is stable across access sites (the closure-struct ref is converted
+  // via `extern.convert_any` once at init).
+  let cacheGlobalIdx = ctx.methodClosureGlobals.get(methodName);
+  if (cacheGlobalIdx === undefined) {
+    cacheGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: `__method_closure_${methodName}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.methodClosureGlobals.set(methodName, cacheGlobalIdx);
+  }
+
+  // Emit the lazy-init access (mirrors `emitLazyProtoGet`):
+  //   global.get $cache
+  //   ref.is_null
+  //   if (then: build closure, store in $cache)
+  //   global.get $cache
+  const initBody: Instr[] = [
+    { op: "ref.func", funcIdx: trampolineFuncIdx } as Instr,
+    { op: "struct.new", typeIdx: structTypeIdx } as Instr,
+    { op: "extern.convert_any" } as Instr,
+    { op: "global.set", index: cacheGlobalIdx } as Instr,
+  ];
+  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: initBody,
+    else: [],
+  } as unknown as Instr);
+  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
+  return true;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -2398,7 +3162,7 @@ function closureBodyUsesArguments(node: ts.Node): boolean {
   }
   // Arrow functions do NOT have their own `arguments` — they inherit
   // the enclosing function's, so we must traverse into them.
-  return ts.forEachChild(node, closureBodyUsesArguments) ?? false;
+  return forEachChild(node, closureBodyUsesArguments) ?? false;
 }
 
 // ── Registration ──────────────────────────────────────────────────────

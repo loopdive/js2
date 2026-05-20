@@ -1,0 +1,22 @@
+{
+  "pr": 352,
+  "conclusion": "success",
+  "head_branch": "issue-1433-disposablestack",
+  "head_sha": "6942c8493648a3243c452b945cd8ef3ad42063a0",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26129985167",
+  "timestamp": "2026-05-19T23:34:14Z",
+  "pass": 28191,
+  "fail": 13694,
+  "compile_error": 1191,
+  "snapshot_delta": 38,
+  "net_per_test": 101,
+  "regressions": 59,
+  "regressions_real": 11,
+  "regressions_wasm_change": 11,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 48,
+  "improvements": 112,
+  "baseline_sha": "6942c8493648a3243c452b945cd8ef3ad42063a0",
+  "baseline_staleness_commits": 26,
+  "baseline_stale": false
+}

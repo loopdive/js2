@@ -3,7 +3,7 @@
  * Extern class helpers, spread call args, lazy prototype initialization,
  * and dynamic struct patching.
  */
-import ts from "typescript";
+import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { reportError } from "../context/errors.js";
@@ -193,6 +193,104 @@ export function emitLazyProtoGet(ctx: CodegenContext, fctx: FunctionContext, cla
     else: [],
   });
   fctx.body.push({ op: "global.get", index: protoGlobalIdx });
+  return true;
+}
+
+/**
+ * (#1395) Emit a lazy-initialized class-object global access. Mirrors
+ * `emitLazyProtoGet` above but for the class identifier itself (not its
+ * prototype). On first access, creates a `$ClassName` struct with default
+ * field values and registers static method names with the runtime's
+ * `_staticMethodNames` allowlist via `__register_class_object`. Subsequent
+ * accesses return the same instance, giving reference identity for
+ * `C === C`.
+ *
+ * Returns `true` if a class-object global was emitted, `false` if no global
+ * was registered for this class (e.g. externref-backed builtin subclasses
+ * from #1366a).
+ */
+export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContext, className: string): boolean {
+  if (ctx.classObjectGlobals?.get(className) === undefined) return false;
+
+  const structTypeIdx = ctx.structMap.get(className);
+  const fields = ctx.structFields.get(className);
+  if (structTypeIdx === undefined || !fields) return false;
+
+  // Look up the pre-registered `__register_class_object` host import (added
+  // in `generateModule` when any class declaration is present). CSV string
+  // global is registered lazily here so classes whose class object is
+  // never materialized don't force a `string_constants` namespace import.
+  const registerClassFuncIdx = ctx.funcMap.get("__register_class_object");
+  let csvGlobalIdx = ctx.classStaticMethodsCsvGlobal.get(className);
+  if (registerClassFuncIdx !== undefined && csvGlobalIdx === undefined) {
+    const staticMethodNames = ctx.classStaticMethodNames.get(className) ?? [];
+    const staticMethodsCsv = staticMethodNames.join(",");
+    addStringConstantGlobal(ctx, staticMethodsCsv);
+    csvGlobalIdx = ctx.stringGlobalMap.get(staticMethodsCsv);
+    if (csvGlobalIdx !== undefined) {
+      ctx.classStaticMethodsCsvGlobal.set(className, csvGlobalIdx);
+    }
+  }
+  const classObjectGlobalIdx = ctx.classObjectGlobals.get(className)!;
+
+  // Build the init body: push default values for all fields, struct.new,
+  // extern.convert_any, global.set. Same shape as emitLazyProtoGet — the
+  // class object reuses the `$ClassName` struct type. Identity is provided
+  // by the singleton global, not by struct shape.
+  const initBody: Instr[] = [];
+  for (const field of fields) {
+    if (field.name === "__tag") {
+      const tag = ctx.classTagMap.get(className) ?? 0;
+      initBody.push({ op: "i32.const", value: tag });
+    } else {
+      switch (field.type.kind) {
+        case "f64":
+          initBody.push({ op: "f64.const", value: 0 });
+          break;
+        case "i32":
+          initBody.push({ op: "i32.const", value: 0 });
+          break;
+        case "i64":
+          initBody.push({ op: "i64.const", value: 0n });
+          break;
+        case "externref":
+          initBody.push({ op: "ref.null.extern" });
+          break;
+        case "ref_null":
+          initBody.push({ op: "ref.null", typeIdx: field.type.typeIdx });
+          break;
+        case "ref":
+          initBody.push({ op: "ref.null", typeIdx: field.type.typeIdx });
+          break;
+        default:
+          initBody.push({ op: "i32.const", value: 0 });
+          break;
+      }
+    }
+  }
+  initBody.push({ op: "struct.new", typeIdx: structTypeIdx });
+  initBody.push({ op: "extern.convert_any" });
+  initBody.push({ op: "global.set", index: classObjectGlobalIdx });
+
+  // Register static methods with the runtime's `_staticMethodNames`
+  // allowlist so `Object.getOwnPropertyDescriptor(C, "m")` returns the
+  // spec descriptor.
+  if (registerClassFuncIdx !== undefined && csvGlobalIdx !== undefined) {
+    initBody.push({ op: "global.get", index: classObjectGlobalIdx });
+    initBody.push({ op: "global.get", index: csvGlobalIdx });
+    initBody.push({ op: "call", funcIdx: registerClassFuncIdx });
+  }
+
+  // Emit: if global is null, init it; then get it.
+  fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: initBody,
+    else: [],
+  });
+  fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
   return true;
 }
 

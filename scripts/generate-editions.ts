@@ -38,8 +38,10 @@ function findTest262Root(base: string): string {
 }
 
 const TEST262_ROOT = findTest262Root(ROOT);
+const CURRENT_RESULTS_JSONL = join(ROOT, "benchmarks", "results", "test262-current.jsonl");
 const RESULTS_JSONL = join(ROOT, "benchmarks", "results", "test262-results.jsonl");
 const OUTPUT_PATH = join(ROOT, "public", "benchmarks", "results", "test262-editions.json");
+const CURRENT_DRAFT_EDITION = 2026;
 
 // ---------------------------------------------------------------------------
 // Feature → Edition mapping (from issue #959 spec)
@@ -124,10 +126,30 @@ const FEATURE_EDITION: Record<string, number> = {
   "Object.is": 2015,
   "Object.setPrototypeOf": 2015,
   "Object.getOwnPropertySymbols": 2015,
+  "DataView.prototype.setUint8": 2015,
+  "DataView.prototype.getUint32": 2015,
+  "DataView.prototype.getInt32": 2015,
+  "DataView.prototype.getUint16": 2015,
+  "DataView.prototype.getFloat32": 2015,
+  "DataView.prototype.getInt16": 2015,
+  "DataView.prototype.getInt8": 2015,
+  "DataView.prototype.getFloat64": 2015,
+  Int8Array: 2015,
+  Uint8Array: 2015,
+  "String.prototype.endsWith": 2015,
+  "String.prototype.includes": 2015,
+  "Symbol.match": 2015,
+  "Symbol.replace": 2015,
+  "Symbol.search": 2015,
+  "Symbol.split": 2015,
+  "new.target": 2015,
+  super: 2015,
+  template: 2015,
 
   // ES2016
   "Array.prototype.includes": 2016,
   exponentiation: 2016,
+  u180e: 2016,
 
   // ES2017
   "async-functions": 2017,
@@ -159,6 +181,9 @@ const FEATURE_EDITION: Record<string, number> = {
   "String.prototype.trimStart": 2019,
   "String.prototype.trimEnd": 2019,
   "well-formed-json-stringify": 2019,
+  "stable-array-sort": 2019,
+  "json-superset": 2019,
+  "string-trimming": 2019,
 
   // ES2020
   BigInt: 2020,
@@ -171,6 +196,10 @@ const FEATURE_EDITION: Record<string, number> = {
   "Promise.all": 2020,
   "for-in-order": 2020,
   "dynamic-import": 2020,
+  "coalesce-expression": 2020,
+  "export-star-as-namespace-from-module": 2020,
+  "arbitrary-module-namespace-names": 2020,
+  "Symbol.matchAll": 2020,
 
   // ES2021
   "Promise.any": 2021,
@@ -221,6 +250,10 @@ const FEATURE_EDITION: Record<string, number> = {
   "Atomics.waitAsync": 2024,
   "String.prototype.isWellFormed": 2024,
   "String.prototype.toWellFormed": 2024,
+  "array-grouping": 2024,
+  "arraybuffer-transfer": 2024,
+  "promise-with-resolvers": 2024,
+  "align-detached-buffer-semantics-with-web-reality": 2024,
 
   // ES2025
   "set-methods": 2025,
@@ -228,17 +261,34 @@ const FEATURE_EDITION: Record<string, number> = {
   "regexp-duplicate-named-groups": 2025,
   Float16Array: 2025,
   "Math.f16round": 2025,
-  "Promise.try": 2025,
   "import-defer": 2025,
   "explicit-resource-management": 2025,
   "source-phase-imports": 2025,
   "import-attributes": 2025,
   "regexp-modifiers": 2025,
+
+  // ES2026 draft / current-standard additions in the default test262 scope
+  "Promise.try": 2026,
+  "promise-try": 2026,
+  "RegExp.escape": 2026,
+  "Error.isError": 2026,
+  "Math.sumPrecise": 2026,
+  "Atomics.pause": 2026,
+  "json-parse-with-source": 2026,
+  "immutable-arraybuffer": 2026,
+  "iterator-sequencing": 2026,
+  "joint-iteration": 2026,
+  "await-dictionary": 2026,
+  caller: 2026,
+  "legacy-regexp": 2026,
+  IsHTMLDDA: 2026,
+  __proto__: 2026,
+  __getter__: 2026,
+  __setter__: 2026,
 };
 
 const EDITION_NAMES: Record<number, string> = {
   0: "≤ ES3",
-  3: "ES3",
   5: "ES5",
   2015: "ES2015",
   2016: "ES2016",
@@ -251,10 +301,11 @@ const EDITION_NAMES: Record<number, string> = {
   2023: "ES2023",
   2024: "ES2024",
   2025: "ES2025",
+  2026: "ES2026",
   [-1]: "Proposals",
 };
 
-const EDITION_ORDER = [0, 5, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025];
+const EDITION_ORDER = [0, 5, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, -1];
 
 // ---------------------------------------------------------------------------
 // Frontmatter parsing
@@ -352,8 +403,9 @@ function classifyEdition(fm: Frontmatter, filePath: string): number {
       if (yr !== undefined && yr > max) max = yr;
     }
     if (max > 0) return max;
-    // Features listed but none in our map — proposal or stage-3+ feature
-    return -1;
+    // Default any remaining tagged feature to the current draft edition.
+    // Proposal-only records are bucketed separately before standard-edition classification.
+    return CURRENT_DRAFT_EDITION;
   }
 
   // Priority 4: path heuristics
@@ -405,6 +457,25 @@ function normalizeStatus(s: string): StatusKey {
   return "fail";
 }
 
+/**
+ * (#1398) Derive a category path from a test file path. Mirrors the runner's
+ * categorization (top two path segments after the leading `test/`), so the
+ * resulting key matches `test262-report.json`'s `categories[].name`.
+ *
+ * Examples:
+ *   "test/language/expressions/class/elements/foo.js" → "language/expressions"
+ *   "test/built-ins/Array/prototype/push/length.js"  → "built-ins/Array"
+ *   "test/annexB/built-ins/escape/length.js"          → "annexB/built-ins"
+ */
+function deriveCategoryFromFile(file: string): string {
+  const parts = file.split("/");
+  if (parts[0] === "test") parts.shift();
+  // Two-segment grouping mirrors the existing runner output. The compiled
+  // report joins these with `/`.
+  if (parts.length >= 2) return parts.slice(0, 2).join("/");
+  return parts[0] ?? "unknown";
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -412,6 +483,9 @@ function normalizeStatus(s: string): StatusKey {
 interface ResultRecord {
   file: string;
   status: string;
+  scope?: string;
+  scope_official?: boolean;
+  category?: string;
 }
 
 interface EditionBucket {
@@ -432,9 +506,16 @@ function getArg(args: string[], flag: string): string | undefined {
 async function main() {
   // Parse CLI args
   const args = process.argv.slice(2);
-  const resultsPath = getArg(args, "--results") ?? RESULTS_JSONL;
+  const resultsPath =
+    getArg(args, "--results") ?? (existsSync(CURRENT_RESULTS_JSONL) ? CURRENT_RESULTS_JSONL : RESULTS_JSONL);
   const outputPath = getArg(args, "--output") ?? OUTPUT_PATH;
   const test262Root = getArg(args, "--test262") ?? TEST262_ROOT;
+
+  if (!existsSync(join(test262Root, "test"))) {
+    throw new Error(
+      `Missing test262 checkout at ${test262Root}. Run 'git submodule update --init --recursive' before generating edition data.`,
+    );
+  }
 
   console.log(`Reading results from: ${resultsPath}`);
   console.log(`Reading test262 from: ${test262Root}`);
@@ -449,8 +530,15 @@ async function main() {
     buckets[yr] = { pass: 0, fail: 0, ce: 0, skip: 0 };
   }
 
+  // (#1398) Per-category × per-edition buckets. Keyed by category path
+  // (e.g. "test/language/expressions") then by edition year (e.g. 2022).
+  // Used to populate `test262-category-editions.json` so the report's
+  // category table can filter to a selected edition.
+  const categoryBuckets: Record<string, Record<number, { pass: number; fail: number; ce: number; skip: number }>> = {};
+
   let classified = 0;
   let unclassified = 0;
+  let processed = 0;
 
   for (const line of lines) {
     let record: ResultRecord;
@@ -462,6 +550,14 @@ async function main() {
 
     const { file, status } = record;
     if (!file || !status) continue;
+    processed++;
+
+    if (record.scope_official === false || record.scope === "proposal") {
+      const proposalBucket = buckets[-1] ?? (buckets[-1] = { pass: 0, fail: 0, ce: 0, skip: 0 });
+      proposalBucket[normalizeStatus(status)]++;
+      unclassified++;
+      continue;
+    }
 
     // Build full path: file is like "test/language/..."
     const fullPath = join(test262Root, file);
@@ -475,6 +571,17 @@ async function main() {
 
     const bucket = buckets[edition] ?? (buckets[edition] = { pass: 0, fail: 0, ce: 0, skip: 0 });
     bucket[key]++;
+
+    // (#1398) Also accumulate into per-category × per-edition buckets.
+    // Use the JSONL `category` field if present (the runner sets it to the
+    // top-level path prefix, e.g. "language/expressions"); fall back to
+    // deriving from the file path.
+    const category = record.category ?? deriveCategoryFromFile(file);
+    if (category && edition !== 0 && edition !== -1) {
+      const catMap = categoryBuckets[category] ?? (categoryBuckets[category] = {});
+      const catBucket = catMap[edition] ?? (catMap[edition] = { pass: 0, fail: 0, ce: 0, skip: 0 });
+      catBucket[key]++;
+    }
   }
 
   // Build output array in edition order
@@ -506,6 +613,49 @@ async function main() {
     console.log(
       `  ${b.edition.padEnd(8)} pass=${b.pass} fail=${b.fail} ce=${b.ce} skip=${b.skip} total=${b.total} (${b.pct}%)`,
     );
+  }
+
+  const accounted = output.reduce((sum, bucket) => sum + bucket.total, 0);
+  if (accounted !== processed) {
+    throw new Error(`Edition totals (${accounted}) do not match processed results (${processed}).`);
+  }
+
+  // (#1398) Write the per-category × per-edition breakdown alongside the
+  // overall per-edition output. The report's category table consumes this
+  // to filter rows when an edition is selected on the timeline slider.
+  //
+  // Output shape:
+  //   {
+  //     "language/expressions": {
+  //       "ES2022": { "pass": 42, "fail": 18, "ce": 3, "skip": 0 },
+  //       "ES2015": { "pass": 10, "fail": 5,  "ce": 0, "skip": 0 }
+  //     },
+  //     ...
+  //   }
+  //
+  // Only edition-classified buckets are emitted (year > 0); proposal-only
+  // and unclassified records are dropped here since the slider only
+  // operates on official edition rank.
+  const categoryEditionOutput: Record<
+    string,
+    Record<string, { pass: number; fail: number; ce: number; skip: number }>
+  > = {};
+  for (const [category, byYear] of Object.entries(categoryBuckets)) {
+    const yearMap: Record<string, { pass: number; fail: number; ce: number; skip: number }> = {};
+    for (const [yr, counts] of Object.entries(byYear)) {
+      const yearNum = Number(yr);
+      if (yearNum <= 0) continue;
+      const name = EDITION_NAMES[yearNum] ?? `ES${yearNum}`;
+      yearMap[name] = counts;
+    }
+    if (Object.keys(yearMap).length > 0) {
+      categoryEditionOutput[category] = yearMap;
+    }
+  }
+  const categoriesPath = outputPath.replace(/test262-editions\.json$/, "test262-category-editions.json");
+  if (categoriesPath !== outputPath) {
+    writeFileSync(categoriesPath, JSON.stringify(categoryEditionOutput, null, 2) + "\n");
+    console.log(`Wrote ${Object.keys(categoryEditionOutput).length} category × edition buckets to: ${categoriesPath}`);
   }
 }
 

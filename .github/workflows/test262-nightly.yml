@@ -51,7 +51,12 @@ jobs:
             test262-cache-
 
       - name: Run test262
-        run: pnpm run test:262
+        run: pnpm run test:262 -- --include-proposals
+
+      - name: Capture committed baseline
+        run: |
+          mkdir -p /tmp/js2wasm-before-refresh
+          cp benchmarks/results/test262-current.jsonl /tmp/js2wasm-before-refresh/test262-current.jsonl 2>/dev/null || true
 
       - name: Promote results to stable filename
         # build-pages.js reads benchmarks/results/test262-current.* — copy the
@@ -66,14 +71,30 @@ jobs:
           cp "$REAL_JSONL" test262-current.jsonl
           cp "$REAL_REPORT" test262-current.json
           ls -la test262-current.*
+          mkdir -p ../../public/benchmarks/results
+          cp "$REAL_REPORT" ../../public/benchmarks/results/test262-report.json
+
+      - name: Regenerate edition buckets
+        run: node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
 
       - name: Commit refreshed results
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f benchmarks/results/test262-current.jsonl benchmarks/results/test262-current.json
+          git add -f benchmarks/results/test262-current.jsonl \
+            benchmarks/results/test262-current.json \
+            public/benchmarks/results/test262-report.json \
+            public/benchmarks/results/test262-editions.json
           if git diff --cached --quiet; then
             echo "No changes to commit."
+            exit 0
+          fi
+          if [ -f /tmp/js2wasm-before-refresh/test262-current.jsonl ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type jsonl \
+              --baseline /tmp/js2wasm-before-refresh/test262-current.jsonl \
+              --candidate benchmarks/results/test262-current.jsonl; then
+            echo "Only volatile test262 metadata/timing changed — skipping commit."
             exit 0
           fi
           PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('benchmarks/results/test262-current.json','utf8')).summary.pass)")

@@ -2,7 +2,7 @@
 /**
  * new/super/class expression compilation.
  */
-import ts from "typescript";
+import { ts, forEachChild } from "../../ts-api.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { collectReferencedIdentifiers, collectWrittenIdentifiers } from "../closures.js";
 import { reportError } from "../context/errors.js";
@@ -39,6 +39,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 
 function resolveEnclosingClassName(fctx: FunctionContext): string | undefined {
   if (fctx.enclosingClassName) return fctx.enclosingClassName;
@@ -585,7 +586,7 @@ function inferArrayElementType(ctx: CodegenContext, expr: ts.NewExpression): ts.
       }
     }
 
-    ts.forEachChild(node, visit);
+    forEachChild(node, visit);
   }
 
   visit(scope);
@@ -603,7 +604,7 @@ function usesArguments(node: ts.Node): boolean {
   if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
     return false;
   }
-  return ts.forEachChild(node, usesArguments) ?? false;
+  return forEachChild(node, usesArguments) ?? false;
 }
 
 /**
@@ -900,6 +901,8 @@ function compileNewFunctionExpression(
     type: ValType;
     localIdx: number;
     mutable: boolean;
+    alreadyBoxed: boolean;
+    valType?: ValType;
   }[] = [];
   for (const name of referencedNames) {
     const localIdx = fctx.localMap.get(name);
@@ -913,7 +916,9 @@ function compileNewFunctionExpression(
         ? fctx.params[localIdx]!.type
         : (fctx.locals[localIdx - fctx.params.length]?.type ?? { kind: "f64" });
     const isMutable = writtenInClosure.has(name);
-    captures.push({ name, type, localIdx, mutable: isMutable });
+    const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
+    const valType = alreadyBoxed ? fctx.boxedCaptures!.get(name)!.valType : undefined;
+    captures.push({ name, type, localIdx, mutable: isMutable, alreadyBoxed, valType });
   }
 
   // 4. Build the closure struct type
@@ -921,6 +926,12 @@ function compileNewFunctionExpression(
     { name: "func", type: { kind: "funcref" as const }, mutable: false },
     ...captures.map((c) => {
       if (c.mutable) {
+        if (c.alreadyBoxed) {
+          // Local already holds a ref cell — reuse the existing ref-cell type
+          // (the local's type IS the ref cell type). Avoids double-wrapping
+          // when the variable was pre-boxed at function entry (#996).
+          return { name: c.name, type: c.type, mutable: false };
+        }
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, c.type);
         return {
           name: c.name,
@@ -985,7 +996,20 @@ function compileNewFunctionExpression(
   for (let i = 0; i < captures.length; i++) {
     const cap = captures[i]!;
     if (cap.mutable) {
-      const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
+      // If the outer scope already had this variable boxed (pre-box from #996
+      // or a previous closure that boxed it), the struct field IS the ref cell
+      // — extract the existing ref-cell type index and reuse the original
+      // value type so the inner code reads/writes through the SAME cell as
+      // the outer scope.
+      let refCellTypeIdx: number;
+      let valType: ValType;
+      if (cap.alreadyBoxed && (cap.type.kind === "ref" || cap.type.kind === "ref_null")) {
+        refCellTypeIdx = (cap.type as { typeIdx: number }).typeIdx;
+        valType = cap.valType ?? { kind: "f64" };
+      } else {
+        refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
+        valType = cap.type;
+      }
       const refCellType: ValType = {
         kind: "ref_null",
         typeIdx: refCellTypeIdx,
@@ -1001,7 +1025,7 @@ function compileNewFunctionExpression(
       if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
       liftedFctx.boxedCaptures.set(cap.name, {
         refCellTypeIdx,
-        valType: cap.type,
+        valType,
       });
     } else {
       // Check if this capture is an already-boxed ref cell from the outer scope
@@ -1413,8 +1437,20 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // No message — push null externref (undefined message)
         fctx.body.push({ op: "ref.null.extern" });
       }
-      // Use host import to create a real Error object with correct .name/.message/.stack
+      // (#1104 Phase 1) In WASI/standalone mode, the JS host is unavailable —
+      // use a Wasm-native `__new_<Name>` function that builds a `$Error_struct`
+      // instead of a `env.__new_<Name>` host import that would leave the
+      // module unsatisfiable at instantiation time. JS-host mode is unchanged.
       const importName = `__new_${ctorName}`;
+      if (ctx.wasi && isWasiErrorName(ctorName)) {
+        emitWasiErrorConstructor(ctx, ctorName, 1);
+        const internalFuncIdx = ctx.funcMap.get(importName);
+        if (internalFuncIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: internalFuncIdx });
+        }
+        return { kind: "externref" };
+      }
+      // Use host import to create a real Error object with correct .name/.message/.stack
       const funcIdx = ensureLateImport(
         ctx,
         importName,
@@ -1474,11 +1510,25 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     return { kind: "externref" };
   }
 
-  // Handle `new Object()` — create an empty struct (equivalent to {})
+  // Handle `new Object()` — create an empty object (equivalent to `{}`).
+  // (#1343) Previously this emitted `ref.null.extern`, but JS spec treats
+  // `new Object()` as a real object: `Boolean(new Object()) === true`,
+  // `(new Object()).hasOwnProperty(...) === false`, etc. Returning null
+  // externref made the receiver fall through every host-import branch
+  // expecting a real object, e.g. `Boolean(new Object())` returned `false`
+  // because `__to_boolean(null) === 0`.
+  //
+  // Use `__object_create(null)` host import to produce a fresh empty
+  // object. Falls back to `ref.null.extern` only if the import can't be
+  // registered (preserving the legacy shape so we never regress further).
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Object") {
-    // Look for an empty struct type, or create an externref null as empty object
-    // In non-fast mode, an empty object is just an externref null
-    // In fast mode or when we have struct types, emit a minimal struct
+    const createIdx = ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (createIdx !== undefined) {
+      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "call", funcIdx: createIdx });
+      return { kind: "externref" };
+    }
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
   }
@@ -1570,9 +1620,25 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     }
 
     if (args.length === 1) {
-      // new Date(ms) — millisecond timestamp
+      // new Date(ms) — millisecond timestamp.
+      //
+      // (#1344) Detect NaN input and store a sentinel i64 so subsequent getter
+      // calls (getDay, getHours, getTime, …) can return NaN per spec
+      // (`new Date(NaN).getTime() → NaN`). Without this, `i64.trunc_sat_f64_s`
+      // saturates NaN to 0 and the Date silently behaves like the epoch.
       compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
-      fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
+      const msLocal = allocTempLocal(fctx, { kind: "f64" });
+      fctx.body.push({ op: "local.tee", index: msLocal } as Instr);
+      // ms != ms is true iff ms is NaN
+      fctx.body.push({ op: "local.get", index: msLocal } as Instr);
+      fctx.body.push({ op: "f64.ne" } as Instr);
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i64" } },
+        then: [{ op: "i64.const", value: -9223372036854775808n } as unknown as Instr],
+        else: [{ op: "local.get", index: msLocal } as Instr, { op: "i64.trunc_sat_f64_s" } as Instr],
+      } as unknown as Instr);
+      releaseTempLocal(fctx, msLocal);
       fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx } as Instr);
       return { kind: "ref", typeIdx: dateTypeIdx };
     }
@@ -2163,6 +2229,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // which shifts defined-function indices, making the earlier lookup stale.
     const finalCtorIdx = ctx.funcMap.get(ctorName) ?? funcIdx;
     fctx.body.push({ op: "call", funcIdx: finalCtorIdx });
+    // (#1366a) Externref-backed subclass instances (extends Error / TypeError
+    // / ...) bubble up as externref, NOT as (ref $struct).
+    if (ctx.classExternrefBackedSet.has(className)) {
+      return { kind: "externref" };
+    }
     const structTypeIdx = ctx.structMap.get(className)!;
     return { kind: "ref", typeIdx: structTypeIdx };
   }
@@ -2478,6 +2549,19 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const typeArgs = ctx.checker.getTypeArguments(exprType as ts.TypeReference);
       const elemTsType = typeArgs?.[0];
       elemWasm = elemTsType ? resolveWasmType(ctx, elemTsType) : { kind: "f64" };
+    }
+
+    // #1197: i32-specialized number[] override — caller (variable-declaration
+    // codegen) flagged this `new Array(...)` as belonging to an i32-specialized
+    // local. Override the element kind from f64 to i32. We must also re-resolve
+    // vecTypeIdx/arrTypeIdx through the i32 registration.
+    if (
+      elemWasm.kind === "f64" &&
+      (ctx as unknown as { _i32ElemArrayOverride?: boolean })._i32ElemArrayOverride === true
+    ) {
+      elemWasm = { kind: "i32" };
+      vecTypeIdx = getOrRegisterVecType(ctx, "i32", { kind: "i32" });
+      arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     }
 
     if (arrTypeIdx < 0) {

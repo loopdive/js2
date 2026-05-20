@@ -1,0 +1,22 @@
+{
+  "pr": 347,
+  "conclusion": "success",
+  "head_branch": "issue-1323-iterator-result-struct",
+  "head_sha": "65c69ca79a0b41c551e7a2ea7dcd77abfe4b158e",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26128536861",
+  "timestamp": "2026-05-19T22:56:13Z",
+  "pass": 26552,
+  "fail": 14326,
+  "compile_error": 864,
+  "snapshot_delta": -1595,
+  "net_per_test": -1566,
+  "regressions": 2096,
+  "regressions_real": 2048,
+  "regressions_wasm_change": 2048,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 48,
+  "improvements": 482,
+  "baseline_sha": "65c69ca79a0b41c551e7a2ea7dcd77abfe4b158e",
+  "baseline_staleness_commits": 680,
+  "baseline_stale": true
+}

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import ts from "typescript";
+import { ts, forEachChild } from "../ts-api.js";
 import type { CompileError, CompileOptions } from "../index.js";
 
 // Default blocked members on extern classes in safe mode
@@ -147,7 +147,7 @@ function validateSafeMode(sourceFile: ts.SourceFile, checker: ts.TypeChecker, op
       }
     }
 
-    ts.forEachChild(node, visit);
+    forEachChild(node, visit);
   }
 
   visit(sourceFile);
@@ -183,7 +183,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
     function visit(current: ts.Node): void {
       if (position < current.getFullStart() || position >= current.getEnd()) return;
       best = current;
-      ts.forEachChild(current, visit);
+      forEachChild(current, visit);
     }
     visit(node);
     return best;
@@ -1415,6 +1415,24 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
       }
     }
 
+    // ── import.defer(...) / import.source(...) — Stage 3 proposals ──
+    // Reported as SyntaxError so negative parse/early test262 tests covering
+    // the import-defer / source-phase-imports proposals correctly count as
+    // detecting the unsupported syntax. This walk runs over the whole AST
+    // (including unreferenced async arrow bodies) so we catch the constructs
+    // even in dead code where the codegen pipeline never visits them. (#1315)
+    if (
+      ts.isCallExpression(node) &&
+      ts.isMetaProperty(node.expression) &&
+      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      (node.expression.name.text === "defer" || node.expression.name.text === "source")
+    ) {
+      addError(
+        node,
+        `SyntaxError: import.${node.expression.name.text}(...) is not supported (Stage 3 proposal — import-defer / source-phase-imports)`,
+      );
+    }
+
     // ── new import() — always a SyntaxError ────────────────────────
     // ES spec: ImportCall is a CallExpression, not a NewExpression target.
     // Also applies to import.source() and import.defer() proposals.
@@ -1951,7 +1969,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
     // We're always in module mode. Check for --> at the start of a line.
     // Note: TS parser doesn't flag this.
 
-    ts.forEachChild(node, visit);
+    forEachChild(node, visit);
   }
 
   /** Check if a node is inside a class static initializer block. */
@@ -2083,7 +2101,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
     }
     // Arrow functions don't bind arguments — keep searching
     let found = false;
-    ts.forEachChild(node, (child) => {
+    forEachChild(node, (child) => {
       if (!found && containsArguments(child)) {
         found = true;
       }
@@ -2304,9 +2322,9 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
         }
         return;
       }
-      ts.forEachChild(node, walkForLabels);
+      forEachChild(node, walkForLabels);
     }
-    ts.forEachChild(block, walkForLabels);
+    forEachChild(block, walkForLabels);
   }
 
   /** Check duplicate lexical declarations across switch case clauses. */
@@ -2581,7 +2599,12 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
           }
         }
       } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
-        lexicalNames.add(stmt.name.text);
+        // At SourceFile scope, function declarations are var-scoped — no conflict with var
+        // (LexicallyDeclaredNames does not include VarDeclaredNames per ES §13.1.1).
+        // Only inside a Block are function declarations lexically scoped (ES §B.3.2).
+        if (ts.isBlock(block)) {
+          lexicalNames.add(stmt.name.text);
+        }
       } else if (ts.isClassDeclaration(stmt) && stmt.name) {
         lexicalNames.add(stmt.name.text);
       }
@@ -2621,7 +2644,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
     ) {
       return;
     }
-    ts.forEachChild(node, (child) => collectVarDeclaredNamesInBlock(child, lexicalNames));
+    forEachChild(node, (child) => collectVarDeclaredNamesInBlock(child, lexicalNames));
   }
 
   /**
@@ -2726,7 +2749,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
     ) {
       return;
     }
-    ts.forEachChild(node, (child: ts.Node) => checkForTDZRef(child, name));
+    forEachChild(node, (child: ts.Node) => checkForTDZRef(child, name));
   }
 
   /**
@@ -2959,7 +2982,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
       }
       return;
     }
-    ts.forEachChild(node, (child) => checkDuplicateLabels(child, activeLabels));
+    forEachChild(node, (child) => checkDuplicateLabels(child, activeLabels));
   }
   checkDuplicateLabels(sourceFile, new Set());
 
@@ -3078,7 +3101,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
           return;
         }
       }
-      ts.forEachChild(node, checkModuleItemPosition);
+      forEachChild(node, checkModuleItemPosition);
     };
     checkModuleItemPosition(sourceFile);
   }
@@ -3184,7 +3207,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
           }
         }
       }
-      ts.forEachChild(node, checkReservedIdentifiers);
+      forEachChild(node, checkReservedIdentifiers);
     };
     checkReservedIdentifiers(sourceFile);
   }
@@ -3226,7 +3249,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
     if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
       checkDuplicateConstructors(node);
     }
-    ts.forEachChild(node, checkClassesForDuplicateCtors);
+    forEachChild(node, checkClassesForDuplicateCtors);
   }
   checkClassesForDuplicateCtors(sourceFile);
 
@@ -3291,7 +3314,7 @@ function validateHardenedMode(
         });
       }
     }
-    ts.forEachChild(node, visit);
+    forEachChild(node, visit);
   }
 
   visit(sourceFile);

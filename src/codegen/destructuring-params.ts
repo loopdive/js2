@@ -4,8 +4,9 @@
  *
  * Extracted from codegen/index.ts (#1013).
  */
-import ts from "typescript";
+import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { shiftLateImportIndices } from "./expressions/late-imports.js";
@@ -24,6 +25,36 @@ import {
   valTypesMatch,
 } from "./shared.js";
 import { buildVecFromExternref, getVecInfo } from "./type-coercion.js";
+
+/**
+ * Detect array binding patterns that, per ECMA-262 §13.3.3.6, perform no
+ * iterator observation at all. Per spec:
+ *
+ *   ArrayBindingPattern : [ ]
+ *     1. Return NormalCompletion(empty).        ← NO IteratorStep
+ *
+ *   ArrayBindingPattern : [ Elision ]            ← each `,` calls IteratorStep
+ *   ArrayBindingPattern : [ BindingElementList ] ← each element calls IteratorStep
+ *
+ * So the ONLY pattern that skips iterator observation entirely is the
+ * truly-empty pattern `[]`. Elisions (`[,]`, `[, ,]`) and nested empties
+ * (`[[]]`, `[[], []]`) each still consume one IteratorStep per top-level
+ * element — they must NOT short-circuit, otherwise:
+ *
+ *   - `function f([,] = throwingIter) {}; f()` fails to propagate the
+ *     iterator's `.next()` throw (#1432 — `dflt-ary-ptrn-elision-step-err`).
+ *   - `function f([[]] = iter) {}; f()` fails to advance the iterator,
+ *     observably wrong for any iterator with side-effects.
+ *
+ * #1158 had broadened this short-circuit to cover patterns whose elements
+ * were all themselves "empty-only" (`[, ,]`, `[[]]`, `[[], []]`). That was
+ * a spec violation: those patterns DO observe the iterator. The narrower
+ * definition below restores spec compliance — the truly-empty `[]` is the
+ * only pattern that bypasses iteration. (#1432)
+ */
+function isPatternEmptyOnly(pattern: ts.ArrayBindingPattern): boolean {
+  return pattern.elements.length === 0;
+}
 
 /**
  * Bounds-checked array.get that returns JS `undefined` (via __get_undefined)
@@ -298,6 +329,51 @@ export function destructureParamObjectExternref(
       const nestedLocal = allocLocal(fctx, `__ext_dparam_nested_${fctx.locals.length}`, elemType);
       fctx.body.push({ op: "local.set", index: nestedLocal });
       ensureBindingLocals(ctx, fctx, element.name);
+
+      // Apply initializer (only when value is `undefined`, per spec — null does
+      // NOT trigger default). E.g. `{ w: { x, y, z } = defaults }` (#1225).
+      if (element.initializer) {
+        const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+        if (undefIdx !== undefined) {
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "local.get", index: nestedLocal });
+          fctx.body.push({ op: "call", funcIdx: undefIdx });
+          const savedBodyInit = fctx.body;
+          const initThen: Instr[] = [];
+          fctx.body = initThen;
+          // Compile initializer; coerce to externref so we can store back.
+          const initType = compileExpression(ctx, fctx, element.initializer, elemType);
+          if (initType && initType.kind !== "externref") {
+            if (initType.kind === "ref" || initType.kind === "ref_null") {
+              fctx.body.push({ op: "extern.convert_any" } as Instr);
+            } else if (initType.kind === "f64") {
+              const bIdx = ctx.funcMap.get("__box_number");
+              if (bIdx !== undefined) fctx.body.push({ op: "call", funcIdx: bIdx });
+            } else if (initType.kind === "i32") {
+              fctx.body.push({ op: "f64.convert_i32_s" });
+              const bIdx = ctx.funcMap.get("__box_number");
+              if (bIdx !== undefined) fctx.body.push({ op: "call", funcIdx: bIdx });
+            }
+          }
+          fctx.body.push({ op: "local.set", index: nestedLocal } as Instr);
+          fctx.body = savedBodyInit;
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: initThen,
+            else: [],
+          });
+        }
+      }
+
+      // Per ECMA-262 §13.15.5.5 RequireObjectCoercible / §8.4.2 GetIterator,
+      // destructuring null/undefined through a non-empty nested pattern must
+      // throw TypeError. Emit the guard BEFORE recursing so we throw even when
+      // the nested destructure path silently no-ops on null (#1225).
+      if (element.name.elements.length > 0) {
+        emitExternrefDestructureGuard(ctx, fctx, nestedLocal);
+      }
+
       if (ts.isObjectBindingPattern(element.name)) {
         destructureParamObjectExternref(ctx, fctx, nestedLocal, element.name);
       } else {
@@ -365,6 +441,50 @@ export function destructureParamObject(
       // Always route through __extern_rest_object for rest patterns.
       const hasRestElement = pattern.elements.some((e) => ts.isBindingElement(e) && !!e.dotDotDotToken);
       if (hasRestElement) structTypeIdx = undefined;
+
+      // The struct fast path uses `struct.get` for property reads, which:
+      //   (a) silently returns the field's default value when a pattern
+      //       property is not declared on the struct, and
+      //   (b) bypasses any JS-defined accessors installed via
+      //       `Object.defineProperty`, even when the struct has the field.
+      //
+      // Per ECMA-262 §13.15.5.6 (Runtime Semantics: KeyedBindingInitialization),
+      // each binding element runs `Let v be GetV(value, propertyName)` (§7.3.3),
+      // which performs an ordinary `[[Get]]` and *must* fire JS getters. If a
+      // getter throws (e.g. test262 dstr/*-get-value-err.js), the error must
+      // propagate, not be silently dropped.
+      //
+      // We cannot statically tell whether a runtime object has had accessors
+      // installed via Object.defineProperty, but we *can* tell when the
+      // pattern names properties the struct does not declare — in that case
+      // the fast path is provably wrong (fieldIdx === -1 → silent skip in the
+      // recursive call below). Fall back to __extern_get for the entire
+      // pattern in that case so that getters fire and exceptions propagate
+      // (#1016 — getter-throw destructure cluster).
+      if (structTypeIdx !== undefined) {
+        const structName = ctx.typeIdxToStructName.get(structTypeIdx);
+        const fields = structName ? ctx.structFields.get(structName) : undefined;
+        let allFieldsPresent = !!fields;
+        if (fields) {
+          for (const element of pattern.elements) {
+            if (!ts.isBindingElement(element)) continue;
+            if (element.dotDotDotToken) continue;
+            const pn = element.propertyName ?? element.name;
+            let propText: string | undefined;
+            if (ts.isIdentifier(pn)) propText = pn.text;
+            else if (ts.isStringLiteral(pn)) propText = pn.text;
+            else if (ts.isNumericLiteral(pn)) propText = pn.text;
+            if (propText === undefined) continue;
+            if (!fields.some((f) => f.name === propText)) {
+              allFieldsPresent = false;
+              break;
+            }
+          }
+        } else {
+          allFieldsPresent = false;
+        }
+        if (!allFieldsPresent) structTypeIdx = undefined;
+      }
 
       if (structTypeIdx !== undefined) {
         // Use ref.test to check if the value is the expected struct (safe for primitives) (#852)
@@ -548,6 +668,25 @@ export function destructureParamArray(
       // Per JS spec: destructuring null/undefined must throw TypeError
       emitExternrefDestructureGuard(ctx, fctx, paramIdx);
 
+      // Per spec §13.3.3.6 (IteratorBindingInitialization), an
+      // empty `[]` pattern body returns unused without iterating. Materializing
+      // the source via __array_from_iter would call .next() on a generator and
+      // execute its body — observably wrong (#1016 — empty pattern advances
+      // generator). For empty patterns the null guard above is sufficient.
+      // (IteratorClose's spec-prescribed `return()` call on a fresh generator
+      // does not execute the body, so skipping it is benign for iterCount.)
+      //
+      // #1158: broaden the short-circuit to any pattern whose elements are all
+      // themselves empty-only — `[, ,]`, `[[]]`, `[[], []]`. Each such element
+      // also requires no IteratorStep call, so we can skip materialization
+      // entirely. Locals declared by nested empty patterns (rare, since they
+      // bind nothing, but still possible via `var` hoisting) are pre-allocated
+      // by `ensureBindingLocals`.
+      if (isPatternEmptyOnly(pattern)) {
+        ensureBindingLocals(ctx, fctx, pattern);
+        return;
+      }
+
       const extVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
       const extArrTypeIdx = getArrTypeIdxFromVec(ctx, extVecIdx);
       const convertedType: ValType = { kind: "ref_null", typeIdx: extVecIdx };
@@ -558,6 +697,103 @@ export function destructureParamArray(
       fctx.body.push({ op: "local.get", index: paramIdx });
       fctx.body.push({ op: "any.convert_extern" } as Instr);
       fctx.body.push({ op: "local.set", index: anyTmp });
+
+      // Tuple-struct fast path (#862): if the externref wraps a known Wasm-native
+      // tuple struct (fields named _0, _1, …), destructure directly via
+      // struct.get instead of routing through __array_from_iter / boxing — which
+      // would convert typed numeric fields to externref and then silently back
+      // to NaN when assigned to f64 locals (PR #255 regression pattern).
+      //
+      // The sentinel `__dparam_done` is set to 1 if the fast path fires; the
+      // existing externref logic below is gated on it being 0.
+      const dstrDoneLocal = allocLocal(fctx, `__dparam_done_${fctx.locals.length}`, { kind: "i32" });
+      fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+      fctx.body.push({ op: "local.set", index: dstrDoneLocal });
+
+      for (let ti = 0; ti < ctx.mod.types.length; ti++) {
+        const def = ctx.mod.types[ti];
+        if (!def || def.kind !== "struct") continue;
+        if (def.fields.length === 0) continue;
+        // Tuple struct detection: fields must be named _0, _1, _2, ...
+        let isTuple = true;
+        for (let fi = 0; fi < def.fields.length; fi++) {
+          if (def.fields[fi]!.name !== `_${fi}`) {
+            isTuple = false;
+            break;
+          }
+        }
+        if (!isTuple) continue;
+        // Only match when the tuple has at least as many fields as the pattern
+        // consumes — fewer fields can't fulfill the binding element count.
+        if (def.fields.length < pattern.elements.length) continue;
+
+        const tupType: ValType = { kind: "ref_null", typeIdx: ti };
+        const tupleLocal = allocLocal(fctx, `__dparam_tup_${ti}_${fctx.locals.length}`, tupType);
+
+        // Build the fast-path body by swapping fctx.body so a recursive
+        // destructureParamArray call emits into the conditional branch instead
+        // of the outer function.
+        //
+        // #1314 — use pushBody/popBody (instead of a manual `fctx.body =`
+        // swap with `savedBody` held only as a JS local) so the outer buffer
+        // is registered in `fctx.savedBodies` for the duration of the swap.
+        // Without this, `shiftLateImportIndices` (triggered when the recursive
+        // emit calls `compileExpression(initializer)` with a function-call
+        // default like `[x = g()]`) walks `fctx.body` (= fastPathInstrs) and
+        // `fctx.savedBodies` but misses the JS-local outer buffer. Calls
+        // already emitted into the outer buffer keep stale `funcIdx` and
+        // start pointing to whatever shifted in (typically an extern import,
+        // which has the wrong arity → "not enough arguments on the stack").
+        const savedBody = pushBody(fctx);
+        const fastPathInstrs = fctx.body;
+        try {
+          fctx.body.push({ op: "local.get", index: anyTmp } as Instr);
+          fctx.body.push({ op: "ref.cast", typeIdx: ti });
+          fctx.body.push({ op: "local.set", index: tupleLocal });
+          destructureParamArray(ctx, fctx, tupleLocal, pattern, tupType);
+          fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+          fctx.body.push({ op: "local.set", index: dstrDoneLocal });
+        } finally {
+          popBody(fctx, savedBody);
+        }
+
+        // Gate on dstrDone == 0 so later tuple-struct checks (and the main
+        // externref logic below) don't re-run once one match has succeeded.
+        const testInstrs: Instr[] = [
+          { op: "local.get", index: anyTmp } as Instr,
+          { op: "ref.test", typeIdx: ti } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: fastPathInstrs,
+            else: [],
+          } as Instr,
+        ];
+
+        fctx.body.push({ op: "local.get", index: dstrDoneLocal } as Instr);
+        fctx.body.push({ op: "i32.eqz" } as Instr);
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: testInstrs,
+          else: [],
+        } as Instr);
+      }
+
+      // Gate the existing externref→vec conversion + iter fallback logic on
+      // dstrDone == 0. If the fast path already destructured, skip all of it.
+      // We redirect fctx.body to a buffer; after the existing code finishes, we
+      // wrap the buffer in `if dstrDone == 0 { ... }` and append to the real body.
+      //
+      // #1314 — same fix as the tuple-struct swap above: use pushBody so the
+      // outer `realBody` is registered in `fctx.savedBodies` and visible to
+      // `shiftLateImportIndices`. The downstream `ensureLateImport` calls
+      // (lines below for `__extern_length`, `__extern_get_idx`,
+      // `__array_from_iter`) trigger shifts that walk the savedBodies stack;
+      // without pushBody, calls already emitted into `realBody` retained
+      // stale `funcIdx` and pointed to the wrong function after the shift.
+      const realBody = pushBody(fctx);
+      const externrefLegacyBody = fctx.body;
 
       // Try direct cast to __vec_externref first (cheapest path)
       fctx.body.push({ op: "local.get", index: anyTmp });
@@ -774,6 +1010,20 @@ export function destructureParamArray(
 
       // Now destructure from the converted vec_externref.
       destructureParamArray(ctx, fctx, resultLocal, pattern, convertedType);
+
+      // Close the #862 tuple-struct fast-path gate: wrap everything since the
+      // dstrDone sentinel was initialised in `if dstrDone == 0 { ... }` and
+      // splice back into the real body.
+      // #1314 — popBody mirrors the pushBody above (was: `fctx.body = realBody`).
+      popBody(fctx, realBody);
+      fctx.body.push({ op: "local.get", index: dstrDoneLocal } as Instr);
+      fctx.body.push({ op: "i32.eqz" } as Instr);
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: externrefLegacyBody,
+        else: [],
+      } as Instr);
       return;
     }
     // Cannot destructure a non-ref type — register locals with defaults
@@ -942,6 +1192,39 @@ export function destructureParamArray(
       !element.dotDotDotToken &&
       (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name))
     ) {
+      // #1158/#1159 — when the nested pattern is itself empty-only, hold
+      // the slot value as externref instead of coercing to vec/tuple. The
+      // recursive call into the empty pattern then takes the
+      // isPatternEmptyOnly short-circuit at line ~647 (no
+      // __array_from_iter materialization).
+      //
+      // Important: this only applies when `element.name` is an array
+      // binding pattern AND empty-only AND `elemType` is not externref
+      // (when elemType is already externref the existing path is fine
+      // — the extracted value flows directly into the recursive call).
+      const isNestedEmptyArr =
+        ts.isArrayBindingPattern(element.name) && isPatternEmptyOnly(element.name) && elemType.kind !== "externref";
+      if (isNestedEmptyArr) {
+        const externType: ValType = { kind: "externref" };
+        const emptyTmp = allocLocal(fctx, `__dparam_emp_${fctx.locals.length}`, externType);
+        // Read element as externref (or __get_undefined() for OOB):
+        fctx.body.push({ op: "local.get", index: paramIdx });
+        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+        fctx.body.push({ op: "i32.const", value: i });
+        emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemType);
+        // elemType is narrowed to non-externref at line 1179, so always coerce.
+        coerceType(ctx, fctx, elemType, externType);
+        fctx.body.push({ op: "local.set", index: emptyTmp });
+        if (element.initializer) {
+          // Default fires only when the slot is undefined — coerce the
+          // initializer to externref WITHOUT going through vec/tuple
+          // materialization (which would call __array_from_iter).
+          emitNestedBindingDefault(ctx, fctx, emptyTmp, externType, element.initializer);
+        }
+        // Recurse with externref so the empty short-circuit fires.
+        destructureParamArray(ctx, fctx, emptyTmp, element.name as ts.ArrayBindingPattern, externType);
+        continue;
+      }
       const tmpLocal = allocLocal(fctx, `__dparam_${fctx.locals.length}`, elemType);
       fctx.body.push({ op: "local.get", index: paramIdx });
       fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }); // get data

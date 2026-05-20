@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import ts from "typescript";
+import { ts, forEachChild } from "../ts-api.js";
 import type { TypedAST } from "../checker/index.js";
 import type { CompileError, ImportDescriptor, ImportIntent } from "../index.js";
 import type { WasmModule } from "../ir/types.js";
@@ -124,6 +124,10 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // Used for `any`-typed loose equality where null == undefined must be true. (#1134)
   if (name === "__host_loose_eq") return { type: "host_loose_eq" };
 
+  // SameValueZero comparison (§7.2.11) — like === except NaN equals NaN.
+  // Used by Array.prototype.includes on array-like receivers (#1360).
+  if (name === "__same_value_zero") return { type: "same_value_zero" };
+
   // Node builtin modules (#1044)
   if (name.startsWith("__node_")) return { type: "node_builtin", moduleName: name.slice(7) };
 
@@ -218,7 +222,7 @@ function checkJsTypeCoverage(ast: TypedAST): CompileError[] {
         }
       }
     }
-    ts.forEachChild(node, visit);
+    forEachChild(node, visit);
   }
 
   visit(sf);
