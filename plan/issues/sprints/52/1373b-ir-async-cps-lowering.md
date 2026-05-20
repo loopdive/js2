@@ -15,6 +15,15 @@ depends_on: [1326c]
 ---
 # #1373b — IR async Phase C: CPS lowering
 
+## Joint architect spec (S53)
+
+This issue is **Phase 2B** of the S53 async cluster. The joint spec at
+`plan/issues/sprints/53/async-cluster-architect-spec.md` defines the shared
+CPS module (`src/codegen/async-cps.ts`) that both this issue and #1042 must
+consume — **do not duplicate the transform**. Phase 2B blocks on #1326c
+Phase 1C-B (`emitStandalonePromiseThen`) AND on #1042 introducing
+`async-cps.ts`. Read the joint spec before starting Phase C work.
+
 ## Background
 
 #1373 Phase A (PR #328) shipped:

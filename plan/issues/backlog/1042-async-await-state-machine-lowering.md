@@ -14,6 +14,15 @@ required_by: [1058]
 ---
 # #1042 — Real `async`/`await` state-machine lowering
 
+## Joint architect spec (S53)
+
+This issue is one of five in the S53 async cluster. The unified architecture,
+phase ordering, file map, and risk register live in
+`plan/issues/sprints/53/async-cluster-architect-spec.md`. **Read that spec
+first** — it pins the state-machine shape this issue must produce so it
+stays compatible with #1373b's IR CPS lowering and #1116's Promise API
+work. This issue is **Phase 2A** in the cluster.
+
 ## Problem
 
 `src/codegen/expressions.ts:790` compiles `AwaitExpression` as a no-op — it recurses into the operand and returns whatever the operand returned. There is no Promise integration, no microtask suspension, no generator-style state machine, and no interaction with the host event loop.

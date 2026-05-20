@@ -15,6 +15,15 @@ goal: ir-full-coverage
 ---
 # #1373 — IR: async function support
 
+## Joint architect spec (S53)
+
+Phase A+B of this issue (selector bucket + IR node types) is **done** and
+provides the IR contract that the S53 async cluster builds on. The joint
+spec at `plan/issues/sprints/53/async-cluster-architect-spec.md` treats this
+issue's `IrInstrAwait` / `IrInstrAsyncReturn` / `IrInstrAsyncThrow` node
+types as the **authoritative** state-machine representation. #1042's AST
+lowering and #1373b's CPS pass both target these nodes.
+
 ## Resolution (2026-05-20)
 
 This umbrella issue is **done**; remaining work has been split into follow-ups:

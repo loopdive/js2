@@ -1,14 +1,15 @@
 ---
 sprint: 53
-status: planning
+status: active
 created: 2026-05-20
 planned: 2026-05-20
-baseline_pass: 28168
+started: 2026-05-20
+baseline_pass: 28233
 baseline_total: 43160
-baseline_pct: 65.3
+baseline_pct: 65.5
 ---
 
-# Sprint 53 Planning
+# Sprint 53
 
 ## Sprint Goal
 

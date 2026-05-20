@@ -14,6 +14,17 @@ es_edition: es2017
 ---
 # #1151 — Async function synchronous throws bypass Promise.reject wrapping
 
+## Joint architect spec (S53)
+
+This issue is one of five in the S53 async cluster. See
+`plan/issues/sprints/53/async-cluster-architect-spec.md` for cluster context.
+The post-#1150 investigation note below identified that the remaining real
+gap is a **binding-pattern parameter inference bug** in `closures.ts:875-886`,
+not the full body-wrap originally proposed. The joint spec adopts the narrow
+fix as **Phase 1A** (lands first; ~one-line `wasmType` override). Option 1
+(body-wrap with return-type change to externref) remains **declined** per
+the update note.
+
 ## Problem
 
 Per spec (ECMA-262 §27.7.5.2 AsyncFunctionStart), an async function must always return a Promise. Any abrupt completion during its body (synchronous throw) must be converted into a **rejected Promise**, not propagate to the caller.
