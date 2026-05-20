@@ -10,7 +10,6 @@ import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addImport } from "../registry/imports.js";
 import { addFuncType } from "../registry/types.js";
-import { walkInstructions } from "../walk-instructions.js";
 
 /**
  * Shift function indices after a late import addition. This must update all
@@ -24,65 +23,71 @@ export function shiftLateImportIndices(
   added: number,
 ): void {
   if (added <= 0) return;
+  // Track ALL instruction arrays (top-level AND nested) to prevent
+  // double-shifting. When fctx.body is a nested block (e.g., a then-array)
+  // that is also reachable from a savedBody via recursive walk, we must
+  // ensure it is only shifted once (#1109).
+  const shifted = new Set<Instr[]>();
   function shiftInstrs(instrs: Instr[]): void {
-    walkInstructions(instrs, (instr) => {
+    if (shifted.has(instrs)) return;
+    shifted.add(instrs);
+    for (const instr of instrs) {
       if ("funcIdx" in instr && typeof (instr as any).funcIdx === "number") {
         if ((instr as any).funcIdx >= importsBefore) {
           (instr as any).funcIdx += added;
         }
       }
-    });
-  }
-  // Track which body arrays have been shifted to prevent double-shifting.
-  // Using a Set avoids reliance on reference equality between bodies that
-  // may be the same logical array referenced from multiple places.
-  const shifted = new Set<Instr[]>();
-  for (const func of ctx.mod.functions) {
-    if (!shifted.has(func.body)) {
-      shiftInstrs(func.body);
-      shifted.add(func.body);
-    }
-  }
-  // Shift current function body (if not already shifted via mod.functions)
-  const curBody = fctx.body;
-  if (!shifted.has(curBody)) {
-    shiftInstrs(curBody);
-    shifted.add(curBody);
-  }
-  // Shift saved body arrays (if not already shifted)
-  for (const sb of fctx.savedBodies) {
-    if (shifted.has(sb)) continue;
-    shiftInstrs(sb);
-    shifted.add(sb);
-  }
-  // Shift parent function contexts on the funcStack (nested closure compilation)
-  for (const parentFctx of ctx.funcStack) {
-    if (!shifted.has(parentFctx.body)) {
-      shiftInstrs(parentFctx.body);
-      shifted.add(parentFctx.body);
-    }
-    for (const sb of parentFctx.savedBodies) {
-      if (!shifted.has(sb)) {
-        shiftInstrs(sb);
-        shifted.add(sb);
+      const a = instr as any;
+      if (a.body && Array.isArray(a.body)) shiftInstrs(a.body);
+      if (a.then && Array.isArray(a.then)) shiftInstrs(a.then);
+      if (a.else && Array.isArray(a.else)) shiftInstrs(a.else);
+      if (a.catches && Array.isArray(a.catches)) {
+        for (const c of a.catches) {
+          if (Array.isArray(c.body)) shiftInstrs(c.body);
+        }
       }
+      if (a.catchAll && Array.isArray(a.catchAll)) shiftInstrs(a.catchAll);
     }
   }
-  // Shift parent function bodies on parentBodiesStack.
-  // Use the same `shifted` set to avoid double-shifting bodies already
-  // handled by the funcStack loop above (funcStack.body and
-  // parentBodiesStack entries can be the same array).
+  for (const func of ctx.mod.functions) {
+    shiftInstrs(func.body);
+  }
+  shiftInstrs(fctx.body);
+  for (const sb of fctx.savedBodies) {
+    shiftInstrs(sb);
+  }
+  // (#1384) Walk ctx.currentFunc.body too. When fctx ≠ ctx.currentFunc — which
+  // happens during compileArrowAsCallback's param-coercion phase (closures.ts
+  // line 2470) where fctx=cbFctx but ctx.currentFunc=outer-fctx — the outer
+  // function's body would otherwise be missed (it's not yet reachable via
+  // funcStack because the savedFunc swap hasn't happened, and `func.body =
+  // fctx.body` in compileFunctionBody only runs AFTER compilation completes,
+  // so ctx.mod.functions[outer].body is still the empty initial array). The
+  // `shifted` Set dedupes when fctx === ctx.currentFunc.
+  if (ctx.currentFunc) {
+    shiftInstrs(ctx.currentFunc.body);
+    for (const sb of ctx.currentFunc.savedBodies) {
+      shiftInstrs(sb);
+    }
+  }
+  for (const parentFctx of ctx.funcStack) {
+    shiftInstrs(parentFctx.body);
+    for (const sb of parentFctx.savedBodies) {
+      shiftInstrs(sb);
+    }
+  }
   for (const pb of ctx.parentBodiesStack) {
-    if (!shifted.has(pb)) {
-      shiftInstrs(pb);
-      shifted.add(pb);
-    }
+    shiftInstrs(pb);
   }
-  // Shift the pending init body (module-level init function compiled before
-  // top-level functions, but not yet added to ctx.mod.functions).
-  if (ctx.pendingInitBody && !shifted.has(ctx.pendingInitBody)) {
+  // (#1384) Walk all live (allocated but not yet attached to mod.functions)
+  // FunctionContext bodies — covers cbFctx.body / liftedFctx.body during
+  // their captures-extraction + param-coercion setup phases, BEFORE the
+  // savedFunc swap puts them on funcStack/parentBodiesStack.
+  for (const lb of ctx.liveBodies) {
+    shiftInstrs(lb);
+  }
+  if (ctx.pendingInitBody) {
     shiftInstrs(ctx.pendingInitBody);
-    shifted.add(ctx.pendingInitBody);
   }
   // Shift funcMap entries for defined functions (not import entries).
   // Defined functions had indices >= importsBefore (before the shift) and need

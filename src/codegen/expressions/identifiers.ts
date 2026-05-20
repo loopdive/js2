@@ -2,10 +2,11 @@
 /**
  * Identifier resolution, TDZ analysis, and instanceof handling.
  */
-import ts from "typescript";
+import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isHeterogeneousUnion, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitFuncRefAsClosure } from "../closures.js";
+import { emitLazyClassObjectGet } from "./extern.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -20,15 +21,41 @@ import { emitNullGuardedStructGet } from "../property-access.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { emitTdzCheck } from "../statements.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
+import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
+import { isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
 
-export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, _name: string, flagIdx: number): void {
-  const tagIdx = ensureExnTag(ctx);
-  fctx.body.push({ op: "local.get", index: flagIdx });
+export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: string, flagIdx: number): void {
+  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+  // If the flag has been boxed in an i32 ref cell (captured by a closure —
+  // see #1177), read it through `struct.get` so we observe mutations the
+  // outer scope made via the same ref cell.
+  const boxed = fctx.boxedTdzFlags?.get(name);
+  if (boxed) {
+    fctx.body.push({ op: "local.get", index: boxed.localIdx });
+    fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 } as Instr);
+  } else {
+    fctx.body.push({ op: "local.get", index: flagIdx });
+  }
   fctx.body.push({ op: "i32.eqz" });
+  let then: Instr[];
+  if (throwRefErrIdx !== undefined) {
+    const msg = `${name} is not defined`;
+    addStringConstantGlobal(ctx, msg);
+    const strIdx = ctx.stringGlobalMap.get(msg)!;
+    then = [
+      { op: "global.get", index: strIdx } as Instr,
+      { op: "call", funcIdx: throwRefErrIdx } as Instr,
+      { op: "unreachable" } as unknown as Instr,
+    ];
+  } else {
+    const tagIdx = ensureExnTag(ctx);
+    then = [{ op: "ref.null.extern" } as Instr, { op: "throw", tagIdx } as unknown as Instr];
+  }
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [{ op: "ref.null.extern" } as Instr, { op: "throw", tagIdx }],
+    then,
     else: [],
   });
 }
@@ -178,6 +205,72 @@ function isDescendantOf(node: ts.Node, ancestor: ts.Node): boolean {
 }
 
 /**
+ * Compile-time TDZ elision for top-level let/const variables (#906).
+ *
+ * Returns the subset of `candidates` for which TDZ tracking can be statically
+ * compiled away — i.e. every identifier reference in the source file that
+ * resolves to the candidate's declaration is provably after initialization
+ * (analyzeTdzAccess returns "skip"). For these names, the caller can skip
+ * emitting the `__tdz_<name>` global, the `global.set __tdz_<name>` writes
+ * in the module init body, and the runtime check at every read.
+ *
+ * If a candidate has *any* reference that yields "throw" or "check", it stays
+ * tracked at runtime. This preserves observable semantics for genuinely
+ * dynamic or ambiguous cases (e.g. a function declaration that reads the
+ * variable, since hoisted functions could be called before the variable's
+ * initializer runs).
+ */
+export function computeElidableTopLevelTdzNames(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  candidates: Set<string>,
+): Set<string> {
+  if (candidates.size === 0) return new Set();
+
+  // Build name → declaration map for top-level let/const candidates so we can
+  // verify that an Identifier resolves to OUR declaration (and not a shadowed
+  // local or unrelated symbol with the same name).
+  const declByName = new Map<string, ts.VariableDeclaration>();
+  for (const stmt of sourceFile.statements) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    const isLetOrConst = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+    if (!isLetOrConst) continue;
+    for (const decl of stmt.declarationList.declarations) {
+      if (ts.isIdentifier(decl.name) && candidates.has(decl.name.text)) {
+        declByName.set(decl.name.text, decl);
+      }
+    }
+  }
+  if (declByName.size === 0) return new Set();
+
+  const elidable = new Set(declByName.keys());
+
+  function walk(node: ts.Node): void {
+    if (elidable.size === 0) return;
+    if (ts.isIdentifier(node) && elidable.has(node.text)) {
+      // Skip the identifier of the declaration itself.
+      const isDeclName = ts.isVariableDeclaration(node.parent) && node.parent.name === node;
+      if (!isDeclName) {
+        // Verify this identifier resolves to OUR top-level declaration
+        // (and not a shadowed local with the same name).
+        const symbol = ctx.checker.getSymbolAtLocation(node);
+        const decl = symbol?.valueDeclaration;
+        if (decl === declByName.get(node.text)) {
+          const result = analyzeTdzAccess(ctx, node);
+          if (result !== "skip") {
+            elidable.delete(node.text);
+          }
+        }
+      }
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+
+  return elidable;
+}
+
+/**
  * Position-based TDZ analysis for call-site capture checks.
  * Used when we know the variable name and the call expression position,
  * but don't have an identifier with a resolved symbol (e.g., pushing
@@ -214,6 +307,17 @@ function analyzeTdzAccessByPos(ctx: CodegenContext, varName: string, callNode: t
 
 /** Emit a static TDZ throw (guaranteed violation — no flag check needed). */
 export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
+  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+  if (throwRefErrIdx !== undefined) {
+    const msg = `${name} is not defined`;
+    addStringConstantGlobal(ctx, msg);
+    const strIdx = ctx.stringGlobalMap.get(msg)!;
+    fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+    fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
+    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    return;
+  }
   const tagIdx = ensureExnTag(ctx);
   fctx.body.push({ op: "ref.null.extern" } as Instr);
   fctx.body.push({ op: "throw", tagIdx });
@@ -221,6 +325,16 @@ export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, n
 
 function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): ValType | null {
   const name = id.text;
+
+  // #1210: string-builder bindings are stored as a (buf, len, cap, mat)
+  // tuple of synthetic locals. The binding name is intentionally NOT in
+  // `localMap` — read access materializes a NativeString lazily and caches
+  // it in `mat`. Check this before the normal local lookup.
+  const sb = getBuilderInfo(fctx, name);
+  if (sb !== undefined) {
+    return emitStringBuilderRead(ctx, fctx, sb);
+  }
+
   const localIdx = fctx.localMap.get(name);
   if (localIdx !== undefined) {
     // TDZ check for function-local let/const variables
@@ -335,6 +449,41 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     return globalInfo.type;
   }
 
+  // (#1395) Class identifier as a value — emit lazy-initialized class-object
+  // singleton, registering static-method names with the runtime's
+  // `_staticMethodNames` allowlist so `Object.getOwnPropertyDescriptor(C, "m")`
+  // returns the spec-correct descriptor for static methods. Without this,
+  // bare `C` falls through to the `ref.null.extern` graceful-default below
+  // and `getOwnPropertyDescriptor(null, "m")` returns null, breaking
+  // verifyProperty-style static-method tests under
+  // `language/{statements,expressions}/class/elements/`.
+  //
+  // For class expressions (`var C = class { ... }`), `classExprNameMap` maps
+  // the user-visible name "C" to the synthetic internal name (e.g.
+  // `__anonClass_0`). All static-prop / static-method storage is keyed on the
+  // synthetic name, so `C.f` (via property-access) reads from
+  // `__static___anonClass_0_f`. Resolving the bare `C` identifier must go
+  // through the same alias so the LHS of `C.f() === C` and the RHS read the
+  // SAME `__class_<Name>` singleton; otherwise the comparison ends up with
+  // `__class___anonClass_0` on the LHS (returned by the arrow body via the
+  // synthetic-name `enclosingClassName`) and `__class_C` on the RHS, which
+  // are distinct singletons and break identity. (#1395 Phase 1 follow-up.)
+  //
+  // Order matters: this is AFTER `localMap`, `capturedGlobals`,
+  // `moduleGlobals`, and `declaredGlobals` so user shadowing
+  // (`var C = ...; class C {}` — though unusual) takes precedence.
+  // It is BEFORE the funcMap-funcref path so a class never gets re-wrapped
+  // as a closure, and BEFORE the `ref.null.extern` fallback so we beat the
+  // null result.
+  {
+    const resolvedClassName = ctx.classExprNameMap.get(name) ?? name;
+    if (ctx.classObjectGlobals?.has(resolvedClassName)) {
+      if (emitLazyClassObjectGet(ctx, fctx, resolvedClassName)) {
+        return { kind: "externref" };
+      }
+    }
+  }
+
   // globalThis — return the JS global object via host import
   if (name === "globalThis") {
     let funcIdx = ctx.funcMap.get("__get_globalThis");
@@ -387,15 +536,32 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
   }
 
   // Check if this is a truly undeclared variable (no TS symbol).
-  // Accessing an undeclared variable should throw ReferenceError per JS strict mode.
+  // Accessing an undeclared variable should throw ReferenceError per JS strict mode
+  // (spec §13.10.1 / §13.11.4 — operand evaluation precedes ToPrimitive in `==`).
   // However, known globals (Symbol, Object, Reflect, etc.) have TS symbols from
   // lib.d.ts and should use the fallback default instead.
   const sym = ctx.checker.getSymbolAtLocation(id);
   if (!sym) {
-    // Truly undeclared variable — throw ReferenceError at runtime
-    const tagIdx = ensureExnTag(ctx);
-    fctx.body.push({ op: "ref.null.extern" } as Instr);
-    fctx.body.push({ op: "throw", tagIdx });
+    // Truly undeclared variable — throw a proper ReferenceError instance
+    // via the `__throw_reference_error` host import. The previous emission
+    // was a raw `throw ref.null.extern`, which surfaced to JS as `null` so
+    // `e instanceof ReferenceError` was false (#1380, S11.9.1_A2.1_T3).
+    const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+    flushLateImportShifts(ctx, fctx);
+    if (throwRefErrIdx !== undefined) {
+      const msg = `${name} is not defined`;
+      addStringConstantGlobal(ctx, msg);
+      const strIdx = ctx.stringGlobalMap.get(msg)!;
+      fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
+      fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    } else {
+      // Standalone/WASI mode without `__throw_reference_error`: fall back to
+      // the raw exception-tag throw (no JS host to construct a ReferenceError).
+      const tagIdx = ensureExnTag(ctx);
+      fctx.body.push({ op: "ref.null.extern" } as Instr);
+      fctx.body.push({ op: "throw", tagIdx } as unknown as Instr);
+    }
     return { kind: "externref" };
   }
 
@@ -488,11 +654,81 @@ function resolveInstanceOfRHS(ctx: CodegenContext, rightExpr: ts.Expression): st
 }
 
 /**
+ * Try to statically evaluate `LHS instanceof <ctorName>` using the LHS TypeScript
+ * type and the built-in type-tag registry (#1325).
+ *
+ * Returns:
+ *   - `true`  → result is provably 1
+ *   - `false` → result is provably 0
+ *   - `undefined` → cannot decide statically, fall through to runtime check
+ *
+ * This lets the compiler emit `i32.const 0/1` (after compiling LHS for side
+ * effects) without consulting the `__instanceof` JS host import — important
+ * for standalone / WASI mode where the import is unavailable.
+ */
+function tryStaticInstanceOf(ctx: CodegenContext, expr: ts.BinaryExpression, ctorName: string): boolean | undefined {
+  if (!isBuiltinTypeName(ctorName)) return undefined;
+
+  // 1. LHS is a user class? A WasmGC user-class struct is never an instance of
+  //    a JS built-in (Array / Error / Map / ...).
+  const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
+  const lhsSymbolName = leftTsType.getSymbol()?.name;
+  if (lhsSymbolName !== undefined) {
+    if (ctx.classTagMap.has(lhsSymbolName)) {
+      // (#1366a) Externref-backed subclass (e.g. `class MyError extends Error`)
+      // — the runtime instance IS a real JS instance of its built-in parent
+      // (and any super-builtin). Walk the recorded built-in parent name
+      // through the BUILTIN_PARENT chain to decide.
+      const builtinParent = ctx.classBuiltinParentMap?.get(lhsSymbolName);
+      if (builtinParent !== undefined) {
+        return isBuiltinSubtype(builtinParent, ctorName);
+      }
+      return false;
+    }
+    // 2. LHS is itself a built-in (or matches the constructor's instance-type
+    //    name) — apply hierarchy reasoning.
+    if (isBuiltinTypeName(lhsSymbolName)) {
+      return isBuiltinSubtype(lhsSymbolName, ctorName);
+    }
+  }
+
+  // 3. LHS is a numeric / boolean primitive → instanceof of any object type is
+  //    always false. (Skip strings — `"" instanceof String` is false but the
+  //    TS type may be the wrapper, so we leave that to runtime.)
+  if (isNumberType(leftTsType) || isBooleanType(leftTsType)) {
+    return false;
+  }
+
+  return undefined;
+}
+
+/**
+ * Emit a constant-result `instanceof` after still compiling the LHS for side
+ * effects. Used by `compileHostInstanceOf` when `tryStaticInstanceOf` resolves
+ * the answer at compile time.
+ */
+function emitConstantInstanceOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  result: boolean,
+): ValType {
+  const leftType = compileExpression(ctx, fctx, expr.left);
+  if (leftType) fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "i32.const", value: result ? 1 : 0 });
+  return { kind: "i32" };
+}
+
+/**
  * Compile `expr instanceof RHS` using a host import when the RHS class is not
  * in our struct system (e.g., TypeError, Array, Function, Promise). (#738)
  * Passes the value as externref and the constructor name as a string constant,
  * delegating to `__instanceof(value, ctorName) -> i32` host import which
  * looks up the constructor on the global object.
+ *
+ * For built-in RHS (Array, Error, *Error, Map, ...), tries `tryStaticInstanceOf`
+ * first to short-circuit when the LHS TS type makes the answer compile-time
+ * obvious — important for standalone/WASI mode (#1325).
  */
 function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
   // Resolve constructor name from the RHS expression (simple identifiers only)
@@ -507,6 +743,13 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (leftType) fctx.body.push({ op: "drop" });
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
+  }
+
+  // Static fast-path: try compile-time evaluation against the built-in
+  // type-tag registry (#1325). When this resolves, we skip the host call.
+  const staticResult = tryStaticInstanceOf(ctx, expr, ctorName);
+  if (staticResult !== undefined) {
+    return emitConstantInstanceOf(ctx, fctx, expr, staticResult);
   }
 
   // Ensure the __instanceof host import exists
@@ -529,6 +772,12 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   const leftType = compileExpression(ctx, fctx, expr.left);
   if (!leftType) {
     fctx.body.push({ op: "ref.null.extern" });
+  } else if (leftType.kind === "i32" || leftType.kind === "f64") {
+    // Stack-level fast path: a primitive numeric value is never an instance of
+    // any constructor — drop and emit false. (Avoids a host call + boxing.)
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
   } else if (leftType.kind !== "externref") {
     coerceType(ctx, fctx, leftType, { kind: "externref" });
   }

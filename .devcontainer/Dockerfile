@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   procps \
   sudo \
   fzf \
+  ripgrep \
   zsh \
   man-db \
   unzip \
@@ -22,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   iproute2 \
   dnsutils \
   aggregate \
+  bubblewrap \
   jq \
   nano \
   vim \
@@ -29,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   dtach \
   locales \
   openssh-server \
+  git-lfs \
   && sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen \
   && locale-gen en_US.UTF-8 \
   && ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime \
@@ -54,8 +57,8 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 ENV DEVCONTAINER=true
 
 # Create workspace and config directories and set permissions
-RUN mkdir -p /workspace /home/node/.claude && \
-  chown -R node:node /workspace /home/node/.claude
+RUN mkdir -p /workspace /home/node/.claude /home/node/.codex && \
+  chown -R node:node /workspace /home/node/.claude /home/node/.codex
 
 WORKDIR /workspace
 
@@ -94,6 +97,7 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 
 # Install Claude
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} pnpm
+RUN npm i -g @openai/codex
 
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/

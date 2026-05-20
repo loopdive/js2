@@ -6,15 +6,15 @@
  * This module imports compileExpression and compileArrowAsClosure from
  * shared.ts (NOT expressions.ts) to avoid circular dependencies.
  */
-import ts from "typescript";
+import { ts } from "../ts-api.js";
 import { isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
-import { addArrayIteratorImports, addStringImports, resolveWasmType } from "./index.js";
+import { addArrayIteratorImports, addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
-import { getOrRegisterArrayType, getOrRegisterVecType } from "./registry/types.js";
+import { getArrTypeIdxFromVec, getOrRegisterArrayType, getOrRegisterVecType } from "./registry/types.js";
 import {
   compileArrowAsClosure,
   compileExpression,
@@ -23,25 +23,25 @@ import {
   registerEmitBoundsCheckedArrayGet,
   VOID_RESULT,
 } from "./shared.js";
+import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureTimsortHelper } from "./timsort.js";
-import { coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
+import { coerceType, coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 
 type ArrayMethodAccess = ts.PropertyAccessExpression | ts.ElementAccessExpression;
 
 /** Emit throw with a string message (local version to avoid circular dep on expressions.ts) */
 function emitThrowString(ctx: CodegenContext, fctx: FunctionContext, message: string): void {
   addStringConstantGlobal(ctx, message);
-  const strIdx = ctx.stringGlobalMap.get(message)!;
-  fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, message));
   const tagIdx = ensureExnTag(ctx);
   fctx.body.push({ op: "throw", tagIdx });
 }
 
 function throwStringInstrs(ctx: CodegenContext, message: string): Instr[] {
   addStringConstantGlobal(ctx, message);
-  const strIdx = ctx.stringGlobalMap.get(message)!;
   const tagIdx = ensureExnTag(ctx);
-  return [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr];
+  return [...stringConstantExternrefInstrs(ctx, message), { op: "throw", tagIdx } as Instr];
 }
 
 /**
@@ -176,14 +176,39 @@ function isReceiverNonNull(expr: ts.Expression, checker: ts.TypeChecker): boolea
  * Emit a bounds-checked array.get.  Stack must contain [arrayref, i32 index].
  * If the index is out of bounds (< 0 or >= array.len), a default value for the
  * element type is produced instead of trapping.
+ *
+ * #1396 — `useUndefinedSentinel` (default false): when true AND `elementType`
+ * is `externref`/`ref_extern`, the OOB else-branch pushes the JS `undefined`
+ * value (via `__get_undefined` host import) instead of `ref.null.extern`.
+ * Required by destructuring callers — JS spec §13.7.5.5 fires defaults only
+ * for `undefined`, not for `null`, and `ref.null.extern` surfaces to JS as
+ * `null` causing `__extern_is_undefined` to return 0 → default never fires
+ * for OOB extern-array reads (~320 fails in `for-of/dstr`, ~171 in
+ * `assignment/dstr`).
  */
-export function emitBoundsCheckedArrayGet(fctx: FunctionContext, arrTypeIdx: number, elementType: ValType): void {
+export function emitBoundsCheckedArrayGet(
+  fctx: FunctionContext,
+  arrTypeIdx: number,
+  elementType: ValType,
+  ctx?: CodegenContext,
+  useUndefinedSentinel = false,
+): void {
   // Save index and array ref to locals so we can use them in both branches
   const idxLocal = allocLocal(fctx, `__bounds_idx_${fctx.locals.length}`, { kind: "i32" });
   const arrLocal = allocLocal(fctx, `__bounds_arr_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
 
   fctx.body.push({ op: "local.set", index: idxLocal }); // save index
   fctx.body.push({ op: "local.set", index: arrLocal }); // save array ref
+
+  // (#1396) When the destructuring caller asked for an undefined sentinel and
+  // the element type is externref-shaped, register the `__get_undefined`
+  // import BEFORE building the if-block so its funcIdx is stable and any
+  // index-shifts have already been flushed into the current function body.
+  let undefinedFuncIdx: number | undefined;
+  if (useUndefinedSentinel && ctx && (elementType.kind === "externref" || elementType.kind === "ref_extern")) {
+    undefinedFuncIdx = ensureGetUndefined(ctx);
+    if (undefinedFuncIdx !== undefined) flushLateImportShifts(ctx, fctx);
+  }
 
   // Condition: idx >= 0 && idx < array.len(arr)
   // We use: (unsigned)idx < array.len — this handles negative indices too
@@ -200,8 +225,12 @@ export function emitBoundsCheckedArrayGet(fctx: FunctionContext, arrTypeIdx: num
     { op: "array.get", typeIdx: arrTypeIdx } as Instr,
   ];
 
-  // Build the "else" branch: out-of-bounds -> default value
-  const elseInstrs: Instr[] = defaultValueInstrs(elementType);
+  // Build the "else" branch: out-of-bounds -> default value (or JS undefined
+  // when the destructuring caller opted in via `useUndefinedSentinel`).
+  const elseInstrs: Instr[] =
+    undefinedFuncIdx !== undefined
+      ? [{ op: "call", funcIdx: undefinedFuncIdx } as Instr]
+      : defaultValueInstrs(elementType);
 
   // When the element type is a non-null ref, the else branch produces ref.null
   // which is ref_null. Use ref_null as the block type so both branches validate,
@@ -329,7 +358,15 @@ const ARRAY_LIKE_METHOD_SET = new Set([
   "map",
   "reduce",
   "reduceRight",
+  // Search methods (#1360) — no callback; compare each element against the
+  // search value via __host_eq (strict equality) or __same_value_zero (includes).
+  "indexOf",
+  "lastIndexOf",
+  "includes",
 ]);
+
+/** Search methods handled inline (no callback). #1360 */
+const ARRAY_LIKE_SEARCH_METHODS = new Set(["indexOf", "lastIndexOf", "includes"]);
 
 /**
  * Compile Array.prototype.METHOD.call(anyReceiver, callback, ...args) for any-typed receivers.
@@ -367,12 +404,51 @@ export function compileArrayLikePrototypeCall(
     return undefined;
   }
 
-  // Bail out if the call site is inside `assert_throws(...)` (test262 rewrites `assert.throws`
-  // to this helper). The Wasm-native loop calls __extern_length / __extern_get_idx directly
-  // and does not currently propagate host-side JS exceptions to the surrounding try/catch,
-  // so any test that expects a throw from the length/index getter or the callback would
-  // silently pass where it should trap. The legacy __proto_method_call bridge handles
-  // exception propagation, so let it own those cases.
+  // Bail out only for real Array vectors (`__vec_*`) and the raw array element
+  // types (`__arr_*`). Those structs are opaque to `__sget_*` getters (excluded
+  // in `emitStructFieldGetters`), so `__extern_length` / `__extern_get_idx`
+  // would see length 0 / undefined. Real arrays take the dedicated
+  // `compileArrayMethodCall` path via the caller's `resolveArrayInfo` branch.
+  //
+  // Other struct receivers (instance classes, anonymous object types like
+  // `{0:..,1:..,length:..}`) have per-field `__sget_*` getters emitted, so
+  // `__extern_length`/`__extern_get_idx` read them correctly (#983, #1090).
+  // Those must be allowed through — the prior blanket bailout routed them
+  // to `__proto_method_call`, which passes the callback as a `__fn_wrap`
+  // externref that the host cannot invoke (regression from PR #195, #1152).
+  {
+    const recvTsType = ctx.checker.getTypeAtLocation(receiverArg);
+    if (recvTsType) {
+      const recvWasmType = resolveWasmType(ctx, recvTsType);
+      if (recvWasmType.kind === "ref" || recvWasmType.kind === "ref_null") {
+        const typeIdx = (recvWasmType as { typeIdx: number }).typeIdx;
+        const typeDef = ctx.mod.types[typeIdx];
+        const typeName = typeDef && "name" in typeDef ? (typeDef as { name?: string }).name : undefined;
+        if (typeName && (typeName.startsWith("__vec_") || typeName.startsWith("__arr_"))) {
+          return undefined;
+        }
+      }
+    }
+  }
+
+  // Bail out if the call site is inside `assert_throws(...)` (test262 rewrites
+  // `assert.throws` to this helper). The Wasm-native loop calls
+  // `__extern_length` / `__extern_get_idx` directly, and those host imports
+  // have an internal try/catch in `src/runtime.ts` that swallows getter
+  // exceptions (returns 0 / undefined respectively). Tests like
+  // `built-ins/Array/prototype/reduce/15.4.4.21-9-c-i-32.js` define a
+  // throwing getter at index 1 and expect the throw to propagate out of
+  // `Array.prototype.reduce.call(obj, ...)`. Routing those through the
+  // legacy `__proto_method_call` bridge — which uses the host's native
+  // `Array.prototype.reduce` — preserves the spec-correct propagation.
+  //
+  // #1358 PR #268 v1 attempted to drop this bailout per architect plan §1
+  // ("exception propagation works"). CI showed 27 regressions in
+  // reduce/reduceRight/forEach/some/every/filter/map/TypedArray.includes —
+  // ALL of them assert.throws-wrapped tests with throwing getters. Restored
+  // here. The structural fix (make `__extern_length` / `__extern_get_idx`
+  // re-throw instead of swallow) is tracked in #1382 (Wasm closure / host
+  // bridge gap).
   {
     let p: ts.Node | undefined = callExpr.parent;
     while (p) {
@@ -385,6 +461,12 @@ export function compileArrayLikePrototypeCall(
       }
       p = p.parent;
     }
+  }
+
+  // #1360 — Search methods: indexOf/lastIndexOf/includes don't take a callback.
+  // Branch into the dedicated search compiler before the callback-validity check.
+  if (ARRAY_LIKE_SEARCH_METHODS.has(methodName)) {
+    return compileArrayLikePrototypeSearch(ctx, fctx, callExpr, methodName, receiverArg);
   }
 
   // every/some/forEach/find/findIndex: callback is args[1]
@@ -407,7 +489,17 @@ export function compileArrayLikePrototypeCall(
     [{ kind: "externref" }, { kind: "f64" }],
     [{ kind: "externref" }],
   );
-  if (lenFn === undefined || getIdxFn === undefined) return undefined;
+  const hasIdxFn = ensureLateImport(
+    ctx,
+    "__extern_has_idx",
+    [{ kind: "externref" }, { kind: "f64" }],
+    [{ kind: "i32" }],
+  );
+  // __is_truthy for JS-correct truthiness when callback returns externref
+  // (boxed boolean false is non-null, so ref.is_null alone is wrong).
+  const isTruthyFn = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
+  if (lenFn === undefined || getIdxFn === undefined || hasIdxFn === undefined || isTruthyFn === undefined)
+    return undefined;
   flushLateImportShifts(ctx, fctx);
 
   // Compile receiver to externref
@@ -497,14 +589,18 @@ export function compileArrayLikePrototypeCall(
         // every/find/some behave as if all elements match (correct for empty loops).
         [{ op: "i32.const", value: 1 } as Instr]
       : closureInfo.returnType.kind === "f64"
-        ? [{ op: "f64.const", value: 0 } as Instr, { op: "f64.ne" } as Instr]
+        ? // NaN is falsy in JS; f64.ne(0) treats NaN as truthy. Use |x|>0 instead.
+          [{ op: "f64.abs" } as Instr, { op: "f64.const", value: 0 } as Instr, { op: "f64.gt" } as Instr]
         : closureInfo.returnType.kind === "i32"
           ? []
-          : closureInfo.returnType.kind === "externref" ||
-              closureInfo.returnType.kind === "ref" ||
-              closureInfo.returnType.kind === "ref_null"
-            ? [{ op: "ref.is_null" } as Instr, { op: "i32.eqz" } as Instr]
-            : [{ op: "drop" } as Instr, { op: "i32.const", value: 1 } as Instr];
+          : closureInfo.returnType.kind === "externref"
+            ? // Boxed value: __is_truthy unwraps JS semantics (false/0/NaN/""/null → falsy).
+              [{ op: "call", funcIdx: isTruthyFn } as Instr]
+            : closureInfo.returnType.kind === "ref" || closureInfo.returnType.kind === "ref_null"
+              ? // Non-externref struct/string refs: fall back to null check. JS truthiness on
+                // these uncommon shapes is not observable here (callbacks usually return any).
+                [{ op: "ref.is_null" } as Instr, { op: "i32.eqz" } as Instr]
+              : [{ op: "drop" } as Instr, { op: "i32.const", value: 1 } as Instr];
 
   /** Increment i */
   const incrI: Instr[] = [
@@ -523,6 +619,29 @@ export function compileArrayLikePrototypeCall(
     { op: "br_if", depth: 1 } as Instr,
   ];
 
+  /** Push `__extern_has_idx(receiver, i)` — spec HasProperty used to skip holes. */
+  const hasIdxCheck: Instr[] = [
+    { op: "local.get", index: receiverTmp } as Instr,
+    { op: "local.get", index: iTmp } as Instr,
+    { op: "f64.convert_i32_s" } as unknown as Instr,
+    { op: "call", funcIdx: hasIdxFn } as Instr,
+  ];
+
+  /**
+   * Wrap the per-iteration body so it runs only when HasProperty(receiver, i).
+   * Absent indices fall through to incrI. Any `br depth: N` inside `inner` that
+   * targets a level OUTSIDE the new `if` must use depth+1 (the if adds one
+   * nesting level).
+   */
+  const gatedBody = (inner: Instr[]): Instr[] => [
+    ...hasIdxCheck,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: inner,
+    } as Instr,
+  ];
+
   switch (methodName) {
     case "every": {
       const resTmp = allocLocal(fctx, `__ali_ev_res_${fctx.locals.length}`, { kind: "i32" });
@@ -537,19 +656,21 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...loadElem,
-              ...callClosure,
-              ...toTruthy,
-              { op: "i32.eqz" } as Instr,
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "i32.const", value: 0 } as Instr,
-                  { op: "local.set", index: resTmp } as Instr,
-                  { op: "br", depth: 2 } as Instr,
-                ],
-              } as Instr,
+              ...gatedBody([
+                ...loadElem,
+                ...callClosure,
+                ...toTruthy,
+                { op: "i32.eqz" } as Instr,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: 0 } as Instr,
+                    { op: "local.set", index: resTmp } as Instr,
+                    { op: "br", depth: 3 } as Instr,
+                  ],
+                } as Instr,
+              ]),
               ...incrI,
             ],
           } as Instr,
@@ -572,18 +693,20 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...loadElem,
-              ...callClosure,
-              ...toTruthy,
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "i32.const", value: 1 } as Instr,
-                  { op: "local.set", index: resTmp } as Instr,
-                  { op: "br", depth: 2 } as Instr,
-                ],
-              } as Instr,
+              ...gatedBody([
+                ...loadElem,
+                ...callClosure,
+                ...toTruthy,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: 1 } as Instr,
+                    { op: "local.set", index: resTmp } as Instr,
+                    { op: "br", depth: 3 } as Instr,
+                  ],
+                } as Instr,
+              ]),
               ...incrI,
             ],
           } as Instr,
@@ -603,10 +726,12 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...loadElem,
-              ...callClosure,
-              // drop return value if any
-              ...(closureInfo.returnType !== null ? [{ op: "drop" } as Instr] : []),
+              ...gatedBody([
+                ...loadElem,
+                ...callClosure,
+                // drop return value if any
+                ...(closureInfo.returnType !== null ? [{ op: "drop" } as Instr] : []),
+              ]),
               ...incrI,
             ],
           } as Instr,
@@ -628,18 +753,20 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...loadElem,
-              ...callClosure,
-              ...toTruthy,
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: elemTmp } as Instr,
-                  { op: "local.set", index: resTmp } as Instr,
-                  { op: "br", depth: 2 } as Instr,
-                ],
-              } as Instr,
+              ...gatedBody([
+                ...loadElem,
+                ...callClosure,
+                ...toTruthy,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: elemTmp } as Instr,
+                    { op: "local.set", index: resTmp } as Instr,
+                    { op: "br", depth: 3 } as Instr,
+                  ],
+                } as Instr,
+              ]),
               ...incrI,
             ],
           } as Instr,
@@ -662,19 +789,21 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...loadElem,
-              ...callClosure,
-              ...toTruthy,
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: iTmp } as Instr,
-                  { op: "f64.convert_i32_s" },
-                  { op: "local.set", index: resTmp } as Instr,
-                  { op: "br", depth: 2 } as Instr,
-                ],
-              } as Instr,
+              ...gatedBody([
+                ...loadElem,
+                ...callClosure,
+                ...toTruthy,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: iTmp } as Instr,
+                    { op: "f64.convert_i32_s" } as unknown as Instr,
+                    { op: "local.set", index: resTmp } as Instr,
+                    { op: "br", depth: 3 } as Instr,
+                  ],
+                } as Instr,
+              ]),
               ...incrI,
             ],
           } as Instr,
@@ -701,18 +830,20 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...loadElem,
-              ...callClosure,
-              ...toTruthy,
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: resultTmp } as Instr,
-                  { op: "local.get", index: elemTmp } as Instr,
-                  { op: "call", funcIdx: arrPushIdx } as Instr,
-                ],
-              } as Instr,
+              ...gatedBody([
+                ...loadElem,
+                ...callClosure,
+                ...toTruthy,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: resultTmp } as Instr,
+                    { op: "local.get", index: elemTmp } as Instr,
+                    { op: "call", funcIdx: arrPushIdx } as Instr,
+                  ],
+                } as Instr,
+              ]),
               ...incrI,
             ],
           } as Instr,
@@ -734,13 +865,17 @@ export function compileArrayLikePrototypeCall(
       if (mapBoxIdx === undefined) return undefined;
       flushLateImportShifts(ctx, fctx);
       const mapReturnToExternref: Instr[] =
-        closureInfo.returnType?.kind === "f64"
-          ? [{ op: "call", funcIdx: mapBoxIdx } as Instr]
-          : closureInfo.returnType?.kind === "i32"
-            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: mapBoxIdx } as Instr]
-            : closureInfo.returnType?.kind === "ref" || closureInfo.returnType?.kind === "ref_null"
-              ? [{ op: "extern.convert_any" }]
-              : []; // externref: already right type
+        closureInfo.returnType === null
+          ? // Void callback leaves nothing on the stack; push null so local.set
+            // has a value. Maps produced from void callbacks fill with undefined.
+            [{ op: "ref.null.extern" } as Instr]
+          : closureInfo.returnType.kind === "f64"
+            ? [{ op: "call", funcIdx: mapBoxIdx } as Instr]
+            : closureInfo.returnType.kind === "i32"
+              ? [{ op: "f64.convert_i32_s" } as unknown as Instr, { op: "call", funcIdx: mapBoxIdx } as Instr]
+              : closureInfo.returnType.kind === "ref" || closureInfo.returnType.kind === "ref_null"
+                ? [{ op: "extern.convert_any" } as unknown as Instr]
+                : []; // externref: already right type
       fctx.body.push({ op: "call", funcIdx: arrNewIdx });
       fctx.body.push({ op: "local.set", index: resultTmp });
       fctx.body.push({
@@ -752,13 +887,15 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...loadElem,
-              ...callClosure,
-              ...mapReturnToExternref,
-              { op: "local.set", index: mappedTmp } as Instr,
-              { op: "local.get", index: resultTmp } as Instr,
-              { op: "local.get", index: mappedTmp } as Instr,
-              { op: "call", funcIdx: arrPushIdx } as Instr,
+              ...gatedBody([
+                ...loadElem,
+                ...callClosure,
+                ...mapReturnToExternref,
+                { op: "local.set", index: mappedTmp } as Instr,
+                { op: "local.get", index: resultTmp } as Instr,
+                { op: "local.get", index: mappedTmp } as Instr,
+                { op: "call", funcIdx: arrPushIdx } as Instr,
+              ]),
               ...incrI,
             ],
           } as Instr,
@@ -832,13 +969,17 @@ export function compileArrayLikePrototypeCall(
       if (rdBoxIdx === undefined) return undefined;
       flushLateImportShifts(ctx, fctx);
       const reduceResultToExternref: Instr[] =
-        closureInfo.returnType?.kind === "f64"
-          ? [{ op: "call", funcIdx: rdBoxIdx } as Instr]
-          : closureInfo.returnType?.kind === "i32"
-            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: rdBoxIdx } as Instr]
-            : closureInfo.returnType?.kind === "ref" || closureInfo.returnType?.kind === "ref_null"
-              ? [{ op: "extern.convert_any" }]
-              : []; // externref or null: already right type
+        closureInfo.returnType === null
+          ? // Void callback leaves nothing on the stack; push null so local.set
+            // has a value. Subsequent iterations pass undefined as acc.
+            [{ op: "ref.null.extern" } as Instr]
+          : closureInfo.returnType.kind === "f64"
+            ? [{ op: "call", funcIdx: rdBoxIdx } as Instr]
+            : closureInfo.returnType.kind === "i32"
+              ? [{ op: "f64.convert_i32_s" } as unknown as Instr, { op: "call", funcIdx: rdBoxIdx } as Instr]
+              : closureInfo.returnType.kind === "ref" || closureInfo.returnType.kind === "ref_null"
+                ? [{ op: "extern.convert_any" } as unknown as Instr]
+                : []; // externref: already right type
 
       fctx.body.push({
         op: "block",
@@ -849,10 +990,12 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...loadElem,
-              ...reduceCallClosure,
-              ...reduceResultToExternref,
-              { op: "local.set", index: accTmp } as Instr,
+              ...gatedBody([
+                ...loadElem,
+                ...reduceCallClosure,
+                ...reduceResultToExternref,
+                { op: "local.set", index: accTmp } as Instr,
+              ]),
               ...incrI,
             ],
           } as Instr,
@@ -930,13 +1073,16 @@ export function compileArrayLikePrototypeCall(
       if (rrBoxIdx === undefined) return undefined;
       flushLateImportShifts(ctx, fctx);
       const rrResultToExternref: Instr[] =
-        closureInfo.returnType?.kind === "f64"
-          ? [{ op: "call", funcIdx: rrBoxIdx } as Instr]
-          : closureInfo.returnType?.kind === "i32"
-            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: rrBoxIdx } as Instr]
-            : closureInfo.returnType?.kind === "ref" || closureInfo.returnType?.kind === "ref_null"
-              ? [{ op: "extern.convert_any" }]
-              : [];
+        closureInfo.returnType === null
+          ? // Void callback — see note in reduce case.
+            [{ op: "ref.null.extern" } as Instr]
+          : closureInfo.returnType.kind === "f64"
+            ? [{ op: "call", funcIdx: rrBoxIdx } as Instr]
+            : closureInfo.returnType.kind === "i32"
+              ? [{ op: "f64.convert_i32_s" } as unknown as Instr, { op: "call", funcIdx: rrBoxIdx } as Instr]
+              : closureInfo.returnType.kind === "ref" || closureInfo.returnType.kind === "ref_null"
+                ? [{ op: "extern.convert_any" } as unknown as Instr]
+                : [];
 
       // Loop: while i >= 0
       /** Exit when i < 0 */
@@ -963,10 +1109,12 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfNeg,
-              ...loadElem,
-              ...rrCallClosure,
-              ...rrResultToExternref,
-              { op: "local.set", index: accTmp } as Instr,
+              ...gatedBody([
+                ...loadElem,
+                ...rrCallClosure,
+                ...rrResultToExternref,
+                { op: "local.set", index: accTmp } as Instr,
+              ]),
               ...decrI,
             ],
           } as Instr,
@@ -979,6 +1127,389 @@ export function compileArrayLikePrototypeCall(
     default:
       return undefined;
   }
+}
+
+/**
+ * #1360 — Inline-compile `Array.prototype.{indexOf,lastIndexOf,includes}`
+ * against an externref array-like receiver.
+ *
+ * Iterates [0, len) (or [len-1, 0] for `lastIndexOf`) using
+ * `__extern_length` + `__extern_get_idx`. For `indexOf`/`lastIndexOf`,
+ * gates each iteration on `__extern_has_idx` so missing properties (sparse
+ * holes) are skipped per spec §23.1.3.16/§23.1.3.20. For `includes`, every
+ * index is visited (spec §23.1.3.13 uses `Get`, which returns `undefined`
+ * for missing keys — same effect as iterating without the HasProperty gate
+ * since the search element is also coerced to externref/undefined).
+ *
+ * Comparison:
+ *   - indexOf/lastIndexOf — `__host_eq` (Strict Equality, NaN ≠ NaN, +0 = -0)
+ *   - includes            — `__same_value_zero` (NaN = NaN, +0 = -0)
+ *
+ * fromIndex coercion:
+ *   `i32.trunc_sat_f64_s` happens to map +Inf → INT_MAX, -Inf → INT_MIN,
+ *   NaN → 0. Combined with the existing typed-array clamp logic
+ *   (negative → max(len + n, 0) for forward; clamp to len-1 for backward),
+ *   that produces the spec-correct start index for every Inf/NaN/finite case.
+ *   Verified by `tests/issue-1360.test.ts`.
+ */
+function compileArrayLikePrototypeSearch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  callExpr: ts.CallExpression,
+  methodName: string,
+  receiverArg: ts.Expression,
+): ValType | null | typeof VOID_RESULT | undefined {
+  // `compileArrayLikePrototypeCall` is dispatched from
+  // `Array.prototype.METHOD.call(receiver, ...methodArgs)`, where
+  // callExpr.arguments[0] is `receiver` (passed to us as `receiverArg`) and
+  // [1+] are the method arguments. Search methods need at least one method
+  // argument: the search value.
+  if (callExpr.arguments.length < 2) return undefined;
+
+  // #1360 PR #274 follow-up: bail to the legacy `__proto_method_call` host
+  // bridge when the search argument is statically null or undefined.
+  // Reason: the runtime's `__extern_has_idx` returns 0 for fields whose
+  // wasmGC value is the externref null (it does `if (v != null) return 1;`
+  // — null fields look "absent" to that loose check). That makes
+  // `lastIndexOf.call({1:null, length:2}, null)` return -1 instead of 1.
+  // The host bridge invokes native `Array.prototype.lastIndexOf` which
+  // honours HasProperty correctly. Until __extern_has_idx grows a
+  // "field-defined-with-null" path (#1382), bail.
+  {
+    const searchArg = callExpr.arguments[1]!;
+    const searchIsNullish =
+      searchArg.kind === ts.SyntaxKind.NullKeyword ||
+      searchArg.kind === ts.SyntaxKind.UndefinedKeyword ||
+      (ts.isIdentifier(searchArg) && searchArg.text === "undefined");
+    if (searchIsNullish) return undefined;
+  }
+
+  const isLast = methodName === "lastIndexOf";
+  const isIncludes = methodName === "includes";
+
+  // Late imports — receiver iteration + element comparison.
+  const lenFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+  const getIdxFn = ensureLateImport(
+    ctx,
+    "__extern_get_idx",
+    [{ kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
+  );
+  const hasIdxFn = ensureLateImport(
+    ctx,
+    "__extern_has_idx",
+    [{ kind: "externref" }, { kind: "f64" }],
+    [{ kind: "i32" }],
+  );
+  const cmpFn = isIncludes
+    ? ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }])
+    : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+  if (lenFn === undefined || getIdxFn === undefined || hasIdxFn === undefined || cmpFn === undefined) return undefined;
+  flushLateImportShifts(ctx, fctx);
+
+  // Compile receiver to externref local.
+  const receiverTmp = allocLocal(fctx, `__alis_recv_${fctx.locals.length}`, { kind: "externref" });
+  const recvType = compileExpression(ctx, fctx, receiverArg, { kind: "externref" });
+  if (recvType && recvType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+  }
+  if (recvType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  fctx.body.push({ op: "local.set", index: receiverTmp });
+
+  // len: f64 from __extern_length. Kept as f64 (not truncated to i32) so the
+  // loop handles huge array-like lengths up to 2^53-1, e.g. test262
+  // `built-ins/Array/prototype/indexOf/length-near-integer-limit.js`. The
+  // legacy i32-truncated path silently failed for length > 2^31. The host
+  // imports `__extern_get_idx` / `__extern_has_idx` already take f64 indices.
+  const lenTmp = allocLocal(fctx, `__alis_len_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push({ op: "local.get", index: receiverTmp });
+  fctx.body.push({ op: "call", funcIdx: lenFn });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+
+  // Search value (externref). For booleans we MUST box via __box_boolean so the
+  // resulting externref is a JS boolean (not a number), since strict equality /
+  // SameValueZero against host-stored booleans (e.g. `obj[k] = true`) requires
+  // the same primitive type. The default coerceType i32→externref path uses
+  // __box_number, which would turn `true` into the number 1 — and `1 === true`
+  // is false in JS. Likewise null/undefined need to round-trip as themselves.
+  const searchTmp = allocLocal(fctx, `__alis_search_${fctx.locals.length}`, { kind: "externref" });
+  // `compileArrayLikePrototypeCall` shape: args[0] is the receiver (already
+  // bound to receiverArg), args[1] is the search value, args[2] is fromIndex.
+  const searchExpr = callExpr.arguments[1]!;
+  const searchTsType = ctx.checker.getTypeAtLocation(searchExpr);
+  const searchIsBoolean =
+    searchTsType !== undefined &&
+    ((searchTsType.flags & ts.TypeFlags.Boolean) !== 0 || (searchTsType.flags & ts.TypeFlags.BooleanLiteral) !== 0);
+  const searchType = compileExpression(ctx, fctx, searchExpr, { kind: "externref" });
+  if (searchType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (searchType.kind === "i32" && searchIsBoolean) {
+    // Box boolean as actual JS boolean. addUnionImports is idempotent and
+    // installs __box_boolean alongside the other any-value helpers.
+    addUnionImports(ctx);
+    const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+    if (boxBoolIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: boxBoolIdx });
+    } else {
+      // Last-resort fallback: drops the i32 and pushes null so the program
+      // is still well-formed. Should never trigger in practice.
+      coerceType(ctx, fctx, searchType, { kind: "externref" });
+    }
+  } else if (searchType.kind !== "externref") {
+    coerceType(ctx, fctx, searchType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: searchTmp });
+
+  // Loop index (f64) — always allocated; defaulted below. f64 lets the loop
+  // walk huge array-like lengths up to 2^53-1 without truncation.
+  const iTmp = allocLocal(fctx, `__alis_i_${fctx.locals.length}`, { kind: "f64" });
+
+  // Result accumulator: i32 (boolean) for includes, f64 (-1 default) for indexOf/lastIndexOf.
+  let resTmp: number;
+  if (isIncludes) {
+    resTmp = allocLocal(fctx, `__alis_res_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+  } else {
+    resTmp = allocLocal(fctx, `__alis_res_${fctx.locals.length}`, { kind: "f64" });
+    fctx.body.push({ op: "f64.const", value: -1 });
+  }
+  fctx.body.push({ op: "local.set", index: resTmp });
+
+  // ── fromIndex coercion (all f64 to handle indices up to 2^53-1) ──
+  // Forward (indexOf/includes): default 0; if negative, k = max(len+n, 0); else
+  // loop exit handles n >= len. NaN → 0 per ToIntegerOrInfinity. +Infinity →
+  // start beyond end (loop exits, returns -1). -Infinity → 0.
+  // Backward (lastIndexOf): default len-1; if negative, k = len+n (may stay
+  // <0 → exits to -1); else clamp to len-1. NaN → 0. +Infinity → len-1.
+  // -Infinity → len + -Infinity = -Infinity → exits.
+  if (callExpr.arguments.length >= 3) {
+    const argType = compileExpression(ctx, fctx, callExpr.arguments[2]!, { kind: "f64" });
+    if (argType && argType.kind !== "f64") {
+      coerceType(ctx, fctx, argType, { kind: "f64" });
+    }
+    if (argType === null) {
+      // Failed to compile fromIndex; treat as 0 (forward) or len-1 (backward).
+      if (isLast) {
+        fctx.body.push({ op: "local.get", index: lenTmp });
+        fctx.body.push({ op: "f64.const", value: 1 });
+        fctx.body.push({ op: "f64.sub" });
+      } else {
+        fctx.body.push({ op: "f64.const", value: 0 });
+      }
+      fctx.body.push({ op: "local.set", index: iTmp });
+    } else {
+      // NaN → 0 per spec ToIntegerOrInfinity. f64.ne(x, x) detects NaN.
+      // Stack: [argType_f64]. tee to iTmp, then check NaN.
+      fctx.body.push({ op: "local.tee", index: iTmp });
+      fctx.body.push({ op: "local.get", index: iTmp });
+      fctx.body.push({ op: "f64.ne" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "f64.const", value: 0 } as Instr, { op: "local.set", index: iTmp } as Instr],
+      } as Instr);
+
+      // Spec: ToIntegerOrInfinity truncates toward 0 for finite values; ±Infinity
+      // and NaN are kept as-is (NaN handled above as 0). f64.trunc gives toward-0
+      // truncation; preserves ±Infinity.
+      fctx.body.push({ op: "local.get", index: iTmp });
+      fctx.body.push({ op: "f64.trunc" } as unknown as Instr);
+      fctx.body.push({ op: "local.set", index: iTmp });
+
+      if (isLast) {
+        // If negative, k = len + n. Otherwise k = min(n, len - 1).
+        fctx.body.push({ op: "local.get", index: iTmp });
+        fctx.body.push({ op: "f64.const", value: 0 });
+        fctx.body.push({ op: "f64.lt" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: lenTmp } as Instr,
+            { op: "local.get", index: iTmp } as Instr,
+            { op: "f64.add" } as Instr,
+            { op: "local.set", index: iTmp } as Instr,
+          ],
+          else: [
+            // n >= 0: k = min(n, len - 1)
+            { op: "local.get", index: iTmp } as Instr,
+            { op: "local.get", index: lenTmp } as Instr,
+            { op: "f64.const", value: 1 } as Instr,
+            { op: "f64.sub" } as Instr,
+            { op: "f64.gt" } as Instr,
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: lenTmp } as Instr,
+                { op: "f64.const", value: 1 } as Instr,
+                { op: "f64.sub" } as Instr,
+                { op: "local.set", index: iTmp } as Instr,
+              ],
+            } as Instr,
+          ],
+        } as Instr);
+      } else {
+        // Forward: if negative, k = max(len + n, 0)
+        fctx.body.push({ op: "local.get", index: iTmp });
+        fctx.body.push({ op: "f64.const", value: 0 });
+        fctx.body.push({ op: "f64.lt" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: lenTmp } as Instr,
+            { op: "local.get", index: iTmp } as Instr,
+            { op: "f64.add" } as Instr,
+            { op: "local.tee", index: iTmp } as Instr,
+            { op: "f64.const", value: 0 } as Instr,
+            { op: "f64.lt" } as Instr,
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "f64.const", value: 0 } as Instr, { op: "local.set", index: iTmp } as Instr],
+            } as Instr,
+          ],
+        } as Instr);
+      }
+    }
+  } else {
+    // No fromIndex provided: default 0 (forward) or len-1 (backward).
+    if (isLast) {
+      fctx.body.push({ op: "local.get", index: lenTmp });
+      fctx.body.push({ op: "f64.const", value: 1 });
+      fctx.body.push({ op: "f64.sub" });
+    } else {
+      fctx.body.push({ op: "f64.const", value: 0 });
+    }
+    fctx.body.push({ op: "local.set", index: iTmp });
+  }
+
+  // ── Loop body ────────────────────────────────────────────────────
+  // Outer block: "exit on found".
+  // Inner loop: forward (i++) or backward (i--).
+  // Each iteration:
+  //   1. Loop-exit guard: forward i >= len → break; backward i < 0 → break.
+  //   2. For includes: skip the HasProperty gate; spec uses Get. For
+  //      indexOf/lastIndexOf: gate on __extern_has_idx, missing → skip.
+  //   3. Load element via __extern_get_idx, compare via __host_eq /
+  //      __same_value_zero, on match store result and break.
+  //   4. Increment / decrement index, branch back to loop start.
+
+  // Loop exit guard (f64 indices)
+  const loopExit: Instr[] = isLast
+    ? [
+        { op: "local.get", index: iTmp } as Instr,
+        { op: "f64.const", value: 0 } as Instr,
+        { op: "f64.lt" } as Instr,
+        { op: "br_if", depth: 1 } as Instr,
+      ]
+    : [
+        { op: "local.get", index: iTmp } as Instr,
+        { op: "local.get", index: lenTmp } as Instr,
+        { op: "f64.ge" } as Instr,
+        { op: "br_if", depth: 1 } as Instr,
+      ];
+
+  // HasProperty gate (only for indexOf/lastIndexOf) — pass f64 index directly.
+  const hasIdxCheck: Instr[] = [
+    { op: "local.get", index: receiverTmp } as Instr,
+    { op: "local.get", index: iTmp } as Instr,
+    { op: "call", funcIdx: hasIdxFn } as Instr,
+  ];
+
+  // Element compare: leaves i32 (0/1) on the stack. Pass f64 index directly.
+  const compareInstrs: Instr[] = [
+    { op: "local.get", index: receiverTmp } as Instr,
+    { op: "local.get", index: iTmp } as Instr,
+    { op: "call", funcIdx: getIdxFn } as Instr,
+    { op: "local.get", index: searchTmp } as Instr,
+    { op: "call", funcIdx: cmpFn } as Instr,
+  ];
+
+  // On-match: write result + break the outer block (depth 3 from inside the
+  // gated `if` body — escape `if` (depth 1) → `loop` (depth 2) → outer block).
+  const onMatchDepthGated = 3;
+  const onMatchDepthUngated = 2;
+  const onMatchInstrs = (depth: number): Instr[] =>
+    isIncludes
+      ? [
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "local.set", index: resTmp } as Instr,
+          { op: "br", depth } as Instr,
+        ]
+      : [
+          // f64 index goes straight to f64 result (no conversion needed).
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "local.set", index: resTmp } as Instr,
+          { op: "br", depth } as Instr,
+        ];
+
+  // Step (i++ / i--) using f64 arithmetic.
+  const stepInstr: Instr[] = isLast
+    ? [
+        { op: "local.get", index: iTmp } as Instr,
+        { op: "f64.const", value: 1 } as Instr,
+        { op: "f64.sub" } as Instr,
+        { op: "local.set", index: iTmp } as Instr,
+        { op: "br", depth: 0 } as Instr,
+      ]
+    : [
+        { op: "local.get", index: iTmp } as Instr,
+        { op: "f64.const", value: 1 } as Instr,
+        { op: "f64.add" } as Instr,
+        { op: "local.set", index: iTmp } as Instr,
+        { op: "br", depth: 0 } as Instr,
+      ];
+
+  // Per-iteration core (without HasProperty gate)
+  const matchAndBreakInner: Instr[] = [
+    ...compareInstrs,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: onMatchInstrs(onMatchDepthGated),
+    } as Instr,
+  ];
+
+  const matchAndBreakUngated: Instr[] = [
+    ...compareInstrs,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: onMatchInstrs(onMatchDepthUngated),
+    } as Instr,
+  ];
+
+  // For indexOf/lastIndexOf: gate on HasProperty.
+  // For includes: spec uses Get (visits every index up to len, missing → undefined).
+  const iterationCore: Instr[] = isIncludes
+    ? matchAndBreakUngated
+    : [
+        ...hasIdxCheck,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: matchAndBreakInner,
+        } as Instr,
+      ];
+
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [
+      {
+        op: "loop",
+        blockType: { kind: "empty" },
+        body: [...loopExit, ...iterationCore, ...stepInstr],
+      } as Instr,
+    ],
+  });
+
+  fctx.body.push({ op: "local.get", index: resTmp });
+  return isIncludes ? { kind: "i32" } : { kind: "f64" };
 }
 
 /**
@@ -1034,8 +1565,9 @@ export function compileArrayPrototypeCall(
           return compileArrayPrototypeSome(ctx, fctx, callExpr, receiverArg, vecTypeIdx, arrTypeIdx, elemType);
         case "forEach":
           return compileArrayPrototypeForEach(ctx, fctx, callExpr, receiverArg, vecTypeIdx, arrTypeIdx, elemType);
-        default:
-          return undefined;
+        // For filter/map/reduce/reduceRight/find/findIndex there's no shape-specific fast
+        // path yet; fall through to the generic array-like loop so array-like receivers
+        // ({length, [idx]}, arguments) are iterated via [[Get]] + HasProperty (issue #1131).
       }
     }
     receiverTsType = ctx.checker.getTypeAtLocation(receiverArg);
@@ -1347,12 +1879,17 @@ function compileArrayPrototypeEvery(
     { op: "i32.ge_s" },
     { op: "br_if", depth: 1 }, // break out of block
 
-    // Call closure(element, index, array): push closure ref, then args
+    // Call closure(element, index, array): push closure ref, then args.
+    // Gate elem/index/array on numParams — 0-param callback must not receive them.
     { op: "local.get", index: closureTmp },
-    { op: "local.get", index: dataTmp },
-    { op: "local.get", index: iTmp },
-    { op: getOp, typeIdx: arrTypeIdx } as Instr,
-    ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
+    ...(numParams >= 1
+      ? [
+          { op: "local.get", index: dataTmp } as Instr,
+          { op: "local.get", index: iTmp } as Instr,
+          { op: getOp, typeIdx: arrTypeIdx } as Instr,
+          ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
+        ]
+      : []),
     // Push index (2nd user param) if callback expects it
     ...(numParams >= 2
       ? [
@@ -1473,10 +2010,14 @@ function compileArrayPrototypeSome(
     { op: "i32.ge_s" },
     { op: "br_if", depth: 1 },
     { op: "local.get", index: closureTmp },
-    { op: "local.get", index: dataTmp },
-    { op: "local.get", index: iTmp },
-    { op: getOp, typeIdx: arrTypeIdx } as Instr,
-    ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
+    ...(numParams >= 1
+      ? [
+          { op: "local.get", index: dataTmp } as Instr,
+          { op: "local.get", index: iTmp } as Instr,
+          { op: getOp, typeIdx: arrTypeIdx } as Instr,
+          ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
+        ]
+      : []),
     // Push index (2nd user param) if callback expects it
     ...(numParams >= 2
       ? [
@@ -1586,10 +2127,14 @@ function compileArrayPrototypeForEach(
     { op: "i32.ge_s" },
     { op: "br_if", depth: 1 },
     { op: "local.get", index: closureTmp },
-    { op: "local.get", index: dataTmp },
-    { op: "local.get", index: iTmp },
-    { op: getOp, typeIdx: arrTypeIdx } as Instr,
-    ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
+    ...(numParams >= 1
+      ? [
+          { op: "local.get", index: dataTmp } as Instr,
+          { op: "local.get", index: iTmp } as Instr,
+          { op: getOp, typeIdx: arrTypeIdx } as Instr,
+          ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
+        ]
+      : []),
     // Push index (2nd user param) if callback expects it
     ...(numParams >= 2
       ? [
@@ -1651,6 +2196,7 @@ const ARRAY_METHODS = new Set([
   "filter",
   "map",
   "reduce",
+  "reduceRight",
   "forEach",
   "find",
   "findIndex",
@@ -1659,6 +2205,13 @@ const ARRAY_METHODS = new Set([
   "entries",
   "keys",
   "values",
+  "@@iterator", // Array.prototype[Symbol.iterator] === Array.prototype.values (#854)
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "with",
+  "flat",
+  "flatMap",
 ]);
 
 /**
@@ -1682,7 +2235,88 @@ export function compileArrayMethodCall(
   const arrInfo = resolveArrayInfo(ctx, receiverType);
   if (!arrInfo) return undefined;
 
-  const { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;
+  let { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;
+  // #1286: tracks whether the probe found the receiver to be externref at
+  // runtime (e.g., the result of `Object.keys(any)`, which goes through the
+  // `__object_keys` host import). The `case "join":` dispatch below routes
+  // through `compileArrayJoinExtern` whenever this is set so the WasmGC-
+  // native loop doesn't try to extract a vec struct from a JS array.
+  let receiverIsExternref = false;
+
+  // The receiver's actual Wasm type may differ from the TS type — e.g.
+  // `[0, true].lastIndexOf(...)` infers i32 elements during construction,
+  // but resolveArrayInfo resolves (number|boolean)[] → __vec_externref.
+  // Probe-compile the receiver to determine the actual Wasm type (#826).
+  const receiverExpr = ts.isPropertyAccessExpression(propAccess) ? propAccess.expression : undefined;
+  if (receiverExpr) {
+    // Fast path: check the Wasm local/global type directly
+    let actualType: ValType | undefined;
+    if (ts.isIdentifier(receiverExpr)) {
+      const name = receiverExpr.text;
+      const localIdx = fctx.localMap.get(name);
+      if (localIdx !== undefined) {
+        // #1247: localIdx is the wasm-level index (params + locals);
+        // `fctx.locals` indexes only locals (no params). Use getLocalType
+        // to handle the offset correctly. Without this, in functions with
+        // params, `paths.shift()` looks up the wrong local and dispatches
+        // through a stale vec type idx, producing struct-type mismatches
+        // at instantiation.
+        actualType = getLocalType(fctx, localIdx);
+      } else {
+        const gIdx = ctx.moduleGlobals.get(name);
+        if (gIdx !== undefined) {
+          const globalDef = ctx.mod.globals[localGlobalIdx(ctx, gIdx)];
+          actualType = globalDef?.type;
+        }
+      }
+    }
+    // Slow path: probe-compile the receiver to determine its actual type.
+    // Compiles the expression, captures the result type, then rolls back.
+    if (!actualType || actualType.kind === "externref" || actualType.kind === "f64" || actualType.kind === "i32") {
+      const savedLen = fctx.body.length;
+      const probeResult = compileExpression(ctx, fctx, receiverExpr);
+      // Roll back — the method function will re-compile the receiver
+      fctx.body.length = savedLen;
+      if (
+        probeResult &&
+        (probeResult.kind === "ref" || probeResult.kind === "ref_null") &&
+        (probeResult as any).typeIdx !== undefined
+      ) {
+        actualType = probeResult;
+      } else if (probeResult && probeResult.kind === "externref") {
+        // Capture externref-shaped receivers too — `Object.keys(any).join(...)` and
+        // similar host-import-returning calls hit this branch (#1286). The
+        // existing struct-vec dispatch below ignores this case (it only updates
+        // vecTypeIdx for known ref types), but `case "join":` consults this flag
+        // to route through the host-import fallback.
+        actualType = probeResult;
+        receiverIsExternref = true;
+      }
+    }
+    // Catch the fast-path case too: an identifier whose declared local/global
+    // type is externref (e.g., a parameter typed `any`). The slow-path probe
+    // above only runs when the fast-path lookup is ambiguous.
+    if (actualType && actualType.kind === "externref") {
+      receiverIsExternref = true;
+    }
+    if (
+      actualType &&
+      (actualType.kind === "ref" || actualType.kind === "ref_null") &&
+      (actualType as { typeIdx: number }).typeIdx !== vecTypeIdx
+    ) {
+      const actualVecIdx = (actualType as { typeIdx: number }).typeIdx;
+      const actualArrIdx = getArrTypeIdxFromVec(ctx, actualVecIdx);
+      if (actualArrIdx >= 0) {
+        const actualArrDef = ctx.mod.types[actualArrIdx];
+        if (actualArrDef && actualArrDef.kind === "array") {
+          vecTypeIdx = actualVecIdx;
+          arrTypeIdx = actualArrIdx;
+          elemType = actualArrDef.element;
+        }
+      }
+    }
+  }
+
   const methodAccess = propAccess as ts.PropertyAccessExpression;
 
   // If receiver is a module global, proxy it through a temp local so
@@ -1732,7 +2366,13 @@ export function compileArrayMethodCall(
       result = compileArrayConcat(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "join":
-      result = compileArrayJoin(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      // #1286: when the probe found the receiver to be externref at runtime,
+      // route through the host-import fallback. The WasmGC-native path expects
+      // a vec struct; trying to extract one from a JS array via ref.cast
+      // would trap with "illegal cast".
+      result = receiverIsExternref
+        ? compileArrayJoinExtern(ctx, fctx, methodAccess, callExpr)
+        : compileArrayJoin(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "splice":
       result = compileArraySplice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
@@ -1813,10 +2453,31 @@ export function compileArrayMethodCall(
           ? compileArrayEvery(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
           : undefined;
       break;
+    case "toReversed":
+      result = compileArrayToReversed(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      break;
+    case "toSorted":
+      result =
+        elemType.kind === "f64" || elemType.kind === "i32"
+          ? compileArrayToSorted(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          : undefined;
+      break;
+    case "toSpliced":
+      result = compileArrayToSpliced(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      break;
+    case "with":
+      result = compileArrayWith(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      break;
     case "entries":
     case "keys":
     case "values":
       result = compileArrayIteratorMethod(ctx, fctx, methodAccess, methodName);
+      break;
+    case "flat":
+      result = compileArrayFlat(ctx, fctx, methodAccess, callExpr);
+      break;
+    case "flatMap":
+      result = compileArrayFlatMap(ctx, fctx, methodAccess, callExpr);
       break;
     default:
       result = undefined;
@@ -1835,6 +2496,379 @@ export function compileArrayMethodCall(
   }
 
   return result;
+}
+
+// ── ES2023 non-mutating array methods (toReversed, toSorted, toSpliced, with) ──
+
+/**
+ * arr.toReversed() -> returns a new reversed copy of the array.
+ * Non-mutating: creates a copy, reverses the copy, returns it.
+ */
+function compileArrayToReversed(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  _callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType {
+  const vecTmp = allocLocal(fctx, `__arr_trev_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__arr_trev_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const newData = allocLocal(fctx, `__arr_trev_nd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__arr_trev_len_${fctx.locals.length}`, { kind: "i32" });
+  const iTmp = allocLocal(fctx, `__arr_trev_i_${fctx.locals.length}`, { kind: "i32" });
+  const jTmp = allocLocal(fctx, `__arr_trev_j_${fctx.locals.length}`, { kind: "i32" });
+
+  // Compile receiver -> vec ref
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  emitReceiverNullGuard(ctx, fctx, vecTmp);
+
+  // Extract length
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+
+  // Extract data array
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // newData = array.new_default(len)
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.set", index: newData });
+
+  // Copy src[0..len] -> newData[0..len]
+  emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, null, lenTmp);
+
+  // Now reverse newData in-place: i = 0, j = len - 1
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: iTmp });
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "i32.sub" });
+  fctx.body.push({ op: "local.set", index: jTmp });
+
+  const swapTmp = allocLocal(fctx, `__arr_trev_sw_${fctx.locals.length}`, elemType);
+  const getOp = elemType.kind === "i16" ? "array.get_s" : "array.get";
+
+  const loopBody: Instr[] = [
+    { op: "local.get", index: iTmp },
+    { op: "local.get", index: jTmp },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+
+    // swap = newData[i]
+    { op: "local.get", index: newData },
+    { op: "local.get", index: iTmp },
+    { op: getOp, typeIdx: arrTypeIdx } as Instr,
+    { op: "local.set", index: swapTmp },
+
+    // newData[i] = newData[j]
+    { op: "local.get", index: newData },
+    { op: "local.get", index: iTmp },
+    { op: "local.get", index: newData },
+    { op: "local.get", index: jTmp },
+    { op: getOp, typeIdx: arrTypeIdx } as Instr,
+    { op: "array.set", typeIdx: arrTypeIdx },
+
+    // newData[j] = swap
+    { op: "local.get", index: newData },
+    { op: "local.get", index: jTmp },
+    { op: "local.get", index: swapTmp },
+    { op: "array.set", typeIdx: arrTypeIdx },
+
+    // i++, j--
+    { op: "local.get", index: iTmp },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: iTmp },
+    { op: "local.get", index: jTmp },
+    { op: "i32.const", value: 1 },
+    { op: "i32.sub" },
+    { op: "local.set", index: jTmp },
+    { op: "br", depth: 0 },
+  ];
+
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody } as Instr],
+  });
+
+  // Return new vec struct: { len, newData }
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "local.get", index: newData });
+  fctx.body.push({ op: "ref.as_non_null" });
+  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  return { kind: "ref_null", typeIdx: vecTypeIdx };
+}
+
+/**
+ * arr.toSorted(compareFn?) -> returns a new sorted copy of the array.
+ * Non-mutating: creates a copy, sorts the copy in-place via timsort, returns it.
+ * Only supports i32/f64 element types (same as sort()).
+ */
+function compileArrayToSorted(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  _callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  const elemKind = elemType.kind as "i32" | "f64";
+  const timsortIdx = ensureTimsortHelper(ctx, vecTypeIdx, arrTypeIdx, elemKind);
+
+  const vecTmp = allocLocal(fctx, `__arr_tsrt_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__arr_tsrt_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const newData = allocLocal(fctx, `__arr_tsrt_nd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__arr_tsrt_len_${fctx.locals.length}`, { kind: "i32" });
+  const newVec = allocLocal(fctx, `__arr_tsrt_nv_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+
+  // Compile receiver -> vec ref
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  emitReceiverNullGuard(ctx, fctx, vecTmp);
+
+  // Extract length
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+
+  // Extract data array
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // newData = array.new_default(len)
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.set", index: newData });
+
+  // Copy src[0..len] -> newData[0..len]
+  emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, null, lenTmp);
+
+  // Create new vec struct: { len, newData }
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "local.get", index: newData });
+  fctx.body.push({ op: "ref.as_non_null" });
+  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  fctx.body.push({ op: "local.tee", index: newVec });
+
+  // Sort the new vec in-place via timsort
+  fctx.body.push({ op: "call", funcIdx: timsortIdx });
+
+  // Return the new vec
+  fctx.body.push({ op: "local.get", index: newVec });
+  fctx.body.push({ op: "ref.as_non_null" });
+  return { kind: "ref_null", typeIdx: vecTypeIdx };
+}
+
+/**
+ * arr.toSpliced(start, deleteCount, ...items) -> returns a new array with splice applied.
+ * Non-mutating: builds a new array = [arr[0..start], ...items, arr[start+deleteCount..len]].
+ */
+function compileArrayToSpliced(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  const vecTmp = allocLocal(fctx, `__arr_tspl_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__arr_tspl_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const newData = allocLocal(fctx, `__arr_tspl_nd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__arr_tspl_len_${fctx.locals.length}`, { kind: "i32" });
+  const startTmp = allocLocal(fctx, `__arr_tspl_s_${fctx.locals.length}`, { kind: "i32" });
+  const delCountTmp = allocLocal(fctx, `__arr_tspl_dc_${fctx.locals.length}`, { kind: "i32" });
+  const newLenTmp = allocLocal(fctx, `__arr_tspl_nl_${fctx.locals.length}`, { kind: "i32" });
+  const tailStartTmp = allocLocal(fctx, `__arr_tspl_ts_${fctx.locals.length}`, { kind: "i32" });
+  const tailCountTmp = allocLocal(fctx, `__arr_tspl_tc_${fctx.locals.length}`, { kind: "i32" });
+  const writeTmp = allocLocal(fctx, `__arr_tspl_w_${fctx.locals.length}`, { kind: "i32" });
+
+  const insertCount = Math.max(0, callExpr.arguments.length - 2);
+
+  // Compile receiver -> vec ref
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  emitReceiverNullGuard(ctx, fctx, vecTmp);
+
+  // Get length
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+
+  // Get data
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // start arg -- clamp negative indices
+  if (callExpr.arguments.length >= 1) {
+    compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+  fctx.body.push({ op: "local.set", index: startTmp });
+  emitClampIndex(fctx, startTmp, lenTmp);
+
+  // deleteCount (default: len - start) -- clamp >= 0 and to remaining len
+  if (callExpr.arguments.length >= 2) {
+    compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  } else {
+    fctx.body.push({ op: "local.get", index: lenTmp });
+    fctx.body.push({ op: "local.get", index: startTmp });
+    fctx.body.push({ op: "i32.sub" });
+  }
+  fctx.body.push({ op: "local.set", index: delCountTmp });
+  emitClampNonNeg(fctx, delCountTmp);
+  // Clamp delCount to not exceed remaining elements: min(delCount, len - start)
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "local.get", index: startTmp });
+  fctx.body.push({ op: "i32.sub" });
+  fctx.body.push({ op: "local.set", index: tailCountTmp }); // reuse as temp
+  fctx.body.push({ op: "local.get", index: delCountTmp });
+  fctx.body.push({ op: "local.get", index: tailCountTmp });
+  fctx.body.push({ op: "i32.gt_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [{ op: "local.get", index: tailCountTmp } as Instr, { op: "local.set", index: delCountTmp } as Instr],
+  } as Instr);
+  emitClampNonNeg(fctx, delCountTmp);
+
+  // tailStart = start + delCount
+  fctx.body.push({ op: "local.get", index: startTmp });
+  fctx.body.push({ op: "local.get", index: delCountTmp });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: tailStartTmp });
+
+  // tailCount = len - tailStart
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "local.get", index: tailStartTmp });
+  fctx.body.push({ op: "i32.sub" });
+  fctx.body.push({ op: "local.set", index: tailCountTmp });
+  emitClampNonNeg(fctx, tailCountTmp);
+
+  // newLen = start + insertCount + tailCount
+  fctx.body.push({ op: "local.get", index: startTmp });
+  fctx.body.push({ op: "i32.const", value: insertCount });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.get", index: tailCountTmp });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: newLenTmp });
+
+  // newData = array.new_default(newLen)
+  fctx.body.push({ op: "local.get", index: newLenTmp });
+  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.set", index: newData });
+
+  // Copy part 1: src[0..start] -> newData[0..start]
+  emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, null, startTmp);
+
+  // Part 2: insert items at newData[start..start+insertCount]
+  if (insertCount > 0) {
+    fctx.body.push({ op: "local.get", index: startTmp });
+    fctx.body.push({ op: "local.set", index: writeTmp });
+    for (let i = 0; i < insertCount; i++) {
+      fctx.body.push({ op: "local.get", index: newData });
+      fctx.body.push({ op: "local.get", index: writeTmp });
+      compileExpression(ctx, fctx, callExpr.arguments[2 + i]!, elemType);
+      fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
+      if (i < insertCount - 1) {
+        fctx.body.push({ op: "local.get", index: writeTmp });
+        fctx.body.push({ op: "i32.const", value: 1 });
+        fctx.body.push({ op: "i32.add" });
+        fctx.body.push({ op: "local.set", index: writeTmp });
+      }
+    }
+  }
+
+  // Part 3: copy tail: src[tailStart..tailStart+tailCount] -> newData[start+insertCount..end]
+  // Compute destination offset = start + insertCount
+  fctx.body.push({ op: "local.get", index: startTmp });
+  fctx.body.push({ op: "i32.const", value: insertCount });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: writeTmp });
+  emitArrayCopy(fctx, arrTypeIdx, newData, writeTmp, dataTmp, tailStartTmp, tailCountTmp);
+
+  // Return new vec struct: { newLen, newData }
+  fctx.body.push({ op: "local.get", index: newLenTmp });
+  fctx.body.push({ op: "local.get", index: newData });
+  fctx.body.push({ op: "ref.as_non_null" });
+  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  return { kind: "ref_null", typeIdx: vecTypeIdx };
+}
+
+/**
+ * arr.with(index, value) -> returns a new array with the element at index replaced.
+ * Non-mutating: creates a copy, sets element at index, returns it.
+ */
+function compileArrayWith(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  if (callExpr.arguments.length < 2) {
+    reportError(ctx, callExpr, "with() requires 2 arguments (index, value)");
+    return null;
+  }
+
+  const vecTmp = allocLocal(fctx, `__arr_with_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__arr_with_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const newData = allocLocal(fctx, `__arr_with_nd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__arr_with_len_${fctx.locals.length}`, { kind: "i32" });
+  const idxTmp = allocLocal(fctx, `__arr_with_idx_${fctx.locals.length}`, { kind: "i32" });
+
+  // Compile receiver -> vec ref
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  emitReceiverNullGuard(ctx, fctx, vecTmp);
+
+  // Extract length
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+
+  // Extract data array
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // Compile index arg, handle negative indices
+  compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
+  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  fctx.body.push({ op: "local.set", index: idxTmp });
+  emitClampIndex(fctx, idxTmp, lenTmp);
+
+  // newData = array.new_default(len)
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.set", index: newData });
+
+  // Copy src[0..len] -> newData[0..len]
+  emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, null, lenTmp);
+
+  // Set newData[idx] = value
+  fctx.body.push({ op: "local.get", index: newData });
+  fctx.body.push({ op: "local.get", index: idxTmp });
+  compileExpression(ctx, fctx, callExpr.arguments[1]!, elemType);
+  fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
+
+  // Return new vec struct: { len, newData }
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "local.get", index: newData });
+  fctx.body.push({ op: "ref.as_non_null" });
+  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 
 /**
@@ -2534,6 +3568,17 @@ function compileArrayPop(
   const getOp = elemType.kind === "i16" ? "array.get_s" : "array.get";
   const lenTmp = allocLocal(fctx, `__arr_pop_len_${fctx.locals.length}`, { kind: "i32" });
 
+  // (#1377) Initialize result to JS `undefined` for externref/anyref element
+  // types so empty-array `arr.pop()` returns spec-compliant undefined (not
+  // the wasm default `ref.null.extern`, which JS sees as `null`). f64 keeps
+  // its NaN default (matches `[].pop()` returning undefined which coerces
+  // to NaN in numeric context). i32 keeps 0 (best-effort; never mixed with
+  // null arrays).
+  if (elemType.kind === "externref" || elemType.kind === "anyref") {
+    emitUndefined(ctx, fctx);
+    fctx.body.push({ op: "local.set", index: resultTmp });
+  }
+
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
@@ -2543,7 +3588,7 @@ function compileArrayPop(
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenTmp });
 
-  // Guard: if length > 0, do pop; else result stays default (0/NaN/null)
+  // Guard: if length > 0, do pop; else result stays as initialized above (undefined for ref types).
   fctx.body.push({ op: "local.get", index: lenTmp });
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "i32.gt_s" });
@@ -2592,6 +3637,13 @@ function compileArrayShift(
   const resultTmp = allocLocal(fctx, `__arr_sft_res_${fctx.locals.length}`, elemType);
 
   const getOp = elemType.kind === "i16" ? "array.get_s" : "array.get";
+
+  // (#1377) Initialize result to JS `undefined` for externref/anyref so
+  // empty-array `arr.shift()` returns spec-compliant undefined.
+  if (elemType.kind === "externref" || elemType.kind === "anyref") {
+    emitUndefined(ctx, fctx);
+    fctx.body.push({ op: "local.set", index: resultTmp });
+  }
 
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
@@ -2645,6 +3697,30 @@ function compileArrayShift(
 
 /**
  * arr.slice(start?, end?) -> create new vec struct with sliced data.
+ */
+/**
+ * #1359 Slice E (sparse holes): for `__vec_*` typed receivers, no holes
+ * are possible at the WasmGC level — the underlying typed array is
+ * dense by construction. Spec §23.1.3.x's `HasProperty(O, k)` checks
+ * before `Get(O, k)` are therefore vacuously true for every k in
+ * `[start, end)`. We can `array.copy` the underlying buffer without
+ * iterating per-index. Host-array receivers (sparse, with prototype-
+ * inherited slots) flow through `__proto_method_call` which delegates
+ * to native `Array.prototype.slice` and gets the spec semantics for
+ * free. See sub-slice plan in the issue file for the full rationale.
+ *
+ * #1359 Slice A (empty-slice "actual: null"): NOT a slice() bug. The
+ * vec returned by this function is non-null (struct.new always returns
+ * non-null). The "actual: null" failure observed in
+ * `slice/S15.4.4.10_A1.1_T4.js` is downstream — the test calls
+ * `Object.prototype.toString.call(arr)` which needs the $vec brand to
+ * resolve to "[object Array]". That's #1334 territory.
+ *
+ * #1359 Slice B (@@species): receiver-type-driven dispatch. When the
+ * receiver's static type is a known `__vec_*`, `Array[@@species] ===
+ * Array` so `struct.new $vec` is correct. For subclass / proxy
+ * receivers (rare; mainly test262), needs `__array_species_create`
+ * host helper. Tracked as #1359B follow-up.
  */
 function compileArraySlice(
   ctx: CodegenContext,
@@ -2768,11 +3844,26 @@ function compileArrayConcat(
   // Check if argument B is a known WasmGC array type. If not (e.g. `any`, `object`,
   // array-like with Symbol.isConcatSpreadable), struct.get would cause an illegal cast at runtime.
   // Fall back to __extern_method_call("concat") for non-array arguments.
+  //
+  // #1359: Also bail if the arg's vec type differs from the receiver's vec type
+  // (e.g. `[].concat([1, 2])` where the empty receiver is `__vec_externref` and the
+  // arg is `__vec_f64`). The fast path emits `ref.cast` from the arg to the receiver's
+  // vec type, which traps at runtime when the types don't match.
+  //
+  // #1359: Likewise bail when there are 2+ args; the typed fast path only handles a
+  // single arg, but `Array.prototype.concat` accepts variadic args and the host
+  // bridge handles them correctly.
   const argNode = callExpr.arguments[0]!;
   const argTsType = ctx.checker.getTypeAtLocation(argNode);
   const argArrayInfo = resolveArrayInfo(ctx, argTsType);
 
   if (!argArrayInfo) {
+    return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
+  }
+  if (argArrayInfo.vecTypeIdx !== vecTypeIdx) {
+    return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
+  }
+  if (callExpr.arguments.length > 1) {
     return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
   }
 
@@ -2892,6 +3983,53 @@ function compileArrayConcatExtern(
 }
 
 /**
+ * #1286: arr.join(sep?) fallback for externref receivers (e.g., the result of
+ * `Object.keys(any)` via the `__object_keys` host import, which returns a real
+ * JS array). The native `compileArrayJoin` path expects a WasmGC vec struct;
+ * trying to extract one from an externref via `ref.cast` traps with "illegal
+ * cast". Instead, delegate to the host's `Array.prototype.join` via the
+ * `__array_join_any` import, which handles JS arrays and WasmGC vecs.
+ */
+function compileArrayJoinExtern(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+): ValType | null {
+  const joinAnyIdx = ensureLateImport(
+    ctx,
+    "__array_join_any",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (joinAnyIdx === undefined) return null;
+
+  // Compile receiver, coerce to externref if needed.
+  const recvType = compileExpression(ctx, fctx, propAccess.expression);
+  if (recvType && recvType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+  }
+
+  // Separator argument. Pass `undefined` (ref.null.extern) when no argument was
+  // given so the runtime falls back to the spec's default `,` separator —
+  // explicit `undefined` matches Array.prototype.join semantics.
+  if (callExpr.arguments.length >= 1) {
+    const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "externref" });
+    if (argType === null) {
+      fctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+    } else if (argType.kind !== "externref") {
+      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+    }
+  } else {
+    fctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+  }
+
+  fctx.body.push({ op: "call", funcIdx: joinAnyIdx });
+  return { kind: "externref" };
+}
+
+/**
  * arr.join(sep?) -> convert elements to strings and concatenate.
  * Receiver is a vec struct.
  */
@@ -2904,6 +4042,10 @@ function compileArrayJoin(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
+  // #1286: dispatch to compileArrayJoinExtern when the receiver evaluates to
+  // externref at runtime is handled in compileArrayMethodCall via the
+  // `receiverIsExternref` flag set by the probe. By the time we get here, the
+  // receiver is known to be a vec struct.
   const concatIdx = ctx.jsStringImports.get("concat");
   const toStrIdx = ctx.funcMap.get("number_toString");
   if (concatIdx === undefined) {
@@ -3010,6 +4152,19 @@ function compileArrayJoin(
 
 /**
  * arr.splice(start, deleteCount?) -> in-place shift, returns new vec with deleted elements.
+ *
+ * #1359 Slice D (deleteCount=undefined): verified spec-correct in this
+ * function on 2026-05-08:
+ *   - 0-arg splice → empty array, no mutation ✓ §23.1.3.30 step 5
+ *   - 1-arg splice(start) → delCount = len - actualStart ✓ §23.1.3.30 step 11.b
+ *   - 2-arg splice(start, undefined) → compiles undefined as f64 NaN →
+ *     `i32.trunc_sat_f64_s(NaN) = 0` ✓ matches ToInteger(undefined) = 0
+ *
+ * The architect's reference test `splice/S15.4.4.12_A6.1_T2.js` actually
+ * tests TypeError-throw when `length` is non-writable, which needs
+ * Object.defineProperty + writable-attr fidelity (#1334), not a fix
+ * here. The 25 splice `assertion_fail` count in the issue's table
+ * needs re-bucketing before any further splice fix is attempted.
  */
 function compileArraySplice(
   ctx: CodegenContext,
@@ -3202,6 +4357,8 @@ interface ArrayLoopLocals {
 
 /**
  * Compile receiver, extract vec/data/len, alloc loop locals, set i = 0.
+ * The caller (compileArrayMethodCall) has already resolved the correct
+ * vec/arr/elem types via probe-compile (#826).
  */
 function setupArrayLoop(
   ctx: CodegenContext,
@@ -3212,7 +4369,12 @@ function setupArrayLoop(
   elemType: ValType,
   tag: string,
 ): ArrayLoopLocals {
-  const vecTmp = allocLocal(fctx, `__arr_${tag}_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  compileExpression(ctx, fctx, propAccess.expression);
+
+  const vecTmp = allocLocal(fctx, `__arr_${tag}_vec_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: vecTypeIdx,
+  });
   const dataTmp = allocLocal(fctx, `__arr_${tag}_data_${fctx.locals.length}`, {
     kind: "ref_null",
     typeIdx: arrTypeIdx,
@@ -3220,7 +4382,6 @@ function setupArrayLoop(
   const lenTmp = allocLocal(fctx, `__arr_${tag}_len_${fctx.locals.length}`, { kind: "i32" });
   const iTmp = allocLocal(fctx, `__arr_${tag}_i_${fctx.locals.length}`, { kind: "i32" });
 
-  compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -3257,15 +4418,21 @@ function buildClosureCallInstrs(
 
   return [
     { op: "local.get", index: closureTmp } as Instr,
-    // Element value
-    ...(elemSource.kind === "local"
-      ? [{ op: "local.get", index: elemSource.index } as Instr]
-      : [
-          { op: "local.get", index: loop.dataTmp } as Instr,
-          { op: "local.get", index: loop.iTmp } as Instr,
-          { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
-        ]),
-    ...elemCoerce,
+    // Element value (1st user param) — only pushed if callback declares ≥1 param.
+    // A 0-arg callback (e.g. `function() {}`) compiles to a funcref that takes only
+    // the closure env, so pushing elem here produces a call_ref signature mismatch.
+    ...(numParams >= 1
+      ? [
+          ...(elemSource.kind === "local"
+            ? [{ op: "local.get", index: elemSource.index } as Instr]
+            : [
+                { op: "local.get", index: loop.dataTmp } as Instr,
+                { op: "local.get", index: loop.iTmp } as Instr,
+                { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
+              ]),
+          ...elemCoerce,
+        ]
+      : []),
     // Index (2nd user param)
     ...(numParams >= 2
       ? [
@@ -3661,12 +4828,17 @@ function compileArrayReduce(
     const elemCoerce = ci.paramTypes[1] ? coercionInstrs(ctx, elemType, ci.paramTypes[1], fctx) : [];
     callInstrs = [
       { op: "local.get", index: setup.closureTmp } as Instr,
-      { op: "local.get", index: accTmp } as Instr,
-      ...accCoerce,
-      { op: "local.get", index: loop.dataTmp } as Instr,
-      { op: "local.get", index: loop.iTmp } as Instr,
-      { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
-      ...elemCoerce,
+      // Accumulator (1st user param) — gate on numParams >= 1.
+      ...(numParams >= 1 ? [{ op: "local.get", index: accTmp } as Instr, ...accCoerce] : []),
+      // Element (2nd user param) — gate on numParams >= 2.
+      ...(numParams >= 2
+        ? [
+            { op: "local.get", index: loop.dataTmp } as Instr,
+            { op: "local.get", index: loop.iTmp } as Instr,
+            { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
+            ...elemCoerce,
+          ]
+        : []),
       ...(numParams >= 3
         ? [
             { op: "local.get", index: loop.iTmp } as Instr,
@@ -3788,7 +4960,13 @@ function compileArrayReduceRight(
   }
 
   // Build the loop locals struct for buildClosureCallInstrs compatibility
-  const loop: ArrayLoopLocals = { vecTmp, dataTmp, lenTmp, iTmp, getOp };
+  const loop: ArrayLoopLocals = {
+    vecTmp,
+    dataTmp,
+    lenTmp,
+    iTmp,
+    getOp,
+  };
 
   // Build reduce-specific callback invocation (2-arg: acc, elem)
   let callInstrs: Instr[];
@@ -3799,12 +4977,15 @@ function compileArrayReduceRight(
     const elemCoerce = ci.paramTypes[1] ? coercionInstrs(ctx, elemType, ci.paramTypes[1], fctx) : [];
     callInstrs = [
       { op: "local.get", index: setup.closureTmp } as Instr,
-      { op: "local.get", index: accTmp } as Instr,
-      ...accCoerce,
-      { op: "local.get", index: dataTmp } as Instr,
-      { op: "local.get", index: iTmp } as Instr,
-      { op: getOp, typeIdx: arrTypeIdx } as Instr,
-      ...elemCoerce,
+      ...(numParams >= 1 ? [{ op: "local.get", index: accTmp } as Instr, ...accCoerce] : []),
+      ...(numParams >= 2
+        ? [
+            { op: "local.get", index: dataTmp } as Instr,
+            { op: "local.get", index: iTmp } as Instr,
+            { op: getOp, typeIdx: arrTypeIdx } as Instr,
+            ...elemCoerce,
+          ]
+        : []),
       ...(numParams >= 3
         ? [
             { op: "local.get", index: iTmp } as Instr,
@@ -4190,11 +5371,34 @@ function compileArraySort(
   ctx: CodegenContext,
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression,
-  _callExpr: ts.CallExpression,
+  callExpr: ts.CallExpression,
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
+  // #1361: Spec §23.1.3.30 step 1 — if comparefn is provided and is not a
+  // function, throw TypeError BEFORE any sort work begins. Fires only when
+  // the argument is known statically to be non-callable (null, number,
+  // string, etc.); `undefined` is explicitly allowed as "no comparator".
+  if (callExpr.arguments.length >= 1) {
+    const cbArg = callExpr.arguments[0]!;
+    const isExplicitUndefined =
+      cbArg.kind === ts.SyntaxKind.UndefinedKeyword || (ts.isIdentifier(cbArg) && cbArg.text === "undefined");
+    if (!isExplicitUndefined && isKnownNonCallable(ctx, cbArg)) {
+      // Compile the receiver and arg for side effects, then throw. The receiver
+      // expression may have getters that mutate state — spec evaluation order
+      // is "evaluate receiver, evaluate args, validate arg, then sort". Doing
+      // both keeps user code observable.
+      const recvType = compileExpression(ctx, fctx, propAccess.expression);
+      if (recvType) fctx.body.push({ op: "drop" });
+      const cbType = compileExpression(ctx, fctx, cbArg);
+      if (cbType) fctx.body.push({ op: "drop" });
+      emitThrowString(ctx, fctx, "TypeError: Array.prototype.sort comparator is not a function");
+      fctx.body.push({ op: "unreachable" } as unknown as Instr);
+      return { kind: "ref_null", typeIdx: vecTypeIdx };
+    }
+  }
+
   const elemKind = elemType.kind as "i32" | "f64";
   const timsortIdx = ensureTimsortHelper(ctx, vecTypeIdx, arrTypeIdx, elemKind);
 
@@ -4273,11 +5477,18 @@ function compileArrayFill(
   emitClampIndex(fctx, startTmp, lenTmp);
 
   // end (default: length) -- clamp negative
-  if (callExpr.arguments.length >= 3) {
+  // Spec §23.1.3.7 step 7: if end is undefined, use len; else ToIntegerOrInfinity(end).
+  // Treat statically-`undefined` arguments (literal `undefined` / `void 0`) as missing,
+  // because once coerced to f64 we cannot distinguish them from `NaN` (which spec says → 0).
+  const fillEndArg = callExpr.arguments.length >= 3 ? callExpr.arguments[2]! : undefined;
+  const fillEndIsUndef =
+    fillEndArg !== undefined &&
+    ((ts.isIdentifier(fillEndArg) && fillEndArg.text === "undefined") || ts.isVoidExpression(fillEndArg));
+  if (fillEndArg !== undefined && !fillEndIsUndef) {
     if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[2]!, { kind: "i32" });
+      compileExpression(ctx, fctx, fillEndArg, { kind: "i32" });
     } else {
-      compileExpression(ctx, fctx, callExpr.arguments[2]!, { kind: "f64" });
+      compileExpression(ctx, fctx, fillEndArg, { kind: "f64" });
       fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     }
   } else {
@@ -4383,11 +5594,18 @@ function compileArrayCopyWithin(
   emitClampIndex(fctx, startTmp, lenTmp);
 
   // end arg (default: length) -- clamp negative
-  if (callExpr.arguments.length >= 3) {
+  // Spec §23.1.3.4 step 11: if end is undefined, use len; else ToInteger(end).
+  // Treat statically-`undefined` arguments (literal `undefined` / `void 0`) as missing,
+  // because once coerced to f64 we cannot distinguish them from `NaN` (which spec says → 0).
+  const cwEndArg = callExpr.arguments.length >= 3 ? callExpr.arguments[2]! : undefined;
+  const cwEndIsUndef =
+    cwEndArg !== undefined &&
+    ((ts.isIdentifier(cwEndArg) && cwEndArg.text === "undefined") || ts.isVoidExpression(cwEndArg));
+  if (cwEndArg !== undefined && !cwEndIsUndef) {
     if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[2]!, { kind: "i32" });
+      compileExpression(ctx, fctx, cwEndArg, { kind: "i32" });
     } else {
-      compileExpression(ctx, fctx, callExpr.arguments[2]!, { kind: "f64" });
+      compileExpression(ctx, fctx, cwEndArg, { kind: "f64" });
       fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     }
   } else {
@@ -4589,6 +5807,100 @@ function compileArrayLastIndexOf(
     return { kind: "i32" };
   }
   return { kind: "f64" };
+}
+
+/**
+ * Compile arr.flat(depth?) — delegates to __array_flat host import (#1136).
+ * Converts WasmGC vec receiver to externref, passes depth arg, returns externref.
+ */
+function compileArrayFlat(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+): ValType | null {
+  // __array_flat(receiver: externref, depth: externref) -> externref
+  const flatIdx = ensureLateImport(
+    ctx,
+    "__array_flat",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (flatIdx === undefined) return null;
+
+  // Compile receiver as externref
+  const recvType = compileExpression(ctx, fctx, propAccess.expression);
+  if (recvType && recvType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+  }
+
+  // Compile depth argument (or push undefined)
+  if (callExpr.arguments.length > 0) {
+    const depthType = compileExpression(ctx, fctx, callExpr.arguments[0]!);
+    if (depthType && depthType.kind !== "externref") {
+      coerceType(ctx, fctx, depthType, { kind: "externref" });
+    } else if (!depthType) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  fctx.body.push({ op: "call", funcIdx: flatIdx });
+  return { kind: "externref" };
+}
+
+/**
+ * Compile arr.flatMap(callback, thisArg?) — delegates to __array_flatMap host import (#1136).
+ * Converts WasmGC vec receiver to externref, passes callback and optional thisArg, returns externref.
+ */
+function compileArrayFlatMap(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+): ValType | null {
+  if (callExpr.arguments.length < 1) return null; // flatMap requires a callback
+
+  // __array_flatMap(receiver: externref, fn: externref, thisArg: externref) -> externref
+  const flatMapIdx = ensureLateImport(
+    ctx,
+    "__array_flatMap",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (flatMapIdx === undefined) return null;
+
+  // Compile receiver as externref
+  const recvType = compileExpression(ctx, fctx, propAccess.expression);
+  if (recvType && recvType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+  }
+
+  // Compile callback as externref
+  const cbType = compileExpression(ctx, fctx, callExpr.arguments[0]!);
+  if (cbType && cbType.kind !== "externref") {
+    coerceType(ctx, fctx, cbType, { kind: "externref" });
+  } else if (!cbType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  // Compile thisArg (or push undefined)
+  if (callExpr.arguments.length > 1) {
+    const thisArgType = compileExpression(ctx, fctx, callExpr.arguments[1]!);
+    if (thisArgType && thisArgType.kind !== "externref") {
+      coerceType(ctx, fctx, thisArgType, { kind: "externref" });
+    } else if (!thisArgType) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  fctx.body.push({ op: "call", funcIdx: flatMapIdx });
+  return { kind: "externref" };
 }
 
 // Register the emitBoundsCheckedArrayGet delegate so closures.ts (and any

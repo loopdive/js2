@@ -23,9 +23,27 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
 /**
  * Register a string literal as a global import from the "string_constants"
  * namespace and repair already-compiled module-global references if needed.
+ *
+ * In `nativeStrings` mode (auto-on for `--target wasi`), no JS host runtime
+ * exists to satisfy the import, so we skip the import and just record the
+ * string in `stringGlobalMap` with the sentinel `-1` (the same convention
+ * used by `collectStringLiterals` finalize). Call sites that materialize a
+ * string constant onto the stack must check the sentinel and use the native
+ * string path (`compileNativeStringLiteral` + `extern.convert_any` for the
+ * externref-typed throw payload) instead of `global.get`. (#1174)
  */
 export function addStringConstantGlobal(ctx: CodegenContext, value: string): void {
   if (ctx.stringGlobalMap.has(value)) return;
+
+  if (ctx.nativeStrings) {
+    // Sentinel: no host import, materialize inline at use sites.
+    ctx.stringGlobalMap.set(value, -1);
+    ctx.stringLiteralMap.set(value, `__str_${ctx.stringLiteralCounter}`);
+    ctx.stringLiteralValues.set(`__str_${ctx.stringLiteralCounter}`, value);
+    ctx.stringLiteralCounter++;
+    ctx.mod.stringPool.push(value);
+    return;
+  }
 
   const hasModuleGlobals = ctx.mod.globals.length > 0 || ctx.mod.functions.length > 0;
   const oldNumImportGlobals = ctx.numImportGlobals;
@@ -75,10 +93,25 @@ export function ensureExnTag(ctx: CodegenContext): number {
  * new import globals are inserted after module globals already exist.
  */
 function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta: number): void {
+  // Dedupe per-call: an instr (or nested array node) reachable from multiple
+  // top-level bodies must only be shifted once per fixup call. The `shifted`
+  // Set below dedupes top-level Instr[] arrays, but nested arrays (if.then,
+  // block.body, try.body, try.catches[].body, try.catchAll) can be reached
+  // from multiple top-level paths (e.g. an if-then array that's also stored
+  // in a saved body via a manual swap pattern). Without per-call dedup, each
+  // additional reachability path applies an extra +delta, over-shifting the
+  // index past the declared global range (#1302 — lodash flow.js).
+  const visitedInstrs = new WeakSet<object>();
+  const visitedArrays = new WeakSet<Instr[]>();
   function shiftGlobalIndices(instrs: Instr[]): void {
+    if (visitedArrays.has(instrs)) return;
+    visitedArrays.add(instrs);
     for (const instr of instrs) {
       if ((instr.op === "global.get" || instr.op === "global.set") && instr.index >= threshold) {
-        instr.index += delta;
+        if (!visitedInstrs.has(instr as object)) {
+          visitedInstrs.add(instr as object);
+          instr.index += delta;
+        }
       }
       if ("body" in instr && Array.isArray((instr as any).body)) {
         shiftGlobalIndices((instr as any).body);
@@ -160,6 +193,8 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   shiftMap(ctx.capturedGlobals);
   shiftMap(ctx.staticProps);
   shiftMap(ctx.protoGlobals);
+  shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals
+  shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals
   shiftMap(ctx.tdzGlobals);
 
   for (const entry of ctx.staticInitExprs) {
@@ -173,5 +208,11 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   }
   if (ctx.wasiBumpPtrGlobalIdx >= threshold) {
     ctx.wasiBumpPtrGlobalIdx += delta;
+  }
+  if (ctx.argcGlobalIdx >= threshold) {
+    ctx.argcGlobalIdx += delta;
+  }
+  if (ctx.extrasArgvGlobalIdx >= threshold) {
+    ctx.extrasArgvGlobalIdx += delta;
   }
 }

@@ -33,6 +33,9 @@ Active file/function claims by agents. **Check before editing. Update when start
 | src/runtime.ts | _toPrimitive + __to_primitive host import | dev-B | #1090 | 2026-04-12 |
 | src/codegen/type-coercion.ts | struct→f64/externref ToPrimitive fallback | dev-B | #1090 | 2026-04-12 |
 | src/codegen/literals.ts | compileObjectLiteralAsExternref fallback | dev-C | #1069 | 2026-04-12 |
+| src/codegen/declarations.ts | module-init guard → _start export logic | dev-2 | #907 | 2026-04-17 |
+| playground/main.ts | _start entry point detection | dev-2 | #907 | 2026-04-17 |
+| src/codegen/statements/loops.ts | compileForOfString (re-resolve __str_charAt funcIdx) | dev-1125-bench | #1186 | 2026-04-27 |
 
 <!--
 Example entries:

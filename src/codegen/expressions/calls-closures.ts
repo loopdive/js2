@@ -7,7 +7,7 @@
  * - compileCallablePropertyCall — call to a callable struct field
  * - tryExternClassMethodOnAny — resolve method call on any-typed receiver via extern classes
  */
-import ts from "typescript";
+import { ts } from "../../ts-api.js";
 import { isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { getOrCreateFuncRefWrapperTypes } from "../closures.js";
@@ -188,38 +188,64 @@ export function compileGetterCallable(
     if (candidateIdx === undefined) continue;
 
     // Found the underlying method. Call it directly: C___priv_method(receiver, ...args)
+    // or C___priv_method(...args) for static methods (no self parameter).
     const structTypeIdx = ctx.structMap.get(receiverClassName);
     const paramTypes = getFuncParamTypes(ctx, candidateIdx);
-    const recvTypeHint = paramTypes?.[0];
-    const recvType = compileExpression(ctx, fctx, propAccess.expression, recvTypeHint);
+    // Static methods have no self parameter — their Wasm signature starts with
+    // the first user argument. Treating them as instance methods here produced
+    // `methodParamCount = -1` for zero-arg statics, which then iterated
+    // `expr.arguments[-1]` (undefined) through `compileExpression` and
+    // surfaced as "unexpected undefined AST node" during the compile of
+    // static-private-generator getter chains (#1162).
+    const isStatic = ctx.staticMethodSet.has(candidateName);
 
-    // Coerce receiver to match the function's first parameter type
-    if (recvType && recvTypeHint) {
-      if (
+    if (isStatic) {
+      // Evaluate receiver for side effects, then drop — static methods don't
+      // take a self parameter. Matches the isStaticMethod branch in
+      // compileCallExpression (calls.ts #2929 path).
+      const recvType = compileExpression(ctx, fctx, propAccess.expression);
+      if (recvType !== null) {
+        fctx.body.push({ op: "drop" });
+      }
+    } else {
+      const recvTypeHint = paramTypes?.[0];
+      const recvType = compileExpression(ctx, fctx, propAccess.expression, recvTypeHint);
+
+      // Coerce receiver to match the function's first parameter type
+      if (recvType && recvTypeHint) {
+        if (
+          recvType.kind === "externref" &&
+          (recvTypeHint.kind === "ref" || recvTypeHint.kind === "ref_null") &&
+          structTypeIdx !== undefined
+        ) {
+          // externref -> struct: convert via any.convert_extern + guarded cast
+          fctx.body.push({ op: "any.convert_extern" } as Instr);
+          emitGuardedRefCast(fctx, structTypeIdx);
+        } else if ((recvType.kind === "ref" || recvType.kind === "ref_null") && recvTypeHint.kind === "externref") {
+          // struct -> externref: convert via extern.convert_any
+          fctx.body.push({ op: "extern.convert_any" } as Instr);
+        } else if (recvType.kind !== recvTypeHint.kind) {
+          // General type mismatch: use coerceType
+          coerceType(ctx, fctx, recvType, recvTypeHint);
+        }
+      } else if (
+        recvType &&
         recvType.kind === "externref" &&
-        (recvTypeHint.kind === "ref" || recvTypeHint.kind === "ref_null") &&
-        structTypeIdx !== undefined
+        structTypeIdx !== undefined &&
+        recvTypeHint === undefined
       ) {
-        // externref -> struct: convert via any.convert_extern + guarded cast
+        // Fallback: no param type info but we know the struct — cast to struct
         fctx.body.push({ op: "any.convert_extern" } as Instr);
         emitGuardedRefCast(fctx, structTypeIdx);
-      } else if ((recvType.kind === "ref" || recvType.kind === "ref_null") && recvTypeHint.kind === "externref") {
-        // struct -> externref: convert via extern.convert_any
-        fctx.body.push({ op: "extern.convert_any" } as Instr);
-      } else if (recvType.kind !== recvTypeHint.kind) {
-        // General type mismatch: use coerceType
-        coerceType(ctx, fctx, recvType, recvTypeHint);
       }
-    } else if (recvType && recvType.kind === "externref" && structTypeIdx !== undefined && recvTypeHint === undefined) {
-      // Fallback: no param type info but we know the struct — cast to struct
-      fctx.body.push({ op: "any.convert_extern" } as Instr);
-      emitGuardedRefCast(fctx, structTypeIdx);
     }
 
-    // Push arguments (skip self at index 0)
-    const methodParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
+    // For static methods, Wasm params are exactly the user args; for instance
+    // methods, param 0 is self so user args start at paramTypes[1].
+    const selfOffset = isStatic ? 0 : 1;
+    const methodParamCount = paramTypes ? Math.max(0, paramTypes.length - selfOffset) : expr.arguments.length;
     for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
-      compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
+      compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + selfOffset]);
     }
     for (let i = methodParamCount; i < expr.arguments.length; i++) {
       const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
@@ -229,22 +255,25 @@ export function compileGetterCallable(
     }
     // Pad missing arguments
     if (paramTypes) {
-      for (let i = Math.min(expr.arguments.length, methodParamCount) + 1; i < paramTypes.length; i++) {
+      for (let i = Math.min(expr.arguments.length, methodParamCount) + selfOffset; i < paramTypes.length; i++) {
         pushDefaultValue(fctx, paramTypes[i]!, ctx);
       }
     }
 
-    fctx.body.push({ op: "call", funcIdx: candidateIdx });
+    // Re-lookup: receiver/arg compilation may have triggered late imports
+    // (e.g. emitUndefined for missing tuple elements) that shift function indices.
+    const finalCandidateIdx = ctx.funcMap.get(candidateName) ?? candidateIdx;
+    fctx.body.push({ op: "call", funcIdx: finalCandidateIdx });
 
     // Determine return type
     const sig = ctx.checker.getResolvedSignature(expr);
     if (sig) {
       const retType = ctx.checker.getReturnTypeOfSignature(sig);
       if (isEffectivelyVoidReturn(ctx, retType, candidateName)) return VOID_RESULT;
-      if (wasmFuncReturnsVoid(ctx, candidateIdx)) return VOID_RESULT;
-      return getWasmFuncReturnType(ctx, candidateIdx) ?? resolveWasmType(ctx, retType);
+      if (wasmFuncReturnsVoid(ctx, finalCandidateIdx)) return VOID_RESULT;
+      return getWasmFuncReturnType(ctx, finalCandidateIdx) ?? resolveWasmType(ctx, retType);
     }
-    return getWasmFuncReturnType(ctx, candidateIdx) ?? VOID_RESULT;
+    return getWasmFuncReturnType(ctx, finalCandidateIdx) ?? VOID_RESULT;
   }
 
   return undefined; // Couldn't resolve to a known method
@@ -399,7 +428,13 @@ export function compileCallablePropertyCall(
 
   // The field must be a callable type — check via TS type checker
   const propTsType = ctx.checker.getTypeAtLocation(propAccess);
-  const callSigs = propTsType.getCallSignatures?.();
+  let callSigs = propTsType.getCallSignatures?.();
+  if (!callSigs || callSigs.length === 0) {
+    // Field typed as `Fn | null` / `Fn | undefined` — strip nullable
+    // members and retry. Storage is externref either way (#1298).
+    const nonNull = ctx.checker.getNonNullableType(propTsType);
+    callSigs = nonNull.getCallSignatures?.();
+  }
   if (!callSigs || callSigs.length === 0) return undefined;
 
   const sig = callSigs[0]!;
@@ -620,6 +655,109 @@ export function compileCallablePropertyCall(
 }
 
 /**
+ * Handle calls where the callee is an element-access expression on a value
+ * whose element type has TS call signatures: `arr[i](args)`, `arr[const](args)`,
+ * `arr["0"](args)`. This mirrors the externref-field branch of
+ * `compileCallablePropertyCall` but routes through the existing element-access
+ * codegen for the receiver, so it works for vec-of-callable, ref-of-callable,
+ * tuple-of-callable, and any other element-access shape.
+ *
+ * Returns undefined when the element type has no call signature (e.g. native
+ * `i32[]` / `f64[]`), letting the caller fall through to the historical
+ * `ref.null.extern; drop` fallback.
+ *
+ * #1306: `mws[idx](c, next)` on a closure-typed array previously dropped the
+ * call. With this helper the value is loaded via __vec_get / array.get, unboxed
+ * (externref → __fn_wrap struct) and dispatched via call_ref.
+ */
+export function compileCallableElementAccessCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  elemAccess: ts.ElementAccessExpression,
+): InnerResult | undefined {
+  // 1. Resolve element type's call signatures (with NonNullable fallback)
+  const elemTsType = ctx.checker.getTypeAtLocation(elemAccess);
+  let callSigs = elemTsType.getCallSignatures?.();
+  if (!callSigs || callSigs.length === 0) {
+    const nn = ctx.checker.getNonNullableType(elemTsType);
+    callSigs = nn.getCallSignatures?.();
+  }
+  if (!callSigs || callSigs.length === 0) return undefined;
+
+  const sig = callSigs[0]!;
+  const sigParamCount = sig.parameters.length;
+  const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
+  const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
+  const sigParamWasmTypes: ValType[] = [];
+  for (let i = 0; i < sigParamCount; i++) {
+    const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+    sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+  }
+
+  // 2. Eagerly create / find the wrapper struct (signature-keyed cache)
+  const resultTypes = sigRetWasm ? [sigRetWasm] : [];
+  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, sigParamWasmTypes, resultTypes);
+  if (!wrapperTypes) return undefined;
+  const { structTypeIdx: wrapperStructIdx, closureInfo } = wrapperTypes;
+
+  // 3. Compile elemAccess to push the element value. For an `Mw[]` (vec of
+  //    callables) the element will be externref (boxed __fn_wrap). For a
+  //    structurally-typed `(Mw, Mw)` tuple it may already be a closure
+  //    struct ref. For native primitive arrays callSigs is empty above,
+  //    so we never get here.
+  const elemResult = compileExpression(ctx, fctx, elemAccess);
+  if (!elemResult) return undefined;
+
+  // 4. Coerce to closure-struct ref (mirror calls-closures.ts:507-519)
+  const closureRefType: ValType = { kind: "ref_null", typeIdx: wrapperStructIdx };
+  const closureLocal = allocLocal(fctx, `__cea_${fctx.locals.length}`, closureRefType);
+  if (elemResult.kind === "externref") {
+    fctx.body.push({ op: "any.convert_extern" });
+    emitGuardedRefCast(fctx, wrapperStructIdx);
+  } else if (elemResult.kind === "ref" || elemResult.kind === "ref_null") {
+    // Already a struct ref — guard cast if the shape differs from the
+    // wrapper we resolved by signature.
+    if ((elemResult as { typeIdx: number }).typeIdx !== wrapperStructIdx) {
+      emitGuardedRefCast(fctx, wrapperStructIdx);
+    }
+  } else {
+    // Primitive element type with call signatures shouldn't happen — bail
+    // to the historical fallback which drops everything for side effects.
+    return undefined;
+  }
+  fctx.body.push({ op: "local.set", index: closureLocal });
+
+  // 5. Push self (closureRef) as first lifted-fn arg, null-check throw
+  fctx.body.push({ op: "local.get", index: closureLocal });
+  emitNullCheckThrow(ctx, fctx, closureRefType);
+
+  // 6. Compile call args (clamped/padded — copy lines 462-478 of
+  //    compileCallablePropertyCall)
+  const cpParamCount = closureInfo.paramTypes.length;
+  for (let i = 0; i < Math.min(expr.arguments.length, cpParamCount); i++) {
+    compileExpression(ctx, fctx, expr.arguments[i]!, closureInfo.paramTypes[i]);
+  }
+  for (let i = cpParamCount; i < expr.arguments.length; i++) {
+    const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
+    if (extraType !== null) fctx.body.push({ op: "drop" });
+  }
+  for (let i = expr.arguments.length; i < cpParamCount; i++) {
+    pushDefaultValue(fctx, closureInfo.paramTypes[i]!, ctx);
+  }
+
+  // 7. Extract funcref + call_ref (mirror lines 543-557)
+  fctx.body.push({ op: "local.get", index: closureLocal });
+  emitNullCheckThrow(ctx, fctx, closureRefType);
+  fctx.body.push({ op: "struct.get", typeIdx: wrapperStructIdx, fieldIdx: 0 });
+  emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
+  emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: closureInfo.funcTypeIdx });
+  fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
+
+  return closureInfo.returnType ?? VOID_RESULT;
+}
+
+/**
  * Try to resolve a method call on an `any`-typed receiver through registered extern classes.
  * When the type checker resolves the receiver as `any` (e.g. when lib files aren't loaded
  * in ESM/bundled contexts), we dispatch known collection methods (Set.union, Map.get, etc.)
@@ -644,10 +782,34 @@ export function tryExternClassMethodOnAny(
   // keep the historical first-match behavior.
   if (methodName === "slice") return null;
 
+  // (#1283) The dispatch below emits `externref` hints for every arg and
+  // assumes the call's params are all-externref. When iterating in
+  // insertion order we may otherwise hit an extern class whose method has a
+  // mixed param signature — e.g. TypedArray.set is `(externref, externref,
+  // f64)` and would mismatch the externref args we push. Concretely this
+  // hit WeakMap.set on `wm: any`: TypedArray's `set` was registered before
+  // WeakMap's, so first-match picked Uint8ClampedArray_set and produced an
+  // invalid Wasm module ("call[0] expected externref, found f64").
+  //
+  // Filter candidates to all-externref param signatures so arg coercions
+  // are always type-correct. Result types are NOT filtered — the dispatch
+  // returns sig.results[0]! to the caller verbatim, so methods like
+  // TypedArray.some `(externref, externref) -> f64` (boolean → f64) and
+  // Array.indexOf `(externref, externref, externref) -> f64` are valid
+  // first-match candidates. Filtering on results was too aggressive and
+  // forced these into __extern_method_call host-side dispatch, where wasm
+  // vec receivers are opaque to JS and `arr.some` returned undefined,
+  // surfacing as "some is not a function" runtime errors in test262.
+  const isAllExternrefParams = (sig: { params: ValType[] }): boolean => {
+    for (const p of sig.params) if (p.kind !== "externref") return false;
+    return true;
+  };
+
   for (const [key, info] of ctx.externClasses) {
     if (key !== info.className) continue;
     const sig = info.methods.get(methodName);
     if (!sig) continue;
+    if (!isAllExternrefParams(sig)) continue;
 
     const importName = `${info.importPrefix}_${methodName}`;
     let funcIdx = ctx.funcMap.get(importName);

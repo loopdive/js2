@@ -17,7 +17,7 @@ import { optimizeBinaryAsync } from "../src/optimize.js";
 import { buildImports, buildStringConstants, instantiateWasm } from "../src/runtime.js";
 import { WasmTreemap, parseWasm, parseWasmSpans, SECTION_COLORS } from "./wasm-treemap.js";
 import type { WasmData, WasmSection, WasmFunctionBody, ByteSpan } from "./wasm-treemap.js";
-import { LayoutManager, clearSavedLayout } from "./layout.js";
+import { LayoutManager, clearSavedLayout, getDefaultLayout, getMobileDefaultLayout } from "./layout.js";
 import DEFAULT_SOURCE from "./examples/dom/calendar.ts?raw";
 import BENCH_HELPERS_SOURCE from "./examples/benchmarks/helpers.ts?raw";
 
@@ -34,12 +34,40 @@ const rawEquivTestModules = import.meta.glob(
 );
 
 function isPagesPlaygroundPath(): boolean {
-  return /\/playground\/?$/.test(window.location.pathname);
+  return /\/playground(?:\/index\.html)?\/?$/.test(window.location.pathname);
 }
 
 function resolveSiteLink(path: string): string {
-  return isPagesPlaygroundPath() ? `../${path}` : `./${path}`;
+  const relativePath = !prefersStaticPlaygroundData && isPagesPlaygroundPath() ? `../${path}` : `./${path}`;
+  return new URL(relativePath, window.location.href).toString();
 }
+
+function getErrorLike(value: unknown): { name?: unknown; message?: unknown; stack?: unknown } | null {
+  return value && typeof value === "object" ? (value as { name?: unknown; message?: unknown; stack?: unknown }) : null;
+}
+
+function isMonacoClipboardCancellation(value: unknown): boolean {
+  const err = getErrorLike(value);
+  if (!err || err.name !== "Canceled" || err.message !== "Canceled") return false;
+  const stack = typeof err.stack === "string" ? err.stack : "";
+  return stack.includes("DeferredPromise.cancel") && stack.includes("handler");
+}
+
+function installBenignCancellationFilters(): void {
+  window.addEventListener("unhandledrejection", (event) => {
+    if (isMonacoClipboardCancellation(event.reason)) {
+      event.preventDefault();
+    }
+  });
+
+  const originalConsoleError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    if (args.some(isMonacoClipboardCancellation)) return;
+    originalConsoleError(...args);
+  };
+}
+
+installBenignCancellationFilters();
 
 self.MonacoEnvironment = {
   getWorker(_workerId: string, label: string) {
@@ -830,10 +858,6 @@ interface FileEntry {
   binaryData?: Uint8Array;
 }
 
-const STORAGE_KEY = "js2wasm_source";
-const LEGACY_STORAGE_KEY = "ts2wasm_source";
-const saved = sessionStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(LEGACY_STORAGE_KEY);
-
 function canonicalizeBenchmarkHelperImports(source: string, pathHint?: string | null): string {
   const replacement = pathHint === "examples/benchmarks.ts" ? "./benchmarks/helpers.ts" : "./helpers.ts";
   return source.replace(
@@ -869,7 +893,7 @@ const files: FileEntry[] = [
     "typescript",
     false,
     "input",
-    canonicalizeBenchmarkHelperImports(saved ?? DEFAULT_SOURCE, null),
+    canonicalizeBenchmarkHelperImports(DEFAULT_SOURCE, null),
   ),
   createFileEntry("output/example.wat", "wat", true, "output", ""),
   createFileEntry("output/example.wasm", "text", true, "output", ""),
@@ -891,13 +915,13 @@ function bindInputModelPersistence(model: monaco.editor.ITextModel): void {
   inputModelChangeDisposable = model.onDidChangeContent(() => {
     if (t262Loading) return;
     clearT262FailureAnnotations();
-    sessionStorage.setItem(STORAGE_KEY, inputFile.model.getValue());
     lastResult = null;
-    compileBtn.disabled = false;
-    runBtn.disabled = true;
+    runBtn.disabled = false;
     benchBtn.disabled = true;
-    downloadWatBtn.disabled = true;
     downloadWasmBtn.disabled = true;
+    for (const f of files) {
+      if (f.folder === "output") f.model.setValue("");
+    }
   });
 }
 
@@ -929,7 +953,8 @@ function setInputSourceModel(virtualPath: string, source: string): void {
     if (layout.getActiveTabForPanel(slot.panelId) !== "ts-source") continue;
     slot.editor.setModel(model);
   }
-  updateTabLabel("ts-source", inputFile.displayName, tabTooltips["ts-source"]);
+  updateTabLabel("ts-source", inputFile.displayName, undefined, tabTooltips["ts-source"]);
+  queueSidebarRefresh();
 }
 
 async function loadBundledExampleSource(path: string): Promise<string | null> {
@@ -980,11 +1005,10 @@ async function openLocalImportedSource(specifier: string): Promise<boolean> {
     if (content == null) return false;
     t262Loading = true;
     clearT262FailureAnnotations();
-    sessionStorage.removeItem(STORAGE_KEY);
     setInputSourceModel(resolvedPath, content);
     revealSourceTab();
     t262SetActive(resolvedPath);
-    updateTabLabel("ts-source", resolvedPath.split("/").pop() ?? "example.ts", tabTooltips["ts-source"]);
+    updateTabLabel("ts-source", resolvedPath.split("/").pop() ?? "example.ts", undefined, tabTooltips["ts-source"]);
     t262Loading = false;
     return true;
   } catch {
@@ -994,11 +1018,14 @@ async function openLocalImportedSource(specifier: string): Promise<boolean> {
 }
 
 // ─── Editor pool ─────────────────────────────────────────────────────────
+const MOBILE_LAYOUT_QUERY = "(max-width: 900px), (max-height: 720px)";
+
 const editorOpts: monaco.editor.IStandaloneEditorConstructionOptions = {
   theme: "cursor-dark",
   fontSize: 13,
   fontFamily: '"SF Mono", "Fira Code", monospace',
   minimap: { enabled: false },
+  lineNumbers: window.matchMedia(MOBILE_LAYOUT_QUERY).matches ? "off" : "on",
   tabSize: 2,
   automaticLayout: true,
   scrollBeyondLastLine: false,
@@ -1074,18 +1101,212 @@ function editorForPanel(panelId: string): EditorSlot | null {
 
 // ─── DOM references ─────────────────────────────────────────────────────
 const timingSpan = document.getElementById("timing") as HTMLSpanElement;
-const compileBtn = document.getElementById("compile") as HTMLButtonElement;
 const runBtn = document.getElementById("run") as HTMLButtonElement;
-const downloadWatBtn = document.getElementById("download-wat") as HTMLButtonElement;
 const downloadWasmBtn = document.getElementById("download-wasm") as HTMLButtonElement;
 const benchBtn = document.getElementById("bench") as HTMLButtonElement;
-const resetLayoutBtn = document.getElementById("reset-layout") as HTMLButtonElement;
-const toggleSidebarBtn = document.getElementById("toggle-sidebar") as HTMLButtonElement;
-const compatLink = document.getElementById("compat-link") as HTMLAnchorElement | null;
-const planLink = document.getElementById("plan-link") as HTMLAnchorElement | null;
+const toolbarLogoEl = document.getElementById("sidebar-logo") as HTMLAnchorElement | null;
+const panelTabControlsEl = document.getElementById("panel-tab-controls") as HTMLElement | null;
+const panelSidebarToggleBtn = document.getElementById("panel-sidebar-toggle") as HTMLButtonElement | null;
+const panelBottomToggleBtn = document.getElementById("panel-bottom-toggle") as HTMLButtonElement | null;
+const rightEditorControlsSlotEl = document.createElement("div");
+rightEditorControlsSlotEl.className = "panel-tab-controls-slot right-editor-controls-slot";
+const rightEditorControlsEl = document.createElement("div");
+rightEditorControlsEl.className = "panel-tab-controls right-editor-controls";
+rightEditorControlsSlotEl.appendChild(rightEditorControlsEl);
+const bottomPanelControlsSlotEl = document.createElement("div");
+bottomPanelControlsSlotEl.className = "panel-tab-controls-slot bottom-panel-controls-slot";
+const bottomPanelControlsEl = document.createElement("div");
+bottomPanelControlsEl.className = "panel-tab-controls right-editor-controls";
+bottomPanelControlsSlotEl.appendChild(bottomPanelControlsEl);
+const mobileSidebarOverlayEl = document.getElementById("mobile-sidebar-overlay") as HTMLElement | null;
+const mobileSidebarCloseBtn = document.getElementById("mobile-sidebar-close") as HTMLButtonElement | null;
+const mobileSidebarContentEl = document.getElementById("mobile-sidebar-content") as HTMLElement | null;
+const layoutRootEl = document.getElementById("layout-root") as HTMLElement;
+let bottomPanelSplitEl: HTMLElement | null = null;
 
-if (compatLink) compatLink.href = resolveSiteLink("benchmarks/report.html");
-if (planLink) planLink.href = resolveSiteLink("#roadmap");
+const mobileLayoutMedia = window.matchMedia(MOBILE_LAYOUT_QUERY);
+let mobileSidebarOpen = false;
+let mobileBottomCollapsed = false;
+
+function syncResponsiveEditorOptions(): void {
+  const mobile = mobileLayoutMedia.matches;
+  for (const slot of editorSlots) {
+    slot.editor.updateOptions({
+      lineNumbers: mobile ? "off" : "on",
+      lineNumbersMinChars: mobile ? 0 : 3,
+    });
+  }
+}
+
+function mountPanelTabControls(): void {
+  if (!panelTabControlsEl) return;
+  const controlsSlot = layoutRootEl.querySelector(".panel-tab-controls-slot") as HTMLElement | null;
+  const sourceTabEl = layoutRootEl.querySelector('.panel-tab[data-tab="ts-source"]') as HTMLElement | null;
+  const rightEditorTabBarEl = layoutRootEl.querySelector(
+    '.layout-child[data-panel="editor-right"] .panel-tab-bar',
+  ) as HTMLElement | null;
+  if (mobileLayoutMedia.matches) {
+    const mobileEditorTabBarEl = layoutRootEl.querySelector(
+      '.layout-child[data-panel="editor-main"] .panel-tab-bar',
+    ) as HTMLElement | null;
+    const mobileOutputTabBarEl = layoutRootEl.querySelector(
+      '.layout-child[data-panel="output-main"] .panel-tab-bar',
+    ) as HTMLElement | null;
+    if (controlsSlot && controlsSlot.firstElementChild !== panelTabControlsEl) {
+      controlsSlot.appendChild(panelTabControlsEl);
+    }
+    if (controlsSlot) {
+      controlsSlot.style.display = "";
+    }
+    if (runBtn.parentElement !== panelTabControlsEl) {
+      panelTabControlsEl.appendChild(runBtn);
+    }
+    if (mobileEditorTabBarEl) {
+      if (mobileEditorTabBarEl.lastElementChild !== rightEditorControlsSlotEl) {
+        mobileEditorTabBarEl.appendChild(rightEditorControlsSlotEl);
+      }
+      if (panelSidebarToggleBtn && rightEditorControlsEl.firstElementChild !== panelSidebarToggleBtn) {
+        rightEditorControlsEl.insertBefore(panelSidebarToggleBtn, rightEditorControlsEl.firstChild);
+      }
+      if (
+        panelBottomToggleBtn &&
+        mobileBottomCollapsed &&
+        panelBottomToggleBtn.parentElement !== rightEditorControlsEl
+      ) {
+        rightEditorControlsEl.appendChild(panelBottomToggleBtn);
+      }
+    }
+    if (mobileOutputTabBarEl && panelBottomToggleBtn && !mobileBottomCollapsed) {
+      if (mobileOutputTabBarEl.firstElementChild !== bottomPanelControlsSlotEl) {
+        mobileOutputTabBarEl.insertBefore(bottomPanelControlsSlotEl, mobileOutputTabBarEl.firstChild);
+      }
+      if (panelBottomToggleBtn.parentElement !== bottomPanelControlsEl) {
+        bottomPanelControlsEl.appendChild(panelBottomToggleBtn);
+      }
+    } else if (bottomPanelControlsSlotEl.parentElement) {
+      bottomPanelControlsSlotEl.parentElement.removeChild(bottomPanelControlsSlotEl);
+    }
+    if (sourceTabEl && timingSpan.parentElement === sourceTabEl) {
+      sourceTabEl.removeChild(timingSpan);
+    }
+    return;
+  }
+  if (bottomPanelControlsSlotEl.parentElement) {
+    bottomPanelControlsSlotEl.parentElement.removeChild(bottomPanelControlsSlotEl);
+  }
+  if (!controlsSlot) {
+    if (panelTabControlsEl.parentElement) {
+      panelTabControlsEl.parentElement.removeChild(panelTabControlsEl);
+    }
+    if (sourceTabEl && timingSpan.parentElement === sourceTabEl) {
+      sourceTabEl.removeChild(timingSpan);
+    }
+    return;
+  }
+  if (controlsSlot.firstElementChild !== panelTabControlsEl) {
+    controlsSlot.appendChild(panelTabControlsEl);
+  }
+  controlsSlot.style.display = "";
+  if (runBtn.parentElement !== panelTabControlsEl) {
+    panelTabControlsEl.appendChild(runBtn);
+  }
+  if (rightEditorTabBarEl) {
+    if (rightEditorTabBarEl.lastElementChild !== rightEditorControlsSlotEl) {
+      rightEditorTabBarEl.appendChild(rightEditorControlsSlotEl);
+    }
+    if (panelSidebarToggleBtn && rightEditorControlsEl.firstElementChild !== panelSidebarToggleBtn) {
+      rightEditorControlsEl.insertBefore(panelSidebarToggleBtn, rightEditorControlsEl.firstChild);
+    }
+    if (panelBottomToggleBtn && panelBottomToggleBtn.parentElement !== rightEditorControlsEl) {
+      rightEditorControlsEl.appendChild(panelBottomToggleBtn);
+    }
+  }
+  if (sourceTabEl && timingSpan.parentElement !== sourceTabEl) {
+    sourceTabEl.appendChild(timingSpan);
+  }
+}
+
+function syncPrimaryActionsPlacement(): void {
+  if (!toolbarLogoEl || !panelTabControlsEl) return;
+  if (mobileLayoutMedia.matches) {
+    if (toolbarLogoEl.parentElement !== panelTabControlsEl) {
+      panelTabControlsEl.insertBefore(toolbarLogoEl, panelTabControlsEl.firstChild);
+    }
+    return;
+  }
+  const sidebarVisible = mobileLayoutMedia.matches ? mobileSidebarOpen : layout.hasPanel("sidebar-left");
+  if (sidebarVisible) {
+    if (toolbarLogoEl.parentElement !== test262SidebarBrandEl) {
+      test262SidebarBrandEl.insertBefore(toolbarLogoEl, test262SidebarBrandEl.firstChild);
+    }
+    return;
+  }
+  if (toolbarLogoEl.parentElement !== panelTabControlsEl) {
+    panelTabControlsEl.insertBefore(toolbarLogoEl, panelTabControlsEl.firstChild);
+  }
+}
+
+function syncMobileSidebar(): void {
+  if (!mobileSidebarOverlayEl || !mobileSidebarContentEl) return;
+  mobileSidebarOverlayEl.classList.toggle("open", mobileSidebarOpen);
+  panelSidebarToggleBtn?.classList.toggle("active", mobileSidebarOpen);
+  panelSidebarToggleBtn?.setAttribute("aria-pressed", mobileSidebarOpen ? "true" : "false");
+  if (mobileSidebarOpen) {
+    if (!mobileSidebarContentEl.contains(test262Panel)) {
+      mobileSidebarContentEl.appendChild(test262Panel);
+    }
+    if (!t262Loaded) {
+      t262Loaded = true;
+      t262Render();
+    }
+  }
+}
+
+function closeMobileSidebar(): void {
+  if (!mobileSidebarOpen) return;
+  mobileSidebarOpen = false;
+  syncMobileSidebar();
+}
+
+function toggleMobileSidebar(): void {
+  mobileSidebarOpen = !mobileSidebarOpen;
+  syncMobileSidebar();
+}
+
+function closeMobileSidebarAfterSelection(): void {
+  if (!mobileLayoutMedia.matches) return;
+  closeMobileSidebar();
+  syncSidebarToggleButton();
+}
+
+function getBottomPanelSplitEl(): HTMLElement | null {
+  const rootSplitEl = layoutRootEl.querySelector(":scope > .layout-split") as HTMLElement | null;
+  if (!rootSplitEl) return null;
+  if (rootSplitEl.style.flexDirection === "column") {
+    return rootSplitEl;
+  }
+  const mainColumnHostEl = rootSplitEl.querySelector(":scope > .layout-child:last-child") as HTMLElement | null;
+  if (!mainColumnHostEl) return null;
+  return mainColumnHostEl.querySelector('.layout-child[data-panel="output-left"]') ? mainColumnHostEl : null;
+}
+
+function syncMobileBottomPanel(): void {
+  const nextSplitEl = getBottomPanelSplitEl();
+  if (bottomPanelSplitEl && bottomPanelSplitEl !== nextSplitEl) {
+    bottomPanelSplitEl.classList.remove("bottom-collapsible", "bottom-collapsed");
+  }
+  bottomPanelSplitEl = nextSplitEl;
+  bottomPanelSplitEl?.classList.add("bottom-collapsible");
+  bottomPanelSplitEl?.classList.toggle("bottom-collapsed", mobileBottomCollapsed);
+  panelBottomToggleBtn?.classList.toggle("active", !mobileBottomCollapsed);
+  panelBottomToggleBtn?.setAttribute("aria-pressed", (!mobileBottomCollapsed).toString());
+}
+
+function toggleMobileBottomPanel(): void {
+  mobileBottomCollapsed = !mobileBottomCollapsed;
+  syncMobileBottomPanel();
+  layout.onLayoutChanged?.();
+}
 
 // Session storage for input
 bindInputModelPersistence(inputFile.model);
@@ -1110,12 +1331,20 @@ const test262Panel = document.createElement("div");
 test262Panel.id = "test262-panel";
 test262Panel.innerHTML = `
   <div class="t262-browser">
-    <div class="t262-search-wrap">
-      <input class="t262-search" type="text" placeholder="Filter tests..." />
+    <div class="t262-sidebar-topbar">
+      <div class="t262-sidebar-brand">
+        <div class="t262-sidebar-title">Playground</div>
+      </div>
+      <div class="t262-sidebar-topbar-actions"></div>
     </div>
     <div class="t262-list"></div>
+    <div class="t262-search-wrap">
+      <input class="t262-search" type="text" placeholder="File filter" />
+    </div>
   </div>
 `;
+const test262SidebarTopbarActionsEl = test262Panel.querySelector(".t262-sidebar-topbar-actions") as HTMLElement;
+const test262SidebarBrandEl = test262Panel.querySelector(".t262-sidebar-brand") as HTMLElement;
 
 interface T262Category {
   name: string;
@@ -1166,14 +1395,16 @@ async function fetchJsonFromPaths<T>(paths: string[]): Promise<T | null> {
   return null;
 }
 
+function staticPlaygroundJsonPaths(fileName: string): string[] {
+  return prefersStaticPlaygroundData
+    ? [resolveSiteLink(`playground-data/${fileName}`)]
+    : [`/playground-data/${fileName}`, `/playground/playground-data/${fileName}`, `playground-data/${fileName}`];
+}
+
 async function loadStaticEquivTests(): Promise<{ name: string; source: string }[]> {
   if (staticEquivTests) return staticEquivTests;
   staticEquivTests =
-    (await fetchJsonFromPaths<{ name: string; source: string }[]>([
-      "/playground-data/equiv-tests.json",
-      "/playground/playground-data/equiv-tests.json",
-      "playground-data/equiv-tests.json",
-    ])) ?? [];
+    (await fetchJsonFromPaths<{ name: string; source: string }[]>(staticPlaygroundJsonPaths("equiv-tests.json"))) ?? [];
   return staticEquivTests;
 }
 
@@ -1214,22 +1445,16 @@ async function loadBundledEquivTests(): Promise<{ name: string; source: string }
 async function loadStaticT262Files(): Promise<Record<string, string[]>> {
   if (staticT262Files) return staticT262Files;
   staticT262Files =
-    (await fetchJsonFromPaths<Record<string, string[]>>([
-      "/playground-data/test262-files.json",
-      "/playground/playground-data/test262-files.json",
-      "playground-data/test262-files.json",
-    ])) ?? {};
+    (await fetchJsonFromPaths<Record<string, string[]>>(staticPlaygroundJsonPaths("test262-files.json"))) ?? {};
   return staticT262Files;
 }
 
 async function loadStaticT262FileResults(): Promise<Record<string, T262FileResult[]>> {
   if (staticT262FileResults) return staticT262FileResults;
   staticT262FileResults =
-    (await fetchJsonFromPaths<Record<string, T262FileResult[]>>([
-      "/playground-data/test262-file-results.json",
-      "/playground/playground-data/test262-file-results.json",
-      "playground-data/test262-file-results.json",
-    ])) ?? {};
+    (await fetchJsonFromPaths<Record<string, T262FileResult[]>>(
+      staticPlaygroundJsonPaths("test262-file-results.json"),
+    )) ?? {};
   return staticT262FileResults;
 }
 
@@ -1265,7 +1490,7 @@ let t262Report: T262Report | null = null;
 const t262FileResultsCache = new Map<string, T262FileResult[]>();
 
 async function loadLatestT262Summary(): Promise<T262Report["summary"] | null> {
-  const runs = await fetchJson<T262TrendRun[]>("benchmarks/results/runs/index.json");
+  const runs = await fetchJson<T262TrendRun[]>(resolveSiteLink("benchmarks/results/runs/index.json"));
   const latest = runs?.[runs.length - 1];
   if (!latest || latest.total === 0) return null;
   return {
@@ -1281,10 +1506,9 @@ async function t262LoadReport(): Promise<T262Report | null> {
   if (t262Report) return t262Report;
   const latestSummary = prefersStaticPlaygroundData ? await loadLatestT262Summary() : null;
   const data = prefersStaticPlaygroundData
-    ? ((await fetchJson<T262Report>("benchmarks/results/test262-report.json")) ??
-      (await fetchJson<T262Report | { error: string }>("/api/test262-results")))
+    ? await fetchJson<T262Report>(resolveSiteLink("benchmarks/results/test262-report.json"))
     : ((await fetchJson<T262Report | { error: string }>("/api/test262-results")) ??
-      (await fetchJson<T262Report>("benchmarks/results/test262-report.json")));
+      (await fetchJson<T262Report>(resolveSiteLink("benchmarks/results/test262-report.json"))));
   if ((!data || "error" in data) && !latestSummary) return null;
   const report =
     !data || "error" in data
@@ -1308,9 +1532,6 @@ async function t262LoadFileResults(category: string): Promise<T262FileResult[]> 
     const staticResults = await loadStaticT262FileResults();
     data = staticResults[category] ?? null;
   }
-  if (!data && prefersStaticPlaygroundData) {
-    data = await fetchJson<T262FileResult[]>(`/api/test262-file-results?category=${encodeURIComponent(category)}`);
-  }
   const resolved = data ?? [];
   t262FileResultsCache.set(category, resolved);
   return resolved;
@@ -1323,8 +1544,12 @@ function t262GetCategoryStats(
   return t262Report.categories.find((c) => c.name === catName) ?? null;
 }
 
-function normalizeT262ResultPath(file: string): string {
+function normalizeT262FilePath(file: string): string {
   return file.startsWith("test/") ? file.slice(5) : file;
+}
+
+function normalizeT262ResultPath(file: string): string {
+  return normalizeT262FilePath(file);
 }
 
 function t262StatusIcon(status: string): string {
@@ -1389,7 +1614,7 @@ function buildEquivSummaryHtml(total: number): string {
 const t262ExpandedCats = new Set<string>();
 let t262Filter = "";
 let t262Debounce: ReturnType<typeof setTimeout> | null = null;
-let t262ActivePath = "";
+let t262ActivePath = inputFile.path;
 let t262Loading = false;
 let activeT262FileResult: T262FileResult | null = null;
 let pendingT262SourceDecorations: monaco.editor.IModelDeltaDecoration[] = [];
@@ -1403,12 +1628,25 @@ const T262_MARKER_OWNER = "test262-selected-result";
 
 async function t262LoadIndex(): Promise<T262CategorySummary[]> {
   if (t262Index) return t262Index;
-  const staticData = await fetchJson<{ categories: T262CategorySummary[] }>(
-    "playground-data/test262-index-summary.json",
-  );
-  const apiData = await fetchJson<{ categories: T262CategorySummary[] }>("/api/test262-index-summary");
-  const preferred = prefersStaticPlaygroundData ? [staticData, apiData] : [apiData, staticData];
-  const resolved = preferred.find((entry) => (entry?.categories?.length ?? 0) > 0) ?? preferred.find(Boolean) ?? null;
+  const loadStaticIndex = async (): Promise<{ categories: T262CategorySummary[] } | null> => {
+    const staticIndex = await fetchJsonFromPaths<{ categories: T262CategorySummary[] } | T262CategorySummary[]>(
+      staticPlaygroundJsonPaths("test262-index-summary.json"),
+    );
+    if (Array.isArray(staticIndex)) {
+      return { categories: staticIndex };
+    }
+    if (staticIndex && Array.isArray(staticIndex.categories)) {
+      return { categories: staticIndex.categories };
+    }
+    return null;
+  };
+  const loadApiIndex = async (): Promise<{ categories: T262CategorySummary[] } | null> => {
+    return await fetchJson<{ categories: T262CategorySummary[] }>("/api/test262-index-summary");
+  };
+  const primary = prefersStaticPlaygroundData ? await loadStaticIndex() : await loadApiIndex();
+  const fallback = primary || prefersStaticPlaygroundData ? null : await loadStaticIndex();
+  const resolved =
+    [primary, fallback].find((entry) => (entry?.categories?.length ?? 0) > 0) ?? primary ?? fallback ?? null;
   t262Index = resolved?.categories ?? [];
   return t262Index;
 }
@@ -1422,10 +1660,7 @@ async function t262LoadFiles(category: string): Promise<string[]> {
   if (!files || files.length === 0) {
     files = (await loadStaticT262Files())[category] ?? null;
   }
-  if ((!files || files.length === 0) && prefersStaticPlaygroundData) {
-    files = await fetchJson<string[]>(`/api/test262-files?category=${encodeURIComponent(category)}`);
-  }
-  const resolved = files ?? [];
+  const resolved = [...new Set((files ?? []).map((file) => normalizeT262FilePath(file)))];
   t262FilesCache.set(category, resolved);
   return resolved;
 }
@@ -1436,20 +1671,15 @@ async function t262LoadFile(path: string): Promise<string> {
     if (apiData !== null) return apiData;
   }
   const normalizedPath = path.startsWith("test/") ? path : `test/${path}`;
-  for (const staticPath of [
-    `/test262/${normalizedPath}`,
-    `/playground/test262/${normalizedPath}`,
-    `test262/${normalizedPath}`,
-  ]) {
+  const staticPaths = prefersStaticPlaygroundData
+    ? [resolveSiteLink(`test262/${normalizedPath}`)]
+    : [`/test262/${normalizedPath}`, `/playground/test262/${normalizedPath}`, `test262/${normalizedPath}`];
+  for (const staticPath of staticPaths) {
     const staticData = await fetchText(staticPath);
     if (staticData !== null) return staticData;
   }
   const remoteData = await fetchText(`${TEST262_REMOTE_BASE}${normalizedPath}`);
   if (remoteData !== null) return remoteData;
-  if (prefersStaticPlaygroundData) {
-    const apiData = await fetchText(`/api/test262-file?path=${encodeURIComponent(path)}`);
-    if (apiData !== null) return apiData;
-  }
   return "";
 }
 
@@ -1471,14 +1701,11 @@ async function loadEquivIndex(): Promise<EquivTest[]> {
       data = staticTests.map((t, index) => ({ name: t.name, index }));
     }
   }
-  if ((!data || data.length === 0) && !prefersStaticPlaygroundData) {
+  if (!data || data.length === 0) {
     const bundledTests = await loadBundledEquivTests();
     if (bundledTests.length > 0) {
       data = bundledTests.map((t, index) => ({ name: t.name, index }));
     }
-  }
-  if ((!data || data.length === 0) && prefersStaticPlaygroundData) {
-    data = await fetchJson<EquivTest[]>("/api/equiv-index");
   }
   if (data && data.length > 0) {
     equivIndex = data;
@@ -1493,11 +1720,11 @@ async function loadEquivSource(idx: number): Promise<string> {
     if (apiData !== null) return apiData;
   }
   const localTests = prefersStaticPlaygroundData ? await loadStaticEquivTests() : await loadBundledEquivTests();
-  const source = localTests[idx]?.source;
+  let source = localTests[idx]?.source;
   if (source != null) return source;
   if (prefersStaticPlaygroundData) {
-    const apiData = await fetchText(`/api/equiv-source?index=${idx}`);
-    if (apiData !== null) return apiData;
+    source = (await loadBundledEquivTests())[idx]?.source;
+    if (source != null) return source;
   }
   return "";
 }
@@ -1697,15 +1924,15 @@ function syncT262FailureAnnotations() {
 async function t262LoadAndShow(filePath: string, fileResult: T262FileResult | null = null) {
   const content = await t262LoadFile(filePath);
   t262Loading = true;
-  sessionStorage.removeItem(STORAGE_KEY);
   setInputSourceModel(filePath, content);
   revealSourceTab();
   t262SetActive(filePath);
   activeT262FileResult = fileResult;
   const fname = t262FileName(filePath);
-  updateTabLabel("ts-source", fname, tabTooltips["ts-source"]);
+  updateTabLabel("ts-source", fname, undefined, tabTooltips["ts-source"]);
   compileOnly();
   t262Loading = false;
+  closeMobileSidebarAfterSelection();
 }
 
 // Build a recursive tree from category paths
@@ -1750,8 +1977,8 @@ const benchmarkExamples: BenchmarkExample[] = [
   {
     name: "loop.ts",
     path: "examples/benchmarks/loop.ts",
-    title: "Loop: sum 1..1M",
-    description: "Tight numeric loop, no allocations",
+    title: "Loop: 1M Int32 sum",
+    description: "Tight i32 loop with explicit | 0 wrap, no allocations",
     benchmarkFunction: "bench_loop",
   },
   {
@@ -1962,17 +2189,22 @@ function t262BuildTree(cats: T262CategorySummary[]): T262TreeNode {
   return root;
 }
 
-const t262ExpandedFolders = new Set<string>();
+const t262ExpandedFolders = new Set<string>(["__ex_dom__"]);
+let t262RenderGeneration = 0;
 
 async function t262Render() {
   const listEl = test262Panel.querySelector(".t262-list") as HTMLElement;
   if (!listEl) return;
-  listEl.innerHTML = "";
+  const renderGeneration = ++t262RenderGeneration;
+  const isStaleRender = () => renderGeneration !== t262RenderGeneration;
+  const listFragment = document.createDocumentFragment();
 
   await ensureBenchmarkSidebarSnapshot();
+  if (isStaleRender()) return;
 
   // Load test262 results report
   const report = await t262LoadReport();
+  if (isStaleRender()) return;
 
   const filter = t262Filter.toLowerCase();
 
@@ -1991,13 +2223,13 @@ async function t262Render() {
       const content = await loadBundledExampleSource(ex.path);
       if (content == null) return;
       t262Loading = true;
-      sessionStorage.removeItem(STORAGE_KEY);
       setInputSourceModel(ex.path, content);
       revealSourceTab();
       t262SetActive(ex.path);
-      updateTabLabel("ts-source", ex.name, tabTooltips["ts-source"]);
-      compileOnly();
+      updateTabLabel("ts-source", ex.name, undefined, tabTooltips["ts-source"]);
+      await compileAndRun();
       t262Loading = false;
+      closeMobileSidebarAfterSelection();
     });
     parent.appendChild(entry);
   }
@@ -2007,13 +2239,56 @@ async function t262Render() {
     if (rawContent == null) return;
     const content = normalizeBenchmarkHelperImport(rawContent, bench.path);
     t262Loading = true;
-    sessionStorage.removeItem(STORAGE_KEY);
     setInputSourceModel(bench.path, content);
     revealSourceTab();
     t262SetActive(bench.path);
-    updateTabLabel("ts-source", bench.name, tabTooltips["ts-source"]);
-    compileOnly();
+    updateTabLabel("ts-source", bench.name, undefined, tabTooltips["ts-source"]);
+    await compileAndRun();
     t262Loading = false;
+    closeMobileSidebarAfterSelection();
+  }
+
+  function appendOutputFolder(parent: HTMLElement, paddingLeft = "22px") {
+    const outputCategoryEl = document.createElement("div");
+    outputCategoryEl.className = "t262-category";
+
+    const outputHeaderEl = document.createElement("div");
+    outputHeaderEl.className = "t262-cat-header t262-section-header-row";
+    outputHeaderEl.style.paddingLeft = paddingLeft;
+
+    const outputTitleEl = document.createElement("span");
+    outputTitleEl.className = "t262-cat-name";
+    outputTitleEl.textContent = "output";
+    outputHeaderEl.appendChild(outputTitleEl);
+
+    downloadWasmBtn.classList.add("output-section-btn");
+    outputHeaderEl.appendChild(downloadWasmBtn);
+    outputCategoryEl.appendChild(outputHeaderEl);
+
+    const outputFilesEl = document.createElement("div");
+    outputFilesEl.className = "t262-files";
+    outputFilesEl.style.paddingLeft = `calc(${paddingLeft} + 12px)`;
+
+    const outputEntries: Array<{ tabId: string; label: string }> = [
+      { tabId: "wat-output", label: watFile.displayName },
+      { tabId: "wasm-hex", label: wasmHexFile.displayName },
+      { tabId: "modular-ts", label: modularFile.displayName },
+    ];
+
+    for (const entry of outputEntries) {
+      const fileEl = document.createElement("div");
+      fileEl.className = "t262-file";
+      fileEl.textContent = entry.label;
+      fileEl.dataset.path = entry.tabId;
+      fileEl.addEventListener("click", () => {
+        showOutputPanel(entry.tabId);
+        closeMobileSidebarAfterSelection();
+      });
+      outputFilesEl.appendChild(fileEl);
+    }
+
+    outputCategoryEl.appendChild(outputFilesEl);
+    parent.appendChild(outputCategoryEl);
   }
 
   function renderBenchmarkFile(bench: BenchmarkExample, parent: HTMLElement) {
@@ -2090,13 +2365,13 @@ async function t262Render() {
     const exHeader = document.createElement("div");
     exHeader.className = "t262-section-header";
     exHeader.textContent = "EXAMPLES";
-    listEl.appendChild(exHeader);
+    listFragment.appendChild(exHeader);
 
     for (const group of exampleGroups) {
       const groupMatches =
         !filter || group.folder.includes(filter) || group.files.some((f) => f.name.toLowerCase().includes(filter));
       if (!groupMatches) continue;
-      await renderTopFolder(group.folder, `__ex_${group.folder}__`, listEl, (container) => {
+      await renderTopFolder(group.folder, `__ex_${group.folder}__`, listFragment, (container) => {
         const filesEl = document.createElement("div");
         filesEl.className = "t262-files";
         filesEl.style.paddingLeft = "22px";
@@ -2104,8 +2379,12 @@ async function t262Render() {
           if (filter && !f.name.toLowerCase().includes(filter) && !group.folder.includes(filter)) continue;
           renderExampleFile(f, filesEl);
         }
+        if (group.files.some((f) => f.path === inputFile.path)) {
+          appendOutputFolder(filesEl);
+        }
         container.appendChild(filesEl);
       });
+      if (isStaleRender()) return;
     }
   }
 
@@ -2113,7 +2392,7 @@ async function t262Render() {
   const unitHeader = document.createElement("div");
   unitHeader.className = "t262-section-header";
   unitHeader.textContent = "UNIT TESTS";
-  listEl.appendChild(unitHeader);
+  listFragment.appendChild(unitHeader);
 
   // Count total files in a tree node (recursively)
   function nodeFileCount(node: T262TreeNode): number {
@@ -2296,6 +2575,9 @@ async function t262Render() {
             });
             filesEl.appendChild(fileEl);
           }
+          if (displayFiles.includes(t262ActivePath)) {
+            appendOutputFolder(filesEl, `${10 + (depth + 1) * 12}px`);
+          }
           el.appendChild(filesEl);
         }
       }
@@ -2308,7 +2590,7 @@ async function t262Render() {
   async function renderTopFolder(
     name: string,
     folderKey: string,
-    parent: HTMLElement,
+    parent: HTMLElement | DocumentFragment,
     renderContents: (container: HTMLElement) => void | Promise<void>,
     summaryHtml?: string,
     onOpen?: () => void | Promise<void>,
@@ -2352,7 +2634,7 @@ async function t262Render() {
     await renderTopFolder(
       "js2wasm Test Suite",
       "__js2wasm__",
-      listEl,
+      listFragment,
       (container) => {
         const filesEl = document.createElement("div");
         filesEl.className = "t262-files";
@@ -2367,36 +2649,42 @@ async function t262Render() {
           fileEl.addEventListener("click", async () => {
             const source = await loadEquivSource(t.index);
             t262Loading = true;
-            sessionStorage.removeItem(STORAGE_KEY);
             setInputSourceModel("input/example.ts", source);
             revealSourceTab();
             t262SetActive(path);
-            updateTabLabel("ts-source", t.name, tabTooltips["ts-source"]);
-            compileOnly();
+            updateTabLabel("ts-source", t.name, undefined, tabTooltips["ts-source"]);
+            await compileAndRun();
             t262Loading = false;
+            closeMobileSidebarAfterSelection();
           });
           filesEl.appendChild(fileEl);
+        }
+        if (t262ActivePath.startsWith("equiv:")) {
+          appendOutputFolder(filesEl);
         }
         container.appendChild(filesEl);
       },
       buildEquivSummaryHtml(equivTests.length),
     );
+    if (isStaleRender()) return;
   }
 
   // ── test262 folder ──
   const cats = await t262LoadIndex();
+  if (isStaleRender()) return;
   const tree = t262BuildTree(cats);
   const t262Matches = !filter || nodeMatchesFilter(tree, filter) || "ecmascript test suite".includes(filter);
   if (t262Matches) {
     await renderTopFolder(
       "ECMAScript Test Suite",
       "__test262__",
-      listEl,
+      listFragment,
       async (container) => {
         await renderNode(tree, container, 1);
       },
       report ? buildT262SummaryHtml(report.summary) : "",
     );
+    if (isStaleRender()) return;
   }
 
   // ── BENCHMARKS section ──
@@ -2410,18 +2698,28 @@ async function t262Render() {
   );
   if (benchMatches.length > 0) {
     const benchHeader = document.createElement("div");
-    benchHeader.className = "t262-section-header";
-    benchHeader.textContent = "BENCHMARKS";
-    listEl.appendChild(benchHeader);
+    benchHeader.className = "t262-section-header t262-section-header-row";
+    const benchTitle = document.createElement("span");
+    benchTitle.textContent = "BENCHMARKS";
+    benchHeader.appendChild(benchTitle);
+    benchBtn.classList.add("bench-section-btn");
+    benchHeader.appendChild(benchBtn);
+    listFragment.appendChild(benchHeader);
 
-    await renderTopFolder("js2wasm Benchmark Suite", "__benchmarks__", listEl, (container) => {
+    await renderTopFolder("js2wasm Benchmark Suite", "__benchmarks__", listFragment, (container) => {
       const filesEl = document.createElement("div");
       filesEl.className = "t262-files";
       filesEl.style.paddingLeft = "22px";
       for (const bench of benchMatches) renderBenchmarkFile(bench, filesEl);
+      if (benchMatches.some((bench) => bench.path === inputFile.path)) {
+        appendOutputFolder(filesEl);
+      }
       container.appendChild(filesEl);
     });
+    if (isStaleRender()) return;
   }
+
+  listEl.replaceChildren(listFragment);
 }
 
 // Wire up the search input
@@ -2436,6 +2734,11 @@ t262SearchInput.addEventListener("input", () => {
 
 // Lazy-load: render the test262 panel when it first becomes visible
 let t262Loaded = false;
+
+function queueSidebarRefresh(): void {
+  if (!t262Loaded) return;
+  void t262Render();
+}
 
 // Treemap
 const treemap = new WasmTreemap(treemapPanel);
@@ -2567,19 +2870,40 @@ layout.onLayoutChanged = () => {
   for (const slot of editorSlots) {
     if (slot.panelId) slot.editor.layout();
   }
+  mountPanelTabControls();
+  updateTabSizes();
+  syncMobileBottomPanel();
+  syncSidebarToggleButton();
+  syncPrimaryActionsPlacement();
 };
 
 // Load saved layout or use default
 const allTabIds = new Set(Object.keys(tabDefs));
-const savedLayout = LayoutManager.loadLayout(allTabIds);
-layout.init(savedLayout ?? undefined);
+function loadResponsiveLayout(): void {
+  const savedLayout = LayoutManager.loadLayout(allTabIds);
+  layout.init(savedLayout ?? (mobileLayoutMedia.matches ? getMobileDefaultLayout() : getDefaultLayout()));
+}
+
+loadResponsiveLayout();
+revealSourceTab();
+mountPanelTabControls();
+syncMobileBottomPanel();
+syncPrimaryActionsPlacement();
+syncResponsiveEditorOptions();
 
 function syncSidebarToggleButton(): void {
-  toggleSidebarBtn.setAttribute("aria-pressed", layout.hasPanel("sidebar-left") ? "true" : "false");
+  const sidebarVisible = mobileLayoutMedia.matches ? mobileSidebarOpen : layout.hasPanel("sidebar-left");
+  panelSidebarToggleBtn?.classList.toggle("active", sidebarVisible);
+  panelSidebarToggleBtn?.setAttribute("aria-pressed", sidebarVisible ? "true" : "false");
+  panelSidebarToggleBtn?.setAttribute("aria-label", sidebarVisible ? "Hide file browser" : "Show file browser");
 }
 
 function toggleSidebar(): void {
-  layout.toggleSidebar();
+  if (mobileLayoutMedia.matches) {
+    toggleMobileSidebar();
+  } else {
+    layout.toggleSidebar();
+  }
   syncSidebarToggleButton();
 }
 
@@ -2596,7 +2920,8 @@ const tabTooltips: Record<string, string> = {
   "modular-ts": "JavaScript (.js)",
 };
 
-async function gzipSize(data: Uint8Array): Promise<number> {
+async function gzipSize(data: Uint8Array): Promise<number | null> {
+  if (typeof CompressionStream !== "function") return null;
   const cs = new CompressionStream("gzip");
   const writer = cs.writable.getWriter();
   writer.write(data);
@@ -2618,31 +2943,50 @@ function updateTabSizes() {
     const baseTitle = file.displayName || tabId;
 
     if (tabId === "wat-output") {
-      updateTabLabel(tabId, baseTitle, tabTooltips[tabId]);
+      updateTabLabel(tabId, baseTitle, undefined, tabTooltips[tabId]);
       continue;
     }
 
     const raw = file.binarySize ?? new TextEncoder().encode(file.model.getValue()).length;
     if (raw === 0) {
-      updateTabLabel(tabId, baseTitle, tabTooltips[tabId]);
+      updateTabLabel(tabId, baseTitle, undefined, tabTooltips[tabId]);
       continue;
     }
 
-    updateTabLabel(tabId, `${baseTitle} (${fmtSize(raw)})`, tabTooltips[tabId]);
+    updateTabLabel(tabId, baseTitle, undefined, tabTooltips[tabId]);
 
     // Compute gzip size async
     const gzInput = file.binaryData ?? new TextEncoder().encode(file.model.getValue());
-    gzipSize(gzInput).then((gz) => {
-      updateTabLabel(tabId, `${baseTitle} (${fmtSize(raw)} / ${fmtSize(gz)} gz)`, tabTooltips[tabId]);
-    });
+    gzipSize(gzInput)
+      .then((gz) => {
+        if (gz === null) return;
+        updateTabLabel(tabId, baseTitle, `${fmtSize(gz)} gz`, tabTooltips[tabId]);
+      })
+      .catch(() => {});
   }
 }
 
-function updateTabLabel(tabId: string, text: string, tooltip?: string) {
+function updateTabLabel(tabId: string, text: string, meta?: string, tooltip?: string) {
   const el = layout.getTabElement(tabId);
   if (el) {
     const label = el.querySelector(".panel-tab-label");
     if (label) label.textContent = text;
+    let metaEl = el.querySelector(".panel-tab-meta") as HTMLElement | null;
+    const closeBtn = el.querySelector(".close-btn");
+    if (meta) {
+      if (!metaEl) {
+        metaEl = document.createElement("span");
+        metaEl.className = "panel-tab-meta";
+        if (closeBtn) {
+          el.insertBefore(metaEl, closeBtn);
+        } else {
+          el.appendChild(metaEl);
+        }
+      }
+      metaEl.textContent = meta;
+    } else {
+      metaEl?.remove();
+    }
     if (tooltip) {
       el.title = tooltip;
       if (label instanceof HTMLElement) label.title = tooltip;
@@ -3590,17 +3934,17 @@ function compileOnly() {
     errorsPre.textContent = result.errors.map((e) => `L${e.line}:${e.column} [${e.severity}] ${e.message}`).join("\n");
   }
 
-  timingSpan.textContent = `compile: ${compileTime.toFixed(1)}ms${result.success ? "" : " (failed)"}`;
-  compileBtn.disabled = true;
-  runBtn.disabled = !result.success;
+  timingSpan.textContent = `${compileTime.toFixed(1)}ms${result.success ? "" : " (failed)"}`;
+  runBtn.disabled = false;
   benchBtn.disabled = !result.success;
-  downloadWatBtn.disabled = !result.success;
   downloadWasmBtn.disabled = !result.success;
 
   // Auto-open mod.wat tab on first successful compile
   if (result.success && !hasCompiledOnce) {
     hasCompiledOnce = true;
-    openFileTab(watFile.path);
+    if (!mobileLayoutMedia.matches) {
+      openFileTab(watFile.path);
+    }
   }
 
   showOutputPanel(result.success ? "preview" : "errors");
@@ -3679,14 +4023,13 @@ function buildEnv(
 
 async function runOnly() {
   if (!lastResult) return;
-  let result = lastResult;
-  let synthesizedMain = false;
+  const result = lastResult;
 
   consolePre.textContent = "";
   errorsPre.textContent = "";
   previewPanel.innerHTML = "";
 
-  // Use compile-time metadata to determine execution intent
+  // Use compile-time metadata to determine execution intent (#907)
   const hasMain = result.hasMain === true;
   const hasTopLevel = result.hasTopLevelStatements === true;
 
@@ -3696,24 +4039,10 @@ async function runOnly() {
     return;
   }
 
-  if (!hasMain && hasTopLevel) {
-    // Top-level statements exist but no main() — recompile with a synthesized
-    // main() so the playground has an entry point to call.
-    const source = inputFile.model.getValue();
-    if (!hasTopLevelMainDeclaration(source)) {
-      const runtimeSource = `${source}\n\nexport function main(): void {}\n`;
-      const runtimeResult = buildCompileResultForEditorSource(runtimeSource);
-      if (!runtimeResult.success) {
-        errorsPre.textContent = runtimeResult.errors
-          .map((e) => `L${e.line}:${e.column} [${e.severity}] ${e.message}`)
-          .join("\n");
-        showOutputPanel("errors");
-        return;
-      }
-      result = runtimeResult;
-      synthesizedMain = true;
-    }
-  }
+  // For non-WASI programs without main(), top-level code is wired into the
+  // Wasm `start` section by the compiler (#907). It runs automatically during
+  // `WebAssembly.instantiate()` — no need for a synthesized main() or an
+  // explicit `_start` call from the host.
 
   const usesDom = detectDomUsage(result);
   const logs: string[] = [];
@@ -3738,13 +4067,19 @@ async function runOnly() {
     wasmExports = instance.exports as Record<string, any>;
     setExports(wasmExports as Record<string, Function>);
     if (typeof wasmExports.main === "function") {
-      if (synthesizedMain) {
-        logs.push("Executed top-level statements via synthesized main().");
-      }
       const returnValue = wasmExports.main();
       if (returnValue !== undefined) logs.push(`→ ${returnValue}`);
+    } else if (typeof wasmExports._start === "function") {
+      // WASI-target binaries export `_start` as their entry point — call it
+      // explicitly. Non-WASI module-init programs run init via the start
+      // section during instantiation and don't expose `_start`.
+      wasmExports._start();
+      logs.push("Executed top-level statements via _start().");
+    } else if (hasTopLevel) {
+      // Top-level code already executed during instantiation via start section.
+      logs.push("Executed top-level statements during module instantiation.");
     } else {
-      logs.push("No exported main() found in Wasm module.");
+      logs.push("No exported main() or _start() found in Wasm module.");
     }
 
     consolePre.textContent = logs.join("\n");
@@ -3803,15 +4138,10 @@ async function runOnly() {
   }
 }
 
-function downloadWat() {
-  if (!lastResult) return;
-  const blob = new Blob([lastResult.wat], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "example.wat";
-  a.click();
-  URL.revokeObjectURL(url);
+async function compileAndRun() {
+  compileOnly();
+  if (!lastResult?.success) return;
+  await runOnly();
 }
 
 function downloadWasm() {
@@ -3839,11 +4169,10 @@ async function runBenchmark() {
       return;
     }
     t262Loading = true;
-    sessionStorage.removeItem(STORAGE_KEY);
     setInputSourceModel("examples/benchmarks.ts", normalizeBenchmarkHelperImport(content, "examples/benchmarks.ts"));
     revealSourceTab();
     t262SetActive("examples/benchmarks.ts");
-    updateTabLabel("ts-source", "benchmarks.ts", tabTooltips["ts-source"]);
+    updateTabLabel("ts-source", "benchmarks.ts", undefined, tabTooltips["ts-source"]);
 
     lastResult = null;
     t262Loading = false;
@@ -4064,36 +4393,154 @@ async function runBenchmark() {
 }
 
 // ─── Event listeners ────────────────────────────────────────────────────
-compileBtn.addEventListener("click", compileOnly);
-runBtn.addEventListener("click", runOnly);
-benchBtn.addEventListener("click", runBenchmark);
-downloadWatBtn.addEventListener("click", downloadWat);
-downloadWasmBtn.addEventListener("click", downloadWasm);
-toggleSidebarBtn.addEventListener("click", toggleSidebar);
-resetLayoutBtn.addEventListener("click", () => {
-  clearSavedLayout();
-  sessionStorage.removeItem(STORAGE_KEY);
-  t262ActivePath = null;
-  t262Loading = true;
-  setInputSourceModel("examples/dom/calendar.ts", DEFAULT_SOURCE);
-  revealSourceTab();
-  t262Loading = false;
-  updateTabLabel("ts-source", "calendar.ts", tabTooltips["ts-source"]);
-  layout.resetLayout();
-  clearSavedLayout();
-  compileOnly();
-  syncSidebarToggleButton();
+runBtn.addEventListener("click", () => {
+  void compileAndRun();
 });
-
+runBtn.addEventListener("mousedown", (event) => {
+  event.stopPropagation();
+});
+runBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+benchBtn.addEventListener("click", runBenchmark);
+downloadWasmBtn.addEventListener("click", downloadWasm);
 document.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "b") {
     event.preventDefault();
     toggleSidebar();
+    return;
+  }
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "j") {
+    event.preventDefault();
+    toggleMobileBottomPanel();
   }
 });
 
-// Auto-compile and run on page load
-compileOnly();
-requestAnimationFrame(() => {
-  void runOnly();
+panelSidebarToggleBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleSidebar();
 });
+
+panelBottomToggleBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleMobileBottomPanel();
+});
+
+mobileSidebarCloseBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  closeMobileSidebar();
+  syncSidebarToggleButton();
+});
+
+mobileSidebarOverlayEl?.addEventListener("click", (event) => {
+  if (event.target === mobileSidebarOverlayEl) {
+    closeMobileSidebar();
+    syncSidebarToggleButton();
+  }
+});
+
+mobileLayoutMedia.addEventListener("change", (event) => {
+  if (!event.matches) {
+    closeMobileSidebar();
+    mobileBottomCollapsed = false;
+  }
+  loadResponsiveLayout();
+  revealSourceTab();
+  mountPanelTabControls();
+  syncMobileSidebar();
+  syncMobileBottomPanel();
+  syncSidebarToggleButton();
+  syncPrimaryActionsPlacement();
+  syncResponsiveEditorOptions();
+});
+
+// #1327 — Deep-link support: ?t262=<path>&error=<encoded-message>
+// Loads a test262 file by URL path (e.g. ?t262=test/built-ins/Array/from/iter-cstm-ctor.js
+// or ?t262=built-ins/Array/from/iter-cstm-ctor.js) into the input editor and
+// shows the error message (if any) in a banner. Falls through silently if the
+// file can't be fetched — the test262 corpus is large and only files referenced
+// by the JSONL baseline are bundled into the GitHub Pages artifact.
+async function loadDeepLinkFromUrl(): Promise<boolean> {
+  const params = new URLSearchParams(location.search);
+  const t262Path = params.get("t262");
+  if (!t262Path) return false;
+  const errorParam = params.get("error");
+
+  try {
+    const source = await t262LoadFile(t262Path);
+    if (!source) {
+      showT262DeepLinkBanner(`Could not load test262 file: ${t262Path}`, "warn");
+      return false;
+    }
+    const virtualPath = t262Path.startsWith("test/") ? t262Path : `test/${t262Path}`;
+    setInputSourceModel(virtualPath, source);
+    revealSourceTab();
+  } catch {
+    showT262DeepLinkBanner(`Failed to fetch test262 file: ${t262Path}`, "warn");
+    return false;
+  }
+
+  if (errorParam) {
+    // Show error as an overlay banner below the editor — inline decoration
+    // would require knowing the line number, which the JSONL `error` field
+    // doesn't always include in a parseable form.
+    showT262DeepLinkBanner(`Reported error: ${errorParam}`, "fail");
+  }
+  return true;
+}
+
+function showT262DeepLinkBanner(message: string, tone: "fail" | "warn"): void {
+  const existing = document.getElementById("t262-deep-link-banner");
+  if (existing) existing.remove();
+  const banner = document.createElement("div");
+  banner.id = "t262-deep-link-banner";
+  banner.setAttribute("role", "status");
+  banner.style.cssText = [
+    "position:fixed",
+    "top:54px",
+    "right:16px",
+    "max-width:520px",
+    "z-index:100",
+    "padding:10px 14px",
+    "border-radius:0",
+    "border:1px solid",
+    `border-color:${tone === "fail" ? "rgba(248,113,113,0.5)" : "rgba(250,204,21,0.5)"}`,
+    `background:${tone === "fail" ? "rgba(248,113,113,0.12)" : "rgba(250,204,21,0.12)"}`,
+    `color:${tone === "fail" ? "#fca5a5" : "#fde68a"}`,
+    "font-family:ui-monospace, SFMono-Regular, Menlo, monospace",
+    "font-size:12px",
+    "line-height:1.5",
+    "white-space:pre-wrap",
+    "box-shadow:0 8px 22px rgba(0,0,0,0.3)",
+  ].join(";");
+  const closeBtn = document.createElement("button");
+  closeBtn.textContent = "×";
+  closeBtn.style.cssText = [
+    "float:right",
+    "margin-left:12px",
+    "background:transparent",
+    "border:none",
+    "color:inherit",
+    "font-size:16px",
+    "line-height:1",
+    "cursor:pointer",
+    "padding:0",
+  ].join(";");
+  closeBtn.addEventListener("click", () => banner.remove());
+  banner.appendChild(closeBtn);
+  const text = document.createElement("span");
+  text.textContent = message;
+  banner.appendChild(text);
+  document.body.appendChild(banner);
+}
+
+// Auto-compile and run on page load (or load test262 deep-link first).
+(async () => {
+  const deepLinked = await loadDeepLinkFromUrl();
+  compileOnly();
+  if (!deepLinked) {
+    requestAnimationFrame(() => {
+      void runOnly();
+    });
+  }
+})();

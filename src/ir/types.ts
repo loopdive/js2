@@ -20,6 +20,8 @@ export interface WasmModule {
   stringPool: string[];
   /** Extern class metadata (for .d.ts and imports helper generation) */
   externClasses: ExternClassMeta[];
+  /** Node builtin module names detected from imports (#1044) */
+  nodeBuiltinModules: Set<string>;
   /** Map from import func name → string literal value (e.g. "__str_0" → "Hello") */
   stringLiteralValues: Map<string, string>;
   /** Set of function names that are async (for .d.ts generation) */
@@ -32,6 +34,8 @@ export interface WasmModule {
   dataSegments: { offset: number; bytes: Uint8Array }[];
   /** Whether the module has top-level executable statements (module init code) */
   hasTopLevelStatements?: boolean;
+  /** Wasm start function index — runs automatically on instantiation (#907) */
+  startFuncIdx?: number;
 }
 
 export type TypeDef = FuncTypeDef | StructTypeDef | ArrayTypeDef | RecGroupDef | SubTypeDef;
@@ -414,6 +418,7 @@ export function createEmptyModule(): WasmModule {
     tags: [],
     stringPool: [],
     externClasses: [],
+    nodeBuiltinModules: new Set(),
     stringLiteralValues: new Map(),
     asyncFunctions: new Set(),
     declaredFuncRefs: [],

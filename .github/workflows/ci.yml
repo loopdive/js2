@@ -9,11 +9,24 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: write
+
 jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      - name: Verify origin/main is merged into branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "::error::Branch is missing commits from origin/main. Run 'git merge origin/main' and push again."
+            exit 1
+          fi
+          echo "✓ origin/main is an ancestor of this branch"
 
       - uses: actions/setup-node@v6
         with:
@@ -35,7 +48,22 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: IR fallback gate (#1376)
+        run: pnpm run check:ir-fallbacks
+
+      - name: Fetch runs/index.json from baselines repo
+        if: github.event_name == 'push'
+        continue-on-error: true
+        run: |
+          # runs/index.json moved from LFS to js2wasm-baselines to avoid bandwidth exhaustion
+          git clone --depth=1 https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines 2>/dev/null || true
+          if [ -f /tmp/js2wasm-baselines/runs/index.json ]; then
+            mkdir -p benchmarks/results/runs
+            cp /tmp/js2wasm-baselines/runs/index.json benchmarks/results/runs/index.json
+          fi
+
       - name: Regenerate planning artifacts
+        if: github.event_name == 'push'
         run: |
           if [ -d plan ] || [ -d dashboard ]; then
             pnpm run build:planning-artifacts
@@ -43,15 +71,15 @@ jobs:
             echo "No private planning artifacts in this checkout; skipping regeneration."
           fi
 
-      - name: Check planning artifacts are committed
+      - name: Commit regenerated planning artifacts
+        if: github.event_name == 'push'
         run: |
           if [ -d plan ] || [ -d dashboard ]; then
-            git diff --exit-code -- \
-              plan/goals \
-              plan/issues/sprints \
-              dashboard/data.js \
-              dashboard/data \
-              public/graph-data.json
-          else
-            echo "No private planning artifacts in this checkout; skipping diff check."
+            if ! git diff --quiet -- plan/goals plan/issues/sprints dashboard/data.js dashboard/data public/graph-data.json; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add -f plan/goals plan/issues/sprints dashboard/data.js dashboard/data public/graph-data.json
+              git commit -m "chore(planning-artifacts): regen after merge [skip ci]"
+              git push
+            fi
           fi

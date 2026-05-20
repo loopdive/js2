@@ -13,17 +13,23 @@
  *   - compileTupleLiteral, compileArrayLiteral, compileArrayConstructorCall
  */
 
-import ts from "typescript";
+import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
-import { emitMethodParamDefaults, promoteAccessorCapturesToGlobals } from "./closures.js";
+import {
+  compileArrowAsCallback,
+  emitMethodParamDefaults,
+  emitObjectMethodAsClosure,
+  promoteAccessorCapturesToGlobals,
+} from "./closures.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { patchStructNewForAddedField } from "./expressions/late-imports.js";
+import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
-import { bodyUsesArguments } from "./function-body.js";
+import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import {
   cacheStringLiterals,
   destructureParamArray,
@@ -185,11 +191,241 @@ function compileObjectLiteralAsExternref(
   return { kind: "externref" };
 }
 
+/**
+ * (#1239) Compile an object literal whose property list contains at least
+ * one `GetAccessorDeclaration` / `SetAccessorDeclaration`.
+ *
+ * Routes through the JS host's plain-object machinery
+ * (`__new_plain_object` + `__extern_set` + `__defineProperty_accessor`)
+ * instead of the wasmGC struct path, so V8 sees real accessor descriptors
+ * and `Get(o, key)` / `Set(o, key, v)` traps invoke the user-defined
+ * getter/setter bodies. Tags the receiving variable in
+ * `ctx.externrefAccessorVars` so subsequent `resolveStructNameForExpr`
+ * lookups bail out to the externref path everywhere.
+ *
+ * The wasmGC struct fallback (the pre-fix behavior) emitted a typed field
+ * for each accessor key and silently dropped the body — a `Get(o, "x")`
+ * via the externref bridge then read the field's default value (`0` /
+ * `null` / `undefined`) instead of running the getter.
+ */
+function compileObjectLiteralWithAccessors(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ObjectLiteralExpression,
+): ValType | null {
+  // 1. Tag the receiving variable BEFORE recursing into initializers — so
+  //    nested literals (e.g. spread sources) don't see a stale tag.
+  let parent: ts.Node | undefined = expr.parent;
+  while (parent && (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent))) {
+    parent = parent.parent;
+  }
+  if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+    ctx.externrefAccessorVars.add(parent.name.text);
+  }
+
+  // 2. Create the plain JS host object.
+  const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (newObjIdx === undefined) return null;
+  fctx.body.push({ op: "call", funcIdx: newObjIdx });
+  const objLocal = allocLocal(fctx, `__objlit_acc_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: objLocal });
+
+  // Pre-pass: pair `get x()` and `set x(v)` declarations on the same name
+  // into a single `__defineProperty_accessor` call so the runtime descriptor
+  // carries both slots.
+  type AccessorPair = {
+    getter?: ts.GetAccessorDeclaration;
+    setter?: ts.SetAccessorDeclaration;
+    firstIdx: number; // emit position (source order of the FIRST occurrence)
+    name: string;
+  };
+  const accessorPairs = new Map<string, AccessorPair>();
+  for (let i = 0; i < expr.properties.length; i++) {
+    const p = expr.properties[i]!;
+    if (!ts.isGetAccessorDeclaration(p) && !ts.isSetAccessorDeclaration(p)) continue;
+    if (!ts.isIdentifier(p.name) && !ts.isStringLiteral(p.name)) continue; // computed: out of scope
+    const propName = (p.name as ts.Identifier | ts.StringLiteral).text;
+    let pair = accessorPairs.get(propName);
+    if (!pair) {
+      pair = { firstIdx: i, name: propName };
+      accessorPairs.set(propName, pair);
+    }
+    if (ts.isGetAccessorDeclaration(p)) pair.getter = p;
+    else pair.setter = p;
+  }
+
+  // Helper to emit __extern_set(obj, key, value) — both the value and the
+  // string key sit on the wasm stack first.
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  const accIdx = ensureLateImport(
+    ctx,
+    "__defineProperty_accessor",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (setIdx === undefined || accIdx === undefined) return null;
+
+  // 3. Walk properties in source order. Value/method properties → __extern_set.
+  //    Accessor declarations → emit __defineProperty_accessor at the FIRST
+  //    occurrence of each name (using the merged getter/setter pair).
+  const emittedAccessors = new Set<string>();
+  for (let i = 0; i < expr.properties.length; i++) {
+    const prop = expr.properties[i]!;
+    if (ts.isSpreadAssignment(prop)) {
+      // Compile spread source and call __object_assign(target, [source])
+      const srcType = compileExpression(ctx, fctx, prop.expression);
+      if (srcType) {
+        if (srcType.kind !== "externref") {
+          coerceType(ctx, fctx, srcType, { kind: "externref" });
+        }
+        const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+        const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+        const assignIdx = ensureLateImport(
+          ctx,
+          "__object_assign",
+          [{ kind: "externref" }, { kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (arrNewIdx !== undefined && arrPushIdx !== undefined && assignIdx !== undefined) {
+          const srcLocal = allocLocal(fctx, `__spread_src_${fctx.locals.length}`, { kind: "externref" });
+          fctx.body.push({ op: "local.set", index: srcLocal });
+          fctx.body.push({ op: "call", funcIdx: arrNewIdx });
+          const arrLocal = allocLocal(fctx, `__spread_arr_${fctx.locals.length}`, { kind: "externref" });
+          fctx.body.push({ op: "local.set", index: arrLocal });
+          fctx.body.push({ op: "local.get", index: arrLocal });
+          fctx.body.push({ op: "local.get", index: srcLocal });
+          fctx.body.push({ op: "call", funcIdx: arrPushIdx });
+          fctx.body.push({ op: "local.get", index: objLocal });
+          fctx.body.push({ op: "local.get", index: arrLocal });
+          fctx.body.push({ op: "call", funcIdx: assignIdx });
+          fctx.body.push({ op: "local.set", index: objLocal });
+        }
+      }
+    } else if (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) {
+      // __extern_set(obj, key, value)
+      let propName: string | undefined;
+      if (ts.isIdentifier(prop.name)) propName = prop.name.text;
+      else if (ts.isStringLiteral(prop.name)) propName = prop.name.text;
+      else if (ts.isNumericLiteral(prop.name)) propName = prop.name.text;
+      // Computed property names not handled here — fall through silently.
+      if (propName === undefined) continue;
+      addStringConstantGlobal(ctx, propName);
+      const keyGlobal = ctx.stringGlobalMap.get(propName);
+      if (keyGlobal === undefined) continue;
+      fctx.body.push({ op: "local.get", index: objLocal });
+      fctx.body.push({ op: "global.get", index: keyGlobal });
+      // Compile value and coerce to externref.
+      let valType: ValType | null;
+      if (ts.isShorthandPropertyAssignment(prop)) {
+        valType = compileExpression(ctx, fctx, prop.name);
+      } else {
+        valType = compileExpression(ctx, fctx, prop.initializer);
+      }
+      if (!valType) {
+        // Push undefined as a fallback so the stack stays balanced.
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (valType.kind !== "externref") {
+        coerceType(ctx, fctx, valType, { kind: "externref" });
+      }
+      fctx.body.push({ op: "call", funcIdx: setIdx });
+    } else if (ts.isMethodDeclaration(prop)) {
+      // Compile method as a callback closure, then __extern_set
+      let methodName: string | undefined;
+      if (ts.isIdentifier(prop.name)) methodName = prop.name.text;
+      else if (ts.isStringLiteral(prop.name)) methodName = prop.name.text;
+      if (methodName === undefined) continue;
+      addStringConstantGlobal(ctx, methodName);
+      const keyGlobal = ctx.stringGlobalMap.get(methodName);
+      if (keyGlobal === undefined) continue;
+      fctx.body.push({ op: "local.get", index: objLocal });
+      fctx.body.push({ op: "global.get", index: keyGlobal });
+      const ok = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+      if (!ok) {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      fctx.body.push({ op: "call", funcIdx: setIdx });
+    } else if (ts.isGetAccessorDeclaration(prop) || ts.isSetAccessorDeclaration(prop)) {
+      // Emit one __defineProperty_accessor call per pair, at the position
+      // of the FIRST get/set declaration on this name. Subsequent siblings
+      // for the same name are skipped (their info was merged into the pair
+      // during the pre-pass).
+      if (!ts.isIdentifier(prop.name) && !ts.isStringLiteral(prop.name)) continue;
+      const propName = (prop.name as ts.Identifier | ts.StringLiteral).text;
+      const pair = accessorPairs.get(propName);
+      if (!pair) continue;
+      if (emittedAccessors.has(propName)) continue;
+      if (pair.firstIdx !== i) continue; // wait for the actual first slot
+      emittedAccessors.add(propName);
+
+      addStringConstantGlobal(ctx, propName);
+      const keyGlobal = ctx.stringGlobalMap.get(propName);
+      if (keyGlobal === undefined) continue;
+
+      // Stack: [obj, key, getterCb | null, setterCb | null, flags]
+      fctx.body.push({ op: "local.get", index: objLocal });
+      fctx.body.push({ op: "global.get", index: keyGlobal });
+
+      // Getter callback (or ref.null.extern when only setter is defined)
+      if (pair.getter) {
+        const ok = compileArrowAsCallback(ctx, fctx, pair.getter as unknown as ts.FunctionExpression, {
+          needsThis: true,
+        });
+        if (!ok) fctx.body.push({ op: "ref.null.extern" });
+      } else {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+
+      // Setter callback
+      if (pair.setter) {
+        const ok = compileArrowAsCallback(ctx, fctx, pair.setter as unknown as ts.FunctionExpression, {
+          needsThis: true,
+        });
+        if (!ok) fctx.body.push({ op: "ref.null.extern" });
+      } else {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+
+      // Flags: enumerable=true, configurable=true (writable is N/A for
+      // accessor descriptors; matches `computeRuntimeFlags(undefined,
+      // true, true, false)` from object-ops.ts).
+      // Bits: enumerable_specified (1<<4) | enumerable_value (1<<1)
+      //     | configurable_specified (1<<5) | configurable_value (1<<2)
+      const flags = (1 << 4) | (1 << 1) | (1 << 5) | (1 << 2);
+      fctx.body.push({ op: "f64.const", value: flags });
+
+      fctx.body.push({ op: "call", funcIdx: accIdx });
+      fctx.body.push({ op: "drop" }); // returns the same externref
+    }
+  }
+
+  fctx.body.push({ op: "local.get", index: objLocal });
+  return { kind: "externref" };
+}
+
 export function compileObjectLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
 ): ValType | null {
+  // (#1239) If the literal carries any get/set accessor declarations,
+  // route to the JS-host plain-object path so the runtime sees real
+  // accessor descriptors. Must run BEFORE any contextual-type / struct
+  // resolution so the wasmGC struct path can't intercept.
+  if (
+    expr.properties.length > 0 &&
+    expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p))
+  ) {
+    return compileObjectLiteralWithAccessors(ctx, fctx, expr);
+  }
+
   // If this empty object literal is the initializer of a variable with widened
   // properties (from pre-pass), register the struct with those extra fields and
   // compile as a struct.new with default values for the widened fields.
@@ -587,12 +823,17 @@ export function compileWidenedEmptyObject(
   widenedProps: { name: string; type: ValType }[],
 ): ValType | null {
   // The struct was already registered during the pre-pass (collectEmptyObjectWidening).
-  // Look it up via the anonTypeMap.
+  // Look it up via the anonTypeMap, or the widenedVarStructMap (which holds the pre-pass
+  // registration even for `any`-typed vars that must skip anonTypeMap to avoid polluting
+  // the singleton `any` type object).
   const type = ctx.checker.getTypeAtLocation(expr);
   let typeName = ctx.anonTypeMap.get(type);
   if (!typeName && ts.isVariableDeclaration(expr.parent) && ts.isIdentifier(expr.parent.name)) {
     const varType = ctx.checker.getTypeAtLocation(expr.parent.name);
     typeName = ctx.anonTypeMap.get(varType);
+  }
+  if (!typeName && ts.isVariableDeclaration(expr.parent) && ts.isIdentifier(expr.parent.name)) {
+    typeName = ctx.widenedVarStructMap.get(expr.parent.name.text);
   }
   if (!typeName) {
     // Fallback: the pre-pass should have registered it but didn't match type identity.
@@ -618,9 +859,17 @@ export function compileWidenedEmptyObject(
       ctx.structMap.set(typeName, typeIdx);
       ctx.typeIdxToStructName.set(typeIdx, typeName);
       ctx.structFields.set(typeName, fields);
-      ctx.anonTypeMap.set(type, typeName);
+      // Skip anonTypeMap registration for `any` — it's a singleton type object shared by
+      // all any-typed vars, so registering it would pollute every any-typed var's lookup.
+      if (!(type.flags & ts.TypeFlags.Any)) {
+        ctx.anonTypeMap.set(type, typeName);
+      }
       const varType = ctx.checker.getTypeAtLocation(expr.parent.name);
-      ctx.anonTypeMap.set(varType, typeName);
+      if (!(varType.flags & ts.TypeFlags.Any)) {
+        ctx.anonTypeMap.set(varType, typeName);
+      }
+      // Record via widenedVarStructMap so later lookups still find it for any-typed vars.
+      ctx.widenedVarStructMap.set(expr.parent.name.text, typeName);
     }
   }
   if (!typeName) return null;
@@ -694,6 +943,62 @@ export function compileObjectLiteralForStruct(
     const shorthandProp = !prop
       ? expr.properties.find((p) => ts.isShorthandPropertyAssignment(p) && p.name.text === field.name)
       : undefined;
+    // #1118: Method shorthand `{ m() {…} }` — `resolvePropertyNameText`
+    // returns undefined for MethodDeclaration, so the search above misses
+    // it. Look it up explicitly by name. The pre-pass in
+    // `ensureStructForType` already registered the method's funcMap entry;
+    // emit a closure-struct ref to it and convert to the field type.
+    // Without this, the field defaults to `undefined` and dynamic dispatch
+    // through `any` (the test262 wrapper pattern) returns null.
+    const methodProp =
+      !prop && !shorthandProp
+        ? expr.properties.find(
+            (p): p is ts.MethodDeclaration =>
+              ts.isMethodDeclaration(p) &&
+              !!p.name &&
+              ((ts.isIdentifier(p.name) && p.name.text === field.name) ||
+                (ts.isStringLiteral(p.name) && p.name.text === field.name) ||
+                (ts.isNumericLiteral(p.name) && p.name.text === field.name)),
+          )
+        : undefined;
+    if (methodProp) {
+      const methodFullName = `${typeName}_${field.name}`;
+      const methodFuncIdx = ctx.funcMap.get(methodFullName);
+      if (methodFuncIdx !== undefined) {
+        const closureType = emitObjectMethodAsClosure(ctx, fctx, methodFullName, methodFuncIdx, structTypeIdx);
+        if (closureType) {
+          // Coerce closure-struct ref → field type. The common case is
+          // externref (un-typed obj literal), which needs extern.convert_any.
+          // For a concretely-typed struct field of the same closure type,
+          // no coercion is needed.
+          if (field.type.kind === "externref") {
+            fctx.body.push({ op: "extern.convert_any" } as Instr);
+          } else if (field.type.kind === "eqref") {
+            // ref → eqref: GC ref subtype, no instruction needed (implicit).
+          } else if (
+            (field.type.kind === "ref" || field.type.kind === "ref_null") &&
+            (field.type as { typeIdx: number }).typeIdx !== (closureType as { typeIdx: number }).typeIdx
+          ) {
+            // Mismatched ref types — fall back to the default branch by
+            // dropping our closure and re-emitting undefined below. This
+            // shouldn't happen for well-formed fields but keeps codegen
+            // sound under TypeChecker quirks.
+            fctx.body.push({ op: "drop" } as Instr);
+            fctx.body.push({ op: "ref.null", typeIdx: (field.type as { typeIdx: number }).typeIdx });
+          }
+          continue; // field handled
+        }
+      }
+      // Fall through to the default-undefined branch if the closure
+      // emission failed (e.g. unsupported signature). Better to leave
+      // the field undefined than to leave the stack unbalanced.
+      if (field.type.kind === "externref") emitUndefined(ctx, fctx);
+      else if (field.type.kind === "eqref") fctx.body.push({ op: "ref.null.eq" });
+      else if (field.type.kind === "ref" || field.type.kind === "ref_null")
+        fctx.body.push({ op: "ref.null", typeIdx: field.type.typeIdx });
+      else fctx.body.push({ op: "i32.const", value: 0 });
+      continue;
+    }
     if (prop && ts.isPropertyAssignment(prop)) {
       // Track closure types for valueOf/toString fields
       const bodyLenBefore = fctx.body.length;
@@ -732,11 +1037,13 @@ export function compileObjectLiteralForStruct(
         // Default value for missing fields: use "undefined" sentinels so
         // destructuring default-value checks can detect missing properties.
         // f64 uses sNaN sentinel 0x7FF00000DEADC0DE (matches emitDefaultValueCheck #866).
+        // externref uses JS undefined (via __get_undefined) not ref.null.extern,
+        // because JS destructuring defaults fire only on `=== undefined`, not null.
         if (field.type.kind === "f64") {
           fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
           fctx.body.push({ op: "f64.reinterpret_i64" });
         } else if (field.type.kind === "externref") {
-          fctx.body.push({ op: "ref.null.extern" });
+          emitUndefined(ctx, fctx);
         } else if (field.type.kind === "eqref") {
           fctx.body.push({ op: "ref.null.eq" });
         } else if (field.type.kind === "ref" || field.type.kind === "ref_null") {
@@ -1222,14 +1529,18 @@ export function compileTupleLiteral(
       }
     } else {
       // Missing element — push sentinel value that destructuring recognizes as
-      // "absent": sNaN sentinel for f64, ref.null for refs/externref, 0 for i32 (#852, #866).
+      // "absent": sNaN sentinel for f64, JS undefined for externref, ref.null
+      // for refs, 0 for i32. For externref we emit `call $__get_undefined` so
+      // destructuring defaults (which fire on `=== undefined`, not `null`)
+      // trigger correctly when a tuple-typed arg is shorter than the pattern
+      // (e.g. `([x = d]) => {}` called with `[]`) — per §8.6.2 (#852, #866).
       if (expectedType.kind === "f64") {
         fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
         fctx.body.push({ op: "f64.reinterpret_i64" });
       } else if (expectedType.kind === "i32") {
         fctx.body.push({ op: "i32.const", value: 0 });
       } else if (expectedType.kind === "externref") {
-        fctx.body.push({ op: "ref.null.extern" });
+        emitUndefined(ctx, fctx);
       } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
         const typeIdx = (expectedType as { typeIdx: number }).typeIdx;
         fctx.body.push({ op: "ref.null", typeIdx });
@@ -1241,6 +1552,314 @@ export function compileTupleLiteral(
 
   fctx.body.push({ op: "struct.new", typeIdx: tupleIdx });
   return { kind: "ref", typeIdx: tupleIdx };
+}
+
+/**
+ * Detect a counted push loop pattern after an empty array literal (#1001):
+ *   const arr: number[] = [];
+ *   for (let i = 0; i < N; i++) arr.push(expr);
+ *
+ * Returns N (the trip count) if the pattern is statically provable, 0 otherwise.
+ * This allows preallocating the backing WasmGC array to eliminate growth overhead.
+ */
+function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
+  // Walk up: ArrayLiteralExpression → VariableDeclaration → VariableDeclarationList → VariableStatement → Block/SourceFile
+  const varDecl = expr.parent;
+  if (!varDecl || !ts.isVariableDeclaration(varDecl) || !ts.isIdentifier(varDecl.name)) return 0;
+  const arrName = varDecl.name.text;
+
+  const declList = varDecl.parent;
+  if (!declList || !ts.isVariableDeclarationList(declList)) return 0;
+  const varStmt = declList.parent;
+  if (!varStmt || !ts.isVariableStatement(varStmt)) return 0;
+
+  const block = varStmt.parent;
+  if (!block) return 0;
+  let stmts: ts.NodeArray<ts.Statement>;
+  if (ts.isBlock(block)) stmts = block.statements;
+  else if (ts.isSourceFile(block)) stmts = block.statements;
+  else return 0;
+
+  // Find the variable statement's index and look at the next statement
+  const idx = stmts.indexOf(varStmt);
+  if (idx < 0 || idx + 1 >= stmts.length) return 0;
+  const nextStmt = stmts[idx + 1]!;
+  if (!ts.isForStatement(nextStmt)) return 0;
+
+  // Check initializer: `let i = 0` or `var i = 0`
+  const init = nextStmt.initializer;
+  if (!init || !ts.isVariableDeclarationList(init)) return 0;
+  if (init.declarations.length !== 1) return 0;
+  const loopDecl = init.declarations[0]!;
+  if (!ts.isIdentifier(loopDecl.name)) return 0;
+  const loopVar = loopDecl.name.text;
+  if (!loopDecl.initializer || !ts.isNumericLiteral(loopDecl.initializer) || loopDecl.initializer.text !== "0")
+    return 0;
+
+  // Check condition: `i < N` where N is a numeric literal
+  const cond = nextStmt.condition;
+  if (!cond || !ts.isBinaryExpression(cond)) return 0;
+  if (cond.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return 0;
+  if (!ts.isIdentifier(cond.left) || cond.left.text !== loopVar) return 0;
+  if (!ts.isNumericLiteral(cond.right)) return 0;
+  const tripCount = Number(cond.right.text);
+  if (!Number.isFinite(tripCount) || tripCount <= 0 || tripCount > 1_000_000) return 0;
+
+  // Check incrementor: `i++` or `i += 1`
+  const inc = nextStmt.incrementor;
+  if (!inc) return 0;
+  if (ts.isPostfixUnaryExpression(inc)) {
+    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return 0;
+    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return 0;
+  } else if (ts.isPrefixUnaryExpression(inc)) {
+    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return 0;
+    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return 0;
+  } else {
+    return 0;
+  }
+
+  // Check body: must contain only `arr.push(expr)` (as expression statement)
+  const body = nextStmt.statement;
+  let bodyStmt: ts.Statement;
+  if (ts.isBlock(body)) {
+    if (body.statements.length !== 1) return 0;
+    bodyStmt = body.statements[0]!;
+  } else {
+    bodyStmt = body;
+  }
+  if (!ts.isExpressionStatement(bodyStmt)) return 0;
+  const callExpr = bodyStmt.expression;
+  if (!ts.isCallExpression(callExpr)) return 0;
+  if (!ts.isPropertyAccessExpression(callExpr.expression)) return 0;
+  if (callExpr.expression.name.text !== "push") return 0;
+  if (!ts.isIdentifier(callExpr.expression.expression)) return 0;
+  if (callExpr.expression.expression.text !== arrName) return 0;
+  if (callExpr.arguments.length !== 1) return 0;
+
+  return tripCount;
+}
+
+/**
+ * Detect a counted index-assign loop pattern after an empty array literal (#1198):
+ *   const arr = [];
+ *   for (let i = 0; i < N; i++) arr[i] = expr;
+ *
+ * Where N is either a numeric literal or an identifier (e.g., function parameter).
+ * Returns:
+ *   - { kind: "literal", count: N } — N is a numeric literal; pre-allocate to that size.
+ *   - { kind: "expr", node }       — N is an identifier; emit code to compile it as i32.
+ *   - null                         — pattern doesn't match; fall through to grow-on-write.
+ *
+ * Why bother distinguishing from `detectCountedPushLoopSize`? Because the index-assign
+ * pattern is the canonical array-fill shape (V8 detects and pre-sizes too), and the
+ * common form uses a parameter `n` rather than a literal — so we need the expr-case to
+ * be useful in practice (e.g. `function f(n) { const a = []; for (let i = 0; i < n; i++) a[i] = ...; }`).
+ *
+ * The body must be **conservatively non-throwing** — pre-sizing means `a.length === N`
+ * even if the body throws partway through, whereas grow-on-write would leave `a.length`
+ * at the partial fill point. Acceptance criterion #3 in the issue explicitly requires
+ * we restrict the pattern to bodies that don't observably throw.
+ *
+ * Allow-list of body RHS expression shapes (definitely don't throw):
+ *   - NumericLiteral, BigIntLiteral, true/false/null, StringLiteral
+ *   - Identifier (read of a declared local; ReferenceError already excluded by TS)
+ *   - BinaryExpression with arithmetic / bitwise / comparison / logical operators
+ *   - PrefixUnaryExpression with +, -, ~, !
+ *   - ParenthesizedExpression
+ *   - ConditionalExpression (ternary)
+ *
+ * Anything else — calls, property access, element access, new, post-increment, throw,
+ * await, yield — defeats the optimisation. The `compileExpression` path will still
+ * handle the `a[i] = ...` correctly with grow-on-write semantics; we just don't pre-size.
+ */
+type IndexAssignPrealloc = { kind: "literal"; count: number } | { kind: "expr"; node: ts.Expression };
+
+function isNonThrowingFillRhs(node: ts.Expression): boolean {
+  // Strip parentheses
+  if (ts.isParenthesizedExpression(node)) return isNonThrowingFillRhs(node.expression);
+
+  if (ts.isNumericLiteral(node)) return true;
+  if (ts.isBigIntLiteral(node)) return true;
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return true;
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (node.kind === ts.SyntaxKind.FalseKeyword) return true;
+  if (node.kind === ts.SyntaxKind.NullKeyword) return true;
+
+  if (ts.isIdentifier(node)) return true;
+
+  if (ts.isBinaryExpression(node)) {
+    const op = node.operatorToken.kind;
+    // Forbid assignment-flavoured operators (=, +=, ...) — these would mutate state.
+    if (
+      op === ts.SyntaxKind.EqualsToken ||
+      op === ts.SyntaxKind.PlusEqualsToken ||
+      op === ts.SyntaxKind.MinusEqualsToken ||
+      op === ts.SyntaxKind.AsteriskEqualsToken ||
+      op === ts.SyntaxKind.AsteriskAsteriskEqualsToken ||
+      op === ts.SyntaxKind.SlashEqualsToken ||
+      op === ts.SyntaxKind.PercentEqualsToken ||
+      op === ts.SyntaxKind.LessThanLessThanEqualsToken ||
+      op === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken ||
+      op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken ||
+      op === ts.SyntaxKind.AmpersandEqualsToken ||
+      op === ts.SyntaxKind.BarEqualsToken ||
+      op === ts.SyntaxKind.CaretEqualsToken ||
+      op === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+      op === ts.SyntaxKind.BarBarEqualsToken ||
+      op === ts.SyntaxKind.QuestionQuestionEqualsToken ||
+      op === ts.SyntaxKind.CommaToken
+    ) {
+      return false;
+    }
+    // `in` and `instanceof` can throw TypeError if RHS is wrong shape — reject.
+    if (op === ts.SyntaxKind.InKeyword || op === ts.SyntaxKind.InstanceOfKeyword) return false;
+    return isNonThrowingFillRhs(node.left) && isNonThrowingFillRhs(node.right);
+  }
+
+  if (ts.isPrefixUnaryExpression(node)) {
+    const op = node.operator;
+    if (
+      op === ts.SyntaxKind.PlusToken ||
+      op === ts.SyntaxKind.MinusToken ||
+      op === ts.SyntaxKind.TildeToken ||
+      op === ts.SyntaxKind.ExclamationToken
+    ) {
+      return isNonThrowingFillRhs(node.operand);
+    }
+    // ++/-- mutate state — reject.
+    return false;
+  }
+
+  if (ts.isConditionalExpression(node)) {
+    return (
+      isNonThrowingFillRhs(node.condition) &&
+      isNonThrowingFillRhs(node.whenTrue) &&
+      isNonThrowingFillRhs(node.whenFalse)
+    );
+  }
+
+  // Default: reject (calls, property access, element access, new, etc.).
+  return false;
+}
+
+function detectCountedIndexAssignSize(expr: ts.ArrayLiteralExpression): IndexAssignPrealloc | null {
+  // Walk up: ArrayLiteralExpression → VariableDeclaration → VariableDeclarationList → VariableStatement → Block/SourceFile
+  const varDecl = expr.parent;
+  if (!varDecl || !ts.isVariableDeclaration(varDecl) || !ts.isIdentifier(varDecl.name)) return null;
+  const arrName = varDecl.name.text;
+
+  const declList = varDecl.parent;
+  if (!declList || !ts.isVariableDeclarationList(declList)) return null;
+  const varStmt = declList.parent;
+  if (!varStmt || !ts.isVariableStatement(varStmt)) return null;
+
+  const block = varStmt.parent;
+  if (!block) return null;
+  let stmts: ts.NodeArray<ts.Statement>;
+  if (ts.isBlock(block)) stmts = block.statements;
+  else if (ts.isSourceFile(block)) stmts = block.statements;
+  else return null;
+
+  const idx = stmts.indexOf(varStmt);
+  if (idx < 0 || idx + 1 >= stmts.length) return null;
+  const nextStmt = stmts[idx + 1]!;
+  if (!ts.isForStatement(nextStmt)) return null;
+
+  // Initializer: `let i = 0` or `var i = 0`
+  const init = nextStmt.initializer;
+  if (!init || !ts.isVariableDeclarationList(init)) return null;
+  if (init.declarations.length !== 1) return null;
+  const loopDecl = init.declarations[0]!;
+  if (!ts.isIdentifier(loopDecl.name)) return null;
+  const loopVar = loopDecl.name.text;
+  if (!loopDecl.initializer || !ts.isNumericLiteral(loopDecl.initializer) || loopDecl.initializer.text !== "0") {
+    return null;
+  }
+
+  // Condition: `i < N` where N is a NumericLiteral or Identifier
+  const cond = nextStmt.condition;
+  if (!cond || !ts.isBinaryExpression(cond)) return null;
+  if (cond.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return null;
+  if (!ts.isIdentifier(cond.left) || cond.left.text !== loopVar) return null;
+
+  let bound: IndexAssignPrealloc;
+  if (ts.isNumericLiteral(cond.right)) {
+    const tripCount = Number(cond.right.text);
+    if (!Number.isFinite(tripCount) || tripCount <= 0 || tripCount > 100_000_000) return null;
+    bound = { kind: "literal", count: tripCount };
+  } else if (ts.isIdentifier(cond.right)) {
+    // Bound is an identifier (e.g. function parameter `n`). The identifier must NOT
+    // alias the loop variable, the array variable, or be reassigned in the loop body
+    // (we check the body further down).
+    if (cond.right.text === loopVar || cond.right.text === arrName) return null;
+    bound = { kind: "expr", node: cond.right };
+  } else {
+    return null;
+  }
+
+  // Incrementor: `i++` or `++i` or `i += 1`
+  const inc = nextStmt.incrementor;
+  if (!inc) return null;
+  if (ts.isPostfixUnaryExpression(inc) || ts.isPrefixUnaryExpression(inc)) {
+    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return null;
+    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return null;
+  } else if (ts.isBinaryExpression(inc)) {
+    if (inc.operatorToken.kind !== ts.SyntaxKind.PlusEqualsToken) return null;
+    if (!ts.isIdentifier(inc.left) || inc.left.text !== loopVar) return null;
+    if (!ts.isNumericLiteral(inc.right) || inc.right.text !== "1") return null;
+  } else {
+    return null;
+  }
+
+  // Body: must be a single ExpressionStatement of shape `arr[loopVar] = <rhs>`
+  // where rhs is conservatively non-throwing.
+  const body = nextStmt.statement;
+  let bodyStmt: ts.Statement;
+  if (ts.isBlock(body)) {
+    if (body.statements.length !== 1) return null;
+    bodyStmt = body.statements[0]!;
+  } else {
+    bodyStmt = body;
+  }
+  if (!ts.isExpressionStatement(bodyStmt)) return null;
+  const assignExpr = bodyStmt.expression;
+  if (!ts.isBinaryExpression(assignExpr)) return null;
+  if (assignExpr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null;
+
+  // Left: arr[loopVar]
+  const left = assignExpr.left;
+  if (!ts.isElementAccessExpression(left)) return null;
+  if (!ts.isIdentifier(left.expression) || left.expression.text !== arrName) return null;
+  if (!ts.isIdentifier(left.argumentExpression) || left.argumentExpression.text !== loopVar) return null;
+
+  // Right: must be conservatively non-throwing.
+  if (!isNonThrowingFillRhs(assignExpr.right)) return null;
+
+  // Final safety check: the RHS must NOT reference the array (would be a self-read,
+  // and grow-on-write semantics would behave differently than pre-sized + filled).
+  // Also reject if the RHS reassigns the bound identifier (only relevant for expr-case).
+  let rhsTouchesArr = false;
+  let rhsTouchesBound = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      if (node.text === arrName) rhsTouchesArr = true;
+      if (bound.kind === "expr" && (bound.node as ts.Identifier).text === node.text) {
+        // The bound identifier appearing in RHS as a *read* is fine; we already verified
+        // the RHS is non-throwing and pure. The risk is only if it's *mutated* — but our
+        // allow-list (numeric arithmetic on identifiers, ternaries, etc.) doesn't include
+        // assignment forms, so no mutation can occur. Mark it so we know the RHS depends
+        // on the bound; doesn't disqualify, just observability.
+        rhsTouchesBound = true;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(assignExpr.right);
+  if (rhsTouchesArr) return null;
+  // rhsTouchesBound is informational; intentionally not used to reject.
+  void rhsTouchesBound;
+
+  return bound;
 }
 
 export function compileArrayLiteral(
@@ -1297,6 +1916,13 @@ export function compileArrayLiteral(
   }
 
   if (expr.elements.length === 0) {
+    // Detect counted push loop pattern and preallocate (#1001).
+    const pushPrealloc = detectCountedPushLoopSize(expr);
+    // Detect counted index-assign loop pattern and preallocate (#1198). Only consult
+    // this if the push detector didn't already match — the patterns are mutually
+    // exclusive at the syntactic level (one uses .push, the other uses [i] = ...).
+    const idxPrealloc = pushPrealloc > 0 ? null : detectCountedIndexAssignSize(expr);
+
     // Empty array — try to determine element type from contextual type (e.g. number[])
     let emptyElemKind = "externref";
     const ctxType = ctx.checker.getContextualType(expr) ?? ctx.checker.getTypeAtLocation(expr);
@@ -1313,6 +1939,16 @@ export function compileArrayLiteral(
         }
       }
     }
+    // #1197: caller (variable-declaration codegen) may have flagged this `[]`
+    // initializer as belonging to an i32-specialized number[] local. Override
+    // the element kind from f64 to i32. The contextual TS type is still
+    // `number[]`, so without this hook codegen would default to __vec_f64.
+    if (
+      emptyElemKind === "f64" &&
+      (ctx as unknown as { _i32ElemArrayOverride?: boolean })._i32ElemArrayOverride === true
+    ) {
+      emptyElemKind = "i32";
+    }
     const vecTypeIdx = getOrRegisterVecType(ctx, emptyElemKind);
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     if (arrTypeIdx < 0) {
@@ -1320,7 +1956,31 @@ export function compileArrayLiteral(
       return null;
     }
     fctx.body.push({ op: "i32.const", value: 0 }); // length field (field 0)
-    fctx.body.push({ op: "i32.const", value: 0 }); // size for array.new_default
+    // Capacity for the backing WasmGC array. Three cases:
+    //   (1) Push pattern matched (#1001): emit literal trip count.
+    //   (2) Index-assign pattern matched (#1198) with literal N: emit i32.const N.
+    //   (3) Index-assign pattern matched (#1198) with identifier N: compile N as i32.
+    //   (4) No pattern: emit i32.const 0 (grow-on-write).
+    if (pushPrealloc > 0) {
+      fctx.body.push({ op: "i32.const", value: pushPrealloc });
+    } else if (idxPrealloc) {
+      if (idxPrealloc.kind === "literal") {
+        fctx.body.push({ op: "i32.const", value: idxPrealloc.count });
+      } else {
+        // Compile the bound expression as i32. Element-set codegen will still
+        // grow if the user index ever exceeds N (defensive: shouldn't happen
+        // in a correctly-matched pattern but the safety net costs nothing).
+        const sizeResult = compileExpression(ctx, fctx, idxPrealloc.node, { kind: "i32" });
+        if (!sizeResult) {
+          // Fallback: if compilation of the bound expression failed, emit 0
+          // and rely on grow-on-write. This shouldn't happen for an Identifier
+          // (the only kind we accept), but keep the fallback for safety.
+          fctx.body.push({ op: "i32.const", value: 0 });
+        }
+      }
+    } else {
+      fctx.body.push({ op: "i32.const", value: 0 });
+    }
     fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx }); // data field (field 1)
     fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx }); // wrap in vec struct
     return { kind: "ref_null", typeIdx: vecTypeIdx };
@@ -1522,6 +2182,14 @@ export function compileArrayConstructorCall(
   } else {
     // Default to f64 for untyped arrays
     elemWasm = { kind: "f64" };
+  }
+
+  // #1197: i32-specialized number[] override — see compileArrayLiteral above.
+  if (
+    elemWasm.kind === "f64" &&
+    (ctx as unknown as { _i32ElemArrayOverride?: boolean })._i32ElemArrayOverride === true
+  ) {
+    elemWasm = { kind: "i32" };
   }
 
   const elemKind =

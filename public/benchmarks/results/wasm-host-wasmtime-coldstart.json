@@ -1,3 +1,20 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:28321b4c92bd68775b87cfca5b9f9b90fa46296ee31da4a324f5167f3c336fa4
-size 323
+[
+  {
+    "name": "AOT compiled",
+    "jsUs": 20753.991795097805,
+    "value": 13696.16732207001,
+    "label": "13.7 ms"
+  },
+  {
+    "name": "interpreter",
+    "jsUs": 20753.991795097805,
+    "value": 24718.388917842844,
+    "label": "24.7 ms"
+  },
+  {
+    "name": "engine",
+    "jsUs": 20753.991795097805,
+    "value": 24662.156310869697,
+    "label": "24.7 ms"
+  }
+]

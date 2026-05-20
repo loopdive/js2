@@ -1,3 +1,137 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:11646b05cd42415842008401c586d1f7b5bc0d6490950b4cb1af4b8d0073d5e0
-size 1700
+[
+  {
+    "edition": "≤ ES3",
+    "pass": 220,
+    "fail": 54,
+    "ce": 0,
+    "skip": 0,
+    "total": 274,
+    "pct": 80
+  },
+  {
+    "edition": "ES5",
+    "pass": 8654,
+    "fail": 4070,
+    "ce": 360,
+    "skip": 0,
+    "total": 13084,
+    "pct": 66
+  },
+  {
+    "edition": "ES2015",
+    "pass": 9691,
+    "fail": 5238,
+    "ce": 486,
+    "skip": 0,
+    "total": 15415,
+    "pct": 63
+  },
+  {
+    "edition": "ES2016",
+    "pass": 87,
+    "fail": 34,
+    "ce": 2,
+    "skip": 0,
+    "total": 123,
+    "pct": 71
+  },
+  {
+    "edition": "ES2017",
+    "pass": 383,
+    "fail": 237,
+    "ce": 47,
+    "skip": 0,
+    "total": 667,
+    "pct": 57
+  },
+  {
+    "edition": "ES2018",
+    "pass": 3084,
+    "fail": 1102,
+    "ce": 65,
+    "skip": 0,
+    "total": 4251,
+    "pct": 73
+  },
+  {
+    "edition": "ES2019",
+    "pass": 76,
+    "fail": 58,
+    "ce": 2,
+    "skip": 0,
+    "total": 136,
+    "pct": 56
+  },
+  {
+    "edition": "ES2020",
+    "pass": 1282,
+    "fail": 502,
+    "ce": 120,
+    "skip": 0,
+    "total": 1904,
+    "pct": 67
+  },
+  {
+    "edition": "ES2021",
+    "pass": 311,
+    "fail": 123,
+    "ce": 29,
+    "skip": 0,
+    "total": 463,
+    "pct": 67
+  },
+  {
+    "edition": "ES2022",
+    "pass": 2829,
+    "fail": 1290,
+    "ce": 115,
+    "skip": 0,
+    "total": 4234,
+    "pct": 67
+  },
+  {
+    "edition": "ES2023",
+    "pass": 203,
+    "fail": 123,
+    "ce": 8,
+    "skip": 0,
+    "total": 334,
+    "pct": 61
+  },
+  {
+    "edition": "ES2024",
+    "pass": 422,
+    "fail": 217,
+    "ce": 6,
+    "skip": 0,
+    "total": 645,
+    "pct": 65
+  },
+  {
+    "edition": "ES2025",
+    "pass": 784,
+    "fail": 469,
+    "ce": 28,
+    "skip": 0,
+    "total": 1281,
+    "pct": 61
+  },
+  {
+    "edition": "ES2026",
+    "pass": 127,
+    "fail": 219,
+    "ce": 3,
+    "skip": 0,
+    "total": 349,
+    "pct": 36
+  },
+  {
+    "edition": "Proposals",
+    "pass": 1361,
+    "fail": 3339,
+    "ce": 186,
+    "skip": 96,
+    "total": 4982,
+    "pct": 27
+  }
+]

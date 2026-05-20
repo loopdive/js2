@@ -24,8 +24,11 @@ STATE_DIR="$HOME/.claude"
 LAST_ACT_FILE="$STATE_DIR/last-user-activity"
 LAST_NOTIFY_FILE="$STATE_DIR/last-notification"
 PENDING_DIR="$STATE_DIR/pending-notify"
-NTFY_URL="http://host.docker.internal:8090/loopdive-claude"
-NTFY_TITLE="ts2wasm"
+# NTFY_URL: defaults to a local docker-host endpoint; override via env to use any ntfy server.
+# Set NTFY_URL=disabled to suppress notifications entirely (e.g. CI or public contributors).
+NTFY_URL="${NTFY_URL:-http://host.docker.internal:8090/loopdive-claude}"
+NTFY_TITLE="${NTFY_TITLE:-ts2wasm}"
+[ "$NTFY_URL" = "disabled" ] && exit 0
 IDLE_THRESHOLD=300   # 5 minutes
 DELAY_SECONDS=300    # 5 minutes
 
@@ -39,6 +42,22 @@ IDLE=$((NOW - LAST_ACT))
 
 MSG=$(printf '%s' "$INPUT" | jq -r '.message' 2>/dev/null | head -c 140)
 [ -z "$MSG" ] && exit 0
+
+# Suppress idle/available agent notifications — these are never actionable.
+# Matches: "idle", "is idle", "available", "waiting for CI", "CI-wait", etc.
+if printf '%s' "$MSG" | grep -qiE '(idle_notification|is idle|idleReason|waiting for ci|ci.wait|ci still|ci queued|still (pending|queued)|no action)'; then
+  exit 0
+fi
+
+# Suppress all agent chatter when a ci-pending sentinel exists.
+# Tech lead sets this with: touch ~/.claude/ci-pending
+# Clear it with: rm -f ~/.claude/ci-pending
+if [ -f "$STATE_DIR/ci-pending" ]; then
+  # Still fire for important events: merges, errors, blockers, completions.
+  if ! printf '%s' "$MSG" | grep -qiE '(merged|error|blocked|failed|CE:|complete|done|escalate|regression)'; then
+    exit 0
+  fi
+fi
 
 send_now() {
   curl -s --max-time 5 -H "Title: $NTFY_TITLE" -d "$MSG" "$NTFY_URL" >/dev/null 2>&1 || true

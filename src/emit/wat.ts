@@ -186,6 +186,11 @@ export function emitWat(mod: WasmModule): string {
     lines.push(`${indent(1)}(export "${escapeWatString(exp.name)}" (${exp.desc.kind} ${exp.desc.index}))`);
   }
 
+  // Start function (#907)
+  if (mod.startFuncIdx !== undefined) {
+    lines.push(`${indent(1)}(start ${mod.startFuncIdx})`);
+  }
+
   // Data segments (active, for linear memory)
   if (mod.dataSegments && mod.dataSegments.length > 0) {
     for (const seg of mod.dataSegments) {
@@ -383,9 +388,9 @@ function formatInstr(instr: Instr, _depth: number): string {
     case "i64.const":
       return `i64.const ${instr.value}`;
     case "f64.const":
-      return `f64.const ${instr.value}`;
+      return `f64.const ${Object.is(instr.value, -0) ? "-0.0" : instr.value}`;
     case "f32.const":
-      return `f32.const ${instr.value}`;
+      return `f32.const ${Object.is(instr.value, -0) ? "-0.0" : instr.value}`;
     case "br":
       return `br ${instr.depth}`;
     case "br_if":

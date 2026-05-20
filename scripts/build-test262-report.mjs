@@ -8,6 +8,8 @@ function parseArgs(argv) {
     input: "",
     output: "",
     includeProposals: false,
+    baselineSha: "",
+    baselineGeneratedAt: "",
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -18,6 +20,10 @@ function parseArgs(argv) {
       args.output = argv[++i] || "";
     } else if (arg === "--include-proposals") {
       args.includeProposals = true;
+    } else if (arg === "--baseline-sha") {
+      args.baselineSha = argv[++i] || "";
+    } else if (arg === "--baseline-generated-at") {
+      args.baselineGeneratedAt = argv[++i] || "";
     }
   }
 
@@ -116,9 +122,11 @@ async function main() {
 
   const report = {
     timestamp: new Date().toISOString(),
+    baseline_generated_at: args.baselineGeneratedAt || new Date().toISOString(),
+    baseline_sha: args.baselineSha || "",
     mode: {
       include_proposals: args.includeProposals ? 1 : 0,
-      label: args.includeProposals ? "full test262" : "official test262 (default scope)",
+      label: args.includeProposals ? "official test262 + proposals" : "official test262 (default scope)",
     },
     summary: buildSummary(officialStatuses),
     official_summary: buildSummary(officialStatuses),
@@ -131,12 +139,36 @@ async function main() {
     ),
     categories: [...categories.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, counter]) => ({ name, ...counter })),
+      .map(([name, counter]) => ({
+        // `name` retained for backward compatibility with existing
+        // landing-page reader (`report.categories[i].name`); `path`
+        // is the canonical field per the #1201 spec.
+        name,
+        path: name,
+        ...counter,
+      })),
     error_categories: Object.fromEntries([...errorCategories.entries()].sort(([a], [b]) => a.localeCompare(b))),
     skip_reasons: Object.fromEntries([...skipReasons.entries()].sort(([a], [b]) => a.localeCompare(b))),
   };
 
   writeFileSync(args.output, JSON.stringify(report, null, 2));
+
+  // #1201 — also write a standalone categories file at
+  // `<output-dir>/test262-categories.json` for clients that only need
+  // the per-path breakdown (e.g. landing-page feature-row hydration,
+  // the categorical table in report.html). Smaller than the full
+  // report and avoids the indirection of "fetch report.json then read
+  // .categories". Same schema as `report.categories`.
+  const outputDir = args.output.replace(/[^/\\]+$/, "");
+  const categoriesPath = outputDir + "test262-categories.json";
+  const categoriesPayload = {
+    timestamp: report.timestamp,
+    baseline_generated_at: report.baseline_generated_at,
+    baseline_sha: report.baseline_sha,
+    mode: report.mode,
+    categories: report.categories,
+  };
+  writeFileSync(categoriesPath, JSON.stringify(categoriesPayload, null, 2));
 }
 
 main().catch((error) => {

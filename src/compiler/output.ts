@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import ts from "typescript";
+import { ts } from "../ts-api.js";
 import type { TypedAST } from "../checker/index.js";
 import { analyzeSource } from "../checker/index.js";
 import type { CabiExportInfo, ParamDef } from "../codegen-linear/c-abi.js";
@@ -195,7 +195,8 @@ export interface ObjectCompileResult {
 export function compileToObjectSource(source: string, options: CompileOptions = {}): ObjectCompileResult {
   const errors: CompileError[] = [];
 
-  const processedSource = preprocessImports(source);
+  const preprocessed = preprocessImports(source);
+  const processedSource = preprocessed.source;
   const defaultFileName = options.fileName ?? (options.allowJs ? "input.js" : "input.ts");
   const effectiveFileName = options.moduleName ?? defaultFileName;
   const ast = analyzeSource(processedSource, effectiveFileName, { allowJs: options.allowJs });
