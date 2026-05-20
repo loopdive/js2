@@ -2,7 +2,7 @@
 id: 1553
 sprint: 52
 title: "spec gap: let/const/var destructuring declarations — residuals after #1432/#1450/#1454/#1550"
-status: needs-spec
+status: decomposed
 created: 2026-05-20
 investigated: 2026-05-20
 priority: medium
@@ -354,3 +354,52 @@ without the matching fix to default-struct destructure semantics, and
 
 Worktree `/workspace/.claude/worktrees/issue-1553-dstr-residuals` is
 clean (no commits) and can be removed.
+
+## Architect spec 2026-05-20 (arch-1553b) — DECOMPOSED
+
+Confirmed the 5-sub-issue decomposition and wrote per-sub implementation
+plans. The slicing follows the dev's investigation but refines bug-to-slice
+mapping. Sub-issue files live in `plan/issues/sprints/53/`:
+
+| Sub | Title | Depends | LOC delta | Bugs closed |
+| --- | --- | --- | --- | --- |
+| **1553a** | Add `decl` mode + `bindingKind` opts to `destructureParamObject`/`Array` helpers (foundation, additive) | — | +150 | (none — plumbing only) |
+| **1553b** | Route typed-struct object decl path through helper (decl-mode) | 1553a | −260 | bug 3 (typed nested default), bug 2 partial |
+| **1553c** | Route externref-fallback object decl path through helper (decl-mode) | 1553a, 1553b | −130 | bug 1, bug 2, bug 4, bug 8 |
+| **1553d** | Route array decl path (typed-vec + externref) through `destructureParamArray` | 1553a, 1553c | −890 | bug 6 (vec rest), array-side bug 4, iter-close |
+| **1553e** | f64 array literal with explicit `undefined` must trigger destructuring default | — | +30 | bug 5 (independent of helper) |
+
+### Sequencing
+
+1. **1553a first** — additive, no behaviour change, unblocks everything.
+2. **1553b** — smallest behaviour-change PR, validates the decl-mode
+   plumbing on the typed-struct lane (lowest risk surface).
+3. **1553c** — externref decl object path; closes the "structural
+   blocker" (bug 2 — `__extern_get` on WasmGC struct) via the
+   helper's `ref.test`+`ref.cast` fast path.
+4. **1553d** — array decl paths; largest deletion (~890 LOC), highest
+   review burden but most unlock (≥35 test262 cases).
+5. **1553e** — orthogonal; can land any time, independent of 1553a-d.
+
+### Total expected unlock
+
+- 1553b: ≥18 cases
+- 1553c: ≥24 cases (after #1552 lands)
+- 1553d: ≥35 cases
+- 1553e: ~8-12 cases
+- **Total: ~85-100 case flips**, comfortably meeting the
+  acceptance criterion 6 (≥60 case reduction).
+
+Dependency on sibling issues:
+
+- **#1450** (NamedEvaluation): in-review. 1553b/c inherit the fix
+  automatically once #1450 lands in main.
+- **#1454** (iterator protocol): partially merged. 1553d depends on
+  `__array_from_iter` + `__extern_get_idx` host imports being stable.
+- **#1552** (catch-rest): in-review. 1553c's rest-binding fix
+  consumes the corrected `__extern_rest_object` host semantics
+  once #1552 lands.
+
+This issue (#1553) stays `needs-spec` → flip to `status: decomposed`
+on merge; close when 1553a-e are all `done` and the test262 delta
+on `language/statements/{let,const,variable}/dstr/` is ≥ 60.

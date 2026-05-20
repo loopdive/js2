@@ -161,3 +161,52 @@ mechanical follow-ups.
 - no regressions in pass count
 - close (or downgrade priority of) the umbrella once #1542, #1543, #1544 land
   and the residual is < 500 fails
+
+## 2026-05-21 Senior-dev re-analysis (sendev-820)
+
+Re-bucketed against `benchmarks/results/test262-current.jsonl` (run
+20.5.2026 18:11:55). Official fails in the umbrella's three `error_category`
+buckets are now:
+
+| `error_category` | Count |
+|------------------|-------|
+| `null_deref`     | `569` |
+| `type_error`     | `508` |
+| `illegal_cast`   | `241` |
+| **umbrella total** | **`1,318`** |
+
+(The `5,962` "TypeError (null/undefined access)" header figure was from an
+older runner schema that included generic `assertion_fail` rows with
+"Cannot access property..." messages. Latest runner correctly buckets
+the deref TypeErrors under `type_error`.)
+
+Three new tractable sub-issues filed in `plan/issues/sprints/53/`:
+
+| Sub-issue | Title | Est fails | Feasibility |
+|-----------|-------|-----------|-------------|
+| **#820a** | RegExp Symbol.match/replace/search/matchAll + RegExpStringIterator null deref | ~148 | medium |
+| **#820b** | Object literal computed-property accessor names silently dropped | ~30 | **easy (implemented)** |
+| **#820c** | Async-gen object-method `yield*` iterator-protocol null deref | ~39 | medium-hard |
+
+Total addressable via these three: ~217 fails (~16% of the umbrella).
+
+**#820b** has been implemented on branch `sendev-820-investigation`
+(`src/codegen/literals.ts` — adds `resolveAccessorPropName` helper to handle
+`ts.ComputedPropertyName` wrapping a string/numeric/no-substitution-template
+literal in the accessor pre-pass and emission loop). Test added at
+`tests/issue-820b.test.ts`. Local test execution blocked by a stale
+fakeowner mount on `/workspace`; needs to be run via CI after merge of the
+PR.
+
+**Top residual clusters (not yet ticketed, all >25 fails):**
+
+- ~64 `annexB/language/.../global-existing-non-enumerable-global-init` —
+  `TypeError: Object.defineProperty called on non-object`. Likely already
+  tracked under #929; verify scope.
+- ~57 `Cannot destructure 'null' or 'undefined' [in C_method() ← test]` —
+  class-method destructuring where the argument is null/undefined; partial
+  overlap with #1543/#1544 residuals.
+- ~46 `dereferencing a null pointer [in fn() ← test]` in `for-await-of`
+  dstr — close cousin of #1544.
+- ~25 `Cannot access property on null or undefined` (no line info) — built-ins
+  Proxy/get + language eval-code residuals.
