@@ -2,7 +2,7 @@
 id: 1450
 sprint: 52
 title: "spec gap: NamedEvaluation — anonymous fn/class names from binding identifiers in destructuring defaults"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: high
 feasibility: medium
@@ -152,6 +152,56 @@ initializer, hintType)` without any name-context hook. So
 - `src/codegen/destructuring-params.ts` — element-level binding emission.
 - `src/codegen/statements/exceptions.ts` — catch parameter destructuring.
 - `tests/issue-1450.test.ts` — regression cases for each binding context.
+
+## Test Results (#1450 implementation, 2026-05-20)
+
+Implemented a property-access constant-folding fallback in
+`src/codegen/property-access.ts` for `f.name` access where the static
+type lacks call/construct signatures (the `any` widening case for catch
+parameters, destructuring binding elements with no type hint, etc.).
+When the identifier's `valueDeclaration` is a `BindingElement` or
+`VariableDeclaration` whose initializer is an `IsAnonymousFunctionDefinition`,
+emit the binding identifier text as a string constant.
+
+Equivalence tests (`tests/issue-1450.test.ts`, 7 cases):
+
+| Pattern | Result |
+| --- | --- |
+| `try/catch ([fn = function(){}])` → `fn.name === 'fn'` | PASS |
+| `try/catch ({fn = function(){}})` → `fn.name === 'fn'` | PASS |
+| `for (let [fn = function(){}] of [[]])` → `fn.name === 'fn'` | PASS (already worked) |
+| `function f([fn = function(){}])` → `fn.name === 'fn'` | PASS (already worked) |
+| `function g(h = function(){})` → `h.name === 'h'` | PASS (already worked) |
+| `const f = function(){}` → `f.name === 'f'` | PASS (already worked) |
+| Named fn expr in destructuring keeps own name (`function x` ≠ binding) | PASS |
+
+Regression check across `tests/issue-1049.test.ts`,
+`tests/issue-43-*-dstr*.test.ts`, `tests/basic-destructuring.test.ts`,
+`tests/null-destructuring.test.ts`, `tests/classes.test.ts`,
+`tests/class-expressions.test.ts`, `tests/closed-imports.test.ts`,
+`tests/for-of-array-destructuring.test.ts`,
+`tests/array-rest-destructuring.test.ts`:
+
+- main HEAD: 13 failed / 31 passed (all pre-existing)
+- this branch: 11 failed / 33 passed — net **+2** (the two new #1450 tests)
+
+No regressions. The 11 remaining failures are pre-existing and unrelated.
+
+### Not covered by this PR
+
+The fix does **not** address:
+
+- **Assignment patterns** (`({a = function(){}} = {})` → `a.name === 'a'`).
+  The LHS identifier resolves to its outer `var`/`let` declaration, so
+  `valueDeclaration` doesn't carry the destructuring initializer. Would
+  require an AST walk for the enclosing destructuring assignment.
+  test262 weight: ~15 fails (`expressions/assignment`).
+- **Class expressions in destructuring defaults**
+  (`var [cls = class {}] = []`). Class expressions in destructuring
+  positions hit a separate, pre-existing compile-time bug where the
+  class struct/funcref doesn't coerce correctly into the destructuring
+  slot (runtime `dereferencing a null pointer`). Out of scope; a deeper
+  destructuring-codegen fix is required.
 
 ## Out of scope
 

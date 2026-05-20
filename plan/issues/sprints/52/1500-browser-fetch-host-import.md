@@ -2,7 +2,7 @@
 id: 1500
 sprint: 52
 title: "browser: fetch() host import with Response bridge"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

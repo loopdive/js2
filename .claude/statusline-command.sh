@@ -21,8 +21,6 @@ branch=$(git -C "${cwd:-$(pwd)}" rev-parse --abbrev-ref HEAD 2>/dev/null)
 issue=$(echo "$branch" | sed -n 's/^issue-\([a-zA-Z0-9]*\).*/\1/p')
 display_cwd=$(basename "${cwd:-$(pwd)}")
 printf '\033[01;34m%s\033[00m' "$display_cwd"
-[ -n "$model" ] && printf ' \033[%sm%s\033[00m' "$model_color" "$model"
-[ -n "$effort" ] && [ "$effort" != "none" ] && [ "$effort" != "disabled" ] && printf ' \033[00;33m%s\033[00m' "$effort"
 
 # Agent PR badge — only shown when inside a worktree, for that worktree's own agent
 status_dir="/workspace/.claude/agent-status"
@@ -45,9 +43,20 @@ if [ -d "$status_dir" ] && [ -n "$in_worktree" ]; then
         task=$(jq -r '.task // empty' "$f" 2>/dev/null)
         [ -n "$pr" ] && ref="#${pr}" || ref="${issue:-${task}}"
         [ -n "$ref" ] && label="${ref} ${age}" || label="${age}"
-        if [ "$elapsed" -ge 900 ]; then   color="48;5;196;37"
-        elif [ "$elapsed" -ge 300 ]; then color="43;30"
-        else                              color="100;37"; fi
+        # Freshness: use last_seen heartbeat if present, else fall back to since
+        last_seen=$(jq -r '.last_seen // empty' "$f" 2>/dev/null)
+        if [ -n "$last_seen" ]; then
+          fresh=$(( now_sec - last_seen ))
+          [ "$fresh" -lt 0 ] && fresh=0
+          if [ "$fresh" -ge 600 ]; then   color="48;5;196;37"  # red: >10min since heartbeat = likely dead
+          elif [ "$fresh" -ge 180 ]; then color="43;30"         # yellow: 3-10min = slow/lagging
+          else                            color="42;30"; fi      # green: <3min = alive
+        else
+          # No heartbeat yet — fall back to time-in-state coloring
+          if [ "$elapsed" -ge 900 ]; then   color="48;5;196;37"
+          elif [ "$elapsed" -ge 300 ]; then color="43;30"
+          else                              color="100;37"; fi
+        fi
         printf ' \033[%sm %s \033[00m' "$color" "$label"
       fi
     fi
@@ -148,6 +157,38 @@ free_bar() {
   }'
 }
 
+# Agent summary (only on main workspace — state counts from agent-status/*.json)
+# Shows: Nactive Mci-wait, colored by freshness via last_seen heartbeat where available.
+if [ -z "$in_worktree" ] && [ -d "/workspace/.claude/agent-status" ]; then
+  _now=$(date +%s)
+  _n_active=0; _n_ciwait=0; _n_stale=0
+  for _f in /workspace/.claude/agent-status/*.json; do
+    [ -f "$_f" ] || continue
+    _state=$(jq -r '.state // empty' "$_f" 2>/dev/null)
+    [ -z "$_state" ] && continue
+    # Freshness: prefer last_seen heartbeat; fall back to "not stale" if no heartbeat yet
+    _ls=$(jq -r '.last_seen // empty' "$_f" 2>/dev/null)
+    _fresh=1
+    if [ -n "$_ls" ]; then
+      _age=$(( _now - _ls ))
+      [ "$_age" -ge 600 ] && _fresh=0
+    fi
+    if [ "$_fresh" -eq 0 ]; then
+      _n_stale=$(( _n_stale + 1 ))
+    elif [ "$_state" = "active" ]; then
+      _n_active=$(( _n_active + 1 ))
+    else
+      _n_ciwait=$(( _n_ciwait + 1 ))
+    fi
+  done
+  _total=$(( _n_active + _n_ciwait + _n_stale ))
+  if [ "$_total" -gt 0 ]; then
+    [ "$_n_active" -gt 0 ] && printf ' \033[00;32m%d↻\033[00m' "$_n_active"
+    [ "$_n_ciwait" -gt 0 ] && printf ' \033[00;33m%d⟳\033[00m' "$_n_ciwait"
+    [ "$_n_stale"  -gt 0 ] && printf ' \033[00;90m%d?\033[00m'  "$_n_stale"
+  fi
+fi
+
 # Sprint progress bar (only on main workspace, not in worktrees)
 if [ -z "$in_worktree" ]; then
   sprint_n=""
@@ -186,6 +227,8 @@ if [ -z "$in_worktree" ]; then
     fi
   fi
   # Days-left-in-week bar: derived from rate_limits.seven_day.resets_at (Unix ts)
+  # Captured into $days_bar and emitted after the free memory indicator below.
+  days_bar=""
   resets_at=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
   if [ -n "$resets_at" ]; then
     now_sec=$(date +%s)
@@ -194,7 +237,7 @@ if [ -z "$in_worktree" ]; then
       days_left=$(awk "BEGIN {printf \"%.1f\", $remaining_sec / 86400}")
       days_int=$(awk "BEGIN {printf \"%d\", $remaining_sec / 86400}")
       elapsed_pct=$(awk "BEGIN {printf \"%.4f\", (7 - $remaining_sec / 86400) * 100 / 7}")
-      awk -v left="$days_left" -v days_int="$days_int" -v elapsed_pct="$elapsed_pct" 'BEGIN {
+      days_bar=$(awk -v left="$days_left" -v days_int="$days_int" -v elapsed_pct="$elapsed_pct" 'BEGIN {
         if (days_int >= 4) {
           # Green zone: plain green text, no background bar — less salient
           printf " \033[32m%sd left\033[00m", left
@@ -211,7 +254,7 @@ if [ -z "$in_worktree" ]; then
           empty_part  = substr(bar, filled + 1)
           printf " \033[%s;%sm%s\033[48;5;237;37m%s \033[00m", fill, fg, filled_part, empty_part
         }
-      }' /dev/null
+      }' /dev/null)
     fi
   fi
   if [ -n "$sprint_n" ] && [ "$sprint_total" -gt 0 ]; then
@@ -243,6 +286,11 @@ if [ -z "$in_worktree" ]; then
       [ -f "$f" ] || continue
       since=$(jq -r '.since // 0' "$f" 2>/dev/null)
       state=$(jq -r '.state // empty' "$f" 2>/dev/null)
+      # since may be an ISO string in some files; convert to epoch or default to 0
+      case "$since" in
+        *T*Z) since=$(date -d "$since" +%s 2>/dev/null || echo 0) ;;
+        ''|null) since=0 ;;
+      esac
       age=$((now_sec - since))
       [ "$age" -gt 10800 ] && continue  # skip stale (>3h)
       total_agents=$((total_agents + 1))
@@ -309,6 +357,7 @@ elif [ -n "$vitesting" ]; then
         p_bar=$(pass_bar "$pass_pct" "${pass_pct}% t262")
         f_bar=$(free_bar "$free_g")
         printf ' \033[00;33m⟳t262\033[00m %s %s %s' "$p_bar" "$d_bar" "$f_bar"
+        [ -n "$days_bar" ] && printf '%s' "$days_bar"
       else
         printf ' \033[00;33m⟳t262\033[00m %s' "$d_bar"
       fi
@@ -328,7 +377,10 @@ elif [ -f "$report" ]; then
     p_bar=$(pass_bar "$pass_pct" "${pass_pct}% t262")
     f_bar=$(free_bar "$free_g")
     printf ' %s %s' "$p_bar" "$f_bar"
+    [ -n "$days_bar" ] && printf '%s' "$days_bar"
   fi
 fi
 [ -z "$in_worktree" ] && [ -n "$branch" ] && [ "$branch" != "main" ] && printf ' \033[00;37m%s\033[00m' "$branch"
+[ -n "$model" ] && printf ' \033[%sm%s\033[00m' "$model_color" "$model"
+[ -n "$effort" ] && [ "$effort" != "none" ] && [ "$effort" != "disabled" ] && printf ' \033[00;33m%s\033[00m' "$effort"
 printf '\n'

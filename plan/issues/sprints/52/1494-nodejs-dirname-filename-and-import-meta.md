@@ -2,7 +2,7 @@
 id: 1494
 sprint: 52
 title: "nodejs: __dirname / __filename / import.meta.url for compiled modules"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

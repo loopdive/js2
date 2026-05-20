@@ -2,7 +2,7 @@
 id: 1490
 sprint: 52
 title: "nodejs: runtime access to process.argv and process.env"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium
