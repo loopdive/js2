@@ -786,7 +786,7 @@ function compileNewFunctionDeclaration(
     } else if (field.type.kind === "i32") {
       ctorFctx.body.push({ op: "i32.const", value: 0 });
     } else if (field.type.kind === "i64") {
-      ctorFctx.body.push({ op: "i64.const", value: 0n } as unknown as Instr);
+      ctorFctx.body.push({ op: "i64.const", value: 0n });
     } else if (field.type.kind === "externref") {
       ctorFctx.body.push({ op: "ref.null.extern" });
     } else if (field.type.kind === "ref_null") {
@@ -1217,7 +1217,7 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   // ES2015 14.5.14 step 21: class with static 'prototype' member must throw TypeError
   if (classNameForCheck && ctx.classThrowsOnEval.has(classNameForCheck)) {
     emitThrowString(ctx, fctx, "TypeError: Classes may not have a static property named 'prototype'");
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "externref" };
   }
 
@@ -1613,7 +1613,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         fctx.body.push({ op: "call", funcIdx: dateNowIdx } as Instr);
         fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
       } else {
-        fctx.body.push({ op: "i64.const", value: 0n } as unknown as Instr);
+        fctx.body.push({ op: "i64.const", value: 0n });
       }
       fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx } as Instr);
       return { kind: "ref", typeIdx: dateTypeIdx };
@@ -1635,9 +1635,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       fctx.body.push({
         op: "if",
         blockType: { kind: "val", type: { kind: "i64" } },
-        then: [{ op: "i64.const", value: -9223372036854775808n } as unknown as Instr],
+        then: [{ op: "i64.const", value: -9223372036854775808n }],
         else: [{ op: "local.get", index: msLocal } as Instr, { op: "i64.trunc_sat_f64_s" } as Instr],
-      } as unknown as Instr);
+      });
       releaseTempLocal(fctx, msLocal);
       fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx } as Instr);
       return { kind: "ref", typeIdx: dateTypeIdx };
@@ -1731,7 +1731,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             { op: "i64.add" } as Instr,
             { op: "local.set", index: yearLocal } as Instr,
           ],
-        } as unknown as Instr,
+        },
       );
 
       // Call days_from_civil(year, month, day) → i64 days
@@ -2013,7 +2013,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // Check: len != floor(len) (non-integer or NaN)
       fctx.body.push({ op: "local.get", index: lenF64 });
       fctx.body.push({ op: "local.get", index: lenF64 });
-      fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+      fctx.body.push({ op: "f64.floor" });
       fctx.body.push({ op: "f64.ne" });
       // Check: len < 0
       fctx.body.push({ op: "local.get", index: lenF64 });
@@ -2048,7 +2048,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // Check: offset != floor(offset) (NaN/non-integer)
         fctx.body.push({ op: "local.get", index: offsetF64 });
         fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+        fctx.body.push({ op: "f64.floor" });
         fctx.body.push({ op: "f64.ne" });
         fctx.body.push({ op: "i32.or" });
         {
@@ -2076,7 +2076,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // Check: len != floor(len) (NaN/non-integer)
         fctx.body.push({ op: "local.get", index: lenF64 });
         fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+        fctx.body.push({ op: "f64.floor" });
         fctx.body.push({ op: "f64.ne" });
         fctx.body.push({ op: "i32.or" });
         {
@@ -2102,7 +2102,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // Check: n != floor(n) (non-integer or NaN)
       fctx.body.push({ op: "local.get", index: nF64 });
       fctx.body.push({ op: "local.get", index: nF64 });
-      fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+      fctx.body.push({ op: "f64.floor" });
       fctx.body.push({ op: "f64.ne" });
       // Check: n < 0
       fctx.body.push({ op: "local.get", index: nF64 });
@@ -2317,7 +2317,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       fctx.body.push({ op: "local.tee", index: lenF64Local });
       // Check len != floor(len) (non-integer or NaN)
       fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+      fctx.body.push({ op: "f64.floor" });
       fctx.body.push({ op: "f64.ne" });
       // Check len < 0
       fctx.body.push({ op: "local.get", index: lenF64Local });
@@ -2385,7 +2385,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // Check: offset != floor(offset) (NaN/non-integer)
         fctx.body.push({ op: "local.get", index: offsetF64 });
         fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+        fctx.body.push({ op: "f64.floor" });
         fctx.body.push({ op: "f64.ne" });
         fctx.body.push({ op: "i32.or" });
 
@@ -2427,7 +2427,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // Check: len != floor(len) (NaN/non-integer)
         fctx.body.push({ op: "local.get", index: lenF64 });
         fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+        fctx.body.push({ op: "f64.floor" });
         fctx.body.push({ op: "f64.ne" });
         fctx.body.push({ op: "i32.or" });
 
@@ -2487,7 +2487,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         if (regIdx !== undefined) {
           fctx.body.push({ op: "local.get", index: bufLocal });
           if (isStructBuf) {
-            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+            fctx.body.push({ op: "extern.convert_any" });
           }
           fctx.body.push({ op: "local.get", index: offsetF64 });
           fctx.body.push({ op: "local.get", index: lenF64 });
@@ -2598,7 +2598,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       fctx.body.push({ op: "local.tee", index: nF64Local });
       // Check n != floor(n) (non-integer or NaN)
       fctx.body.push({ op: "local.get", index: nF64Local });
-      fctx.body.push({ op: "f64.floor" } as unknown as Instr);
+      fctx.body.push({ op: "f64.floor" });
       fctx.body.push({ op: "f64.ne" });
       // Check n < 0
       fctx.body.push({ op: "local.get", index: nF64Local });

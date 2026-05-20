@@ -556,7 +556,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
               fieldIdx: 0,
             } as Instr,
           ],
-        } as unknown as Instr);
+        });
       } else {
         emitCoercedLocalSet(ctx, fctx, localIdx, stackType);
       }
@@ -586,7 +586,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
             { op: "local.get", index: tmpVal } as Instr,
             { op: "struct.set", typeIdx: boxedNoInit.refCellTypeIdx, fieldIdx: 0 } as Instr,
           ],
-        } as unknown as Instr);
+        });
       } else {
         fctx.body.push({ op: "local.set", index: localIdx });
       }

@@ -58,6 +58,16 @@ jobs:
       - name: IR fallback gate (#1376)
         run: pnpm run check:ir-fallbacks
 
+      - name: Instr cast budget (#1526)
+        run: |
+          COUNT=$(grep -rn "as unknown as Instr" src/ | wc -l)
+          MAX=$(node -p "require('./scripts/instr-cast-baseline.json').max")
+          echo "Instr casts: $COUNT (max: $MAX)"
+          if [ "$COUNT" -gt "$MAX" ]; then
+            echo "::error::Instr casts grew: $COUNT > $MAX. The 'as unknown as Instr' pattern bypasses the typed Wasm instruction union — add the missing op to the Instr union in src/ir/types.ts instead, or update scripts/instr-cast-baseline.json with reviewer sign-off."
+            exit 1
+          fi
+
       - name: Fetch runs/index.json from baselines repo
         if: github.event_name == 'push'
         continue-on-error: true

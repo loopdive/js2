@@ -723,12 +723,12 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
           // domain. No ToInt32 needed; emit native i32.* directly.
           emitValue(instr.lhs, out);
           emitValue(instr.rhs, out);
-          out.push({ op: jsBitwiseToI32(instr.op) } as unknown as Instr);
+          out.push({ op: jsBitwiseToI32(instr.op) });
           if (!resultIsI32) {
             // Convert i32 → f64 to honour the legacy js.bit* result-type
             // contract. `>>>` is unsigned, others signed.
             if (instr.op === "js.shr_u") {
-              out.push({ op: "f64.convert_i32_u" } as unknown as Instr);
+              out.push({ op: "f64.convert_i32_u" });
             } else {
               out.push({ op: "f64.convert_i32_s" });
             }
@@ -769,25 +769,25 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
           // Stack: [lhs_i32, rhs]
           if (!rhsIsI32) emitJsToInt32(out, tmpSlot);
           // Stack: [lhs_i32, rhs_i32]
-          out.push({ op: jsBitwiseToI32(instr.op) } as unknown as Instr);
+          out.push({ op: jsBitwiseToI32(instr.op) });
           // `>>>` returns a Uint32; everything else is Int32. Convert
           // back to f64 with the matching signedness — UNLESS the IR
           // result type was already narrowed to i32 by Stage 3.
           if (!resultIsI32) {
             if (instr.op === "js.shr_u") {
-              out.push({ op: "f64.convert_i32_u" } as unknown as Instr);
+              out.push({ op: "f64.convert_i32_u" });
             } else {
               out.push({ op: "f64.convert_i32_s" });
             }
           }
           return;
         }
-        out.push({ op: instr.op } as unknown as Instr);
+        out.push({ op: instr.op });
         return;
       }
       case "unary":
         emitValue(instr.rand, out);
-        out.push({ op: instr.op } as unknown as Instr);
+        out.push({ op: instr.op });
         return;
       case "select":
         // Wasm `select` pops [val1, val2, cond] and pushes val1 if cond != 0
@@ -1006,7 +1006,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         }
         const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
         // ref.func $lifted, push captures, struct.new <subtype>.
-        out.push({ op: "ref.func", funcIdx: liftedIdx } as unknown as Instr);
+        out.push({ op: "ref.func", funcIdx: liftedIdx });
         for (const cap of instr.captures) emitValue(cap, out);
         out.push({ op: "struct.new", typeIdx: sub.structTypeIdx });
         return;
@@ -1024,7 +1024,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
           throw new Error(`ir/lower: resolver cannot resolve closure subtype for ${func.name}`);
         }
         emitValue(instr.self, out);
-        out.push({ op: "ref.cast", typeIdx: sub.structTypeIdx } as unknown as Instr);
+        out.push({ op: "ref.cast", typeIdx: sub.structTypeIdx });
         out.push({ op: "struct.get", typeIdx: sub.structTypeIdx, fieldIdx: sub.capFieldIdx(instr.index) });
         return;
       }
@@ -1051,8 +1051,8 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         // which avoids a circular type reference between the struct and
         // its lifted func type). `call_ref` requires a typed funcref, so
         // we emit `ref.cast` to convert.
-        out.push({ op: "ref.cast", typeIdx: cl.funcTypeIdx } as unknown as Instr);
-        out.push({ op: "call_ref", typeIdx: cl.funcTypeIdx } as unknown as Instr);
+        out.push({ op: "ref.cast", typeIdx: cl.funcTypeIdx });
+        out.push({ op: "call_ref", typeIdx: cl.funcTypeIdx });
         return;
       }
       case "refcell.new": {
@@ -1184,7 +1184,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         emitValue(instr.vec, out);
         out.push({ op: "struct.get", typeIdx: vec.vecStructTypeIdx, fieldIdx: vec.dataFieldIdx });
         emitValue(instr.index, out);
-        out.push({ op: "array.get", typeIdx: vec.arrayTypeIdx } as unknown as Instr);
+        out.push({ op: "array.get", typeIdx: vec.arrayTypeIdx });
         return;
       }
       // Slice 7a/7b (#1169f): generator ops.
@@ -1241,7 +1241,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         }
         const fnIdx = resolver.resolveFunc({ kind: "func", name: "__create_generator" });
         out.push({ op: "local.get", index: slotWasmIdx(func.generatorBufferSlot) });
-        out.push({ op: "ref.null.extern" } as unknown as Instr);
+        out.push({ op: "ref.null.extern" });
         out.push({ op: "call", funcIdx: fnIdx });
         return;
       }
@@ -1302,7 +1302,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         // element = data[counter]
         loopBody.push({ op: "local.get", index: slotWasmIdx(instr.dataSlot) });
         loopBody.push({ op: "local.get", index: slotWasmIdx(instr.counterSlot) });
-        loopBody.push({ op: "array.get", typeIdx: vec.arrayTypeIdx } as unknown as Instr);
+        loopBody.push({ op: "array.get", typeIdx: vec.arrayTypeIdx });
         loopBody.push({ op: "local.set", index: slotWasmIdx(instr.elementSlot) });
 
         // Body instrs
@@ -1348,7 +1348,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         // ref-typed inputs the wasm engine simply re-tags the reference
         // so it can flow into externref-typed positions.
         emitValue(instr.value, out);
-        out.push({ op: "extern.convert_any" } as unknown as Instr);
+        out.push({ op: "extern.convert_any" });
         return;
       }
       case "iter.new": {
@@ -2253,19 +2253,19 @@ function jsBitwiseToI32(
 
 function emitJsToInt32(out: Instr[], tmpLocalIdx: number): void {
   // Stack: [f64]
-  out.push({ op: "f64.trunc" } as unknown as Instr);
+  out.push({ op: "f64.trunc" });
   // Stack: [f64_trunc]
   out.push({ op: "local.tee", index: tmpLocalIdx });
   out.push({ op: "local.get", index: tmpLocalIdx });
   // Stack: [f64_trunc, f64_trunc]
   out.push({ op: "f64.const", value: 4294967296 });
   out.push({ op: "f64.div" });
-  out.push({ op: "f64.floor" } as unknown as Instr);
+  out.push({ op: "f64.floor" });
   out.push({ op: "f64.const", value: 4294967296 });
   out.push({ op: "f64.mul" });
   out.push({ op: "f64.sub" });
   // Stack: [f64_in_range]
-  out.push({ op: "i32.trunc_sat_f64_u" } as unknown as Instr);
+  out.push({ op: "i32.trunc_sat_f64_u" });
   // Stack: [i32]
 }
 
@@ -2290,7 +2290,7 @@ function emitConst(instr: Extract<IrInstr, { kind: "const" }>, out: Instr[], fun
     case "null": {
       const valTy = instr.resultType ? asVal(instr.resultType) : null;
       if (valTy && valTy.kind === "ref_null") {
-        out.push({ op: "ref.null", typeIdx: (valTy as { typeIdx: number }).typeIdx } as unknown as Instr);
+        out.push({ op: "ref.null", typeIdx: (valTy as { typeIdx: number }).typeIdx });
         return;
       }
       // Slice 7b (#1169f): bare `yield;` lowers to a `gen.push` of
@@ -2299,7 +2299,7 @@ function emitConst(instr: Extract<IrInstr, { kind: "const" }>, out: Instr[], fun
       // `ref.null.extern` Wasm op. Same shape the legacy generator
       // path uses for the "no value" yield (see misc.ts:212-215).
       if (valTy && valTy.kind === "externref") {
-        out.push({ op: "ref.null.extern" } as unknown as Instr);
+        out.push({ op: "ref.null.extern" });
         return;
       }
       throw new Error(`ir/lower: const null must have ref_null or externref resultType (${funcName})`);

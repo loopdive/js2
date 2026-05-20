@@ -104,7 +104,7 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       const rhsType = compileExpression(ctx, fctx, expr.right);
       if (rhsType) fctx.body.push({ op: "drop" });
       emitThrowString(ctx, fctx, "TypeError: Assignment to constant variable.");
-      fctx.body.push({ op: "unreachable" } as unknown as Instr);
+      fctx.body.push({ op: "unreachable" });
       return { kind: "f64" }; // unreachable, but satisfy type
     }
     // Named function expression name binding is read-only — assignments are
@@ -445,7 +445,7 @@ function emitStrictPutValueThrow(ctx: CodegenContext, fctx: FunctionContext): vo
   fctx.body.push({ op: "drop" });
   const tagIdx = ensureExnTag(ctx);
   fctx.body.push({ op: "ref.null.extern" } as Instr);
-  fctx.body.push({ op: "throw", tagIdx } as unknown as Instr);
+  fctx.body.push({ op: "throw", tagIdx });
 }
 
 function compileDestructuringAssignment(
@@ -2876,10 +2876,10 @@ export function compileLogicalAssignment(
     if (qqeUndefIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: qqeTmp });
       if (varType.kind !== "externref") {
-        fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+        fctx.body.push({ op: "extern.convert_any" });
       }
       fctx.body.push({ op: "call", funcIdx: qqeUndefIdx });
-      fctx.body.push({ op: "i32.or" } as unknown as Instr);
+      fctx.body.push({ op: "i32.or" });
     }
     releaseTempLocal(fctx, qqeTmp);
 
@@ -3562,7 +3562,7 @@ function emitLogicalAssignmentPattern(
       if (undefIdx !== undefined) {
         fctx.body.push({ op: "local.get", index: tmpForUndef });
         fctx.body.push({ op: "call", funcIdx: undefIdx });
-        fctx.body.push({ op: "i32.or" } as unknown as Instr);
+        fctx.body.push({ op: "i32.or" });
       }
       releaseTempLocal(fctx, tmpForUndef);
     }
@@ -4064,7 +4064,7 @@ export function compileCompoundAssignment(
     const rhsType = compileExpression(ctx, fctx, expr.right);
     if (rhsType) fctx.body.push({ op: "drop" });
     emitThrowString(ctx, fctx, "TypeError: Assignment to constant variable.");
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return { kind: "f64" };
   }
 

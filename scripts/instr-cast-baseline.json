@@ -1,0 +1,6 @@
+{
+  "max": 0,
+  "updated": "2026-05-20",
+  "previous": 379,
+  "notes": "Issue #1526 — removed all `as unknown as Instr` casts (baseline was 379 lines / 380 substring matches). Every op was already in the `Instr` union; the casts were gratuitous bypasses. The CI gate counts grep lines (`grep -rn 'as unknown as Instr' src/ | wc -l`) and fails if the number exceeds `max`. Bumping this value requires explicit reviewer sign-off."
+}

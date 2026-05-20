@@ -1229,28 +1229,28 @@ export function compileBinaryExpression(
           // Stack: [leftAnyref]. Save and probe.
           const tmpLeftAny = allocTempLocal(fctx, { kind: "anyref" });
           fctx.body.push({ op: "local.tee", index: tmpLeftAny });
-          fctx.body.push({ op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr);
+          fctx.body.push({ op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR });
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
             then: [
               { op: "local.get", index: tmpRightAny } as Instr,
-              { op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+              { op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR },
               {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "i32" } },
                 then: [
                   { op: "local.get", index: tmpLeftAny } as Instr,
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR },
                   { op: "local.get", index: tmpRightAny } as Instr,
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR },
                   { op: "ref.eq" } as Instr,
                 ],
                 else: [{ op: "i32.const", value: 0 } as Instr],
-              } as unknown as Instr,
+              },
             ],
             else: [{ op: "i32.const", value: 0 } as Instr],
-          } as unknown as Instr);
+          });
           releaseTempLocal(fctx, tmpLeftAny);
           releaseTempLocal(fctx, tmpRightAny);
           if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });

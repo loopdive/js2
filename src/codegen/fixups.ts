@@ -162,12 +162,7 @@ export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule
       const idx = (curr as { index: number }).index;
       const localType = localTypes[idx];
       if (localType && localType.kind === "externref") {
-        body.splice(
-          i + 1,
-          0,
-          { op: "any.convert_extern" } as unknown as Instr,
-          { op: "ref.cast_null", typeIdx: structTypeIdx } as unknown as Instr,
-        );
+        body.splice(i + 1, 0, { op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: structTypeIdx });
         fixed++;
         i += 4; // skip past local.get + any.convert_extern + ref.cast_null + struct.get
         continue;
@@ -179,12 +174,7 @@ export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule
       const idx = (curr as { index: number }).index;
       const localType = localTypes[idx];
       if (localType && localType.kind === "externref") {
-        body.splice(
-          i + 1,
-          0,
-          { op: "any.convert_extern" } as unknown as Instr,
-          { op: "ref.cast_null", typeIdx: structTypeIdx } as unknown as Instr,
-        );
+        body.splice(i + 1, 0, { op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: structTypeIdx });
         fixed++;
         i += 4;
         continue;
@@ -208,12 +198,7 @@ export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule
         if (ft?.kind === "func" && ft.results.length > 0) retType = ft.results[0];
       }
       if (retType && retType.kind === "externref") {
-        body.splice(
-          i + 1,
-          0,
-          { op: "any.convert_extern" } as unknown as Instr,
-          { op: "ref.cast_null", typeIdx: structTypeIdx } as unknown as Instr,
-        );
+        body.splice(i + 1, 0, { op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: structTypeIdx });
         fixed++;
         i += 4;
         continue;
@@ -265,12 +250,7 @@ export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule
         const idx = (refProducer as { index: number }).index;
         const localType = localTypes[idx];
         if (localType && localType.kind === "externref") {
-          body.splice(
-            refIdx + 1,
-            0,
-            { op: "any.convert_extern" } as unknown as Instr,
-            { op: "ref.cast_null", typeIdx: structTypeIdx } as unknown as Instr,
-          );
+          body.splice(refIdx + 1, 0, { op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: structTypeIdx });
           fixed++;
           i += 3; // shifted by 2 insertions + advance past struct.set
           continue;
@@ -989,7 +969,7 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
         const paramType = params[pi]!;
         if (argInstr.op === "ref.null.extern" && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
           // Replace ref.null extern with ref.null of the correct type
-          instrs[pos] = { op: "ref.null", typeIdx: (paramType as any).typeIdx } as unknown as Instr;
+          instrs[pos] = { op: "ref.null", typeIdx: (paramType as any).typeIdx };
         }
       }
     }

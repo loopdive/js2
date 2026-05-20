@@ -46,18 +46,18 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
     then = [
       { op: "global.get", index: strIdx } as Instr,
       { op: "call", funcIdx: throwRefErrIdx } as Instr,
-      { op: "unreachable" } as unknown as Instr,
+      { op: "unreachable" },
     ];
   } else {
     const tagIdx = ensureExnTag(ctx);
-    then = [{ op: "ref.null.extern" } as Instr, { op: "throw", tagIdx } as unknown as Instr];
+    then = [{ op: "ref.null.extern" } as Instr, { op: "throw", tagIdx }];
   }
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
     then,
     else: [],
-  } as unknown as Instr);
+  });
 }
 
 /**
@@ -315,7 +315,7 @@ export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, n
     const strIdx = ctx.stringGlobalMap.get(msg)!;
     fctx.body.push({ op: "global.get", index: strIdx } as Instr);
     fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
-    fctx.body.push({ op: "unreachable" } as unknown as Instr);
+    fctx.body.push({ op: "unreachable" });
     return;
   }
   const tagIdx = ensureExnTag(ctx);
@@ -554,13 +554,13 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
       const strIdx = ctx.stringGlobalMap.get(msg)!;
       fctx.body.push({ op: "global.get", index: strIdx } as Instr);
       fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
-      fctx.body.push({ op: "unreachable" } as unknown as Instr);
+      fctx.body.push({ op: "unreachable" });
     } else {
       // Standalone/WASI mode without `__throw_reference_error`: fall back to
       // the raw exception-tag throw (no JS host to construct a ReferenceError).
       const tagIdx = ensureExnTag(ctx);
       fctx.body.push({ op: "ref.null.extern" } as Instr);
-      fctx.body.push({ op: "throw", tagIdx } as unknown as Instr);
+      fctx.body.push({ op: "throw", tagIdx });
     }
     return { kind: "externref" };
   }
