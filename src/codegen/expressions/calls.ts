@@ -6760,6 +6760,79 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         return { kind: "externref" };
       }
 
+      // #820a — RegExp Symbol.match/replace/search/matchAll dispatch.
+      // Per ECMA-262, `R[Symbol.match](S)` must invoke `Get(R, "exec")` so user
+      // overrides like `r.exec = fn` take effect, and must `ToLength(R.lastIndex)`
+      // to coerce string values like '1.9'. Without an explicit dispatch the
+      // resolved-method-name fallback below drops the receiver and returns
+      // `ref.null.extern`, which surfaces as "dereferencing a null pointer"
+      // in any code that reads the result. Route to JS-host imports that call
+      // `r[Symbol.X](...)` directly so the engine performs the spec dispatch.
+      if (
+        methodName === "@@match" ||
+        methodName === "@@replace" ||
+        methodName === "@@search" ||
+        methodName === "@@matchAll"
+      ) {
+        const importInfo: { name: string; argCount: number; ret: ValType } =
+          methodName === "@@match"
+            ? { name: "__regexp_symbol_match", argCount: 1, ret: { kind: "externref" } }
+            : methodName === "@@replace"
+              ? { name: "__regexp_symbol_replace", argCount: 2, ret: { kind: "externref" } }
+              : methodName === "@@search"
+                ? { name: "__regexp_symbol_search", argCount: 1, ret: { kind: "f64" } }
+                : { name: "__regexp_symbol_matchAll", argCount: 1, ret: { kind: "externref" } };
+
+        // Push receiver, coerced to externref.
+        const recvType = compileExpression(ctx, fctx, elemAccess.expression);
+        if (recvType) {
+          if (recvType.kind === "ref" || recvType.kind === "ref_null") {
+            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+          } else if (recvType.kind === "f64") {
+            const boxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+            if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+          } else if (recvType.kind === "i32") {
+            fctx.body.push({ op: "f64.convert_i32_s" });
+            const boxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+            if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+          }
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+
+        // Push each declared arg coerced to externref. Missing args → undefined (null.extern).
+        for (let i = 0; i < importInfo.argCount; i++) {
+          if (i < expr.arguments.length) {
+            const aType = compileExpression(ctx, fctx, expr.arguments[i]!);
+            if (aType) {
+              if (aType.kind !== "externref") coerceType(ctx, fctx, aType, { kind: "externref" });
+            } else {
+              fctx.body.push({ op: "ref.null.extern" });
+            }
+          } else {
+            fctx.body.push({ op: "ref.null.extern" });
+          }
+        }
+        // Drop any extra args (evaluate for side effects per JS semantics).
+        for (let i = importInfo.argCount; i < expr.arguments.length; i++) {
+          const extra = compileExpression(ctx, fctx, expr.arguments[i]!);
+          if (extra) fctx.body.push({ op: "drop" });
+        }
+
+        const params: ValType[] = [];
+        for (let i = 0; i < importInfo.argCount + 1; i++) params.push({ kind: "externref" });
+        const funcIdx = ensureLateImport(ctx, importInfo.name, params, [importInfo.ret]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+        } else {
+          // Shouldn't happen — import registration always succeeds — but be safe.
+          if (importInfo.ret.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+          else fctx.body.push({ op: "f64.const", value: 0 });
+        }
+        return importInfo.ret;
+      }
+
       // Try class instance method: ClassName_methodName
       let receiverClassName = receiverType.getSymbol()?.name;
       if (receiverClassName && !ctx.classSet.has(receiverClassName)) {

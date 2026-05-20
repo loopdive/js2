@@ -950,6 +950,8 @@ const _symbolToWasm: Map<symbol, string> = new Map([
   [Symbol.asyncIterator, "@@asyncIterator"],
   [_disposeSym, "@@dispose"],
   [_asyncDisposeSym, "@@asyncDispose"],
+  // #820a — Symbol.matchAll added so well-known dispatch routes to @@matchAll.
+  [Symbol.matchAll, "@@matchAll"],
 ]);
 
 /**
@@ -974,6 +976,7 @@ const _symbolIdToKeys: Map<number, { wasm: string; sym: symbol }> = new Map([
   [12, { wasm: "@@asyncIterator", sym: Symbol.asyncIterator }],
   [13, { wasm: "@@dispose", sym: _disposeSym }],
   [14, { wasm: "@@asyncDispose", sym: _asyncDisposeSym }],
+  [15, { wasm: "@@matchAll", sym: Symbol.matchAll }],
 ]);
 
 /**
@@ -1021,7 +1024,7 @@ function _safeGet(obj: any, key: any): any {
   // Well-known symbol ID (i32 from compiler): only apply to WasmGC structs.
   // For regular JS objects/arrays, numeric keys 1-12 are actual indices, not symbol IDs
   // (e.g. getOwnPropertyNames conversion loop uses __extern_get with integer indices).
-  if (_isWasmStruct(obj) && typeof key === "number" && key >= 1 && key <= 14) {
+  if (_isWasmStruct(obj) && typeof key === "number" && key >= 1 && key <= 15) {
     const symKeys = _symbolIdToKeys.get(key);
     if (symKeys) {
       const v = obj[symKeys.sym];
@@ -1088,7 +1091,7 @@ function _safeSet(obj: any, key: any, val: any): void {
   // `arr[Symbol.iterator]=v`, which under accumulated fork state could leak to
   // `Object.prototype[Symbol.iterator] = <number>` and trip every subsequent
   // compile that calls Array.from on a plain object (#1160 follow-up).
-  if (_isWasmStruct(obj) && typeof key === "number" && key >= 1 && key <= 14) {
+  if (_isWasmStruct(obj) && typeof key === "number" && key >= 1 && key <= 15) {
     const symKeys = _symbolIdToKeys.get(key);
     if (symKeys) {
       try {
@@ -2444,7 +2447,7 @@ assert._isSameValue = isSameValue;
           if (_sidecarGet(obj, strKey) !== undefined) return 1;
           // _safeSet routes numeric keys 1-14 onto Symbol.<wellKnown> sidecar
           // entries. Reverse that mapping so index 1-14 values remain visible.
-          if (idx >= 1 && idx <= 14) {
+          if (idx >= 1 && idx <= 15) {
             const symKeys = _symbolIdToKeys.get(idx);
             if (symKeys) {
               if (_sidecarGet(obj, symKeys.sym) !== undefined) return 1;
@@ -2560,6 +2563,7 @@ assert._isSameValue = isSameValue;
           [12, Symbol.asyncIterator],
           [13, _disposeSym],
           [14, _asyncDisposeSym],
+          [15, Symbol.matchAll],
         ]);
         return (id: number) => {
           let sym = symbolCache.get(id);
@@ -4338,6 +4342,78 @@ assert._isSameValue = isSameValue;
           }
           // ret is non-null, non-callable → GetMethod throws TypeError
           throw new TypeError("Iterator return method is not callable");
+        };
+      // #820a — RegExp Symbol.match/replace/search/matchAll spec dispatch.
+      // The compiler emits these for `r[Symbol.match](s)` etc. so the JS engine
+      // performs the full ECMA-262 dispatch: Get(R, "exec") honoring user
+      // overrides and ToLength(R.lastIndex) coercion. Without these the codegen
+      // fallback drops the receiver and returns null.extern, surfacing as
+      // "dereferencing a null pointer" downstream.
+      //
+      // ECMA-262 21.2.5.2.1 RegExpExec requires IsCallable(Get(R, "exec")).
+      // When user code assigns `r.exec = function() { ... }` to a JS-host RegExp,
+      // the RHS is a WasmGC closure (struct), which the JS engine sees as a
+      // non-callable object — so it silently falls back to RegExpBuiltinExec,
+      // ignoring the override. Pre-wrap any WasmGC-closure `exec` as a JS
+      // function so IsCallable returns true. (We mutate `r.exec` in place; the
+      // result is observably a function — which is what the user wrote — so
+      // this is a no-op for code that doesn't introspect typeof r.exec.)
+      const _ensureExecCallable = (r: any): void => {
+        if (r == null || typeof r !== "object") return;
+        const exec = r.exec;
+        if (exec != null && typeof exec !== "function" && _isWasmStruct(exec)) {
+          // Try arity 1 first (matches exec's spec arity); fall back to 2/3/4
+          // because the lower-arity __call_fn_N exports may have been dead-
+          // code eliminated when no Wasm callsite needed them. The higher-arity
+          // dispatchers cover the same closure via funcref ref.test, dropping
+          // the extra args harmlessly. (Compiler emits __call_fn_2/3/4 for
+          // host shims like __array_from / __proto_method_call.)
+          let wrapped: ((...args: any[]) => any) | null = null;
+          for (const arity of [1, 2, 3, 4]) {
+            wrapped = _wrapWasmClosure(exec, arity, callbackState);
+            if (wrapped) break;
+          }
+          if (wrapped) {
+            try {
+              r.exec = wrapped;
+            } catch {
+              /* ignore — frozen receiver, builtin fallback will run */
+            }
+          }
+        }
+      };
+      if (name === "__regexp_symbol_match")
+        return (r: any, s: any) => {
+          if (r == null) throw new TypeError("Cannot read property Symbol.match of null/undefined");
+          _ensureExecCallable(r);
+          const fn = r[Symbol.match];
+          if (typeof fn !== "function") throw new TypeError("r[Symbol.match] is not a function");
+          return fn.call(r, s);
+        };
+      if (name === "__regexp_symbol_replace")
+        return (r: any, s: any, repl: any) => {
+          if (r == null) throw new TypeError("Cannot read property Symbol.replace of null/undefined");
+          _ensureExecCallable(r);
+          const fn = r[Symbol.replace];
+          if (typeof fn !== "function") throw new TypeError("r[Symbol.replace] is not a function");
+          return fn.call(r, s, repl);
+        };
+      if (name === "__regexp_symbol_search")
+        return (r: any, s: any) => {
+          if (r == null) throw new TypeError("Cannot read property Symbol.search of null/undefined");
+          _ensureExecCallable(r);
+          const fn = r[Symbol.search];
+          if (typeof fn !== "function") throw new TypeError("r[Symbol.search] is not a function");
+          const v = fn.call(r, s);
+          return Number(v);
+        };
+      if (name === "__regexp_symbol_matchAll")
+        return (r: any, s: any) => {
+          if (r == null) throw new TypeError("Cannot read property Symbol.matchAll of null/undefined");
+          _ensureExecCallable(r);
+          const fn = r[Symbol.matchAll];
+          if (typeof fn !== "function") throw new TypeError("r[Symbol.matchAll] is not a function");
+          return fn.call(r, s);
         };
       // Convert a WasmGC vec struct to a real JS array so it's iterable by
       // native JS APIs (Map, Set, spread, for-of, etc.). (#854)

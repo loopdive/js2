@@ -700,6 +700,7 @@ const WELL_KNOWN_SYMBOLS: Record<string, number> = {
   asyncIterator: 12,
   dispose: 13,
   asyncDispose: 14,
+  matchAll: 15,
 };
 
 /**
