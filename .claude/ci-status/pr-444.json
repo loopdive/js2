@@ -1,0 +1,23 @@
+{
+  "pr": 444,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "arch-eslint-resolver-spec",
+  "head_sha": "ff55fa8d036f1dcd9a2dba30a1c61cca3f76e261",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/444",
+  "timestamp": "2026-05-20T23:36:52Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}
