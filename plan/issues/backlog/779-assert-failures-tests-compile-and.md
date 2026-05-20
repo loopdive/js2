@@ -111,6 +111,20 @@ as a literal current decomposition of all wrong-value failures.
 - #786 Multi-assertion failures (returned N > 2)
 - #846 assert.throws not thrown for invalid built-in arguments (2,799 fail)
 - #1002 RegExp js-host mode completion
+- #1431 assignment-pattern destructuring completion (in-review)
+- #1432 parameter-list rest/destructuring iterator semantics (done)
+- #1450 NamedEvaluation in destructuring defaults (in-review)
+- #1451 class/object-literal method param destructuring (in-review)
+- #1454 iterator-protocol error propagation / IteratorClose (in-review)
+- #1455 subclassing builtins instanceof (done)
+- #1460 Object.defineProperty descriptor fidelity (in-review)
+- #1461 Array.prototype.* on array-like receivers (in-review)
+- #1462 Object.getOwnPropertyDescriptor / Object.create (in-review)
+- #1518 Annex B sloppy function-in-block hoisting (in-review)
+- **#1550 dstr-binding `init-skipped`: default initializer evaluated when value is non-undefined** (~252 fail)
+- **#1551 SuperCall: argument evaluation order, spread getter side-effects, uninitialized-`this` PutValue** (~64 fail)
+- **#1552 catch parameter destructuring (`try/dstr`): residuals after #1450/#1454** (~58 fail)
+- **#1553 let/const/var declaration destructuring residuals (`statements/{let,const,variable}/dstr`)** (~93 fail)
 
 ## Completed split-outs
 
@@ -118,6 +132,33 @@ as a literal current decomposition of all wrong-value failures.
 - #847 for-await-of / for-of destructuring wrong values
 - #848 class computed property and accessor correctness
 - #849 mapped arguments object sync
+
+## 2026-05-20 fresh sub-cluster analysis (assertion_fail rows only)
+
+Total `assertion_fail` rows in current baseline: **9,231**. Top sub-clusters
+NOT yet routed to an active sub-issue, ranked by likely test-unlock:
+
+| Sub-cluster | Tests | Routed to |
+| --- | --- | --- |
+| `Array.prototype.*` array-like receivers | 947 | #1461 |
+| `class/dstr` method param destructure (gen/async-gen/private) | 727 | #1451 |
+| `class/elements` descriptor / private fields | 679 | #1364 (done), #1456 |
+| `Object/defineProperty` + `defineProperties` | 846 | #1460 |
+| `for-of/dstr` async-iter + iterator-close | 252 | #1396, #1454, #1468 |
+| **dstr `init-skipped` (default evaluated even when value defined)** | **252** | **#1550 (new)** |
+| `expressions/assignment/dstr` residuals | 138 | #1431 (mostly), #1454 |
+| `Object/create` | 118 | #1462 |
+| `eval-code/direct` Annex B | 104 | #1518 |
+| **`statements/{let,const,variable}/dstr` declaration form** | **93** | **#1553 (new)** |
+| `Array.prototype/{filter,every,some,forEach,map}` (subset of #1461) | ≈460 | #1461 |
+| **`expressions/super` arg-eval / spread / uninitialized-this** | **64** | **#1551 (new)** |
+| **`statements/try/dstr` catch destructuring** | **58** | **#1552 (new)** |
+| `expressions/object/method-definition` (non-dstr name/eval) | 40 | (residual, low priority) |
+| `expressions/yield` iterator-result-value semantics | 31 | (residual) |
+| `statements/switch` completion semantics | 25 | (residual) |
+
+The four new sub-issues (#1550–#1553) together cover ~467 still-failing tests
+that the prior sprint-52 splits do not address.
 
 ## Acceptance criteria
 

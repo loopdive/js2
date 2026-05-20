@@ -1,0 +1,22 @@
+{
+  "pr": 382,
+  "conclusion": "success",
+  "head_branch": "issue-1512-dynamic-import-errors",
+  "head_sha": "8dfe1e580402b8d5fa5110b40a374df4c60d341b",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26175465698",
+  "timestamp": "2026-05-20T23:51:00Z",
+  "pass": 28252,
+  "fail": 13634,
+  "compile_error": 1189,
+  "snapshot_delta": 19,
+  "net_per_test": 116,
+  "regressions": 43,
+  "regressions_real": 8,
+  "regressions_wasm_change": 8,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 35,
+  "improvements": 124,
+  "baseline_sha": "8dfe1e580402b8d5fa5110b40a374df4c60d341b",
+  "baseline_staleness_commits": 136,
+  "baseline_stale": true
+}

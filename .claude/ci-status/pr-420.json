@@ -1,0 +1,23 @@
+{
+  "pr": 420,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "equiv-tests-generators",
+  "head_sha": "defafd6519bf5385188ebe81700028c34c3b1888",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/420",
+  "timestamp": "2026-05-20T20:31:20Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

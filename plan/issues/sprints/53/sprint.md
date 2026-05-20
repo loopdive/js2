@@ -1,14 +1,15 @@
 ---
 sprint: 53
-status: planning
+status: active
 created: 2026-05-20
 planned: 2026-05-20
-baseline_pass: 28168
+started: 2026-05-20
+baseline_pass: 28233
 baseline_total: 43160
-baseline_pct: 65.3
+baseline_pct: 65.5
 ---
 
-# Sprint 53 Planning
+# Sprint 53
 
 ## Sprint Goal
 
@@ -46,6 +47,39 @@ to "validated".
 | 1130  | Array methods getter-observing property access              | medium   | hard        | ~120 FAIL                      | property-model   |
 | 1129  | ToObject (§7.1.18) — primitive auto-boxing                  | medium   | hard        | broad coercion fidelity        | core-semantics   |
 | 1352  | RegExp exec result wasmGC string vs externref equality      | medium   | medium      | ~50 FAIL S15.10.2 cluster      | spec-completeness |
+| 1557  | ESLint config.js trampoline arity (Tier 1d blocker)         | high     | medium      | unblocks ESLint Tier 1d        | npm-library-support |
+| 1558  | ESLint linter.js f64.eq i32→f64 coercion (Tier 1d blocker)  | high     | medium      | unblocks ESLint Tier 1d        | npm-library-support |
+| 1559  | Resolver: bare-package import → impl, not .d.ts for codegen | high     | hard        | unblocks ESLint Tier 1e        | npm-library-support |
+| 1560  | CJS class re-export linkage to compiled class               | high     | medium      | unblocks ESLint Tier 1e        | npm-library-support |
+
+## ESLint-from-source critical path (added 2026-05-20)
+
+Goal restatement: **compile ESLint from source to a runnable Wasm binary**
+(Tier 1d binary instantiates → Tier 1e `linter.verify("const x = 1;", {})`
+returns `[]`).
+
+Phase 1 — Tier 1d unblockers (parallel-safe, two devs):
+
+1. **#1557** — `config.js` `__obj_meth_tramp` arity mismatch
+2. **#1558** — `linter.js` `Linter_verifyAndFix` f64.eq coercion
+
+Phase 2 — Tier 1e unblockers (sequential: #1560 depends on #1559):
+
+3. **#1559** — Resolver picks impl entry for bare-package codegen
+   (`needs-spec` — assign to architect first)
+4. **#1560** — CJS named class re-export links to compiled class
+
+Phase 3 — harvest-and-fix runtime gaps once Tier 1e unskips. Use
+`/harvest-errors` skill against the failing test to mine the next
+layer of bugs. Likely surface: Map/WeakMap edge cases, RegExp parity,
+specific class/closure runtime patterns. **Not knowable until Tier 1e
+runs.**
+
+Note: the S53 async cluster (#1042, #1116, #1151, #1373, #1373b) is
+**NOT on the ESLint critical path**. `linter.verify()` is synchronous.
+`verifyAndFix()` is async but is a Tier 2 target. The async cluster
+remains in the sprint for its own goals (async-model), but it does
+not gate ESLint progress.
 
 ## Carry-forward from Sprint 52
 
@@ -54,9 +88,10 @@ The following S52 issues are `status: ready` and have **no open PR** as of
 
 - **#1373** — IR async function (no agent ever picked it up; architect spec still needed)
 - **#1373b** — IR async CPS lowering (blocked on #1373; re-open once #1373 lands)
-- **#1382** — Wasm closure / host-import bridge (structural; architect-grade)
-- **#1394** — Method-closure caching (depends on #1388, architect-grade)
-- **#1400** — ESLint entry-point compiled module validity
+- ~~**#1382**~~ — **DONE** (merged 2026-05-20)
+- ~~**#1394**~~ — **DONE** (merged 2026-05-20)
+- **#1400** — ESLint entry-point: partial PR landed (Config_new fix);
+  follow-up issues #1557, #1558, #1559, #1560 now carry remaining work
 - **#1387** — `with` statement architect exploration (was `moved-to-s52` — needs status reset to `ready`)
 
 The 41 other S52 ready/in-progress issues either have an open PR or are

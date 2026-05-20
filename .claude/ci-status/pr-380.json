@@ -1,0 +1,22 @@
+{
+  "pr": 380,
+  "conclusion": "success",
+  "head_branch": "issue-1464-iterator-helpers",
+  "head_sha": "44b2ac32fee6f271fcdc12dbffceab88133946c8",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26175456354",
+  "timestamp": "2026-05-20T23:49:31Z",
+  "pass": 28243,
+  "fail": 13651,
+  "compile_error": 1188,
+  "snapshot_delta": 10,
+  "net_per_test": 52,
+  "regressions": 50,
+  "regressions_real": 8,
+  "regressions_wasm_change": 8,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 42,
+  "improvements": 60,
+  "baseline_sha": "44b2ac32fee6f271fcdc12dbffceab88133946c8",
+  "baseline_staleness_commits": 135,
+  "baseline_stale": true
+}

@@ -2,7 +2,7 @@
 id: 1471
 sprint: 52
 title: "host-independence: eliminate JS host boxing/unboxing for standalone Wasm"
-status: in-progress
+status: ready
 created: 2026-05-20
 priority: high
 feasibility: medium

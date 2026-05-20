@@ -1,6 +1,106 @@
 {
   "backlog": [
     {
+      "id": "1541",
+      "title": "Opt-in icu_normalizer (icu4x) for String.prototype.normalize",
+      "priority": "low",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1539",
+      "title": "Opt-in Wasm-native RegExp engine via regress (ES2018 syntax)",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1538",
+      "title": "Wasm-native JSON.parse and JSON.stringify (standalone, no host)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1537",
+      "title": "Wasm-native number formatting (Ryū port): toString/toFixed/toPrecision/toExponential",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1536",
+      "title": "Wasm-native exception types: $Error WasmGC struct + throw / try_table / catch_ref",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1529",
+      "title": "codegen: 'illegal cast' umbrella at closure & destructuring parameter boundaries",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1527",
+      "title": "module-code: ambiguous-export & re-export tests fail with 'no test export'",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1524",
+      "title": "test262 harness: TypedArray `ctors` fixture not visible in resizable-buffer tests",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1523",
+      "title": "test262 harness: provide `$262` host-object API (createRealm / detachArrayBuffer / agent / global)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
+      "id": "1522",
+      "title": "codegen: invalid Wasm binary at type-boundary coercion (extern/anyref + struct ref types)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "backlog",
+      "sprint": "backlog"
+    },
+    {
       "id": "1357",
       "title": "spec backlog: AbstractModuleSource constructor (Stage 3 import-source proposal, 8 test262 fails)",
       "priority": "low",
@@ -141,7 +241,7 @@
   ],
   "blocked": [
     {
-      "id": "1521",
+      "id": "1530",
       "title": "wasi: Native Messaging host example (Chrome extension integration)",
       "priority": "medium",
       "feasibility": "medium",
@@ -238,12 +338,164 @@
   ],
   "ready": [
     {
-      "id": "1400",
-      "title": "npm: compile ESLint package entry to valid Wasm",
+      "id": "1554",
+      "title": "cli: --standalone should reject --allow-fs (logically mutually exclusive flags)",
+      "priority": "low",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1552",
+      "title": "spec gap: catch parameter destructuring (`try/dstr`) — share dstr-binding helper with function decls",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1551",
+      "title": "spec gap: SuperCall — argument-list evaluation order, spread getter side-effects, uninitialized-this PutValue",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1550",
+      "title": "spec gap: dstr-binding default initializer evaluated when value is non-undefined (`init-skipped` pattern)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1544",
+      "title": "for-of / for-await-of destructuring of iterator results throws illegal cast",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1543",
+      "title": "Async-generator method with destructured default params throws illegal cast instead of expected error",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1542",
+      "title": "Class method destructured-pattern param default not applied; throws \\\"Cannot destructure null\\\" instead",
       "priority": "high",
       "feasibility": "hard",
       "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "suspended",
+      "sprint": "52"
+    },
+    {
+      "id": "1540",
+      "title": "JSX runtime: bind _jsx/_jsxs/_Fragment as host import (default) and standalone stub",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [
+        "1531"
+      ],
       "goal": "npm-library-support",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1531",
+      "title": "JSX syntax is not parsed when compiling .tsx/.jsx input",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1528",
+      "title": "spec gap: non-constructor TypeError — Promise.all / allSettled species and executor paths",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1526",
+      "title": "spec gap: BigInt + Number mixed arithmetic should throw spec TypeError, not host error",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1525",
+      "title": "spec gap: built-in coercion paths throw 'Cannot convert object to primitive value' eagerly",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1474",
+      "title": "host-independence: eliminate JS host RegExp for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1473",
+      "title": "host-independence: eliminate JS host error/exception ops for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1472",
+      "title": "host-independence: eliminate JS host object/property ops for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1471",
+      "title": "host-independence: eliminate JS host boxing/unboxing for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
       "status": "ready",
       "sprint": "52"
     },
@@ -265,16 +517,6 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "moved-to-s52",
-      "sprint": "52"
-    },
-    {
-      "id": "1373",
-      "title": "IR: claim async functions (async/await through IR path)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "ir-full-coverage",
-      "status": "ready",
       "sprint": "52"
     },
     {
@@ -1763,6 +2005,36 @@
   ],
   "inprogress": [
     {
+      "id": "1534",
+      "title": "test: Web API host import unit tests (fetch, timers, localStorage, crypto.getRandomValues)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "browser-support",
+      "status": "in-progress",
+      "sprint": "52"
+    },
+    {
+      "id": "1533",
+      "title": "test: Node.js API host import unit tests (fs, crypto, process, console)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "in-progress",
+      "sprint": "52"
+    },
+    {
+      "id": "1532",
+      "title": "test: WASI syscall unit test suite (fd_write, environ_get, clock_time_get, fd_read, proc_exit)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "in-progress",
+      "sprint": "52"
+    },
+    {
       "id": "1520",
       "title": "docs: architectural comparison — Static Hermes (native) vs js2wasm (WasmGC AOT)",
       "priority": "high",
@@ -1779,46 +2051,6 @@
       "feasibility": "medium",
       "depends_on": [],
       "goal": "spec-completeness",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1474",
-      "title": "host-independence: eliminate JS host RegExp for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1473",
-      "title": "host-independence: eliminate JS host error/exception ops for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1472",
-      "title": "host-independence: eliminate JS host object/property ops for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1471",
-      "title": "host-independence: eliminate JS host boxing/unboxing for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
       "status": "in-progress",
       "sprint": "52"
     },
@@ -2107,16 +2339,6 @@
       "sprint": "52"
     },
     {
-      "id": "1491",
-      "title": "nodejs: fs.readFileSync/writeFileSync as JS-host imports (non-WASI)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "nodejs-support",
-      "status": "review",
-      "sprint": "52"
-    },
-    {
       "id": "1490",
       "title": "nodejs: runtime access to process.argv and process.env",
       "priority": "medium",
@@ -2269,16 +2491,6 @@
     {
       "id": "1456",
       "title": "spec gap: private-reference assignment to readonly accessor / method throws TypeError",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "review",
-      "sprint": "52"
-    },
-    {
-      "id": "1455",
-      "title": "spec gap: subclassing builtins — instanceof and prototype chain (class Sub extends Map / Float32Array / WeakMap / …)",
       "priority": "medium",
       "feasibility": "medium",
       "depends_on": [],
@@ -2447,18 +2659,6 @@
       "sprint": "52"
     },
     {
-      "id": "1394",
-      "title": "class method-closure caching: C.prototype.method returns stable singleton closure",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [
-        "1388"
-      ],
-      "goal": "spec-completeness",
-      "status": "review",
-      "sprint": "52"
-    },
-    {
       "id": "1383",
       "title": "narrower typeof-gated strict-equality fix (follow-up to closed PR #272 / #1380)",
       "priority": "medium",
@@ -2467,26 +2667,6 @@
       "goal": "spec-completeness",
       "status": "review",
       "sprint": ""
-    },
-    {
-      "id": "1382",
-      "title": "structural: Wasm closures not JS-callable from host imports — bridge gap",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "ir-full-coverage",
-      "status": "review",
-      "sprint": "52"
-    },
-    {
-      "id": "1364",
-      "title": "spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails)",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "review",
-      "sprint": "52"
     },
     {
       "id": "1326",
@@ -2531,8 +2711,38 @@
   ],
   "done": [
     {
+      "id": "1535",
+      "title": "research: JS host dependency audit — identify gaps and evaluate standalone Wasm/JS replacements",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "standalone-wasm",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1521",
+      "title": "test262 CI speedup: cross-PR cache sharing + path-scoped test selection",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
       "id": "1493",
       "title": "nodejs: console.error / console.warn → stderr (fd=2) in WASI mode",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "nodejs-support",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1491",
+      "title": "nodejs: fs.readFileSync/writeFileSync as JS-host imports (non-WASI)",
       "priority": "medium",
       "feasibility": "medium",
       "depends_on": [],
@@ -2547,6 +2757,16 @@
       "feasibility": "medium",
       "depends_on": [],
       "goal": "wasi-completeness",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
+      "id": "1455",
+      "title": "spec gap: subclassing builtins — instanceof and prototype chain (class Sub extends Map / Float32Array / WeakMap / …)",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
       "status": "done",
       "sprint": "52"
     },
@@ -2591,6 +2811,16 @@
       "sprint": "52"
     },
     {
+      "id": "1400",
+      "title": "npm: compile ESLint package entry to valid Wasm",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
       "id": "1398",
       "title": "report: edition filter on category table — per-category edition breakdown",
       "priority": "low",
@@ -2629,6 +2859,18 @@
       "goal": "spec-completeness",
       "status": "done",
       "sprint": "51"
+    },
+    {
+      "id": "1394",
+      "title": "class method-closure caching: C.prototype.method returns stable singleton closure",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [
+        "1388"
+      ],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
     },
     {
       "id": "1393",
@@ -2721,6 +2963,16 @@
       "sprint": "51"
     },
     {
+      "id": "1382",
+      "title": "structural: Wasm closures not JS-callable from host imports — bridge gap",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "ir-full-coverage",
+      "status": "done",
+      "sprint": "52"
+    },
+    {
       "id": "1381",
       "title": "spec gap: String.prototype.{substring,slice,indexOf,search,charAt,charCodeAt,codePointAt,at,includes,startsWith,endsWith,trim,concat} edge cases (~128 fails)",
       "priority": "medium",
@@ -2789,6 +3041,16 @@
       "goal": "ir-full-coverage",
       "status": "done",
       "sprint": "51"
+    },
+    {
+      "id": "1373",
+      "title": "IR: claim async functions (async/await through IR path)",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "ir-full-coverage",
+      "status": "done",
+      "sprint": "52"
     },
     {
       "id": "1372",
@@ -2879,6 +3141,16 @@
       "goal": "spec-completeness",
       "status": "done",
       "sprint": "51"
+    },
+    {
+      "id": "1364",
+      "title": "spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "done",
+      "sprint": "52"
     },
     {
       "id": "1363",

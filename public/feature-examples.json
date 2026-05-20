@@ -15689,7 +15689,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> makeCounter</span><span style=\"color:#89DDFF\">():</span><span style=\"color:#89DDFF\"> ()</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">  let</span><span style=\"color:#BABED8\"> n</span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#F78C6C\"> 0</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  return</span><span style=\"color:#89DDFF\"> ()</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#89DDFF\"> ++</span><span style=\"color:#BABED8\">n</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span>\n<span class=\"line\"></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> c </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#82AAFF\"> makeCounter</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#82AAFF\">c</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#82AAFF\"> c</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> value </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#82AAFF\"> c</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#464B5D;font-style:italic\"> // 3</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $makeCounter</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> externref</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $n </span><span style=\"color:#FFCB6B\">f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__tdz_n </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__boxed_n (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">8</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i32</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    ref</span><span style=\"color:#89DDFF\">.func</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    struct.new </span><span style=\"color:#F78C6C\">8</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.tee</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    struct.new </span><span style=\"color:#F78C6C\">9</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    extern.convert_any</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  ...</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">)</span></span></code></pre>",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 644,
+      "passCount": 645,
       "totalCount": 1177,
       "tests": [
         {
@@ -17535,6 +17535,12 @@
           "error_category": "type_error"
         },
         {
+          "file": "test/language/function-code/10.4.3-1-25gs.js",
+          "status": "fail",
+          "error": "TypeError: is not a constructor",
+          "error_category": "type_error"
+        },
+        {
           "file": "test/language/function-code/10.4.3-1-26-s.js",
           "status": "fail",
           "error": "TypeError: is not a constructor",
@@ -17575,12 +17581,6 @@
           "status": "fail",
           "error": "'this' had incorrect value!",
           "error_category": "other"
-        },
-        {
-          "file": "test/language/function-code/10.4.3-1-56-s.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L14: assert.sameValue(x, o, 'x');",
-          "error_category": "assertion_fail"
         },
         {
           "file": "test/language/function-code/10.4.3-1-56gs.js",
@@ -17659,12 +17659,6 @@
           "status": "fail",
           "error": "'this' had incorrect value!",
           "error_category": "other"
-        },
-        {
-          "file": "test/language/function-code/10.4.3-1-72-s.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L13: assert(f.call(null), 'f.call(null) !== true');",
-          "error_category": "assertion_fail"
         },
         {
           "file": "test/language/function-code/10.4.3-1-72gs.js",
@@ -18690,6 +18684,12 @@
           "file": "test/built-ins/Function/prototype/toString/async-method-class-expression.js",
           "status": "compile_error",
           "error": "L5:3 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #18:\"test\" failed: extern.convert_any[0] expected type anyref, found global.get of type externref @+1878) [in test()] [@+1878] [wat: (func $test (result f64) (local $x externref) (local $__tdz_x i32) (local $f externref) (local $g externref) (local $h externref) (local $x externref) (local $f externref)]",
+          "error_category": "wasm_compile"
+        },
+        {
+          "file": "test/built-ins/Function/prototype/toString/method-class-expression-static.js",
+          "status": "compile_error",
+          "error": "L4:3 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #17:\"test\" failed: call[0] expected type externref, found ref.func of type (ref 6) @+1674) [in test()] [@+1674] [wat: (func $test (result f64) (local $x externref) (local $__tdz_x i32) (local $f externref) (local $g externref) (local $h (ref null 10)) (local $x externref) (local $f externref)]",
           "error_category": "wasm_compile"
         }
       ],
@@ -21732,7 +21732,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> safeDiv</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">a</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8;font-style:italic\"> b</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">):</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  try</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    if</span><span style=\"color:#F07178\"> (</span><span style=\"color:#BABED8\">b</span><span style=\"color:#89DDFF\"> ===</span><span style=\"color:#F78C6C\"> 0</span><span style=\"color:#F07178\">) </span><span style=\"color:#89DDFF;font-style:italic\">throw</span><span style=\"color:#89DDFF\"> new</span><span style=\"color:#82AAFF\"> Error</span><span style=\"color:#F07178\">(</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#C3E88D\">div by zero</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#F07178\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span><span style=\"color:#BABED8\"> a</span><span style=\"color:#89DDFF\"> /</span><span style=\"color:#BABED8\"> b</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">  }</span><span style=\"color:#89DDFF;font-style:italic\"> catch</span><span style=\"color:#F07178\"> (</span><span style=\"color:#BABED8\">e</span><span style=\"color:#F07178\">) </span><span style=\"color:#89DDFF\">{</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span><span style=\"color:#89DDFF\"> -</span><span style=\"color:#F78C6C\">1</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">  }</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $safeDiv</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">param</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">) (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $e </span><span style=\"color:#FFCB6B\">externref</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#89DDFF;font-style:italic\">try</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">      (do</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">        local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">        f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">        f64</span><span style=\"color:#89DDFF\">.eq</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">        (</span><span style=\"color:#89DDFF;font-style:italic\">if</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">          (</span><span style=\"color:#89DDFF;font-style:italic\">then</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">          global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">          call</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">          throw</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">          )</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">        )</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">        local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  ...</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">)</span></span></code></pre>",
       "testCategories": ["language/statements/try"],
-      "passCount": 108,
+      "passCount": 107,
       "totalCount": 201,
       "tests": [
         {
@@ -22201,6 +22201,12 @@
           "file": "test/language/statements/try/S12.14_A11_T4.js",
           "status": "fail",
           "error": "#2.1: \"finally\" block must be evaluated",
+          "error_category": "other"
+        },
+        {
+          "file": "test/language/statements/try/S12.14_A12_T2.js",
+          "status": "fail",
+          "error": "#1.2:  \"try{continue} catch finally\" must work correctly",
           "error_category": "other"
         },
         {
@@ -22690,12 +22696,6 @@
           "error_category": ""
         },
         {
-          "file": "test/language/statements/try/S12.14_A12_T2.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
           "file": "test/language/statements/try/S12.14_A12_T3.js",
           "status": "pass",
           "error": "",
@@ -23056,7 +23056,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">class</span><span style=\"color:#FFCB6B\"> Point</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#F07178\">  x</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#F07178\">  y</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">  constructor</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">x</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8;font-style:italic\"> y</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">)</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">    this.</span><span style=\"color:#BABED8\">x</span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#BABED8\"> x</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">    this.</span><span style=\"color:#BABED8\">y</span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#BABED8\"> y</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">  }</span></span>\n<span class=\"line\"><span style=\"color:#F07178\">  dist</span><span style=\"color:#89DDFF\">():</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span><span style=\"color:#BABED8\"> Math</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">sqrt</span><span style=\"color:#F07178\">(</span><span style=\"color:#89DDFF\">this.</span><span style=\"color:#BABED8\">x</span><span style=\"color:#89DDFF\"> *</span><span style=\"color:#89DDFF\"> this.</span><span style=\"color:#BABED8\">x</span><span style=\"color:#89DDFF\"> +</span><span style=\"color:#89DDFF\"> this.</span><span style=\"color:#BABED8\">y</span><span style=\"color:#89DDFF\"> *</span><span style=\"color:#89DDFF\"> this.</span><span style=\"color:#BABED8\">y</span><span style=\"color:#F07178\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">  }</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $Point_dist</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">param</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">)) (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__ng_0 (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__ng_1 (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__ng_2 (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__ng_3 (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.tee</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    ref</span><span style=\"color:#89DDFF\">.is_null</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#89DDFF;font-style:italic\">if</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">      (</span><span style=\"color:#89DDFF;font-style:italic\">then</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">      global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 3</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">      throw</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">      )</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">      (</span><span style=\"color:#89DDFF;font-style:italic\">else</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">      local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  ...</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">)</span></span></code></pre>",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 2675,
+      "passCount": 2677,
       "totalCount": 4581,
       "tests": [
         {
@@ -23276,6 +23276,12 @@
           "error_category": "other"
         },
         {
+          "file": "test/built-ins/Object/create/15.2.3.5-4-13.js",
+          "status": "fail",
+          "error": "L41:3 Property description must be an object: 5",
+          "error_category": "other"
+        },
+        {
           "file": "test/built-ins/Object/create/15.2.3.5-4-133.js",
           "status": "fail",
           "error": "returned 3 — assert #2 at L24: assert.sameValue(afterDeleted, false, 'afterDeleted');",
@@ -23430,6 +23436,12 @@
           "status": "fail",
           "error": "returned 2 — assert #1 at L35: assert.sameValue(newObj.prop, \"ownAccessorProperty\", 'newObj.prop');",
           "error_category": "assertion_fail"
+        },
+        {
+          "file": "test/built-ins/Object/create/15.2.3.5-4-165.js",
+          "status": "fail",
+          "error": "L62:3 dereferencing a null pointer [in __fnctor_Func_new() ← test]",
+          "error_category": "null_deref"
         },
         {
           "file": "test/built-ins/Object/create/15.2.3.5-4-166.js",
@@ -23631,6 +23643,12 @@
         },
         {
           "file": "test/built-ins/Object/create/15.2.3.5-4-258.js",
+          "status": "fail",
+          "error": "returned 2 — assert #1 at L12: assert.throws(TypeError, function() {   Object.create({}, {     prop: {",
+          "error_category": "assertion_fail"
+        },
+        {
+          "file": "test/built-ins/Object/create/15.2.3.5-4-259.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L12: assert.throws(TypeError, function() {   Object.create({}, {     prop: {",
           "error_category": "assertion_fail"
@@ -24078,12 +24096,6 @@
           "status": "fail",
           "error": "returned 2 — assert #1 at L23: assert(result, 'result !== true');",
           "error_category": "assertion_fail"
-        },
-        {
-          "file": "test/built-ins/Object/defineProperties/15.2.3.7-2-14.js",
-          "status": "fail",
-          "error": "L41:3 Property description must be an object: 1",
-          "error_category": "other"
         },
         {
           "file": "test/built-ins/Object/defineProperties/15.2.3.7-2-16.js",
@@ -25346,12 +25358,6 @@
           "error_category": "assertion_fail"
         },
         {
-          "file": "test/built-ins/Object/defineProperties/15.2.3.7-6-a-175.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L19: assert.throws(TypeError, function() {   Object.defineProperties(arr, {     length: {",
-          "error_category": "assertion_fail"
-        },
-        {
           "file": "test/built-ins/Object/defineProperties/15.2.3.7-6-a-176.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L33: assert(e instanceof TypeError); }",
@@ -26052,12 +26058,6 @@
           "status": "fail",
           "error": "returned 2 — assert #1 at L14: assert(obj.hasOwnProperty(\"true\"), 'obj.hasOwnProperty(\"true\") !== true');",
           "error_category": "assertion_fail"
-        },
-        {
-          "file": "test/built-ins/Object/defineProperty/15.2.3.6-2-43.js",
-          "status": "fail",
-          "error": "L41:3 Cannot convert object to primitive value",
-          "error_category": "runtime_error"
         }
       ],
       "testsTruncated": true
@@ -26073,7 +26073,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> greet</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">name</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> string</span><span style=\"color:#89DDFF\">):</span><span style=\"color:#FFCB6B\"> string</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  return</span><span style=\"color:#89DDFF\"> \"</span><span style=\"color:#C3E88D\">Hello </span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#89DDFF\"> +</span><span style=\"color:#BABED8\"> name</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span>\n<span class=\"line\"></span>\n<span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> initials</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">first</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> string</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8;font-style:italic\"> last</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> string</span><span style=\"color:#89DDFF\">):</span><span style=\"color:#FFCB6B\"> string</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  return</span><span style=\"color:#BABED8\"> first</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">slice</span><span style=\"color:#F07178\">(</span><span style=\"color:#F78C6C\">0</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#F78C6C\"> 1</span><span style=\"color:#F07178\">) </span><span style=\"color:#89DDFF\">+</span><span style=\"color:#BABED8\"> last</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">slice</span><span style=\"color:#F07178\">(</span><span style=\"color:#F78C6C\">0</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#F78C6C\"> 1</span><span style=\"color:#F07178\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $greet</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">param</span><span style=\"color:#FFCB6B\"> externref</span><span style=\"color:#BABED8\">) (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> externref</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    call</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 799,
+      "passCount": 802,
       "totalCount": 1230,
       "tests": [
         {
@@ -27073,12 +27073,6 @@
           "error_category": "runtime_error"
         },
         {
-          "file": "test/built-ins/String/prototype/search/S15.5.4.12_A1_T12.js",
-          "status": "fail",
-          "error": "wasm exception during compile (poisoned built-in)",
-          "error_category": "other"
-        },
-        {
           "file": "test/built-ins/String/prototype/search/S15.5.4.12_A1_T2.js",
           "status": "fail",
           "error": "#1: __instance = new Boolean; __instance.search = String.prototype.search;  __instance.search(function(){return false;}()) === 0. Actual: -1",
@@ -27095,6 +27089,12 @@
           "status": "fail",
           "error": "L41:3 Cannot convert object to primitive value",
           "error_category": "runtime_error"
+        },
+        {
+          "file": "test/built-ins/String/prototype/search/S15.5.4.12_A2_T7.js",
+          "status": "fail",
+          "error": "wasm exception during compile (poisoned built-in)",
+          "error_category": "other"
         },
         {
           "file": "test/built-ins/String/prototype/search/S15.5.4.12_A7.js",
@@ -27257,6 +27257,12 @@
           "status": "fail",
           "error": "L41:3 Cannot convert object to primitive value",
           "error_category": "runtime_error"
+        },
+        {
+          "file": "test/built-ins/String/prototype/split/arguments-are-new-reg-exp-and-0-and-instance-is-string-hello.js",
+          "status": "fail",
+          "error": "returned 2 — assert #1 at L21: assert.sameValue(   __split.constructor,   Array,",
+          "error_category": "assertion_fail"
         },
         {
           "file": "test/built-ins/String/prototype/split/arguments-are-new-reg-exp-and-1-and-instance-is-string-hello.js",
@@ -27638,12 +27644,6 @@
         },
         {
           "file": "test/built-ins/String/prototype/split/separator-colon-instance-is-string-one-1-two-2-four-4.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L18: assert.sameValue(   __split.constructor,   Array,",
-          "error_category": "assertion_fail"
-        },
-        {
-          "file": "test/built-ins/String/prototype/split/separator-comma-instance-is-string-one-two-three-four-five.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L18: assert.sameValue(   __split.constructor,   Array,",
           "error_category": "assertion_fail"
@@ -28579,6 +28579,12 @@
           "error_category": "wasm_compile"
         },
         {
+          "file": "test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T4.js",
+          "status": "compile_error",
+          "error": "L6:3 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #21:\"test\" failed: f64.ne[0] expected type f64, found call of type i32 @+2829) [in test()] [@+2829] [wat: (func $test (result f64) (local $__lowerCase externref) (local $__expected externref) (local $__nullchk_2 externref) (local $__tmp_3 externref) (local $__tmp_4 externref) (local $__tmp_5 anyref) (local $__tmp_6 anyref)]",
+          "error_category": "wasm_compile"
+        },
+        {
           "file": "test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T9.js",
           "status": "compile_error",
           "error": "L4:3 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #25:\"test\" failed: f64.ne[0] expected type f64, found call of type i32 @+3513) [in test()] [@+3513] [wat: (func $test (result f64) (local $__obj (ref null 22)) (local $__lowerCase externref) (local $__expected externref) (local $index i32) (local $__nullchk_4 externref) (local $__tmp_5 externref) (local $__tmp_6 externref)]",
@@ -28615,7 +28621,7 @@
           "error_category": "other"
         },
         {
-          "file": "test/built-ins/String/prototype/indexOf/not-a-constructor.js",
+          "file": "test/built-ins/String/prototype/search/name.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
@@ -28627,37 +28633,13 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/String/prototype/search/S15.5.4.12_A2_T7.js",
+          "file": "test/built-ins/String/prototype/split/separator-comma-instance-is-string-one-two-three-four-five.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/String/prototype/split/arguments-are-new-reg-exp-and-0-and-instance-is-string-hello.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/String/prototype/split/separator-undef.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T4.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/String/prototype/trim/15.5.4.20-2-18.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/String/prototype/trim/15.5.4.20-2-19.js",
+          "file": "test/built-ins/String/S15.5.2.1_A1_T5.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
@@ -29075,6 +29057,24 @@
           "status": "pass",
           "error": "",
           "error_category": ""
+        },
+        {
+          "file": "test/built-ins/String/prototype/charCodeAt/not-a-constructor.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/String/prototype/charCodeAt/pos-coerce-err.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/String/prototype/charCodeAt/pos-coerce-string.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
         }
       ],
       "testsTruncated": true
@@ -29204,7 +29204,7 @@
         {
           "file": "test/built-ins/Number/MIN_VALUE/S15.7.3.3_A4.js",
           "status": "fail",
-          "error": "returned 2 — assert #1 at L11: assert.notSameValue(x, \"MIN_VALUE\", 'The value of x is not \"MIN_VALUE\"'); }",
+          "error": "returned 3 — assert #2 at L14: assert(   !Number.propertyIsEnumerable('MIN_VALUE'),   'The value of !Number.propertyIsEnumerable(\\'MIN_VALUE\\') is expe",
           "error_category": "assertion_fail"
         },
         {
@@ -32280,12 +32280,6 @@
           "error_category": "assertion_fail"
         },
         {
-          "file": "test/built-ins/JSON/stringify/replacer-array-abrupt.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L28: assert.throws(Test262Error, function() {   JSON.stringify(null, abruptLength); });",
-          "error_category": "assertion_fail"
-        },
-        {
           "file": "test/built-ins/JSON/stringify/replacer-array-duplicates.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L28: assert.sameValue(JSON.stringify(value, ['key', 'key']), '{\"key\":true}'); assert.sameValue(getCalls, 1);",
@@ -32415,6 +32409,12 @@
           "file": "test/built-ins/JSON/stringify/value-array-circular.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L28: assert.throws(TypeError, function() {   JSON.stringify(direct); });",
+          "error_category": "assertion_fail"
+        },
+        {
+          "file": "test/built-ins/JSON/stringify/value-array-proxy-revoked.js",
+          "status": "fail",
+          "error": "returned 2 — assert #1 at L31: assert.throws(TypeError, function() {   JSON.stringify(handle.proxy); }, 'top-level value');",
           "error_category": "assertion_fail"
         },
         {
@@ -32574,7 +32574,7 @@
           "error_category": "other"
         },
         {
-          "file": "test/built-ins/JSON/stringify/value-array-proxy-revoked.js",
+          "file": "test/built-ins/JSON/stringify/replacer-array-abrupt.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
@@ -34841,6 +34841,12 @@
           "error_category": "assertion_fail"
         },
         {
+          "file": "test/built-ins/Array/is-a-constructor.js",
+          "status": "fail",
+          "error": "returned 2 — assert #1 at L22: assert.sameValue(isConstructor(Array), true, 'isConstructor(Array) must return true'); new Array();",
+          "error_category": "assertion_fail"
+        },
+        {
           "file": "test/built-ins/Array/isArray/15.4.3.2-1-9.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L10: assert.sameValue(Array.isArray(new Date(0)), false, 'Array.isArray(new Date(0)) must return false');",
@@ -35171,9 +35177,9 @@
           "error_category": "assertion_fail"
         },
         {
-          "file": "test/built-ins/Array/prototype/concat/Array.prototype.concat_array-like-to-length-throws.js",
+          "file": "test/built-ins/Array/prototype/concat/Array.prototype.concat_array-like-string-length.js",
           "status": "fail",
-          "error": "returned 2 — assert #1 at L27: assert.throws(TypeError, function() {   Array.prototype.concat.call(spreadableWithBrokenLength, obj2, arr); }, 'Array.pr",
+          "error": "returned 2 — assert #1 at L33: assert.compareArray(actual, expected, 'The value of actual is expected to equal the value of expected');",
           "error_category": "assertion_fail"
         },
         {
@@ -35987,12 +35993,6 @@
           "error_category": "assertion_fail"
         },
         {
-          "file": "test/built-ins/Array/prototype/every/15.4.4.16-7-c-i-31.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L30: assert.throws(RangeError, function() {   arr.every(callbackfn); });",
-          "error_category": "assertion_fail"
-        },
-        {
           "file": "test/built-ins/Array/prototype/every/15.4.4.16-7-c-i-7.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L31: assert.sameValue(Array.prototype.every.call(child, callbackfn), false, 'Array.prototype.every.call(child, callbackfn)');",
@@ -36249,12 +36249,6 @@
           "status": "fail",
           "error": "L55:3 object is not a function",
           "error_category": "wasm_compile"
-        },
-        {
-          "file": "test/built-ins/Array/prototype/filter/15.4.4.20-1-9.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L21: assert.sameValue(newArr[0], 11, 'newArr[0]'); assert.sameValue(newArr[1], 9, 'newArr[1]');",
-          "error_category": "assertion_fail"
         },
         {
           "file": "test/built-ins/Array/prototype/filter/15.4.4.20-10-3.js",
@@ -36899,6 +36893,12 @@
           "error_category": "other"
         },
         {
+          "file": "test/built-ins/Array/prototype/filter/resizable-buffer.js",
+          "status": "fail",
+          "error": "L49:3 ctors is not defined",
+          "error_category": "other"
+        },
+        {
           "file": "test/built-ins/Array/prototype/filter/target-array-non-extensible.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L38: assert.throws(TypeError, function() {   arr.filter(function() {     return true;",
@@ -37352,7 +37352,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> re </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#89DDFF\"> /</span><span style=\"color:#C3E88D\">d</span><span style=\"color:#89DDFF\">+/</span><span style=\"color:#F78C6C\">g</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> found </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#89DDFF\"> \"</span><span style=\"color:#C3E88D\">abc123def456</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">match</span><span style=\"color:#BABED8\">(re)</span><span style=\"color:#89DDFF\">;</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $__module_init</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    call</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 4</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 4</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    call</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 5</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1547,
+      "passCount": 1546,
       "totalCount": 1896,
       "tests": [
         {
@@ -37569,6 +37569,12 @@
           "file": "test/built-ins/RegExp/lookBehind/variable-length.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L24: assert.compareArray(\"abcdef\".match(/(?<=[a|b|c]*)[^a|b|c]{3}/), [\"def\"], \"#1\"); assert.compareArray(\"abcdef\".match(/(?<=",
+          "error_category": "assertion_fail"
+        },
+        {
+          "file": "test/built-ins/RegExp/lookBehind/word-boundary.js",
+          "status": "fail",
+          "error": "returned 2 — assert #1 at L25: assert.compareArray(\"abc def\".match(/(?<=\\b)[d-f]{3}/), [\"def\"], \"#1\"); assert.compareArray(\"ab cdef\".match(/(?<=\\B)\\w{3",
           "error_category": "assertion_fail"
         },
         {
@@ -38364,6 +38370,12 @@
           "error_category": "null_deref"
         },
         {
+          "file": "test/built-ins/RegExp/prototype/Symbol.replace/coerce-lastindex-err.js",
+          "status": "fail",
+          "error": "L82:3 dereferencing a null pointer [in __closure_5() ← assert_throws ← test]",
+          "error_category": "null_deref"
+        },
+        {
           "file": "test/built-ins/RegExp/prototype/Symbol.replace/coerce-lastindex.js",
           "status": "fail",
           "error": "L55:3 dereferencing a null pointer [in test()]",
@@ -38832,6 +38844,12 @@
           "error_category": "null_deref"
         },
         {
+          "file": "test/built-ins/RegExp/prototype/Symbol.split/limit-0-bail.js",
+          "status": "fail",
+          "error": "L41:3 Cannot convert object to primitive value",
+          "error_category": "runtime_error"
+        },
+        {
           "file": "test/built-ins/RegExp/prototype/Symbol.split/name.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L20: verifyProperty(RegExp.prototype[Symbol.split], \"name\", {   value: \"[Symbol.split]\",   writable: false,",
@@ -38896,12 +38914,6 @@
           "status": "fail",
           "error": "L55:3 Cannot convert object to primitive value",
           "error_category": "runtime_error"
-        },
-        {
-          "file": "test/built-ins/RegExp/prototype/Symbol.split/str-empty-match.js",
-          "status": "fail",
-          "error": "L41:3 dereferencing a null pointer [in test()]",
-          "error_category": "null_deref"
         },
         {
           "file": "test/built-ins/RegExp/prototype/Symbol.split/str-empty-no-match.js",
@@ -39013,6 +39025,12 @@
         },
         {
           "file": "test/built-ins/RegExp/prototype/test/S15.10.6.3_A2_T7.js",
+          "status": "fail",
+          "error": "returned 2 — assert #1 at L19: assert.sameValue(     e instanceof TypeError,     true,",
+          "error_category": "assertion_fail"
+        },
+        {
+          "file": "test/built-ins/RegExp/prototype/test/S15.10.6.3_A2_T8.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L19: assert.sameValue(     e instanceof TypeError,     true,",
           "error_category": "assertion_fail"
@@ -39396,55 +39414,43 @@
           "error_category": "other"
         },
         {
-          "file": "test/built-ins/RegExp/early-err-modifiers-other-code-point-y.js",
+          "file": "test/built-ins/RegExp/property-escapes/binary-property-with-value-ASCII_-_No.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/RegExp/lookBehind/word-boundary.js",
+          "file": "test/built-ins/RegExp/property-escapes/generated/Extended_Pictographic.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/RegExp/named-groups/string-replace-unclosed.js",
+          "file": "test/built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Beria_Erfe.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/RegExp/named-groups/unicode-property-names-valid.js",
+          "file": "test/built-ins/RegExp/prototype/exec/S15.10.6.2_A1_T10.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/RegExp/property-escapes/generated/IDS_Binary_Operator.js",
+          "file": "test/built-ins/RegExp/prototype/ignoreCase/name.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/RegExp/property-escapes/generated/Script_-_Tangsa.js",
+          "file": "test/built-ins/RegExp/prototype/Symbol.split/str-coerce-lastindex-err.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/RegExp/prototype/global/this-val-regexp-prototype.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/RegExp/prototype/Symbol.replace/coerce-lastindex-err.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/RegExp/prototype/Symbol.split/limit-0-bail.js",
+          "file": "test/built-ins/RegExp/prototype/Symbol.split/str-empty-match.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
@@ -39625,6 +39631,12 @@
         },
         {
           "file": "test/built-ins/RegExp/early-err-modifiers-other-code-point-uppercase-I.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/RegExp/early-err-modifiers-other-code-point-y.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -39960,7 +39972,19 @@
           "error_category": ""
         },
         {
+          "file": "test/built-ins/RegExp/named-groups/string-replace-unclosed.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
           "file": "test/built-ins/RegExp/named-groups/string-replace-undefined.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/RegExp/named-groups/unicode-property-names-valid.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -40021,12 +40045,6 @@
         },
         {
           "file": "test/built-ins/RegExp/property-escapes/binary-property-with-value-ASCII_-_No-negated.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/RegExp/property-escapes/binary-property-with-value-ASCII_-_No.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -40242,12 +40260,6 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/RegExp/property-escapes/generated/Extended_Pictographic.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
           "file": "test/built-ins/RegExp/property-escapes/generated/Extender.js",
           "status": "pass",
           "error": "",
@@ -40339,18 +40351,6 @@
         },
         {
           "file": "test/built-ins/RegExp/property-escapes/generated/General_Category_-_Lowercase_Letter.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/RegExp/property-escapes/generated/General_Category_-_Mark.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/RegExp/property-escapes/generated/General_Category_-_Math_Symbol.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -53094,7 +53094,7 @@
         "built-ins/WeakMap",
         "built-ins/WeakSet"
       ],
-      "passCount": 663,
+      "passCount": 658,
       "totalCount": 835,
       "tests": [
         {
@@ -53186,6 +53186,12 @@
           "status": "fail",
           "error": "L41:3 $262 is not defined",
           "error_category": "other"
+        },
+        {
+          "file": "test/built-ins/Map/prototype/forEach/callback-parameters.js",
+          "status": "fail",
+          "error": "L55:3 object is not a function",
+          "error_category": "wasm_compile"
         },
         {
           "file": "test/built-ins/Map/prototype/forEach/iterates-in-key-insertion-order.js",
@@ -53306,6 +53312,12 @@
           "status": "fail",
           "error": "returned 2 — assert #1 at L18: assert.throws(TypeError, function() {   Map(); });",
           "error_category": "assertion_fail"
+        },
+        {
+          "file": "test/built-ins/Map/valid-keys.js",
+          "status": "fail",
+          "error": "L55:3 No dependency provided for extern class \"BigInt64Array\"",
+          "error_category": "wasm_compile"
         },
         {
           "file": "test/built-ins/Set/bigint-number-same-value.js",
@@ -53698,6 +53710,12 @@
           "error_category": "assertion_fail"
         },
         {
+          "file": "test/built-ins/Set/prototype/symmetricDifference/subclass.js",
+          "status": "fail",
+          "error": "returned 2 — assert #1 at L17: assert.compareArray([...combined], expected); assert.sameValue(combined instanceof Set, true, \"The returned object is a ",
+          "error_category": "assertion_fail"
+        },
+        {
           "file": "test/built-ins/Set/prototype/union/add-not-called.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L23: assert.compareArray([...combined], expected); assert.sameValue(combined instanceof Set, true, \"The returned object is a ",
@@ -54022,12 +54040,6 @@
           "error_category": "wasm_compile"
         },
         {
-          "file": "test/built-ins/WeakSet/is-a-constructor.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L22: assert.sameValue(isConstructor(WeakSet), true, 'isConstructor(WeakSet) must return true'); new WeakSet();",
-          "error_category": "assertion_fail"
-        },
-        {
           "file": "test/built-ins/WeakSet/iterable-with-object-values.js",
           "status": "fail",
           "error": "L41:3 '[object Object]' returned for property 'add' of object '#<WeakSet>' is not a function",
@@ -54112,19 +54124,37 @@
           "error_category": "runtime_error"
         },
         {
-          "file": "test/built-ins/Map/prototype/forEach/callback-parameters.js",
+          "file": "test/built-ins/Map/prototype/getOrInsert/append-value-if-key-is-not-present-different-key-types.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Map/valid-keys.js",
+          "file": "test/built-ins/Map/prototype/values/does-not-have-mapdata-internal-slot.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Set/prototype/symmetricDifference/subclass.js",
+          "file": "test/built-ins/Map/prototype/values/returns-iterator-empty.js",
+          "status": "compile_timeout",
+          "error": "timeout (30s)",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/Set/prototype/delete/this-not-object-throw-boolean.js",
+          "status": "compile_timeout",
+          "error": "timeout (30s)",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/Set/prototype/isDisjointFrom/not-a-constructor.js",
+          "status": "compile_timeout",
+          "error": "timeout (30s)",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/WeakSet/is-a-constructor.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
@@ -54664,12 +54694,6 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Map/prototype/getOrInsert/append-value-if-key-is-not-present-different-key-types.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
           "file": "test/built-ins/Map/prototype/getOrInsert/does-not-have-mapdata-internal-slot-set.js",
           "status": "pass",
           "error": "",
@@ -55060,12 +55084,6 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Map/prototype/values/does-not-have-mapdata-internal-slot.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
           "file": "test/built-ins/Map/prototype/values/length.js",
           "status": "pass",
           "error": "",
@@ -55079,12 +55097,6 @@
         },
         {
           "file": "test/built-ins/Map/prototype/values/not-a-constructor.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/Map/prototype/values/returns-iterator-empty.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -55559,12 +55571,6 @@
         },
         {
           "file": "test/built-ins/Set/prototype/delete/returns-true-when-delete-operation-occurs.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/Set/prototype/delete/this-not-object-throw-boolean.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -56090,12 +56096,6 @@
           "status": "pass",
           "error": "",
           "error_category": ""
-        },
-        {
-          "file": "test/built-ins/Set/prototype/has/returns-true-when-value-present-number.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
         }
       ],
       "testsTruncated": true
@@ -56113,7 +56113,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> id </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#82AAFF\"> Symbol</span><span style=\"color:#BABED8\">(</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#C3E88D\">id</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#BABED8\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> desc </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> id</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#BABED8\">description</span><span style=\"color:#89DDFF\">;</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $__module_init</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">    drop</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 4</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i32</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i32</span><span style=\"color:#89DDFF\">.add</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 4</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 4</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    ref</span><span style=\"color:#89DDFF\">.null</span><span style=\"color:#FFCB6B\"> extern</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 3</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 50,
+      "passCount": 51,
       "totalCount": 98,
       "tests": [
         {
@@ -56303,12 +56303,6 @@
           "error_category": "null_deref"
         },
         {
-          "file": "test/built-ins/Symbol/prototype/Symbol.toStringTag.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L17: assert.sameValue(Symbol.prototype[Symbol.toStringTag], 'Symbol');  verifyProperty(Symbol.prototype, Symbol.toStringTag, ",
-          "error_category": "assertion_fail"
-        },
-        {
           "file": "test/built-ins/Symbol/prototype/toString/toString-default-attributes-non-strict.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L14: assert.sameValue(sym.toString(), 'Symbol(66)', \"`sym.toString()` returns `'Symbol(66)'`, after executing `sym.toString =",
@@ -56399,7 +56393,7 @@
           "error_category": "other"
         },
         {
-          "file": "test/built-ins/Symbol/prototype/valueOf/name.js",
+          "file": "test/built-ins/Symbol/keyFor/prop-desc.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
@@ -56519,12 +56513,6 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Symbol/keyFor/prop-desc.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
           "file": "test/built-ins/Symbol/length.js",
           "status": "pass",
           "error": "",
@@ -56597,6 +56585,12 @@
           "error_category": ""
         },
         {
+          "file": "test/built-ins/Symbol/prototype/Symbol.toStringTag.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
           "file": "test/built-ins/Symbol/prototype/toString/length.js",
           "status": "pass",
           "error": "",
@@ -56622,6 +56616,12 @@
         },
         {
           "file": "test/built-ins/Symbol/prototype/valueOf/length.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/Symbol/prototype/valueOf/name.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -56726,7 +56726,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 2351,
+      "passCount": 2349,
       "totalCount": 2999,
       "tests": [
         {
@@ -58134,6 +58134,12 @@
           "error_category": "wasm_compile"
         },
         {
+          "file": "test/built-ins/DataView/prototype/setUint8/index-is-out-of-range.js",
+          "status": "fail",
+          "error": "returned 8 — assert #7 at L59: assert.sameValue(typedArray[0], 0, \"[0] no value was set\"); assert.sameValue(typedArray[1], 0, \"[1] no value was set\"); ",
+          "error_category": "assertion_fail"
+        },
+        {
           "file": "test/built-ins/DataView/prototype/setUint8/negative-byteoffset-throws.js",
           "status": "fail",
           "error": "returned 3 — assert #2 at L29: assert.sameValue(typedArray[0], 0, \"-1 - no value was set\");  assert.throws(RangeError, function() {",
@@ -58222,6 +58228,12 @@
           "status": "fail",
           "error": "RangeError: Start offset is outside the bounds of the buffer",
           "error_category": "range_error"
+        },
+        {
+          "file": "test/built-ins/TypedArray/from/arylk-get-length-error.js",
+          "status": "fail",
+          "error": "returned 2 — assert #1 at L24: assert.throws(Test262Error, function() {   TypedArray.from(arrayLike); });",
+          "error_category": "assertion_fail"
         },
         {
           "file": "test/built-ins/TypedArray/from/arylk-to-length-error.js",
@@ -58476,6 +58488,12 @@
           "error_category": "other"
         },
         {
+          "file": "test/built-ins/TypedArray/prototype/copyWithin/invoked-as-func.js",
+          "status": "fail",
+          "error": "returned 3 — assert #2 at L27: assert.throws(TypeError, function() {   copyWithin(); });",
+          "error_category": "assertion_fail"
+        },
+        {
           "file": "test/built-ins/TypedArray/prototype/copyWithin/resizable-buffer.js",
           "status": "fail",
           "error": "L59:3 ctors is not defined",
@@ -58674,6 +58692,12 @@
           "error_category": "runtime_error"
         },
         {
+          "file": "test/built-ins/TypedArray/prototype/findLastIndex/get-length-ignores-length-prop.js",
+          "status": "fail",
+          "error": "L50:3 Cannot redefine property: length",
+          "error_category": "runtime_error"
+        },
+        {
           "file": "test/built-ins/TypedArray/prototype/findLastIndex/invoked-as-func.js",
           "status": "fail",
           "error": "returned 3 — assert #2 at L27: assert.throws(TypeError, function() {   findLastIndex(); });",
@@ -58720,12 +58744,6 @@
           "status": "fail",
           "error": "L59:3 ctors is not defined",
           "error_category": "other"
-        },
-        {
-          "file": "test/built-ins/TypedArray/prototype/includes/BigInt/get-length-uses-internal-arraylength.js",
-          "status": "fail",
-          "error": "L57:3 Cannot redefine property: length",
-          "error_category": "runtime_error"
         },
         {
           "file": "test/built-ins/TypedArray/prototype/includes/coerced-searchelement-fromindex-resize.js",
@@ -58894,12 +58912,6 @@
           "status": "fail",
           "error": "L51:3 ctors is not defined",
           "error_category": "other"
-        },
-        {
-          "file": "test/built-ins/TypedArray/prototype/length/invoked-as-accessor.js",
-          "status": "fail",
-          "error": "returned 2 — assert #1 at L21: assert.throws(TypeError, function() {   TypedArrayPrototype.length; });",
-          "error_category": "assertion_fail"
         },
         {
           "file": "test/built-ins/TypedArray/prototype/length/invoked-as-func.js",
@@ -59716,18 +59728,6 @@
           "status": "fail",
           "error": "L48:3 No dependency provided for extern class \"SharedArrayBuffer\"",
           "error_category": "wasm_compile"
-        },
-        {
-          "file": "test/built-ins/TypedArrayConstructors/ctors/length-arg/proto-from-ctor-realm.js",
-          "status": "fail",
-          "error": "L48:3 $262 is not defined",
-          "error_category": "other"
-        },
-        {
-          "file": "test/built-ins/TypedArrayConstructors/ctors/no-args/proto-from-ctor-realm.js",
-          "status": "fail",
-          "error": "L48:3 $262 is not defined",
-          "error_category": "other"
         }
       ],
       "testsTruncated": true
@@ -63228,6 +63228,12 @@
           "error_category": "other"
         },
         {
+          "file": "test/built-ins/Proxy/get-fn-realm.js",
+          "status": "fail",
+          "error": "L41:3 $262 is not defined",
+          "error_category": "other"
+        },
+        {
           "file": "test/built-ins/Proxy/get/accessor-get-is-undefined-throws.js",
           "status": "fail",
           "error": "L71:3 dereferencing a null pointer [in __closure_5() ← assert_throws ← test]",
@@ -64074,12 +64080,6 @@
           "error_category": "assertion_fail"
         },
         {
-          "file": "test/built-ins/Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js",
-          "status": "fail",
-          "error": "returned 4 — assert #3 at L50: assert.sameValue(   Object.getPrototypeOf(outro),   proto,",
-          "error_category": "assertion_fail"
-        },
-        {
           "file": "test/built-ins/Proxy/setPrototypeOf/null-handler.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L14: assert.throws(TypeError, function() {   Object.setPrototypeOf(p.proxy, {}); });",
@@ -64722,7 +64722,7 @@
           "error_category": "wasm_compile"
         },
         {
-          "file": "test/built-ins/Proxy/get-fn-realm.js",
+          "file": "test/built-ins/Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
@@ -65565,7 +65565,7 @@
       "compileSuccess": false,
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">promise</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">then</span><span style=\"color:#BABED8\">(</span><span style=\"color:#BABED8;font-style:italic\">v</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#BABED8\"> v </span><span style=\"color:#89DDFF\">+</span><span style=\"color:#F78C6C\"> 1</span><span style=\"color:#BABED8\">)</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#464B5D;font-style:italic\"> // not yet</span></span></code></pre>",
       "testCategories": ["built-ins/Promise"],
-      "passCount": 472,
+      "passCount": 470,
       "totalCount": 652,
       "tests": [
         {
@@ -66027,8 +66027,8 @@
         {
           "file": "test/built-ins/Promise/any/resolve-throws-iterator-return-is-not-callable.js",
           "status": "fail",
-          "error": "TypeError (null/undefined access): Input throw-completion forwarded when IteratorClose returns abruptly because GetMethod throws.",
-          "error_category": "type_error"
+          "error": "L55:3 [object Object] is not a constructor",
+          "error_category": "other"
         },
         {
           "file": "test/built-ins/Promise/any/resolve-throws-iterator-return-null-or-undefined.js",
@@ -66211,7 +66211,7 @@
           "error_category": "runtime_error"
         },
         {
-          "file": "test/built-ins/Promise/prototype/then/rxn-handler-rejected-next-abrupt.js",
+          "file": "test/built-ins/Promise/prototype/then/resolve-settled-fulfilled-thenable.js",
           "status": "fail",
           "error": "L46:3 object.constructor[Symbol.species] is not a constructor",
           "error_category": "other"
@@ -66259,12 +66259,6 @@
           "error_category": "other"
         },
         {
-          "file": "test/built-ins/Promise/race/invoke-resolve-get-error.js",
-          "status": "fail",
-          "error": "L46:3 object.constructor[Symbol.species] is not a constructor",
-          "error_category": "other"
-        },
-        {
           "file": "test/built-ins/Promise/race/invoke-resolve-get-once-multiple-calls.js",
           "status": "fail",
           "error": "returned 3 — assert #2 at L43: assert.sameValue(   callCount, 4, '`resolve` invoked once for each iterated value' );",
@@ -66301,10 +66295,10 @@
           "error_category": "assertion_fail"
         },
         {
-          "file": "test/built-ins/Promise/race/iter-returns-string-reject.js",
+          "file": "test/built-ins/Promise/race/iter-arg-is-string-resolve.js",
           "status": "fail",
-          "error": "returned 2 — assert #1 at L33: assert(error instanceof TypeError);   }).then($DONE, $DONE); } catch (error) {",
-          "error_category": "assertion_fail"
+          "error": "returned 2 — assert #1 at L27: assert.sameValue(v, \"a\");   }, function() {     $DONE('The promise should be resolved, but was rejected');",
+          "error_category": "promise_error"
         },
         {
           "file": "test/built-ins/Promise/race/reject-from-same-thenable.js",
@@ -66322,6 +66316,12 @@
           "file": "test/built-ins/Promise/race/resolve-throws-iterator-return-null-or-undefined.js",
           "status": "fail",
           "error": "L55:3 [object Object] is not a constructor",
+          "error_category": "other"
+        },
+        {
+          "file": "test/built-ins/Promise/race/S25.4.4.3_A6.2_T1.js",
+          "status": "fail",
+          "error": "L46:3 object.constructor[Symbol.species] is not a constructor",
           "error_category": "other"
         },
         {
@@ -66631,6 +66631,12 @@
           "error_category": "wasm_compile"
         },
         {
+          "file": "test/built-ins/Promise/all/invoke-then-get-error-reject.js",
+          "status": "compile_timeout",
+          "error": "timeout (30s)",
+          "error_category": ""
+        },
+        {
           "file": "test/built-ins/Promise/all/iter-next-val-err-reject.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
@@ -66643,7 +66649,13 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Promise/prototype/then/reject-settled-fulfilled.js",
+          "file": "test/built-ins/Promise/any/iter-next-val-err-no-close.js",
+          "status": "compile_timeout",
+          "error": "timeout (30s)",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/Promise/any/resolve-ignores-late-rejection-deferred.js",
           "status": "compile_timeout",
           "error": "timeout (30s)",
           "error_category": ""
@@ -66710,12 +66722,6 @@
         },
         {
           "file": "test/built-ins/Promise/all/invoke-then-error-reject.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/Promise/all/invoke-then-get-error-reject.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -67681,12 +67687,6 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Promise/any/iter-next-val-err-no-close.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
           "file": "test/built-ins/Promise/any/iter-next-val-err-reject.js",
           "status": "pass",
           "error": "",
@@ -67808,12 +67808,6 @@
         },
         {
           "file": "test/built-ins/Promise/any/resolve-from-resolve-reject-catch.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/Promise/any/resolve-ignores-late-rejection-deferred.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -68245,6 +68239,12 @@
           "error_category": ""
         },
         {
+          "file": "test/built-ins/Promise/prototype/then/reject-settled-fulfilled.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
           "file": "test/built-ins/Promise/prototype/then/reject-settled-rejected.js",
           "status": "pass",
           "error": "",
@@ -68353,12 +68353,6 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Promise/prototype/then/resolve-settled-fulfilled-thenable.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
           "file": "test/built-ins/Promise/prototype/then/resolve-settled-rejected-non-obj.js",
           "status": "pass",
           "error": "",
@@ -68444,6 +68438,12 @@
         },
         {
           "file": "test/built-ins/Promise/prototype/then/rxn-handler-rejected-invoke-strict.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/Promise/prototype/then/rxn-handler-rejected-next-abrupt.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -70985,6 +70985,12 @@
           "error_category": "other"
         },
         {
+          "file": "test/built-ins/Atomics/waitAsync/bigint/true-for-timeout.js",
+          "status": "fail",
+          "error": "L60:3 No dependency provided for extern class \"SharedArrayBuffer\"",
+          "error_category": "wasm_compile"
+        },
+        {
           "file": "test/built-ins/Atomics/waitAsync/bigint/undefined-for-timeout-agent.js",
           "status": "fail",
           "error": "L60:3 $262 is not defined",
@@ -71205,6 +71211,12 @@
           "status": "fail",
           "error": "L46:3 $262 is not defined",
           "error_category": "other"
+        },
+        {
+          "file": "test/built-ins/Atomics/waitAsync/symbol-for-timeout-throws.js",
+          "status": "fail",
+          "error": "L51:3 No dependency provided for extern class \"SharedArrayBuffer\"",
+          "error_category": "wasm_compile"
         },
         {
           "file": "test/built-ins/Atomics/waitAsync/symbol-for-value-throws-agent.js",
@@ -71871,18 +71883,6 @@
           "status": "compile_error",
           "error": "L21:20 Unsupported new expression for class: SharedArrayBuffer; L24:20 Unsupported new expression for class: SharedArrayBuffer",
           "error_category": "other"
-        },
-        {
-          "file": "test/built-ins/Atomics/waitAsync/bigint/true-for-timeout.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
-        },
-        {
-          "file": "test/built-ins/Atomics/waitAsync/symbol-for-timeout-throws.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
         },
         {
           "file": "test/built-ins/Atomics/add/bigint/non-shared-bufferdata.js",
@@ -72855,12 +72855,6 @@
           "status": "fail",
           "error": "returned 3 — assert #2 (found 1 asserts in source)",
           "error_category": "assertion_fail"
-        },
-        {
-          "file": "test/built-ins/AsyncFromSyncIteratorPrototype/next/yield-next-rejected-promise-close.js",
-          "status": "fail",
-          "error": "L80:5 dereferencing a null pointer [in __closure_6() ← assert_throwsAsync ← __closure_5 ← asyncTest]",
-          "error_category": "null_deref"
         },
         {
           "file": "test/built-ins/AsyncFromSyncIteratorPrototype/return/absent-value-not-passed.js",
@@ -74503,25 +74497,25 @@
         {
           "file": "test/language/expressions/async-generator/named-yield-star-async-return.js",
           "status": "compile_error",
-          "error": "L80:19 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #42:\"__closure_4\" failed: array.set[2] expected type f64, found array.get of type externref @+9055) [in __closure_4()] [@+9055] [wat: (func $__closure_4 (type 41) (local $__self_cast (ref null 42)) (local $this (ref null 22)) (local $arguments (ref null 1)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec_5...]",
+          "error": "L80:19 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #42:\"__closure_4\" failed: array.set[2] expected type f64, found array.get of type externref @+9052) [in __closure_4()] [@+9052] [wat: (func $__closure_4 (type 41) (local $__self_cast (ref null 42)) (local $this (ref null 22)) (local $arguments (ref null 1)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec_5...]",
           "error_category": "wasm_compile"
         },
         {
           "file": "test/language/expressions/async-generator/named-yield-star-async-throw.js",
           "status": "compile_error",
-          "error": "L80:19 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #43:\"__closure_4\" failed: array.set[2] expected type f64, found array.get of type externref @+9360) [in __closure_4()] [@+9360] [wat: (func $__closure_4 (type 41) (local $__self_cast (ref null 42)) (local $this (ref null 22)) (local $arguments (ref null 1)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec_5...]",
+          "error": "L80:19 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #43:\"__closure_4\" failed: array.set[2] expected type f64, found array.get of type externref @+9363) [in __closure_4()] [@+9363] [wat: (func $__closure_4 (type 41) (local $__self_cast (ref null 42)) (local $this (ref null 22)) (local $arguments (ref null 1)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec_5...]",
           "error_category": "wasm_compile"
         },
         {
           "file": "test/language/expressions/async-generator/named-yield-star-sync-return.js",
           "status": "compile_error",
-          "error": "L78:11 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #43:\"__closure_2\" failed: array.set[2] expected type f64, found array.get of type externref @+7580) [in __closure_2()] [@+7580] [wat: (func $__closure_2 (type 35) (local $__self_cast (ref null 36)) (local $this (ref null 22)) (local $returnCount (ref null 30)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_ve...]",
+          "error": "L78:11 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #43:\"__closure_2\" failed: array.set[2] expected type f64, found array.get of type externref @+7583) [in __closure_2()] [@+7583] [wat: (func $__closure_2 (type 35) (local $__self_cast (ref null 36)) (local $this (ref null 22)) (local $returnCount (ref null 30)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_ve...]",
           "error_category": "wasm_compile"
         },
         {
           "file": "test/language/expressions/async-generator/named-yield-star-sync-throw.js",
           "status": "compile_error",
-          "error": "L76:11 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #44:\"__closure_2\" failed: array.set[2] expected type f64, found array.get of type externref @+7896) [in __closure_2()] [@+7896] [wat: (func $__closure_2 (type 35) (local $__self_cast (ref null 36)) (local $this (ref null 22)) (local $throwCount (ref null 30)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec...]",
+          "error": "L76:11 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #44:\"__closure_2\" failed: array.set[2] expected type f64, found array.get of type externref @+7893) [in __closure_2()] [@+7893] [wat: (func $__closure_2 (type 35) (local $__self_cast (ref null 36)) (local $this (ref null 22)) (local $throwCount (ref null 30)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec...]",
           "error_category": "wasm_compile"
         },
         {
@@ -74545,13 +74539,13 @@
         {
           "file": "test/language/expressions/async-generator/yield-star-async-throw.js",
           "status": "compile_error",
-          "error": "L80:19 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #43:\"__closure_4\" failed: array.set[2] expected type f64, found array.get of type externref @+9371) [in __closure_4()] [@+9371] [wat: (func $__closure_4 (type 41) (local $__self_cast (ref null 42)) (local $this (ref null 22)) (local $arguments (ref null 1)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec_5...]",
+          "error": "L80:19 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #43:\"__closure_4\" failed: array.set[2] expected type f64, found array.get of type externref @+9374) [in __closure_4()] [@+9374] [wat: (func $__closure_4 (type 41) (local $__self_cast (ref null 42)) (local $this (ref null 22)) (local $arguments (ref null 1)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec_5...]",
           "error_category": "wasm_compile"
         },
         {
           "file": "test/language/expressions/async-generator/yield-star-sync-return.js",
           "status": "compile_error",
-          "error": "L78:11 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #43:\"__closure_2\" failed: array.set[2] expected type f64, found array.get of type externref @+7594) [in __closure_2()] [@+7594] [wat: (func $__closure_2 (type 35) (local $__self_cast (ref null 36)) (local $this (ref null 22)) (local $returnCount (ref null 30)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_ve...]",
+          "error": "L78:11 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #43:\"__closure_2\" failed: array.set[2] expected type f64, found array.get of type externref @+7591) [in __closure_2()] [@+7591] [wat: (func $__closure_2 (type 35) (local $__self_cast (ref null 36)) (local $this (ref null 22)) (local $returnCount (ref null 30)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_ve...]",
           "error_category": "wasm_compile"
         },
         {
@@ -74587,7 +74581,7 @@
         {
           "file": "test/language/statements/async-generator/yield-star-async-throw.js",
           "status": "compile_error",
-          "error": "L80:19 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #44:\"__closure_4\" failed: array.set[2] expected type f64, found array.get of type externref @+9556) [in __closure_4()] [@+9556] [wat: (func $__closure_4 (type 43) (local $__self_cast (ref null 44)) (local $this (ref null 22)) (local $arguments (ref null 1)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec_5...]",
+          "error": "L80:19 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #44:\"__closure_4\" failed: array.set[2] expected type f64, found array.get of type externref @+9553) [in __closure_4()] [@+9553] [wat: (func $__closure_4 (type 43) (local $__self_cast (ref null 44)) (local $this (ref null 22)) (local $arguments (ref null 1)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec_5...]",
           "error_category": "wasm_compile"
         },
         {
@@ -74601,6 +74595,12 @@
           "status": "compile_error",
           "error": "L76:11 invalid Wasm binary (WebAssembly.instantiate(): Compiling function #45:\"__closure_2\" failed: array.set[2] expected type f64, found array.get of type externref @+8089) [in __closure_2()] [@+8089] [wat: (func $__closure_2 (type 37) (local $__self_cast (ref null 38)) (local $this (ref null 22)) (local $throwCount (ref null 25)) (local $arguments (ref null 1)) (local $__args_arr_tmp (ref null 0)) (local $__arr_push_vec...]",
           "error_category": "wasm_compile"
+        },
+        {
+          "file": "test/built-ins/AsyncFromSyncIteratorPrototype/next/yield-next-rejected-promise-close.js",
+          "status": "compile_timeout",
+          "error": "timeout (30s)",
+          "error_category": ""
         },
         {
           "file": "test/built-ins/AsyncFromSyncIteratorPrototype/next/iterator-result-poisoned-done.js",
@@ -80046,6 +80046,12 @@
           "error_category": "assertion_fail"
         },
         {
+          "file": "test/built-ins/WeakRef/proto-from-ctor-realm.js",
+          "status": "fail",
+          "error": "L41:3 $262 is not defined",
+          "error_category": "other"
+        },
+        {
           "file": "test/built-ins/WeakRef/proto.js",
           "status": "fail",
           "error": "returned 2 — assert #1 at L14: assert.sameValue(   Object.getPrototypeOf(WeakRef),   Function.prototype,",
@@ -80176,12 +80182,6 @@
           "status": "compile_error",
           "error": "L25:1 for-of requires an array expression; L29:1 for-of requires an array expression",
           "error_category": "other"
-        },
-        {
-          "file": "test/built-ins/WeakRef/proto-from-ctor-realm.js",
-          "status": "compile_timeout",
-          "error": "timeout (30s)",
-          "error_category": ""
         },
         {
           "file": "test/built-ins/FinalizationRegistry/constructor.js",
@@ -82060,6 +82060,12 @@
           "error_category": "assertion_fail"
         },
         {
+          "file": "test/built-ins/Iterator/prototype/map/this-non-object.js",
+          "status": "fail",
+          "error": "L54:3 Cannot redefine property: next",
+          "error_category": "runtime_error"
+        },
+        {
           "file": "test/built-ins/Iterator/prototype/map/this-plain-iterator.js",
           "status": "fail",
           "error": "L44:3 object is not a function",
@@ -82394,12 +82400,6 @@
           "status": "fail",
           "error": "unknown failure",
           "error_category": "other"
-        },
-        {
-          "file": "test/built-ins/Iterator/prototype/take/this-non-object.js",
-          "status": "fail",
-          "error": "L54:3 Cannot redefine property: next",
-          "error_category": "runtime_error"
         },
         {
           "file": "test/built-ins/Iterator/prototype/take/this-plain-iterator.js",
@@ -83746,12 +83746,6 @@
           "error_category": ""
         },
         {
-          "file": "test/built-ins/Iterator/prototype/map/this-non-object.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
           "file": "test/built-ins/Iterator/prototype/map/underlying-iterator-advanced-in-parallel.js",
           "status": "pass",
           "error": "",
@@ -84059,6 +84053,12 @@
         },
         {
           "file": "test/built-ins/Iterator/prototype/take/this-non-callable-next.js",
+          "status": "pass",
+          "error": "",
+          "error_category": ""
+        },
+        {
+          "file": "test/built-ins/Iterator/prototype/take/this-non-object.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -84618,9 +84618,21 @@
         "annexB/built-ins/String/prototype/sub",
         "annexB/built-ins/String/prototype/sup"
       ],
-      "passCount": 82,
+      "passCount": 80,
       "totalCount": 82,
       "tests": [
+        {
+          "file": "test/annexB/built-ins/String/prototype/big/length.js",
+          "status": "compile_timeout",
+          "error": "timeout (30s)",
+          "error_category": ""
+        },
+        {
+          "file": "test/annexB/built-ins/String/prototype/bold/B.2.3.5.js",
+          "status": "compile_timeout",
+          "error": "timeout (30s)",
+          "error_category": ""
+        },
         {
           "file": "test/annexB/built-ins/String/prototype/anchor/attr-tostring-err.js",
           "status": "pass",
@@ -84665,12 +84677,6 @@
         },
         {
           "file": "test/annexB/built-ins/String/prototype/big/B.2.3.3.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/annexB/built-ins/String/prototype/big/length.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -84731,12 +84737,6 @@
         },
         {
           "file": "test/annexB/built-ins/String/prototype/blink/this-val-tostring-err.js",
-          "status": "pass",
-          "error": "",
-          "error_category": ""
-        },
-        {
-          "file": "test/annexB/built-ins/String/prototype/bold/B.2.3.5.js",
           "status": "pass",
           "error": "",
           "error_category": ""
@@ -86113,12 +86113,6 @@
           "error_category": "other"
         },
         {
-          "file": "test/built-ins/Temporal/Duration/prototype/microseconds/prop-desc.js",
-          "status": "fail",
-          "error": "L55:3 Temporal is not defined",
-          "error_category": "other"
-        },
-        {
           "file": "test/built-ins/Temporal/Duration/prototype/milliseconds/blank-duration.js",
           "status": "fail",
           "error": "TypeError: Cannot access property on null or undefined at 48:18",
@@ -86380,12 +86374,6 @@
           "file": "test/built-ins/Temporal/Duration/prototype/round/largestunit-smallestunit-default.js",
           "status": "fail",
           "error": "L41:3 Temporal is not defined",
-          "error_category": "other"
-        },
-        {
-          "file": "test/built-ins/Temporal/Duration/prototype/round/largestunit-smallestunit-mismatch.js",
-          "status": "fail",
-          "error": "L51:3 Temporal is not defined",
           "error_category": "other"
         },
         {
@@ -87679,12 +87667,6 @@
           "error_category": "other"
         },
         {
-          "file": "test/built-ins/Temporal/Duration/prototype/with/blank-duration.js",
-          "status": "fail",
-          "error": "L41:3 Cannot read properties of null (reading 'with') [in test()]",
-          "error_category": "runtime_error"
-        },
-        {
           "file": "test/built-ins/Temporal/Duration/prototype/with/branding.js",
           "status": "fail",
           "error": "L51:3 Temporal is not defined",
@@ -88307,6 +88289,24 @@
           "status": "fail",
           "error": "L67:3 Temporal is not defined",
           "error_category": "other"
+        },
+        {
+          "file": "test/built-ins/Temporal/Instant/prototype/add/order-of-operations.js",
+          "status": "fail",
+          "error": "L49:3 TemporalHelpers is not defined",
+          "error_category": "other"
+        },
+        {
+          "file": "test/built-ins/Temporal/Instant/prototype/add/prop-desc.js",
+          "status": "fail",
+          "error": "L54:3 Temporal is not defined",
+          "error_category": "other"
+        },
+        {
+          "file": "test/built-ins/Temporal/Instant/prototype/add/result-out-of-range.js",
+          "status": "fail",
+          "error": "L51:3 Temporal is not defined",
+          "error_category": "other"
         }
       ],
       "testsTruncated": true
@@ -88346,5 +88346,5 @@
       "testsTruncated": false
     }
   ],
-  "features_generated": "2026-05-20T15:29:51.217Z"
+  "features_generated": "2026-05-20T19:01:07.339Z"
 }
