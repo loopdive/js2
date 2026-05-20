@@ -1,26 +1,21 @@
 name: Test262 Sharded
 
+# #1525 — PR-event trigger removed. The authoritative test262 PR gate is
+# `test262-differential.yml` (#1246), which compares branch tip vs. main HEAD
+# in the same workflow run and avoids the rolling-baseline drift that produced
+# false-positive regressions on PR #142, #143, #151, #294.
+#
+# This workflow is retained on push-to-main and workflow_dispatch ONLY because
+# its `promote-baseline` job is the canonical writer for:
+#   - benchmarks/results/test262-current.json (landing-page summary)
+#   - js2wasm-baselines/test262-current.jsonl (history feed, trend chart)
+# Those downstream artifacts are consumed by refresh-committed-baseline.yml
+# and the public dashboard.
+#
+# If a one-off sharded run against a PR is needed for investigation, dispatch
+# manually via workflow_dispatch. See docs/ci-policy.md §3.
+
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/test262-sharded.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "tsconfig.json"
-      - "scripts/tsconfig.json"
-      - "vitest.config.ts"
-      - "src/**"
-      - "scripts/build-test262-report.mjs"
-      - "scripts/compiler-fork-worker.mjs"
-      - "scripts/compiler-pool.ts"
-      - "scripts/diff-test262.ts"
-      - "scripts/generate-editions.ts"
-      - "scripts/test262-worker.mjs"
-      - "tests/test262-chunk*.test.ts"
-      - "tests/test262-runner.ts"
-      - "tests/test262-scope-classification.test.ts"
-      - "tests/test262-shared.ts"
   push:
     branches: [main]
     paths:

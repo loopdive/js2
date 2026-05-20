@@ -261,6 +261,14 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 
 ### Merge protocol (PR + CI, devs self-merge)
 
+**Authoritative ruleset**: see [`docs/ci-policy.md`](docs/ci-policy.md) for
+the required-checks list, reviewer rules, force-push policy, linear-history
+mode, and the admin script (`scripts/enable-branch-protection.sh`) that
+applies them. Required checks today: `quality` (ci.yml), `differential gate
+(branch vs main)` (test262-differential.yml), `refresh-benchmarks`
+(benchmark-refresh.yml). The dev-self-merge skill is a UX layer on top —
+GitHub branch protection is the hard block.
+
 **Devs do NOT run local test262.** Branch validation happens in GitHub Actions:
 
 1. **Dev merges `origin/main` INTO their branch** — `git merge origin/main` (not rebase), BEFORE opening a PR
