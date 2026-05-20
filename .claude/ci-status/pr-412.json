@@ -1,0 +1,22 @@
+{
+  "pr": 412,
+  "conclusion": "success",
+  "head_branch": "issue-1400-eslint-package-entry",
+  "head_sha": "254ab4bfb79e69890f777467b09f551c75665f99",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26170321026",
+  "timestamp": "2026-05-20T16:05:56Z",
+  "pass": 28168,
+  "fail": 13713,
+  "compile_error": 1190,
+  "snapshot_delta": 10,
+  "net_per_test": 48,
+  "regressions": 52,
+  "regressions_real": 2,
+  "regressions_wasm_change": 2,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 50,
+  "improvements": 50,
+  "baseline_sha": "254ab4bfb79e69890f777467b09f551c75665f99",
+  "baseline_staleness_commits": 82,
+  "baseline_stale": true
+}

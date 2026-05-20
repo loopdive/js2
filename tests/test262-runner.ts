@@ -360,6 +360,52 @@ export function shouldSkip(source: string, meta: Test262Meta, filePath?: string)
   return { skip: false };
 }
 
+// ── Path-scoped filter (#1521) ──────────────────────────────────────
+//
+// The Test262 Differential workflow narrows the test set on PRs that touch
+// only narrow areas of the codegen tree (e.g. `src/codegen/regexp.ts` only
+// runs RegExp + RegExp-Symbol tests). The workflow detects the changed
+// src/ paths, maps them to coarse test category prefixes, and exports the
+// result as `TEST262_PATH_FILTER` (a pipe-separated list of substrings).
+//
+// Filter semantics:
+//   - empty / unset → run all tests (safe fallback for core-file changes
+//     and for the `detect-scope` job failing entirely).
+//   - non-empty → keep tests whose path contains any one of the
+//     pipe-separated patterns (substring match).
+//
+// Apply this filter BEFORE wrap+compile+cache-lookup so even cache hits
+// are skipped for filtered-out tests — that's where the wall-clock
+// savings come from.
+
+let _cachedPathFilter: string[] | null | undefined;
+
+function parsePathFilter(): string[] | null {
+  if (_cachedPathFilter !== undefined) return _cachedPathFilter;
+  const raw = process.env.TEST262_PATH_FILTER ?? "";
+  const parts = raw
+    .split("|")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  _cachedPathFilter = parts.length > 0 ? parts : null;
+  return _cachedPathFilter;
+}
+
+/**
+ * Check whether `relPath` (a test262/test-relative path like
+ * `built-ins/RegExp/prototype/test/foo.js`) matches the active
+ * `TEST262_PATH_FILTER`. Returns true when no filter is active (run all),
+ * or when the path contains any one of the pipe-separated patterns.
+ */
+export function matchesPathFilter(relPath: string): boolean {
+  const filter = parsePathFilter();
+  if (filter === null) return true;
+  for (const p of filter) {
+    if (relPath.includes(p)) return true;
+  }
+  return false;
+}
+
 // ── Test wrapping ───────────────────────────────────────────────────
 
 /**

@@ -1,0 +1,91 @@
+name: CI Status Pending
+
+# Writes a pr-{N}.json stub with conclusion:null immediately when a PR is
+# opened or updated. This lets the dispatch loop count in-flight CI runs
+# without waiting for Test262 Differential to complete. The final result
+# workflow (ci-status-feed.yml or ci-status-basic.yml) overwrites this stub
+# with real data when CI finishes.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  write-pending:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write pending stub
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          mkdir -p .claude/ci-status
+          out=".claude/ci-status/pr-$PR.json"
+          # Don't overwrite a final result for the same SHA
+          if [ -f "$out" ]; then
+            existing_sha=$(jq -r '.head_sha // empty' "$out")
+            existing_conclusion=$(jq -r '.conclusion // empty' "$out")
+            if [ "$existing_sha" = "$HEAD_SHA" ] && \
+               [ -n "$existing_conclusion" ] && \
+               [ "$existing_conclusion" != "null" ]; then
+              echo "Final result already exists for $HEAD_SHA — skipping"
+              exit 0
+            fi
+          fi
+          jq -n \
+            --arg pr "$PR" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg head_branch "$HEAD_BRANCH" \
+            --arg run_url "$PR_URL" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              pr: ($pr|tonumber),
+              conclusion: null,
+              pending: true,
+              head_branch: $head_branch,
+              head_sha: $head_sha,
+              run_url: $run_url,
+              timestamp: $timestamp,
+              pass: null,
+              fail: null,
+              compile_error: null,
+              snapshot_delta: null,
+              net_per_test: null,
+              regressions: null,
+              regressions_real: null,
+              regressions_wasm_change: null,
+              wasm_identical_noise: null,
+              compile_timeouts: null,
+              improvements: null,
+              baseline_sha: null,
+              baseline_staleness_commits: null,
+              baseline_stale: false
+            }' > "$out"
+          echo "Wrote pending stub for PR #$PR @ ${HEAD_SHA:0:8}"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .claude/ci-status/pr-${{ github.event.pull_request.number }}.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(ci-status): PR #${{ github.event.pull_request.number }} pending CI [skip ci]"
+          git pull --rebase origin main || true
+          git push

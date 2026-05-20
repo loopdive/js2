@@ -2,7 +2,7 @@
 id: 1490
 sprint: 52
 title: "nodejs: runtime access to process.argv and process.env"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium
@@ -110,3 +110,23 @@ Add at least one `equivalence.test.ts` case asserting that:
 - `src/lib.d.ts` (or wherever the project's ambient process shim lives) —
   declare `NodeJS.Process`.
 - `tests/equivalence.test.ts` — new "process.argv / env runtime" block.
+
+## Suspended Work
+
+- **PR**: #396 — https://github.com/loopdive/js2wasm/pull/396
+- **Branch**: `issue-1490-nodejs-process-argv`
+- **Worktree**: `/workspace/.claude/worktrees/issue-1490-nodejs-process-argv/`
+- **HEAD SHA**: `7d80abd48916c3c936807b039df1547097acd4a3`
+- **State**: PR open, in CI-wait. 8/8 local tests pass.
+
+### Implemented (commit f812ee8 → 7d80abd4)
+- `src/codegen/property-access.ts` — non-WASI detection of `process.{argv,env,platform,arch}` → late host imports returning externref. Shadow-aware.
+- `src/codegen/expressions/calls.ts` — non-WASI detection of `process.exit(n)` (→ `__process_exit` f64) and `process.cwd()` (→ `__get_process_cwd`).
+- `src/runtime.ts` — runtime resolvers (`__get_process_argv`, `__get_process_env`, `__get_process_cwd`, `__get_process_platform`, `__get_process_arch`, `__process_exit`) under the existing `builtin` intent path. Use `globalThis.process.*` with safe defaults.
+- `tests/issue-1490.test.ts` — 8 tests: argv shape, argv.length, argv[i], env.KEY round-trip, env object identity, cwd, platform, mocked process.exit.
+
+### Resume steps
+1. Monitor `.claude/ci-status/pr-396.json` for HEAD-SHA match.
+2. Run `/dev-self-merge 396`.
+3. If MERGE: `gh pr merge 396 --admin --merge`; mark task #52 completed; remove worktree.
+4. If ESCALATE: message tech lead with criterion + values.

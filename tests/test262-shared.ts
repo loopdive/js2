@@ -20,6 +20,7 @@ import {
   classifyError,
   classifyTestScope,
   findTestFiles,
+  matchesPathFilter,
   parseMeta,
   shouldSkip,
   TEST_CATEGORIES,
@@ -328,6 +329,13 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
         it(
           relPath,
           async () => {
+            // #1521 — Path-scoped filter. Applied BEFORE source read / parse /
+            // cache lookup so narrowly-scoped PRs skip ~40k tests entirely
+            // (no compile, no record, no execution). Empty / unset filter
+            // (the default) is a no-op. See `matchesPathFilter` in
+            // test262-runner.ts for the matching semantics.
+            if (!matchesPathFilter(relPath)) return;
+
             const source = readFileSync(filePath, "utf-8");
             const meta = parseMeta(source);
             const scopeInfo = classifyTestScope(source, meta, filePath);

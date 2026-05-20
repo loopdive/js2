@@ -1932,7 +1932,41 @@ export function compilePropertyAccess(
     // value. For CLASS instances the field doesn't exist; fall through to the
     // legacy null-externref placeholder.
     {
-      const methodFullName = `${typeName}_${propName}`;
+      // (#1394) Walk the class-parent chain to the TOPMOST class that owns
+      // the same method funcIdx. When `class D extends C { }` inherits `m`
+      // from C, the codegen registers `D_m` in `classMethodSet` with the
+      // same `funcIdx` as `C_m` (class-bodies.ts:519–523). Two distinct
+      // names → two distinct cache globals (`__method_closure_D_m` and
+      // `__method_closure_C_m`) → two lazily-allocated closures with
+      // different identity. Spec'd behaviour: identity follows the owning
+      // class, so `(new D()).m === C.prototype.m`. Walk the chain until
+      // either no parent or the parent's funcIdx differs (override).
+      const ownerNameForChain = (start: string): string => {
+        const startFull = `${start}_${propName}`;
+        const startIdx = ctx.funcMap.get(startFull);
+        if (startIdx === undefined) return start; // not a method we know
+        let bestOwner = start;
+        let cls: string | undefined = ctx.classParentMap.get(start);
+        const seen = new Set<string>([start]);
+        while (cls && !seen.has(cls)) {
+          seen.add(cls);
+          const full = `${cls}_${propName}`;
+          const parentIdx = ctx.funcMap.get(full);
+          if (parentIdx === undefined) break; // parent doesn't have this method
+          if (parentIdx === startIdx) {
+            // Inherited (same funcIdx) — keep walking up.
+            bestOwner = cls;
+            cls = ctx.classParentMap.get(cls);
+            continue;
+          }
+          // Parent has a DIFFERENT funcIdx → start overrides the method.
+          // Identity must use start's cache, not the parent's.
+          break;
+        }
+        return bestOwner;
+      };
+      const owner = ownerNameForChain(typeName);
+      const methodFullName = `${owner}_${propName}`;
       if (ctx.classMethodSet.has(methodFullName) || ctx.staticMethodSet.has(methodFullName)) {
         const funcIdx = ctx.funcMap.get(methodFullName);
         if (funcIdx !== undefined) {
@@ -1965,7 +1999,11 @@ export function compilePropertyAccess(
           // `c`'s TS type via resolveStructName(...) → `__anonClass_N`, so
           // both arrive at the same cache key.
           if (ctx.classSet.has(typeName) && ctx.classMethodSet.has(methodFullName)) {
-            const fullStructTypeIdx = ctx.structMap.get(typeName);
+            // (#1394 inherited-method fix) Use the OWNER class's struct
+            // type, not the receiver's. The trampoline's `this` param is
+            // typed against the method's owning class, so the receiver
+            // type must match for validation.
+            const fullStructTypeIdx = ctx.structMap.get(owner) ?? ctx.structMap.get(typeName);
             if (fullStructTypeIdx !== undefined) {
               // Compile + drop the object expression for side effects;
               // the cached closure carries no per-instance binding (JS
@@ -2714,6 +2752,20 @@ export function compileElementAccess(
           if (funcIdx !== undefined) {
             const retType = emitGetterCallWithDummy(ctx, fctx, className, getterName, funcIdx);
             return retType ?? { kind: "externref" };
+          }
+        }
+        // (#1394) ClassName.prototype[key] cached singleton — must reuse the
+        // same cache global as the dot-form `ClassName.prototype.key`, so
+        // `C.prototype['m'] === C.prototype.m` holds. Sibling of the
+        // dot-access path at property-access.ts:1361–1383.
+        const methodFullName = `${className}_${key}`;
+        if (ctx.classMethodSet.has(methodFullName) && !ctx.staticMethodSet.has(methodFullName)) {
+          const funcIdx = ctx.funcMap.get(methodFullName);
+          const structTypeIdx = ctx.structMap.get(className);
+          if (funcIdx !== undefined && structTypeIdx !== undefined) {
+            if (emitCachedMethodClosureAccess(ctx, fctx, methodFullName, funcIdx, structTypeIdx)) {
+              return { kind: "externref" };
+            }
           }
         }
       }

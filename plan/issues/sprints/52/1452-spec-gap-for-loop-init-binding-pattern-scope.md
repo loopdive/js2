@@ -2,7 +2,7 @@
 id: 1452
 sprint: 52
 title: "spec gap: for-loop init binding patterns — declared names not visible in loop body"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: easy

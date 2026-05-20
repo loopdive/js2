@@ -186,8 +186,6 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1319 | Cannot convert object to primitive — Symbol.toPrimitive / valueOf / toString chain incomplete (234 failures) | high | ready |
 | #1320 | Runtime bridge: Array.from(externref) / Iterator.from(externref) doesn't preserve own [Symbol.iterator] on plain JS objects (4 test262 fails) | medium | ready |
 | #1321 | Number.prototype formatting methods (toString/toFixed/toPrecision/toExponential) rely on JS host unnecessarily | medium | ready |
-| #1323 | Iterator protocol bridging: implement $IteratorResult struct in pure Wasm, eliminate host bridge | medium | ready |
-| #1326 | Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host | low | ready |
 | #1327 | Landing page: per-feature test pass counts + feature report page + playground deep-link | high | ready |
 | #1328 | RegExp host-mode: Symbol.match / matchAll protocol spec compliance (101 fails) | medium | ready |
 | #1329 | RegExp host-mode: Symbol.replace / replaceAll protocol spec compliance (110 fails) | medium | ready |
@@ -222,6 +220,13 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1342 | spec gap: JSON.stringify replacer/toJSON/property-list (49 of 66 test262 fails) | medium | in-progress |
 | #1348 | spec gap: for-of doesn't IteratorClose on body throw (portion of 389 fails) | high | in-progress |
 | #1352 | spec gap: Set methods (union/intersection/etc.) accept any set-like argument (101 test262 fails) | medium | in-progress |
+
+### Review
+
+| Issue | Title | Priority | Status |
+|---|---|---|---|
+| #1323 | Iterator protocol bridging: implement $IteratorResult struct in pure Wasm, eliminate host bridge | medium | review |
+| #1326 | Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host | low | review |
 
 ### Done
 

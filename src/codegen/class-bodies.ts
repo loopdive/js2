@@ -20,7 +20,7 @@ import {
 } from "./destructuring-params.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { cacheStringLiterals, hasAbstractModifier, hasStaticModifier, resolveWasmType } from "./index.js";
-import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -241,6 +241,16 @@ export function collectClassDeclaration(
   // Register constructor function: takes ctor params, returns (ref $structTypeIdx)
   const ctorParams: ValType[] = [];
   const ctorName = `${className}_new`;
+  // (#1455) For externref-backed subclasses with no explicit constructor
+  // (`class Sub extends DataView {}`), synthesize the spec's implicit
+  // `constructor(...args) { super(...args); }` as a single-arg forwarder.
+  // The single externref param `__arg0` is forwarded to `__new_<Parent>`.
+  // Multi-arg forms (e.g. `new DataView(buf, 0, 16)`) only forward the first
+  // arg — multi-arg implicit forwarding is deferred (#1366c follow-up).
+  const isImplicitExternrefForwarder = !ctor && ctx.classBuiltinParentMap.has(className);
+  if (isImplicitExternrefForwarder) {
+    ctorParams.push({ kind: "externref" });
+  }
   if (ctor) {
     for (let i = 0; i < ctor.parameters.length; i++) {
       const param = ctor.parameters[i]!;
@@ -742,6 +752,11 @@ export function compileClassBodies(
   if (ctorLocalIdx !== undefined) {
     const func = ctx.mod.functions[ctorLocalIdx]!;
     const params: { name: string; type: ValType }[] = [];
+    // (#1455) Match the synthetic forwarder param added during pre-registration.
+    const isImplicitForwarder = !ctor && ctx.classBuiltinParentMap.has(className);
+    if (isImplicitForwarder) {
+      params.push({ name: "__arg0", type: { kind: "externref" } });
+    }
     if (ctor) {
       for (let pi = 0; pi < ctor.parameters.length; pi++) {
         const param = ctor.parameters[pi]!;
@@ -932,8 +947,17 @@ export function compileClassBodies(
       const parentName = ctx.classBuiltinParentMap.get(className);
       if (parentName) {
         const importName = `__new_${parentName}`;
-        // No constructor → no params to forward; pass null externref.
-        fctx.body.push({ op: "ref.null.extern" });
+        // (#1455) Implicit constructor: forward the synthetic `__arg0`
+        // externref param to `__new_<Parent>(__arg0)`. Callers that supply
+        // zero args have `pushDefaultValue` pad with `ref.null.extern`; the
+        // runtime strips trailing null/undefined so `new Sub()` correctly
+        // calls `new Builtin()`. Callers that supply 2+ args have the extras
+        // truncated — multi-arg forwarding is a follow-up.
+        if (params.length > 0 && params[0]!.type.kind === "externref") {
+          fctx.body.push({ op: "local.get", index: 0 });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
         const funcIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
         if (funcIdx !== undefined) {
@@ -1043,6 +1067,51 @@ export function compileClassBodies(
           continue;
         }
         compileStatement(ctx, fctx, stmt);
+      }
+    }
+
+    // (#1455) Tag externref-backed user-class instances with their class name
+    // so the modified `__instanceof` host import can resolve
+    // `instance instanceof Sub` by walking the registered tag chain. The
+    // direct user-class parent (or null when the direct parent is a builtin)
+    // is registered idempotently on first call.
+    if (isExternrefBacked) {
+      const builtinParent = ctx.classBuiltinParentMap.get(className);
+      // Direct user-class parent: classParentMap[className] is set to the
+      // immediate parent name; if it equals the builtin parent, the user
+      // chain terminates here (pass ref.null.extern for the parent arg).
+      const directParent = ctx.classParentMap.get(className);
+      const userParent = directParent && directParent !== builtinParent ? directParent : undefined;
+      const tagIdx = ensureLateImport(
+        ctx,
+        "__tag_user_class",
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (tagIdx !== undefined) {
+        fctx.body.push({ op: "local.get", index: selfLocal });
+        // Class name as string constant externref
+        addStringConstantGlobal(ctx, className);
+        const cnameIdx = ctx.stringGlobalMap.get(className);
+        if (cnameIdx !== undefined && cnameIdx !== -1) {
+          fctx.body.push({ op: "global.get", index: cnameIdx });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        // Parent name (or null externref).
+        if (userParent !== undefined) {
+          addStringConstantGlobal(ctx, userParent);
+          const pnameIdx = ctx.stringGlobalMap.get(userParent);
+          if (pnameIdx !== undefined && pnameIdx !== -1) {
+            fctx.body.push({ op: "global.get", index: pnameIdx });
+          } else {
+            fctx.body.push({ op: "ref.null.extern" });
+          }
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        fctx.body.push({ op: "call", funcIdx: tagIdx });
       }
     }
 

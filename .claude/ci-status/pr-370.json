@@ -1,0 +1,22 @@
+{
+  "pr": 370,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1445-string-arg-coercion",
+  "head_sha": "d7c8ac30dc6ce34fd07c63df03579c0677a1e40a",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26150993932",
+  "timestamp": "2026-05-20T09:41:41Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

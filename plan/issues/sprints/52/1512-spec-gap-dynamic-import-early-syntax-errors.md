@@ -2,7 +2,7 @@
 id: 1512
 sprint: 52
 title: "spec gap: dynamic import — early SyntaxErrors for nested syntactic contexts"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium

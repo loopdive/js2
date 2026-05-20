@@ -1,0 +1,22 @@
+{
+  "pr": 363,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1468-objlit-undefined",
+  "head_sha": "2e48a4f5e954747d2df71ef7e2f4e8c97c1e6261",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26150902245",
+  "timestamp": "2026-05-20T09:02:16Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

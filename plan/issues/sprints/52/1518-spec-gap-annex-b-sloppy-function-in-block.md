@@ -2,7 +2,7 @@
 id: 1518
 sprint: 52
 title: "spec gap: Annex B.3.2 — sloppy-mode function-in-block hoisting (`var` shadow)"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: hard

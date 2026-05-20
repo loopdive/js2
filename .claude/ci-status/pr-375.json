@@ -1,0 +1,22 @@
+{
+  "pr": 375,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1460-defineproperty-fidelity",
+  "head_sha": "8f28db678fbe685bc429e611b17822ad522bc137",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26151075096",
+  "timestamp": "2026-05-20T10:41:37Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

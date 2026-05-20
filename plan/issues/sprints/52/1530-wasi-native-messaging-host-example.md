@@ -1,5 +1,5 @@
 ---
-id: 1521
+id: 1530
 sprint: 52
 title: "wasi: Native Messaging host example (Chrome extension integration)"
 status: blocked

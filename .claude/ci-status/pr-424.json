@@ -1,0 +1,23 @@
+{
+  "pr": 424,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "issue-1529-rename-refs",
+  "head_sha": "e06f5c2e127b92ca993effcc4c852029c0a51929",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/424",
+  "timestamp": "2026-05-20T21:10:17Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

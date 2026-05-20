@@ -2,7 +2,7 @@
 id: 1504
 sprint: 52
 title: "browser: marshal compiled export return values (structs/arrays) to plain JS"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium
@@ -202,3 +202,22 @@ expect(fn()).toBe(42);
 - Memory cost: marshaling N items walks the struct/vec once. For huge
   return values (>10k elements) users can opt into `marshal: false` and
   do their own targeted reads via the `__sget_*` / `__vec_get` exports.
+
+## Suspended Work
+
+- **PR**: https://github.com/loopdive/js2wasm/pull/404
+- **Branch**: `issue-1504-browser-export-interop`
+- **Worktree**: `/workspace/.claude/worktrees/issue-1504-browser-export-interop`
+- **HEAD SHA**: `5742e3da255a3c133a863d4b4c3516815a61ae9e`
+- **Status when suspended**: in CI-wait — background wait loop submitted
+
+### What's implemented
+- `wrapExports` (`src/runtime.ts:~5047`) now calls `_wasmToPlain` on user-visible callable returns that look marshalable. Closures (#1308) still get JS-callable wrappers. Added `options.marshal: false` opt-out.
+- New `__is_closure(externref) -> i32` codegen export: ref.test against base wrapper struct types from `ctx.closureInfoByTypeIdx`. Emitted from both `generateModule` and `generateMultiModule`. Used by `wrapExports` as the authoritative discriminator (because `__vec_len` returns 0 for both empty arrays and non-vec structs).
+- `emitVecAccessExports` (`src/codegen/index.ts:~2322`) no longer gated on `__iterator/JSON_stringify/__make_iterable`; emits when `vecTypeMap.size > 0` so array returns get `__vec_len/__vec_get` for the marshal path.
+- New `tests/issue-1504.test.ts` — 6 tests passing; `tests/issue-1308.test.ts` regression intact (7/7); 55 equivalence tests passing.
+
+### Resume steps
+1. Check `/workspace/.claude/ci-status/pr-404.json` — if `head_sha` matches `5742e3da2` and net positive: `gh pr merge 404 --merge --admin`.
+2. If regressions, run `/dev-self-merge 404` to see analysis. Watch for impact on test262 since the `emitVecAccessExports` widening adds exports to every module with vec types (low risk: pure additive).
+3. After merge: set `status: done` in this file, `rm /workspace/.claude/agent-status/issue-1504-browser-export-interop.json`, `git worktree remove /workspace/.claude/worktrees/issue-1504-browser-export-interop`.

@@ -2,7 +2,7 @@
 id: 1392
 sprint: 52
 title: "infra: refresh:benchmarks hangs in browser runtime Playwright eval"
-status: ready
+status: done
 created: 2026-05-08
 priority: high
 feasibility: medium

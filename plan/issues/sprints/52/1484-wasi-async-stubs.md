@@ -2,7 +2,7 @@
 id: 1484
 sprint: 52
 title: "wasi: provide standalone setTimeout/setInterval via poll_oneoff (or fail loud)"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium
@@ -147,3 +147,31 @@ This issue is intentionally split into two milestones inside one
 file: ship the MVP diagnostic first to stop the silent failure,
 then iterate the full `poll_oneoff` implementation. A reviewer may
 prefer to split this into 1484a / 1484b after the MVP lands.
+
+## Suspended Work
+
+- **PR:** https://github.com/loopdive/js2wasm/pull/395
+- **Branch:** `issue-1484-wasi-async-stubs`
+- **Worktree:** `/workspace/.claude/worktrees/issue-1484-wasi-async-stubs`
+- **HEAD:** `ad3800cb9b3affbd2b46b2fc1fbf42246871d1ba`
+- **Status:** ci-wait
+
+### Implemented (committed in ad3800cb9)
+
+- MVP: `rejectTimersUnderWasi` compile-time diagnostic in `src/codegen/index.ts` next to `checkWasiDomUsage`. Flags bare-id calls to `setTimeout`/`setInterval`/`setImmediate`/`queueMicrotask` under `--target wasi`. Name-slot filter excludes class methods, prop access, etc.
+- Full: `poll_oneoff` host import registered conditionally + `__wasi_sleep_ms` helper emitted in `registerWasiImports`. Helper is dead-coded today (diagnostic short-circuits compile).
+- `buildWasiPolyfill` extended with a minimal `poll_oneoff` shim in `src/runtime.ts`.
+- `wasiPollOneoffIdx?: number` added to `src/codegen/context/types.ts`.
+- `tests/wasi-timers.test.ts` — 8 tests (all pass).
+
+### Resume steps
+
+1. Wait for ci-status file `/workspace/.claude/ci-status/pr-395.json` with `head_sha == ad3800cb9b3affbd2b46b2fc1fbf42246871d1ba`.
+2. Run `/dev-self-merge 395`. If MERGE: `GATE_BYPASS=1 gh pr merge 395 --admin --merge`. If ESCALATE: message tech-lead with criterion + values.
+3. Post-merge: `rm /workspace/.claude/agent-status/issue-1484-wasi-async-stubs.json` and `git worktree remove /workspace/.claude/worktrees/issue-1484-wasi-async-stubs`.
+
+### Follow-ups noted (not in this PR)
+
+- Async-scheduler hook to lower setTimeout calls to `__wasi_sleep_ms` (replaces the rejection with real WASI sleeps).
+- `queueMicrotask`/RAF and closure-arity>0 in #1501.
+

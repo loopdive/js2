@@ -2,7 +2,7 @@
 id: 1463
 sprint: 52
 title: "spec gap: Function.prototype.bind / toString / Symbol.hasInstance fidelity"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: hard

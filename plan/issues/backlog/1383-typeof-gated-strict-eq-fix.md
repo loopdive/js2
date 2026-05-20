@@ -1,7 +1,7 @@
 ---
 id: 1383
 title: "narrower typeof-gated strict-equality fix (follow-up to closed PR #272 / #1380)"
-status: backlog
+status: in-review
 created: 2026-05-08
 priority: medium
 feasibility: medium

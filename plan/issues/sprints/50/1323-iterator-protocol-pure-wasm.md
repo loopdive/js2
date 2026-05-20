@@ -2,7 +2,7 @@
 id: 1323
 sprint: 50
 title: "Iterator protocol bridging: implement $IteratorResult struct in pure Wasm, eliminate host bridge"
-status: ready
+status: in-review
 created: 2026-05-07
 updated: 2026-05-07
 priority: medium

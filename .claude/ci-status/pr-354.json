@@ -1,0 +1,23 @@
+{
+  "pr": 354,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "issue-1461-array-prototype-arraylike",
+  "head_sha": "aefe9df8654649877811be5fe5fdf6996b9186dc",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/354",
+  "timestamp": "2026-05-20T14:39:47Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

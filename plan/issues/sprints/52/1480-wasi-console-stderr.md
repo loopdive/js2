@@ -2,7 +2,7 @@
 id: 1480
 sprint: 52
 title: "wasi: console.error and console.warn should write to stderr (fd=2)"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium
