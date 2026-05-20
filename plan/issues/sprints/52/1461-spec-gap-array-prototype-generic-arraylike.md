@@ -2,7 +2,7 @@
 id: 1461
 sprint: 52
 title: "spec gap: Array.prototype.* called on array-like / exotic receivers"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium

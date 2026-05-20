@@ -1,0 +1,22 @@
+{
+  "pr": 411,
+  "conclusion": "success",
+  "head_branch": "issue-1521-test262-ci-speedup",
+  "head_sha": "205b5553b5e1f035433b963edb3acda3e6924695",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26170321515",
+  "timestamp": "2026-05-20T20:25:26Z",
+  "pass": 28163,
+  "fail": 13714,
+  "compile_error": 1193,
+  "snapshot_delta": -8,
+  "net_per_test": 34,
+  "regressions": 54,
+  "regressions_real": 9,
+  "regressions_wasm_change": 9,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 45,
+  "improvements": 43,
+  "baseline_sha": "205b5553b5e1f035433b963edb3acda3e6924695",
+  "baseline_staleness_commits": 145,
+  "baseline_stale": true
+}

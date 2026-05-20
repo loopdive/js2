@@ -9,9 +9,37 @@
  * When execute=false: compile only, write to disk (for cache warming).
  * When execute=true: compile + instantiate + run test(), return full result.
  */
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { compile, createIncrementalCompiler } from "./compiler-bundle.mjs";
 import { buildImports } from "./runtime-bundle.mjs";
+
+// ── Bundle hash (#1521) ────────────────────────────────────────────────
+// Each cache entry written below carries a `bundle_hash` field. When the
+// runner restores a stale cache (via the `test262-cache-v2-` loose
+// restore-keys fallback), it can detect entries from a different compiler
+// bundle and recompile them. Entries written from the *same* bundle as the
+// current run can be reused immediately — even across PRs.
+//
+// Hash inputs (in priority order):
+//   1. TEST262_BUNDLE_HASH env var (set by CI from `hashFiles(...)` digest)
+//   2. sha256 of `scripts/compiler-bundle.mjs` (computed locally as fallback)
+//
+// Computed once per worker startup — cheap (a few MB read + sha256).
+const _workerDir = dirname(fileURLToPath(import.meta.url));
+function computeBundleHash() {
+  const fromEnv = process.env.TEST262_BUNDLE_HASH;
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  try {
+    const buf = readFileSync(join(_workerDir, "compiler-bundle.mjs"));
+    return createHash("sha256").update(buf).digest("hex").slice(0, 16);
+  } catch {
+    return "no-bundle";
+  }
+}
+const BUNDLE_HASH = computeBundleHash();
 
 let compileCount = 0;
 const GC_INTERVAL = 25;
@@ -379,7 +407,18 @@ const _ACCESSOR_SNAPSHOTS = [
   [
     "RegExp.prototype",
     RegExp.prototype,
-    ["flags", "source", "global", "ignoreCase", "multiline", "sticky", "unicode", "unicodeSets", "dotAll", "hasIndices"],
+    [
+      "flags",
+      "source",
+      "global",
+      "ignoreCase",
+      "multiline",
+      "sticky",
+      "unicode",
+      "unicodeSets",
+      "dotAll",
+      "hasIndices",
+    ],
   ],
 ];
 
@@ -937,6 +976,7 @@ process.on("message", async (msg) => {
             error: errMsg || "unknown",
             errorCodes,
             compileMs,
+            bundle_hash: BUNDLE_HASH,
           }),
         );
       } catch {}
@@ -982,7 +1022,7 @@ process.on("message", async (msg) => {
     if (msg.wasmPath && msg.metaPath) {
       try {
         writeFileSync(msg.wasmPath, new Uint8Array(0));
-        writeFileSync(msg.metaPath, JSON.stringify({ ok: false, error: errMsg, compileMs }));
+        writeFileSync(msg.metaPath, JSON.stringify({ ok: false, error: errMsg, compileMs, bundle_hash: BUNDLE_HASH }));
       } catch {}
     }
     process.send({ id, status: "compile_error", error: errMsg, compileMs });
@@ -1002,6 +1042,7 @@ process.on("message", async (msg) => {
           imports: result.imports,
           sourceMap: result.sourceMap || null,
           compileMs,
+          bundle_hash: BUNDLE_HASH,
         }),
       );
     } catch {}

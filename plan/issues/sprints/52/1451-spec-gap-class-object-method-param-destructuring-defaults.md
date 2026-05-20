@@ -2,7 +2,7 @@
 id: 1451
 sprint: 52
 title: "spec gap: class/object-literal method parameter destructuring with non-trivial defaults"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: hard

@@ -2,7 +2,7 @@
 id: 1464
 sprint: 52
 title: "spec gap: Iterator.prototype helpers + Iterator.zip / Iterator.concat (ES2025)"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium

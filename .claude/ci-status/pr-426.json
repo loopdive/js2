@@ -1,0 +1,23 @@
+{
+  "pr": 426,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "issue-1527-ir-adoption-doc",
+  "head_sha": "90b534e6c79ca3e6612fcacb19637e0470de8811",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/426",
+  "timestamp": "2026-05-20T21:05:44Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

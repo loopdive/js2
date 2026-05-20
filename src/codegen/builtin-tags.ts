@@ -69,6 +69,24 @@ export const BUILTIN_TYPE_TAGS = {
   ArrayBuffer: -50,
   SharedArrayBuffer: -51,
   DataView: -52,
+
+  // Weak references (#1455)
+  WeakRef: -60,
+
+  // Typed arrays (#1455). %TypedArray% intrinsic is not in this registry —
+  // tests rarely use `arr instanceof %TypedArray%`; concrete typed arrays
+  // are sufficient for the spec-completeness gap addressed by #1455.
+  Int8Array: -70,
+  Uint8Array: -71,
+  Uint8ClampedArray: -72,
+  Int16Array: -73,
+  Uint16Array: -74,
+  Int32Array: -75,
+  Uint32Array: -76,
+  Float32Array: -77,
+  Float64Array: -78,
+  BigInt64Array: -79,
+  BigUint64Array: -80,
 } as const;
 
 export type BuiltinTypeName = keyof typeof BUILTIN_TYPE_TAGS;
@@ -179,6 +197,20 @@ export const BUILTIN_PARENTS_HOST_CONSTRUCTIBLE: ReadonlySet<BuiltinTypeName> = 
   "Promise",
   "RegExp",
   "ArrayBuffer",
+  // #1455 — additional host-constructible builtins for subclass-builtins
+  "DataView",
+  "WeakRef",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
 ]);
 
 /**

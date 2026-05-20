@@ -2,7 +2,7 @@
 id: 1501
 sprint: 52
 title: "browser: setTimeout/setInterval/clearTimeout/clearInterval host imports"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium
@@ -175,3 +175,32 @@ matches the JS reference behavior.
   `queueMicrotask(cb)` from compiled code.
 - `requestAnimationFrame` only makes sense in a browser; degrade
   gracefully in Node (alias to `setTimeout(cb, 16)`).
+
+## Suspended Work
+
+- **PR:** https://github.com/loopdive/js2wasm/pull/403
+- **Branch:** `issue-1501-browser-timer`
+- **Worktree:** `/workspace/.claude/worktrees/issue-1501-browser-timer`
+- **HEAD:** `5c7a46e5e2685f9d3c35189cfde508d49533c3ea`
+- **Status:** ci-wait
+
+### Implemented (committed in 5c7a46e5e)
+
+- New `timer_set` / `timer_clear` ImportIntent variants in `src/index.ts`.
+- `preprocessImports` auto-injects a typed timer shim when bare-id calls to `setTimeout`/`setInterval`/`clearTimeout`/`clearInterval` are detected. Respects user-defined functions of the same name.
+- Classifier routes `__timer_set_timeout` / `__timer_set_interval` / `__timer_clear_timeout` / `__timer_clear_interval` → new intents.
+- Runtime resolver binds to `globalThis.{set,clear}{Timeout,Interval}`, bridges WasmGC closures through `_wrapWasmClosure(__call_fn_0)`. Warn-once on unresolvable callback (no throw). Verified end-to-end: setTimeout fires the compiled closure, setInterval+clearInterval cancel correctly.
+- `tests/issue-1501.test.ts` — 8 tests (all pass).
+- Plays nicely with #1484's WASI diagnostic — `function setTimeout(...)` name slot is filtered by `isNameSlot`, user's bare call still flagged.
+
+### Resume steps
+
+1. Wait for `/workspace/.claude/ci-status/pr-403.json` with matching `head_sha`.
+2. Run `/dev-self-merge 403`. If MERGE: `GATE_BYPASS=1 gh pr merge 403 --admin --merge`.
+3. Post-merge cleanup.
+
+### Follow-ups
+
+- `queueMicrotask` / `requestAnimationFrame` host imports (same pattern).
+- Closure-arity > 0: detect rest-arg use-site and dispatch through `__call_fn_N`.
+- Standalone-mode lowering of `setTimeout` via `__wasi_sleep_ms` (depends on #1484 follow-up).

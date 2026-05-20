@@ -133,7 +133,6 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | #1058 | Compile the TypeScript compiler itself to Wasm — self-hosting stress test | high | ready |
 | #1075 | CommonJS module.exports / exports.foo support for compiling .cjs and unmodified npm CJS packages | high | ready |
 | #1093 | Systematic ECMAScript spec conformance audit — review compiled semantics against tc39.es/ecma262 | high | ready |
-| #1095 | Eliminate `as unknown as Instr` casts — extend Instr union to cover all emitted opcodes | medium | ready |
 | #1098 | Audit and reduce patch-layer accumulation in codegen (155 workarounds, special cases, fallbacks) | medium | ready |
 | #1099 | Standalone execution demo — compile and run a program on Wasmtime with zero JS host | high | ready |
 | #1122 | Keep standalone recursive numeric benchmark stable across non-run entry exports | high | ready |
@@ -145,6 +144,12 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 | Issue | Title | Priority | Status |
 |---|---|---|---|
 | #1206 | fix(build-pages): copy benchmark JSONs + frame-nav-sync.js to top-level pages-dist paths (404s on landing page) | medium | in-progress |
+
+### Review
+
+| Issue | Title | Priority | Status |
+|---|---|---|---|
+| #1095 | Eliminate `as unknown as Instr` casts — extend Instr union to cover all emitted opcodes | medium | review |
 
 ### Done
 

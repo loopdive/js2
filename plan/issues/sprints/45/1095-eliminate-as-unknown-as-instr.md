@@ -2,7 +2,7 @@
 id: 1095
 sprint: 45
 title: "Eliminate `as unknown as Instr` casts — extend Instr union to cover all emitted opcodes"
-status: ready
+status: in-review
 created: 2026-04-12
 updated: 2026-04-12
 priority: medium

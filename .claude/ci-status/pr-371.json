@@ -1,0 +1,22 @@
+{
+  "pr": 371,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1515-dataview-toindex",
+  "head_sha": "cc7453853592ca5e5a6e0461a8aaa54553518a1a",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26150996441",
+  "timestamp": "2026-05-20T09:40:09Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

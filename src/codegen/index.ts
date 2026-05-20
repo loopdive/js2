@@ -2949,6 +2949,16 @@ export function generateMultiModule(
 
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
+
+    // Late fixup: repair extern.convert_any applied to non-anyref values.
+    // Must run after stackBalance since fixCallArgTypesInBody can insert
+    // duplicate/redundant extern.convert_any when walking back through
+    // already-converted producers (#1400). Without this, ESLint's Config_new
+    // and similar multi-arg __extern_set call sites emit 2–4 consecutive
+    // extern.convert_any ops, the second of which fails validation
+    // ("found extern.convert_any of type externref" — externref is NOT a
+    // subtype of anyref). Mirror the single-module pipeline at line 1053.
+    fixupExternConvertAny(ctx);
   } catch (e) {
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -3053,8 +3063,10 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
 
   // Check if source uses console.log/warn/error, process.exit, or node:fs functions
   let needsFdWrite = false;
+  let needsConsoleStderr = false;
   let needsProcExit = false;
   let needsRandomGet = false;
+  let needsFdRead = false;
 
   // ctx.wasiNodeFsFuncs is populated from the original source before import preprocessing
   // (see detectNodeFsImports in compiler.ts)
@@ -3069,6 +3081,10 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
         ["log", "warn", "error"].includes(propAccess.name.text)
       ) {
         needsFdWrite = true;
+        // #1493: console.warn/error must route to fd=2 (stderr), not fd=1 (stdout).
+        if (propAccess.name.text === "warn" || propAccess.name.text === "error") {
+          needsConsoleStderr = true;
+        }
       }
       if (
         ts.isIdentifier(propAccess.expression) &&
@@ -3085,6 +3101,10 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
       ) {
         needsRandomGet = true;
       }
+    }
+    // #1481: readStdin() builtin → triggers fd_read import + helper
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "readStdin") {
+      needsFdRead = true;
     }
     forEachChild(node, visit);
   }
@@ -3110,6 +3130,18 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
     const procExitType = addFuncType(ctx, [{ kind: "i32" }], [], "$wasi_proc_exit");
     addImport(ctx, "wasi_snapshot_preview1", "proc_exit", { kind: "func", typeIdx: procExitType });
     ctx.wasiProcExitIdx = ctx.funcMap.get("proc_exit")!;
+  }
+
+  // #1481: fd_read(fd, iovs, iovs_len, nread) -> errno (i32)
+  if (needsFdRead) {
+    const fdReadType = addFuncType(
+      ctx,
+      [{ kind: "i32" }, { kind: "i32" }, { kind: "i32" }, { kind: "i32" }],
+      [{ kind: "i32" }],
+      "$wasi_fd_read",
+    );
+    addImport(ctx, "wasi_snapshot_preview1", "fd_read", { kind: "func", typeIdx: fdReadType });
+    ctx.wasiFdReadIdx = ctx.funcMap.get("fd_read")!;
   }
 
   // #1322: random_get(buf_ptr: i32, buf_len: i32) -> errno (i32)
@@ -3153,11 +3185,20 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
   // This writes to stdout (fd=1) using fd_write
   if (needsFdWrite) {
     emitWasiWriteStringHelper(ctx);
+    // #1493: also register __wasi_write_string_stderr (fd=2) for console.warn/error.
+    if (needsConsoleStderr) {
+      emitWasiWriteStringStderrHelper(ctx);
+    }
   }
 
   // Register __wasi_write_file_sync(pathPtr, pathLen, dataPtr, dataLen) helper
   if (needsPathOpen) {
     emitWasiWriteFileSyncHelper(ctx);
+  }
+
+  // #1481: register __wasi_read_stdin_all() -> ref NativeString helper
+  if (needsFdRead) {
+    emitWasiReadStdinAllHelper(ctx);
   }
 }
 
@@ -3190,6 +3231,46 @@ function emitWasiWriteStringHelper(ctx: CodegenContext): void {
 
   ctx.mod.functions.push({
     name: "__wasi_write_string",
+    typeIdx: funcTypeIdx,
+    locals: [],
+    body,
+    exported: false,
+  });
+}
+
+/**
+ * #1493: Emit __wasi_write_string_stderr(ptr: i32, len: i32) helper that calls
+ * fd_write(2, iov, 1, nwritten). Used by console.warn / console.error so their
+ * output lands on stderr (matching Node/V8 semantics and enabling `2>&1` / `2>err`).
+ */
+function emitWasiWriteStringStderrHelper(ctx: CodegenContext): void {
+  const funcTypeIdx = addFuncType(ctx, [{ kind: "i32" }, { kind: "i32" }], []);
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.funcMap.set("__wasi_write_string_stderr", funcIdx);
+
+  // Parameters: 0=ptr, 1=len
+  // iovec at memory[0]: { buf_ptr: i32, buf_len: i32 }
+  // nwritten at memory[8]
+  const body: Instr[] = [
+    // Store ptr at memory[0] (iovec.buf)
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "local.get", index: 0 } as Instr,
+    { op: "i32.store", align: 2, offset: 0 } as Instr,
+    // Store len at memory[4] (iovec.buf_len)
+    { op: "i32.const", value: 4 } as Instr,
+    { op: "local.get", index: 1 } as Instr,
+    { op: "i32.store", align: 2, offset: 0 } as Instr,
+    // Call fd_write(fd=2, iovs=0, iovs_len=1, nwritten=8)
+    { op: "i32.const", value: 2 } as Instr, // fd = stderr
+    { op: "i32.const", value: 0 } as Instr, // iovs pointer
+    { op: "i32.const", value: 1 } as Instr, // iovs_len = 1
+    { op: "i32.const", value: 8 } as Instr, // nwritten pointer
+    { op: "call", funcIdx: ctx.wasiFdWriteIdx } as Instr,
+    { op: "drop" } as Instr, // drop the return value (errno)
+  ];
+
+  ctx.mod.functions.push({
+    name: "__wasi_write_string_stderr",
     typeIdx: funcTypeIdx,
     locals: [],
     body,
@@ -3267,6 +3348,178 @@ function emitWasiWriteFileSyncHelper(ctx: CodegenContext): void {
     name: "__wasi_write_file_sync",
     typeIdx: funcTypeIdx,
     locals: [{ name: "openedFd", type: { kind: "i32" } }],
+    body,
+    exported: false,
+  });
+}
+
+/**
+ * Emit __wasi_read_stdin_all() -> ref NativeString.
+ *
+ * Loops fd_read on fd=0 into a linear-memory buffer starting at offset
+ * `STDIN_BUF_START` (after the 1024-byte iovec scratch area), in chunks of
+ * `CHUNK`, until fd_read reports nread=0 (EOF). The accumulated bytes are
+ * copied into a fresh `__str_data` (i16) array and wrapped in a NativeString
+ * struct.
+ *
+ * Memory layout (re-using the WASI scratch area 0..1023):
+ *   [0..3]  = iovec.buf  (set per chunk)
+ *   [4..7]  = iovec.buf_len
+ *   [8..11] = nread (output from fd_read)
+ *
+ * The total buffer is hard-capped at MAX_BYTES to keep things simple — if
+ * stdin exceeds this we stop reading and return what we have. The cap is
+ * sized to fit comfortably inside the initial 1 page (64KB) of memory.
+ */
+function emitWasiReadStdinAllHelper(ctx: CodegenContext): void {
+  const STDIN_BUF_START = 1024;
+  const CHUNK = 1024;
+  const MAX_BYTES = 60 * 1024; // ~60KB cap; first page is 64KB
+
+  // () -> ref NativeString
+  const funcTypeIdx = addFuncType(ctx, [], [{ kind: "ref", typeIdx: ctx.nativeStrTypeIdx }]);
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.funcMap.set("__wasi_read_stdin_all", funcIdx);
+
+  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+
+  // locals: total(0), nread(1), dataArr(2), i(3), b(4)
+  const TOTAL = 0;
+  const NREAD = 1;
+  const DATA = 2;
+  const I = 3;
+  const B = 4;
+
+  const body: Instr[] = [
+    // total = 0
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "local.set", index: TOTAL } as Instr,
+
+    // outer block to allow break-out
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            // if (total >= MAX_BYTES) break;
+            { op: "local.get", index: TOTAL } as Instr,
+            { op: "i32.const", value: MAX_BYTES } as Instr,
+            { op: "i32.ge_u" } as Instr,
+            { op: "br_if", depth: 1 } as Instr,
+
+            // iovec.buf = STDIN_BUF_START + total at memory[0]
+            { op: "i32.const", value: 0 } as Instr,
+            { op: "i32.const", value: STDIN_BUF_START } as Instr,
+            { op: "local.get", index: TOTAL } as Instr,
+            { op: "i32.add" } as Instr,
+            { op: "i32.store", align: 2, offset: 0 } as Instr,
+
+            // iovec.buf_len = CHUNK at memory[4]
+            { op: "i32.const", value: 4 } as Instr,
+            { op: "i32.const", value: CHUNK } as Instr,
+            { op: "i32.store", align: 2, offset: 0 } as Instr,
+
+            // fd_read(fd=0, iovs=0, iovs_len=1, nread=8)
+            { op: "i32.const", value: 0 } as Instr,
+            { op: "i32.const", value: 0 } as Instr,
+            { op: "i32.const", value: 1 } as Instr,
+            { op: "i32.const", value: 8 } as Instr,
+            { op: "call", funcIdx: ctx.wasiFdReadIdx! } as Instr,
+            { op: "drop" } as Instr,
+
+            // nread = memory[8]
+            { op: "i32.const", value: 8 } as Instr,
+            { op: "i32.load", align: 2, offset: 0 } as Instr,
+            { op: "local.set", index: NREAD } as Instr,
+
+            // if (nread == 0) break;
+            { op: "local.get", index: NREAD } as Instr,
+            { op: "i32.eqz" } as Instr,
+            { op: "br_if", depth: 1 } as Instr,
+
+            // total += nread
+            { op: "local.get", index: TOTAL } as Instr,
+            { op: "local.get", index: NREAD } as Instr,
+            { op: "i32.add" } as Instr,
+            { op: "local.set", index: TOTAL } as Instr,
+
+            // continue
+            { op: "br", depth: 0 } as Instr,
+          ],
+        },
+      ],
+    },
+
+    // dataArr = array.new_default<__str_data>(total)
+    { op: "local.get", index: TOTAL } as Instr,
+    { op: "array.new_default", typeIdx: strDataTypeIdx } as Instr,
+    { op: "local.set", index: DATA } as Instr,
+
+    // i = 0
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "local.set", index: I } as Instr,
+
+    // copy bytes: while (i < total) dataArr[i] = mem[STDIN_BUF_START+i]; i++
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            // if (i >= total) break;
+            { op: "local.get", index: I } as Instr,
+            { op: "local.get", index: TOTAL } as Instr,
+            { op: "i32.ge_u" } as Instr,
+            { op: "br_if", depth: 1 } as Instr,
+
+            // b = i32.load8_u(STDIN_BUF_START + i)
+            { op: "i32.const", value: STDIN_BUF_START } as Instr,
+            { op: "local.get", index: I } as Instr,
+            { op: "i32.add" } as Instr,
+            { op: "i32.load8_u", align: 0, offset: 0 } as unknown as Instr,
+            { op: "local.set", index: B } as Instr,
+
+            // dataArr[i] = b
+            { op: "local.get", index: DATA } as Instr,
+            { op: "local.get", index: I } as Instr,
+            { op: "local.get", index: B } as Instr,
+            { op: "array.set", typeIdx: strDataTypeIdx } as Instr,
+
+            // i++
+            { op: "local.get", index: I } as Instr,
+            { op: "i32.const", value: 1 } as Instr,
+            { op: "i32.add" } as Instr,
+            { op: "local.set", index: I } as Instr,
+
+            { op: "br", depth: 0 } as Instr,
+          ],
+        },
+      ],
+    },
+
+    // return struct.new NativeString(total, 0, dataArr)
+    { op: "local.get", index: TOTAL } as Instr, // len
+    { op: "i32.const", value: 0 } as Instr, // off
+    { op: "local.get", index: DATA } as Instr, // data
+    { op: "struct.new", typeIdx: strTypeIdx } as Instr,
+  ];
+
+  ctx.mod.functions.push({
+    name: "__wasi_read_stdin_all",
+    typeIdx: funcTypeIdx,
+    locals: [
+      { name: "total", type: { kind: "i32" } },
+      { name: "nread", type: { kind: "i32" } },
+      { name: "dataArr", type: { kind: "ref", typeIdx: strDataTypeIdx } },
+      { name: "i", type: { kind: "i32" } },
+      { name: "b", type: { kind: "i32" } },
+    ],
     body,
     exported: false,
   });
@@ -6539,7 +6792,14 @@ function collectExternDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFil
     // In WASI mode, skip node:fs functions — they're handled by WASI syscall helpers.
     if (ts.isFunctionDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt) && !stmt.body) {
       const name = stmt.name.text;
-      if (ctx.wasi && ctx.wasiNodeFsFuncs.has(name)) continue;
+      // Skip node:fs functions — they're handled by dedicated dispatch:
+      //   • WASI target → __wasi_*  syscall helpers (#1035)
+      //   • non-WASI + allowFs → __node_fs_* JS-host imports (#1491)
+      if (ctx.wasiNodeFsFuncs.has(name) && (ctx.wasi || ctx.allowFs)) continue;
+      // #1481: in WASI mode, readStdin() is a built-in routed to __wasi_read_stdin_all,
+      // not a host import — skip the env.readStdin stub so the codegen path in
+      // compileCallExpression takes over.
+      if (ctx.wasi && name === "readStdin") continue;
       if (!ctx.funcMap.has(name)) {
         const sig = ctx.checker.getSignatureFromDeclaration(stmt);
         if (sig) {

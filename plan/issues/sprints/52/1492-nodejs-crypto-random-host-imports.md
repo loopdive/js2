@@ -2,7 +2,7 @@
 id: 1492
 sprint: 52
 title: "nodejs: crypto.randomBytes / randomUUID host imports"
-status: in-progress
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium
@@ -129,3 +129,29 @@ differ.
 - `src/codegen/math-helpers.ts` — WASI `__crypto_random_bytes` + UUID v4
   helper that consumes `random_get`.
 - `tests/equivalence.test.ts` — "crypto randomBytes / randomUUID" block.
+
+## Suspended Work
+
+- **PR:** https://github.com/loopdive/js2wasm/pull/398
+- **Branch:** `issue-1492-nodejs-crypto`
+- **Worktree:** `/workspace/.claude/worktrees/issue-1492-nodejs-crypto`
+- **HEAD:** `bdb5adf9d56e0679eb7d72da1cec9ff051d3165d`
+- **Status:** ci-wait
+
+### Implemented (committed in bdb5adf9d)
+
+- New `node_builtin_fn { moduleName; fnName }` ImportIntent variant in `src/index.ts`.
+- `preprocessImports` typed-stub table `NODE_BUILTIN_FN_TYPED_STUBS` in `src/import-resolver.ts` covering `crypto.randomBytes` / `crypto.randomUUID`. Named imports get rewritten to typed `function` wrappers that delegate to `__nodefn__crypto__<fn>` host imports.
+- Classifier in `src/compiler/import-manifest.ts` routes `__nodefn__<mod>__<fn>` → `node_builtin_fn` intent.
+- Runtime resolver in `src/runtime.ts`: deps override → `require(moduleName)[fnName]` → `globalThis.crypto` browser fallback → non-secure warn-once shim. Buffer→Uint8Array normalisation for `randomBytes`.
+- `tests/issue-1492.test.ts` — 5 tests (all pass).
+
+### Resume steps
+
+1. Wait for ci-status file `/workspace/.claude/ci-status/pr-398.json` with matching `head_sha`.
+2. Run `/dev-self-merge 398`. If MERGE: `GATE_BYPASS=1 gh pr merge 398 --admin --merge`. If ESCALATE: message tech-lead.
+3. Post-merge cleanup.
+
+### Follow-ups (not in this PR)
+
+- WASI native fallback: `randomBytes(n)` via `n` calls to `random_get`, `randomUUID()` built from 16 bytes formatted as v4. Needs codegen helper emission similar to #1322's Math.random path.

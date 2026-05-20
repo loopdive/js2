@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
+      if (typeof __DEFINES__ === "undefined") window.__DEFINES__ = {};
+    </script>
+    <script>
       (() => {
         const base = document.createElement("base");
         base.href = location.hostname === "loopdive.github.io" ? "/js2wasm/" : "/";
@@ -3056,22 +3059,20 @@ match (value) {
         <div class="host-bench-group">
           <h3 class="host-bench-title">JavaScript host (V8, JIT enabled)</h3>
           <p class="host-bench-subcopy">
-            A benchmark comparing JavaScript in its native environment to the exact same source code compiled with JS²
-            as a WebAssembly module. Both were run inside Google's V8 engine in Node.js. Press the button to run the
-            benchmark in your browser including additional DOM benchmarks.
+            Speedup of JS² compiled WebAssembly relative to the same source code running as JavaScript in V8 (Node.js).
+            Bars extending past the JS baseline mean Wasm is faster; bars falling short mean slower. Press the button to
+            run the benchmark in your browser including additional DOM benchmarks.
           </p>
           <div class="conformance-diagrams">
             <div class="diagram-panel">
               <perf-benchmark-chart
                 src="./benchmarks/results/playground-benchmark-sidebar.json"
-                mode="runtime"
+                mode="perf"
                 rerun-src="./benchmarks/results/loadtime-benchmarks.json"
                 rerun-label="Run Browser Benchmark"
-                title="Runtime"
+                title="Speed vs JS in V8"
                 baseline-label="JS in V8"
-                show-delta
-                delta-kind="runtime"
-                legend="Median Wasm runtime per benchmark. JS lines show the same benchmark in JavaScript."
+                legend="Speedup relative to JS baseline in V8. 2x = twice as fast. 0.8x = 20% slower."
               ></perf-benchmark-chart>
             </div>
           </div>
@@ -3095,12 +3096,10 @@ match (value) {
             >
               <perf-benchmark-chart
                 src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
-                mode="absolute-lower-better"
-                title="Runtime"
-                baseline-label="JS in V8"
-                show-delta
-                delta-kind="runtime"
-                legend="Geometric mean of repeated calls inside one fresh process after module load."
+                mode="perf"
+                title="Speed relative to V8 with JIT"
+                baseline-label="V8 with JIT"
+                legend="Speedup relative to V8 with JIT. 2x = twice as fast. 0.57x = 57% the speed. Geometric mean of repeated calls inside one fresh process after module load."
               ></perf-benchmark-chart>
             </div>
             <div
@@ -3114,7 +3113,7 @@ match (value) {
                 title="Module Size"
                 baseline-label="JS source (minified)"
                 show-delta
-                delta-kind="size"
+                delta-kind="factor"
                 legend="Geometric mean of raw deployable module size; JS source counts only the minified benchmark .js files. Parenthetical interpreter payload is not included in the bar or delta."
               ></perf-benchmark-chart>
             </div>

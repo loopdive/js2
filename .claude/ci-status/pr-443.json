@@ -1,0 +1,23 @@
+{
+  "pr": 443,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "issue-1543-1544-path-b",
+  "head_sha": "b8dcb61d0f2729615136dc2814e996cedae76ffd",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/443",
+  "timestamp": "2026-05-20T22:20:05Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

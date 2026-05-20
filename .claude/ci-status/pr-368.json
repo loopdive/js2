@@ -1,0 +1,22 @@
+{
+  "pr": 368,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1450-named-evaluation",
+  "head_sha": "4ec7a6af3be989285d521f23ca59faffd6aeb7ad",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26150988659",
+  "timestamp": "2026-05-20T09:50:36Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

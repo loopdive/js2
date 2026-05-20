@@ -2,7 +2,7 @@
 id: 1444
 sprint: 52
 title: "spec gap: RegExp named groups (unmatched + duplicate) and lookbehind edge cases"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: hard

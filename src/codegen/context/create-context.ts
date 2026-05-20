@@ -136,6 +136,7 @@ export function createCodegenContext(
     wasiFdCloseIdx: -1,
     wasiBumpPtrGlobalIdx: -1,
     wasiNodeFsFuncs: options?.wasiNodeFsFuncs ?? new Set(),
+    allowFs: options?.allowFs ?? false,
     tdzGlobals: new Map(),
     tdzLetConstNames: new Set(),
     definedPropertyFlags: new Map(),

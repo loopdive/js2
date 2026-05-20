@@ -127,8 +127,15 @@ jobs:
           # timeouts, or pool config busts the cache and forces a clean run
           # instead of replaying stale `compile_timeout` results (issue #1171).
           key: test262-cache-v2-${{ hashFiles('src/**/*.ts', 'scripts/test262-worker.mjs', 'scripts/compiler-fork-worker.mjs', 'vitest.config.ts') }}-chunk-${{ matrix.chunk }}
+          # #1521 — Cross-PR cache sharing. The first restore-keys line restores
+          # any cache for the same src+worker+config hash but a different chunk;
+          # the second line falls back to ANY recent cache (different src). Cache
+          # entries written by a different compiler bundle carry a stale
+          # `bundle_hash` field and are re-compiled on read (see
+          # scripts/test262-worker.mjs + scripts/precompile-tests.ts).
           restore-keys: |
             test262-cache-v2-${{ hashFiles('src/**/*.ts', 'scripts/test262-worker.mjs', 'scripts/compiler-fork-worker.mjs', 'vitest.config.ts') }}-
+            test262-cache-v2-
 
       - name: Build compiler bundles
         run: |

@@ -151,7 +151,10 @@ export function compileSource(
   //
   // Before preprocessing strips import declarations, detect node:fs imports
   // for WASI mode (preprocessing replaces them with declare stubs).
-  const wasiNodeFsFuncs = options.target === "wasi" ? detectNodeFsImports(cjsRewritten) : undefined;
+  // #1491 — detect named fs imports for both WASI (#1035 syscall path) and the
+  // new JS-host imports (non-WASI). Detection is identical; the codegen branch
+  // is selected based on `ctx.wasi` + `ctx.allowFs`.
+  const wasiNodeFsFuncs = detectNodeFsImports(cjsRewritten);
   const preprocessed = preprocessImports(rewriteEvalSuperCall(cjsRewritten));
   const processedSource = preprocessed.source;
 
@@ -347,6 +350,7 @@ export function compileSource(
         experimentalIR: options.experimentalIR !== false,
         nodeBuiltins: preprocessed.nodeBuiltins,
         wasiNodeFsFuncs,
+        allowFs: options.allowFs ?? false,
       });
       mod = result.module;
       // Propagate codegen errors with source locations

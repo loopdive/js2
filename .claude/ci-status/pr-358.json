@@ -1,0 +1,22 @@
+{
+  "pr": 358,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1440-date-setters",
+  "head_sha": "e1ba0558fe566f63aa0077de8db16f380a40a557",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26150888128",
+  "timestamp": "2026-05-20T09:20:39Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

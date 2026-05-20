@@ -2,7 +2,7 @@
 id: 1454
 sprint: 52
 title: "spec gap: iterator protocol — error propagation and IteratorClose during destructuring"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: medium
 feasibility: medium

@@ -788,12 +788,34 @@ function compileExpressionInner(ctx: CodegenContext, fctx: FunctionContext, expr
       // dispatch to compileInstanceOf for an externref-backed RHS.
       if (ctx.classExternrefBackedSet.has(rhsResult)) {
         const lhsTsType = ctx.checker.getTypeAtLocation(expr.left);
-        const lhsName = lhsTsType.getSymbol()?.name;
+        let lhsName = lhsTsType.getSymbol()?.name;
+        // (#1455) TypeScript reports `__class` as the synthetic symbol name
+        // for anonymous class expressions (`const Sub = class extends Map {}`).
+        // Resolve via `typeToString` — for a const-bound class expression
+        // this returns the binding name, which we can look up in
+        // `classExprNameMap` to recover the synthetic class id.
+        if (lhsName === "__class") {
+          const typeStr = ctx.checker.typeToString(lhsTsType);
+          const mapped = ctx.classExprNameMap.get(typeStr);
+          if (mapped !== undefined) {
+            lhsName = mapped;
+          } else if (ctx.classTagMap.has(typeStr)) {
+            lhsName = typeStr;
+          }
+        }
+        // (#1455) Canonicalize class names through `classExprNameMap` so
+        // `const Sub = class extends Map {}` (where the binding name `Sub`
+        // and the synthetic name `__anonClass_N` both register independently
+        // as classes) compare equal.
+        const canon = (n: string | undefined): string | undefined =>
+          n === undefined ? undefined : (ctx.classExprNameMap.get(n) ?? n);
+        const canonLhs = canon(lhsName);
+        const canonRhs = canon(rhsResult);
         let staticAnswer: boolean | undefined;
-        if (lhsName !== undefined) {
-          if (lhsName === rhsResult) {
+        if (lhsName !== undefined && ctx.classTagMap.has(lhsName)) {
+          if (canonLhs === canonRhs) {
             staticAnswer = true;
-          } else if (ctx.classTagMap.has(lhsName)) {
+          } else {
             // LHS is a known user class. Walk its parent chain — true iff the
             // RHS class is an ancestor of the LHS class.
             let cur: string | undefined = lhsName;
@@ -816,12 +838,11 @@ function compileExpressionInner(ctx: CodegenContext, fctx: FunctionContext, expr
           fctx.body.push({ op: "i32.const", value: staticAnswer ? 1 : 0 });
           return { kind: "i32" };
         }
-        // Could not decide statically — return false (host-side
-        // __instanceof against MyError name would return 0 anyway).
-        const leftType = compileExpression(ctx, fctx, expr.left);
-        if (leftType) fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: 0 });
-        return { kind: "i32" };
+        // (#1455) LHS type could not be resolved statically (TS often infers
+        // `any` for `class Sub extends WeakRef {}` because WeakRef<T> requires
+        // type args). Fall through to the host runtime check, which consults
+        // the user-class tag registry attached at construction time.
+        return compileHostInstanceOf(ctx, fctx, expr);
       }
     }
     return compileBinaryExpression(ctx, fctx, expr);

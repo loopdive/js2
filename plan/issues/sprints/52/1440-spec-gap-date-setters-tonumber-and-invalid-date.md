@@ -2,7 +2,7 @@
 id: 1440
 sprint: 52
 title: "spec gap: Date setters ToNumber coercion + Invalid Date (NaN) propagation"
-status: ready
+status: in-review
 created: 2026-05-20
 priority: high
 feasibility: medium
