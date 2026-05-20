@@ -1,16 +1,6 @@
 {
   "backlog": [
     {
-      "id": "1552",
-      "title": "Tagged-union value representation: retire __box_*, __unbox_*, __typeof, __is_truthy",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "standalone-wasm",
-      "status": "backlog",
-      "sprint": "backlog"
-    },
-    {
       "id": "1541",
       "title": "Opt-in icu_normalizer (icu4x) for String.prototype.normalize",
       "priority": "low",
@@ -348,6 +338,36 @@
   ],
   "ready": [
     {
+      "id": "1554",
+      "title": "cli: --standalone should reject --allow-fs (logically mutually exclusive flags)",
+      "priority": "low",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1552",
+      "title": "spec gap: catch parameter destructuring (`try/dstr`) — share dstr-binding helper with function decls",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1551",
+      "title": "spec gap: SuperCall — argument-list evaluation order, spread getter side-effects, uninitialized-this PutValue",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
       "id": "1550",
       "title": "spec gap: dstr-binding default initializer evaluated when value is non-undefined (`init-skipped` pattern)",
       "priority": "high",
@@ -381,10 +401,10 @@
       "id": "1542",
       "title": "Class method destructured-pattern param default not applied; throws \\\"Cannot destructure null\\\" instead",
       "priority": "high",
-      "feasibility": "medium",
+      "feasibility": "hard",
       "depends_on": [],
       "goal": "test262-conformance",
-      "status": "ready",
+      "status": "suspended",
       "sprint": "52"
     },
     {
@@ -440,6 +460,46 @@
       "sprint": "52"
     },
     {
+      "id": "1474",
+      "title": "host-independence: eliminate JS host RegExp for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1473",
+      "title": "host-independence: eliminate JS host error/exception ops for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1472",
+      "title": "host-independence: eliminate JS host object/property ops for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1471",
+      "title": "host-independence: eliminate JS host boxing/unboxing for standalone Wasm",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "host-independence",
+      "status": "ready",
+      "sprint": "52"
+    },
+    {
       "id": "1399",
       "title": "chore: fix 9 biome lint errors in src/runtime.ts",
       "priority": "low",
@@ -457,16 +517,6 @@
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "moved-to-s52",
-      "sprint": "52"
-    },
-    {
-      "id": "1373",
-      "title": "IR: claim async functions (async/await through IR path)",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "ir-full-coverage",
-      "status": "ready",
       "sprint": "52"
     },
     {
@@ -2005,46 +2055,6 @@
       "sprint": "52"
     },
     {
-      "id": "1474",
-      "title": "host-independence: eliminate JS host RegExp for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1473",
-      "title": "host-independence: eliminate JS host error/exception ops for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1472",
-      "title": "host-independence: eliminate JS host object/property ops for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1471",
-      "title": "host-independence: eliminate JS host boxing/unboxing for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
       "id": "1378",
       "title": "spec gap: try/catch/finally — error type fidelity, finally completion override, dstr-binding (~85 fails)",
       "priority": "medium",
@@ -3031,6 +3041,16 @@
       "goal": "ir-full-coverage",
       "status": "done",
       "sprint": "51"
+    },
+    {
+      "id": "1373",
+      "title": "IR: claim async functions (async/await through IR path)",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "ir-full-coverage",
+      "status": "done",
+      "sprint": "52"
     },
     {
       "id": "1372",

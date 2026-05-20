@@ -155,3 +155,118 @@ Rationale:
 ### Scope NOT in this fix
 - Option 1 (async-function body-wrap) is DECLINED — #1150 already closes the body-throw path via call-site catch. Re-opening this costs significant rework with no clear added benefit.
 - Async-method destructure params in class bodies / object literals (`class-bodies.ts`, `literals.ts`) have their own param-destructure code paths. Likely share the same inference bug; flag as follow-up if regressions surface.
+
+## Implementation Plan (architect spec, 2026-05-20)
+
+### Status review
+
+The original framing — "async function bodies throw past the function boundary; caller sees a wasm trap" — was **closed in #1150 (PR #243)** via call-site try/catch wrapping. The current behaviour:
+
+1. **Async function bodies** still compile with unwrapped result type `T` (`function-body.ts:569`, `closures.ts:1208`, `class-bodies.ts:369`, `literals.ts:1308`, `declarations.ts:2219`). No body-level try/catch is emitted.
+2. **Async call sites** that the codegen recognises as async are wrapped by `wrapAsyncCallInTryCatch` (`expressions.ts:236`) immediately after `wrapAsyncReturn`. The wrap is gated on `isAsyncCallExpression(ctx, expr)` returning true. Throws emerging from the call become `Promise.reject(__get_caught_exception)` (host mode) or a `$Promise` struct in `REJECTED` state (standalone/WASI mode).
+3. **`await asyncCall()`** intentionally skips the wrap (`expressions.ts:926-929`) so the raw `T` is left on the stack for the await's passthrough lowering. A sync throw at this site rethrows in the outer async function, which is itself wrapped by ITS caller — correct per spec, as long as the outer caller's wrap fires.
+
+The 26+ Bucket C failures the ticket was opened for now pass.
+
+### Remaining gaps (this spec covers all three)
+
+1. **Gap A — `isAsyncCallExpression` false negatives.** The detector resolves the call's signature via `expr.expression` identifier or `checker.getResolvedSignature(expr).getDeclaration()`. It misses:
+   - Indirect calls through a variable holding the async function: `const f = asyncFn; f();` resolves to the variable's TS type; if the declared type isn't `async`, no `AsyncKeyword` modifier is found on the declaration, and no wrap is emitted.
+   - Calls through an externref-typed function reference (closure passed as callback): `cb()` where `cb: () => Promise<T>`. The signature is anonymous; no decl modifiers.
+   - Synthetic builder calls in async-generator/async-iter machinery where `expr.expression` is a parenthesised IIFE.
+   Symptom in test262: sync throws from these call shapes still trap at the wasm boundary.
+
+2. **Gap B — binding-pattern param without explicit type annotation** (already specified above; covered in `closures.ts:875-886`). Surfaces as the 6 `async-generator/dstr/*-val-null.js` / `*-value-undef.js` family — non-throwing because the destructure was never emitted, not because the throw escaped.
+
+3. **Gap C — compatibility with #1373b Slice 1 (IR async CPS lowering).** Once `supportsAsyncIr` flips on, async-function bodies route through `src/ir/lower.ts` and bypass the legacy `function-body.ts:569` path entirely. The legacy call-site `wrapAsyncCallInTryCatch` still fires (it's keyed on the TS-level signature, not the wasm-level lowering), but the IR lowering may emit its own `Promise.reject` path for `IrInstrAsyncThrow` and double-wrap. We must either (a) have the IR lower emit raw throws and let the call-site wrap convert, or (b) have IR lower emit the rejected promise and have the call-site detect IR-claimed callees and skip the call-site wrap.
+
+### Recommendation: close all three gaps, defer body-wrap (Option 1) indefinitely
+
+Option 1 (wrap the entire async body in `try/catch` and change the return signature to `externref`) is **DECLINED** as a primary fix because:
+- It requires changing the return type at 5 codegen sites + every call-site that consumes the unwrapped `T` (await's passthrough lowering, `then`-chain coercions).
+- It removes the `await` fast-path that returns raw `T`, forcing every awaited call to extract the value from a Promise struct — a regression vs. today's `await asyncCall()` direct-value lowering.
+- The same correctness is achievable at the call site for ~95% of cases via `wrapAsyncCallInTryCatch`. The remaining ~5% (Gap A) is fixable by broadening the detector.
+
+We will instead:
+- **A1**: broaden `isAsyncCallExpression` to recognise variable-typed async refs and call_ref dispatches via the TS type's call signatures, falling back to "treat as async if the TS return type is `Promise<T>`".
+- **A2**: as a safety net for the remaining detector misses (anonymous IIFEs, builder-synthesised calls), add a generic **opt-in body-wrap** for async functions that are statically reachable from non-await consumers and that contain a sync-throw construct (TDZ access, default-param throw, top-of-body destructure of a binding pattern). This is a narrow Option 1 — emitted only when needed.
+- **B**: implement the `closures.ts:878-886` binding-pattern coercion already detailed above.
+- **C**: when `supportsAsyncIr` is on, the call-site wrap must remain emitted, but the IR lower's `IrInstrAsyncThrow` must throw a wasm exception (not construct a rejected promise) so the wrap converts it. Gate documented in `src/ir/lower.ts` comment.
+
+### Changes
+
+**File: `src/codegen/expressions.ts`** (Gap A1, ~15 LOC)
+- Function `isAsyncCallExpression` (line 154):
+  - After the existing identifier + signature-declaration check, add a fallback: ask the TS checker for `getTypeAtLocation(expr.expression)`; iterate `type.getCallSignatures()`; if any signature's return type matches `unwrapPromiseType(retType, ctx.checker) !== retType` (i.e. return is `Promise<T>`) AND the call is NOT directly under `new`, return true.
+  - Pattern follows the existing async-generator exclusion logic — re-check `decl?.asteriskToken` if present.
+  - Edge case: callees that explicitly return `Promise<T>` from a sync function will now also get wrapped. This is semantically correct — synchronous throws from a function declared to return a Promise still violate the contract.
+
+**File: `src/codegen/expressions.ts`** (Gap A2 safety net, ~10 LOC — DEFERRED until A1 is measured)
+- After the wrap site at line 935, no change. Body-wrap is only needed if a follow-up audit finds residual `[in __async_*() ← test]` runtime traps after A1 lands. Track as a separate sub-issue with concrete failing tests rather than implementing speculatively.
+
+**File: `src/codegen/closures.ts`** (Gap B, ~8 LOC — already specified in earlier section)
+- Function `compileArrowAsClosure` near line 878:
+  ```ts
+  let wasmType = resolveWasmType(ctx, paramType);
+  // Binding patterns require an externref to destructure; primitive types
+  // (f64/i32 from TS inference of an un-annotated pattern param) yield a
+  // silent no-op body. Coerce to externref so the destructure routes
+  // through emitExternrefDestructureGuard's sync-throw path.
+  if (
+    (ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name)) &&
+    wasmType.kind !== "externref" &&
+    wasmType.kind !== "ref" &&
+    wasmType.kind !== "ref_null"
+  ) {
+    wasmType = { kind: "externref" };
+  }
+  ```
+- Mirror change in `class-bodies.ts` near line 1174 and `literals.ts` near line 1303 if the same pattern (`compileMethodAsClosure` / `compileObjectMethodAsClosure`) constructs the param list independently.
+
+**File: `src/ir/lower.ts`** (Gap C scaffolding, comment + assertion only, ~5 LOC)
+- At the `IrInstrAsyncThrow` lowering site (currently stub-throwing per #1373b Slice 1's gate=false default):
+  - Add a comment: when `supportsAsyncIr` is true, emit a wasm `throw` of the value's externref payload (NOT a `Promise.reject` struct). The enclosing call-site `wrapAsyncCallInTryCatch` (`expressions.ts:236`) will convert it to a rejected promise.
+  - Rationale: keeps the call-site wrap as the single source of truth for sync-throw → reject conversion. Avoids double-wrap if both legacy and IR paths are active during the gate-flip transition.
+
+### Wasm IR pattern (already in place — verify, do not re-emit)
+
+```wasm
+;; Existing pattern at every async call site (host mode):
+(try (result externref)
+  ;; ... call to async function, leaves T on stack ...
+  ;; coerce T → externref if needed
+  call $Promise_resolve     ;; from wrapAsyncReturn
+catch_all
+  call $__get_caught_exception   ;; pulls the wasm exception value as externref
+  call $Promise_reject
+end)
+```
+
+Standalone (WASI) mode emits a `$Promise` struct.new with state=REJECTED instead.
+
+### Edge cases
+
+- `await asyncCall()` parent → wrap skipped (intentional fast-path). Outer async function's caller wrap catches any sync throw rethrown by await. **No change needed.**
+- `new AsyncCtor()` — async ctors are not legal JS, but TS allows declared types with `Promise<T>` return. Skip the wrap for `NewExpression`s. The A1 broadened check must gate on `!ts.isNewExpression(expr.parent)`.
+- Async generators (`async function*`) — `isAsyncCallExpression` already excludes via `asteriskToken`. Their semantics are different (return AsyncGenerator, not Promise). Gap B's binding-pattern coercion still applies to them.
+- TDZ default-param throw — already handled correctly via the wrap; verified in #1150 PR #243.
+
+### Regression gate
+
+- Compile + run all `test/language/statements/async-function/`, `test/language/expressions/async-function/`, `test/language/statements/async-generator/dstr/`, `test/language/expressions/async-generator/dstr/`, `test/language/expressions/class/dstr/async-*`.
+- Spot-check `tests/equivalence.test.ts` for any pre-existing async function expression / arrow tests that pass an async callback as a variable (Gap A1 may newly wrap calls that previously left raw T on the stack — confirm consumers tolerate externref).
+- Net regression budget for the PR: −5 ≤ Δ ≤ +30 (B is small and additive; A1 may swing slightly negative if any test relied on the previous no-wrap behaviour for sync return-as-promise).
+
+### Lines of change estimate
+
+- Gap A1: ~15 LOC in `expressions.ts:isAsyncCallExpression`.
+- Gap B: ~8 LOC × 3 files (`closures.ts`, `class-bodies.ts`, `literals.ts`) ≈ 24 LOC.
+- Gap C scaffolding: ~5 LOC comment + assertion in `src/ir/lower.ts`.
+- Total: ~45 LOC plus regression-test fixtures.
+
+### Sequencing
+
+- B is **independent** of A — ship it first. It closes the 6 binding-pattern dstr failures with the lowest risk.
+- A1 ships second, broadening the detector. Re-measure test262 after both.
+- Open Gap A2 (body-wrap safety net) ONLY if a residual cluster of sync-throw traps remains after A1.
+- Gap C scaffolding ships with whatever PR flips `supportsAsyncIr` from default-off to default-on (currently #1373b-claim).

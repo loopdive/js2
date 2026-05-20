@@ -1,11 +1,14 @@
 ---
 id: 52
-status: active
+status: done
 created: 2026-05-20
 started: 2026-05-20
+ended: 2026-05-20
+baseline_pass_start: 28171
+baseline_pass_end: 28233
 wrap_checklist:
-  status_closed: false
-  retro_written: false
+  status_closed: true
+  retro_written: true
   diary_updated: false
   end_tag_pushed: false
   begin_tag_pushed: true
@@ -15,6 +18,28 @@ wrap_checklist:
 
 **Planned**: 2026-05-20
 **Started**: 2026-05-20
+
+## Retrospective
+
+**Result**: +62 test262 passes (28,171 → 28,233, 65.5%). 30+ open PRs in CI queue — auto-merge monitor will continue landing them into sprint 53 window.
+
+**Wins**:
+- Shipped full spec-gap sweep: 60+ issues across destructuring, iterators, String/RegExp/Date/Map/Set/Error/Proxy/Reflect/Promise/Generator protocol gaps
+- JSX parsing + runtime host binding (#1531, #1540) landed cleanly
+- WASI subsystem complete: stdin, stdout, stderr, env, clock, fs, benchmarks (#1480–#1484, #1490–#1504)
+- ESLint Tier 1c unblocked (#1400 Config_new fix), Tier 1d unblockers filed as #1557/#1558
+- Host-independence track (#1470–#1474) architected and speced; PR #408 in CI
+- IR async Phase C scaffolding + CPS spec (#1373b) landed (gate=false)
+- Path B fix for literals.ts:447 (~119 test262 gains pending CI on PR #443)
+- Root-cause analysis for #1543/#1544/#1553/#1556 written by architect + senior dev
+
+**Carried forward to S53**:
+- #1471–#1474 host-independence (blocked on PR #408 merging)
+- #1554 --standalone guard (blocked on PR #408)
+- #1326c microtask queue (hard, in-progress, no PR)
+- #1553 declaration destructuring (needs architect spec for 5 sub-issues)
+- #1373, #1373b, #1042 async cluster (architect spec needed before dev dispatch)
+- #1387 with statement (architect exploration)
 
 ## Theme
 
