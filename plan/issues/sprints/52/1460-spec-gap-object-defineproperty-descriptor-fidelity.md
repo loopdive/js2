@@ -2,7 +2,7 @@
 id: 1460
 sprint: 52
 title: "spec gap: Object.defineProperty / defineProperties descriptor fidelity"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: high
 feasibility: hard

@@ -2,7 +2,7 @@
 id: 1387
 sprint: 52
 title: "feat: implement `with` statement — architect exploration of dynamic-scope compilation strategies"
-status: ready
+status: moved-to-s52
 created: 2026-05-08
 priority: medium
 feasibility: hard

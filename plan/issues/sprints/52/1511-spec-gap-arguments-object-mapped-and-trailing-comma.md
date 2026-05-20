@@ -2,7 +2,7 @@
 id: 1511
 sprint: 52
 title: "spec gap: arguments object — mapped semantics, descriptors, trailing-comma length"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: high
 feasibility: medium

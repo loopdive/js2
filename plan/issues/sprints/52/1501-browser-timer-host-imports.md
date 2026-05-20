@@ -2,7 +2,7 @@
 id: 1501
 sprint: 52
 title: "browser: setTimeout/setInterval/clearTimeout/clearInterval host imports"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

@@ -2,7 +2,7 @@
 id: 1519
 sprint: 52
 title: "spec gap: `new` expression — non-literal spread + non-constructor TypeError + new.target via apply/call"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

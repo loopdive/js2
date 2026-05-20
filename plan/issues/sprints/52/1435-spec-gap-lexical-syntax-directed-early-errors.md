@@ -2,7 +2,7 @@
 id: 1435
 sprint: 52
 title: "spec gap: lexical grammar and syntax-directed early errors"
-status: ready
+status: in-progress
 created: 2026-05-11
 updated: 2026-05-11
 priority: medium
