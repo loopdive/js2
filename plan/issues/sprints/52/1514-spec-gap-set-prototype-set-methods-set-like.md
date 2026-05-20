@@ -2,7 +2,7 @@
 id: 1514
 sprint: 52
 title: "spec gap: Set.prototype.{union,intersection,difference,…} accept set-like protocol"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

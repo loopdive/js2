@@ -2,7 +2,7 @@
 id: 1436
 sprint: 52
 title: "spec gap: global object descriptors and global function coercion/URI semantics"
-status: ready
+status: in-progress
 created: 2026-05-11
 updated: 2026-05-11
 priority: medium

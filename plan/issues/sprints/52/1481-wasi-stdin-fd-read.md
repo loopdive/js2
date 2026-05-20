@@ -2,7 +2,7 @@
 id: 1481
 sprint: 52
 title: "wasi: support reading stdin via fd_read"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: high
 feasibility: medium

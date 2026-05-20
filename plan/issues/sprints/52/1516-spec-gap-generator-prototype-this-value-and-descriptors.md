@@ -2,7 +2,7 @@
 id: 1516
 sprint: 52
 title: "spec gap: GeneratorPrototype — this-value coercion + name/length/property descriptors"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: easy

@@ -2,7 +2,7 @@
 id: 1504
 sprint: 52
 title: "browser: marshal compiled export return values (structs/arrays) to plain JS"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

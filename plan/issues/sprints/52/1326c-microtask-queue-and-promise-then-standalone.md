@@ -2,7 +2,7 @@
 id: 1326c
 sprint: 52
 title: "Async standalone Phase 1C: microtask queue + Promise.then chained-resolution (follow-up to #1326 Phase 1B)"
-status: ready
+status: in-progress
 created: 2026-05-08
 priority: medium
 feasibility: hard

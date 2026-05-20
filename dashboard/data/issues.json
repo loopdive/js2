@@ -170,17 +170,7 @@
       ],
       "goal": "ir-full-coverage",
       "status": "blocked",
-      "sprint": "52"
-    },
-    {
-      "id": "1364",
-      "title": "spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails)",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "blocked",
-      "sprint": "52"
+      "sprint": "51"
     },
     {
       "id": "1166",
@@ -255,474 +245,14 @@
   ],
   "ready": [
     {
-      "id": "1504",
-      "title": "browser: marshal compiled export return values (structs/arrays) to plain JS",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "browser-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1503",
-      "title": "browser: crypto.getRandomValues / crypto.randomUUID host imports",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "browser-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1502",
-      "title": "browser: localStorage / sessionStorage host imports with standalone fallback",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "browser-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1501",
-      "title": "browser: setTimeout/setInterval/clearTimeout/clearInterval host imports",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "browser-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1500",
-      "title": "browser: fetch() host import with Response bridge",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "browser-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1494",
-      "title": "nodejs: __dirname / __filename / import.meta.url for compiled modules",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "nodejs-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1493",
-      "title": "nodejs: console.error / console.warn → stderr (fd=2) in WASI mode",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "nodejs-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1492",
-      "title": "nodejs: crypto.randomBytes / randomUUID host imports",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "nodejs-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1491",
-      "title": "nodejs: fs.readFileSync/writeFileSync as JS-host imports (non-WASI)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "nodejs-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1490",
-      "title": "nodejs: runtime access to process.argv and process.env",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "nodejs-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1484",
-      "title": "wasi: provide standalone setTimeout/setInterval via poll_oneoff (or fail loud)",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "wasi-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1483",
-      "title": "wasi: route Date.now and performance.now to clock_time_get",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "wasi-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1482",
-      "title": "wasi: wire process.env to environ_get / environ_sizes_get",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "wasi-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1481",
-      "title": "wasi: support reading stdin via fd_read",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "wasi-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1480",
-      "title": "wasi: console.error and console.warn should write to stderr (fd=2)",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "wasi-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1474",
-      "title": "host-independence: eliminate JS host RegExp for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1473",
-      "title": "host-independence: eliminate JS host error/exception ops for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1472",
-      "title": "host-independence: eliminate JS host object/property ops for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1471",
-      "title": "host-independence: eliminate JS host boxing/unboxing for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1470",
-      "title": "host-independence: eliminate JS host string ops for standalone Wasm",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "host-independence",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1468",
-      "title": "for-of/dstr: obj-ptrn-id-init undefined-key + array-elem-trlg iterator close",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1467",
-      "title": "spec gap: Error / AggregateError / Symbol prototype protocol",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1466",
-      "title": "spec gap: Proxy + Reflect trap / operation fidelity",
+      "id": "1395",
+      "title": "class static method descriptors: class identifier resolves to string_constant, not constructor object",
       "priority": "medium",
       "feasibility": "hard",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1465",
-      "title": "spec gap: Promise.all / allSettled / any / race iterable + subclass fidelity",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1464",
-      "title": "spec gap: Iterator.prototype helpers + Iterator.zip / Iterator.concat (ES2025)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1463",
-      "title": "spec gap: Function.prototype.bind / toString / Symbol.hasInstance fidelity",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1462",
-      "title": "spec gap: Object.getOwnPropertyDescriptor + Object.create descriptor surface",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1461",
-      "title": "spec gap: Array.prototype.* called on array-like / exotic receivers",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1460",
-      "title": "spec gap: Object.defineProperty / defineProperties descriptor fidelity",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1456",
-      "title": "spec gap: private-reference assignment to readonly accessor / method throws TypeError",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1455",
-      "title": "spec gap: subclassing builtins — instanceof and prototype chain (class Sub extends Map / Float32Array / WeakMap / …)",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1454",
-      "title": "spec gap: iterator protocol — error propagation and IteratorClose during destructuring",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1453",
-      "title": "spec gap: per-iteration fresh let/const binding in for-statements",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1452",
-      "title": "spec gap: for-loop init binding patterns — declared names not visible in loop body",
-      "priority": "high",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1451",
-      "title": "spec gap: class/object-literal method parameter destructuring with non-trivial defaults",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1450",
-      "title": "spec gap: NamedEvaluation — anonymous fn/class names from binding identifiers in destructuring defaults",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1445",
-      "title": "spec gap: String.raw + String.prototype.* argument coercion (ToInteger / ToPrimitive)",
-      "priority": "medium",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1444",
-      "title": "spec gap: RegExp named groups (unmatched + duplicate) and lookbehind edge cases",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1443",
-      "title": "spec gap: String.prototype.replace/replaceAll/match/search delegate to argument's Symbol.* method",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1442",
-      "title": "spec gap: String.prototype methods — RequireObjectCoercible + ToString on this value",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1441",
-      "title": "spec gap: String.prototype.split — Array result shape + String wrapper receivers",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1440",
-      "title": "spec gap: Date setters ToNumber coercion + Invalid Date (NaN) propagation",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1439",
-      "title": "spec gap: RegExp.prototype Symbol.* protocol methods (replace/match/split/matchAll/search)",
-      "priority": "high",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1436",
-      "title": "spec gap: global object descriptors and global function coercion/URI semantics",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1435",
-      "title": "spec gap: lexical grammar and syntax-directed early errors",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1400",
-      "title": "npm: compile ESLint package entry to valid Wasm",
-      "priority": "high",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "npm-library-support",
-      "status": "ready",
-      "sprint": "52"
-    },
-    {
-      "id": "1399",
-      "title": "chore: fix 9 biome lint errors in src/runtime.ts",
-      "priority": "low",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "",
-      "status": "ready",
-      "sprint": "null"
+      "sprint": "51"
     },
     {
       "id": "1394",
@@ -734,7 +264,7 @@
       ],
       "goal": "spec-completeness",
       "status": "ready",
-      "sprint": "52"
+      "sprint": "51"
     },
     {
       "id": "1387",
@@ -743,8 +273,8 @@
       "feasibility": "hard",
       "depends_on": [],
       "goal": "spec-completeness",
-      "status": "ready",
-      "sprint": "52"
+      "status": "moved-to-s52",
+      "sprint": "51"
     },
     {
       "id": "1382",
@@ -754,7 +284,7 @@
       "depends_on": [],
       "goal": "ir-full-coverage",
       "status": "ready",
-      "sprint": "52"
+      "sprint": "51"
     },
     {
       "id": "1373",
@@ -764,7 +294,7 @@
       "depends_on": [],
       "goal": "ir-full-coverage",
       "status": "ready",
-      "sprint": "52"
+      "sprint": "51"
     },
     {
       "id": "1353",
@@ -996,7 +526,7 @@
       ],
       "goal": "standalone-mode",
       "status": "ready",
-      "sprint": "52"
+      "sprint": "51"
     },
     {
       "id": "1326",
@@ -2294,39 +1824,29 @@
   ],
   "inprogress": [
     {
-      "id": "1438",
-      "title": "spec gap: Map, WeakMap, and WeakSet residual collection semantics",
+      "id": "1381",
+      "title": "spec gap: String.prototype.{substring,slice,indexOf,search,charAt,charCodeAt,codePointAt,at,includes,startsWith,endsWith,trim,concat} edge cases (~128 fails)",
       "priority": "medium",
-      "feasibility": "medium",
+      "feasibility": "easy",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1433",
-      "title": "spec gap: DisposableStack and AsyncDisposableStack lifecycle semantics",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "in-progress",
-      "sprint": "52"
-    },
-    {
-      "id": "1431",
-      "title": "spec gap: assignment operators — destructuring completion, defaults, and compound side effects",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "in-progress",
-      "sprint": "52"
+      "sprint": "51"
     },
     {
       "id": "1378",
       "title": "spec gap: try/catch/finally — error type fidelity, finally completion override, dstr-binding (~85 fails)",
       "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "in-progress",
+      "sprint": "51"
+    },
+    {
+      "id": "1364",
+      "title": "spec gap: class elements — method/field descriptor enumerable/configurable/writable (~700 fails)",
+      "priority": "high",
       "feasibility": "medium",
       "depends_on": [],
       "goal": "spec-completeness",
@@ -2427,70 +1947,10 @@
   "review": [],
   "done": [
     {
-      "id": "1437",
-      "title": "spec gap: Math numeric edge cases beyond random source",
-      "priority": "low",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "done",
-      "sprint": "52"
-    },
-    {
-      "id": "1434",
-      "title": "spec gap: ToNumber/ToNumeric coercion and unary operator edge cases",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "done",
-      "sprint": "52"
-    },
-    {
-      "id": "1432",
-      "title": "spec gap: parameter lists — rest/destructuring iterator semantics and default initializers",
-      "priority": "medium",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "done",
-      "sprint": "52"
-    },
-    {
-      "id": "1398",
-      "title": "report: edition filter on category table — per-category edition breakdown",
-      "priority": "low",
-      "feasibility": "medium",
-      "depends_on": [],
-      "goal": "",
-      "status": "done",
-      "sprint": "52"
-    },
-    {
-      "id": "1397",
-      "title": "codegen: static method dispatch ignores runtime property reassignment on typed receivers",
-      "priority": "medium",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "done",
-      "sprint": "52"
-    },
-    {
       "id": "1396",
-      "title": "fix: for-of/dstr default initializers don't fire on OOB extern-array reads — null vs undefined sentinel",
+      "title": "for-of/dstr + assignment/dstr default initializers don't fire on OOB extenref-array reads",
       "priority": "high",
       "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "done",
-      "sprint": "51"
-    },
-    {
-      "id": "1395",
-      "title": "class static method descriptors: class identifier resolves to string_constant, not constructor object",
-      "priority": "medium",
-      "feasibility": "hard",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "done",
@@ -2581,16 +2041,6 @@
       "title": "CE: static async method with PrivateName — 'not enough arguments on the stack' (249 tests)",
       "priority": "high",
       "feasibility": "medium",
-      "depends_on": [],
-      "goal": "spec-completeness",
-      "status": "done",
-      "sprint": "51"
-    },
-    {
-      "id": "1381",
-      "title": "spec gap: String.prototype.{substring,slice,indexOf,search,charAt,charCodeAt,codePointAt,at,includes,startsWith,endsWith,trim,concat} edge cases (~128 fails)",
-      "priority": "medium",
-      "feasibility": "easy",
       "depends_on": [],
       "goal": "spec-completeness",
       "status": "done",
