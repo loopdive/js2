@@ -3478,6 +3478,123 @@ assert._isSameValue = isSameValue;
         };
       // Get actual JS built-in object by name (#965) — fixes WI3 null receiver for built-in classes
       if (name === "__get_builtin") return (n: string) => (globalThis as any)[n];
+      // #1513: Reflect.X(non-object) must throw TypeError per ECMA-262 §26.1.
+      // The synthetic rewrites to Object.X(target) don't enforce this — Object
+      // helpers are permissive for primitives. This guard runs before each
+      // Reflect.X delegation and throws if target is not Type(Object).
+      if (name === "__reflect_require_object")
+        return (target: any, method: any): void => {
+          if (target == null || (typeof target !== "object" && typeof target !== "function")) {
+            const name = method == null ? "method" : String(method);
+            throw new TypeError(`Reflect.${name} called on non-object`);
+          }
+        };
+      // #1513: Reflect.defineProperty(target, key, desc) — returns boolean
+      // (true on success, false on define-failure). Unlike Object.defineProperty,
+      // it must NOT throw on non-configurable redefinition failures.
+      // Per ECMA-262 §26.1.3: target must be Object → throw TypeError if not.
+      if (name === "__reflect_defineProperty")
+        return (target: any, key: any, desc: any): number => {
+          if (target == null || (typeof target !== "object" && typeof target !== "function")) {
+            throw new TypeError("Reflect.defineProperty called on non-object");
+          }
+          // ECMA-262 §26.1.3 step 2 — desc must be Object (ToPropertyDescriptor).
+          if (desc == null || (typeof desc !== "object" && typeof desc !== "function")) {
+            throw new TypeError("Property description must be an object: " + String(desc));
+          }
+          try {
+            Object.defineProperty(target, key, desc);
+            return 1;
+          } catch (e) {
+            if (e instanceof TypeError) return 0;
+            throw e;
+          }
+        };
+      // #1513: Reflect.setPrototypeOf(target, proto) — returns boolean.
+      // false on non-extensible / cycle / failure; throws on non-object target
+      // or invalid proto.
+      if (name === "__reflect_setPrototypeOf")
+        return (target: any, proto: any): number => {
+          if (target == null || (typeof target !== "object" && typeof target !== "function")) {
+            throw new TypeError("Reflect.setPrototypeOf called on non-object");
+          }
+          if (proto !== null && typeof proto !== "object" && typeof proto !== "function") {
+            throw new TypeError("Object prototype may only be an Object or null");
+          }
+          try {
+            return Object.setPrototypeOf(target, proto) === target ? 1 : 1;
+          } catch (e) {
+            if (e instanceof TypeError) return 0;
+            throw e;
+          }
+        };
+      // #1513: Reflect.has(target, key) — returns boolean, follows the
+      // prototype chain per §26.1.9 / OrdinaryHasProperty. Throws TypeError
+      // on non-object target. Bypasses the buggy `in`-operator codegen for
+      // plain JS objects.
+      if (name === "__reflect_has")
+        return (target: any, key: any): number => {
+          if (target == null || (typeof target !== "object" && typeof target !== "function")) {
+            throw new TypeError("Reflect.has called on non-object");
+          }
+          // WasmGC structs: native Reflect.has can't see opaque struct fields,
+          // so check the sidecar / descriptor table / struct shape directly,
+          // then fall back to the prototype chain via __getPrototypeOf.
+          if (_isWasmStruct(target)) {
+            const k = typeof key === "symbol" ? key : String(key);
+            // Deleted-key tombstone (#1334).
+            const tomb = _wasmStructDeletedKeys.get(target);
+            if (tomb && tomb.has(k)) return 0;
+            const sc = _wasmStructProps.get(target);
+            if (sc && k in sc) return 1;
+            const descs = _wasmPropDescs.get(target);
+            if (descs && descs.has(String(k))) return 1;
+            const exports = callbackState?.getExports();
+            const fieldNames = _getStructFieldNames(target, exports) ?? [];
+            if (fieldNames.includes(String(k))) return 1;
+            // Walk the WasmGC prototype chain via host exports (best-effort).
+            try {
+              const proto = Object.getPrototypeOf(target);
+              if (proto != null) return Reflect.has(proto, key) ? 1 : 0;
+            } catch {
+              // ignore; treat as absent
+            }
+            return 0;
+          }
+          return Reflect.has(target, key) ? 1 : 0;
+        };
+      // #1513: Reflect.ownKeys(target) — returns array of all own keys
+      // (integer-indexed strings ascending, then other strings in insertion
+      // order, then symbols). Throws TypeError on non-object.
+      if (name === "__reflect_ownKeys")
+        return (target: any): any => {
+          if (target == null || (typeof target !== "object" && typeof target !== "function")) {
+            throw new TypeError("Reflect.ownKeys called on non-object");
+          }
+          // Use native Reflect.ownKeys when the target is a plain JS object —
+          // it already returns spec-correct ordering and includes symbols.
+          if (!_isWasmStruct(target)) return Reflect.ownKeys(target);
+          // For WasmGC structs, fall back to combining string + symbol keys.
+          const exports = callbackState?.getExports();
+          const stringKeys: (string | symbol)[] = _getStructFieldNames(target, exports) ?? [];
+          const sc = _wasmStructProps.get(target);
+          if (sc) {
+            for (const k of Object.getOwnPropertyNames(sc)) {
+              if (k.startsWith("__get_") || k.startsWith("__set_")) continue;
+              if (!stringKeys.includes(k)) stringKeys.push(k);
+            }
+            for (const k of Object.getOwnPropertySymbols(sc)) {
+              if (!stringKeys.includes(k)) stringKeys.push(k);
+            }
+          }
+          const accMap = _wasmStructAccessors.get(target);
+          if (accMap) {
+            for (const k of accMap.keys()) {
+              if (!stringKeys.includes(k)) stringKeys.push(k);
+            }
+          }
+          return stringKeys;
+        };
       // Object.hasOwn(obj, key) — ES2022 static method (#965)
       if (name === "__object_hasOwn")
         return (obj: any, key: any): number =>

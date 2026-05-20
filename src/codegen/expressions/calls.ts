@@ -3126,10 +3126,63 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Reflect") {
       const reflectMethod = propAccess.name.text;
 
-      // Reflect.get(obj, prop) → obj[prop]
+      // #1513: Reflect.X(target, ...) must throw TypeError when target is not
+      // Type(Object) per ECMA-262 §26.1. The synthetic rewrites to Object.X
+      // are permissive for primitives (e.g. Object.getOwnPropertyNames(1)
+      // returns [], not throws), so we inject a runtime guard before the
+      // rewrite. The guard stores target in a fresh Wasm local and returns a
+      // synthetic Identifier (resolvable via fctx.localMap) for reuse in the
+      // synthetic rewrite — avoiding double-evaluation of the argument.
+      // Emit a runtime type-check for the Reflect target. Returns the
+      // expression to use as arg0 in the synthetic rewrite.
+      //
+      // For Identifier/Literal args we re-use the original AST node so the
+      // synthetic rewrite preserves the declared variable's type (important
+      // for WasmGC structs whose typed-field path differs from the externref
+      // sidecar path — replacing `obj` with an externref local would route
+      // property writes through the sidecar and orphan typed-field reads).
+      //
+      // For complex args (calls, etc.) we stash the value in a fresh
+      // externref local to avoid double-evaluation, then return a synthetic
+      // Identifier that resolves to that local via fctx.localMap.
+      const emitReflectArg0Check = (arg0: ts.Expression, methodName: string): ts.Expression => {
+        const simple = ts.isIdentifier(arg0) || ts.isLiteralExpression(arg0) || arg0.kind === ts.SyntaxKind.NullKeyword;
+        // Compile arg0 to externref → push method name → call require_object.
+        // If simple, drop the externref afterwards (we'll re-evaluate arg0
+        // for the rewrite). If complex, tee to a local and return a synthetic
+        // identifier for the rewrite.
+        let returnExpr: ts.Expression;
+        if (simple) {
+          compileExpression(ctx, fctx, arg0, { kind: "externref" });
+          returnExpr = arg0; // re-evaluate in rewrite — side-effect-free
+        } else {
+          const localName = `__reflect_target_${fctx.locals.length}`;
+          const localIdx = allocLocal(fctx, localName, { kind: "externref" });
+          compileExpression(ctx, fctx, arg0, { kind: "externref" });
+          fctx.body.push({ op: "local.tee", index: localIdx });
+          returnExpr = ts.factory.createIdentifier(localName);
+        }
+        addStringConstantGlobal(ctx, methodName);
+        const msgIdx = ctx.stringGlobalMap.get(methodName)!;
+        fctx.body.push({ op: "global.get", index: msgIdx } as Instr);
+        const requireIdx = ensureLateImport(
+          ctx,
+          "__reflect_require_object",
+          [{ kind: "externref" }, { kind: "externref" }],
+          [],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (requireIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: requireIdx });
+        }
+        return returnExpr;
+      };
+
+      // Reflect.get(obj, prop) → obj[prop]  (after type-check)
       if (reflectMethod === "get" && expr.arguments.length >= 2) {
+        const targetIdent = emitReflectArg0Check(expr.arguments[0] as ts.Expression, "get");
         const syntheticElemAccess = ts.factory.createElementAccessExpression(
-          expr.arguments[0] as ts.Expression,
+          targetIdent,
           expr.arguments[1] as ts.Expression,
         );
         ts.setTextRange(syntheticElemAccess, expr);
@@ -3137,10 +3190,11 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         return compileExpression(ctx, fctx, syntheticElemAccess);
       }
 
-      // Reflect.set(obj, prop, val) → (obj[prop] = val, true)
+      // Reflect.set(obj, prop, val) → (obj[prop] = val, true)  (after type-check)
       if (reflectMethod === "set" && expr.arguments.length >= 3) {
+        const targetIdent = emitReflectArg0Check(expr.arguments[0] as ts.Expression, "set");
         const syntheticElemAccess = ts.factory.createElementAccessExpression(
-          expr.arguments[0] as ts.Expression,
+          targetIdent,
           expr.arguments[1] as ts.Expression,
         );
         const syntheticAssign = ts.factory.createBinaryExpression(
@@ -3158,16 +3212,28 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         return { kind: "i32" };
       }
 
-      // Reflect.has(obj, prop) → prop in obj
+      // Reflect.has(obj, prop) — direct call to __reflect_has host helper.
+      // (The previous synthetic rewrite to `prop in obj` was unreliable for
+      // some plain-object cases; native Reflect.has follows the prototype
+      // chain per §26.1.9 and is the spec-correct path.)
       if (reflectMethod === "has" && expr.arguments.length >= 2) {
-        const syntheticIn = ts.factory.createBinaryExpression(
-          expr.arguments[1] as ts.Expression,
-          ts.factory.createToken(ts.SyntaxKind.InKeyword),
-          expr.arguments[0] as ts.Expression,
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
+        const hasIdx = ensureLateImport(
+          ctx,
+          "__reflect_has",
+          [{ kind: "externref" }, { kind: "externref" }],
+          [{ kind: "i32" }],
         );
-        ts.setTextRange(syntheticIn, expr);
-        (syntheticIn as any).parent = expr.parent;
-        return compileExpression(ctx, fctx, syntheticIn);
+        flushLateImportShifts(ctx, fctx);
+        if (hasIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: hasIdx });
+          return { kind: "i32" };
+        }
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: 0 });
+        return { kind: "i32" };
       }
 
       // Reflect.apply(fn, thisArg, args) → fn.apply(thisArg, args)
@@ -3204,81 +3270,89 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         return compileExpression(ctx, fctx, syntheticNew);
       }
 
-      // Reflect.ownKeys(obj) → Object.getOwnPropertyNames(obj)
-      // (includes non-enumerable string keys; per spec should also include symbols,
-      // but getOwnPropertyNames is a closer approximation than Object.keys)
+      // Reflect.ownKeys(obj) — direct call to __reflect_ownKeys host helper,
+      // which throws TypeError on non-object and returns spec-correct ordering
+      // (integer keys ascending, then string keys insertion order, then symbols).
       if (reflectMethod === "ownKeys" && expr.arguments.length >= 1) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "getOwnPropertyNames",
-        );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[0] as ts.Expression,
-        ]);
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        return compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
+        // Compile arg FIRST so any late imports it adds settle before we
+        // ensure ours — keeps __reflect_ownKeys index stable for the call.
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        const ownKeysIdx = ensureLateImport(ctx, "__reflect_ownKeys", [{ kind: "externref" }], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (ownKeysIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: ownKeysIdx });
+        }
+        return { kind: "externref" };
       }
 
-      // Reflect.defineProperty(obj, prop, desc) → (Object.defineProperty(obj, prop, desc), true)
+      // Reflect.defineProperty(obj, prop, desc) — direct call to
+      // __reflect_defineProperty host helper, which throws TypeError on
+      // non-object and returns boolean (true on success, false on
+      // define-failure per §26.1.3).
       if (reflectMethod === "defineProperty" && expr.arguments.length >= 3) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "defineProperty",
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
+        compileExpression(ctx, fctx, expr.arguments[2]!, { kind: "externref" });
+        const dpIdx = ensureLateImport(
+          ctx,
+          "__reflect_defineProperty",
+          [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+          [{ kind: "i32" }],
         );
-        const syntheticCall = ts.factory.createCallExpression(
-          syntheticPropAccess,
-          undefined,
-          Array.from(expr.arguments) as ts.Expression[],
-        );
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        const resultType = compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
-        if (resultType) {
-          fctx.body.push({ op: "drop" });
+        flushLateImportShifts(ctx, fctx);
+        if (dpIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: dpIdx });
+          return { kind: "i32" };
         }
-        fctx.body.push({ op: "i32.const", value: 1 });
+        // Fallback: drop args and return false
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: 0 });
         return { kind: "i32" };
       }
 
-      // Reflect.getPrototypeOf(obj) → Object.getPrototypeOf(obj)
+      // Reflect.getPrototypeOf(obj) → Object.getPrototypeOf(obj)  (after type-check)
       if (reflectMethod === "getPrototypeOf" && expr.arguments.length >= 1) {
+        const targetIdent = emitReflectArg0Check(expr.arguments[0] as ts.Expression, "getPrototypeOf");
         const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
           ts.factory.createIdentifier("Object"),
           "getPrototypeOf",
         );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[0] as ts.Expression,
-        ]);
+        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [targetIdent]);
         ts.setTextRange(syntheticCall, expr);
         (syntheticCall as any).parent = expr.parent;
         return compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
       }
 
-      // Reflect.setPrototypeOf(obj, proto) → (Object.setPrototypeOf(obj, proto), true)
+      // Reflect.setPrototypeOf(obj, proto) — direct call to host helper
+      // (throws TypeError on non-object target, returns boolean).
       if (reflectMethod === "setPrototypeOf" && expr.arguments.length >= 2) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "setPrototypeOf",
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
+        const spoIdx = ensureLateImport(
+          ctx,
+          "__reflect_setPrototypeOf",
+          [{ kind: "externref" }, { kind: "externref" }],
+          [{ kind: "i32" }],
         );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[0] as ts.Expression,
-          expr.arguments[1] as ts.Expression,
-        ]);
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        const resultType = compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
-        if (resultType) {
-          fctx.body.push({ op: "drop" });
+        flushLateImportShifts(ctx, fctx);
+        if (spoIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: spoIdx });
+          return { kind: "i32" };
         }
-        fctx.body.push({ op: "i32.const", value: 1 });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: 0 });
         return { kind: "i32" };
       }
 
       // Reflect.deleteProperty(obj, prop) → (delete obj[prop], result as boolean)
+      // (after type-check)
       if (reflectMethod === "deleteProperty" && expr.arguments.length >= 2) {
+        const targetIdent = emitReflectArg0Check(expr.arguments[0] as ts.Expression, "deleteProperty");
         const syntheticElemAccess = ts.factory.createElementAccessExpression(
-          expr.arguments[0] as ts.Expression,
+          targetIdent,
           expr.arguments[1] as ts.Expression,
         );
         const syntheticDelete = ts.factory.createDeleteExpression(syntheticElemAccess as ts.UnaryExpression);
@@ -3287,11 +3361,11 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         return compileExpression(ctx, fctx, syntheticDelete);
       }
 
-      // Reflect.isExtensible(obj) → check compile-time non-extensible state
+      // Reflect.isExtensible(obj) — must throw TypeError on non-object per
+      // §26.1.7. Pre-validate, then check compile-time non-extensible state.
       if (reflectMethod === "isExtensible" && expr.arguments.length >= 1) {
         const arg0 = expr.arguments[0]!;
-        const argType = compileExpression(ctx, fctx, arg0);
-        if (argType) fctx.body.push({ op: "drop" });
+        emitReflectArg0Check(arg0, "isExtensible");
         let result = 1;
         if (ts.isIdentifier(arg0) && ctx.nonExtensibleVars.has(arg0.text)) {
           result = 0;
@@ -3300,26 +3374,28 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         return { kind: "i32" };
       }
 
-      // Reflect.preventExtensions(obj) → mark non-extensible, return true
+      // Reflect.preventExtensions(obj) — must throw TypeError on non-object
+      // per §26.1.12. Pre-validate, then mark non-extensible, return true.
       if (reflectMethod === "preventExtensions" && expr.arguments.length >= 1) {
         const arg0 = expr.arguments[0]!;
         if (ts.isIdentifier(arg0)) {
           ctx.nonExtensibleVars.add(arg0.text);
         }
-        const argType = compileExpression(ctx, fctx, arg0);
-        if (argType) fctx.body.push({ op: "drop" });
+        emitReflectArg0Check(arg0, "preventExtensions");
         fctx.body.push({ op: "i32.const", value: 1 });
         return { kind: "i32" };
       }
 
-      // Reflect.getOwnPropertyDescriptor(obj, prop) → rewrite to Object.getOwnPropertyDescriptor
+      // Reflect.getOwnPropertyDescriptor(obj, prop) → Object.getOwnPropertyDescriptor
+      // (after type-check)
       if (reflectMethod === "getOwnPropertyDescriptor" && expr.arguments.length >= 2) {
+        const targetIdent = emitReflectArg0Check(expr.arguments[0] as ts.Expression, "getOwnPropertyDescriptor");
         const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
           ts.factory.createIdentifier("Object"),
           "getOwnPropertyDescriptor",
         );
         const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[0] as ts.Expression,
+          targetIdent,
           expr.arguments[1] as ts.Expression,
         ]);
         ts.setTextRange(syntheticCall, expr);
