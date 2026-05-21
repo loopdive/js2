@@ -3308,10 +3308,10 @@
   {
     "name": "sprint 52",
     "sprintNumber": 52,
-    "status": "active",
+    "status": "done",
     "date": "",
     "baseline": "",
-    "result": "",
+    "result": "+62 test262 passes (28,171 → 28,233, 65.5%). 30+ open PRs in CI queue — auto-merge monitor will continue landing them into sprint 53 window.",
     "issueCount": 0,
     "issueIds": [
       "1326c",
@@ -3404,6 +3404,7 @@
       "1550",
       "1551",
       "1552",
+      "1553",
       "1554"
     ],
     "completedIssueIds": [
@@ -3427,11 +3428,41 @@
     ],
     "explicitCarryOver": false,
     "isPlanning": false,
-    "isClosed": false
+    "isClosed": true
   },
   {
     "name": "sprint 53",
     "sprintNumber": 53,
+    "status": "active",
+    "date": "",
+    "baseline": "",
+    "result": "",
+    "issueCount": 0,
+    "issueIds": [
+      "804",
+      "820a",
+      "820b",
+      "820c",
+      "1553a",
+      "1553b",
+      "1553c",
+      "1553d",
+      "1553e",
+      "1557",
+      "1558",
+      "1559",
+      "1560"
+    ],
+    "completedIssueIds": [
+      "804"
+    ],
+    "explicitCarryOver": false,
+    "isPlanning": false,
+    "isClosed": false
+  },
+  {
+    "name": "sprint 54",
+    "sprintNumber": 54,
     "status": "planning",
     "date": "",
     "baseline": "",

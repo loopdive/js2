@@ -88,3 +88,150 @@ All three FAIL today (codes 2 or 3) — confirmed via compile-verify probe.
 ## Dispatch notes
 
 Route to architect for implementation spec. `reasoning_effort: high`. Recommend **filing after #1131 lands** — if the B fix introduces a general "[[Get]](O, k)" helper, this issue can reuse it for the slow-path.
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. Builds on the sketch above; adds
+exact struct field, branch placement, and the `__array_get_via_get`
+helper.)
+
+### Entry point
+
+- `src/codegen/array-methods.ts` — every Array.prototype.X loop
+  generator (forEach, map, every, some, filter, reduce, reduceRight,
+  find, findIndex, indexOf, lastIndexOf, includes).
+- New runtime helper `__array_get_via_get(arr, index)` in
+  `src/runtime.ts` that performs spec-compliant [[Get]].
+
+### Data structure changes
+
+1. Vec struct (existing) gets a flag field:
+   ```wat
+   (type $vec_externref (struct
+     (field $len    (mut i32))
+     (field $data   (mut (ref $arr_externref)))
+     (field $flags  (mut i32))          ;; NEW: bit 0 = has-index-accessors
+     (field $lenDesc (mut (ref null any))) ;; NEW: optional length descriptor
+   ))
+   ```
+   Bit 0 of `$flags` is set when any `Object.defineProperty(arr,
+   numericKey, {get|set})` is invoked.
+
+2. `$lenDesc` (nullable) holds the length getter descriptor when
+   `defineProperty(arr, "length", ...)` is invoked with an accessor.
+
+### Algorithm — array method loop with branch
+
+For each loop method (e.g. `forEach`):
+
+```wat
+local.get $arr
+struct.get $vec_externref $flags
+i32.const 1
+i32.and
+if
+  ;; slow path: spec-compliant loop using [[Get]]
+  ;; for k from 0 to ToLength(Get(arr, "length")):
+  ;;   if HasProperty(arr, ToString(k)):
+  ;;     let v = Get(arr, ToString(k));
+  ;;     callback(v, k, arr);
+  ;; (calls __array_get_via_get, __array_has_via_get, callback)
+else
+  ;; fast path: existing tight loop
+end
+```
+
+### Spec compliance — `length` coercion
+
+When `$lenDesc` is non-null:
+1. Invoke the getter (a funcref or externref).
+2. Apply ToLength: ToNumber (coerce via existing `__to_number`),
+   then floor / clamp to [0, 2^53-1].
+3. Use the result as the loop bound. (Spec: ToLength of a string
+   "2" → 2; of NaN → 0; etc.)
+
+### Fast-path preservation
+
+The bit-flag check is one `struct.get + i32.and + if`. For arrays
+with no accessors, the branch predictor will pin the false path;
+overhead < 1ns per call. Acceptable.
+
+### Where the flag is set
+
+`compileObjectDefineProperty` in `src/codegen/object-ops.ts:336`
+already has a branch for arrays. When the key is numeric AND the
+descriptor includes `get` or `set`, OR the key is "length" AND
+descriptor is accessor, emit:
+
+```wat
+local.get $arr
+struct.get $vec_externref $flags
+i32.const 1
+i32.or
+struct.set $vec_externref $flags
+```
+
+Plus, for length-accessor: store the descriptor in `$lenDesc`.
+
+### `__array_get_via_get(arr, index)`
+
+```ts
+function __array_get_via_get(arr, index) {
+  const key = String(index);
+  // Check own accessor on this index
+  const accGet = _sidecarGet(arr, "__get_" + key);
+  if (accGet) return _invokeCallback(accGet, arr, []);
+  // Fall through to indexed read
+  return _vecGet(arr, index);
+}
+```
+
+### Edge cases
+
+- **Getter throws** — must propagate (existing exception machinery).
+- **Sparse arrays / HasProperty** — `HasProperty(arr, "5")` must
+  return false for unset indices in `forEach` (spec skips them);
+  `every` must NOT call the callback for missing indices. The
+  helper `__array_has_via_get` returns based on sidecar + length +
+  defined-bitmap.
+- **Mutation during iteration** — spec snapshots `length` at start
+  for some methods (map, filter, reduce — implementation-defined
+  behaviour for some). Match V8: cache initial length.
+- **`length` setter** — orthogonal; if user installs a length
+  setter, writes to length now dispatch to the setter. Handle in
+  array-length-write path (separate from this issue's scope but
+  same flag).
+- **`Array.prototype.X.call(plainObject, cb)`** — covered by #1131
+  not here; coordinate the [[Get]] helper.
+- **Reduce with no initial value, empty getter-driven array** —
+  throws TypeError per spec; the slow path must mirror this.
+- **`forEach` with a getter that returns `undefined`** — callback
+  still invoked with undefined; do NOT skip.
+
+### Test262 paths
+
+- `test/built-ins/Array/prototype/{forEach,map,every,some,filter,reduce,reduceRight,find,findIndex,indexOf,lastIndexOf,includes}/15.4.4.*-*`
+- Specifically the `accessed` / `lengthAccessed` / `testResult`
+  patterns called out above.
+
+Acceptance: ≥60 of 80 target tests pass.
+
+### Dependencies
+
+- **#1131** — array-like receiver via .call; introduces the
+  [[Get]] helper. This issue should land *after* #1131 to reuse it.
+  If #1131 stalls, implement the helper here and #1131 reuses.
+- **#739** — Object.defineProperty correctness; the flag-setting
+  branch lives in the same file. Coordinate.
+- **#929** — Object.defineProperty receiver validation; harmless
+  overlap.
+
+### Risks
+
+- **Fast-path regression**: any incorrect bit-check could redirect
+  hot arrays to the slow path. Add a vitest in
+  `tests/issue-1130.test.ts` measuring iteration count delta
+  before/after (microbench).
+- **Spec corners**: ToLength returning 2^53-1 with no array data →
+  loop must terminate; cap at a max of 2^32-1 for safety (matches
+  V8 fast-path limit).

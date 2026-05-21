@@ -1,5 +1,5 @@
 ---
-id: typescript-self-host-tier0-survey
+id: 1579
 title: "TypeScript self-host Tier 0 survey — distance from `compileProject(tsc)` to a runnable Wasm"
 status: backlog
 created: 2026-05-20

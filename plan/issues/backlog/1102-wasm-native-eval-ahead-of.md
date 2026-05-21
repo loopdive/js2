@@ -59,3 +59,89 @@ Start with **Option B** (ahead-of-time specialization). Most real-world eval() u
 - #1006 eval host import (JS-host mode)
 - #1073 eval scope injection
 - #1089 indirect eval
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. Implement Option B — AOT
+specialization — with a clean runtime trap fallback for dynamic
+eval.)
+
+### Entry point
+
+`compileCallExpression` branch in `src/codegen/expressions/calls.ts`:
+detect `eval(arg)` / `new Function(...)` and route to
+`src/codegen/builtins/eval.ts` (new).
+
+### Algorithm
+
+1. **Detect eval call site** — identifier name === "eval" (direct
+   eval); or `Function` constructor in `new Function(...)`.
+
+2. **Argument analysis**:
+   1. Concatenate const-foldable string operands at compile time.
+   2. If the result is a fully-known string → specialize.
+   3. Otherwise → emit `__eval_dynamic_trap(arg)` import:
+      - JS-host mode: import maps to `(s) => eval(s)`.
+      - Standalone mode: throws `EvalError: dynamic eval not
+        supported`.
+
+3. **Specialization for direct eval**:
+   1. Parse the string with the existing TS parser
+      (`ts.createSourceFile`).
+   2. Lower the resulting AST nodes *into the caller's scope*:
+      `var` declarations become caller locals (or aliased), function
+      decls become hoisted locals, expression statements compile in
+      place.
+   3. Hoisting must honour the direct-eval rule: `var`s leak into
+      the surrounding function scope, `let`/`const` create a new
+      block scope per spec §18.2.1.
+   4. Emit the lowered code at the call site.
+
+4. **Specialization for `new Function(...args, body)`**:
+   1. Compile the body as a standalone function with parameter
+      names from `...args`.
+   2. Return a funcref/closure value.
+
+### Edge cases
+
+- **Indirect eval** (`(0, eval)("x")`) — caller's scope is NOT in
+  effect; lower into global scope per spec §18.2.1.
+- **Strict mode eval** — separate variable scope per spec.
+- **eval changing `this`** — direct eval inherits caller's `this`;
+  indirect eval uses global object.
+- **`with`** — out of scope (project does not support `with`).
+- **eval that introduces a function declaration** — must be
+  hoisted at the syntactic location of the eval call, not at the
+  function's top.
+- **Cycle: eval calls eval** — Option B handles nested const-foldable
+  cases; dynamic nested eval throws.
+- **`new Function` with non-string body** — `Function(undefined)`
+  per spec creates an empty function. Specialize this.
+
+### Test262 paths
+
+- `test/language/eval-code/direct/*` — direct eval with const
+  strings.
+- `test/language/eval-code/indirect/*` — indirect eval.
+- `test/built-ins/Function/instance/*` — Function constructor.
+
+Acceptance: const-string eval cases pass; dynamic-string cases get
+a clear EvalError or compile-time diagnostic.
+
+### Dependencies
+
+- **#1073** — eval scope injection; this issue subsumes it.
+- **#1089** — indirect eval; covered by step 1's branch on
+  identifier-vs-expression callee.
+- **#1066** standalone-mode eval — covered by step 2's trap.
+- **#1264/#1265** — eval strict/sloppy scoping; coordinate to share
+  the scope-lowering helper.
+
+### Risks
+
+- **Hoisting correctness**: var-leak semantics from a nested eval
+  back into the caller are tricky; ship a strict mode-only subset
+  first.
+- **Compile-time work explosion**: large eval strings parse at
+  compile time, slowing builds. Cap with a 64KB literal-eval limit;
+  anything larger → dynamic trap.

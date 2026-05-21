@@ -289,7 +289,7 @@ Earlier wording claimed `node:http` imports fall through `preprocessImports` as 
 ### Current compiler gaps
 
 - **No Node host-import routing.** When `compileProject` encounters `import http from 'node:http'`, `ModuleResolver` either resolves to Node's built-in module shim (producing nonsense codegen) or to `null` (falls through to the single-file fallback in the calling layer). Neither path recognizes that `http`/`https`/`stream`/`buffer`/... should be external host imports. The fix is a pre-resolver hook that short-circuits Node-builtin specifiers to an extern-import mode *before* the file walker tries to read them. Filed as **#1044**.
-- **`await` is a no-op** at src/codegen/expressions.ts:790. `AwaitExpression` recurses into its operand and returns unchanged — no Promise integration, no microtask suspension, no state-machine lowering. Any code path that exercises real I/O completion observes synchronous resolution only. Tracked as **#1042**.
+- **`await` is a no-op** at src/codegen/expressions.ts:973 (verified 2026-05-21 — was L790). `AwaitExpression` recurses into its operand and returns unchanged — no Promise integration, no microtask suspension, no state-machine lowering. Any code path that exercises real I/O completion observes synchronous resolution only. Tracked as **#1042**.
 - **`Buffer` global not registered** as an extern class (unlike `Map`/`Set` at src/codegen/index.ts:2661). Needs to be added to the extern-class set with method signatures.
 - **`process.env` reads** — axios reads `process.env.NODE_ENV` and `process.env.HTTP_PROXY` at startup. Partial handling today; **#1043** tracks compile-time `process.env.NODE_ENV` substitution + DCE specifically.
 

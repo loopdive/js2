@@ -127,3 +127,97 @@ long-term dependency than PCRE2 or a maintained Rust option.
 
 XL for near-JS parity, M only if we intentionally adopt a reduced-feature
 standalone subset.
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. Recommendation: phased approach
+starting with **QuickJS libregexp** (option 5) extracted as a C
+file compiled to wasm via wasi-sdk; QuickJS libregexp is the only
+candidate with explicit JS-spec semantics.)
+
+### Phase 0 — Decision and ABI
+
+Pick QuickJS libregexp. Rationale:
+- explicit ECMAScript ES2023 semantics
+- ~3000 LOC, manageable extract surface
+- no backtracking blowup for non-fancy patterns (NFA-based)
+- already licensed compatibly (MIT)
+
+Define ABI in `src/codegen/builtins/regexp-standalone.ts`:
+```ts
+// Wasm functions exported by the embedded engine:
+//   __re_compile(pattern_ptr, pattern_len, flags) -> handle (i32)
+//   __re_exec(handle, str_ptr, str_len, startIdx) -> match_struct_ref
+//   __re_free(handle) -> void
+//   __re_get_group(match, idx) -> {start: i32, end: i32}
+```
+
+### Phase 1 — Engine integration
+
+1. Extract QuickJS `libregexp.c` and dependencies into a new
+   `vendor/libregexp/` directory.
+2. Add a build step: compile with `wasi-sdk clang` to produce a
+   wasm module `libregexp.wasm`.
+3. Link strategy: either (a) statically embed at compile time via
+   `wasmMerge` (binaryen), or (b) instantiate as a side-module at
+   runtime and import its exports. Prefer (a) for single-binary
+   output.
+4. Convert JS strings → libregexp `JSString` representation at the
+   ABI boundary (UTF-16 native strings already match libregexp's
+   internal repr).
+
+### Phase 2 — Codegen lowering
+
+In `src/codegen/builtins/regexp-standalone.ts`:
+1. `new RegExp(pattern, flags)`:
+   - Allocate `$RegExp_struct` (existing).
+   - Call `__re_compile`, store the handle in `$compiled` field.
+   - Store source pattern + flags for `.source` / `.flags` accessors.
+2. `re.exec(s)`:
+   - Call `__re_exec(handle, s, lastIndex)`.
+   - Build match-array struct from the returned struct.
+3. `re.test(s)`: exec, check null/non-null.
+4. `s.match(re)`, `s.replace(re, ...)`, etc.: route through
+   exec + result processing. Reuse logic from JS-host implementation;
+   only the underlying exec changes.
+
+### Edge cases
+
+- **Sticky `y` flag** — engine state mutated; ensure `lastIndex`
+  updates per spec.
+- **Unicode `u` flag** — libregexp supports this; pass through.
+- **`v` flag** (ES2024) — libregexp supports it; pass through.
+- **Backreferences** — libregexp supports.
+- **Look-behind** — supported.
+- **Named capture groups** — supported via `(?<name>...)`.
+- **Compile errors** — propagate as `SyntaxError`.
+- **Memory ownership** — wasm-side `$RegExp_struct` holds the
+  libregexp handle; on GC, finalizer (or explicit dispose) calls
+  `__re_free`. WasmGC currently lacks finalizers — use a sidecar
+  cleanup registry or live with the small leak.
+- **String mutability** — libregexp expects immutable input strings;
+  pass copies if the source is a mutable buffer.
+
+### Phase 3 — Test262 conformance
+
+- `test/built-ins/RegExp/*` — target ≥85% pass in standalone mode.
+- `test/built-ins/String/prototype/{match,replace,replaceAll,search,split}/*`
+  via #1105 Tier 2.
+
+### Dependencies
+
+- **#1105 Tier 2** — depends on this; coordinate ABI.
+- **#1539** — alternative: port `regress` (Rust). Architectural
+  choice; pick one.
+- **#1101 WeakRef** — finalizer story shared.
+
+### Risks
+
+- **Engine maintenance**: forking libregexp ties us to QuickJS
+  upstream. Plan: keep a thin compatibility shim, follow upstream
+  bugfixes manually.
+- **Binary size**: +50-80KB for the engine. Acceptable for a
+  standalone wasm; consider lazy-loading for browser targets.
+- **Memory leak**: without WasmGC finalizers, RegExp objects leak
+  their compiled state until process exit. Use a manual `dispose()`
+  API for long-running programs.

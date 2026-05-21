@@ -332,7 +332,7 @@ Earlier wording implied that cross-file React source references require a pre-bu
 - **`queueMicrotask` has no compile-time mapping.** Required for effect flushing. Small, rolled into the DOM-host-globals scaffold.
 - **`process.env.NODE_ENV` not DCE'd** — tracked as **#1043**. Without it, `react.development.js` compiles ~40% more code than necessary, amplifying bug surface.
 - **Recursive fiber types widen to externref** — correctness OK (src/shape-inference.ts widens unresolvable recursive unions), but field reads go through runtime dispatch, not struct accessors. Perf is bad but not a blocker.
-- **`async`/`await` is a no-op** at src/codegen/expressions.ts:790. Concurrent React / Suspense cannot work. Acceptable to defer — the Counter smoke test does not require `await`.
+- **`async`/`await` is a no-op** at src/codegen/expressions.ts:973 (verified 2026-05-21 — was L790). Concurrent React / Suspense cannot work. Acceptable to defer — the Counter smoke test does not require `await`.
 - **`Object.is`** — verify NaN and `-0` semantics match ES spec across Wasm float paths; unclear whether a dedicated intrinsic is registered.
 
 ### Hooks feasibility assessment — **YES, hooks should compile correctly**

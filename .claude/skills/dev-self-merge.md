@@ -180,24 +180,47 @@ EOF
 
 Any bucket with count > 50 → **ESCALATE** with the bucket name and count (criterion 3 above).
 
-## Step 5 — merge
+## Step 5 — queue for merge
 
-All criteria passed. Run:
+All criteria passed. **Add the PR to the merge queue** (do NOT use `--admin` direct merge — main is now protected by a merge queue ruleset):
 
 ```bash
-gh pr merge <N> --merge --admin \
-  --body "Self-merged. net_per_test=+$(jq .net_per_test .claude/ci-status/pr-<N>.json) ($(jq .improvements .claude/ci-status/pr-<N>.json) improvements, $(jq .regressions .claude/ci-status/pr-<N>.json) regressions). Criteria: /dev-self-merge."
+gh pr merge <N> --merge --auto \
+  --body "Self-merged via queue. net_per_test=+$(jq .net_per_test .claude/ci-status/pr-<N>.json) ($(jq .improvements .claude/ci-status/pr-<N>.json) improvements, $(jq .regressions .claude/ci-status/pr-<N>.json) regressions). Criteria: /dev-self-merge."
 ```
 
-Then:
-1. Set `status: done` in the issue file:
+The `--auto` flag enqueues the PR. GitHub will:
+1. Place the PR on a temp branch (`gh-readonly-queue/main/pr-<N>-...`)
+2. Re-run the required checks (`cheap gate`, `merge shard reports`, `quality`) against that merged state via the `merge_group` event
+3. Fast-forward main if checks pass — usually within minutes of CI completing
+4. Trigger `auto-refresh-prs.yml` after the merge, which pushes a fresh `git merge origin/main` to every other open PR branch
+
+**Once queued, your job is done.** Do not wait for the actual merge. Proceed immediately:
+1. Optimistically set `status: done` in the issue file (queue rejections are rare — the gate already verified what the queue re-verifies):
    ```bash
    issue_num=$(echo "<branch>" | grep -oE '[0-9]+' | head -1)
    file=$(find /workspace/plan/issues -name "${issue_num}-*.md" | head -1)
    sed -i "s/^status: .*/status: done/" "$file"
    ```
 2. `TaskUpdate taskId=<your-task> status=completed`
-3. `TaskList` → claim next unowned task
+3. Remove your worktree: `git worktree remove /workspace/.claude/worktrees/<branch>`
+4. `TaskList` → claim next unowned task (or message tech lead if empty)
+
+### If the queue rejects your PR
+
+GitHub will comment on the PR if the final queue checks fail (rare — would mean something flipped between your CI run and the queue's re-run, likely main moved). In that case:
+- The auto-refresh workflow may have already pushed a merge of main into your branch — fetch and review
+- Re-evaluate /dev-self-merge against the new CI run
+- If still good, re-queue with `gh pr merge <N> --merge --auto`
+
+### Admin direct-merge — only when
+
+Use `gh pr merge <N> --merge --admin` (bypassing the queue) only when:
+- The change is workflow-only / CI-only and the queue ruleset checks don't apply
+- Tech lead explicitly authorizes a hotfix bypass
+- The queue itself is broken and needs unblocking
+
+Set `GATE_BYPASS=1` if the local pre-commit hook blocks because `pr-<N>.json` isn't present. **Tech-lead use only.**
 
 ## What ESCALATE means
 

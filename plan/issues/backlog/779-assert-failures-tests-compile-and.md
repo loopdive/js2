@@ -166,3 +166,52 @@ that the prior sprint-52 splits do not address.
 - refresh counts and active sub-issues against the latest official-scope run
 - ensure completed split-outs are removed from the active sub-issue list
 - keep the residual active list focused on still-open root-cause buckets
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. #779 is an umbrella — no direct
+code; the work is in sub-issues. Per existing notes, this is
+`sprint_role: analysis-only`.)
+
+### No direct entry point
+
+#779 has no code to write. Sub-issues drive the work. Frontmatter
+flag `sprint_role: analysis-only` is correctly set.
+
+### Dispatch order (after sub-issues that already have plans)
+
+1. **#1550** (init-skipped) — largest single new cluster (~252).
+   Mechanical fix in `destructureParamArray` / let-const-var dstr.
+2. **#1551** (super call evaluation order) — ~64; SuperCall
+   lowering surgery.
+3. **#1552** catch dstr — overlaps with the #1552 in this repo
+   (tagged unions). Rename one. The 779-listed "#1552" is "catch
+   parameter destructuring"; the global #1552 in backlog/ is
+   "tagged-union value rep". **Action**: rename the 779-side
+   sub-issue to #1554 to avoid collision.
+3. **#1553** let/const/var dstr residuals — overlaps with #1555.
+4. Existing in-review sub-issues should be merged before opening
+   new ones to clear the queue.
+
+### Sub-issues needing architect specs
+
+The following sub-issues are currently `feasibility: hard` or
+`reasoning_effort: high` and lack their own Implementation Plans:
+
+- #1461 — Array.prototype.* on array-like receivers (~947) — see
+  also #1130 plan (shared [[Get]] helper).
+- #1460 — Object.defineProperty descriptor fidelity (~846) — see
+  #739 plan; overlap.
+- #1518 — Annex B sloppy function-in-block hoisting — needs spec.
+- #1550 — dstr init-skipped — needs spec.
+- #1551 — SuperCall — needs spec.
+- #1553 — let/const/var dstr residuals — needs spec.
+
+Recommendation: dispatch architect to each in turn after #779/#820
+umbrella triage.
+
+### Acceptance
+
+When umbrella drops below 2,000 official assertion_fail rows AND
+all called-out sub-issues have explicit Implementation Plans,
+close umbrella and convert to a tracker.

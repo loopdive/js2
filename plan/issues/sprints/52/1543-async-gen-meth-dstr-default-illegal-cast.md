@@ -11,6 +11,7 @@ goal: test262-conformance
 test262_fail: 74
 shares_fix_with: [1544]
 root_cause_doc: 1556
+note: "Line numbers verified against main 2026-05-21: literals.ts:447 (binding-element exclusion) and destructuring-params.ts:620 (default-value check) both confirmed present and unchanged"
 ---
 
 # #1543 — Async-gen-meth destructured default param → illegal cast

@@ -12,6 +12,7 @@ area: codegen, runtime
 language_feature: regular expressions
 goal: host-independence
 related: []
+note: "Line numbers verified against main 2026-05-21: typeof-delete.ts:301-308, builtin-tags.ts:180, string-ops.ts:1680/1746 all confirmed. No regex-compile.ts file exists; suggested module name."
 ---
 
 # #1474 — Eliminate JS host RegExp for standalone Wasm

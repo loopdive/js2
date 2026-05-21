@@ -81,3 +81,161 @@ func $gen_next(self: ref $gen_state) -> ref $gen_result {
 - Phase 3: yield*, return(), throw() (covers 95%)
 
 ## Complexity: XL
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. Concrete plan for Phase 1 — sequential
+yields. Phases 2-3 sketched at the end.)
+
+### Entry point
+
+- **AST detection**: `compileFunctionDeclaration` and friends in
+  `src/codegen/declarations.ts` — branch when `node.asteriskToken`
+  is present.
+- **Codegen**: new file `src/codegen/generators-native.ts` with the
+  state-machine lowering.
+- **Yield expression**: `compileYieldExpression` in
+  `src/codegen/expressions.ts` — emit state save + `return` from
+  the resume function.
+
+### Data structure
+
+Per-generator state struct (one type per generator function in the
+type section):
+
+```wat
+(type $GenState_<funcName> (sub (struct
+  (field $tag i32)                  ;; GENERATOR_TAG
+  (field $state (mut i32))          ;; current state label
+  (field $value (mut f64))          ;; last yielded f64
+  (field $valueRef (mut (ref null any))) ;; or ref payload
+  (field $done (mut i32))
+  ;; captured params/locals (filled per function via analysis)
+  (field $local_x (mut f64))
+  (field $local_y (mut (ref null any)))
+)))
+```
+
+Generator result struct (shared):
+
+```wat
+(type $IterResult (struct
+  (field $value (ref null any))
+  (field $done i32)
+)))
+```
+
+### Algorithm — Phase 1 (sequential yields)
+
+1. **CPS transform**: split the generator body at every `yield`.
+   Each segment becomes a `case` in a switch on `$state`.
+
+2. **Local analysis**: identify all locals that cross a yield
+   boundary; allocate them as struct fields, not wasm locals.
+
+3. **State numbering**: assign state IDs:
+   - 0 = initial (before first instruction)
+   - 1..N = after each yield N
+   - N+1 = done
+
+4. **Generated resume function**:
+
+```wat
+(func $gen_resume_<name> (param $self (ref $GenState_<name>))
+                         (param $sent (ref null any))
+                         (result (ref $IterResult))
+  local.get $self
+  struct.get $state
+  br_table 0 1 2 ... N
+  ;; case 0:
+  ;; ... segment 0 instructions ...
+  ;; yield_1: save state=1, value=...
+  ;; return result
+  ;; case 1:
+  ;; ... segment 1 instructions ...
+  ...
+)
+```
+
+5. **Generator object construction** — `compileFunctionCall` for a
+   generator function:
+   1. Allocate `$GenState_<name>` with state=0.
+   2. Copy params into the corresponding fields.
+   3. Return wrapped in `$Generator` (existing tag).
+
+6. **`gen.next(arg)`** — dispatch to `$gen_resume_<name>`.
+
+7. **`gen.return(arg)`** — set state to N+1, return
+   `{value: arg, done: true}`.
+
+8. **`gen.throw(err)`** — Phase 3.
+
+### Phase 2 — yields inside control flow
+
+- **Yield in loop**: state ID per loop iteration's yield site; the
+  loop's induction variable becomes a struct field. On resume,
+  br_table jumps mid-loop; the loop continuation is re-entered.
+- **Yield in if/switch**: each branch's post-yield is its own state.
+- **Yield in try**: try-block segments get their own state; on
+  resume from inside a try, the exception handler state is
+  preserved.
+
+### Phase 3 — yield*, throw, return
+
+- **`yield* iter`** — delegate: capture sub-iterator in a struct
+  field; each resume steps the sub-iterator and re-yields its
+  value; on done, fall through.
+- **`gen.throw(err)`** — re-enter the resume function in a new state
+  that re-raises; the existing wasm exception tag handles the
+  surface.
+- **`gen.return(arg)`** — invoke any active `finally` blocks via
+  the suspended state's cleanup path; then mark done.
+
+### Edge cases
+
+- **Yield as expression value**: `let x = yield 1` — the next
+  `.next(arg)` provides `x`. The resume function takes `$sent` as
+  a parameter; the resumption point assigns `$sent` to the
+  target local.
+- **Yield inside expression**: `f(yield 1, yield 2)` — multiple
+  yields per statement; CPS-split per yield, intermediate values
+  saved to struct fields.
+- **`for-of` over a generator** — driven by the iterator protocol;
+  no special case.
+- **Async generators (`async function*`)** — different state
+  machine (combines async + generator); separate Phase 4 / #1042.
+- **Closures inside generators** — captured locals must live in
+  the state struct, not the resume function's stack.
+- **Strict mode / arguments object** — arguments captured at
+  construction time.
+
+### Test262 paths
+
+- `test/language/statements/generators/*` — Phase 1 + 2.
+- `test/built-ins/GeneratorPrototype/*` — all phases.
+- `test/language/expressions/yield/*` — Phase 1.
+
+Acceptance per phase:
+- Phase 1: ≥60% of test262 generator tests pass.
+- Phase 2: ≥85%.
+- Phase 3: ≥95%.
+
+### Dependencies
+
+- **#1042** — async/await state machine; shares CPS-transform
+  infrastructure. Land async first if its plan is approved; #680
+  can reuse the splitting machinery.
+- **#735** — async iteration correctness; benefits from this work.
+- **#1257** — funcIdx shift; detached-bodies fix; relevant because
+  CPS splitting creates many detached Instr[] arrays.
+
+### Risks
+
+- **Compile-time CPS analysis**: every yield creates a state; deeply
+  nested loops with yields explode the state count. Cap at 256
+  states per generator; beyond, fall back to host import (gated by
+  ctx.wasi check).
+- **Local lifetime correctness**: forgetting to spill a local into
+  the state struct causes silent data corruption on resume. Add an
+  assertion: every local read in segment N must come from either
+  (a) a wasm local set in the same segment or (b) a struct field.
