@@ -903,6 +903,11 @@ class PerfBenchmarkChart extends HTMLElement {
       const baseOpacity = "0.1";
       const gradDir = ratio >= 1 ? "to right" : "to left";
       const textOpacity = (0.4 + dist * 0.6).toFixed(2);
+      // When the row carries an explicit lane colour (4-lane perf mode), use it
+      // instead of the default white gradient. baseColor/edgeColor are CSS
+      // colour strings with alpha already applied.
+      const customBaseColor = row.fillColor || `rgba(255,255,255,${baseOpacity})`;
+      const customEdgeColor = row.edgeColor || row.fillColor || null;
 
       const rowEl = document.createElement("div");
       rowEl.className = "bench-row";
@@ -926,6 +931,8 @@ class PerfBenchmarkChart extends HTMLElement {
         baseOpacity,
         edgeOpacity,
         textOpacity,
+        customBaseColor,
+        customEdgeColor,
         ratioStd: Number(row.ratioStd ?? 0),
         fillEl: rowEl.querySelector(".bench-fill"),
         errorEl: rowEl.querySelector(".bench-errorbar"),
@@ -960,7 +967,14 @@ class PerfBenchmarkChart extends HTMLElement {
 
         d.fillEl.style.left = curLeft + "%";
         d.fillEl.style.width = curWidth + "%";
-        d.fillEl.style.background = `linear-gradient(${d.gradDir}, rgba(255,255,255,${d.baseOpacity}), rgba(255,255,255,${curEdgeOp}))`;
+        if (d.customEdgeColor) {
+          // Lane-coloured bar: animate edge alpha by varying the gradient stop
+          // alpha. We keep the colour fixed and let the existing dist→alpha
+          // scaling stay visually consistent across lanes.
+          d.fillEl.style.background = `linear-gradient(${d.gradDir}, ${d.customBaseColor}, ${d.customEdgeColor})`;
+        } else {
+          d.fillEl.style.background = `linear-gradient(${d.gradDir}, rgba(255,255,255,${d.baseOpacity}), rgba(255,255,255,${curEdgeOp}))`;
+        }
 
         const stdRatio = Math.min(d.ratioStd || 0, Math.max(d.ratio - 0.01, 0), Math.max(scaleMax / 100 - d.ratio, 0));
         if (stdRatio > 0) {
@@ -1262,16 +1276,60 @@ class PerfBenchmarkChart extends HTMLElement {
             return shortPath === benchmarkFilter || shortName === benchmarkFilter || path === benchmarkFilter;
           });
         }
+        const srcFilter = (this.getAttribute("src-filter") || "").trim().toLowerCase();
+        if (srcFilter) {
+          rows = rows.filter((row) =>
+            `${row?.scenario ?? ""} ${row?.name ?? ""} ${row?.label ?? ""} ${row?.path ?? ""}`
+              .toLowerCase()
+              .includes(srcFilter),
+          );
+        }
         if (rows.length === 0) {
           this.style.display = "none";
           return;
         }
         ratios = [];
+        // Lane definitions: when any of these alternate fields are present we
+        // fan a row out into multiple lanes (one bar per lane). Labels are
+        // generic execution-model categories (AOT / Interpreter / Engine) —
+        // bars are monochrome and distinguished by their label, not by color,
+        // so the comparison doesn't visually privilege any one lane.
+        const LANES = [
+          { key: "wasmUs", label: "AOT" },
+          { key: "javyUs", label: "Interpreter" },
+          { key: "starlingMonkeyUs", label: "Engine" },
+        ];
+        const anyHasExtraLanes = rows.some(
+          (row) => Number(row?.javyUs ?? 0) > 0 || Number(row?.starlingMonkeyUs ?? 0) > 0,
+        );
+        // When the caller has filtered down to a single benchmark name (the
+        // "one chart per benchmark" layout), prefix each bar with the scenario
+        // so cold/warm bars stay distinguishable inside the same chart.
+        const distinctBenchNames = new Set(rows.map((row) => String(row?.name ?? "")));
+        const showScenarioInLabel = distinctBenchNames.size === 1 && rows.some((row) => row?.scenario);
         for (const row of rows) {
-          const wasmUs = Number(row?.wasmUs ?? 0);
           const jsUs = Number(row?.jsUs ?? 0);
-          if (wasmUs <= 0 || jsUs <= 0) continue;
-          ratios.push({ ...row, ratio: jsUs / wasmUs, ratioStd: Number(row?.ratioStd ?? 0) });
+          if (jsUs <= 0) continue;
+          if (anyHasExtraLanes) {
+            // Multi-lane mode: emit one ratio entry per present lane. The
+            // label becomes the bar's row label so the chart shows lane-per-bar.
+            const baseName = showScenarioInLabel ? String(row?.scenario ?? "") : (row?.name ?? "unknown");
+            for (const lane of LANES) {
+              const us = Number(row?.[lane.key] ?? 0);
+              if (us <= 0) continue;
+              ratios.push({
+                ...row,
+                name: baseName ? `${baseName} — ${lane.label}` : lane.label,
+                ratio: jsUs / us,
+                ratioStd: 0,
+                lane: lane.key,
+              });
+            }
+          } else {
+            const wasmUs = Number(row?.wasmUs ?? 0);
+            if (wasmUs <= 0) continue;
+            ratios.push({ ...row, ratio: jsUs / wasmUs, ratioStd: Number(row?.ratioStd ?? 0) });
+          }
         }
       }
       const isAbsoluteMode = mode === "absolute-lower-better" || mode === "runtime" || mode === "module-size";

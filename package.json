@@ -73,6 +73,7 @@
     "prepublishOnly": "pnpm run build",
     "refresh:benchmarks": "npx tsx benchmarks/run.ts && pnpm run build:compiler-bundle && node scripts/generate-playground-benchmark-sidebar.mjs && node scripts/generate-playground-benchmark-sidebar-no-jit.mjs && pnpm run generate:size-benchmarks && node scripts/generate-browser-runtime-benchmarks.mjs",
     "refresh:benchmarks:no-jit": "pnpm run build:compiler-bundle && node scripts/generate-playground-benchmark-sidebar-no-jit.mjs",
+    "refresh:benchmarks:wasmtime": "pnpm run build:compiler-bundle && node scripts/generate-wasmtime-hot-runtime.mjs",
     "build:compiler-bundle": "esbuild scripts/compiler-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen --external:@typescript/native-preview --external:@typescript/native-preview/*",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
