@@ -1,0 +1,14 @@
+[
+  { "name": "AOT compiled", "path": "fib", "value": 26200, "label": "26.2 ms", "jsUs": 19100 },
+  { "name": "Interpreter", "path": "fib", "value": 28800, "label": "28.8 ms", "jsUs": 19100 },
+  { "name": "Engine", "path": "fib", "value": 37200, "label": "37.2 ms", "jsUs": 19100 },
+  { "name": "AOT compiled", "path": "fib-recursive", "value": 32500, "label": "32.5 ms", "jsUs": 19200 },
+  { "name": "Interpreter", "path": "fib-recursive", "value": 31200, "label": "31.2 ms", "jsUs": 19200 },
+  { "name": "Engine", "path": "fib-recursive", "value": 26400, "label": "26.4 ms", "jsUs": 19200 },
+  { "name": "AOT compiled", "path": "array-sum", "value": 0, "label": "n/a (runtime-error)", "jsUs": 28300 },
+  { "name": "Interpreter", "path": "array-sum", "value": 28000, "label": "28.0 ms", "jsUs": 28300 },
+  { "name": "Engine", "path": "array-sum", "value": 31000, "label": "31.0 ms", "jsUs": 28300 },
+  { "name": "AOT compiled", "path": "string-hash", "value": 0, "label": "n/a (compile-error)", "jsUs": 29900 },
+  { "name": "Interpreter", "path": "string-hash", "value": 30700, "label": "30.7 ms", "jsUs": 29900 },
+  { "name": "Engine", "path": "string-hash", "value": 30500, "label": "30.5 ms", "jsUs": 29900 }
+]

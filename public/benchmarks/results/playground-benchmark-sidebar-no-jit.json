@@ -4,17 +4,8 @@
     "wasmOptimized": true,
     "wasmOptimizeLevel": 4,
     "mode": "no-jit",
-    "jsFlags": [
-      "--jitless",
-      "--no-opt",
-      "--no-turbofan",
-      "--no-sparkplug",
-      "--no-maglev"
-    ],
-    "wasmFlags": [
-      "--no-wasm-tier-up",
-      "--liftoff"
-    ],
+    "jsFlags": ["--jitless", "--no-opt", "--no-turbofan", "--no-sparkplug", "--no-maglev"],
+    "wasmFlags": ["--no-wasm-tier-up", "--liftoff"],
     "wasmUs": 2269.178977272728,
     "jsUs": 40213.1375,
     "wasmStdUs": 3.672326361968849,
@@ -29,17 +20,8 @@
     "wasmOptimized": true,
     "wasmOptimizeLevel": 4,
     "mode": "no-jit",
-    "jsFlags": [
-      "--jitless",
-      "--no-opt",
-      "--no-turbofan",
-      "--no-sparkplug",
-      "--no-maglev"
-    ],
-    "wasmFlags": [
-      "--no-wasm-tier-up",
-      "--liftoff"
-    ],
+    "jsFlags": ["--jitless", "--no-opt", "--no-turbofan", "--no-sparkplug", "--no-maglev"],
+    "wasmFlags": ["--no-wasm-tier-up", "--liftoff"],
     "wasmUs": 256.5523341924399,
     "jsUs": 7813.4687499999945,
     "wasmStdUs": 2.594609838350956,
@@ -54,17 +36,8 @@
     "wasmOptimized": true,
     "wasmOptimizeLevel": 4,
     "mode": "no-jit",
-    "jsFlags": [
-      "--jitless",
-      "--no-opt",
-      "--no-turbofan",
-      "--no-sparkplug",
-      "--no-maglev"
-    ],
-    "wasmFlags": [
-      "--no-wasm-tier-up",
-      "--liftoff"
-    ],
+    "jsFlags": ["--jitless", "--no-opt", "--no-turbofan", "--no-sparkplug", "--no-maglev"],
+    "wasmFlags": ["--no-wasm-tier-up", "--liftoff"],
     "wasmUs": 2.207497375328083,
     "jsUs": 8.899546028738355,
     "wasmStdUs": 0.15541724391429565,
@@ -79,17 +52,8 @@
     "wasmOptimized": true,
     "wasmOptimizeLevel": 4,
     "mode": "no-jit",
-    "jsFlags": [
-      "--jitless",
-      "--no-opt",
-      "--no-turbofan",
-      "--no-sparkplug",
-      "--no-maglev"
-    ],
-    "wasmFlags": [
-      "--no-wasm-tier-up",
-      "--liftoff"
-    ],
+    "jsFlags": ["--jitless", "--no-opt", "--no-turbofan", "--no-sparkplug", "--no-maglev"],
+    "wasmFlags": ["--no-wasm-tier-up", "--liftoff"],
     "wasmUs": 13.454687612093238,
     "jsUs": 239.79663204508856,
     "wasmStdUs": 0.2633450704764015,

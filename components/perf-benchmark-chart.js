@@ -67,6 +67,27 @@ class PerfBenchmarkChart extends HTMLElement {
         :host {
           display: block;
         }
+        /* Saturated tinting based on the chart's scenario, set via [data-tint] on the host. */
+        :host([data-tint="cold"]) .bench-track-bg {
+          background: linear-gradient(to right, rgba(50, 120, 240, 0.18), rgba(50, 120, 240, 0.05));
+        }
+        :host([data-tint="cold"]) .bench-fill,
+        :host([data-tint="cold"]) .bench-extra-fill {
+          background: linear-gradient(to right, rgba(70, 140, 255, 0.35), rgba(120, 180, 255, 1.0)) !important;
+        }
+        :host([data-tint="cold"]) .bench-row-baseline {
+          background: rgba(120, 180, 255, 0.95);
+        }
+        :host([data-tint="warm"]) .bench-track-bg {
+          background: linear-gradient(to right, rgba(240, 70, 60, 0.18), rgba(240, 70, 60, 0.05));
+        }
+        :host([data-tint="warm"]) .bench-fill,
+        :host([data-tint="warm"]) .bench-extra-fill {
+          background: linear-gradient(to right, rgba(250, 100, 85, 0.35), rgba(255, 150, 130, 1.0)) !important;
+        }
+        :host([data-tint="warm"]) .bench-row-baseline {
+          background: rgba(255, 150, 130, 0.95);
+        }
 
         .chart-title {
           font-family: var(--mono, ui-monospace, monospace);
@@ -107,6 +128,17 @@ class PerfBenchmarkChart extends HTMLElement {
           background: var(--fg-soft, rgba(255,255,255,0.55));
           opacity: 1;
           z-index: 1;
+        }
+        .js-line-secondary {
+          background: var(--fg-faint, rgba(255,255,255,0.35));
+          opacity: 0.75;
+          width: 1px;
+          border-left: 1px dashed var(--fg-faint, rgba(255,255,255,0.45));
+          background: transparent;
+        }
+        .js-label-secondary {
+          color: var(--fg-faint, rgba(255,255,255,0.45));
+          font-style: italic;
         }
 
         .bench-bars {
@@ -166,14 +198,7 @@ class PerfBenchmarkChart extends HTMLElement {
         }
 
         .bench-errorbar {
-          position: absolute;
-          top: 50%;
-          height: 0;
-          border-top: 1px solid rgba(255,255,255,0.5);
-          transform: translateY(-50%);
-          z-index: 2;
-          opacity: 0;
-          filter: drop-shadow(0 0 1px rgba(0,0,0,0.9)) drop-shadow(0 0 0.5px rgba(0,0,0,1));
+          display: none;
         }
 
         .bench-errorbar::before,
@@ -210,18 +235,19 @@ class PerfBenchmarkChart extends HTMLElement {
 
         .bench-row-baseline-label {
           position: absolute;
-          top: -24px;
-          transform: translateX(-50%);
+          top: 50%;
+          transform: translate(-50%, -50%);
           font-family: var(--mono, ui-monospace, monospace);
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 600;
-          color: rgba(255,255,255,0.68);
+          color: rgba(255,255,255,0.78);
           white-space: nowrap;
           text-shadow:
             0 1px 1px rgba(6, 10, 20, 0.9),
             0 0 10px rgba(6, 10, 20, 0.6);
           opacity: 0;
           z-index: 4;
+          pointer-events: none;
         }
 
         .bench-value {
@@ -338,8 +364,32 @@ class PerfBenchmarkChart extends HTMLElement {
       </div>
     `;
 
-    this.shadowRoot.querySelector(".chart-title-label").textContent = title;
-    this.shadowRoot.querySelector(".chart-title-note").hidden = !this._isLowerBetterMode(mode);
+    // Split the title at the first " (" so the parenthesized sub-text (which
+    // typically holds a direction hint like "higher is better") stays in the
+    // mixed-case .chart-title-note span instead of being uppercased by the
+    // .chart-title-label style.
+    const titleLabelEl = this.shadowRoot.querySelector(".chart-title-label");
+    const titleNoteEl = this.shadowRoot.querySelector(".chart-title-note");
+    const parenIdx = title.indexOf(" (");
+    if (parenIdx > 0) {
+      titleLabelEl.textContent = title.slice(0, parenIdx);
+      titleNoteEl.textContent = " " + title.slice(parenIdx + 1);
+      titleNoteEl.hidden = false;
+    } else {
+      titleLabelEl.textContent = title;
+      // No parenthetical in the title; hide the auto-appended note.
+      titleNoteEl.hidden = true;
+    }
+    // Auto-tint speed charts: "cold speed" blue, "warm speed" red. Other titles
+    // containing "cold" or "warm" (e.g. "cold start", "warm isolate") stay neutral.
+    const titleLower = title.toLowerCase();
+    if (titleLower.includes("cold speed")) {
+      this.dataset.tint = "cold";
+    } else if (titleLower.includes("warm speed")) {
+      this.dataset.tint = "warm";
+    } else if (this.dataset.tint) {
+      delete this.dataset.tint;
+    }
     this.shadowRoot.querySelector(".js-label").textContent = baselineLabel;
     this.shadowRoot.querySelector(".legend").textContent = legend;
     const actions = this.shadowRoot.querySelector(".chart-actions");
@@ -591,6 +641,15 @@ class PerfBenchmarkChart extends HTMLElement {
     return value.toFixed(2).replace(/\.?0+$/, "");
   }
 
+  // Consistent ratio formatting used everywhere a `<n>x` string is rendered.
+  // Strips trailing zeros so "0.10x" never shows next to "0.1x" elsewhere.
+  _formatRatio(ratio) {
+    if (!Number.isFinite(ratio)) return "0x";
+    if (ratio >= 10) return `${Math.round(ratio)}x`;
+    if (ratio >= 0.1) return `${ratio.toFixed(1).replace(/\.0$/, "")}x`;
+    return `${ratio.toFixed(2).replace(/\.?0+$/, "")}x`;
+  }
+
   _formatBytes(bytes) {
     const value = Number(bytes);
     if (!Number.isFinite(value) || value <= 0) return "0 B";
@@ -617,8 +676,7 @@ class PerfBenchmarkChart extends HTMLElement {
     if (!Number.isFinite(metricValue) || !Number.isFinite(baselineValue) || baselineValue <= 0) return "";
     if (metricValue <= 0) return "";
     if (kind === "factor") {
-      const ratio = metricValue / baselineValue;
-      return ratio >= 10 ? `${Math.round(ratio)}x` : `${ratio.toFixed(1)}x`;
+      return this._formatRatio(metricValue / baselineValue);
     }
     if (Math.abs(metricValue - baselineValue) <= Math.max(0.0001, baselineValue * 0.0005)) {
       return "0%";
@@ -681,7 +739,27 @@ class PerfBenchmarkChart extends HTMLElement {
       : 1;
     const useRatioNorm = hasAllPerRowBaselines && maxRatio > 1;
     const ratioNormBaselinePct = useRatioNorm ? (1 / maxRatio) * 100 : 0;
-    const showGlobalBaseline = baselineValue > 0 || useRatioNorm;
+    // When all rows use per-row scaling (scalePerRow), each row already shows
+    // its own baseline marker — the global JS line would be drawn at the
+    // chart-wide baselinePct which falls off the visible track whenever a
+    // single row's value dominates the global maxValue (e.g. size charts
+    // where Engine = 14 MB vs JS source = 1.77 kB makes the global baseline
+    // sit at ~0.01%). Suppress the global marker in that case.
+    const allRowsScalePerRow = absoluteRows.length > 0 && absoluteRows.every((row) => row.scalePerRow === true);
+    // Also suppress the global baseline when its position would land outside the
+    // visible track (baselinePct < 3% or > 97%) — typical for shared-scale charts
+    // where one row's value dwarfs the baseline (e.g. Engine=14 MB makes JS=1.77 kB
+    // land at ~0.01% of track width, which renders in the row-label gutter to the
+    // left of the bars). Per-row markers cover those cases instead.
+    // Show the chart-wide global JS label/line whenever the baseline position
+    // is inside the visible track. When values span orders of magnitude and the
+    // baseline lands < 3% or > 97%, the global label would render in the gutter
+    // outside the bars — suppress it in that case and rely on per-row markers.
+    // Always show the chart-wide global JS label/line when a baseline exists.
+    // The positioning code (positionAbsoluteBaseline) clamps the label inside the
+    // track edges so even tiny baselinePct values (e.g. 0.012% on module-size
+    // charts where JS=1.77 kB vs Engine=14.5 MB) land just inside the left edge.
+    const showGlobalBaseline = (baselineValue > 0 || useRatioNorm) && !allRowsScalePerRow;
 
     if (showGlobalBaseline) {
       jsLabelEl.style.display = "";
@@ -708,7 +786,13 @@ class PerfBenchmarkChart extends HTMLElement {
 
     const preparedRows = absoluteRows.map((row, index) => {
       const label = row.name || "unknown";
-      const rowBaselineValue = !hasSharedBaseline || forceRowBaseline ? this._rowBaselineValue(row) : 0;
+      // Use per-row baseline only when the global JS line/label isn't shown
+      // — otherwise the two markers would overlap on the same bar.
+      // Per-row baselines also fire when the row explicitly opts in
+      // (compareFromBaseline) or when each row carries its own different baseline.
+      const usePerRowBaseline =
+        !showGlobalBaseline || !hasSharedBaseline || forceRowBaseline || row.scalePerRow === true;
+      const rowBaselineValue = usePerRowBaseline ? this._rowBaselineValue(row) : 0;
       const rowExtraValue = Math.max(0, Number(row.extraValue ?? 0));
       const rowTotalValue = row.value + rowExtraValue;
       const scalePerRow = row.scalePerRow ?? !hasSharedBaseline;
@@ -729,7 +813,13 @@ class PerfBenchmarkChart extends HTMLElement {
       const targetExtraWidth = compareFromBaseline ? 0 : (rowExtraValue / rowScaleMax) * 100;
       const valueIsBelowBaseline = compareFromBaseline && rowTotalValue < rowBaselineValue;
       const gradientDirection = valueIsBelowBaseline ? "to left" : "to right";
-      const targetBaselineLabelLeft = targetBaselineLeft > 0 ? Math.min(94, Math.max(6, targetBaselineLeft)) : 0;
+      // The vertical line marker (bench-row-baseline) renders at targetBaselineLeft —
+      // its true position inside the bar. The label text uses translateX(-50%) so
+      // when the position is near the left edge (e.g. 0.012% on a module-size chart
+      // where JS=1.77 kB and Engine=14.5 MB) the centered text hangs off the track
+      // into the row-label gutter. Clamp the LABEL position only to keep the text
+      // visible just inside the track edges (the line itself stays at true pos).
+      const targetBaselineLabelLeft = targetBaselineLeft > 0 ? Math.min(97, Math.max(3, targetBaselineLeft)) : 0;
       const rowBaselineLabel = rowBaselineValue > 0 && index === 0 ? row.baselineLabel || baselineLabel : "";
       const valueLabel = this._valueLabel(row.label, rowTotalValue);
       const factorLabel = this._factorDeltaLabel(
@@ -773,7 +863,7 @@ class PerfBenchmarkChart extends HTMLElement {
           <div class="bench-fill" style="left: ${row.compareFromBaseline ? row.targetBaselineLeft : 0}%; width: 0%; background: linear-gradient(${row.gradientDirection}, rgba(255,255,255,0.1), rgba(255,255,255,0.9)); border-radius: 4px; position: absolute; height: 100%; top: 0"></div>
           <div class="bench-extra-fill" style="left: 0%; width: 0%; background: rgba(255,255,255,0.22); border-radius: 0 4px 4px 0; position: absolute; height: 100%; top: 0"></div>
           <div class="bench-row-baseline" style="left: ${row.targetBaselineLeft}%"></div>
-          <span class="bench-row-baseline-label" style="left: ${row.targetBaselineLabelLeft}%">${row.rowBaselineLabel}</span>
+          <span class="bench-row-baseline-label" style="left: ${row.targetBaselineLabelLeft}%; transform: ${row.targetBaselineLabelLeft < 10 ? "translate(0, -50%)" : row.targetBaselineLabelLeft > 90 ? "translate(-100%, -50%)" : "translate(-50%, -50%)"}">${row.rowBaselineLabel}</span>
           <div class="bench-errorbar" style="display: none"></div>
           <span class="bench-value" style="left: 10px; color: rgba(255,255,255,0)">${row.valueLabel}</span>
         </div>
@@ -817,6 +907,14 @@ class PerfBenchmarkChart extends HTMLElement {
         d.rowBaselineEl.style.left = `${d.targetBaselineLeft}%`;
         d.rowBaselineEl.style.opacity = d.showRowBaseline ? `${0.25 + 0.65 * t}` : "0";
         d.rowBaselineLabelEl.style.left = `${d.targetBaselineLabelLeft}%`;
+        // Position-aware horizontal anchoring + vertical centering (the label now
+        // sits inside the bar at the baseline tick).
+        d.rowBaselineLabelEl.style.transform =
+          d.targetBaselineLabelLeft < 10
+            ? "translate(0, -50%)"
+            : d.targetBaselineLabelLeft > 90
+              ? "translate(-100%, -50%)"
+              : "translate(-50%, -50%)";
         d.rowBaselineLabelEl.style.opacity = d.showRowBaselineLabel ? `${0.25 + 0.65 * t}` : "0";
         const valueAnchor = d.valueIsBelowBaseline ? curLeft : curTotalWidth;
         d.valueEl.style.left = d.valueIsBelowBaseline
@@ -829,25 +927,15 @@ class PerfBenchmarkChart extends HTMLElement {
       if (progress < 1) requestAnimationFrame(animateAbsoluteBars);
     }
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            observer.disconnect();
-            requestAnimationFrame(animateAbsoluteBars);
-          }
-        }
-      },
-      { threshold: 0.3 },
-    );
-    observer.observe(this);
-
     const positionAbsoluteBaseline = () => {
       const track = container.querySelector(".bench-track");
       const wrap = shadow.querySelector(".bars-wrap");
       if (showGlobalBaseline && track && wrap && jsLabelEl && jsLineEl) {
         const wrapRect = wrap.getBoundingClientRect();
         const trackRect = track.getBoundingClientRect();
+        // If the chart hasn't been laid out yet (display:none parent etc.),
+        // the track has zero width — bail and let a later call retry.
+        if (trackRect.width <= 0) return;
         const lineX = trackRect.left + (trackRect.width * baselineLinePct) / 100 - wrapRect.left;
         const rawLabelX = trackRect.left + (trackRect.width * baselineLabelPct) / 100 - wrapRect.left;
         const labelX = Math.min(
@@ -859,8 +947,37 @@ class PerfBenchmarkChart extends HTMLElement {
         jsLineEl.style.left = `${lineX}px`;
       }
     };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            observer.disconnect();
+            // Reposition the global baseline now that the chart has real
+            // dimensions, then start the bar animation.
+            requestAnimationFrame(() => {
+              positionAbsoluteBaseline();
+              animateAbsoluteBars(performance.now());
+            });
+          }
+        }
+      },
+      { threshold: 0.1 },
+    );
+    observer.observe(this);
+
+    // First attempt — may run while the chart is still display:none in which
+    // case it bails and the IntersectionObserver above will re-trigger when
+    // the chart actually gains layout.
     requestAnimationFrame(positionAbsoluteBaseline);
+    // Re-position on resize (chart may grow/shrink with the viewport).
     window.addEventListener("resize", positionAbsoluteBaseline);
+    // Also re-position whenever the chart's size changes (e.g. when a parent
+    // panel transitions from display:none to visible after data loads).
+    if (typeof ResizeObserver !== "undefined") {
+      const resizeObs = new ResizeObserver(() => positionAbsoluteBaseline());
+      resizeObs.observe(this);
+    }
   }
 
   _renderRatioRows(ratios) {
@@ -877,7 +994,38 @@ class PerfBenchmarkChart extends HTMLElement {
     jsLineEl.style.display = "";
     jsLabelEl.textContent = baselineLabel;
 
-    const maxRatio = Math.max(...ratios.map((r) => r.ratio), 1.5);
+    // Render a secondary baseline (e.g. "+JIT" marker for the warm-JS reference
+    // in merge-scenarios charts) if one was computed during ratio building.
+    // We inject the secondary marker into the bars-wrap once per render.
+    {
+      const wrap = shadow.querySelector(".bars-wrap");
+      const existing = wrap?.querySelectorAll(".js-line-secondary, .js-label-secondary");
+      existing?.forEach((el) => el.remove());
+      if (Number.isFinite(this._secondBaselineRatio) && this._secondBaselineRatio > 0 && wrap) {
+        const line2 = document.createElement("div");
+        line2.className = "js-line js-line-secondary";
+        const label2 = document.createElement("div");
+        label2.className = "js-label js-label-secondary";
+        label2.textContent = this._secondBaselineLabel || "+JIT";
+        wrap.appendChild(line2);
+        wrap.appendChild(label2);
+      }
+    }
+
+    // Scale max precedence:
+    //   1. max-ratio="<n>" attribute — hardcoded shared scale across charts
+    //   2. share-scale="benchmark" — derived from sibling scenarios on the same data file
+    //   3. local max from this chart's ratios
+    const localMax = Math.max(...ratios.map((r) => r.ratio), 1.5);
+    const maxRatioAttr = Number(this.getAttribute("max-ratio") || 0);
+    let maxRatio;
+    if (maxRatioAttr > 0) {
+      maxRatio = Math.max(maxRatioAttr, 1.5);
+    } else if (Number.isFinite(this._sharedMaxRatio) && this._sharedMaxRatio > 0) {
+      maxRatio = Math.max(this._sharedMaxRatio, 1.5);
+    } else {
+      maxRatio = localMax;
+    }
     const maxPct = Math.ceil(maxRatio * 100);
     const scaleMax = Math.ceil(maxPct / 100) * 100;
     const jsPos = (100 / scaleMax) * 100; // JS baseline as % of track width
@@ -888,20 +1036,17 @@ class PerfBenchmarkChart extends HTMLElement {
       const ratio = row.ratio;
       const label = row.name || row.path?.replace(/^examples\/benchmarks\//, "").replace(/\.ts$/, "") || "unknown";
 
-      let targetLeft, targetWidth;
-      if (ratio >= 1) {
-        targetLeft = jsPos;
-        targetWidth = ((ratio - 1) / (scaleMax / 100 - 1)) * (100 - jsPos);
-      } else {
-        const wasmPos = (ratio / (scaleMax / 100)) * 100;
-        targetLeft = wasmPos;
-        targetWidth = jsPos - wasmPos;
-      }
+      // Speed bars start at 0 (left edge) and extend to where the value lands
+      // on the absolute ratio scale. JS baseline marker stays at jsPos.
+      const wasmPos = (ratio / (scaleMax / 100)) * 100;
+      const targetLeft = 0;
+      const targetWidth = wasmPos;
 
       const dist = Math.abs(ratio - 1) / Math.max(maxRatio - 1, 1);
       const edgeOpacity = (0.1 + dist * 0.9).toFixed(2);
       const baseOpacity = "0.1";
-      const gradDir = ratio >= 1 ? "to right" : "to left";
+      // Bars now always grow rightward from 0, so the gradient is always "to right".
+      const gradDir = "to right";
       const textOpacity = (0.4 + dist * 0.6).toFixed(2);
       // When the row carries an explicit lane colour (4-lane perf mode), use it
       // instead of the default white gradient. baseColor/edgeColor are CSS
@@ -915,9 +1060,9 @@ class PerfBenchmarkChart extends HTMLElement {
         <span class="bench-name">${label}</span>
         <div class="bench-track">
           <div class="bench-track-bg" style="width: ${jsPos}%"></div>
-          <div class="bench-fill" style="left: ${jsPos}%; width: 0%; background: linear-gradient(${gradDir}, rgba(255,255,255,${baseOpacity}), rgba(255,255,255,0.1)); border-radius: 4px; position: absolute; height: 100%; top: 0"></div>
-          <div class="bench-errorbar" style="left: ${jsPos}%; width: 0%"></div>
-          <span class="bench-value" style="left: ${jsPos}%; padding-left: 6px; color: rgba(255,255,255,0)">0.0x</span>
+          <div class="bench-fill" style="left: 0%; width: 0%; background: linear-gradient(${gradDir}, rgba(255,255,255,${baseOpacity}), rgba(255,255,255,0.1)); border-radius: 4px; position: absolute; height: 100%; top: 0"></div>
+          <div class="bench-errorbar" style="left: 0%; width: 0%"></div>
+          <span class="bench-value" style="left: 0%; padding-left: 6px; color: rgba(255,255,255,0)">0.0x</span>
         </div>
       `;
       container.appendChild(rowEl);
@@ -943,6 +1088,7 @@ class PerfBenchmarkChart extends HTMLElement {
     // Animation
     const duration = 3293;
     const ease = (t) => 1 - (1 - t) * (1 - t);
+    const formatRatio = (r) => this._formatRatio(r);
 
     function animateBars(ts) {
       if (!animateBars._start) animateBars._start = ts;
@@ -952,15 +1098,10 @@ class PerfBenchmarkChart extends HTMLElement {
 
       for (const d of barData) {
         const curWidth = t * d.targetWidth;
-        const curLeft = d.ratio >= 1 ? d.targetLeft : jsPos - t * (jsPos - d.targetLeft);
+        // Bars now always start at 0 (left edge) and animate width only.
+        const curLeft = d.targetLeft;
         const curRatio = t * d.ratio;
-        const scoreText = d.customLabel
-          ? d.customLabel
-          : curRatio >= 10
-            ? `${Math.round(curRatio)}x`
-            : curRatio < 0.1
-              ? `${curRatio.toFixed(2)}x`
-              : `${curRatio.toFixed(1)}x`;
+        const scoreText = d.customLabel ? d.customLabel : formatRatio(curRatio);
 
         const curEdgeOp = (0.1 + t * (parseFloat(d.edgeOpacity) - 0.1)).toFixed(2);
         const curTextOp = (t * parseFloat(d.textOpacity)).toFixed(2);
@@ -1033,6 +1174,21 @@ class PerfBenchmarkChart extends HTMLElement {
         jsLabelEl.style.left = jsX + "px";
         jsLabelEl.style.transform = "translateX(-50%)";
         jsLineEl.style.left = jsX + "px";
+        // Secondary baseline (+JIT) — positioned at jsPos * secondBaselineRatio
+        const secondaryLine = wrap.querySelector(".js-line-secondary");
+        const secondaryLabel = wrap.querySelector(".js-label-secondary");
+        if (
+          secondaryLine &&
+          secondaryLabel &&
+          Number.isFinite(this._secondBaselineRatio) &&
+          this._secondBaselineRatio > 0
+        ) {
+          const secondaryPos = jsPos * this._secondBaselineRatio;
+          const secX = trackRect.left + (trackRect.width * secondaryPos) / 100 - wrapRect.left;
+          secondaryLine.style.left = secX + "px";
+          secondaryLabel.style.left = secX + "px";
+          secondaryLabel.style.transform = "translateX(-50%)";
+        }
       }
     };
     requestAnimationFrame(positionBaseline);
@@ -1249,10 +1405,29 @@ class PerfBenchmarkChart extends HTMLElement {
           return measured;
         });
       } else if (mode === "absolute-lower-better") {
-        const rows = Array.isArray(json) ? json : (json?.benchmarks ?? []);
+        let rows = Array.isArray(json) ? json : (json?.benchmarks ?? []);
         if (!Array.isArray(rows) || rows.length === 0) {
           this.style.display = "none";
           return;
+        }
+        // Apply the same benchmark + src-filter the perf-mode path uses, so
+        // per-test absolute charts (e.g. module size / cold start per test)
+        // narrow down to one benchmark's rows instead of rendering all of them.
+        if (benchmarkFilter) {
+          rows = rows.filter((row) => {
+            const path = String(row?.path || "");
+            const shortPath = path.split("/").pop() || "";
+            const shortName = String(row?.name || "");
+            return shortPath === benchmarkFilter || shortName === benchmarkFilter || path === benchmarkFilter;
+          });
+        }
+        const srcFilterAbs = (this.getAttribute("src-filter") || "").trim().toLowerCase();
+        if (srcFilterAbs) {
+          rows = rows.filter((row) =>
+            `${row?.scenario ?? ""} ${row?.name ?? ""} ${row?.label ?? ""} ${row?.path ?? ""}`
+              .toLowerCase()
+              .includes(srcFilterAbs),
+          );
         }
         absoluteRows = rows
           .map((row) => ({
@@ -1264,7 +1439,10 @@ class PerfBenchmarkChart extends HTMLElement {
             scalePerRow: typeof row?.scalePerRow === "boolean" ? row.scalePerRow : undefined,
             label: row.label || null,
           }))
-          .filter((row) => row.value > 0);
+          // Keep rows with value > 0 (real measurements) AND rows with a
+          // descriptive label (e.g. "n/a (compile-error)") so missing-data lanes
+          // stay visible as zero-width bars with the explanatory label.
+          .filter((row) => row.value > 0 || (typeof row.label === "string" && row.label.length > 0));
       } else {
         // Default perf mode: ratio = jsUs / wasmUs (higher = wasm faster)
         let rows = Array.isArray(json) ? json : [];
@@ -1276,6 +1454,11 @@ class PerfBenchmarkChart extends HTMLElement {
             return shortPath === benchmarkFilter || shortName === benchmarkFilter || path === benchmarkFilter;
           });
         }
+        // Capture rows after benchmark filter but BEFORE src-filter (scenario)
+        // so charts with `share-scale="benchmark"` can compute a max from all
+        // scenarios of the same test — making cold/warm charts share a scale.
+        const shareScale = (this.getAttribute("share-scale") || "").trim();
+        const scopeRows = shareScale === "benchmark" ? [...rows] : null;
         const srcFilter = (this.getAttribute("src-filter") || "").trim().toLowerCase();
         if (srcFilter) {
           rows = rows.filter((row) =>
@@ -1302,27 +1485,72 @@ class PerfBenchmarkChart extends HTMLElement {
         const anyHasExtraLanes = rows.some(
           (row) => Number(row?.javyUs ?? 0) > 0 || Number(row?.starlingMonkeyUs ?? 0) > 0,
         );
-        // When the caller has filtered down to a single benchmark name (the
-        // "one chart per benchmark" layout), prefix each bar with the scenario
-        // so cold/warm bars stay distinguishable inside the same chart.
+        // When the caller has filtered to a single benchmark AND there are
+        // multiple distinct scenarios in the row set, prefix each bar with the
+        // scenario so cold/warm bars stay distinguishable inside the same chart.
+        // When the chart has already been narrowed to one scenario (cold OR warm),
+        // the prefix is redundant.
         const distinctBenchNames = new Set(rows.map((row) => String(row?.name ?? "")));
-        const showScenarioInLabel = distinctBenchNames.size === 1 && rows.some((row) => row?.scenario);
+        const distinctScenarios = new Set(rows.map((row) => String(row?.scenario ?? "")).filter(Boolean));
+        const showScenarioInLabel = distinctBenchNames.size === 1 && distinctScenarios.size > 1;
+        // merge-scenarios mode: when set, fan rows by lane AND by scenario, so a
+        // single chart shows AOT/Interpreter/Engine × cold/warm = 6 bars. The
+        // ratio uses the COLD jsUs across all bars (so warm bars show the
+        // speedup over cold-JS, not their own scenario's JS), and the cold-row
+        // jsUs becomes the primary baseline while the warm-row jsUs becomes a
+        // secondary "+JIT" baseline.
+        const mergeScenarios = this.hasAttribute("merge-scenarios");
+        // Find the cold jsUs and warm jsUs (per row scenario) used for the two baselines
+        let coldJsUs = 0;
+        let warmJsUs = 0;
         for (const row of rows) {
-          const jsUs = Number(row?.jsUs ?? 0);
+          const js = Number(row?.jsUs ?? 0);
+          const sc = String(row?.scenario ?? "").toLowerCase();
+          if (sc === "cold" && js > 0) coldJsUs = js;
+          else if (sc === "warm" && js > 0) warmJsUs = js;
+        }
+        // Stash the secondary baseline ratio so the renderer can draw a "+JIT" marker.
+        this._secondBaselineRatio = mergeScenarios && coldJsUs > 0 && warmJsUs > 0 ? coldJsUs / warmJsUs : null;
+        this._secondBaselineLabel = this.getAttribute("second-baseline-label") || "+JIT";
+
+        for (const row of rows) {
+          // Normalize all bars against the same baseline. In merge-scenarios mode
+          // use the cold jsUs so cold AND warm bars share the same denominator.
+          const rowScenario = String(row?.scenario ?? "").toLowerCase();
+          const jsUs = mergeScenarios
+            ? coldJsUs > 0
+              ? coldJsUs
+              : Number(row?.jsUs ?? 0)
+            : Number(row?.coldJsUs ?? row?.jsUs ?? 0);
           if (jsUs <= 0) continue;
           if (anyHasExtraLanes) {
-            // Multi-lane mode: emit one ratio entry per present lane. The
-            // label becomes the bar's row label so the chart shows lane-per-bar.
-            const baseName = showScenarioInLabel ? String(row?.scenario ?? "") : (row?.name ?? "unknown");
+            let baseName = "";
+            if (mergeScenarios && rowScenario) {
+              // Bars carry the lane label; the scenario goes into color/tag, not the label.
+              baseName = "";
+            } else if (showScenarioInLabel) {
+              baseName = String(row?.scenario ?? "");
+            } else if (distinctBenchNames.size > 1) {
+              baseName = String(row?.name ?? "");
+            }
             for (const lane of LANES) {
               const us = Number(row?.[lane.key] ?? 0);
               if (us <= 0) continue;
+              // Assign per-scenario fill/edge colors when merging.
+              const isCold = rowScenario === "cold";
+              const isWarm = rowScenario === "warm";
+              const fillColor = isCold ? "rgba(70, 140, 255, 0.35)" : isWarm ? "rgba(250, 100, 85, 0.35)" : null;
+              const edgeColor = isCold ? "rgba(120, 180, 255, 1.0)" : isWarm ? "rgba(255, 150, 130, 1.0)" : null;
+              const scenarioSuffix = mergeScenarios ? ` (${rowScenario})` : "";
               ratios.push({
                 ...row,
-                name: baseName ? `${baseName} — ${lane.label}` : lane.label,
+                name: (baseName ? `${baseName} — ${lane.label}` : lane.label) + scenarioSuffix,
                 ratio: jsUs / us,
                 ratioStd: 0,
                 lane: lane.key,
+                scenario: rowScenario,
+                fillColor,
+                edgeColor,
               });
             }
           } else {
@@ -1330,6 +1558,28 @@ class PerfBenchmarkChart extends HTMLElement {
             if (wasmUs <= 0) continue;
             ratios.push({ ...row, ratio: jsUs / wasmUs, ratioStd: Number(row?.ratioStd ?? 0) });
           }
+        }
+        // share-scale="benchmark": compute the max ratio across all scenarios
+        // of this benchmark so e.g. a cold-speed chart and a warm-speed chart
+        // for the same test share an identical x-axis scale.
+        if (scopeRows && scopeRows.length > 0) {
+          let scopeMax = 0;
+          for (const row of scopeRows) {
+            const jsUs = Number(row?.jsUs ?? 0);
+            if (jsUs <= 0) continue;
+            if (anyHasExtraLanes) {
+              for (const lane of LANES) {
+                const us = Number(row?.[lane.key] ?? 0);
+                if (us > 0) scopeMax = Math.max(scopeMax, jsUs / us);
+              }
+            } else {
+              const wasmUs = Number(row?.wasmUs ?? 0);
+              if (wasmUs > 0) scopeMax = Math.max(scopeMax, jsUs / wasmUs);
+            }
+          }
+          this._sharedMaxRatio = scopeMax > 0 ? scopeMax : null;
+        } else {
+          this._sharedMaxRatio = null;
         }
       }
       const isAbsoluteMode = mode === "absolute-lower-better" || mode === "runtime" || mode === "module-size";
