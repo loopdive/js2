@@ -102,7 +102,25 @@ jobs:
         uses: actions/checkout@v5
         with:
           submodules: recursive
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Merge origin/main into branch (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          git config user.email "ci-merge@js2wasm.local"
+          git config user.name "ci-merge"
+          git fetch origin main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "✓ origin/main is already an ancestor of HEAD — no merge needed"
+          elif git merge origin/main --no-edit; then
+            echo "✓ auto-merged origin/main into branch (local to this runner only — branch unchanged)"
+            git log -1 --oneline
+          else
+            echo "::error::Branch conflicts with origin/main. Manual conflict resolution required."
+            git status
+            git merge --abort
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -177,6 +195,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Merge origin/main into branch (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          git config user.email "ci-merge@js2wasm.local"
+          git config user.name "ci-merge"
+          git fetch origin main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "✓ origin/main is already an ancestor of HEAD — no merge needed"
+          elif git merge origin/main --no-edit; then
+            echo "✓ auto-merged origin/main into branch (local to this runner only — branch unchanged)"
+            git log -1 --oneline
+          else
+            echo "::error::Branch conflicts with origin/main. Manual conflict resolution required."
+            git status
+            git merge --abort
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -232,6 +270,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Merge origin/main into branch (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          git config user.email "ci-merge@js2wasm.local"
+          git config user.name "ci-merge"
+          git fetch origin main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "✓ origin/main is already an ancestor of HEAD — no merge needed"
+          elif git merge origin/main --no-edit; then
+            echo "✓ auto-merged origin/main into branch (local to this runner only — branch unchanged)"
+            git log -1 --oneline
+          else
+            echo "::error::Branch conflicts with origin/main. Manual conflict resolution required."
+            git status
+            git merge --abort
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v6

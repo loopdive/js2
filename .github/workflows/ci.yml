@@ -17,22 +17,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-      - name: Verify origin/main is merged into branch
+      - name: Merge origin/main into branch (PR only)
         if: github.event_name == 'pull_request'
         run: |
+          git config user.email "ci-merge@js2wasm.local"
+          git config user.name "ci-merge"
           git fetch origin main
-          if ! git merge-base --is-ancestor origin/main HEAD; then
-            missing_non_skip=$(git log HEAD..origin/main --oneline | grep -v '\[skip ci\]' | wc -l)
-            if [ "$missing_non_skip" -eq 0 ]; then
-              echo "✓ origin/main only has [skip ci] commits not in branch (auto-generated metadata, safe to skip)"
-              git log HEAD..origin/main --oneline
-            else
-              echo "::error::Branch is missing non-[skip ci] commits from origin/main. Run 'git merge origin/main' and push again."
-              exit 1
-            fi
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "✓ origin/main is already an ancestor of HEAD"
+          elif git merge origin/main --no-edit; then
+            echo "✓ auto-merged origin/main into branch (local to runner only — branch unchanged)"
+            git log -1 --oneline
           else
-            echo "✓ origin/main is an ancestor of this branch"
+            echo "::error::Branch conflicts with origin/main. Resolve manually and push."
+            git status
+            git merge --abort
+            exit 1
           fi
 
       - uses: actions/setup-node@v6
