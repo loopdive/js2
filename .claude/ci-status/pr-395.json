@@ -1,11 +1,10 @@
 {
   "pr": 395,
-  "conclusion": null,
-  "pending": true,
+  "conclusion": "cancelled",
   "head_branch": "issue-1484-wasi-async-stubs",
-  "head_sha": "6753863e06e70ee4a10c6b63bde0a19ed0c906d7",
-  "run_url": "https://github.com/loopdive/js2wasm/pull/395",
-  "timestamp": "2026-05-21T10:08:26Z",
+  "head_sha": "f5b9c266bf144d6a2f5d113081a7c0413186c0a5",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26198877192",
+  "timestamp": "2026-05-21T12:28:02Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -17,7 +16,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": null,
+  "baseline_sha": "null",
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }
