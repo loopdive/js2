@@ -1,0 +1,14 @@
+[
+  { "name": "AOT compiled", "path": "fib", "value": 100, "label": "0.1 kB", "jsUs": 1770 },
+  { "name": "Interpreter", "path": "fib", "value": 2800, "label": "2.8 kB", "jsUs": 1770 },
+  { "name": "Engine", "path": "fib", "value": 14467800, "label": "14.5 MB", "jsUs": 1770 },
+  { "name": "AOT compiled", "path": "fib-recursive", "value": 200, "label": "0.2 kB", "jsUs": 1770 },
+  { "name": "Interpreter", "path": "fib-recursive", "value": 2700, "label": "2.7 kB", "jsUs": 1770 },
+  { "name": "Engine", "path": "fib-recursive", "value": 14470000, "label": "14.5 MB", "jsUs": 1770 },
+  { "name": "AOT compiled", "path": "array-sum", "value": 500, "label": "0.5 kB", "jsUs": 1770 },
+  { "name": "Interpreter", "path": "array-sum", "value": 3000, "label": "3.0 kB", "jsUs": 1770 },
+  { "name": "Engine", "path": "array-sum", "value": 14469200, "label": "14.5 MB", "jsUs": 1770 },
+  { "name": "AOT compiled", "path": "string-hash", "value": 4500, "label": "4.5 kB", "jsUs": 1770 },
+  { "name": "Interpreter", "path": "string-hash", "value": 3400, "label": "3.4 kB", "jsUs": 1770 },
+  { "name": "Engine", "path": "string-hash", "value": 14473300, "label": "14.5 MB", "jsUs": 1770 }
+]
