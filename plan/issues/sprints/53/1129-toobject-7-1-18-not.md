@@ -1,9 +1,9 @@
 ---
 id: 1129
 title: "ToObject (§7.1.18) not implemented — no primitive auto-boxing"
-status: ready
+status: done
 created: 2026-04-17
-updated: 2026-04-17
+updated: 2026-05-21
 priority: low
 feasibility: hard
 task_type: feature
@@ -61,7 +61,40 @@ architectural change — defer to a later sprint.
 
 ## Acceptance criteria
 
-- [ ] `Object(42)` creates a Number wrapper (typeof === "object")
-- [ ] `Object("abc")` creates a String wrapper
-- [ ] `Object(true)` creates a Boolean wrapper
-- [ ] `Object(null)` and `Object(undefined)` return empty objects (per spec, NOT TypeError — that's only for ToObject, not the Object() constructor)
+- [x] `Object(42)` creates a Number wrapper (typeof === "object")
+- [x] `Object("abc")` creates a String wrapper
+- [x] `Object(true)` creates a Boolean wrapper
+- [x] `Object(null)` and `Object(undefined)` return empty objects (per spec, NOT TypeError — that's only for ToObject, not the Object() constructor)
+
+## Implementation
+
+Added an `Object(x)` call handler in `src/codegen/expressions/calls.ts`
+(after the `new RegExp` peephole), gated on `ts.isIdentifier(expr.expression)
+&& expr.expression.text === "Object"`:
+
+- `Object()` / `Object(null)` / `Object(undefined)` → `__object_create(null)`
+  host import (mirrors `new Object()` in `new-super.ts`). Static null/undefined
+  is detected via `ts.TypeFlags.Null | Undefined | Void` exact-match (unions
+  that include other types fall through to the primitive/object branch).
+- `Object(number)` → `__new_Number(f64)` — same host import used by `new Number(x)`.
+- `Object(string)` → `__new_String(externref)`.
+- `Object(boolean)` → coerce bool→i32→f64, then `__new_Boolean(f64)`.
+- Object / externref / union — return the argument unchanged (per spec
+  identity rule). A future runtime ToObject for `any`-typed values would
+  require a `__to_object` host helper; deferred.
+
+Sloppy-mode `this` boxing for prototype methods (Gap #3) is still deferred —
+requires a per-function strict/sloppy flag in the closure struct.
+
+`for-in` on primitives (Gap #2) works in practice because the externref
+fallback iterates string indices via the host; no codegen change required
+for the acceptance criteria.
+
+## Test Results
+
+`npm test -- tests/issue-1129.test.ts --run` — 9/9 pass:
+- typeof checks for `Object(42)`, `Object("abc")`, `Object(true)`,
+  `Object(false)`, `Object(null)`, `Object(undefined)`, `Object()` —
+  all return `"object"`.
+- `Object(42).valueOf() === 42` — Number wrapper round-trips through host valueOf.
+- `Object("abc").toString() === "abc"` — String wrapper round-trips.

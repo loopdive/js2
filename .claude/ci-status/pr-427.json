@@ -1,11 +1,10 @@
 {
   "pr": 427,
-  "conclusion": null,
-  "pending": true,
+  "conclusion": "cancelled",
   "head_branch": "issue-1523-sprint-consistency",
-  "head_sha": "e90cd9793068f4a32d6bee3bb107d594f977b779",
-  "run_url": "https://github.com/loopdive/js2wasm/pull/427",
-  "timestamp": "2026-05-20T21:11:57Z",
+  "head_sha": "a9d12e67d55380612cb41c47782711cdd1c249ae",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26197141124",
+  "timestamp": "2026-05-21T05:46:25Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -17,7 +16,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": null,
+  "baseline_sha": "null",
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }
