@@ -11,6 +11,7 @@ goal: test262-conformance
 test262_fail: 45
 shares_fix_with: [1543]
 root_cause_doc: 1556
+note: "Verified 2026-05-21 — shares fix with #1543; both gated by literals.ts:447 (confirmed present)"
 ---
 
 # #1544 — for-of / for-await-of dstr rest/elision → illegal cast

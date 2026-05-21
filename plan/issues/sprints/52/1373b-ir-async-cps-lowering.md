@@ -12,6 +12,7 @@ area: ir, codegen
 language_feature: async
 goal: ir-full-coverage
 depends_on: [1326c]
+note: "Verified 2026-05-21: src/codegen/async-scheduler.ts exists; src/codegen/async-cps.ts does NOT exist yet (still pending #1042 introducing it). async-cluster-architect-spec.md exists."
 ---
 # #1373b — IR async Phase C: CPS lowering
 

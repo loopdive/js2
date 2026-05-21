@@ -12,7 +12,7 @@ Devs do NOT do a direct ff-only merge to main. Instead:
 2. [ ] Run scoped local checks (issue-specific compile+run)
 3. [ ] `git push && gh pr create`
 4. [ ] Monitor `.claude/ci-status/pr-<N>.json` until SHA matches HEAD
-5. [ ] `net_per_test > 0`: `gh pr merge <N> --admin --merge`
+5. [ ] `net_per_test > 0`: `gh pr merge <N> --merge --auto` (enqueues; queue re-runs checks against merged state then lands)
 6. [ ] Escalate to tech lead if: regressions > 10, single bucket > 50, or judgment call needed
 
 ## Tech lead direct merge (fallback / hotfix only)
@@ -39,7 +39,19 @@ If ff-only fails: main moved since your last `git merge main`. Just merge main a
 7. [ ] `git diff HEAD~1 --stat` — no unexpected deletions
 8. [ ] Update issue frontmatter: `status: done` and `completed: YYYY-MM-DD`
 9. [ ] Update `plan/log/dependency-graph.md`
-10. [ ] Message tech lead: `"Merged #N to main."`
+10. [ ] **Refresh all open PR branches** — for every remaining open PR, merge origin/main into its branch and push so the quality gate doesn't fail and branches stay close to main:
+    ```bash
+    gh pr list --state open --json number,headRefName --jq '.[].headRefName' | while read branch; do
+      wt="/workspace/.claude/worktrees/$branch"
+      if [ -d "$wt" ]; then
+        git -C "$wt" merge origin/main --no-edit && git -C "$wt" push origin "$branch" \
+          && echo "refreshed $branch" || echo "CONFLICT on $branch — ping dev"
+      else
+        echo "no worktree for $branch — create one or ask dev to refresh"
+      fi
+    done
+    ```
+11. [ ] Message tech lead: `"Merged #N to main. Refreshed open PR branches."`
 
 ## If something went wrong
 

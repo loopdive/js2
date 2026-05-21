@@ -1,5 +1,5 @@
 ---
-id: eslint-next-layer-survey
+id: 1573
 title: "ESLint next-layer validation-error survey (post #1557 / #1558)"
 status: survey
 created: 2026-05-20

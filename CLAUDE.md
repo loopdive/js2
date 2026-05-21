@@ -152,7 +152,12 @@ Spawn dedicated agents when:
 - The role needs sustained back-and-forth with the user (e.g., PO during planning)
 - The role accumulates context that's hard to capture in a skill (e.g., SM during retro discussion)
 
-**IMPORTANT: Always use teammates, not subagents.** Spawn agents via `TeamCreate` + `Agent` with `team_name` parameter. Never use bare `Agent` spawns — subagents can't coordinate, causing OOM from concurrent test runs and duplicate work. Teammates communicate via `SendMessage` to serialize test runs and coordinate on file conflicts.
+**Pick the right spawn mode (this matters for lifecycle):**
+
+- **Teammates** (`Agent` with `team_name: "js2wasm"`) — long-running, lead-orchestrated. Use for **dev agents** that pull from the TaskList, receive mid-task redirects via SendMessage, or need to coordinate file locks with other agents. Teammates do **not** self-terminate — the tech lead sends `shutdown_request` when they're idle.
+- **Subagents** (`Agent` without `team_name`) — fire-and-forget. Use for **one-shot architects, research agents, spec writers** that read inputs, write an output file, and return a summary. Subagents auto-cleanup when their task returns — no pane management needed.
+
+Default rule: if the agent's job is "produce one document and exit," it's a subagent. If the agent's job is "stay on the task queue and grab the next thing," it's a teammate. Misusing teammates for one-shot work causes pane exhaustion because they idle forever waiting for orchestration that never comes (confirmed via Claude Code docs — see [[feedback_agent_self_termination]]).
 
 **IMPORTANT: Always use team name `"js2wasm"`** — this is the single permanent team. Never create ad-hoc team names (e.g. `"wasi-conflicts"`, `"s52-wave2"`). One team, one task queue, always.
 
@@ -178,8 +183,8 @@ Spawn dedicated agents when:
 | Planning agents done, user not talking to them | Write context summary → terminate |
 | Planning agents done, user IS talking to them | Keep alive until user signals done |
 | Dev between tasks | Keep alive — wait for CI, self-merge if green, then claim next task from TaskList |
-| Dev sending idle_notification pings | **Do NOT shut down.** Respond: ask if they have a PR to check on, or direct them to claim the next task from TaskList. |
-| Dev idle, no tasks available | Keep alive if more tasks expected soon. Terminate only if sprint is explicitly wrapping up. |
+| Dev sending idle_notification pings | If TaskList has unowned work: redirect them to it. Otherwise: send `shutdown_request` — that's the correct lifecycle exit, not a punishment. |
+| Dev idle, no tasks available | Send `shutdown_request` immediately. Idle teammates burn pane slots and block new spawns. Re-spawn when work appears. |
 | End of sprint | All agents write context summaries → terminate → run `/sprint-wrap-up` |
 
 ### Roles and interactions
@@ -245,7 +250,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 ### Agent work dispatch
 - **Tech lead populates TaskList** — devs self-serve from it. No per-task dispatch messages needed.
 - **Dev loop**: claim task from TaskList → implement → push PR → wait for CI → self-merge if green → mark completed → claim next task.
-- **Dev self-merge**: when `.claude/ci-status/pr-<N>.json` has matching SHA, `net_per_test > 0`, ratio <10%, no bucket >50 — run `gh pr merge <N> --admin --merge`. Escalate to tech lead only when criteria fail. See `.claude/skills/dev-self-merge.md`.
+- **Dev self-merge**: when `.claude/ci-status/pr-<N>.json` has matching SHA, `net_per_test > 0`, ratio <10%, no bucket >50 — run `gh pr merge <N> --merge --auto` (queues for the merge queue; queue re-runs required checks on the merged state and lands the PR). Escalate to tech lead only when criteria fail. `--admin --merge` is reserved for workflow-only / hotfix bypass. See `.claude/skills/dev-self-merge.md`.
 - **Tech lead reading ci-status files**: always verify `head_sha` matches current PR HEAD (`gh pr view N --json headRefOid`) before interpreting `net_per_test` or regression counts. A SHA mismatch means CI ran on a stale commit — the numbers are misleading. Also check `baseline_staleness_commits` > 0 as a secondary signal.
 - **Devs contact tech lead for**: TaskList empty, blocked >30 min, CI ESCALATE result (immediately — do not wait to be asked), net < 0 result.
 - Dev agents do NOT run full test262 locally — scoped checks only, CI validates conformance.
@@ -269,7 +274,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 2. **Dev runs scoped local checks** — issue-targeted compile/run checks for confidence
 3. **Dev pushes the branch to origin and opens a PR against `main`**
 4. **Dev waits for CI** — monitors `.claude/ci-status/pr-<N>.json` until it appears with a SHA matching HEAD (idle wait, no token burn)
-5. **Dev self-merges** — if `net_per_test > 0`, SHA matches, ratio <10%, no bucket >50: `gh pr merge <N> --admin --merge`
+5. **Dev self-merges** — if `net_per_test > 0`, SHA matches, ratio <10%, no bucket >50: `gh pr merge <N> --merge --auto` (enqueues; queue does the final verification)
 6. **If regressions**: dev fixes on branch, pushes again, loops back to step 4
 7. **Escalate to tech lead** only when: regressions >10, single bucket >50, or judgment call needed
 8. **After merge**: dev marks task `completed`, claims next task

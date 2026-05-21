@@ -12,6 +12,7 @@ goal: async-model
 renumbered_from: 855
 depends_on: [944]
 test262_fail: 210
+note: "Verified 2026-05-21: collectPromiseImports at codegen/index.ts:4614 (matches WI1); runtime.ts Promise handlers at L3946 (drifted from ~991). All other line refs (expressions.ts, statements.ts, index.ts) should be re-grepped before dispatch."
 ---
 # #1116 -- Promise resolution and async error handling (210 tests)
 
@@ -95,7 +96,58 @@ These are complex async protocol issues. Recommended approach:
 191/652 Promise test262 tests pass (29.3%) — up from near 0% baseline for key patterns.
 **Reverted in `f572d629` due to 1,451 regressions.** See #944 for bisection analysis.
 
-## Implementation Plan (v2)
+## Implementation Plan — Dev-Ready Summary (task #88, 2026-05-21)
+
+**Read this first.** The joint cluster strategy is at
+`plan/issues/sprints/53/async-cluster-architect-spec.md` §1.4 + §3 Phase 1B
+— but a dev only needs this issue file. The deep WI1-WI8 plan lives below;
+this section crystallises what is **still actionable** today.
+
+### Status snapshot (verified 2026-05-21)
+
+| WI | Description | Status | Action |
+|----|-------------|--------|--------|
+| WI1 | `collectPromiseImports` detects allSettled/any/finally/then2/new Promise | **LANDED** at `src/codegen/index.ts:4614` | verify no method name missing |
+| WI2 | Static-method dispatch (allSettled/any) | **partial** at `src/codegen/expressions/calls.ts:compileCallExpression` (line ~965) | confirm both names in the existing all/race/resolve/reject block |
+| WI3 | `.then`/`.catch`/`.finally` instance dispatch with receiver type guard | **partial** at `src/codegen/expressions/calls.ts:3807-3809` | **CRITICAL: verify the v2 receiver type guard is present.** Without it the v1 regression cascade returns. Pattern in §"WI3" below — guard rejects routing through `Promise_then` unless `recvSym === "Promise"` or apparent type's symbol is `Promise`. |
+| WI4 | `new Promise(executor)` | **import LANDED** (`index.ts:4719-4721`); emit-site to verify in `expressions.ts:compileNewExpression` | confirm executor arg passes through |
+| WI5 | `compileVariableStatement` + narrow `isPromiseHostCall` (statics + `new` only — NOT instance methods) | **LANDED** at `src/codegen/statements/variables.ts:117` / `:141` | leave alone — extending the predicate is the v1 trap |
+| WI6 | Async-void → `Promise.resolve(undefined)` wrap | **TODO** | implement at `compileExpressionBody` ~739 and `compileCallExpression` `isEffectivelyVoidReturn` block (see WI6 below) |
+| WI7 | Mark nested async fns in `ctx.asyncFunctions` | **TODO** | add `isAsync` modifier check in `compileNestedFunctionDeclaration` (statements family); see WI7 below |
+| WI8 | Runtime `Promise_*` handlers (allSettled/any/new/then2/finally) | **LANDED** at `src/runtime.ts:3946-3972` | verify `Promise_then2` signature `(p, cb1, cb2) → externref` |
+
+### Remaining work (do in this order)
+
+1. **Audit WI3 guard.** If absent, add `recvSym === "Promise" || apparentSym === "Promise"` check BEFORE the existing `Promise_then`/`Promise_catch`/`Promise_finally`/`Promise_then2` routing at `calls.ts:3807`. Without this guard, `.then()` calls on compiled async function results (TS type `Promise<T>`, Wasm type `T`) route through the Promise host import and trap at runtime. **This is the single most regression-prone change in the cluster.** Reproduce v1's failure mode 1 in a unit test before changing anything: `async function f() { return 1; } f().then(v => v)` should NOT route through `Promise_then` because the Wasm-level receiver isn't externref.
+
+2. **WI6 implementation** — wrap async-void calls in `Promise.resolve(undefined)` when the consumer expects externref. Code is in §"WI6" below.
+
+3. **WI7 implementation** — register nested async functions so WI6's `isAsyncCallExpression`/`asyncFunctions.has(name)` detection covers them. Code in §"WI7" below.
+
+4. **Re-baseline** — run `tests/equivalence.test.ts` + targeted test262 buckets `built-ins/Promise/all`, `built-ins/Promise/race`, `built-ins/Promise/allSettled`, `built-ins/Promise/any`, `built-ins/Promise/resolve`, `built-ins/Promise/reject`. Original baseline was 210 fails; expect most landed-WIs already moved the needle. Document current pass count in the PR before claiming "remaining work scope".
+
+### Critical rules (joint spec §6.5, non-negotiable)
+
+- **Never override variable types at hoisting / `collectDeclarations` / `walkStmtForLetConst`.** Only at `compileVariableStatement` (WI5's narrow predicate). v1 broke 828 tests by cascading types through generators and async generators.
+- **Never include instance methods (`.then`/`.catch`/`.finally`) in `isPromiseHostCall`.** Only `Promise.resolve/reject/all/race/allSettled/any` and `new Promise()` are guaranteed host Promises. Instance methods on compiled async return values would silently widen the variable to externref and break the next 277 tests.
+- **The WI3 receiver guard is the prevention against v1's 666-test regression.** Land any WI3 change behind a unit test that asserts compiled async return + `.then()` does NOT call `Promise_then`.
+
+### Pre-merge checks
+
+- Equivalence tests pass (no regressions).
+- `tests/issue-1116.test.ts` covers the 5 representative cases listed in the §"Test cases (5 representative)" section near the bottom of this file.
+- Test262 regression ratio < 10%, no single bucket > 50 (per `dev-self-merge` skill).
+- If touching `calls.ts:3807` (WI3 guard region), manually verify the four host-Promise patterns AND a compiled-async `.then()` pattern: the first four should call `Promise_then`/`Promise_then2`, the last must not.
+
+### Coordination
+
+- **#820c overlap**: edits the same file (`calls.ts`) but a different region (yield*/IteratorStep ~line 4293). No textual overlap with the 3807 block. Land in either order, rebase second.
+- **#1042 dependency**: Phase 2A (#1042) introduces `async-cps.ts` and eventually changes async function bodies to return real Promises. After #1042 ships, the WI3 receiver guard will start matching compiled async returns too — at that point WI3's guard logic can be simplified (TS type `Promise<T>` becomes a reliable signal). Do NOT pre-emptively loosen the guard.
+- **#1151 Gap A1** broadens `isAsyncCallExpression` independently; no conflict with #1116's edits.
+
+---
+
+## Implementation Plan (v2) — detailed reference
 
 ### Why v1 failed — root cause analysis
 
@@ -491,7 +543,8 @@ if (isAsync) {
 
 #### WI8: Runtime _vecToArray for Promise combinators (runtime.ts)
 
-**File: `src/runtime.ts`** — line ~991
+**File: `src/runtime.ts`** — line ~3896 (verified 2026-05-21 — drifted from
+original ~991; `_vecToArray` at 3896, `Promise_all` handler at 3946)
 
 Already exists in current runtime. After the revert, re-add or verify the `_vecToArray` helper and the `Promise_allSettled`, `Promise_any`, `Promise_finally`, `Promise_then2`, `Promise_new` handlers.
 
@@ -588,3 +641,72 @@ different type (f64, ref T, etc.). A senior engineer should:
 3. **Thenable coercion** → `Promise.resolve(thenable)` where `thenable` has a `.then` method. Handled by the JS runtime's `Promise.resolve()` — no compiler change needed.
 4. **Recursive Promise resolution** → `Promise.resolve(Promise.resolve(42))`. Handled by JS runtime.
 5. **Compiled async function `.then()` chaining** → Falls through to general dispatch (may fail). Out of scope for this issue — requires architectural changes to make compiled async functions return real Promises.
+
+---
+
+## Status update (2026-05-21 — arch-async, task #79)
+
+### Verified current line numbers and landed-WI inventory
+
+Code-tree reorganised since v2 plan was authored. Verified locations:
+
+- **WI1** `collectPromiseImports` — **`src/codegen/index.ts:4614`** (was ~7879). Already detects `allSettled` / `any` / `finally` / `then2` / `new Promise`. **LANDED.**
+- **WI2** static-method dispatch — `src/codegen/expressions/calls.ts:compileCallExpression` (line 965). Add `allSettled`/`any` next to existing `all`/`race`/`resolve`/`reject` block. Partially landed (allSettled/any imports exist in runtime).
+- **WI3** instance-method dispatch with receiver guard — **`src/codegen/expressions/calls.ts:3807-3809`** (the `Promise_then2` branch already exists). The receiver type guard required by v2 must precede this block. **Partially landed** — verify guard is present.
+- **WI4** `compileNewExpression` `new Promise(executor)` — `index.ts:4719-4721` registers `Promise_new` import. Expression compiler emit-site: `src/codegen/expressions.ts:compileNewExpression`. **Import LANDED.**
+- **WI5** `compileVariableStatement` + `isPromiseHostCall` — **`src/codegen/statements/variables.ts:141` / `:117`**. v2's narrow predicate (statics + `new Promise` only, no instance methods) is in place. **LANDED.**
+- **WI6** async-void → `Promise.resolve(undefined)` wrap — `compileExpressionBody` line ~739 / `compileCallExpression` `isEffectivelyVoidReturn` block. Status uncertain; verify before re-implementing.
+- **WI7** nested async fn detection — `compileNestedFunctionDeclaration` (in `statements.ts` family). Status uncertain.
+- **WI8** runtime `Promise_*` handlers — **`src/runtime.ts:3956,3961,3968,3970,3972`**. **LANDED** (allSettled, any, new, then2, finally).
+
+### Conflict notes — #820c overlap
+
+#820c (async-gen object-method yield*, ~39 fails) is in-progress and edits:
+- `src/codegen/expressions/calls.ts` — yield*/IteratorStep lowering (~line 4293).
+  **No overlap** with #1116's `.then`/`.catch`/`.finally` dispatch block at 3807.
+  Both editable in parallel; trivial rebase if both target the same file.
+- `src/codegen/closures.ts` — async-gen trampoline. **No overlap** with #1116 (which
+  does not touch closures.ts).
+- `src/runtime.ts` — #820c adds `__yieldstar_async_*`. **No overlap** with #1116's
+  `Promise_*` handler block (different sections).
+
+**Recommended**: Run #820c and remaining-#1116-WIs in parallel; rebase whichever
+lands second. Land order with #1042/#1151 — see #1042 status update.
+
+### FAIL estimate (refreshed)
+
+- Original v1 baseline: **210 tests** in `promise_error` category.
+- v1 implementation (commit `bae201ef`) reached 191/652 Promise tests passing
+  but caused **−1,451 net** regressions; reverted.
+- v2 expected pass after full implementation: **≥100 of 210** (acceptance
+  criterion). Realistic mid-point: ~120-140 with WI1-WI4 + WI8 alone (already
+  partially landed); WI5+WI6+WI7 unlock another ~40-60.
+- **Current pass delta vs baseline**: re-measure on current main (much of v2
+  has landed). Likely already at +80 to +120 vs the 210 baseline. **Re-baseline
+  before declaring remaining work scope.**
+
+### Test cases (5 representative — for `tests/issue-1116.test.ts` if not present)
+
+1. **Promise.allSettled mixed** — `Promise.allSettled([Promise.resolve(1), Promise.reject(2)]).then(r => expect(r).toEqual([{status:"fulfilled",value:1},{status:"rejected",reason:2}]))`
+2. **Promise.any first-fulfilled** — `Promise.any([Promise.reject(1), Promise.resolve(2)]).then(v => expect(v).toBe(2))`
+3. **new Promise(executor) resolve** — `new Promise(res => res(42)).then(v => expect(v).toBe(42))`
+4. **.then(cb1, cb2) two-callback rejection** — `Promise.reject("x").then(v => 0, e => expect(e).toBe("x"))`
+5. **.finally cleanup** — `let ran = false; Promise.resolve(7).finally(() => { ran = true; }).then(v => { expect(v).toBe(7); expect(ran).toBe(true); })`
+
+Plus a **regression watch** entry: a generator function returning `Promise<T>` from
+nested calls must not have its variable type silently promoted to externref via
+hoisting (the v1 cascade root cause). Re-run `tests/equivalence.test.ts` after
+each WI lands.
+
+### Remaining sequencing
+
+| WI | Status | Notes |
+|----|--------|-------|
+| WI1 | LANDED | verify all method names in detect-list |
+| WI2 | partial | confirm allSettled/any dispatch in `calls.ts:compileCallExpression` |
+| WI3 | partial | **verify receiver type guard is in place** before instance-method routing — this is the v1-regression-prevention rule |
+| WI4 | partial | verify `compileNewExpression` emits the call when `Promise_new` import is present |
+| WI5 | LANDED | predicate matches v2's narrow definition |
+| WI6 | TODO | implement async-void wrap when caller expects externref |
+| WI7 | TODO | mark nested async fns in `ctx.asyncFunctions` |
+| WI8 | LANDED | verify `Promise_then2` handler signature in runtime |

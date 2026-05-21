@@ -49,7 +49,7 @@ if (/_FIXTURE\.js/.test(source)) {
 ```
 
 ### 2. No codegen for `import()` call expressions
-The compiler recognizes `import.meta` (`src/codegen/expressions.ts:828`) and static `import` declarations (`src/codegen/declarations.ts:203`), but `import()` as a call expression (`ts.SyntaxKind.CallExpression` with `expression.kind === ts.SyntaxKind.ImportKeyword`) has no codegen handler. The `src/compiler/validation.ts` validates several error cases for `import()` (new, assignment target, spread) but never compiles a valid `import()` call.
+The compiler recognizes `import.meta` (`src/codegen/expressions.ts:1011`, verified 2026-05-21 — drifted from L828) and static `import` declarations (`src/codegen/declarations.ts:203`), but `import()` as a call expression (`ts.SyntaxKind.CallExpression` with `expression.kind === ts.SyntaxKind.ImportKeyword`) has no codegen handler. The `src/compiler/validation.ts` validates several error cases for `import()` (new, assignment target, spread) but never compiles a valid `import()` call.
 
 ### 3. No runtime module loader
 `import()` returns a `Promise<ModuleNamespace>`. This requires:
@@ -88,3 +88,70 @@ Key work items:
 2. Runtime: `__dynamic_import` host handler with module registry (~100 LOC)
 3. Test262 runner: pre-compile fixtures, register in module map, remove skip filter (~150 LOC)
 4. Tests: verify the 429 skipped tests start passing (expect ~300+ given most are straightforward module loads)
+
+## Implementation Plan (added 2026-05-21)
+
+### Root cause recap
+Codegen for `import(specifier)` is already present at `src/codegen/expressions/calls.ts:1106-1148` — it lazily imports `__dynamic_import: (externref) -> externref` and emits the call. What is missing:
+1. The test262 runner skip filter at `tests/test262-runner.ts:179-187` rejects fixtures before compilation.
+2. There is no host implementation of `__dynamic_import` in the runtime bridge / harness.
+3. There is no module registry: the host has no way to map `"./_FIXTURE.js"` → a previously-compiled module's namespace object.
+4. Static imports use `compileMulti`, but its output never exposes individual module namespaces in a form the host can return as a Promise.
+
+### Entry points
+- **Codegen** (already complete, validate only): `src/codegen/expressions/calls.ts:1106` — `if (expr.expression.kind === ts.SyntaxKind.ImportKeyword)` branch
+- **Test262 runner skip filter**: `tests/test262-runner.ts:179-187` (delete `hasDynamicFixture` skip)
+- **Test262 runner fixture pre-compile**: `tests/test262-runner.ts:312` (`_FIXTURE.js` detection — extend to compile-and-register)
+- **Host bridge** (new): wherever runtime imports are wired for the runner (search `__import_meta_url` / `Promise.resolve` in test262 harness boot)
+
+### Data structures
+- New: `moduleRegistry: Map<string, ExternRef>` — keyed by resolved specifier (absolute path), value is the module namespace object (a JS object whose keys are the module's exported bindings)
+- Per-test seed: when the runner discovers `_FIXTURE.js` references, it walks them statically (regex over `import\(['"]([^'"]+)['"]\)`), compiles each fixture with `compileMulti`, evaluates it to populate a namespace object, then registers it under its module-relative path
+
+### Algorithm (host-mode pre-link strategy)
+1. **Pre-scan**: for each test source, collect all string-literal `import(...)` specifiers. Skip tests with non-literal specifiers in initial PR (fall back to skip with new reason `"ES2020: dynamic import() with computed specifier"`).
+2. **Resolve**: relative paths resolved against the test's directory. Reject specifiers escaping the test262 root (path-traversal guard).
+3. **Compile**: each fixture compiled with the same `compileMulti` machinery as static imports; collect its export bindings into a JS namespace object `{ [exportName]: binding, [Symbol.toStringTag]: "Module" }`.
+4. **Register**: insert `(resolvedAbsPath, namespaceObject)` into `moduleRegistry` for the duration of the run.
+5. **Bridge `__dynamic_import`**: host import receives a specifier externref string, looks up `moduleRegistry.get(resolveSpec(callerUrl, spec))`, and returns `Promise.resolve(namespace)`. On miss, return `Promise.reject(new TypeError(...))`.
+6. **Drop skip filter** at `tests/test262-runner.ts:185` once all fixtures pre-compile successfully.
+
+### Wasm output
+No new codegen — existing `__dynamic_import` call sequence at `calls.ts:1106-1148` is correct:
+```wasm
+;; import("./mod.js")
+local.get $tmp_specifier  ;; externref string
+call $__dynamic_import     ;; (externref) -> externref (Promise)
+;; result: externref Promise, consumed by `await` lowering
+```
+
+### Edge cases
+- **Specifier is non-string** (e.g. number, object) → spec: ToString(specifier) before import. Pre-string the argument via existing `coerceType(..., { kind: "externref" })` — already in place at `calls.ts:1126`.
+- **Specifier resolves to a missing fixture** → host returns `Promise.reject(new TypeError("Module not found: " + spec))` to match HostLoadImportedModule spec error path.
+- **import.meta.url inside the dynamically-imported module** → namespace object must carry the resolved URL; pass through `__import_meta_url` host import that already exists.
+- **Second argument (options/attributes)** — current codegen evaluates and drops (`calls.ts:1137-1144`). That matches the v1 spec where assertions are ignored. Test262 has a few tests asserting the second arg is evaluated; this already works.
+- **Re-entrant import** (`import(spec)` inside an already-importing module): use the same registry; the second lookup hits the cached namespace.
+- **Symbol.toStringTag** on the namespace must equal `"Module"` — must set explicitly on the JS object.
+- **null prototype** — namespace objects have null prototype per spec.
+
+### Test plan
+- Remove the skip filter from `tests/test262-runner.ts:179-187`
+- Targeted local runs:
+  - `test/language/expressions/dynamic-import/usage/import-call-expression-string-target.js` — simplest positive
+  - `test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-eval-rqstd-abrupt-typeerror.js` — error propagation
+  - `test/language/expressions/dynamic-import/namespace/await-ns-Symbol-toStringTag.js` — namespace shape
+  - `test/language/expressions/dynamic-import/for-await-resolution-and-error-agen-yield.js` — interaction with async iterators
+- Expected: 429 → at least 350 pass; remaining tail is computed-specifier or live-binding edge cases that need follow-up
+
+### Dependencies
+- **Hard**: #1042 async-await CPS lowering (needed for `await import(...)` to unwrap the Promise) — already specced.
+- **Soft**: clean handling of `import.meta` in fixtures depends on the existing `__import_meta_url` mechanism (already implemented for static imports per `codegen/index.ts:4025`).
+
+### Out of scope
+- Computed specifiers (`import(\`./mod-\${n}.js\`)`) — defer to follow-up issue; first PR skips and reports `"dynamic import() with computed specifier"`.
+- Standalone (no JS host) mode — needs filesystem-backed loader; defer to a follow-up tracked as a separate issue.
+
+### Files touched
+- `tests/test262-runner.ts` (skip filter removal + fixture pre-compile pass)
+- `tests/test262-host.ts` or wherever the runner's host imports live (`__dynamic_import` handler + module registry)
+- (validation only) `src/codegen/expressions/calls.ts:1106-1148`
