@@ -1,11 +1,10 @@
 {
   "pr": 432,
-  "conclusion": null,
-  "pending": true,
+  "conclusion": "cancelled",
   "head_branch": "issue-1524-strict-no-host-imports",
-  "head_sha": "59e7c38a4069081cd43ec9262669dd8535b4f643",
-  "run_url": "https://github.com/loopdive/js2wasm/pull/432",
-  "timestamp": "2026-05-20T21:21:50Z",
+  "head_sha": "4a39c8cc6444f6f8c762832f35d8196ccbb3d2d2",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26197141398",
+  "timestamp": "2026-05-21T05:53:21Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -17,7 +16,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": null,
+  "baseline_sha": "null",
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }

@@ -8,19 +8,23 @@
 // `main`. Both rungs below pass. This narrows #1560 significantly:
 // the CJS re-export plumbing IS functional for local-file graphs.
 //
-// The remaining bug surface is bare-package + package.json resolution:
-//   `import { Linter } from "eslint"` resolves to the `.d.ts` (not the
-//   compiled class) and the consumer sees `env.__new_Linter` because
-//   the resolver never picked the implementation graph.
-//
-// That makes #1560's actionable surface **downstream of #1559**: once
-// #1559 redirects bare-package imports to the impl entry, this test's
-// pattern should naturally extend to the bare-package case. If after
-// #1559 lands the ESLint case still degrades to extern, #1560 has a
-// real residual bug; otherwise #1560 can close as "covered by #1559".
+// FINDING (2026-05-21, post-#1559 smoke): with the #1559 resolver fix
+// applied (PR #457 — bare-package imports prefer the `.js` impl over
+// `.d.ts`), compiling `import { Linter } from "eslint"` produces a
+// binary whose `r.imports` contains NO `__new_Linter` extern. The
+// `module.exports = { Linter }` re-export chain in ESLint's
+// `lib/api.js → lib/linter/index.js → lib/linter/linter.js` survives
+// intact once the resolver picks the impl graph. This issue is
+// therefore RESOLVED by #1559 — no separate code change required.
 //
 // This file remains in the suite as a positive regression guard:
-// the local-file CJS class re-export pattern must continue to work.
+//   - Rungs 1 + 2: two-hop class re-export (the original reduced repro).
+//   - Rung 3: three-hop class re-export — mirrors ESLint's depth
+//     (`api.js → linter/index.js → linter/linter.js`) without
+//     depending on bare-package resolution. Pins that the local-file
+//     CJS class re-export plumbing handles arbitrary chain depth.
+// If any future change regresses the class-binding propagation through
+// `module.exports = { Class }` hops, these tests catch it directly.
 
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -127,5 +131,79 @@ describe("#1560 — CJS named class re-export links to compiled class", () => {
     const exports = inst.instance.exports as { test?: () => number };
     expect(typeof exports.test).toBe("function");
     expect(exports.test!()).toBe(42);
+  });
+
+  /**
+   * Rung 3 — three-hop re-export chain
+   * (`leaf.js` → `mid1.js` → `mid2.js` → `entry.ts`). Mirrors
+   * ESLint's chain depth (`lib/api.js` → `lib/linter/index.js` →
+   * `lib/linter/linter.js`) without going through bare-package
+   * resolution. The class identity must survive every
+   * `const { Foo } = require(...)` ; `module.exports = { Foo }`
+   * round-trip, end-to-end. This pin guards against a regression
+   * where multi-hop re-export accidentally drops the class binding.
+   */
+  it("three-hop class re-export — `new Foo().hello()` returns 42", async () => {
+    const dir = resolve(__dirname, "../.tmp/issue-1560-3hop");
+    const pkg = join(dir, "pkg");
+    mkdirSync(pkg, { recursive: true });
+
+    writeFileSync(
+      join(pkg, "leaf.js"),
+      `
+class Foo {
+  constructor() { this.v = 42; }
+  hello() { return this.v; }
+}
+module.exports = { Foo };
+`,
+    );
+    writeFileSync(
+      join(pkg, "mid1.js"),
+      `
+const { Foo } = require("./leaf");
+module.exports = { Foo };
+`,
+    );
+    writeFileSync(
+      join(pkg, "mid2.js"),
+      `
+const { Foo } = require("./mid1");
+module.exports = { Foo };
+`,
+    );
+    const entry3 = join(dir, "entry.ts");
+    writeFileSync(
+      entry3,
+      `
+import { Foo } from "./pkg/mid2";
+export function test(): number {
+  const f = new Foo();
+  return f.hello();
+}
+`,
+    );
+
+    try {
+      const r = compileProject(entry3, { allowJs: true });
+      expect(r.success).toBe(true);
+      if (!r.success) return;
+
+      const importEntries = Object.keys(r.imports as Record<string, unknown>);
+      const externNew = importEntries.filter((k) => /__new_Foo$/.test(k));
+      expect(externNew).toEqual([]);
+
+      const imps = buildImports(r.imports as never, undefined, r.stringPool);
+      const inst = await WebAssembly.instantiate(r.binary, imps as never);
+      const exports = inst.instance.exports as { test?: () => number };
+      expect(typeof exports.test).toBe("function");
+      expect(exports.test!()).toBe(42);
+    } finally {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
   });
 });

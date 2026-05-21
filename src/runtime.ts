@@ -1251,6 +1251,21 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
 const _staticMethodNames = new WeakMap<object, string[]>();
 
 /**
+ * (#1455) Registry of synthetic constructors for user classes that extend
+ * host built-ins (`class Sub extends Map / Float32Array / WeakRef / ...`).
+ * Populated lazily by the `__set_subclass_proto` host import: on first call
+ * for a given `subName`, a `class Sub extends Parent {}` is created and stored
+ * here. The map is keyed by the user-visible class name so `__instanceof`
+ * can resolve `instance instanceof Sub` without `Sub` being on globalThis.
+ *
+ * The synthetic class is real — its prototype inherits from Parent.prototype,
+ * which means setting `instance.[[Prototype]]` to `Sub.prototype` preserves
+ * the existing `instance instanceof Parent` answer while making
+ * `instance instanceof Sub` true.
+ */
+const _subclassCtors = new Map<string, Function[]>();
+
+/**
  * (#1395) Cache of static-method-name → bridge JS function for class objects.
  * Mirrors `_prototypeMethodBridges` so `verifyProperty` and
  * `assert.sameValue(C.m, C.m)` both see the same Function reference across
@@ -1871,6 +1886,7 @@ function resolveImport(
           RegExp,
           ArrayBuffer,
           DataView,
+          Date,
           // (#1455) TypedArray constructors for subclass-builtins host
           // construction (`class Sub extends Float32Array {}` etc.).
           Int8Array,
@@ -1893,6 +1909,8 @@ function resolveImport(
           ReferenceError,
           AggregateError,
           Test262Error,
+          // (#1455) SharedArrayBuffer for `class Sub extends SharedArrayBuffer {}`
+          ...(typeof SharedArrayBuffer !== "undefined" ? { SharedArrayBuffer } : {}),
           // TC39 Explicit Resource Management (stage 3 / Node.js 22+)
           ...(typeof DisposableStack !== "undefined" ? { DisposableStack } : {}),
           ...(typeof AsyncDisposableStack !== "undefined" ? { AsyncDisposableStack } : {}),
@@ -4510,6 +4528,19 @@ assert._isSameValue = isSameValue;
       if (name === "__instanceof")
         return (v: any, ctorName: string) => {
           try {
+            // (#1455) User subclasses of built-ins (e.g. `class Sub extends Map {}`)
+            // are not on globalThis. Check the subclass registry first — it
+            // returns a synthetic ctor `Sub` registered by `__set_subclass_proto`.
+            // For a given v, walk its proto chain looking for any registered
+            // sub-ctor whose prototype matches — this avoids ambiguity when
+            // the same `subName` is used across multiple parents (test fixtures).
+            const bucket = _subclassCtors.get(ctorName);
+            if (bucket !== undefined && bucket.length > 0) {
+              for (const subCtor of bucket) {
+                if (v instanceof subCtor) return 1;
+              }
+              // Fall through: maybe globalThis has the same name (unlikely).
+            }
             const ctor = (globalThis as any)[ctorName];
             if (typeof ctor === "function" && v instanceof ctor) return 1;
           } catch {
@@ -4542,6 +4573,65 @@ assert._isSameValue = isSameValue;
           if (!_userClassParents.has(className)) {
             _userClassParents.set(className, parentName == null ? null : parentName);
           }
+        };
+      // (#1455) Subclasses of host builtins: after `__new_<Parent>(args)`
+      // returns the bare host instance whose [[Prototype]] is Parent.prototype,
+      // we set the instance's prototype to a synthetic `Sub.prototype` that
+      // inherits from Parent.prototype. The synthetic ctor is registered on
+      // first call (idempotent), keyed by `name`, and reused thereafter so
+      // `instance instanceof Sub` returns true (matched by `__instanceof`).
+      if (name === "__set_subclass_proto")
+        return (instance: any, subName: string, parentName: string) => {
+          if (instance == null || typeof subName !== "string" || typeof parentName !== "string") {
+            return instance;
+          }
+          // Look up the parent constructor — prefer host deps then globalThis.
+          const Parent: any = (deps && (deps as any)[parentName]) ?? (globalThis as any)[parentName];
+          if (typeof Parent !== "function") {
+            // Cannot synthesize — return instance unchanged.
+            return instance;
+          }
+          // Find a cached synthetic ctor whose parent matches. The cache is a
+          // small array per `subName` so multiple parents (e.g. across test
+          // fixtures that reuse the same class name) don't collide.
+          let bucket = _subclassCtors.get(subName);
+          let Sub: any;
+          if (bucket !== undefined) {
+            for (const candidate of bucket) {
+              if (Object.getPrototypeOf((candidate as any).prototype) === Parent.prototype) {
+                Sub = candidate;
+                break;
+              }
+            }
+          }
+          if (Sub === undefined) {
+            try {
+              // Synthesize a real JS subclass so `instance instanceof Sub`
+              // works via the engine's standard prototype-walk semantics.
+              Sub = class extends Parent {};
+              try {
+                Object.defineProperty(Sub, "name", { value: subName, configurable: true });
+              } catch {
+                /* ignore */
+              }
+              if (bucket === undefined) {
+                bucket = [];
+                _subclassCtors.set(subName, bucket);
+              }
+              bucket.push(Sub);
+            } catch {
+              return instance;
+            }
+          }
+          try {
+            const proto = (Sub as any).prototype;
+            if (proto != null && Object.getPrototypeOf(instance) !== proto) {
+              Object.setPrototypeOf(instance, proto);
+            }
+          } catch {
+            /* Object.setPrototypeOf may be unsupported on some exotic instances; ignore */
+          }
+          return instance;
         };
       // parseInt / parseFloat host imports
       if (name === "parseInt")
@@ -4673,7 +4763,22 @@ assert._isSameValue = isSameValue;
     case "extern_get":
       return (obj: any, key: any) => {
         const val = _safeGet(obj, key);
-        if (val !== undefined) return val;
+        if (val !== undefined) {
+          // (#779c) Sandbox-aware constructor identity. When a
+          // `globalSandbox` is supplied (test262 per-test realm isolation),
+          // the test's `Array` identifier resolves via `declared_global` to
+          // `sandbox.Array`, but `obj.constructor` for host JS arrays
+          // returns `globalThis.Array`. Substitute the sandbox version so
+          // `arr.constructor === Array` holds. No-op without a sandbox.
+          if (globalSandbox && key === "constructor" && typeof val === "function") {
+            const fname = (val as { name?: string }).name;
+            if (fname && val === (globalThis as any)[fname]) {
+              const sb = globalSandbox[fname];
+              if (sb !== undefined) return sb;
+            }
+          }
+          return val;
+        }
         if (typeof key === "string") {
           const exports = callbackState?.getExports();
           const getter = exports?.[`__sget_${key}`];
@@ -4693,7 +4798,11 @@ assert._isSameValue = isSameValue;
           if (typeof vecLen === "function") {
             try {
               const len = vecLen(obj);
-              if (typeof len === "number") return Array;
+              if (typeof len === "number") {
+                // (#779c) Return sandbox.Array when test262 sandbox is active,
+                // so `vec.constructor === Array` (sandbox.Array) holds.
+                return globalSandbox?.Array ?? Array;
+              }
             } catch {
               // Not a vec wrapper — fall through
             }
