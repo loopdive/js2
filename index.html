@@ -3091,27 +3091,84 @@ match (value) {
         </div>
 
         <div class="host-bench-group" id="wasmtime-bench-group" style="display: none">
-          <h3 class="host-bench-title">WebAssembly host (Wasmtime, JIT disabled)</h3>
+          <h3 class="host-bench-title">Four execution models on the same JS programs</h3>
           <p class="host-bench-subcopy">
-            This test case approximates a multi-tenant Wasm native serverless environment. 5 small
+            Per-request cost of running the same
             <a href="./benchmarks/competitive/programs/">JavaScript programs</a>
-            are run as WebAssembly in three different setups: 1. compiled ahead of time with JS², 2. interpreted by a
-            separate dynamically linked interpreter module, 3. interpreted by a bundled JS engine (preinitialized +
-            partial AOT evaluation). As a baseline we show the same code running in its native environment inside a V8
-            engine in Node.js with JIT enabled, spawning a fresh runtime process.
+            across four execution models on edge:
+            <strong>AOT</strong>
+            (Cranelift-compiled
+            <code>.cwasm</code>
+            , no runtime codegen),
+            <strong>JS in V8</strong>
+            (Ignition → Liftoff → TurboFan, all at request time, the implicit 1.0× baseline),
+            <strong>Interpreter</strong>
+            (a per-function tiny module — ~3 kB — delegating to a preloaded QuickJS-style plugin), and
+            <strong>Engine</strong>
+            (a full JS engine bundled inside Wasm with AOT pre-init — ~14 MB per function). Two scenarios per program:
+            fresh instance per request (cold) and reused instance (warm). Interpreter and Engine both run a JS
+            interpreter inside Wasm — the size and per-call cost tradeoff isn't free. One chart per benchmark; each
+            chart shows AOT vs Interpreter vs Engine for both scenarios.
           </p>
           <div class="conformance-diagrams">
             <div
               class="diagram-panel"
               data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+              data-row-filter="fib"
               style="display: none"
             >
               <perf-benchmark-chart
                 src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                benchmark="fib"
                 mode="perf"
-                title="Speed relative to V8 with JIT"
-                baseline-label="V8 with JIT"
-                legend="Speedup relative to V8 with JIT. 2x = twice as fast. 0.57x = 57% the speed. Geometric mean of repeated calls inside one fresh process after module load."
+                title="fib — AOT vs Interpreter vs Engine (cold + warm)"
+                baseline-label="JS in V8"
+                legend="Per-program wall time relative to V8 (1.0× baseline). Cold = fresh instance per request; warm = instance reused. Bars share one neutral colour — compare heights, not hues."
+              ></perf-benchmark-chart>
+            </div>
+            <div
+              class="diagram-panel"
+              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+              data-row-filter="fib-recursive"
+              style="display: none"
+            >
+              <perf-benchmark-chart
+                src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                benchmark="fib-recursive"
+                mode="perf"
+                title="fib-recursive — AOT vs Interpreter vs Engine (cold + warm)"
+                baseline-label="JS in V8"
+                legend="Per-program wall time relative to V8 (1.0× baseline). Cold = fresh instance per request; warm = instance reused."
+              ></perf-benchmark-chart>
+            </div>
+            <div
+              class="diagram-panel"
+              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+              data-row-filter="array-sum"
+              style="display: none"
+            >
+              <perf-benchmark-chart
+                src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                benchmark="array-sum"
+                mode="perf"
+                title="array-sum — AOT vs Interpreter vs Engine (cold + warm)"
+                baseline-label="JS in V8"
+                legend="Per-program wall time relative to V8 (1.0× baseline). Cold = fresh instance per request; warm = instance reused."
+              ></perf-benchmark-chart>
+            </div>
+            <div
+              class="diagram-panel"
+              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+              data-row-filter="string-hash"
+              style="display: none"
+            >
+              <perf-benchmark-chart
+                src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                benchmark="string-hash"
+                mode="perf"
+                title="string-hash — AOT vs Interpreter vs Engine (cold + warm)"
+                baseline-label="JS in V8"
+                legend="Per-program wall time relative to V8 (1.0× baseline). Cold = fresh instance per request; warm = instance reused."
               ></perf-benchmark-chart>
             </div>
             <div

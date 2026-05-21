@@ -15,6 +15,7 @@ benchmarks/results/*.json
 !benchmarks/results/history.json
 !benchmarks/results/diff-test-baseline.json
 !benchmarks/results/wasm-host-wasmtime-hot-runtime.json
+!benchmarks/results/wasm-host-wasmtime-hot-runtime-no-jit.json
 !benchmarks/results/wasm-host-wasmtime-coldstart.json
 !benchmarks/results/wasm-host-wasmtime-module-size.json
 !benchmarks/results/playground-benchmark-sidebar.json
