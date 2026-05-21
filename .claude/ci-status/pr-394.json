@@ -1,11 +1,10 @@
 {
   "pr": 394,
-  "conclusion": null,
-  "pending": true,
+  "conclusion": "cancelled",
   "head_branch": "issue-1494-nodejs-dirname",
-  "head_sha": "9863ab465b9d35b06c87937b0450b68b96fa6726",
-  "run_url": "https://github.com/loopdive/js2wasm/pull/394",
-  "timestamp": "2026-05-20T20:44:31Z",
+  "head_sha": "06693e3505894f82c42abd734f53e8ab82aa51eb",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26197132824",
+  "timestamp": "2026-05-21T04:34:08Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -17,7 +16,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": null,
+  "baseline_sha": "null",
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }

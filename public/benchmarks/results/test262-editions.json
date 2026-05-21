@@ -10,9 +10,9 @@
   },
   {
     "edition": "ES5",
-    "pass": 8672,
-    "fail": 4048,
-    "ce": 364,
+    "pass": 8670,
+    "fail": 4047,
+    "ce": 367,
     "skip": 0,
     "total": 13084,
     "pct": 66
@@ -38,52 +38,52 @@
   {
     "edition": "ES2017",
     "pass": 389,
-    "fail": 229,
-    "ce": 49,
+    "fail": 231,
+    "ce": 47,
     "skip": 0,
     "total": 667,
     "pct": 58
   },
   {
     "edition": "ES2018",
-    "pass": 3083,
-    "fail": 1103,
-    "ce": 65,
+    "pass": 3082,
+    "fail": 1102,
+    "ce": 67,
     "skip": 0,
     "total": 4251,
     "pct": 73
   },
   {
     "edition": "ES2019",
-    "pass": 76,
-    "fail": 58,
-    "ce": 2,
+    "pass": 78,
+    "fail": 57,
+    "ce": 1,
     "skip": 0,
     "total": 136,
-    "pct": 56
+    "pct": 57
   },
   {
     "edition": "ES2020",
-    "pass": 1297,
-    "fail": 488,
-    "ce": 119,
+    "pass": 1295,
+    "fail": 489,
+    "ce": 120,
     "skip": 0,
     "total": 1904,
     "pct": 68
   },
   {
     "edition": "ES2021",
-    "pass": 316,
+    "pass": 313,
     "fail": 121,
-    "ce": 26,
+    "ce": 29,
     "skip": 0,
     "total": 463,
     "pct": 68
   },
   {
     "edition": "ES2022",
-    "pass": 2826,
-    "fail": 1293,
+    "pass": 2825,
+    "fail": 1294,
     "ce": 115,
     "skip": 0,
     "total": 4234,
@@ -91,12 +91,12 @@
   },
   {
     "edition": "ES2023",
-    "pass": 202,
-    "fail": 123,
+    "pass": 203,
+    "fail": 122,
     "ce": 9,
     "skip": 0,
     "total": 334,
-    "pct": 60
+    "pct": 61
   },
   {
     "edition": "ES2024",
@@ -109,27 +109,27 @@
   },
   {
     "edition": "ES2025",
-    "pass": 788,
-    "fail": 467,
-    "ce": 26,
+    "pass": 787,
+    "fail": 466,
+    "ce": 28,
     "skip": 0,
     "total": 1281,
-    "pct": 62
+    "pct": 61
   },
   {
     "edition": "ES2026",
-    "pass": 126,
-    "fail": 219,
-    "ce": 4,
+    "pass": 125,
+    "fail": 218,
+    "ce": 6,
     "skip": 0,
     "total": 349,
     "pct": 36
   },
   {
     "edition": "Proposals",
-    "pass": 1363,
-    "fail": 3336,
-    "ce": 187,
+    "pass": 1362,
+    "fail": 3338,
+    "ce": 186,
     "skip": 96,
     "total": 4982,
     "pct": 27

@@ -1,0 +1,23 @@
+{
+  "pr": 341,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "issue-1095-instr-union",
+  "head_sha": "9e4935260dbbdb648ea9ce3d0b4313d41705081b",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/341",
+  "timestamp": "2026-05-21T00:13:45Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": null,
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

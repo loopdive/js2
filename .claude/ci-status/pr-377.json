@@ -1,11 +1,10 @@
 {
   "pr": 377,
-  "conclusion": null,
-  "pending": true,
+  "conclusion": "cancelled",
   "head_branch": "issue-1451-method-param-dstr",
-  "head_sha": "4fc16fe68eab132833e1b0516abb5d4435e675d8",
-  "run_url": "https://github.com/loopdive/js2wasm/pull/377",
-  "timestamp": "2026-05-20T16:22:12Z",
+  "head_sha": "59289cda85730230866001c8d608b78fcb4d07f5",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26197123973",
+  "timestamp": "2026-05-21T03:55:28Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -17,7 +16,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": null,
+  "baseline_sha": "null",
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }

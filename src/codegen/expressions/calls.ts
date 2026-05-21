@@ -1011,6 +1011,89 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     }
   }
 
+  // `Object(x)` called without `new` — ECMAScript §20.1.1.1 / §7.1.18 ToObject.
+  // Per spec: Object() / Object(null) / Object(undefined) → fresh empty object;
+  // Object(number)  → new Number wrapper (typeof === "object");
+  // Object(string)  → new String wrapper (typeof === "object");
+  // Object(boolean) → new Boolean wrapper (typeof === "object");
+  // Object(object)  → return the argument unchanged.
+  // (#1129) Without this, `Object(42)` previously fell through to the generic
+  // builtin path which produced `ref.null.extern` — `typeof` was correct
+  // ("object" since `typeof null === "object"`) but `.valueOf()` returned 0.
+  if (!expr.questionDotToken && ts.isIdentifier(expr.expression) && expr.expression.text === "Object") {
+    const args = expr.arguments ?? [];
+
+    // Object() / Object(null) / Object(undefined) → fresh empty object via
+    // `__object_create(null)`. Mirrors the `new Object()` path in new-super.ts
+    // so the result is a real object (Boolean(...) === true, etc.).
+    const isNullOrUndefinedArg = (a: ts.Expression): boolean => {
+      if (a.kind === ts.SyntaxKind.NullKeyword) return true;
+      if (ts.isIdentifier(a) && a.text === "undefined") return true;
+      const t = ctx.checker.getTypeAtLocation(a);
+      const f = t.getFlags();
+      // Type-only check — only treat as null/undefined when the static type
+      // is *exactly* null/undefined/void (not unions that include other types).
+      const NULL_UNDEFINED_VOID = ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void;
+      return (f & NULL_UNDEFINED_VOID) !== 0 && (f & ~NULL_UNDEFINED_VOID) === 0;
+    };
+
+    if (args.length === 0 || isNullOrUndefinedArg(args[0]!)) {
+      const createIdx = ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const finalCreateIdx = ctx.funcMap.get("__object_create") ?? createIdx;
+      if (finalCreateIdx !== undefined) {
+        fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "call", funcIdx: finalCreateIdx });
+        return { kind: "externref" };
+      }
+      // Fallback if host import unavailable (standalone) — emit null externref.
+      // typeof null === "object" still satisfies the §20.1.1.1 typeof contract.
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+
+    // Object(primitive) — wrap into the corresponding wrapper object.
+    const argTsType = ctx.checker.getTypeAtLocation(args[0]!);
+
+    if (isNumberType(argTsType)) {
+      compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
+      const newNumIdx = ensureLateImport(ctx, "__new_Number", [{ kind: "f64" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const finalNumIdx = ctx.funcMap.get("__new_Number") ?? newNumIdx;
+      if (finalNumIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalNumIdx });
+        return { kind: "externref" };
+      }
+    } else if (isStringType(argTsType)) {
+      compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+      const newStrIdx = ensureLateImport(ctx, "__new_String", [{ kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const finalStrIdx = ctx.funcMap.get("__new_String") ?? newStrIdx;
+      if (finalStrIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalStrIdx });
+        return { kind: "externref" };
+      }
+    } else if (isBooleanType(argTsType)) {
+      // __new_Boolean takes f64 — coerce bool→f64.
+      compileExpression(ctx, fctx, args[0]!, { kind: "i32" });
+      fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+      const newBoolIdx = ensureLateImport(ctx, "__new_Boolean", [{ kind: "f64" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const finalBoolIdx = ctx.funcMap.get("__new_Boolean") ?? newBoolIdx;
+      if (finalBoolIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalBoolIdx });
+        return { kind: "externref" };
+      }
+    }
+    // Unknown / object / externref / union — per spec, `Object(o)` returns `o`
+    // unchanged for objects. We can't distinguish primitive-boxed-as-externref
+    // from real objects statically, so the best static behavior is identity.
+    // (A future revision could call a `__to_object` host helper for runtime
+    // ToObject of any-typed values; out of scope for this issue.)
+    compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+    return { kind: "externref" };
+  }
+
   // Optional chaining on direct call: fn?.()
   if (expr.questionDotToken && ts.isIdentifier(expr.expression)) {
     return compileOptionalDirectCall(ctx, fctx, expr);

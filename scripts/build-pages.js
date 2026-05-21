@@ -315,7 +315,12 @@ writeJson(join(PLAYGROUND_APP_DATA_DIR, "test262-file-results.json"), test262Dat
 // The canonical source lives in benchmarks/results/ (committed); fall back to
 // public/benchmarks/results/ for any files curated there.
 const TOP_BENCH_RESULTS = join(PAGES_DIST, "benchmarks", "results");
-for (const fileName of ["playground-benchmark-sidebar.json", "loadtime-benchmarks.json", "size-benchmarks.json"]) {
+for (const fileName of [
+  "playground-benchmark-sidebar.json",
+  "playground-benchmark-sidebar-no-jit.json",
+  "loadtime-benchmarks.json",
+  "size-benchmarks.json",
+]) {
   const source = resolvePreferredFileOrNull(join(BENCHMARKS_RESULTS_DIR, fileName), join(PUBLIC_BENCH, fileName));
   if (source) {
     copyFile(source, join(TOP_BENCH_RESULTS, fileName));
