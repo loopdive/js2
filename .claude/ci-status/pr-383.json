@@ -1,0 +1,22 @@
+{
+  "pr": 383,
+  "conclusion": "success",
+  "head_branch": "issue-1454-iterator-close",
+  "head_sha": "322faab62fd874d9774df24872a4715ad7eec23a",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26175474130",
+  "timestamp": "2026-05-20T23:55:05Z",
+  "pass": 28286,
+  "fail": 13603,
+  "compile_error": 1190,
+  "snapshot_delta": 53,
+  "net_per_test": 98,
+  "regressions": 54,
+  "regressions_real": 10,
+  "regressions_wasm_change": 10,
+  "wasm_identical_noise": 0,
+  "compile_timeouts": 44,
+  "improvements": 108,
+  "baseline_sha": "322faab62fd874d9774df24872a4715ad7eec23a",
+  "baseline_staleness_commits": 140,
+  "baseline_stale": true
+}
