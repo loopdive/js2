@@ -1,11 +1,10 @@
 {
   "pr": 351,
-  "conclusion": null,
-  "pending": true,
+  "conclusion": "cancelled",
   "head_branch": "issue-1438-keyed-collections",
-  "head_sha": "4f5d528ed7811d097a6dc7266401ca002daa44ad",
-  "run_url": "https://github.com/loopdive/js2wasm/pull/351",
-  "timestamp": "2026-05-21T07:19:38Z",
+  "head_sha": "006eef3bae6dd3a9d00e23cfb85673bdf557a7ec",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26198681443",
+  "timestamp": "2026-05-21T12:26:14Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -17,7 +16,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": null,
+  "baseline_sha": "null",
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }
