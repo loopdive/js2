@@ -41,6 +41,9 @@ on:
       - "tests/test262-runner.ts"
       - "tests/test262-scope-classification.test.ts"
       - "tests/test262-shared.ts"
+  merge_group:
+    branches: [main]
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       include_proposals:
@@ -78,12 +81,55 @@ concurrency:
   group: >-
     ${{ github.event_name == 'push' && 'test262-sharded-main'
      || github.event_name == 'pull_request' && format('test262-sharded-pr-{0}', github.ref)
+     || github.event_name == 'merge_group' && format('test262-sharded-mq-{0}', github.ref)
      || format('test262-sharded-dispatch-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  gate:
+    name: cheap gate (main-ancestor + lint)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Verify origin/main is merged into branch
+        run: |
+          git fetch origin main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "origin/main is an ancestor of this branch"
+          else
+            missing=$(git log HEAD..origin/main --oneline | grep -v '\[skip ci\]' | wc -l)
+            if [ "$missing" -eq 0 ]; then
+              echo "only [skip ci] commits not in branch"
+            else
+              echo "::error::Branch is missing $missing non-[skip ci] commits from origin/main. The auto-refresh workflow should have merged main into this branch automatically — if it didn't, push 'git merge origin/main' manually."
+              exit 1
+            fi
+          fi
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck + lint
+        run: |
+          pnpm run typecheck 2>&1 | tail -50 || (echo "::error::typecheck failed"; exit 1)
+          # If lint script exists, run it (otherwise skip silently)
+          if grep -q '"lint"' package.json; then pnpm run lint 2>&1 | tail -50; fi
+
   test262-shard:
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+    if: (github.event_name != 'push' || github.actor != 'github-actions[bot]') && ((github.event_name != 'pull_request' && github.event_name != 'merge_group') || needs.gate.result == 'success')
+    needs: [gate]
     name: test262 shard ${{ matrix.chunk }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -171,7 +217,7 @@ jobs:
   merge-report:
     if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     name: merge shard reports
-    needs: test262-shard
+    needs: [test262-shard]
     runs-on: ubuntu-latest
 
     steps:

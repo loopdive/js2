@@ -2323,7 +2323,17 @@ function emitVecAccessExports(ctx: CodegenContext): void {
   // Emit vec access exports when the runtime may need to introspect WasmGC arrays:
   // - for-of iteration on non-array types (__iterator)
   // - JSON.stringify on arrays of structs (JSON_stringify)
-  if (!ctx.funcMap.has("__iterator") && !ctx.funcMap.has("JSON_stringify") && !ctx.funcMap.has("__make_iterable"))
+  // - (#779c) `vec.constructor === Array` identity via the runtime's
+  //   `extern_get` constructor path, which calls `__vec_len` to positively
+  //   distinguish vec wrappers from other null-prototype WasmGC structs.
+  //   When `__extern_get` is imported, the property-access lowering may
+  //   need this discrimination for `vec.constructor` lookups.
+  if (
+    !ctx.funcMap.has("__iterator") &&
+    !ctx.funcMap.has("JSON_stringify") &&
+    !ctx.funcMap.has("__make_iterable") &&
+    !ctx.funcMap.has("__extern_get")
+  )
     return;
   try {
     _emitVecAccessExportsInner(ctx);

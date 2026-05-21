@@ -13,6 +13,9 @@ on:
       - ".github/workflows/diff-test.yml"
   push:
     branches: [main]
+  merge_group:
+    branches: [main]
+    types: [checks_requested]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -68,8 +71,8 @@ jobs:
 
       # Delta-gate ON PRs ONLY — block merge if a previously-matching program
       # now mismatches. On `push: main` the baseline is refreshed below.
-      - name: Delta gate (PR only)
-        if: github.event_name == 'pull_request'
+      - name: Delta gate (PR + merge queue)
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: npx tsx scripts/diff-test-gate.ts
 
       # On merge to main, refresh the committed baseline so the next PR

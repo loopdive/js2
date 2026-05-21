@@ -34,6 +34,67 @@ import {
   valTypesMatch,
 } from "./shared.js";
 
+/**
+ * (#1455) Emit the call sequence that adjusts an externref-backed subclass
+ * instance's [[Prototype]] from `Parent.prototype` (set by `__new_<Parent>(...)`)
+ * to a synthetic `Sub.prototype` whose own [[Prototype]] is `Parent.prototype`.
+ * This is the missing step from `Reflect.Construct(Parent, args, Sub)` — without
+ * it, `instance instanceof Sub` returns false because the chain never reaches
+ * `Sub.prototype`. With it, both `instance instanceof Sub` and
+ * `instance instanceof Parent` (and grandparents) return true.
+ *
+ * Pre-condition: the instance externref is in `selfLocal`.
+ * Post-condition: `selfLocal` holds the same instance with its prototype set.
+ * Idempotent: a Wasm-side null check guards repeated calls; the host import
+ * also early-returns when the prototype is already correct.
+ *
+ * Standalone (no host import): no-op — `selfLocal` is left unchanged.
+ */
+function emitSetSubclassProto(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  selfLocal: number,
+  subName: string,
+  parentName: string,
+): void {
+  const setProtoIdx = ensureLateImport(
+    ctx,
+    "__set_subclass_proto",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (setProtoIdx === undefined) {
+    // Standalone path: no host import available — leave instance alone.
+    return;
+  }
+  addStringConstantGlobal(ctx, subName);
+  addStringConstantGlobal(ctx, parentName);
+  const subNameGlobal = ctx.stringGlobalMap.get(subName);
+  const parentNameGlobal = ctx.stringGlobalMap.get(parentName);
+  if (subNameGlobal === undefined || parentNameGlobal === undefined) {
+    // String pool not available (very unusual) — skip silently.
+    return;
+  }
+  // Skip when the instance is null (e.g. standalone `__new_<Parent>` fallback);
+  // calling Object.setPrototypeOf on null/undefined throws in JS, which we
+  // do not want here. Use ref.is_null + if/else (avoids leaving stack imbalanced).
+  fctx.body.push({ op: "local.get", index: selfLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [],
+    else: [
+      { op: "local.get", index: selfLocal },
+      { op: "global.get", index: subNameGlobal },
+      { op: "global.get", index: parentNameGlobal },
+      { op: "call", funcIdx: setProtoIdx },
+      { op: "local.set", index: selfLocal },
+    ],
+  });
+}
+
 export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
   if (ts.isIdentifier(name)) return name.text;
   if (ts.isPrivateIdentifier(name)) return "__priv_" + name.text.slice(1);
@@ -967,6 +1028,10 @@ export function compileClassBodies(
           // stack; treat that as the instance (best-effort fallback).
         }
         fctx.body.push({ op: "local.set", index: selfLocal });
+        // (#1455) Set the instance's [[Prototype]] to `Sub.prototype` so
+        // `instance instanceof Sub` walks through it, in addition to
+        // `instance instanceof Parent` (already true via Parent.prototype).
+        emitSetSubclassProto(ctx, fctx, selfLocal, className, parentName);
       }
     }
 
@@ -1667,6 +1732,10 @@ export function compileSuperCall(
     // is already on the stack; treating it as the instance is the documented
     // standalone fallback (architect spec, risk #2).
     fctx.body.push({ op: "local.set", index: selfLocal });
+    // (#1455) Adjust the instance's [[Prototype]] to `childClassName.prototype`
+    // so `instance instanceof childClassName` returns true. Without this step
+    // the chain only reaches `<builtinParent>.prototype`.
+    emitSetSubclassProto(ctx, fctx, selfLocal, childClassName, builtinParent);
     return;
   }
 
