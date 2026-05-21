@@ -33,23 +33,70 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # List open PRs targeting main
-          prs=$(gh pr list --state open --base main --json number,headRefName --jq '.[] | "\(.number) \(.headRefName)"')
-          echo "$prs" | while read pr branch; do
-            [ -z "$branch" ] && continue
+          refresh_one() {
+            # set +e so any failure here just returns from the function;
+            # the outer loop keeps iterating.
+            set +e
+            local pr="$1"
+            local branch="$2"
+
             echo "=== Refreshing PR #$pr (branch: $branch) ==="
-            git fetch origin "$branch" || { echo "  failed to fetch — skip"; continue; }
-            git checkout -B "$branch" "origin/$branch"
+
+            if ! git fetch origin "$branch" 2>&1; then
+              echo "  ✗ fetch failed for $branch — skipping"
+              return 1
+            fi
+
+            if ! git checkout -B "$branch" "origin/$branch" 2>&1; then
+              echo "  ✗ checkout failed for $branch — skipping"
+              return 1
+            fi
+
             if git merge-base --is-ancestor origin/main HEAD; then
-              echo "  already up to date"
-              continue
+              echo "  ✓ already up to date"
+              return 0
             fi
-            if git merge origin/main --no-edit -m "Merge main into $branch (auto-refresh after $(git rev-parse --short origin/main))"; then
-              git push origin "$branch"
-              echo "  merged and pushed"
+
+            if ! git merge origin/main --no-edit \
+                 -m "Merge main into $branch (auto-refresh after $(git rev-parse --short origin/main))"; then
+              echo "  ⚠ merge conflict — leaving for dev"
+              git merge --abort 2>/dev/null || true
+              gh pr comment "$pr" --body "Auto-refresh failed: this branch conflicts with the latest \`main\`. Please merge \`origin/main\` locally, resolve the conflicts, and push." 2>/dev/null || true
+              return 1
+            fi
+
+            if ! git push origin "$branch" 2>&1; then
+              echo "  ✗ push failed for $branch — leaving local state, may need manual intervention"
+              gh pr comment "$pr" --body "Auto-refresh: merged \`main\` locally but push to the PR branch failed. May be a permissions or ref-update issue. Please refresh manually." 2>/dev/null || true
+              return 1
+            fi
+
+            echo "  ✓ merged and pushed"
+            return 0
+          }
+
+          # Track totals so the workflow summary is useful
+          ok=0
+          failed=0
+
+          # List open PRs targeting main
+          prs=$(gh pr list --state open --base main --json number,headRefName \
+                  --jq '.[] | "\(.number) \(.headRefName)"')
+
+          # Use a here-string (not pipe-into-while) so counter updates in the
+          # outer scope persist — pipes spawn a subshell that discards them.
+          while read -r pr branch; do
+            [ -z "$branch" ] && continue
+            if refresh_one "$pr" "$branch"; then
+              ok=$((ok+1))
             else
-              echo "  conflict — leaving for dev"
-              git merge --abort
-              gh pr comment "$pr" --body "Auto-refresh failed: this branch conflicts with the latest \`main\`. Please merge \`origin/main\` locally, resolve the conflicts, and push." || true
+              failed=$((failed+1))
             fi
-          done
+          done <<< "$prs"
+
+          echo ""
+          echo "=== Auto-refresh summary ==="
+          echo "  refreshed: $ok"
+          echo "  failed/skipped: $failed"
+          # Don't fail the step itself on individual failures — they're reported per-PR
+          exit 0
