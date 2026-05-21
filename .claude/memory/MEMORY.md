@@ -91,6 +91,6 @@
 - [feedback_refactoring_failures.md](feedback_refactoring_failures.md) — After refactoring: check missing imports first, not circular deps
 - [feedback_sprint_tags.md](feedback_sprint_tags.md) — Tag sprint-N/begin at start, sprint/N at end
 - [feedback_no_stash_before_merge.md](feedback_no_stash_before_merge.md) — Never stash before merge, commit first
-- [feedback_regression_analysis.md](feedback_regression_analysis.md) — Regressions may be false-positive exposure, not real regressions
+- [feedback_regression_analysis.md](feedback_regression_analysis.md) — Regressions may be false-positive exposure, not real regressions; `pass → compile_timeout` is runner-load flake unless baseline compile >5s
 
 Most project context lives in `/workspace/CLAUDE.md`.

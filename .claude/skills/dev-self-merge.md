@@ -105,6 +105,38 @@ is null (older CI feed).
 Field priority (use the first non-null):
 `regressions_wasm_change` → `regressions_real` → `regressions`
 
+### Step 1b — compile_timeout flake filter
+
+A `pass → compile_timeout` transition is **runner-load noise** unless the
+underlying compilation takes meaningfully long. Verified during the 2026-05-21
+post-wave investigation: 23 of 27 "regressions" turned out to be timeouts on
+tests that compile in <500ms locally. See
+`plan/issues/sprints/53/post-wave-regression-investigation.md` for the full
+investigation (headline number overstated ~6×).
+
+If `regressions_wasm_change` is null (older CI feed) or if the JSON has a
+breakdown by transition kind, the dev should subtract `pass → compile_timeout`
+transitions where `baseline_compile_ms < 5000` from the regression count
+before applying criterion 2.
+
+The cleanest field to use is `regressions_wasm_change` (introduced in #1222) —
+it already excludes `compile_timeout` AND byte-identical-binary flips. If the
+feed has it, prefer it. The filter chain stays:
+
+`regressions_wasm_change` → `regressions_real` → `regressions`
+
+If the CI feed somehow surfaces a `regressions` count that includes
+compile_timeout flakes (older format), and the feed has a `compile_timeout`
+field, compute:
+
+```bash
+flake=$(jq -r '.compile_timeout // 0' .claude/ci-status/pr-<N>.json)
+R_real=$((regressions - flake))
+```
+
+Use `R_real` for criterion 2. Document this in your ESCALATE message if
+relevant ("8 of 12 regressions are compile_timeout flake; effective R=4").
+
 ## Step 2 — SHA check
 
 ```bash

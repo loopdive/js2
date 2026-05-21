@@ -27,3 +27,23 @@ When a PR CI shows "X tests went from pass → fail", don't immediately assume t
 - They were passing on main only because our sync-mock async generator crashed in the harness at a point that matched the expected error phase
 - The fix (real Promise-returning async gens) made them correctly fail — the "regression" was the fix exposing the real state
 - Admin-merged with #1020 filed for tracking
+
+**Second pattern — `pass → compile_timeout` flake (2026-05-21):**
+
+The post-wave investigation for sprint 53 (see
+`plan/issues/sprints/53/post-wave-regression-investigation.md`, task #105)
+found that 23 of 27 reported "regressions" were not real — they were
+`pass → compile_timeout` flips on tests that compile in <500ms on a fresh
+local run. Headline regression count was **overstated ~6×** (27 reported vs.
+4 actual assertion failures).
+
+Cause: tests near the 30s compile-timeout boundary flap on/off "pass" with CI
+runner load (scheduling, memory pressure, GC timing). The transition is
+"runner-load noise," not a compiler regression.
+
+Rule of thumb: a `pass → compile_timeout` transition is noise unless
+`baseline_compile_ms > 5000`. The CI feed's `regressions_wasm_change`
+(introduced in #1222) already filters these — prefer it for ratio analysis.
+For older feeds without that field, subtract `compile_timeout` from
+`regressions` before applying the 10% ratio check. The `dev-self-merge`
+skill encodes this in Step 1b.
