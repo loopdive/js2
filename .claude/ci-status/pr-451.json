@@ -1,0 +1,22 @@
+{
+  "pr": 451,
+  "conclusion": "cancelled",
+  "head_branch": "issue-820b-computed-accessor",
+  "head_sha": "13fdefb60af56a7b3181c5bfe47608e706e614bb",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26197146134",
+  "timestamp": "2026-05-21T13:09:29Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

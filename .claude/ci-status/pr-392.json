@@ -1,0 +1,22 @@
+{
+  "pr": 392,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1482-wasi-environ-get",
+  "head_sha": "a965cc4cb652067015dc99beba9d3a724ecc3538",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26198693929",
+  "timestamp": "2026-05-21T12:22:03Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

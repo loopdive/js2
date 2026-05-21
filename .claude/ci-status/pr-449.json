@@ -1,0 +1,22 @@
+{
+  "pr": 449,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1557-tramp-arity",
+  "head_sha": "f422405419eaac4aeeb52356796db13e99328b71",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26196924106",
+  "timestamp": "2026-05-21T02:58:37Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

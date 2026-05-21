@@ -1,11 +1,10 @@
 {
   "pr": 383,
-  "conclusion": null,
-  "pending": true,
+  "conclusion": "cancelled",
   "head_branch": "issue-1454-iterator-close",
-  "head_sha": "322faab62fd874d9774df24872a4715ad7eec23a",
-  "run_url": "https://github.com/loopdive/js2wasm/pull/383",
-  "timestamp": "2026-05-20T16:23:54Z",
+  "head_sha": "57c6f0b18757af9964402ab5706fe12d504e4ca0",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26197124105",
+  "timestamp": "2026-05-21T03:54:59Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -17,7 +16,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": null,
+  "baseline_sha": "null",
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }

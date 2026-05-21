@@ -44,6 +44,11 @@ export const BUILTIN_TYPE_TAGS = {
   // Indexed collections
   Array: -3,
 
+  // Wrapper types (#1455)
+  Boolean: -4,
+  Number: -5,
+  String: -6,
+
   // Errors (Error is the parent of all *Error subclasses)
   Error: -10,
   TypeError: -11,
@@ -59,6 +64,7 @@ export const BUILTIN_TYPE_TAGS = {
   Set: -21,
   WeakMap: -22,
   WeakSet: -23,
+  WeakRef: -24,
 
   // Built-in objects
   Date: -30,
@@ -69,9 +75,6 @@ export const BUILTIN_TYPE_TAGS = {
   ArrayBuffer: -50,
   SharedArrayBuffer: -51,
   DataView: -52,
-
-  // Weak references (#1455)
-  WeakRef: -60,
 
   // Typed arrays (#1455). %TypedArray% intrinsic is not in this registry —
   // tests rarely use `arr instanceof %TypedArray%`; concrete typed arrays
@@ -200,6 +203,7 @@ export const BUILTIN_PARENTS_HOST_CONSTRUCTIBLE: ReadonlySet<BuiltinTypeName> = 
   // #1455 — additional host-constructible builtins for subclass-builtins
   "DataView",
   "WeakRef",
+  "SharedArrayBuffer",
   "Int8Array",
   "Uint8Array",
   "Uint8ClampedArray",
@@ -211,6 +215,12 @@ export const BUILTIN_PARENTS_HOST_CONSTRUCTIBLE: ReadonlySet<BuiltinTypeName> = 
   "Float64Array",
   "BigInt64Array",
   "BigUint64Array",
+  // #1455 — wrapper types + Date. `new Sub()` lowers to `new Wrapper()` /
+  // `new Date()` and the instance's [[Prototype]] is set to `Sub.prototype`.
+  "Boolean",
+  "Number",
+  "String",
+  "Date",
 ]);
 
 /**

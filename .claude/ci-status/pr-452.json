@@ -1,0 +1,22 @@
+{
+  "pr": 452,
+  "conclusion": "cancelled",
+  "head_branch": "issue-1151-gap-b",
+  "head_sha": "bd98fffaaf2a112089bcb91d09e1f2b992d48dd3",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26197164782",
+  "timestamp": "2026-05-21T13:09:23Z",
+  "pass": null,
+  "fail": null,
+  "compile_error": null,
+  "snapshot_delta": null,
+  "net_per_test": null,
+  "regressions": null,
+  "regressions_real": null,
+  "regressions_wasm_change": null,
+  "wasm_identical_noise": null,
+  "compile_timeouts": null,
+  "improvements": null,
+  "baseline_sha": "null",
+  "baseline_staleness_commits": null,
+  "baseline_stale": false
+}

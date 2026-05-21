@@ -1,11 +1,10 @@
 {
   "pr": 388,
-  "conclusion": null,
-  "pending": true,
+  "conclusion": "cancelled",
   "head_branch": "issue-1518-annex-b",
-  "head_sha": "123822ebc54fcf8b26368ae65e3dc9d3ec9fda9d",
-  "run_url": "https://github.com/loopdive/js2wasm/pull/388",
-  "timestamp": "2026-05-20T16:25:33Z",
+  "head_sha": "04050206491418b5c50ec1e4a1f44cbb081e04d0",
+  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26197137188",
+  "timestamp": "2026-05-21T05:51:43Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -17,7 +16,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": null,
+  "baseline_sha": "null",
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }

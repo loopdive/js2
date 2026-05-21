@@ -17,6 +17,10 @@ benchmarks/results/*.json
 !benchmarks/results/wasm-host-wasmtime-hot-runtime.json
 !benchmarks/results/wasm-host-wasmtime-coldstart.json
 !benchmarks/results/wasm-host-wasmtime-module-size.json
+!benchmarks/results/playground-benchmark-sidebar.json
+!benchmarks/results/playground-benchmark-sidebar-no-jit.json
+!benchmarks/results/size-benchmarks.json
+!benchmarks/results/loadtime-benchmarks.json
 benchmarks/results/*.md
 benchmarks/results/*.txt
 .pnpm-store/
