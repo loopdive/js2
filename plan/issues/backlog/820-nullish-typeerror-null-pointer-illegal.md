@@ -210,3 +210,73 @@ PR.
   dstr — close cousin of #1544.
 - ~25 `Cannot access property on null or undefined` (no line info) — built-ins
   Proxy/get + language eval-code residuals.
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. #820 is an umbrella, not a single
+codegen change. The plan is to drive the sub-issues to completion
+rather than write umbrella code. This section names the work items
+and the dispatch order.)
+
+### No direct entry point
+
+#820 itself has no code to write. Each sub-issue has (or needs) its
+own Implementation Plan:
+
+| Sub-issue | Title | Plan? | Priority |
+|-----------|-------|-------|----------|
+| #1542 | Class method dstr default param not applied (~134) | needs plan | 1 |
+| #1543 | Async-gen-meth dstr default → illegal cast (~74) | needs plan | 2 |
+| #1544 | for-of / for-await-of dstr → illegal cast (~45) | needs plan | 3 |
+| #820a | RegExp Symbol.* + RegExpStringIterator null deref (~148) | needs plan | 4 |
+| #820b | Object literal computed-prop accessor names (~30) | done (merged) | — |
+| #820c | Async-gen `yield*` iterator-protocol null deref (~39) | needs plan | 5 |
+
+### Dispatch order
+
+1. #1542 first — largest single cluster, mechanical destructuring
+   fix in `src/codegen/destructuring-params.ts`.
+2. #820a second — RegExp Symbol.* surgery is contained in
+   `src/codegen/builtins/regexp.ts` and runtime.ts match-result
+   paths; medium feasibility.
+3. #1543/#1544 together — both touch async-gen + dstr lowering, so
+   one dev should pick them up to amortise context.
+4. #820c last — depends on async-iteration correctness work in #735.
+
+### Residual cluster triage
+
+After the six sub-issues land, re-bucket the umbrella. The remaining
+~370 official fails split predictably:
+
+- **~64** AnnexB global-init `Object.defineProperty on non-object`
+  → already #929; verify no double-counting with #983/#1129.
+- **~57** Class-method destructure of null/undefined → file as
+  `#1547` follow-up under #1542 once #1542 lands; the residual is
+  the *outer* null/undefined arg, not the inner default-param case.
+- **~46** for-await-of dstr null deref → file as `#1548` follow-up
+  under #1544.
+- **~25** Proxy/eval long-tail → file individually as found, do not
+  bundle.
+
+### Acceptance for closing umbrella
+
+Per the existing acceptance criteria: residual <500 official fails
+AND #1542/#1543/#1544/#820a/#820c all merged. Estimated post-work
+residual: ~280 fails. Close umbrella, downgrade tracking to
+individual sub-issues.
+
+### Dependencies
+
+- #1542/#1543/#1544 — independent, dispatchable in parallel.
+- #820a — independent of all of the above.
+- #820c — soft-blocks on #735 (async-iteration correctness).
+- #983 — separate umbrella; do not co-mingle.
+
+### Risks
+
+- **Double-counting**: bucket counts may overlap across sub-issues.
+  The senior-dev re-bucket on 2026-05-21 should be the authoritative
+  baseline; re-bucket after each sub-issue lands.
+- **Temporal contamination**: ensure all baselines filter
+  `proposal:` scopes out — Temporal contributes 700+ similar-looking
+  null derefs that are not codegen bugs.

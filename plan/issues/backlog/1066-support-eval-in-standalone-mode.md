@@ -191,3 +191,58 @@ is widely available.
   the same mechanism.
 - The WIT interface design should ideally be proposed upstream so other
   TypeScript/Wasm compilers could implement the same host contract.
+
+## Implementation Plan (added 2026-05-21)
+
+### Entry points
+- New `wit/eval-host.wit` — interface definition (Option A reference)
+- New `runtimes/eval-host-wasmtime/` (Rust crate) — reference standalone host
+- `src/codegen/typeof-delete.ts` — wherever `eval(...)` is currently lowered (`grep -n eval`); ensure WASI target emits the same import shape
+- `src/cli.ts` — accept `--eval-host=auto|wasm|disabled`
+
+### Algorithm
+1. **Guest-side codegen** (unchanged from #1006): every `eval(s)` becomes:
+   ```wasm
+   local.get $s_externref
+   i32.const <direct_flag>
+   call $__eval_host_eval
+   ```
+   The import signature is `(externref, i32) -> externref`; throw maps to the guest's exception tag.
+2. **Reference host** (Rust):
+   - Embed js2wasm as a library; if not, shell out to the `js2wasm` CLI with `--target wasi --stdin`.
+   - For each `eval` invocation: hash source; lookup in LRU cache (key = source-string SHA256); on miss, compile and instantiate; on hit, just instantiate.
+   - Wrap the source as `(function() { return (\n${source}\n); })()` for expression form; detect statement-form source and emit `void (function() { ${source} })()` instead.
+   - Run the child module under the same WASI context; capture return as externref or trap as throw.
+3. **Cache**: source → compiled-module map, sized to e.g. 64 entries with LRU eviction.
+
+### Wasm output (guest side)
+```wasm
+(import "env" "__eval_host_eval" (func $eval (param externref i32) (result externref)))
+```
+For WASI target, the import module name becomes `"eval-host"` to match the WIT mapping.
+
+### Edge cases
+- **Direct eval scope capture**: standalone mode cannot reify the caller's variable environment. Per the design, treat direct eval as indirect in standalone mode (document limitation).
+- **Throws**: the host returns a "result" envelope `{ ok | throw }` via a 2-cell struct, or the import returns externref and re-throws on the guest side via a sentinel tag.
+- **Strict mode propagation**: pass a third arg `strict: i32`.
+- **Recursive eval (eval inside eval)**: child module instantiates a new host context; cache is shared.
+- **Security**: gate behind explicit `--enable-dynamic-codegen` flag in the standalone host; default OFF.
+
+### Test plan
+- `tests/issue-1066-standalone-eval.test.ts`:
+  - `eval("1+2")` → 3
+  - `eval("throw 1")` → caught by guest's `try/catch`
+  - Direct-eval `var` declaration (must explicitly fail with a clear message in v1)
+- Cross-mode parity: same test files compiled with `--target js` and `--target wasi` produce identical results for indirect-eval cases.
+
+### Dependencies
+- **Hard**: #1006 (JS-host eval) — lands first; this issue mirrors its import shape
+- **Hard**: #1058 (js2wasm self-host) — required to embed compiler as a library; until then, shell out to CLI
+- **Soft**: #1165 `func.new` proposal — eventually replaces this approach
+
+### Files touched
+- new `wit/eval-host.wit`
+- new `runtimes/eval-host-wasmtime/` (Rust crate)
+- `src/codegen/typeof-delete.ts` (eval call lowering, if target-aware)
+- `src/cli.ts` (`--eval-host` flag)
+- new `tests/issue-1066-standalone-eval.test.ts`

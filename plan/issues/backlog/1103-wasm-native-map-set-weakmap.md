@@ -11,12 +11,13 @@ task_type: feature
 language_feature: collections
 goal: iterator-protocol
 es_edition: ES2015
+note: "Verified 2026-05-21: builtinCtors moved from runtime.ts L872-897 to L1856"
 ---
 # #1103 — Wasm-native Map, Set, WeakMap, WeakSet
 
 ## Problem
 
-Map, Set, WeakMap, and WeakSet are currently constructed via the JS host's `builtinCtors` table in runtime.ts (L872-897). All method calls on these types are dispatched through externref host imports. In standalone mode, there is no JS host to provide these constructors.
+Map, Set, WeakMap, and WeakSet are currently constructed via the JS host's `builtinCtors` table in runtime.ts (L1856, verified 2026-05-21 — drifted from cited L872-897). All method calls on these types are dispatched through externref host imports. In standalone mode, there is no JS host to provide these constructors.
 
 ## Approach
 

@@ -87,14 +87,14 @@ Only to claim a shared file/function that would conflict:
 4. `git push origin <branch>` + `gh pr create --base main`
 5. Wait for `.claude/ci-status/pr-<N>.json` with matching SHA
 6. Run `/dev-self-merge` — self-merge if criteria pass, escalate to tech lead if not
-7. After merge: `TaskUpdate` → completed, `rm` status file, `git worktree remove`, then `tmux kill-pane -t $TMUX_PANE`
+7. After merge: `TaskUpdate` → completed, `rm` status file, `git worktree remove`, then claim the next TaskList task. If queue is empty, message tech lead `"PR #N merged. Queue empty."` and wait for a `shutdown_request` — do not run `tmux kill-pane` yourself.
 
 ## TaskList Protocol
 
 - **Tech lead populates TaskList** at sprint start from `plan/issues/sprints/{N}/` (filter `status: ready`) and whenever new issues are created mid-sprint
 - **Devs claim tasks** via `TaskUpdate(owner: "name")` — lowest ID first
 - **Devs mark completed** via `TaskUpdate(status: completed)` immediately after merge
-- **If TaskList is empty**: dev messages tech lead, then `tmux kill-pane -t $TMUX_PANE` — one agent per task, always terminate after completion
+- **If TaskList is empty**: dev messages tech lead `"Queue empty."` and stops. Tech lead either dispatches a new task or sends `shutdown_request`. Devs never run `tmux kill-pane` themselves — the lead manages pane cleanup (per Claude Code teammate lifecycle docs).
 
 ## Issue Lifecycle
 

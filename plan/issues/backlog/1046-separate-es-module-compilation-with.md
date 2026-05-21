@@ -10,6 +10,7 @@ reasoning_effort: max
 goal: compiler-architecture
 parent: null
 required_by: [1058]
+note: "Verified 2026-05-21: preprocessImports 23→89, compileProject 216→248, resolveAllImports 204→360, compileMultiSource 406→534"
 ---
 # #1046 — Separate ES-module compilation with consumer-driven type specialization
 
@@ -17,8 +18,8 @@ required_by: [1058]
 
 The compiler today has two multi-file code paths, both of which are **whole-program**:
 
-1. **`compile(source, options)`** — single-file. Unresolved imports fall through `preprocessImports` (`src/import-resolver.ts:23`) to `declare const X: any` stubs, losing all cross-module type information.
-2. **`compileProject(entryFile, options)`** (`src/index.ts:216`) — builds a `ModuleResolver`, walks the entire import closure via `resolveAllImports` (`src/resolve.ts:204`), inlines every reachable file into **one shared `ts.Program`** in `compileMultiSource` (`src/compiler.ts:406`), and emits **one** Wasm binary containing everything.
+1. **`compile(source, options)`** — single-file. Unresolved imports fall through `preprocessImports` (`src/import-resolver.ts:89`, verified 2026-05-21 — was L23) to `declare const X: any` stubs, losing all cross-module type information.
+2. **`compileProject(entryFile, options)`** (`src/index.ts:248`, verified 2026-05-21 — was L216) — builds a `ModuleResolver`, walks the entire import closure via `resolveAllImports` (`src/resolve.ts:360`, verified — was L204), inlines every reachable file into **one shared `ts.Program`** in `compileMultiSource` (`src/compiler.ts:534`, verified — was L406), and emits **one** Wasm binary containing everything.
 
 Whole-program works for a single app but is the wrong distribution model for publishing and consuming compiled `.js`/`.ts` ES modules independently. Two concrete costs:
 
@@ -180,3 +181,105 @@ This means specialization is not limited to packages we have source for: as long
 - Supersedes: **#1041** (closed — framing error; mislabeled as "no module graph")
 - Dependency-adjacent: **#1044** (Node host imports), **#1045** (DOM host imports) — host imports are the "no specialization possible" edge of the same spectrum
 - Architecture doc: `plan/design/architecture/npm-stress-compiler-gaps.md` cross-cutting gap #1 (corrected)
+
+## Implementation Plan (added 2026-05-21)
+
+### Strategic recommendation
+Ship in three milestones (as outlined). Milestone 1 is independent and unblocks the rest. Land #904 (link-time specialization) IN PARALLEL — they share infrastructure.
+
+### Milestone 1 — single-module compile + `.widl` emit
+
+#### Entry points
+- New file `src/widl.ts` — `.widl` schema, serialiser, parser
+- New `compileModule(entryFile, opts)` exported from `src/index.ts` — variant of `compileProject` that compiles ONE file, treats every import as an extern import
+- `src/resolve.ts:360` — add `resolveArtifact(specifier, containingFile)` next to `resolveAllImports`
+- `src/codegen/index.ts` — emit imports with concrete struct types (not just externref) when the producer signature is monomorphic
+
+#### .widl JSON schema (v1)
+```json
+{
+  "schemaVersion": 1,
+  "moduleId": "@acme/math/add",
+  "sourceHash": "sha256:...",
+  "exports": {
+    "add": {
+      "kind": "function",
+      "params": [{"name":"a","tsType":"number","wasmType":"f64"},
+                 {"name":"b","tsType":"number","wasmType":"f64"}],
+      "returns": {"tsType":"number","wasmType":"f64"},
+      "wasmExportName": "add",
+      "specializations": []
+    }
+  },
+  "imports": []
+}
+```
+
+#### Algorithm (Milestone 1)
+1. Parse the entry module only into a `ts.Program` (do not walk the import closure).
+2. For each `import` statement, populate `ts.SymbolFlags` from the resolved `.d.ts` (existing TS module resolution).
+3. For each unresolved import, emit a placeholder `(import "<specifier>" "<name>" (func ...))` whose type comes from the `.d.ts` signature.
+4. For each export, emit it as a wasm `(export ...)` with the function's concrete wasm signature.
+5. Emit `<module>.widl` alongside `<module>.wasm`.
+6. At runtime, `buildImports` in `src/runtime.ts` looks up each `(import "X" "Y" ...)` against a registry of pre-instantiated producer modules.
+
+#### Wasm output (per import)
+For `import { add } from "./add"` where `.widl` says `add: (f64,f64) -> f64`:
+```wasm
+(import "./add" "add" (func $add (param f64 f64) (result f64)))
+```
+NOT `(import "./add" "add" (func (param externref externref) (result externref)))`. Concrete types eliminate boxing across module boundaries.
+
+#### Edge cases
+- **Producer signature uses union / any** → emit two import shapes (one specialized externref, one if specialization is requested). Until specialization lands, fall back to externref.
+- **Cross-module class instances** → the consumer references the producer's `$ClassFoo` struct. Wasm doesn't share named types across instances. Workaround: emit a thin trampoline that does `extern.convert_any` / `ref.cast` at the boundary.
+- **Circular imports** → must detect and break cycles; emit a runtime-init dependency edge in the host loader.
+- **Default export** → maps to wasm export named `default`.
+- **Re-exports** (`export * from "./other"`) → walk to find the originating module; emit a re-export at the wasm level.
+- **Side effects** (top-level statements) → emit as a `(start ...)` function in the wasm module.
+
+### Milestone 2 — type specialization (ahead-of-time)
+
+#### Specialization key
+```
+key = sha256(producerHash + ":" + exportName + ":" + canonicalize(typePinning))
+canonicalize({ T: "number", U: "string" }) = '{"T":"number","U":"string"}'  // sorted keys
+```
+
+#### Algorithm
+1. Consumer walks every imported symbol's call site, collects a set of `typePinning` tuples per import.
+2. For each pinning, look up `<producer>.widl > exports.<name>.specializations[key]`.
+3. If present → emit `(import "producer" "<name>_spec_<key>" (func ...))`.
+4. If absent and Milestone 3 is on → trigger JIT specialization (next milestone).
+5. If absent and Milestone 3 is off → fall back to the generic externref import.
+
+#### Producer specialization generation
+- `compileModule(entry, { specializations: [{ exportName, typePinning }, ...] })` produces additional `_spec_<key>` exports inside the same wasm module.
+- Each specialization runs codegen with `ctx.typeParams = pinning` so the existing type-resolver sees concrete types and emits f64/i32 instead of externref.
+
+### Milestone 3 — JIT specialization
+- Consumer build invokes producer `compileModule(... specializations:[<new pin>])`
+- New artifact `.wasm`/`.widl` written to a build-local cache: `node_modules/.cache/js2wasm-spec/<producerHash>/<key>.wasm`
+- Cache eviction by source-hash mismatch on producer re-compile.
+
+### Test plan
+- Add `tests/issue-1046-separate-compile.test.ts` covering:
+  - Producer compiles standalone → emits `.wasm` + `.widl`
+  - Consumer compiles with `.widl` available → emits cross-module imports (verify by reading the wasm import table)
+  - Two-instance link at runtime → calls succeed
+  - Mismatched `.widl` schemaVersion → graceful fallback
+  - Circular imports → detected, broken via runtime init order
+
+### Dependencies
+- **Hard**: type-flow analysis sufficient to identify monomorphic export signatures (subset of #743 — can ship without full whole-program if signatures are already concrete).
+- **Hard**: #904 (link-time specialization) — shares infrastructure; coordinate on which lands first.
+- **Soft**: WIT generator at `src/wit-generator.ts` is a similar artifact-emitter — share serialiser scaffolding.
+
+### Files touched
+- new `src/widl.ts` (schema + serializer)
+- `src/resolve.ts` (resolveArtifact)
+- `src/compiler.ts` (compileMultiSource third mode)
+- `src/codegen/index.ts` (concrete-type imports)
+- `src/runtime.ts` (multi-instance buildImports)
+- new `src/index.ts` export `compileModule`
+- new `tests/issue-1046-separate-compile.test.ts`

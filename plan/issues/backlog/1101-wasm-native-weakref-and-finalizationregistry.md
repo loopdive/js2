@@ -40,3 +40,87 @@ The WasmGC proposal does not yet include weak references. However:
 
 - #988 FinalizationRegistry constructor CE (23 tests)
 - WasmGC weak references proposal (future spec work)
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. Pragmatic compile-away: since WasmGC
+weak refs are not yet shipped, implement WeakRef as a *strong* ref
+that is spec-conformant for non-GC-timing-dependent tests, and stub
+FinalizationRegistry as no-op-on-collect.)
+
+### Entry point
+
+`src/codegen/builtins/weakref.ts` (new). Invoked from the constructor
+dispatch when `new WeakRef(...)` or `new FinalizationRegistry(...)`
+is seen.
+
+### Data structures
+
+```wat
+(type $WeakRef (sub (struct
+  (field $tag i32)               ;; WEAKREF_TAG
+  (field $target (mut (ref null any))) ;; mut for revoke; "weak" in name only
+)))
+(type $FinReg (sub (struct
+  (field $tag i32)               ;; FINREG_TAG
+  (field $cb (ref null funcref))
+  (field $entries (ref $vec_FinRegEntry))
+)))
+(type $FinRegEntry (struct
+  (field $target (ref null any))
+  (field $heldValue (ref null any))
+  (field $token (ref null any))
+))
+```
+
+### Algorithm
+
+1. **WeakRef construction**: store target strongly. (Spec note: a
+   WeakRef whose target is never collected is conformant — the spec
+   only requires that *if* the target is collected, deref returns
+   undefined. With strong storage, deref always returns the target;
+   that's allowed.)
+2. **`weakRef.deref()`**: return `$target`. Never undefined under
+   our strong-ref implementation.
+3. **FinalizationRegistry construction**: store callback, allocate
+   empty entries vec.
+4. **`reg.register(target, held, token?)`**: push entry to vec.
+5. **`reg.unregister(token)`**: filter entries by token equality.
+6. **Cleanup**: no-op (no GC hook available). Spec allows this — the
+   callback is best-effort.
+
+### Edge cases
+
+- **`deref()` after register-unregister roundtrip**: still returns
+  target (strong storage).
+- **Primitive target** — `new WeakRef(42)` throws TypeError per spec;
+  enforce at construction.
+- **`new WeakRef(symbolToken)`** — per ES2024, symbols are
+  permitted; tagged-union storage in the target slot handles this.
+- **Cross-realm targets** — N/A (single realm).
+- **GC-timing tests** — these will fail; document the gap. Skip in
+  test262 with a clear reason.
+
+### Test262 paths
+
+- `test/built-ins/WeakRef/*` — most non-timing tests should pass.
+- `test/built-ins/FinalizationRegistry/*` — construction +
+  register + unregister should pass; cleanup-callback tests stay
+  skipped.
+
+Acceptance: ≥60% of non-timing-dependent WeakRef/FinReg tests pass.
+
+### Dependencies
+
+- **#1325** — tag registry; add WEAKREF_TAG, FINREG_TAG.
+- Future: when WasmGC adds weak refs (proposal stage), upgrade
+  storage to nullable-on-collect; this is a drop-in replacement
+  inside `$WeakRef.$target` lowering.
+
+### Risks
+
+- Memory leak: targets are pinned. Document; programs relying on
+  WeakRef for memory management need the native weak-ref proposal.
+- Test262 may have tests that explicitly assert collection
+  occurred — those fail by design. Add skip filters with reason
+  "WeakRef requires WasmGC weak-ref proposal".
