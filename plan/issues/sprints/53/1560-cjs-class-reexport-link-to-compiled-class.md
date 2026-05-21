@@ -2,8 +2,10 @@
 id: 1560
 sprint: 53
 title: "CJS module.exports = { Linter } — named class re-exports link to compiled class, not extern fallback"
-status: ready
+status: done
+covered_by: 1559
 created: 2026-05-20
+resolved: 2026-05-21
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -17,6 +19,45 @@ depends_on: [1559]
 ---
 
 # #1560 — CJS class re-exports link to compiled class
+
+## Resolution (2026-05-21) — COVERED BY #1559
+
+With the #1559 resolver fix applied (PR #457), the symptom this issue
+chased no longer reproduces:
+
+- `import { Linter } from "eslint"` → `r.imports` contains **no**
+  `__new_Linter` extern.
+- The two-hop, three-hop, and ESLint chains all propagate the class
+  binding through `module.exports = { Class }` re-exports correctly.
+
+The CJS re-export plumbing established by #1277 (`module.exports →
+Wasm exports`) and #1279 (`require()` graph) was always functional for
+class values — the apparent breakage in #1400 was caused entirely by
+the resolver picking `eslint/lib/types/index.d.ts` (the `types`
+condition of the `exports` map) instead of the impl entry. Once #1559
+redirects bare-package imports to the `.js` body, the class binding
+flows through every re-export hop intact.
+
+**Smoke result (2026-05-21, worktree `issue-1560-cjs-class-reexport`,
+#1559 applied):**
+
+```
+Imports with __new_: []
+Has __new_Linter: false
+Binary bytes: 961400
+```
+
+The residual Tier 1b failure (`WebAssembly.validate(r.binary) === false`)
+is a separate downstream blocker (#1287 territory), not within the
+scope of #1560.
+
+**Regression coverage** added in `tests/issue-1560.test.ts`:
+
+1. Two-hop `leaf → middle → entry` class re-export.
+2. Three-hop `leaf → mid1 → mid2 → entry` chain that mirrors
+   ESLint's depth without depending on bare-package resolution.
+
+No code change required under #1560 — closing as `covered_by: 1559`.
 
 ## Problem
 

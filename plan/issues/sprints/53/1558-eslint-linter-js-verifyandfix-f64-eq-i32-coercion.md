@@ -2,7 +2,7 @@
 id: 1558
 sprint: 53
 title: "ESLint linter.js direct compile: Linter_verifyAndFix f64.eq missing i32→f64 coercion on call result"
-status: ready
+status: done
 created: 2026-05-20
 priority: high
 feasibility: medium
@@ -14,6 +14,36 @@ goal: npm-library-support
 related: [1400, 1289, 1287, 1282]
 blocks: [eslint-tier-1d]
 ---
+
+## Resolution
+
+Root cause: `compileBinaryExpression` in `src/codegen/binary-ops.ts` had a
+legacy AST branch (around line 1363) that handles operators against
+TS-typed `number` operands. It coerced the RIGHT operand from `i32` to
+`f64` if needed but assumed the LEFT operand was already `f64`. When the
+left operand was actually `i32` (e.g. `string.length` returned via the
+`wasm:js-string`/`length` import returns `i32`, not `f64`), the emitted
+`f64.eq` had one `i32` and one `f64` operand → validation error
+`f64.eq[0] expected type f64, found call of type i32`.
+
+The `a.length === b.length` form took the IR path (#1169 slice) which
+already coerces both sides to the `f64` hint, masking the bug. The
+`(b as string).length`, `b!.length`, `b.length` after a temp-assign, and
+similar `as`/non-null wrappers all dropped off the IR fast-path into
+this legacy branch and tripped the validator.
+
+Fix: in the legacy branch, coerce BOTH `i32` operands to `f64` (using a
+temp local to bridge the stack swap when both sides need conversion).
+See diff in `src/codegen/binary-ops.ts:1363-1397`.
+
+Test coverage: `tests/issue-1558.test.ts` — 11 cases covering the
+synthetic minimum repro, all `as` / `!` / temp-local variants, runtime
+correctness of widened equality (both equal & unequal lengths, `===`
+and `!==`), and a smoke test against `node_modules/eslint/lib/linter/
+linter.js` confirming `Linter_verifyAndFix` no longer raises the
+`f64.eq` validation error. (Other unrelated validation errors in
+downstream functions of `linter.js` remain — tracked separately under
+#1559 and #1560.)
 
 # #1558 — ESLint linter.js verifyAndFix f64.eq i32 operand coercion missing
 

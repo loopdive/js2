@@ -420,7 +420,18 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           wasmType.kind === "i64" ||
           wasmType.kind === "externref";
         const newIsRef = wasmType.kind === "ref" || wasmType.kind === "ref_null";
-        if (!(existingIsRef && newIsPrimitive) && !(existingIsExternref && newIsRef)) {
+        // (#820c) Accessor object literals always produce externref — the
+        // local's hoisted ref-struct type would force a ref.cast that fails
+        // on the JS host plain object, silently nulling the captured value
+        // and trapping later closures (#820c, async-gen-yield-star-*). The
+        // hoist pass emits no initialization for ref-typed locals, so
+        // narrowing ref → externref here is safe (no struct.new to
+        // invalidate, and externref locals default to ref.null.extern which
+        // is the same "undefined" sentinel a hoisted externref would carry
+        // before its first assignment).
+        if (initIsAccessorLiteral && existingIsRef && wasmType.kind === "externref") {
+          localSlot.type = wasmType;
+        } else if (!(existingIsRef && newIsPrimitive) && !(existingIsExternref && newIsRef)) {
           localSlot.type = wasmType;
         }
       }

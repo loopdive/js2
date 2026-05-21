@@ -1363,8 +1363,35 @@ export function compileBinaryExpression(
     leftType.kind !== "externref" &&
     rightType.kind !== "externref"
   ) {
-    // Ensure right operand is also f64 (may be i32 from boolean context)
-    if (rightType.kind === "i32") {
+    // (#1558) Both operands need to be f64 for compileNumericBinaryOp, which
+    // emits f64.eq/f64.add/etc. The left operand can be i32 even when the TS
+    // type is `number` — e.g. `string.length` returns i32 directly via the
+    // wasm:js-string `length` import. Without this coercion, `f64.eq[0]`
+    // (operand 0) fails Wasm validation with "expected f64, found i32".
+    //
+    // The no-cast comparison `a.length === b.length` happens to take the IR
+    // path (which already coerces both sides to the f64 hint), but
+    // `a.length === (b as string).length` and similar AsExpression / non-null
+    // assertion forms fall back to this legacy path. (#1558 was reported on
+    // ESLint `Linter.verifyAndFix` for `currentText.length ===
+    // secondPreviousText.length` after the latter went through narrowing.)
+    if (leftType.kind === "i32" && rightType.kind === "i32") {
+      // Both i32 — convert each to f64 in-place. Right is on top of stack.
+      fctx.body.push({ op: "f64.convert_i32_s" });
+      const tmpR = allocTempLocal(fctx, { kind: "f64" });
+      fctx.body.push({ op: "local.set", index: tmpR });
+      fctx.body.push({ op: "f64.convert_i32_s" });
+      fctx.body.push({ op: "local.get", index: tmpR });
+      releaseTempLocal(fctx, tmpR);
+    } else if (leftType.kind === "i32") {
+      // Only left is i32 — convert via temp. Right is already f64-ish.
+      const tmpR = allocTempLocal(fctx, rightType);
+      fctx.body.push({ op: "local.set", index: tmpR });
+      fctx.body.push({ op: "f64.convert_i32_s" });
+      fctx.body.push({ op: "local.get", index: tmpR });
+      releaseTempLocal(fctx, tmpR);
+    } else if (rightType.kind === "i32") {
+      // Only right is i32 — convert in place (top of stack).
       fctx.body.push({ op: "f64.convert_i32_s" });
     }
     return compileNumericBinaryOp(ctx, fctx, op, expr);

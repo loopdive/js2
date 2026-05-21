@@ -4492,6 +4492,14 @@ function buildBridgeCallInstrs(
 /** Build instructions to check truthiness of a callback result (-> i32). */
 function buildTruthyCheck(ctx: CodegenContext, setup: ArrayCallbackSetup): Instr[] {
   if (setup.closureInfo) {
+    // Void-returning callback (e.g. `function() {}`) leaves nothing on the
+    // stack — `call_ref` consumed all its args and pushed no result. The
+    // downstream `if`/`br_if` still needs an i32 condition, otherwise Wasm
+    // validation rejects with "not enough arguments on the stack for if".
+    // JS semantics: `undefined` is falsy → push i32.const 0. (#1522 Cluster 2)
+    if (setup.closureInfo.returnType === null) {
+      return [{ op: "i32.const", value: 0 } as Instr];
+    }
     const retKind = setup.closureInfo.returnType?.kind;
     if (retKind === "f64") {
       return [{ op: "f64.const", value: 0 } as Instr, { op: "f64.ne" } as Instr];
@@ -4511,6 +4519,12 @@ function buildTruthyCheck(ctx: CodegenContext, setup: ArrayCallbackSetup): Instr
 /** Build instructions to check falsiness of a callback result (-> i32). */
 function buildFalsyCheck(ctx: CodegenContext, setup: ArrayCallbackSetup): Instr[] {
   if (setup.closureInfo) {
+    // Void-returning callback: result is `undefined`, which is falsy. Push
+    // i32.const 1 so the consumer's `if`/`br_if` sees a "truthy" check-result
+    // (i.e. the callback's return value WAS falsy). (#1522 Cluster 2)
+    if (setup.closureInfo.returnType === null) {
+      return [{ op: "i32.const", value: 1 } as Instr];
+    }
     const retKind = setup.closureInfo.returnType?.kind;
     if (retKind === "f64") {
       return [{ op: "f64.const", value: 0 } as Instr, { op: "f64.eq" } as Instr];
@@ -4736,10 +4750,14 @@ function compileArrayMap(
     const retType = setup.closureInfo.returnType;
     callInstrs = [
       ...buildClosureCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, { kind: "inline" }),
-      // Coerce closure return type to map result element type if needed
-      ...(retType && retType.kind !== mapResultElemType.kind
-        ? coercionInstrs(ctx, retType, mapResultElemType, fctx)
-        : []),
+      // Void-returning callback (e.g. `function() {}`) pushes nothing → push a
+      // default-of-mapResultElemType so the downstream `array.set` validates.
+      // JS semantics: `undefined → mapped` maps to NaN/null/0 per type. (#1522)
+      ...(retType === null
+        ? defaultValueInstrs(mapResultElemType)
+        : retType.kind !== mapResultElemType.kind
+          ? coercionInstrs(ctx, retType, mapResultElemType, fctx)
+          : []),
     ];
   } else {
     callInstrs = [
@@ -4861,10 +4879,15 @@ function compileArrayReduce(
       ...guardedFuncRefCastInstrs(fctx, ci.funcTypeIdx),
       { op: "ref.as_non_null" } as Instr,
       { op: "call_ref", typeIdx: ci.funcTypeIdx } as Instr,
-      // Coerce closure return type to accumulator type if needed
-      ...(ci.returnType && ci.returnType.kind !== numKind
-        ? coercionInstrs(ctx, ci.returnType, { kind: numKind as any }, fctx)
-        : []),
+      // Void-returning callback (e.g. `function() {}`): nothing on stack →
+      // push default-of-accumulator so the trailing `local.set accTmp`
+      // validates. JS: cb returns `undefined` → acc becomes undefined →
+      // for numeric kind that's NaN (f64) / 0 (i32). (#1522 Cluster 2)
+      ...(ci.returnType === null
+        ? defaultValueInstrs({ kind: numKind as any })
+        : ci.returnType.kind !== numKind
+          ? coercionInstrs(ctx, ci.returnType, { kind: numKind as any }, fctx)
+          : []),
       { op: "local.set", index: accTmp } as Instr,
     ];
   } else {
@@ -5008,10 +5031,15 @@ function compileArrayReduceRight(
       ...guardedFuncRefCastInstrs(fctx, ci.funcTypeIdx),
       { op: "ref.as_non_null" } as Instr,
       { op: "call_ref", typeIdx: ci.funcTypeIdx } as Instr,
-      // Coerce closure return type to accumulator type if needed
-      ...(ci.returnType && ci.returnType.kind !== numKind
-        ? coercionInstrs(ctx, ci.returnType, { kind: numKind as any }, fctx)
-        : []),
+      // Void-returning callback (e.g. `function() {}`): nothing on stack →
+      // push default-of-accumulator so the trailing `local.set accTmp`
+      // validates. JS: cb returns `undefined` → acc becomes undefined →
+      // for numeric kind that's NaN (f64) / 0 (i32). (#1522 Cluster 2)
+      ...(ci.returnType === null
+        ? defaultValueInstrs({ kind: numKind as any })
+        : ci.returnType.kind !== numKind
+          ? coercionInstrs(ctx, ci.returnType, { kind: numKind as any }, fctx)
+          : []),
       { op: "local.set", index: accTmp } as Instr,
     ];
   } else {

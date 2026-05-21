@@ -244,8 +244,8 @@ function compileObjectLiteralWithAccessors(
   for (let i = 0; i < expr.properties.length; i++) {
     const p = expr.properties[i]!;
     if (!ts.isGetAccessorDeclaration(p) && !ts.isSetAccessorDeclaration(p)) continue;
-    if (!ts.isIdentifier(p.name) && !ts.isStringLiteral(p.name)) continue; // computed: out of scope
-    const propName = (p.name as ts.Identifier | ts.StringLiteral).text;
+    const propName = resolveAccessorPropName(ctx, p.name); // (#820b) handles ComputedPropertyName
+    if (propName === undefined) continue; // arbitrary computed key: out of scope
     let pair = accessorPairs.get(propName);
     if (!pair) {
       pair = { firstIdx: i, name: propName };
@@ -357,8 +357,8 @@ function compileObjectLiteralWithAccessors(
       // of the FIRST get/set declaration on this name. Subsequent siblings
       // for the same name are skipped (their info was merged into the pair
       // during the pre-pass).
-      if (!ts.isIdentifier(prop.name) && !ts.isStringLiteral(prop.name)) continue;
-      const propName = (prop.name as ts.Identifier | ts.StringLiteral).text;
+      const propName = resolveAccessorPropName(ctx, prop.name); // (#820b)
+      if (propName === undefined) continue;
       const pair = accessorPairs.get(propName);
       if (!pair) continue;
       if (emittedAccessors.has(propName)) continue;
@@ -937,6 +937,71 @@ export function compileObjectLiteralForStruct(
     }
   }
 
+  // (#1557) Per-literal method funcIdx overrides. When struct dedup collapses
+  // multiple object literals that share a field shape but have methods with
+  // different signatures (e.g. `{ validate(value) {} }` and `{ validate() {} }`
+  // both type as `__anon_0` because `validate` resolves to externref with no
+  // call signatures), the shared `funcMap` entry `__anon_0_validate` would be
+  // overwritten by whichever method body is compiled last — breaking
+  // trampolines emitted against the earlier-arity sig. To keep each literal's
+  // method body + trampoline self-consistent, when we detect a method here
+  // whose `methodFullName` is already bound to a function whose signature
+  // differs from the new one, we allocate a fresh funcIdx for THIS literal's
+  // method and route both the trampoline AND the body to it via this local
+  // map. The shared `funcMap` entry continues to point at the original
+  // placeholder (used by external lookups like `ClassName.prototype.method`).
+  const literalMethodFuncIdx = new Map<string, number>();
+  for (const prop of expr.properties) {
+    if (!ts.isMethodDeclaration(prop)) continue;
+    if (!prop.name) continue;
+    if (
+      !ts.isIdentifier(prop.name) &&
+      !ts.isStringLiteral(prop.name) &&
+      !ts.isNumericLiteral(prop.name) &&
+      !ts.isComputedPropertyName(prop.name)
+    ) {
+      continue;
+    }
+    const methodName = resolveAccessorPropName(ctx, prop.name);
+    if (methodName === undefined) continue;
+    const fullName = `${typeName}_${methodName}`;
+    const existingFuncIdx = ctx.funcMap.get(fullName);
+    if (existingFuncIdx === undefined) continue;
+
+    // Compute the signature this method would compile to.
+    const newParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
+    for (const param of prop.parameters) {
+      const paramType = ctx.checker.getTypeAtLocation(param);
+      let wasmType = resolveWasmType(ctx, paramType);
+      if (param.initializer && wasmType.kind === "ref") {
+        wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
+      }
+      newParams.push(wasmType);
+    }
+
+    // Compare against existing function's param count. (Result-type comparison
+    // is harder; param count is the canonical mismatch that causes
+    // "not enough arguments on the stack" trampoline failures.)
+    const localIdx = existingFuncIdx - ctx.numImportFuncs;
+    const existingFunc = ctx.mod.functions[localIdx];
+    if (!existingFunc) continue;
+    const existingType = ctx.mod.types[existingFunc.typeIdx];
+    if (!existingType || existingType.kind !== "func") continue;
+    if (existingType.params.length === newParams.length) continue;
+
+    // Mismatch — allocate a fresh funcIdx for this literal's method without
+    // touching the shared funcMap entry.
+    const freshFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.mod.functions.push({
+      name: `${fullName}__lit${freshFuncIdx}`,
+      typeIdx: existingFunc.typeIdx, // placeholder; the body-compile step rewrites this
+      locals: [],
+      body: [],
+      exported: false,
+    });
+    literalMethodFuncIdx.set(methodName, freshFuncIdx);
+  }
+
   for (const field of fields) {
     // First check for an explicit property assignment (identifier, string literal, or computed key)
     const prop = expr.properties.find((p) => resolvePropertyNameText(ctx, p) === field.name);
@@ -964,7 +1029,10 @@ export function compileObjectLiteralForStruct(
         : undefined;
     if (methodProp) {
       const methodFullName = `${typeName}_${field.name}`;
-      const methodFuncIdx = ctx.funcMap.get(methodFullName);
+      // (#1557) Prefer the per-literal funcIdx if we detected a sig mismatch
+      // above. The trampoline must reference the funcIdx whose body will
+      // actually be compiled for THIS literal, not a sibling literal's body.
+      const methodFuncIdx = literalMethodFuncIdx.get(field.name) ?? ctx.funcMap.get(methodFullName);
       if (methodFuncIdx !== undefined) {
         const closureType = emitObjectMethodAsClosure(ctx, fctx, methodFullName, methodFuncIdx, structTypeIdx);
         if (closureType) {
@@ -1295,6 +1363,14 @@ export function compileObjectLiteralForStruct(
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
         }
+        // Binding-pattern params MUST route through the externref destructure path
+        // so that (a) null/undefined trigger a spec-mandated synchronous TypeError and
+        // (b) nested patterns recurse via the generic destructure logic. See #1151
+        // Gap B — mirrors closures.ts:1186 and class-bodies.ts:1160.
+        const hasBindingPattern = ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name);
+        if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
+          wasmType = { kind: "externref" };
+        }
         methodParams.push(wasmType);
       }
 
@@ -1324,9 +1400,12 @@ export function compileObjectLiteralForStruct(
 
       const methodTypeIdx = addFuncType(ctx, methodParams, methodResults, `${fullName}_type`);
 
-      // Check if a placeholder function was already pre-registered (by ensureStructForType).
-      // If so, reuse it instead of pushing a duplicate with an empty body.
-      const existingFuncIdx = ctx.funcMap.get(fullName);
+      // (#1557) If this method was earmarked for a per-literal funcIdx (because
+      // a sibling literal sharing the same struct dedup-key already owns the
+      // shared `funcMap` entry with a different signature), compile into the
+      // dedicated funcIdx instead of overwriting the shared one.
+      const perLiteralIdx = literalMethodFuncIdx.get(methodName);
+      const existingFuncIdx = perLiteralIdx ?? ctx.funcMap.get(fullName);
       let methodFunc: WasmFunction;
       if (existingFuncIdx !== undefined) {
         const localIdx = existingFuncIdx - ctx.numImportFuncs;
@@ -1362,6 +1441,13 @@ export function compileObjectLiteralForStruct(
         // to match the function signature (which uses ref_null so callers can pass ref.null)
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
+        }
+        // Binding-pattern params MUST route through the externref destructure path
+        // (#1151 Gap B). Must mirror the sig-collection phase above so the fctx
+        // param type agrees with the function signature.
+        const hasBindingPattern = ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name);
+        if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
+          wasmType = { kind: "externref" };
         }
         methodFctxParams.push({ name: paramName, type: wasmType });
       }
