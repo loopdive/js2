@@ -1,10 +1,11 @@
 {
-  "pr": 438,
-  "conclusion": "failure",
-  "head_branch": "issue-1551-super-call-eval",
-  "head_sha": "df35008fca72b48063ae362005e0a4d0a19c8bcf",
-  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/26185443150",
-  "timestamp": "2026-05-21T12:58:31Z",
+  "pr": 465,
+  "conclusion": null,
+  "pending": true,
+  "head_branch": "claude/check-test262-ci-queue-Tliwh",
+  "head_sha": "15979e15af93ef57478db7ff4e931b9be378d7e9",
+  "run_url": "https://github.com/loopdive/js2wasm/pull/465",
+  "timestamp": "2026-05-21T12:50:51Z",
   "pass": null,
   "fail": null,
   "compile_error": null,
@@ -16,7 +17,7 @@
   "wasm_identical_noise": null,
   "compile_timeouts": null,
   "improvements": null,
-  "baseline_sha": "null",
+  "baseline_sha": null,
   "baseline_staleness_commits": null,
   "baseline_stale": false
 }
