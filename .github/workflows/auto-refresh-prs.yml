@@ -1,15 +1,18 @@
 name: Auto-refresh open PR branches with main
 
-# DISABLED: under the merge-queue-driven workflow, the queue builds its own
-# fresh main+PR merge_group ref per cycle, so PR branches don't need force
-# refreshes. Running this on every push-to-main caused massive CI churn:
-# N open PRs × ~6 workflows per push = hundreds of redundant runs per merge.
+# Fires on every push to main to keep open PRs current. Necessary under the
+# serial merge queue + strict_required_status_checks_policy model: after each
+# merge, all other auto-merge-enabled PRs become 1 commit behind main, and
+# strict policy bounces them from the queue. Without auto-refresh, drain
+# stalls after every merge until someone manually runs update-branch.
 #
-# The queue rejects PRs that can't merge into current main due to conflicts —
-# same end result as auto-refresh surfacing them preemptively, without the
-# churn. Kept as workflow_dispatch-only for occasional manual housekeeping.
+# Churn cost: every main push fires N `update-branch` calls (one per open
+# PR with auto-merge enabled), each triggering CI re-runs. Acceptable cost
+# for self-sustaining drain.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       reason:
