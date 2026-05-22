@@ -78,13 +78,13 @@ jobs:
   gate:
     name: cheap gate (main-ancestor + lint)
     runs-on: ubuntu-latest
-    # Must include push:main — test262-shard `needs: [gate]`, so a skipped gate
-    # cascades to skipped shards, skipped merge-report, and skipped
-    # promote-baseline. That breaks landing-page pass-rate refresh after every
-    # PR merge (which fires push:main). Bot author filter prevents
-    # auto-baseline-refresh commits from re-triggering CI.
+    # Skip when the synchronize event was triggered by auto-refresh-prs
+    # (github-actions[bot] doing 'Merge branch main into <branch>'). Otherwise
+    # every push to main triggers N PR-level test262 runs (one per auto-refreshed
+    # PR), which with global concurrency serialize and gridlock the queue.
+    # The merge_group cycle will still validate the PR when the queue picks it.
     if: |
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.actor != 'github-actions[bot]') ||
       github.event_name == 'merge_group' ||
       (github.event_name == 'push' && github.actor != 'github-actions[bot]')
     timeout-minutes: 10
@@ -130,7 +130,7 @@ jobs:
     # batch.
     if: |
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.actor != 'github-actions[bot]') ||
       github.event_name == 'merge_group' ||
       github.event_name == 'workflow_dispatch'
     needs: [gate]
