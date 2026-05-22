@@ -89,19 +89,22 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-      - name: Verify origin/main is merged into branch
+      - name: Verify branch contains its base
         run: |
-          git fetch origin main
-          if git merge-base --is-ancestor origin/main HEAD; then
-            echo "origin/main is an ancestor of this branch"
+          # Use the PR's recorded base sha (not freshly-fetched origin/main)
+          # to avoid TOCTOU false positives when main moves between checkout
+          # and this step. For merge_group the queue ref already merged base.
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            echo "✓ merge_group ref already includes base"
+            exit 0
+          fi
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          git fetch origin "$BASE_SHA" --depth 1 || git fetch origin main --depth 50
+          if git merge-base --is-ancestor "$BASE_SHA" HEAD; then
+            echo "✓ PR base ($BASE_SHA) is an ancestor of HEAD"
           else
-            missing=$(git log HEAD..origin/main --oneline | grep -v '\[skip ci\]' | wc -l)
-            if [ "$missing" -eq 0 ]; then
-              echo "only [skip ci] commits not in branch"
-            else
-              echo "::error::Branch is missing $missing non-[skip ci] commits from origin/main. The auto-refresh workflow should have merged main into this branch automatically — if it didn't, push 'git merge origin/main' manually."
-              exit 1
-            fi
+            echo "::error::PR's recorded base is not an ancestor of HEAD — re-run the job."
+            exit 1
           fi
       - name: Setup Node
         uses: actions/setup-node@v6
