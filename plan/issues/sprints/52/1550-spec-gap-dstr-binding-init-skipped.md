@@ -13,6 +13,7 @@ language_feature: destructuring, default-parameters
 goal: spec-completeness
 parent: 779
 related: [1432, 1450, 1451, 1454]
+note: "Verified 2026-05-21: corrected file path destructuring.ts → statements/destructuring.ts"
 ---
 # #1550 — Destructuring default initializer must NOT be evaluated when value is non-undefined
 
@@ -88,8 +89,9 @@ Suspected root cause is in the shared destructuring helpers. Candidate sites
   `destructureParamObject`. Look for the `default` / `Initializer` arm and
   check whether the runtime guard is `__extern_is_undefined(v)` (strict
   undefined) or `!v` / `is_falsy(v)` (wider, wrong).
-- `src/codegen/destructuring.ts` (if present) — the statement-form
-  declaration / for-loop variant.
+- `src/codegen/statements/destructuring.ts` (verified 2026-05-21 — file
+  moved from `src/codegen/destructuring.ts` to `statements/`) — the
+  statement-form declaration / for-loop variant.
 - `src/codegen/expressions/assignment.ts` — destructuring assignment
   (`[a = init] = arr`); §13.15.5 has the same `undefined`-only guard.
 - `src/runtime.ts` — helpers like `__extern_is_undefined`, `__is_undefined`.

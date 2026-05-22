@@ -79,3 +79,48 @@ Instead of calling `__any_add(externref, externref) → externref`:
 - Replaces need for `__any_add`, `__any_sub` etc. host helpers for known-union cases
 
 ## Complexity: XL
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. **Important**: #1552 is a newer
+issue that supersedes parts of this with a single uniform `$Value`
+struct. Recommend closing #745 in favour of #1552 unless there's a
+reason for the per-union-type custom struct described here.)
+
+### Coordination
+
+This issue and #1552 describe overlapping designs:
+
+- **#745 (this issue)**: Per-distinct-union-type custom struct
+  with only the fields needed for that union (e.g.
+  `number | string` gets `{tag, f64, ref}`).
+- **#1552**: A single universal `$Value` struct covering ALL
+  union types in the program.
+
+#1552 is simpler (one type for everything) and easier to optimize
+(predictable layout, JIT-friendly). #745 is space-efficient (no
+unused fields) but generates many struct types and complicates
+codegen branching.
+
+**Architect recommendation**: Adopt #1552's universal design.
+Close #745 as superseded once #1552's Implementation Plan is
+approved.
+
+### If #745 is kept
+
+Follow the algorithm in #1552's Implementation Plan but generate
+one struct type per distinct union signature observed (signature
+= sorted set of member types). Helper functions become parametric
+over the struct type. Add a `ctx.unionTypes:
+Map<signature, typeIdx>` to dedup.
+
+### Dependencies
+
+- **#1552** — supersedes; coordinate.
+- **#743** — required to identify union types.
+- **#744** — monomorphization; complementary.
+
+### Risk
+
+Two competing designs in the backlog. Decide before any code
+ships.

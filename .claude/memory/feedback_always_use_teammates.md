@@ -1,17 +1,30 @@
 ---
 name: feedback_always_use_teammates
-description: Always create a team (max 4 devs + PO on demand), never use bare subagents
-type: feedback
-originSessionId: 0ffbd21c-b73d-429a-a76d-4fb742ea9794
+description: "Use teammates for dev queues, subagents for one-shot architects/research — not \"always teammates\""
+metadata: 
+  node_type: memory
+  type: feedback
+  originSessionId: 0ffbd21c-b73d-429a-a76d-4fb742ea9794
 ---
-At session start when acting as TTL:
-1. `TeamCreate` with fixed team name **`dev-team`** (reuse across sprints — no sprint-N naming)
-2. Spawn up to **4 dev** teammates (with worktree isolation + bypassPermissions)
-3. Spawn **PO** on demand when issues need updating
-4. **No tester teammate** — TTL runs tests directly in background
 
-**NEVER** use solo `Agent` spawns without `team_name`. Subagents can't coordinate — they OOM from concurrent test runs and duplicate work.
+**Pick the spawn mode by lifecycle, not by default.**
 
-**Why:** Teammates can message each other to serialize test runs (only 1 runs equiv tests at a time). They can coordinate on file conflicts. The team lead merges their work.
+- **Teammates** (`Agent` with `team_name: "js2wasm"`) — long-running. Use for **devs** pulling from TaskList, agents that need mid-task SendMessage redirects, or file-conflict coordination. Teammates do NOT self-terminate; tech lead sends `shutdown_request` → agent approves → lead removes pane.
+- **Subagents** (`Agent` without `team_name`) — fire-and-forget. Use for **one-shot architects, research agents, spec writers, PO issue-file creators**. They read inputs, write an output file, return a summary, auto-cleanup. No pane management.
 
-**How to apply:** TeamCreate → spawn devs with team_name → teammates coordinate via SendMessage → TTL merges after completion. Spawn PO only when plan/ needs updating. Max 4 devs (20GB container, each ~2GB RSS).
+**Why this matters:** Confirmed against Claude Code docs (2026-05-21): the "always teammates" rule we previously enforced caused pane exhaustion. One-shot architects spawned as teammates idle forever waiting for orchestration that never comes. Subagents are designed precisely for fire-and-forget work and clean up automatically.
+
+**When you actually need teammates:**
+- Multiple devs grinding through a TaskList in parallel
+- An agent that needs to receive SendMessage redirects mid-task
+- An agent coordinating with another agent on file locks
+
+**When you should use a subagent instead:**
+- "Write one spec, exit"
+- "Read the baseline JSONL, produce a report, exit"
+- "Create three issue files, exit"
+- Any task that has a single deliverable file
+
+**How to apply:** Before spawning, ask "does this agent need to listen for new tasks or messages after completing this one?" If yes → teammate. If no → subagent.
+
+See [[feedback_agent_self_termination]] for the matching shutdown protocol.

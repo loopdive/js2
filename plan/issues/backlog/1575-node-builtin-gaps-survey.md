@@ -1,5 +1,5 @@
 ---
-id: node-builtin-gaps-survey
+id: 1575
 title: "Node.js built-in module support — gap survey (js2wasm → npm)"
 status: survey
 created: 2026-05-20

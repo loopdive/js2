@@ -52,3 +52,119 @@ Also considered: registering guardInstrs into fctx.savedBodies before calling em
 - `src/codegen/expressions/late-imports.ts` `shiftLateImportIndices` — the walker that can't see detached arrays.
 - `src/codegen/closures.ts:1525-1592` — async-gen body swap (candidate for same hazard).
 - `src/codegen/expressions/assignment.ts:49-76` `emitExternrefAssignDestructureGuard` — 2 remaining regressions (different code path, may or may not be same root cause).
+
+## Implementation Plan
+
+(Author: architect, 2026-05-21. Pick Option A — a
+`ctx.detachedBodies` stack — as the architectural fix; Option B is
+brittle and depends on every contributor honouring the rule.)
+
+### Entry point
+
+`src/codegen/context/`(or `src/codegen/index.ts` where the
+CodegenContext is defined) — add a stack field plus push/pop helpers.
+
+### Data structure change
+
+```ts
+interface CodegenContext {
+  // ... existing fields
+  detachedBodies: Instr[][];   // NEW: arrays awaiting splice
+}
+```
+
+Push lifecycle:
+1. Any helper that creates a detached `Instr[]` and may trigger a
+   late import while still holding the reference: push the array
+   onto `ctx.detachedBodies` before the risk window, pop after the
+   splice/discard.
+2. `shiftLateImportIndices` walks `ctx.detachedBodies` in addition
+   to the existing arrays.
+
+### Algorithm
+
+1. **Audit** — grep for `collectInstrs` callers and body-swap
+   patterns:
+   - `src/codegen/statements/destructuring.ts:emitNullGuard`
+   - `src/codegen/expressions/assignment.ts:emitExternrefAssignDestructureGuard`
+   - `src/codegen/closures.ts:1525-1592` (async-gen body swap)
+   - Generator/for-await-of drivers in
+     `src/codegen/statements/loops.ts`
+   - Any `pushBody`/`popBody` without `savedBodies` registration.
+
+2. **Per-call-site change** — for each audit hit, wrap the
+   detached-array lifetime in push/pop:
+
+```ts
+const detached: Instr[] = [];
+ctx.detachedBodies.push(detached);
+try {
+  // ... emit into detached, possibly triggering late imports
+} finally {
+  ctx.detachedBodies.pop();
+  // splice detached into the parent body
+}
+```
+
+3. **`shiftLateImportIndices`** — extend to:
+
+```ts
+function shiftLateImportIndices(ctx, fctx, shifted) {
+  // existing walks
+  for (const arr of ctx.detachedBodies) shiftArray(arr, shifted);
+}
+```
+
+4. **Defensive assertion** — at end of compilation, assert
+   `ctx.detachedBodies.length === 0`. Catches missing pops.
+
+### Edge cases
+
+- **Nested detached arrays** — push/pop is stack-disciplined; nested
+  collectInstrs calls each register their own array. The shift walks
+  all entries in the stack regardless of nesting.
+- **Early-throw during emitFn** — `try/finally` ensures pop runs
+  even on exception.
+- **Arrays that aren't expected to contain late-importable calls**
+  (e.g. pure value computations) — pushing them is harmless overhead
+  (one extra array walk per late import); err on the side of
+  pushing.
+- **Async-gen specific (closures.ts:1525-1592)**: `bodyInstrs` is
+  swapped via direct assignment, not collectInstrs. The shift
+  currently walks `funcStack` and `parentBodiesStack`. Verify
+  whether the async-gen swap correctly registers bodyInstrs in
+  parentBodiesStack; if not, add registration there *or* push
+  bodyInstrs into detachedBodies for the duration of inner-fn
+  compile.
+
+### Regression tests
+
+In `tests/issue-1257.test.ts`:
+- `async function* g() { try { yield ({} = null); } catch (e) {} }` →
+  TypeError, no infinite recursion.
+- `({x = f()} = null)` in a normal function → TypeError.
+- `({} = null)` at top level → TypeError.
+- `[] = null` in async generator → TypeError.
+
+### Test262 paths
+
+- `test/language/expressions/object/dstr/*-null-undefined-*`
+- `test/language/statements/for-await-of/dstr/*-null-*`
+- `test/built-ins/AsyncGeneratorPrototype/return/*`
+
+Acceptance: 12 regressions from PR #225 fully resolved (currently
+9/12 — close the remaining 3).
+
+### Dependencies
+
+- None blocking. Pure refactor + audit.
+
+### Risks
+
+- **Performance**: shift walks one more list per late import. List
+  size is typically < 5 deep; negligible.
+- **Audit completeness**: missing one detached-array site leaves a
+  silent funcIdx corruption bug. Mitigate with a property test:
+  run a stress test that triggers many late imports during nested
+  detached-array compilation, verify all funcIdx targets resolve to
+  the expected names.
