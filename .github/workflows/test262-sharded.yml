@@ -3,24 +3,14 @@ name: Test262 Sharded
 on:
   pull_request:
     branches: [main]
-    paths:
-      - ".github/workflows/test262-sharded.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "tsconfig.json"
-      - "scripts/tsconfig.json"
-      - "vitest.config.ts"
-      - "src/**"
-      - "scripts/build-test262-report.mjs"
-      - "scripts/compiler-fork-worker.mjs"
-      - "scripts/compiler-pool.ts"
-      - "scripts/diff-test262.ts"
-      - "scripts/generate-editions.ts"
-      - "scripts/test262-worker.mjs"
-      - "tests/test262-chunk*.test.ts"
-      - "tests/test262-runner.ts"
-      - "tests/test262-scope-classification.test.ts"
-      - "tests/test262-shared.ts"
+    # Run on every PR push (no path filter). Path-filtering was causing the
+    # merge queue to stall: when auto-refresh-prs merged a docs-only main
+    # commit into a PR branch, the synchronize event's diff had no src/ files,
+    # the path filter skipped this workflow, and the queue's required
+    # "merge shard reports" check never produced a result on the new HEAD,
+    # blocking the PR forever. The cheap-gate job inside this workflow
+    # short-circuits to ~1 min for branches that don't need a full shard run.
+    # See task #109.
   push:
     branches: [main]
     paths:
