@@ -6,7 +6,7 @@
  *   rerun-src  — optional full benchmark manifest used for requested live refresh
  *   rerun-label — optional label for the live benchmark button
  *   title      — chart heading (default: "Benchmark Performance (Wasm vs JS)")
- *   legend     — legend text (default: "WASM runtime performance relative to JS (larger is better)")
+ *   legend     — legend text (default: empty; pass an explicit legend per chart, or render a section-level description in the host page)
  *   mode       — perf | runtime | module-size | size | coldstart | loadtime | absolute-lower-better
  *
  * Usage:
@@ -58,7 +58,10 @@ class PerfBenchmarkChart extends HTMLElement {
   _render() {
     const src = this.getAttribute("src") || "./benchmarks/results/playground-benchmark-sidebar.json";
     const title = this.getAttribute("title") || "Benchmark Performance (Wasm vs JS)";
-    const legend = this.getAttribute("legend") || "WASM runtime performance relative to JS (larger is better)";
+    // No fallback legend — callers that omit `legend` get no <p>.legend rendered.
+    // Avoids stale text leaking into charts (e.g. module-size charts) where
+    // the previous default ("runtime performance relative to JS") was wrong.
+    const legend = this.getAttribute("legend") || "";
     const baselineLabel = this.getAttribute("baseline-label") || "JS";
     const mode = this.getAttribute("mode") || "perf";
 
@@ -391,7 +394,9 @@ class PerfBenchmarkChart extends HTMLElement {
       delete this.dataset.tint;
     }
     this.shadowRoot.querySelector(".js-label").textContent = baselineLabel;
-    this.shadowRoot.querySelector(".legend").textContent = legend;
+    const legendEl = this.shadowRoot.querySelector(".legend");
+    legendEl.textContent = legend;
+    legendEl.hidden = !legend;
     const actions = this.shadowRoot.querySelector(".chart-actions");
     const rerunButton = this.shadowRoot.querySelector(".rerun-button");
     if (this.getAttribute("rerun-src") && actions && rerunButton) {
@@ -1016,8 +1021,11 @@ class PerfBenchmarkChart extends HTMLElement {
     //   1. max-ratio="<n>" attribute — hardcoded shared scale across charts
     //   2. share-scale="benchmark" — derived from sibling scenarios on the same data file
     //   3. local max from this chart's ratios
+    // Exception: live browser rerun ignores the hardcoded max-ratio so the
+    // chart re-scales to the user's actual measurements (snapshot value may
+    // be wildly different from machine-local results).
     const localMax = Math.max(...ratios.map((r) => r.ratio), 1.5);
-    const maxRatioAttr = Number(this.getAttribute("max-ratio") || 0);
+    const maxRatioAttr = this._liveRerun ? 0 : Number(this.getAttribute("max-ratio") || 0);
     let maxRatio;
     if (maxRatioAttr > 0) {
       maxRatio = Math.max(maxRatioAttr, 1.5);
@@ -1239,17 +1247,24 @@ class PerfBenchmarkChart extends HTMLElement {
 
       if (this.isConnected && measuredRows.length > 0) {
         this.style.display = "";
-        if ((this.getAttribute("mode") || "perf") === "runtime") {
-          this._renderAbsoluteRows(
-            measuredRows.map((row) => ({
-              name: this._shortBenchmarkLabel(row),
-              value: row.wasmUs,
-              baselineValue: row.jsUs,
-              label: this._formatDurationUs(row.wasmUs),
-            })),
-          );
-        } else {
-          this._renderRatioRows(measuredRows);
+        // Mark this as a live rerun so the renderer skips the hardcoded
+        // max-ratio attribute and re-scales to the measured data.
+        this._liveRerun = true;
+        try {
+          if ((this.getAttribute("mode") || "perf") === "runtime") {
+            this._renderAbsoluteRows(
+              measuredRows.map((row) => ({
+                name: this._shortBenchmarkLabel(row),
+                value: row.wasmUs,
+                baselineValue: row.jsUs,
+                label: this._formatDurationUs(row.wasmUs),
+              })),
+            );
+          } else {
+            this._renderRatioRows(measuredRows);
+          }
+        } finally {
+          this._liveRerun = false;
         }
         if (status)
           status.textContent = `Updated with ${measuredRows.length} live browser benchmarks after in-page wasm-opt.`;
@@ -1514,14 +1529,20 @@ class PerfBenchmarkChart extends HTMLElement {
         this._secondBaselineLabel = this.getAttribute("second-baseline-label") || "+JIT";
 
         for (const row of rows) {
-          // Normalize all bars against the same baseline. In merge-scenarios mode
-          // use the cold jsUs so cold AND warm bars share the same denominator.
+          // Default: each chart uses its row's own jsUs (cold-speed vs cold-JS,
+          // warm-speed vs warm-JS). Charts that need a cross-scenario shared
+          // baseline opt in via baseline-source="cold" — they then prefer
+          // row.coldJsUs as the denominator. In merge-scenarios mode the chart
+          // always uses cold jsUs so cold and warm bars share a denominator.
           const rowScenario = String(row?.scenario ?? "").toLowerCase();
+          const baselineSource = this.getAttribute("baseline-source");
           const jsUs = mergeScenarios
             ? coldJsUs > 0
               ? coldJsUs
               : Number(row?.jsUs ?? 0)
-            : Number(row?.coldJsUs ?? row?.jsUs ?? 0);
+            : baselineSource === "cold"
+              ? Number(row?.coldJsUs ?? row?.jsUs ?? 0)
+              : Number(row?.jsUs ?? 0);
           if (jsUs <= 0) continue;
           if (anyHasExtraLanes) {
             let baseName = "";
