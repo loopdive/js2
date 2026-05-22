@@ -106,6 +106,70 @@ export function emitThrowTypeError(ctx: CodegenContext, fctx: FunctionContext, m
 }
 
 /**
+ * #1456 — Classify a private property reference for assignment/compound-assignment.
+ *
+ * Per ES2022 §7.3.18 (PrivateElementSet) and §13.15.2
+ * (AssignmentExpression : LHS op= AssignmentExpression):
+ *
+ *   - Private *methods* throw TypeError on any write (`=`, `+=`, …).
+ *   - Private *accessor* with no setter throws TypeError on write.
+ *   - Private *accessor* with no getter throws TypeError on read (matters
+ *     for compound: the read step happens first).
+ *   - Plain private fields read/write through the brand slot as usual.
+ *
+ * We classify the LHS at compile time by looking up the brand-table proxies
+ * we've already populated when the class was registered:
+ *   - `ctx.classMethodSet` — `<Class>_<__priv_name>` for private methods
+ *     (both static and instance share the same `__priv_X` name space; that's
+ *     consistent with how `resolveClassMemberName` mangles them).
+ *   - `ctx.classAccessorSet` — `<Class>_<__priv_name>` for accessors;
+ *     existence of `<Class>_get_<__priv_name>` / `<Class>_set_<__priv_name>`
+ *     in `ctx.funcMap` distinguishes getter-only / setter-only / pair.
+ *
+ * Returns `undefined` if the receiver class cannot be resolved (defensive —
+ * the caller falls back to existing behavior).
+ */
+export type PrivateMemberKind = "method" | "accessor-readonly" | "accessor-writeonly" | "accessor" | "field";
+
+export function classifyPrivateMember(
+  ctx: CodegenContext,
+  name: ts.PrivateIdentifier,
+): { className: string; fieldName: string; kind: PrivateMemberKind } | undefined {
+  const fieldName = "__priv_" + name.text.slice(1);
+  // Walk up parent links to find the lexically enclosing class that declares `#name`.
+  // Unlike resolveDeclaringClassForPrivateName, we need to consider classes whose
+  // PrivateIdentifier was registered as a method or accessor — those entries do
+  // NOT appear in ctx.structFields, so the field-only lookup fails. We probe each
+  // of method / accessor / field sets in turn.
+  let current: ts.Node | undefined = name.parent;
+  while (current) {
+    if ((ts.isClassDeclaration(current) || ts.isClassExpression(current)) && current.name) {
+      const className = current.name.text;
+      const fullName = `${className}_${fieldName}`;
+      // Method: registered in classMethodSet (instance) or staticMethodSet (static).
+      if (ctx.classMethodSet.has(fullName) || ctx.staticMethodSet.has(fullName)) {
+        return { className, fieldName, kind: "method" };
+      }
+      // Accessor: classAccessorSet has the accessor key.
+      if (ctx.classAccessorSet.has(fullName)) {
+        const hasGetter = ctx.funcMap.has(`${className}_get_${fieldName}`);
+        const hasSetter = ctx.funcMap.has(`${className}_set_${fieldName}`);
+        if (hasGetter && !hasSetter) return { className, fieldName, kind: "accessor-readonly" };
+        if (hasSetter && !hasGetter) return { className, fieldName, kind: "accessor-writeonly" };
+        return { className, fieldName, kind: "accessor" };
+      }
+      // Field: declared as a struct field on this class.
+      const structFields = ctx.structFields.get(className);
+      if (structFields?.some((f) => f.name === fieldName)) {
+        return { className, fieldName, kind: "field" };
+      }
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+/**
  * Check if a TS return type is effectively void for Wasm purposes.
  * For async functions, the TS checker reports `Promise<void>` which is not
  * caught by `isVoidType`. This helper unwraps Promise types for async

@@ -22,7 +22,7 @@
 
 set -euo pipefail
 
-REPO="${REPO:-loopdive/js2wasm}"
+REPO="${REPO:-loopdive/js2}"
 INTERVAL_SECS="${INTERVAL_SECS:-60}"
 STATE_FILE="${STATE_FILE:-${HOME}/.cache/poll-pr-drift-state.json}"
 LOCK_FILE="${LOCK_FILE:-/tmp/poll-pr-mentions.lock}"

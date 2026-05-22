@@ -113,7 +113,7 @@ Add at least one `equivalence.test.ts` case asserting that:
 
 ## Suspended Work
 
-- **PR**: #396 — https://github.com/loopdive/js2wasm/pull/396
+- **PR**: #396 — https://github.com/loopdive/js2/pull/396
 - **Branch**: `issue-1490-nodejs-process-argv`
 - **Worktree**: `/workspace/.claude/worktrees/issue-1490-nodejs-process-argv/`
 - **HEAD SHA**: `7d80abd48916c3c936807b039df1547097acd4a3`

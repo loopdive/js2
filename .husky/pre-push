@@ -21,7 +21,7 @@ remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
 # remotes locally; the URL is the authoritative signal.
 
 case "$remote_url" in
-  *loopdive/js2wasm.git|*loopdive/js2wasm)
+  *loopdive/js2.git|*loopdive/js2)
     is_public=1
     ;;
   *)

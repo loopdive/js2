@@ -2,7 +2,7 @@
 
 This runbook sets up a Mac mini at home as a self-hosted GitHub Actions runner
 host for the `test262-shard` matrix in `.github/workflows/test262-sharded.yml`.
-Trusted PRs (from collaborators on `loopdive/js2wasm`) route to the Mac mini;
+Trusted PRs (from collaborators on `loopdive/js2`) route to the Mac mini;
 fork PRs continue to use `ubuntu-latest`.
 
 > No workflow changes have been made yet. This runbook is the host-side plan —
@@ -25,7 +25,7 @@ If you upgrade RAM later: 32 GB → 6 runners; 48 GB → 9; 64 GB → 12+.
 
 ## What the runner host trusts
 
-- **Trusted code**: any commit reachable from a PR opened by a `loopdive/js2wasm`
+- **Trusted code**: any commit reachable from a PR opened by a `loopdive/js2`
   collaborator, plus pushes to `main`.
 - **Untrusted code**: fork PRs. These keep using `ubuntu-latest` via the
   workflow's `runs-on` gate. They never run on your Mac mini.
@@ -61,7 +61,7 @@ Go to https://github.com/organizations/loopdive/settings/actions and ensure
 self-hosted runners are not blocked. Recommended policy:
 
 - **Runner groups** → create a group `mac-mini` that is restricted to
-  `loopdive/js2wasm` only. (Prevents other repos in the org from accidentally
+  `loopdive/js2` only. (Prevents other repos in the org from accidentally
   scheduling onto your hardware.)
 - **Workflow permissions** for the repo stay as-is.
 
@@ -75,7 +75,7 @@ The runner image needs a token to register itself. Two options:
 - **Fine-grained PAT** (recommended). Generate at
   https://github.com/settings/personal-access-tokens with:
   - **Resource owner**: `loopdive`
-  - **Repository access**: only `loopdive/js2wasm`
+  - **Repository access**: only `loopdive/js2`
   - **Organization permissions**: `Self-hosted runners: Read and write`
   - **Expiration**: 90 days (rotate via calendar reminder)
 

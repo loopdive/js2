@@ -1,51 +1,32 @@
 name: Refresh Committed Baseline
 
-# Keeps `benchmarks/results/test262-current.jsonl` in sync with reality (#1191).
+# DEPRECATED (post #491): This workflow is effectively a no-op.
 #
-# Why this exists:
-#   The committed JSONL baseline is the second source of truth for the
-#   dev-self-merge gate (Step 4 buckets regressions by reading this file).
-#   The `Test262 Sharded` workflow only commits the small JSON summary back
-#   to main; the large JSONL was deliberately moved to the
-#   `js2wasm-baselines` repo to avoid bandwidth bloat. As a result the
-#   committed JSONL drifts from reality and the bucket-by-path regression
-#   analysis becomes unreliable.
+# Background:
+#   Per PR #491, the committed `benchmarks/results/test262-current.jsonl`
+#   was removed from main — the dev-self-merge bucket analysis now reads
+#   the baselines from the separate `loopdive/js2wasm-baselines` repo
+#   instead. There is no longer a committed JSONL on main to refresh.
 #
-# What this does:
-#   1. Triggers after `Test262 Sharded` completes on push to main (the
-#      sharded workflow is itself path-filtered to src/**, scripts/**, etc.,
-#      so this transitively only fires on compiler-source changes).
-#   2. Downloads the merged JSONL artifact from the upstream run (cheap —
-#      no test262 re-run required).
-#   3. Commits the refreshed JSONL back to main with [skip ci] so it does
-#      not retrigger CI. Because this is purely a snapshot state update
-#      (no source change), it self-merges via direct push, mirroring the
-#      sharded workflow's existing JSON-commit pattern.
+#   The main branch ruleset additionally enforces the merge queue, so any
+#   `git push` from a workflow job fails with `GH013: Changes must be made
+#   through the merge queue`. The push step that this workflow's `refresh`
+#   job historically ended with would always fail under that ruleset.
 #
-# Manual override: `workflow_dispatch` finds the most recent main sharded
-# run that uploaded an unexpired `test262-merged-report` artifact (overall
-# run may show failure if regression-gate flagged regressions — the
-# artifact is still valid because `merge-report` uses `if: always()`).
+# Current status:
+#   - `workflow_run` and `push: main` triggers REMOVED — this workflow no
+#     longer runs automatically on every test262 sharded completion or
+#     push to main (it was failing every time and adding noise).
+#   - `workflow_dispatch` retained so the workflow can still be invoked
+#     manually if someone wants to inspect what it would have done (e.g.
+#     during an audit). The terminal `git push` step inside the job will
+#     still fail under the merge queue ruleset; that's expected.
+#
+# To fully retire: delete this file once we're confident no tooling
+# references it. Tracked alongside the post-#491 CI cleanup PR.
 
 on:
-  workflow_run:
-    workflows: ["Test262 Sharded"]
-    types: [completed]
   workflow_dispatch:
-  # #1235 — also fire on every push to main as a safety net. Three
-  # consecutive PRs (#142, #143, #144) all saw 22–28 "real" (wasm_change)
-  # regressions caused by baselines drift after admin-merges. The
-  # workflow_run trigger ABOVE depends on `Test262 Sharded` actually
-  # firing (and its actor being a non-bot user); admin-merges sometimes
-  # don't satisfy both conditions, leaving the JSONL stale across multiple
-  # subsequent PR runs. The push trigger below fires unconditionally on
-  # main and routes through the workflow_dispatch logic in
-  # "Resolve source CI run" — finds the most-recent main `Test262 Sharded`
-  # run with an unexpired `test262-merged-report` artifact and refreshes
-  # from THAT. `[skip ci]` commits are filtered out to avoid loops on the
-  # bot's own commits (this workflow itself commits with `[skip ci]`).
-  push:
-    branches: [main]
 
 permissions:
   contents: write

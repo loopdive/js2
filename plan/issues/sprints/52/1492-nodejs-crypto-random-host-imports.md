@@ -132,7 +132,7 @@ differ.
 
 ## Suspended Work
 
-- **PR:** https://github.com/loopdive/js2wasm/pull/398
+- **PR:** https://github.com/loopdive/js2/pull/398
 - **Branch:** `issue-1492-nodejs-crypto`
 - **Worktree:** `/workspace/.claude/worktrees/issue-1492-nodejs-crypto`
 - **HEAD:** `bdb5adf9d56e0679eb7d72da1cec9ff051d3165d`

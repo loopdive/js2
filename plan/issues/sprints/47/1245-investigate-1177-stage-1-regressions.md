@@ -244,7 +244,7 @@ branch and run targeted tests.
 - Do they share a pattern (specific feature, specific codegen path)?
 
 Check the CI run artifact at:
-`https://github.com/loopdive/js2wasm/actions/runs/25219534735`
+`https://github.com/loopdive/js2/actions/runs/25219534735`
 
 **3. Form a hypothesis.**
 
@@ -273,6 +273,6 @@ Options:
 ## Related
 
 - `plan/issues/sprints/45/1177.md` — full impl spec with Stage 1 diff locations
-- PR#125 CI run: https://github.com/loopdive/js2wasm/actions/runs/25219534735
+- PR#125 CI run: https://github.com/loopdive/js2/actions/runs/25219534735
 - #1205 — Stages 2+3 (already landed, prerequisite)
 - #1223 — blocked on Stage 1 landing

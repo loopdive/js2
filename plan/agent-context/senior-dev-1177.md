@@ -4,7 +4,7 @@
 
 ## Final result
 
-- **PR**: https://github.com/loopdive/js2wasm/pull/53 (MERGED)
+- **PR**: https://github.com/loopdive/js2/pull/53 (MERGED)
 - **Final commit**: `9ea4c82b6`
 - **Net test262 delta**: **+30 pass** (26994 → 27024)
 - **Canonical TDZ-throw cluster**: 100% fixed (3 newly passing + 4 stable)

@@ -986,7 +986,7 @@ unchanged.
 
 ## Suspended Work
 
-- **PR**: https://github.com/loopdive/js2wasm/pull/405
+- **PR**: https://github.com/loopdive/js2/pull/405
 - **Branch**: `issue-1326c-microtask-standalone`
 - **Worktree**: `/workspace/.claude/worktrees/issue-1326c-microtask-standalone/`
 - **HEAD SHA**: `29b8726c3cb1ed67540b81a765f600986e74030a`

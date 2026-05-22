@@ -1530,7 +1530,39 @@ export function compilePropertyAccess(
   if (propName === "name") {
     const callSigs = objType.getCallSignatures?.();
     const constructSigs = objType.getConstructSignatures?.();
-    if ((callSigs && callSigs.length > 0) || (constructSigs && constructSigs.length > 0)) {
+    const hasFuncSig = (callSigs && callSigs.length > 0) || (constructSigs && constructSigs.length > 0);
+    // (#1450) Even when the static type lacks call/construct signatures
+    // (catch parameter `any`, destructuring assignment target widened to
+    // contextual type, etc.), spec NamedEvaluation still applies if the
+    // identifier's binding declaration has an anonymous-fn / named-fn /
+    // class initializer. Pre-resolve here so destructuring patterns like
+    //   try {} catch ([fn = function(){}]) { fn.name }
+    // fold to the binding identifier text instead of the externref miss.
+    if (!hasFuncSig && ts.isIdentifier(expr.expression)) {
+      const sym = ctx.checker.getSymbolAtLocation(expr.expression);
+      const decl = sym?.valueDeclaration;
+      if (decl && (ts.isBindingElement(decl) || ts.isVariableDeclaration(decl)) && decl.initializer) {
+        let initExpr: ts.Expression = decl.initializer;
+        while (ts.isParenthesizedExpression(initExpr)) initExpr = initExpr.expression;
+        let resolvedName: string | undefined;
+        if (isAnonymousFunctionDefinition(decl.initializer)) {
+          // SingleNameBinding NamedEvaluation: anonymous fn/class inherits
+          // the binding identifier's text as its .name.
+          resolvedName = expr.expression.text;
+        } else if (ts.isFunctionExpression(initExpr) && initExpr.name) {
+          // Named function expression keeps its own name (the binding
+          // identifier is ignored per spec).
+          resolvedName = initExpr.name.text;
+        } else if (ts.isClassExpression(initExpr) && initExpr.name) {
+          resolvedName = initExpr.name.text;
+        }
+        if (resolvedName !== undefined) {
+          addStringConstantGlobal(ctx, resolvedName);
+          return compileStringLiteral(ctx, fctx, resolvedName);
+        }
+      }
+    }
+    if (hasFuncSig) {
       // Resolve the function name from the type symbol or the expression
       let funcName = objType.getSymbol()?.name ?? "";
       // __type, __function, __class, __object are anonymous type names from TS checker
@@ -1845,6 +1877,28 @@ export function compilePropertyAccess(
     if (symId !== undefined) {
       fctx.body.push({ op: "i32.const", value: symId });
       return { kind: "i32" };
+    }
+  }
+
+  // (#1467) `sym.description` — Symbol.prototype.description accessor.
+  // When the LHS is a Symbol primitive (or Symbol-wrapper object), read the
+  // host's Symbol.prototype.description accessor via `__symbol_description`.
+  // This handles three test262 buckets:
+  //   • Symbol('x').description === 'x'
+  //   • Symbol().description === undefined
+  //   • Symbol.prototype.description.call(wrapperObj) → unwraps the wrapper
+  // Generic __extern_get works for plain JS hosts but bypasses the spec
+  // accessor (which V8 implements specially), so we route directly.
+  if (propName === "description" && (objType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
+    const symDescIdx = ensureLateImport(ctx, "__symbol_description", [{ kind: "externref" }], [{ kind: "externref" }]);
+    if (symDescIdx !== undefined) {
+      const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+      if (recvType && recvType.kind !== "externref") {
+        coerceType(ctx, fctx, recvType, { kind: "externref" });
+      }
+      flushLateImportShifts(ctx, fctx);
+      fctx.body.push({ op: "call", funcIdx: symDescIdx });
+      return { kind: "externref" };
     }
   }
 

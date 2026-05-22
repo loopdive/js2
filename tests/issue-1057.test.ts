@@ -10,6 +10,9 @@ function compileAndRun(source: string): any {
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const mod = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(mod, imports);
+  // Wire wasmExports so the runtime can call `__vec_len` for the
+  // `constructor === Array` lookup on vec wrapper structs (#1441).
+  imports.setExports?.(instance.exports as Record<string, Function>);
   return (instance.exports as any).test();
 }
 

@@ -113,7 +113,7 @@ program read `"hello\n"` as a string.
 
 ## Suspended Work
 
-- **PR**: https://github.com/loopdive/js2wasm/pull/400
+- **PR**: https://github.com/loopdive/js2/pull/400
 - **Branch**: `issue-1481-wasi-stdin`
 - **Worktree**: `/workspace/.claude/worktrees/issue-1481-wasi-stdin`
 - **HEAD SHA**: `04ade449ed5d31390ec7347a8d9c75115e2b3968`
