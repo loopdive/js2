@@ -78,13 +78,19 @@ jobs:
   gate:
     name: cheap gate (main-ancestor + lint)
     runs-on: ubuntu-latest
-    # Skip when the synchronize event was triggered by auto-refresh-prs
-    # (github-actions[bot] doing 'Merge branch main into <branch>'). Otherwise
-    # every push to main triggers N PR-level test262 runs (one per auto-refreshed
-    # PR), which with global concurrency serialize and gridlock the queue.
-    # The merge_group cycle will still validate the PR when the queue picks it.
+    # Gate always runs on pull_request / merge_group / non-bot push. The
+    # PR-level test262 storm caused by auto-refresh-prs (github-actions[bot]
+    # doing 'Merge branch main into <branch>') is avoided by skipping JUST
+    # the heavy `test262-shard` matrix on bot synchronizes — NOT the gate.
+    # If the gate were also skipped, `test262-shard` and `merge-report` would
+    # cascade-skip (via `needs:`), and the required check "merge shard reports"
+    # would never be produced, permanently BLOCKING the PR under the strict
+    # required-checks policy. The companion workflow .github/workflows/
+    # test262-pr-stub.yml produces a cheap "merge shard reports" check name
+    # on bot synchronizes so PRs stay mergeable; the real workflow's gate
+    # still firing here keeps "cheap gate (main-ancestor + lint)" honest.
     if: |
-      (github.event_name == 'pull_request' && github.actor != 'github-actions[bot]') ||
+      github.event_name == 'pull_request' ||
       github.event_name == 'merge_group' ||
       (github.event_name == 'push' && github.actor != 'github-actions[bot]')
     timeout-minutes: 10

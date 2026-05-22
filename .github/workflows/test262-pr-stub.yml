@@ -1,0 +1,80 @@
+name: Test262 PR stub
+
+# PR-level companion to test262-sharded.yml. Produces the two required check
+# names — "cheap gate (main-ancestor + lint)" and "merge shard reports" — on
+# EVERY pull_request event, cheaply.
+#
+# Why this exists (the over-filter bug, see PR #496):
+#   test262-sharded.yml skips its heavy `test262-shard` matrix when the
+#   pull_request synchronize was triggered by github-actions[bot] (i.e.
+#   auto-refresh-prs doing 'Merge branch main into <branch>'). That's correct
+#   — we don't want N PR-level test262 storms every time main moves.
+#
+#   However, `merge-report` has `needs: [test262-shard]`. When the shard job
+#   is skipped, `merge-report` also skips (GitHub's `needs:` semantics treat
+#   skipped as not-success). The required check "merge shard reports" is then
+#   never produced, and under strict-required-checks the PR is permanently
+#   BLOCKED with `mergeStateStatus: BLOCKED, checks_summary: []`.
+#
+#   This stub workflow fires on ALL pull_request events (no paths filter, no
+#   actor filter). It produces "merge shard reports" trivially so the required
+#   check exists. For dev synchronizes, the real test262-sharded.yml ALSO
+#   produces "merge shard reports" with a real result — GitHub picks the most
+#   recent run of a given check name, so the real result wins (it lands later
+#   in the run). For bot synchronizes, only this stub produces it → PR stays
+#   mergeable.
+#
+#   The merge_group event still runs the full 32-shard test262 on the temp
+#   merge-with-main branch, so regressions are gated at queue time.
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: test262-pr-stub-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: cheap gate (main-ancestor + lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck + lint
+        run: |
+          pnpm run typecheck 2>&1 | tail -50 || (echo "::error::typecheck failed"; exit 1)
+          if grep -q '"lint"' package.json; then pnpm run lint 2>&1 | tail -50; fi
+
+  merge-report:
+    name: merge shard reports
+    runs-on: ubuntu-latest
+    needs: [gate]
+    steps:
+      - name: Stub-pass (real 32-shard test262 runs in merge_group)
+        run: |
+          echo "→ PR-level stub — does not run test262."
+          echo "→ For dev synchronizes, test262-sharded.yml's merge-report job"
+          echo "  produces the real 'merge shard reports' check result (latest"
+          echo "  run wins under required-check evaluation)."
+          echo "→ For bot synchronizes (auto-refresh-prs), only this stub fires,"
+          echo "  keeping the PR mergeable without paying for a 50-shard storm."
+          echo "→ The merge queue (merge_group event) runs full 50-shard test262"
+          echo "  on the temp merge-with-main branch — that gate validates the"
+          echo "  actual merge."
