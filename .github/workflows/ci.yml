@@ -21,21 +21,30 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Verify origin/main is merged into branch
+      - name: Verify branch contains its base
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: |
-          git fetch origin main
-          if ! git merge-base --is-ancestor origin/main HEAD; then
-            missing_non_skip=$(git log HEAD..origin/main --oneline | grep -v '\[skip ci\]' | wc -l)
-            if [ "$missing_non_skip" -eq 0 ]; then
-              echo "✓ origin/main only has [skip ci] commits not in branch (auto-generated metadata, safe to skip)"
-              git log HEAD..origin/main --oneline
-            else
-              echo "::error::Branch is missing non-[skip ci] commits from origin/main. Run 'git merge origin/main' and push again."
-              exit 1
-            fi
+          # NOTE: when GitHub Actions checks out a pull_request event it sets HEAD
+          # to refs/pull/N/merge — a simulated merge of the PR's head into the
+          # PR's base captured AT CHECKOUT TIME. The base sha embedded in that
+          # merge is what we should compare against, not 'git fetch origin main'
+          # (which races against any new push to main since checkout — leading
+          # to false-positive "branch missing main commits" failures).
+          # For pull_request events, github.event.pull_request.base.sha is the
+          # exact base sha used to compute the simulated merge.
+          # For merge_group events, the queue already merged main into the
+          # group ref, so the check is trivially true.
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            echo "✓ merge_group ref already merged base — skip explicit check"
+            exit 0
+          fi
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          git fetch origin "$BASE_SHA" --depth 1 || git fetch origin main --depth 50
+          if git merge-base --is-ancestor "$BASE_SHA" HEAD; then
+            echo "✓ PR base ($BASE_SHA) is an ancestor of HEAD"
           else
-            echo "✓ origin/main is an ancestor of this branch"
+            echo "::error::PR's recorded base ($BASE_SHA) is not an ancestor of HEAD. This is a checkout state anomaly — try re-running the job."
+            exit 1
           fi
 
       - uses: actions/setup-node@v6
