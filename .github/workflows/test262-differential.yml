@@ -29,26 +29,13 @@ name: Test262 Differential
 #   the landing-page dashboard history (acceptance criterion 5).
 
 on:
-  pull_request:
+  # Removed pull_request trigger — under the merge queue model, the queue
+  # builds its own merge_group ref and runs the diff there. Running this on
+  # every PR push was the single biggest source of CI cost (~16 shards × 95
+  # open PRs).
+  merge_group:
     branches: [main]
-    paths:
-      - ".github/workflows/test262-differential.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "tsconfig.json"
-      - "scripts/tsconfig.json"
-      - "vitest.config.ts"
-      - "src/**"
-      - "scripts/build-test262-report.mjs"
-      - "scripts/compiler-fork-worker.mjs"
-      - "scripts/compiler-pool.ts"
-      - "scripts/diff-test262.ts"
-      - "scripts/generate-editions.ts"
-      - "scripts/test262-worker.mjs"
-      - "tests/test262-chunk*.test.ts"
-      - "tests/test262-runner.ts"
-      - "tests/test262-scope-classification.test.ts"
-      - "tests/test262-shared.ts"
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       include_proposals:

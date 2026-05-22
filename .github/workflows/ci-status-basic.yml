@@ -13,10 +13,12 @@ name: CI Status Feed (basic)
 # If src/** WAS changed, Test262 Sharded will also run and ci-status-feed.yml
 # will write the authoritative file. We skip in that case to avoid races.
 
+# DISABLED: legacy dev-self-merge utility (writes ci-status JSON for the
+# old dev-wait loop). Under the merge queue model, this is no longer
+# needed — GitHub coordinates check status natively. Earlier today this
+# workflow piled up to 60+ queued runs during PR refresh waves.
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: write

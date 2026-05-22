@@ -28,6 +28,23 @@
 12. [ ] Check `plan/issues/` for any issues with `status: suspended` — these have unfinished work
 13. [ ] Read last session's notes in `project_next_session.md` memory file
 
+## Background watchers
+
+14. [ ] **Start the PR-drift mention poller** — Monitor that watches for new
+    PR comments tagging `@claude` (drift events from `pr-drift-detect.yml`).
+    The poller uses a state file so it catches up on events missed while no
+    session was running — start at session boot every time.
+    ```
+    Monitor:
+      description: "PR drift @claude mentions — dispatch agent on each"
+      persistent: true
+      command: INTERVAL_SECS=60 STATE_FILE=/tmp/poll-pr-mentions-state bash /workspace/scripts/poll-pr-mentions.sh 2>&1
+    ```
+    Verify with `TaskList` that exactly one `poll-pr-mentions` Monitor is running.
+    If a previous session's Monitor is still in the list (zombie), `TaskStop`
+    it before starting a fresh one — duplicate pollers double-dispatch.
+    See `plan/method/pr-drift-protocol.md` for what to do when an event fires.
+
 ## Before starting a new sprint
 
 14. [ ] **Check previous sprint is fully closed** — run the deterministic check:

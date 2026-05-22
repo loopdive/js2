@@ -11,10 +11,11 @@ name: CI Status Feed
 # stale between merges, causing spurious regressions_wasm_change counts on
 # every PR during heavy merge periods.
 
+# DISABLED: writes pr-{N}.json after Test262 Differential. Under the merge
+# queue model, GitHub natively coordinates check status — pr-status JSON
+# consumed by the legacy dev-self-merge wait loop is no longer needed.
 on:
-  workflow_run:
-    workflows: ["Test262 Differential"]
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: write
