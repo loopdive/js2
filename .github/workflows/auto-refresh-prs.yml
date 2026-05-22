@@ -1,55 +1,52 @@
 name: Auto-refresh open PR branches with main
 
-on:
-  push:
-    branches: [main]
+# DISABLED: under the merge-queue-driven workflow, the queue builds its own
+# fresh main+PR merge_group ref per cycle, so PR branches don't need force
+# refreshes. Running this on every push-to-main caused massive CI churn:
+# N open PRs × ~6 workflows per push = hundreds of redundant runs per merge.
+#
+# The queue rejects PRs that can't merge into current main due to conflicts —
+# same end result as auto-refresh surfacing them preemptively, without the
+# churn. Kept as workflow_dispatch-only for occasional manual housekeeping.
 
-# Skip auto-refresh commits to avoid infinite loops
-concurrency:
-  group: auto-refresh-prs
-  cancel-in-progress: false
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you manually triggering this?"
+        required: false
+        default: "manual refresh"
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   refresh:
-    if: ${{ !contains(github.event.head_commit.message, '[skip auto-refresh]') }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     timeout-minutes: 30
     steps:
       - name: Checkout main
         uses: actions/checkout@v5
         with:
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure git
-        run: |
-          git config user.email "ci-auto-refresh@js2wasm.local"
-          git config user.name "ci-auto-refresh"
-
-      - name: Refresh each open PR branch
+      - name: Refresh each open PR branch via GitHub update-branch API
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # List open PRs targeting main
-          prs=$(gh pr list --state open --base main --json number,headRefName --jq '.[] | "\(.number) \(.headRefName)"')
-          echo "$prs" | while read pr branch; do
-            [ -z "$branch" ] && continue
-            echo "=== Refreshing PR #$pr (branch: $branch) ==="
-            git fetch origin "$branch" || { echo "  failed to fetch — skip"; continue; }
-            git checkout -B "$branch" "origin/$branch"
-            if git merge-base --is-ancestor origin/main HEAD; then
-              echo "  already up to date"
-              continue
-            fi
-            if git merge origin/main --no-edit -m "Merge main into $branch (auto-refresh after $(git rev-parse --short origin/main))"; then
-              git push origin "$branch"
-              echo "  merged and pushed"
+          set +e
+          mapfile -t PRS < <(gh pr list --state open --limit 200 --json number --jq '.[].number')
+          ok=0; fail=0
+          for pr in "${PRS[@]}"; do
+            out=$(gh api "repos/${{ github.repository }}/pulls/$pr/update-branch" -X PUT 2>&1)
+            if echo "$out" | grep -qE 'Updating|no new commits|head branch is up'; then
+              ok=$((ok+1))
             else
-              echo "  conflict — leaving for dev"
-              git merge --abort
-              gh pr comment "$pr" --body "Auto-refresh failed: this branch conflicts with the latest \`main\`. Please merge \`origin/main\` locally, resolve the conflicts, and push." || true
+              fail=$((fail+1))
+              echo "fail #$pr: $out" | head -c 200
             fi
           done
+          echo "ok=$ok / fail=$fail (of ${#PRS[@]})"

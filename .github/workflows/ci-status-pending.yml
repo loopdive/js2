@@ -1,14 +1,12 @@
 name: CI Status Pending
 
-# Writes a pr-{N}.json stub with conclusion:null immediately when a PR is
-# opened or updated. This lets the dispatch loop count in-flight CI runs
-# without waiting for Test262 Differential to complete. The final result
-# workflow (ci-status-feed.yml or ci-status-basic.yml) overwrites this stub
-# with real data when CI finishes.
+# DISABLED: this workflow served the legacy dev-self-merge wait-loop where
+# dev agents polled pr-{N}.json to know when CI completed. Under the merge
+# queue model, GitHub itself coordinates check status — devs/tools query
+# the PR's checks API directly. Kept as workflow_dispatch for emergencies.
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 permissions:
   contents: write
