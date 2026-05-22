@@ -513,12 +513,29 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   }
   // (#1239) Object literals carrying get/set accessor declarations also
   // route through `__make_getter_callback` via compileObjectLiteralWithAccessors.
-  if (
-    !state.getterCallbackFound &&
-    ts.isObjectLiteralExpression(node) &&
-    node.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p))
-  ) {
-    state.getterCallbackFound = true;
+  //
+  // (#1433) Same path is used for `[Symbol.dispose]` / `[Symbol.asyncDispose]`
+  // methods so the disposer is installed as a real JS function under the
+  // matching Symbol property.
+  if (!state.getterCallbackFound && ts.isObjectLiteralExpression(node)) {
+    for (const p of node.properties) {
+      if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) {
+        state.getterCallbackFound = true;
+        break;
+      }
+      if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
+        const inner = p.name.expression;
+        if (
+          ts.isPropertyAccessExpression(inner) &&
+          ts.isIdentifier(inner.expression) &&
+          inner.expression.text === "Symbol" &&
+          (inner.name.text === "dispose" || inner.name.text === "asyncDispose")
+        ) {
+          state.getterCallbackFound = true;
+          break;
+        }
+      }
+    }
   }
   // ── getterCallbackFound: Object.defineProperty / Reflect.defineProperty with accessor descriptor (#929) ──
   // Also covers Object.defineProperties(obj, { p1: desc1, p2: desc2, ... }) (#1027)
@@ -2186,6 +2203,17 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const name = stmt.name ? stmt.name.text : "default";
       // Register the function's .name value for ES-spec compliance
       ctx.functionNameMap.set(name, name);
+      // #1463 — capture source text for Function.prototype.toString() so that
+      // `someFn.toString()` returns the original declaration text instead of
+      // the `function () { [native code] }` placeholder. Only top-level
+      // declarations are captured; class methods, arrow functions, and
+      // function expressions fall back to the placeholder.
+      try {
+        const sourceText = stmt.getText(sourceFile);
+        if (sourceText) ctx.funcSourceText.set(name, sourceText);
+      } catch {
+        // Synthetic nodes lacking source positions — skip silently.
+      }
       const sig = ctx.checker.getSignatureFromDeclaration(stmt);
       if (!sig) continue;
 

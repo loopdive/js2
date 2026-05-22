@@ -423,3 +423,89 @@ section for the exact callsite to audit.
 - Sibling: #1544 (for-of/for-await-of dstr → illegal cast)
 - Related: #778 (ref.test before ref.cast guard pattern)
 - Related: #826 (illegal-cast umbrella follow-up)
+
+## Findings (2026-05-20, senior-dev investigation)
+
+Triangulated the failure mode with a 7-case minimal probe
+(`tests/probe-1543-debug.test.ts`, removed post-investigation). The issue
+title is misleading — three distinct sub-bugs surface under this one ID, and
+none of them is async-gen-specific.
+
+### Sub-bug 1: wasm-VALIDATION error (compile-time)
+
+The minimal repro `class { method({ x = thrower() } = {}) {} }` (both
+plain and async-gen variants) fails at compile time with:
+
+```
+WebAssembly.instantiate(): Compiling function #N:"C_method" failed:
+local.set[0] expected type externref, found struct.get of type i32
+```
+
+WAT dump shows the synthesized `{}` default is emitted as
+`i32.const 0 ; struct.new <typeIdx>` where the struct's field 0 has wasm
+type `i32`, and the destructure code reads it via `struct.get` expecting
+`externref`. The struct-field types in the TS-inferred type don't match
+what the destructure emitter expects. **NOT async-gen specific** — same
+error fires for plain class methods, async non-generator methods, etc.
+
+### Sub-bug 2: test262-baseline runtime "illegal cast" (74 tests)
+
+Test262 baseline shows `L68:3 illegal cast [in __closure_3()/__closure_4()
+← assert_throws ← test]` for ~74 async-gen-meth-dflt-* tests. This is a
+runtime trap, distinct from Sub-bug 1's compile-time validation error.
+The test262 harness wraps each assertion in an `assert_throws` closure;
+that closure's param-passing apparently routes around the validation
+error and surfaces the cast failure at runtime instead.
+
+### Sub-bug 3: default-not-fired
+
+When the param is annotated `: any` (e.g. `{ x = thrower() }: any = {}`),
+the validation error goes away — the code compiles. But the inner default
+`x = thrower()` never fires: `method()` returns "no-throw" instead of
+throwing Test262Error. Overlaps with #1542's scope (which fixed some
+sub-shapes); this is a sibling shape #1542 didn't cover.
+
+### Root cause (Sub-bug 1)
+
+`src/codegen/literals.ts:447` explicitly excludes
+`ts.isParameter(expr.parent) && ts.isBindingElement(expr.parent)` from
+the `__new_plain_object` (externref) path, with a comment citing
+"150+ dstr regressions" if widened. That exclusion is exactly what
+forces the synthesized `{}` through the typed-struct path. The
+TS-inferred struct type (from the binding pattern `{ x = thrower() }`
+with `never`-typed initializer) yields fields with `i32` types where
+the destructure reader expects `externref`. The mismatch trips
+wasm validation.
+
+### Three investigation paths (none risk-free)
+
+**Path (a) — field-type widening.** Change the type-resolver so
+inferred structural binding-pattern param types use widened field types
+(externref/anyref) instead of the narrowest TS-inferred type. Requires
+reworking the type-resolver and a regression gate against the 150+
+existing dstr cases.
+
+**Path (b) — `__new_plain_object` routing.** Relax the
+`literals.ts:447` exclusion specifically for the `{ x = init } = {}`
+shape, routing it through the externref plain-object path. Same
+regression risk on the 150+ cases the exclusion guards.
+
+**Path (c) — defensive `ref.test` guard.** Apply the #778 pattern
+(check `ref.test` before `ref.cast`) at the destructure reader so the
+cast traps as a JS-visible TypeError rather than a wasm trap.
+**Caveat: this won't help compile-time failures (Sub-bug 1).** It might
+address Sub-bug 2's runtime trap, but only for the test262-harness
+path that gets past the validation error in the first place.
+
+### Recommendation
+
+Filed as a follow-up architect-spec scope, not a focused PR target.
+A focused PR is risky on all three paths. The architect spec should
+cover:
+
+1. Type-resolver behaviour for binding-pattern params with
+   destructure-with-initializer
+2. Field-type widening / coercion strategy compatible with both
+   struct-typed and externref-typed dstr paths
+3. Explicit regression gate against the 150+ dstr cases the
+   `literals.ts:447` comment guards

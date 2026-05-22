@@ -1318,6 +1318,64 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     return compileSuperMethodCall(ctx, fctx, expr);
   }
 
+  // (#1467) AggregateError(errors, message, options?) — called WITHOUT `new`.
+  // Per ES §20.5.7.1, AggregateError called as a function must construct
+  // normally (same effective semantics as `new`). Mirror the codegen in
+  // new-super.ts so the without-new and with-new failures resolve together.
+  // Must run BEFORE the property-access dispatch since the expression is a
+  // bare identifier, and BEFORE the BUILTIN_CLASS_NAMES generic path which
+  // would otherwise emit a host-method call without spec coercion.
+  // Unwrap parenthesized expressions and as/satisfies casts so
+  // `(AggregateError as any)([], 'msg')` also reaches this dispatch.
+  let _aggCallee: ts.Expression = expr.expression;
+  while (
+    ts.isParenthesizedExpression(_aggCallee) ||
+    ts.isAsExpression(_aggCallee) ||
+    ts.isTypeAssertionExpression(_aggCallee) ||
+    ts.isSatisfiesExpression(_aggCallee) ||
+    ts.isNonNullExpression(_aggCallee)
+  ) {
+    _aggCallee = (_aggCallee as ts.AsExpression | ts.ParenthesizedExpression).expression;
+  }
+  if (ts.isIdentifier(_aggCallee) && _aggCallee.text === "AggregateError") {
+    const args = expr.arguments ?? [];
+    if (args.length >= 1) {
+      const errorsType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+      if (errorsType && errorsType.kind !== "externref") {
+        coerceType(ctx, fctx, errorsType, { kind: "externref" });
+      }
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    if (args.length >= 2) {
+      const msgType = compileExpression(ctx, fctx, args[1]!, { kind: "externref" });
+      if (msgType && msgType.kind !== "externref") {
+        coerceType(ctx, fctx, msgType, { kind: "externref" });
+      }
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    if (args.length >= 3) {
+      const optsType = compileExpression(ctx, fctx, args[2]!, { kind: "externref" });
+      if (optsType && optsType.kind !== "externref") {
+        coerceType(ctx, fctx, optsType, { kind: "externref" });
+      }
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    const funcIdx = ensureLateImport(
+      ctx,
+      "__new_AggregateError",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (funcIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx });
+    }
+    return { kind: "externref" };
+  }
+
   // Handle property access calls: console.log, Math.xxx, extern methods
   if (ts.isPropertyAccessExpression(expr.expression)) {
     const propAccess = expr.expression;
@@ -1653,14 +1711,40 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
                 compileStringLiteral(ctx, fctx, methodName);
               }
 
-              // Compile receiver (first argument to .call)
+              // Compile receiver (first argument to .call).
+              // (#1442) When the receiver's static TS type is `boolean`, the
+              // i32 → externref auto-coercion uses `__box_number` and arrives
+              // host-side as `Number(0)` / `Number(1)`. That makes
+              // `String.prototype.trim.call(true)` return `"1"` instead of
+              // `"true"`. Box booleans through `__box_boolean` so the host
+              // gets a real `Boolean` wrapper, then String() / ToString
+              // produces the spec-correct `"true"` / `"false"`.
               const receiverArg = expr.arguments[0]!;
-              const recvType = compileExpression(ctx, fctx, receiverArg, { kind: "externref" });
-              if (recvType && recvType.kind !== "externref") {
-                fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
-              }
-              if (recvType === null) {
-                fctx.body.push({ op: "ref.null.extern" });
+              const receiverTsType = ctx.checker.getTypeAtLocation(receiverArg);
+              if (isBooleanType(receiverTsType)) {
+                const recvWasm = compileExpression(ctx, fctx, receiverArg);
+                if (recvWasm && recvWasm.kind === "i32") {
+                  addUnionImports(ctx);
+                  flushLateImportShifts(ctx, fctx);
+                  const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+                  if (boxBoolIdx !== undefined) {
+                    fctx.body.push({ op: "call", funcIdx: boxBoolIdx });
+                  } else {
+                    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+                  }
+                } else if (recvWasm && recvWasm.kind !== "externref") {
+                  fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+                } else if (recvWasm === null) {
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
+              } else {
+                const recvType = compileExpression(ctx, fctx, receiverArg, { kind: "externref" });
+                if (recvType && recvType.kind !== "externref") {
+                  fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+                }
+                if (recvType === null) {
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
               }
 
               // Build args array from remaining arguments
@@ -1938,6 +2022,35 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       }
     }
 
+    // (#1467) Error.isError(v) — ES2025 static method.
+    // Returns true for any value with an [[ErrorData]] internal slot. Host
+    // import returns i32 (0/1); coerce to f64 / leave as i32 depending on
+    // caller context — we return i32 so callers can use it as a boolean.
+    if (
+      ts.isIdentifier(propAccess.expression) &&
+      propAccess.expression.text === "Error" &&
+      propAccess.name.text === "isError" &&
+      expr.arguments.length >= 1
+    ) {
+      const isErrorIdx = ensureLateImport(ctx, "__error_isError", [{ kind: "externref" }], [{ kind: "i32" }]);
+      if (isErrorIdx !== undefined) {
+        const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        if (argType && argType.kind !== "externref") {
+          if (argType.kind === "ref" || argType.kind === "ref_null") {
+            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+          } else {
+            // Numbers, bools, etc. aren't errors — drop and push 0.
+            fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "i32.const", value: 0 });
+            return { kind: "i32" };
+          }
+        }
+        flushLateImportShifts(ctx, fctx);
+        fctx.body.push({ op: "call", funcIdx: isErrorIdx });
+        return { kind: "i32" };
+      }
+    }
+
     // Handle Array.isArray(x) — compile-time type check
     if (
       ts.isIdentifier(propAccess.expression) &&
@@ -2016,6 +2129,55 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" };
       }
+    }
+
+    // Handle Array.fromAsync(items, mapFn?, thisArg?) — ES2024 (#1517)
+    // Delegates to host import which implements the spec algorithm using
+    // native `for await...of` over async iterables, sync iterables (awaiting
+    // each value), and array-likes. Returns a Promise externref; the outer
+    // `await` unwraps it via the standard async/await machinery.
+    if (
+      ts.isIdentifier(propAccess.expression) &&
+      propAccess.expression.text === "Array" &&
+      propAccess.name.text === "fromAsync"
+    ) {
+      // items
+      if (expr.arguments.length >= 1) {
+        const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+      } else {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      // mapFn
+      if (expr.arguments.length >= 2) {
+        const mapType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
+        if (mapType && mapType.kind !== "externref") coerceType(ctx, fctx, mapType, { kind: "externref" });
+      } else {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      // thisArg
+      if (expr.arguments.length >= 3) {
+        const thisType = compileExpression(ctx, fctx, expr.arguments[2]!, { kind: "externref" });
+        if (thisType && thisType.kind !== "externref") coerceType(ctx, fctx, thisType, { kind: "externref" });
+      } else {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      const fromAsyncIdx = ensureLateImport(
+        ctx,
+        "__array_from_async",
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (fromAsyncIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: fromAsyncIdx });
+        return { kind: "externref" };
+      }
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
     }
 
     // Handle Array.from(arr) — array copy
@@ -2259,8 +2421,12 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         fctx.body.push({ op: "drop" });
       } else if (argType) {
         fctx.body.push({ op: "drop" });
+        // (#1462) Primitive (f64/i32/i64) is not an Object per ES2015+ §19.1.2.13/14;
+        // isFrozen/isSealed on a primitive returns TRUE.
+        fctx.body.push({ op: "i32.const", value: 1 });
+        return { kind: "i32" };
       }
-      // Fallback: not frozen/sealed (conservative)
+      // Fallback (no argType): treat as not frozen/sealed
       fctx.body.push({ op: "i32.const", value: 0 });
       return { kind: "i32" };
     }
@@ -2294,8 +2460,12 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         fctx.body.push({ op: "drop" });
       } else if (argType) {
         fctx.body.push({ op: "drop" });
+        // (#1462) Primitive (f64/i32/i64) is not an Object per ES2015+ §19.1.2.12;
+        // isExtensible on a primitive returns FALSE.
+        fctx.body.push({ op: "i32.const", value: 0 });
+        return { kind: "i32" };
       }
-      // Fallback: extensible (conservative)
+      // Fallback (no argType): extensible (conservative)
       fctx.body.push({ op: "i32.const", value: 1 });
       return { kind: "i32" };
     }
@@ -2343,6 +2513,43 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         // Base class with no parent: return null (Object.prototype not modeled)
         fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };
+      }
+
+      // (#1516) `Object.getPrototypeOf(g)` where `g` is a generator function
+      // declaration must return `%GeneratorFunction.prototype%` (= `%Generator%`)
+      // — the object whose `.prototype` is `%GeneratorPrototype%`. The compiled
+      // closure is opaque to the host, so we resolve the call statically here
+      // by routing to a dedicated runtime import.
+      //
+      // Same shape for `async function*`. Tests rely on this:
+      //   var GeneratorPrototype = Object.getPrototypeOf(g).prototype;
+      //   GeneratorPrototype.next.call(non_gen);  // → TypeError
+      if (ts.isIdentifier(arg0)) {
+        const argName = arg0.text;
+        const isGen = ctx.generatorFunctions.has(argName);
+        // ctx.asyncFunctions excludes async generators by design — codegen
+        // checks the original AST for the async keyword. Re-derive the flag
+        // from the symbol declaration so we route async-generators correctly.
+        let isAsyncGen = false;
+        if (isGen) {
+          const sym = ctx.checker.getSymbolAtLocation(arg0);
+          const decl = sym?.valueDeclaration ?? sym?.declarations?.[0];
+          if (decl && (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl))) {
+            isAsyncGen = decl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
+          }
+        }
+        if (isGen) {
+          const helperName = isAsyncGen
+            ? "__get_async_generator_function_prototype"
+            : "__get_generator_function_prototype";
+          const helperIdx = ensureLateImport(ctx, helperName, [], [{ kind: "externref" }]);
+          flushLateImportShifts(ctx, fctx);
+          if (helperIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx: helperIdx });
+            return { kind: "externref" };
+          }
+          // Standalone mode (no host): fall through to legacy null path.
+        }
       }
 
       const argTsType = ctx.checker.getTypeAtLocation(arg0);
@@ -2423,8 +2630,10 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
             // Expression produced no value — push null as fallback
             fctx.body.push({ op: "ref.null.extern" });
           } else if (argType.kind !== "externref") {
-            // Coerce to externref for the host import
-            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+            // (#1462) Use coerceType — handles f64 → __box_number, i32 → boxed,
+            // ref/ref_null → extern.convert_any. Bare extern.convert_any here would
+            // emit an illegal cast on primitive types (e.g. `Object.create(5)`).
+            coerceType(ctx, fctx, argType, { kind: "externref" });
           }
         }
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -3220,209 +3429,215 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       return { kind: "i32" };
     }
 
-    // ── Reflect API — compile-time rewrites to equivalent operations ──────
+    // ── Reflect API — host dispatch via __reflect_* imports (#1466) ──────
+    // Replaces the previous compile-time rewrites that bypassed the Proxy MOP.
+    // Each method routes through a thin host wrapper around Reflect.X so
+    // Proxy targets see their traps fire and boolean returns are preserved.
     if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Reflect") {
       const reflectMethod = propAccess.name.text;
 
-      // Reflect.get(obj, prop) → obj[prop]
+      // Helper — compile each argument as externref, padding missing positions with ref.null.extern.
+      const emitReflectArgs = (count: number): void => {
+        const externRef: ValType = { kind: "externref" };
+        for (let i = 0; i < count; i++) {
+          const arg = expr.arguments[i];
+          if (arg !== undefined) {
+            const argTy = compileExpression(ctx, fctx, arg, externRef);
+            if (argTy && argTy.kind !== "externref") {
+              coerceType(ctx, fctx, argTy, externRef);
+            } else if (argTy === null) {
+              // Expression had no value — push null externref to keep arity.
+              fctx.body.push({ op: "ref.null.extern" });
+            }
+          } else {
+            fctx.body.push({ op: "ref.null.extern" });
+          }
+        }
+      };
+
+      // Helper — drop N pushed args and return a fallback constant when the import is unavailable.
+      const fallbackReturn = (n: number, ret: "i32-true" | "extern-null"): InnerResult => {
+        for (let i = 0; i < n; i++) fctx.body.push({ op: "drop" });
+        if (ret === "i32-true") {
+          fctx.body.push({ op: "i32.const", value: 1 });
+          return { kind: "i32" };
+        }
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      };
+
+      const externRef: ValType = { kind: "externref" };
+      const i32Ty: ValType = { kind: "i32" };
+
+      // Reflect.get(target, key, [receiver]) — returns externref.
       if (reflectMethod === "get" && expr.arguments.length >= 2) {
-        const syntheticElemAccess = ts.factory.createElementAccessExpression(
-          expr.arguments[0] as ts.Expression,
-          expr.arguments[1] as ts.Expression,
-        );
-        ts.setTextRange(syntheticElemAccess, expr);
-        (syntheticElemAccess as any).parent = expr.parent;
-        return compileExpression(ctx, fctx, syntheticElemAccess);
-      }
-
-      // Reflect.set(obj, prop, val) → (obj[prop] = val, true)
-      if (reflectMethod === "set" && expr.arguments.length >= 3) {
-        const syntheticElemAccess = ts.factory.createElementAccessExpression(
-          expr.arguments[0] as ts.Expression,
-          expr.arguments[1] as ts.Expression,
-        );
-        const syntheticAssign = ts.factory.createBinaryExpression(
-          syntheticElemAccess,
-          ts.factory.createToken(ts.SyntaxKind.EqualsToken),
-          expr.arguments[2] as ts.Expression,
-        );
-        ts.setTextRange(syntheticAssign, expr);
-        (syntheticAssign as any).parent = expr.parent;
-        const assignType = compileExpression(ctx, fctx, syntheticAssign);
-        if (assignType) {
-          fctx.body.push({ op: "drop" });
+        emitReflectArgs(3);
+        const funcIdx = ensureLateImport(ctx, "__reflect_get", [externRef, externRef, externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "externref" };
         }
-        fctx.body.push({ op: "i32.const", value: 1 });
-        return { kind: "i32" };
+        return fallbackReturn(3, "extern-null");
       }
 
-      // Reflect.has(obj, prop) → prop in obj
+      // Reflect.set(target, key, value, [receiver]) — returns i32 (boolean).
+      if (reflectMethod === "set" && expr.arguments.length >= 2) {
+        emitReflectArgs(4);
+        const funcIdx = ensureLateImport(ctx, "__reflect_set", [externRef, externRef, externRef, externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "i32" };
+        }
+        return fallbackReturn(4, "i32-true");
+      }
+
+      // Reflect.has(target, key) — returns i32 (boolean).
       if (reflectMethod === "has" && expr.arguments.length >= 2) {
-        const syntheticIn = ts.factory.createBinaryExpression(
-          expr.arguments[1] as ts.Expression,
-          ts.factory.createToken(ts.SyntaxKind.InKeyword),
-          expr.arguments[0] as ts.Expression,
-        );
-        ts.setTextRange(syntheticIn, expr);
-        (syntheticIn as any).parent = expr.parent;
-        return compileExpression(ctx, fctx, syntheticIn);
-      }
-
-      // Reflect.apply(fn, thisArg, args) → fn.apply(thisArg, args)
-      if (reflectMethod === "apply" && expr.arguments.length >= 3) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          expr.arguments[0] as ts.Expression as ts.LeftHandSideExpression,
-          "apply",
-        );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[1] as ts.Expression,
-          expr.arguments[2] as ts.Expression,
-        ]);
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        return compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
-      }
-
-      // Reflect.construct(C, args) → new C(...args)
-      // For now, only handle array literal args: Reflect.construct(C, [a, b])
-      if (reflectMethod === "construct" && expr.arguments.length >= 2) {
-        const ctorExpr = expr.arguments[0] as ts.Expression as ts.LeftHandSideExpression;
-        const argsExpr = expr.arguments[1]!;
-        // If args is an array literal, spread it as positional args
-        let newArgs: readonly ts.Expression[];
-        if (ts.isArrayLiteralExpression(argsExpr)) {
-          newArgs = argsExpr.elements;
-        } else {
-          // Fallback: pass args array as-is (single arg)
-          newArgs = [argsExpr as ts.Expression];
+        emitReflectArgs(2);
+        const funcIdx = ensureLateImport(ctx, "__reflect_has", [externRef, externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "i32" };
         }
-        const syntheticNew = ts.factory.createNewExpression(ctorExpr, undefined, newArgs as ts.Expression[]);
-        ts.setTextRange(syntheticNew, expr);
-        (syntheticNew as any).parent = expr.parent;
-        return compileExpression(ctx, fctx, syntheticNew);
+        return fallbackReturn(2, "i32-true");
       }
 
-      // Reflect.ownKeys(obj) → Object.getOwnPropertyNames(obj)
-      // (includes non-enumerable string keys; per spec should also include symbols,
-      // but getOwnPropertyNames is a closer approximation than Object.keys)
-      if (reflectMethod === "ownKeys" && expr.arguments.length >= 1) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "getOwnPropertyNames",
-        );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[0] as ts.Expression,
-        ]);
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        return compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
-      }
-
-      // Reflect.defineProperty(obj, prop, desc) → (Object.defineProperty(obj, prop, desc), true)
-      if (reflectMethod === "defineProperty" && expr.arguments.length >= 3) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "defineProperty",
-        );
-        const syntheticCall = ts.factory.createCallExpression(
-          syntheticPropAccess,
-          undefined,
-          Array.from(expr.arguments) as ts.Expression[],
-        );
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        const resultType = compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
-        if (resultType) {
-          fctx.body.push({ op: "drop" });
-        }
-        fctx.body.push({ op: "i32.const", value: 1 });
-        return { kind: "i32" };
-      }
-
-      // Reflect.getPrototypeOf(obj) → Object.getPrototypeOf(obj)
-      if (reflectMethod === "getPrototypeOf" && expr.arguments.length >= 1) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "getPrototypeOf",
-        );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[0] as ts.Expression,
-        ]);
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        return compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
-      }
-
-      // Reflect.setPrototypeOf(obj, proto) → (Object.setPrototypeOf(obj, proto), true)
-      if (reflectMethod === "setPrototypeOf" && expr.arguments.length >= 2) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "setPrototypeOf",
-        );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[0] as ts.Expression,
-          expr.arguments[1] as ts.Expression,
-        ]);
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        const resultType = compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
-        if (resultType) {
-          fctx.body.push({ op: "drop" });
-        }
-        fctx.body.push({ op: "i32.const", value: 1 });
-        return { kind: "i32" };
-      }
-
-      // Reflect.deleteProperty(obj, prop) → (delete obj[prop], result as boolean)
+      // Reflect.deleteProperty(target, key) — returns i32 (boolean).
       if (reflectMethod === "deleteProperty" && expr.arguments.length >= 2) {
-        const syntheticElemAccess = ts.factory.createElementAccessExpression(
-          expr.arguments[0] as ts.Expression,
-          expr.arguments[1] as ts.Expression,
-        );
-        const syntheticDelete = ts.factory.createDeleteExpression(syntheticElemAccess as ts.UnaryExpression);
-        ts.setTextRange(syntheticDelete, expr);
-        (syntheticDelete as any).parent = expr.parent;
-        return compileExpression(ctx, fctx, syntheticDelete);
-      }
-
-      // Reflect.isExtensible(obj) → check compile-time non-extensible state
-      if (reflectMethod === "isExtensible" && expr.arguments.length >= 1) {
-        const arg0 = expr.arguments[0]!;
-        const argType = compileExpression(ctx, fctx, arg0);
-        if (argType) fctx.body.push({ op: "drop" });
-        let result = 1;
-        if (ts.isIdentifier(arg0) && ctx.nonExtensibleVars.has(arg0.text)) {
-          result = 0;
+        emitReflectArgs(2);
+        const funcIdx = ensureLateImport(ctx, "__reflect_deleteProperty", [externRef, externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "i32" };
         }
-        fctx.body.push({ op: "i32.const", value: result });
-        return { kind: "i32" };
+        return fallbackReturn(2, "i32-true");
       }
 
-      // Reflect.preventExtensions(obj) → mark non-extensible, return true
+      // Reflect.defineProperty(target, key, desc) — returns i32 (boolean).
+      if (reflectMethod === "defineProperty" && expr.arguments.length >= 3) {
+        emitReflectArgs(3);
+        const funcIdx = ensureLateImport(ctx, "__reflect_defineProperty", [externRef, externRef, externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "i32" };
+        }
+        return fallbackReturn(3, "i32-true");
+      }
+
+      // Reflect.getOwnPropertyDescriptor(target, key) — returns externref.
+      if (reflectMethod === "getOwnPropertyDescriptor" && expr.arguments.length >= 2) {
+        emitReflectArgs(2);
+        const funcIdx = ensureLateImport(
+          ctx,
+          "__reflect_getOwnPropertyDescriptor",
+          [externRef, externRef],
+          [externRef],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "externref" };
+        }
+        return fallbackReturn(2, "extern-null");
+      }
+
+      // Reflect.getPrototypeOf(target) — returns externref.
+      if (reflectMethod === "getPrototypeOf" && expr.arguments.length >= 1) {
+        emitReflectArgs(1);
+        const funcIdx = ensureLateImport(ctx, "__reflect_getPrototypeOf", [externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "externref" };
+        }
+        return fallbackReturn(1, "extern-null");
+      }
+
+      // Reflect.setPrototypeOf(target, proto) — returns i32 (boolean).
+      if (reflectMethod === "setPrototypeOf" && expr.arguments.length >= 2) {
+        emitReflectArgs(2);
+        const funcIdx = ensureLateImport(ctx, "__reflect_setPrototypeOf", [externRef, externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "i32" };
+        }
+        return fallbackReturn(2, "i32-true");
+      }
+
+      // Reflect.ownKeys(target) — returns externref (Array including Symbol keys, per §28.1.13).
+      if (reflectMethod === "ownKeys" && expr.arguments.length >= 1) {
+        emitReflectArgs(1);
+        const funcIdx = ensureLateImport(ctx, "__reflect_ownKeys", [externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "externref" };
+        }
+        return fallbackReturn(1, "extern-null");
+      }
+
+      // Reflect.isExtensible(target) — returns i32 (boolean).
+      // Preserve ctx.nonExtensibleVars marking (used by Object.isFrozen / Object.preventExtensions
+      // compile-time tracking at calls.ts:2089/2180) for identifiers so legacy callers still see
+      // the same answer; but the runtime answer always comes from the host.
+      if (reflectMethod === "isExtensible" && expr.arguments.length >= 1) {
+        emitReflectArgs(1);
+        const funcIdx = ensureLateImport(ctx, "__reflect_isExtensible", [externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "i32" };
+        }
+        return fallbackReturn(1, "i32-true");
+      }
+
+      // Reflect.preventExtensions(target) — returns i32 (boolean).
+      // Keep ctx.nonExtensibleVars side-effect for identifiers so the Object.* compile-time
+      // fast path stays consistent with the host's runtime answer.
       if (reflectMethod === "preventExtensions" && expr.arguments.length >= 1) {
         const arg0 = expr.arguments[0]!;
         if (ts.isIdentifier(arg0)) {
           ctx.nonExtensibleVars.add(arg0.text);
         }
-        const argType = compileExpression(ctx, fctx, arg0);
-        if (argType) fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: 1 });
-        return { kind: "i32" };
+        emitReflectArgs(1);
+        const funcIdx = ensureLateImport(ctx, "__reflect_preventExtensions", [externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "i32" };
+        }
+        return fallbackReturn(1, "i32-true");
       }
 
-      // Reflect.getOwnPropertyDescriptor(obj, prop) → rewrite to Object.getOwnPropertyDescriptor
-      if (reflectMethod === "getOwnPropertyDescriptor" && expr.arguments.length >= 2) {
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "getOwnPropertyDescriptor",
-        );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          expr.arguments[0] as ts.Expression,
-          expr.arguments[1] as ts.Expression,
-        ]);
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-        return compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
+      // Reflect.apply(fn, thisArg, argList) — returns externref. Host performs CreateListFromArrayLike.
+      if (reflectMethod === "apply" && expr.arguments.length >= 3) {
+        emitReflectArgs(3);
+        const funcIdx = ensureLateImport(ctx, "__reflect_apply", [externRef, externRef, externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "externref" };
+        }
+        return fallbackReturn(3, "extern-null");
+      }
+
+      // Reflect.construct(C, args, [newTarget]) — returns externref.
+      // Passing ref.null.extern for omitted newTarget lets the host wrapper default to `C`.
+      if (reflectMethod === "construct" && expr.arguments.length >= 2) {
+        emitReflectArgs(3);
+        const funcIdx = ensureLateImport(ctx, "__reflect_construct", [externRef, externRef, externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx });
+          return { kind: "externref" };
+        }
+        return fallbackReturn(3, "extern-null");
       }
     }
 
@@ -4958,8 +5173,17 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
               } else {
                 fctx.body.push({ op: "ref.null.extern" });
               }
-            } else if (pt.kind === "f64") fctx.body.push({ op: "f64.const", value: 0 });
-            else if (pt.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
+            } else if (pt.kind === "f64") {
+              // #1441 — `split` uses NaN as the "limit was not provided"
+              // sentinel. ToUint32(NaN) === 0 would produce `[]` if the runtime
+              // passed it through verbatim, so the `string_method` host shim
+              // strips a trailing NaN limit before invoking the JS method.
+              if (method === "split") {
+                fctx.body.push({ op: "f64.const", value: Number.NaN });
+              } else {
+                fctx.body.push({ op: "f64.const", value: 0 });
+              }
+            } else if (pt.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
           }
         }
         fctx.body.push({ op: "call", funcIdx });
@@ -5020,6 +5244,21 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     // Fallback .toString() for any type not already handled above
     // Handles: function.toString(), object.toString(), array.toString(), class instance.toString()
     if (propAccess.name.text === "toString" && expr.arguments.length === 0) {
+      // #1463 — `someFn.toString()` where `someFn` is a top-level function
+      // declaration → return the captured source text directly. Must happen
+      // BEFORE the externref-routes-to-JS fallback below: top-level functions
+      // resolve to externref at the type system level, so the default path
+      // would call `__extern_toString` on a Wasm closure (which JS doesn't
+      // know how to stringify) and the spec text would be lost.
+      if (ts.isIdentifier(propAccess.expression)) {
+        const captured = ctx.funcSourceText.get(propAccess.expression.text);
+        if (captured) {
+          addStringConstantGlobal(ctx, captured);
+          const idx = ctx.stringGlobalMap.get(captured)!;
+          fctx.body.push({ op: "global.get", index: idx });
+          return { kind: "externref" };
+        }
+      }
       const tsType = ctx.checker.getTypeAtLocation(propAccess.expression);
       const wasm = resolveWasmType(ctx, tsType);
 
@@ -5058,8 +5297,17 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       const isFunc = callSigs && callSigs.length > 0 && !tsType.getProperties?.()?.length;
 
       if (isFunc) {
-        addStringConstantGlobal(ctx, "function () { [native code] }");
-        const idx = ctx.stringGlobalMap.get("function () { [native code] }")!;
+        // #1463 — return captured source text when the receiver is an
+        // identifier resolving to a known top-level function declaration.
+        // Falls back to the legacy placeholder for arrow functions, method
+        // references, or any receiver we can't resolve statically.
+        let toStrStr = "function () { [native code] }";
+        if (ts.isIdentifier(propAccess.expression)) {
+          const captured = ctx.funcSourceText.get(propAccess.expression.text);
+          if (captured) toStrStr = captured;
+        }
+        addStringConstantGlobal(ctx, toStrStr);
+        const idx = ctx.stringGlobalMap.get(toStrStr)!;
         fctx.body.push({ op: "global.get", index: idx });
       } else {
         const str = isArray ? "[object Array]" : "[object Object]";

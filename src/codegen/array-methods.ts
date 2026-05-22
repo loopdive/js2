@@ -916,15 +916,72 @@ export function compileArrayLikePrototypeCall(
           fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
         }
         if (initType === null) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: accTmp });
       } else {
-        // No initial value: acc = receiver[0], start from i=1
-        fctx.body.push({ op: "local.get", index: receiverTmp });
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "call", funcIdx: getIdxFn });
-        fctx.body.push({ op: "i32.const", value: 1 });
+        // No initial value (spec §23.1.3.21 step 6.b): scan forward for the
+        // FIRST present index k (HasProperty), set acc = receiver[k], set
+        // iTmp = k+1, then continue with the main loop. If no element is
+        // present, throw TypeError. The previous implementation grabbed
+        // receiver[0] unconditionally, which produced NaN when index 0
+        // was a hole (issue #1461 acceptance bullet 3).
+        const foundTmp = allocLocal(fctx, `__ali_rd_found_${fctx.locals.length}`, { kind: "i32" });
+        // foundTmp = 0
+        fctx.body.push({ op: "i32.const", value: 0 });
+        fctx.body.push({ op: "local.set", index: foundTmp });
+        // i = 0
+        fctx.body.push({ op: "i32.const", value: 0 });
         fctx.body.push({ op: "local.set", index: iTmp });
+
+        // Scan loop: walk i = 0..len-1, find first HasProperty(receiver, i).
+        fctx.body.push({
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                // exit if i >= len  (br to enclosing block; reduce-no-initial throws)
+                ...exitIfDone,
+                // if HasProperty(receiver, i): { acc = receiver[i]; i = i + 1; br 2 (exit scan block) }
+                ...hasIdxCheck,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    // acc = receiver[i]
+                    { op: "local.get", index: receiverTmp } as Instr,
+                    { op: "local.get", index: iTmp } as Instr,
+                    { op: "f64.convert_i32_s" } as unknown as Instr,
+                    { op: "call", funcIdx: getIdxFn } as Instr,
+                    { op: "local.set", index: accTmp } as Instr,
+                    // foundTmp = 1
+                    { op: "i32.const", value: 1 } as Instr,
+                    { op: "local.set", index: foundTmp } as Instr,
+                    // i = i + 1
+                    { op: "local.get", index: iTmp } as Instr,
+                    { op: "i32.const", value: 1 } as Instr,
+                    { op: "i32.add" } as Instr,
+                    { op: "local.set", index: iTmp } as Instr,
+                    // Exit scan block (depth: 2 = past the inner `if`, the loop, to break out of the outer block)
+                    { op: "br", depth: 2 } as Instr,
+                  ],
+                } as Instr,
+                // Not present: increment and loop back (br depth 0 = continue loop)
+                ...incrI,
+              ],
+            } as Instr,
+          ],
+        });
+        // If no element was found, throw TypeError (spec step 6.c).
+        fctx.body.push({ op: "local.get", index: foundTmp });
+        fctx.body.push({ op: "i32.eqz" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: throwStringInstrs(ctx, "TypeError: Reduce of empty array with no initial value"),
+        });
       }
-      fctx.body.push({ op: "local.set", index: accTmp });
 
       // Reduce callback has 4 params: acc, elem, i, array
       // Build the reduce call instructions (similar to callClosure but with accTmp first).
@@ -1022,18 +1079,70 @@ export function compileArrayLikePrototypeCall(
           fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
         }
         if (initType === null) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: accTmp });
       } else {
-        // No initial: acc = receiver[len-1], start from i = len-2
-        fctx.body.push({ op: "local.get", index: receiverTmp });
-        fctx.body.push({ op: "local.get", index: iTmp });
-        fctx.body.push({ op: "f64.convert_i32_s" } as unknown as Instr);
-        fctx.body.push({ op: "call", funcIdx: getIdxFn });
-        fctx.body.push({ op: "local.get", index: iTmp });
-        fctx.body.push({ op: "i32.const", value: 1 });
-        fctx.body.push({ op: "i32.sub" });
-        fctx.body.push({ op: "local.set", index: iTmp });
+        // No initial value (spec §23.1.3.22 step 7.b): scan BACKWARD for the
+        // FIRST (highest) present index k, set acc = receiver[k], iTmp = k-1.
+        // Throw TypeError if no element is present. The previous code grabbed
+        // receiver[len-1] unconditionally, which produced NaN when the last
+        // index was a hole (issue #1461 acceptance bullet 3).
+        const foundTmpR = allocLocal(fctx, `__ali_rr_found_${fctx.locals.length}`, { kind: "i32" });
+        fctx.body.push({ op: "i32.const", value: 0 });
+        fctx.body.push({ op: "local.set", index: foundTmpR });
+
+        // Scan loop: walk i = len-1..0, find first HasProperty(receiver, i).
+        fctx.body.push({
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                // exit if i < 0  (br to enclosing block; reduceRight-no-initial throws)
+                { op: "local.get", index: iTmp } as Instr,
+                { op: "i32.const", value: 0 } as Instr,
+                { op: "i32.lt_s" } as Instr,
+                { op: "br_if", depth: 1 } as Instr,
+                // if HasProperty(receiver, i): { acc = receiver[i]; i = i - 1; br 2 (exit scan block) }
+                ...hasIdxCheck,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: receiverTmp } as Instr,
+                    { op: "local.get", index: iTmp } as Instr,
+                    { op: "f64.convert_i32_s" } as unknown as Instr,
+                    { op: "call", funcIdx: getIdxFn } as Instr,
+                    { op: "local.set", index: accTmp } as Instr,
+                    { op: "i32.const", value: 1 } as Instr,
+                    { op: "local.set", index: foundTmpR } as Instr,
+                    { op: "local.get", index: iTmp } as Instr,
+                    { op: "i32.const", value: 1 } as Instr,
+                    { op: "i32.sub" } as Instr,
+                    { op: "local.set", index: iTmp } as Instr,
+                    { op: "br", depth: 2 } as Instr,
+                  ],
+                } as Instr,
+                // Not present: decrement and loop back
+                { op: "local.get", index: iTmp } as Instr,
+                { op: "i32.const", value: 1 } as Instr,
+                { op: "i32.sub" } as Instr,
+                { op: "local.set", index: iTmp } as Instr,
+                { op: "br", depth: 0 } as Instr,
+              ],
+            } as Instr,
+          ],
+        });
+        // If no element was found, throw TypeError.
+        fctx.body.push({ op: "local.get", index: foundTmpR });
+        fctx.body.push({ op: "i32.eqz" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: throwStringInstrs(ctx, "TypeError: Reduce of empty array with no initial value"),
+        });
       }
-      fctx.body.push({ op: "local.set", index: accTmp });
 
       const rrNumParams = closureInfo.paramTypes.length;
       const rrCallClosure: Instr[] = [

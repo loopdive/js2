@@ -166,7 +166,7 @@ Picked up the labs-restructure / PR-#59 cleanup thread the same morning. Two tas
 
 The team-lead initially asked me to "open a PR" for the labs-restructure branch. There were two structural confounders I had to surface twice before it became actionable:
 
-1. The branch's own first commit installs a `.husky/pre-push` hook that **refuses** to push `labs/` paths to `loopdive/js2wasm.git`. So a PR for that branch on origin isn't producible without `--no-verify`. Confirmed via `git push --dry-run origin HEAD` — hook listed all 28 labs/ paths and exit 1.
+1. The branch's own first commit installs a `.husky/pre-push` hook that **refuses** to push `labs/` paths to `loopdive/js2.git`. So a PR for that branch on origin isn't producible without `--no-verify`. Confirmed via `git push --dry-run origin HEAD` — hook listed all 28 labs/ paths and exit 1.
 2. The "PR doesn't exist" perception was because the existing PR is on **`loopdive/js2wasm-labs`** (the private fork), not origin. Both repos have a `main`; `gh pr list` defaults to the origin remote and so didn't surface labs PR #1.
 
 Future labs-side work: verify PR existence via `gh pr list --repo loopdive/js2wasm-labs` rather than relying on default-remote `gh pr list`. Also: the labs repo's CI is broken (labs/main itself fails the "CI Status Feed" workflow), so the "self-merge on net_per_test ≥ 0" criterion doesn't apply over there — labs PRs need a human merge call.
@@ -176,7 +176,7 @@ Future labs-side work: verify PR existence via `gh pr list --repo loopdive/js2wa
 | PR | Repo | Head | State | Note |
 |---|---|---|---|---|
 | #1 | loopdive/js2wasm-labs | `0c7c654e9` | OPEN, mergeable | Restructure + bench refresh; CI on labs is systemically failing (preexisting) |
-| #59 | loopdive/js2wasm | `bf1fbff85` | OPEN, mergeable | Public-side path deletions; CI running on new HEAD |
+| #59 | loopdive/js2 | `bf1fbff85` | OPEN, mergeable | Public-side path deletions; CI running on new HEAD |
 
 Per team-lead message at end of session: PR #59 merged successfully with the TECH_LEAD hook version preserved, private content removed from the public repo, labs branch already on the labs remote. Shutting down.
 
@@ -191,7 +191,7 @@ Pulled into a new round of work after the labs/public-cleanup thread closed. Thr
 User asked whether `loopdive/js2wasm-labs#1` (the labs side of the public/private split) was actually merged. I had earlier reported it as "ready, awaiting human merge call." User said "yes" → ran `gh pr merge 1 --repo loopdive/js2wasm-labs --admin --merge`. Merge commit `26b432adabbdb1d6f65831c51bd632e92b1ab5a3` at 10:59:30 UTC.
 
 **Result**: private/public split now complete on both sides:
-- `loopdive/js2wasm` (public): competitor benchmarks, blog/, docs/, vendor scripts gone
+- `loopdive/js2` (public): competitor benchmarks, blog/, docs/, vendor scripts gone
 - `loopdive/js2wasm-labs` (private): same paths under `labs/` + bench refresh + path-based pre-push hook
 
 Verified zero `labs/` paths on origin/main and zero competitor content on origin/main. Caveat: git history on origin/main retains the original commits (PR #59 changes live state, not history).

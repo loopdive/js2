@@ -185,7 +185,7 @@ Pass means:
 
 ## Suspended Work
 
-- **PR**: #407 — https://github.com/loopdive/js2wasm/pull/407
+- **PR**: #407 — https://github.com/loopdive/js2/pull/407
 - **Branch**: `issue-1503-browser-crypto`
 - **Worktree**: `/workspace/.claude/worktrees/issue-1503-browser-crypto/`
 - **HEAD SHA**: `8274ab1a2a53a7d79eeca2b84e73b077a4fe559d`

@@ -46,7 +46,7 @@ and the in-flight `1169d.md`:
 - **Commit**: `40a4e90e3` — single commit, only the 5 new files
   (4303 insertions, 0 deletions, 0 modifications to existing files)
 - **CHECKLIST-FOXTROT** token included in commit message
-- **PR**: #48 — https://github.com/loopdive/js2wasm/pull/48
+- **PR**: #48 — https://github.com/loopdive/js2/pull/48
 - **Branch**: `chore/1169-slice-specs-e-i`
 - Direct push to main was rejected (non-fast-forward) and `git
   merge origin/main` was blocked by the /workspace hook → opened

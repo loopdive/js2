@@ -51,7 +51,7 @@ import {
   flushLateImportShifts,
   registerResolveComputedKeyExpression,
 } from "./shared.js";
-import { pushDefaultValue } from "./type-coercion.js";
+import { buildVecFromExternref, getVecInfo, pushDefaultValue } from "./type-coercion.js";
 
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
@@ -337,10 +337,46 @@ function compileObjectLiteralWithAccessors(
       }
       fctx.body.push({ op: "call", funcIdx: setIdx });
     } else if (ts.isMethodDeclaration(prop)) {
-      // Compile method as a callback closure, then __extern_set
+      // Compile method as a callback closure, then __extern_set.
+      //
+      // (#1433) For computed keys that resolve to well-known Symbols
+      // (e.g. `[Symbol.dispose]() {…}`), box the i32 symbol ID into a
+      // real JS Symbol via __box_symbol so the host can find the method
+      // under the real Symbol property. Otherwise the wasmGC struct path
+      // would name the field "@@dispose" and native APIs (DisposableStack,
+      // `using` declarations) would never see Symbol.dispose.
       let methodName: string | undefined;
+      let wellKnownSymId: number | undefined;
       if (ts.isIdentifier(prop.name)) methodName = prop.name.text;
       else if (ts.isStringLiteral(prop.name)) methodName = prop.name.text;
+      else if (ts.isComputedPropertyName(prop.name)) {
+        const inner = prop.name.expression;
+        if (
+          ts.isPropertyAccessExpression(inner) &&
+          ts.isIdentifier(inner.expression) &&
+          inner.expression.text === "Symbol"
+        ) {
+          wellKnownSymId = getWellKnownSymbolId(inner.name.text);
+        }
+        if (wellKnownSymId === undefined) {
+          // Fall back to the resolved string key (e.g. "@@dispose").
+          methodName = resolveComputedKeyExpression(ctx, prop.name.expression);
+        }
+      }
+      if (wellKnownSymId !== undefined) {
+        const boxSymIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (boxSymIdx === undefined) continue;
+        fctx.body.push({ op: "local.get", index: objLocal });
+        fctx.body.push({ op: "i32.const", value: wellKnownSymId });
+        fctx.body.push({ op: "call", funcIdx: boxSymIdx });
+        const ok = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+        if (!ok) {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        fctx.body.push({ op: "call", funcIdx: setIdx });
+        continue;
+      }
       if (methodName === undefined) continue;
       addStringConstantGlobal(ctx, methodName);
       const keyGlobal = ctx.stringGlobalMap.get(methodName);
@@ -410,6 +446,28 @@ function compileObjectLiteralWithAccessors(
   return { kind: "externref" };
 }
 
+/**
+ * (#1433) Check whether an object literal contains a method whose computed
+ * property name resolves to `Symbol.dispose` or `Symbol.asyncDispose`. Such
+ * objects MUST be routed through the JS-host plain-object path so the
+ * native runtime (e.g. `using r = res` / `DisposableStack.use(res)`) can
+ * find a real Symbol.dispose property on the resource. The WasmGC struct
+ * path would store these under field name "@@dispose", which the host
+ * never sees as a Symbol property.
+ */
+function _hasDisposalMethod(expr: ts.ObjectLiteralExpression): boolean {
+  for (const p of expr.properties) {
+    if (!ts.isMethodDeclaration(p)) continue;
+    if (!ts.isComputedPropertyName(p.name)) continue;
+    const inner = p.name.expression;
+    if (!ts.isPropertyAccessExpression(inner)) continue;
+    if (!ts.isIdentifier(inner.expression) || inner.expression.text !== "Symbol") continue;
+    const propName = inner.name.text;
+    if (propName === "dispose" || propName === "asyncDispose") return true;
+  }
+  return false;
+}
+
 export function compileObjectLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -419,9 +477,14 @@ export function compileObjectLiteral(
   // route to the JS-host plain-object path so the runtime sees real
   // accessor descriptors. Must run BEFORE any contextual-type / struct
   // resolution so the wasmGC struct path can't intercept.
+  //
+  // (#1433) Same routing for objects containing a `[Symbol.dispose]` or
+  // `[Symbol.asyncDispose]` method — host DisposableStack / `using`
+  // declarations rely on real Symbol-keyed properties.
   if (
     expr.properties.length > 0 &&
-    expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p))
+    (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
+      _hasDisposalMethod(expr))
   ) {
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }
@@ -740,20 +803,42 @@ export function ensureSymbolCounter(ctx: CodegenContext): number {
  * The description argument (if any) is evaluated for side effects but discarded.
  */
 export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
-  // Evaluate description arg for side effects, then drop it
-  if (args.length > 0) {
+  const counterIdx = ensureSymbolCounter(ctx);
+  // Increment counter first so the new id is reserved before we register a
+  // description for it: `++counter; register_desc(counter, desc); return counter`.
+  fctx.body.push({ op: "global.get", index: counterIdx });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "global.set", index: counterIdx });
+  // (#1467) Pre-register the description so `__box_symbol(id)` later returns
+  // `Symbol(desc)` instead of `Symbol("wasm_<id>")`. This preserves
+  // `Symbol(s).description === s` and `Symbol().description === undefined`.
+  // Standalone-mode fallback: if the host import isn't available, the symbol
+  // is still constructed (with the legacy `wasm_<id>` description); only the
+  // `.description` accessor in JS-host mode benefits.
+  const regIdx = ensureLateImport(ctx, "__symbol_register_desc", [{ kind: "i32" }, { kind: "externref" }], []);
+  if (regIdx !== undefined) {
+    fctx.body.push({ op: "global.get", index: counterIdx });
+    if (args.length > 0) {
+      const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+      if (argType && argType.kind !== "externref") {
+        coerceType(ctx, fctx, argType, { kind: "externref" });
+      }
+    } else {
+      // `Symbol()` with no arg → register `null` so the host knows to construct
+      // a Symbol with no description (so `.description === undefined`).
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    flushLateImportShifts(ctx, fctx);
+    fctx.body.push({ op: "call", funcIdx: regIdx });
+  } else if (args.length > 0) {
+    // Standalone-mode: still evaluate the description for side effects.
     const argType = compileExpression(ctx, fctx, args[0]!);
     if (argType !== null) {
       fctx.body.push({ op: "drop" });
     }
   }
-
-  const counterIdx = ensureSymbolCounter(ctx);
-  // ++counter; return counter
-  fctx.body.push({ op: "global.get", index: counterIdx });
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "global.set", index: counterIdx });
+  // Push the symbol id (the counter) as the result.
   fctx.body.push({ op: "global.get", index: counterIdx });
   return { kind: "i32" };
 }
@@ -2151,12 +2236,34 @@ export function compileArrayLiteral(
     const el = expr.elements[i]!;
     if (ts.isSpreadElement(el)) {
       const srcType = compileExpression(ctx, fctx, el.expression);
-      if (!srcType || (srcType.kind !== "ref" && srcType.kind !== "ref_null")) {
+      if (!srcType) continue;
+      if (srcType.kind === "externref") {
+        // #1514 — Spread of a JS iterable (Set, Map, generator, Array, etc.)
+        // arriving as externref. Materialize into a wasm vec matching the
+        // result's element type by iterating __extern_length / __extern_get,
+        // then treat as a normal vec spread. Without this, `[...realJsSet]`
+        // silently produced an empty array because the externref branch was
+        // dropped.
+        const externLocal = allocLocal(fctx, `__spread_extern_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: externLocal });
+        const matVecInfo = getVecInfo(ctx, vecTypeIdx);
+        if (!matVecInfo) continue;
+        const matInstrs = buildVecFromExternref(ctx, fctx, externLocal, vecTypeIdx, matVecInfo);
+        for (const instr of matInstrs) fctx.body.push(instr);
+        const srcLocal = allocLocal(fctx, `__spread_mat_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: vecTypeIdx,
+        });
+        fctx.body.push({ op: "local.tee", index: srcLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "i32.add" });
+        spreadLocals.push({ local: srcLocal, elemIdx: i, srcVecTypeIdx: vecTypeIdx });
+        continue;
+      }
+      if (srcType.kind !== "ref" && srcType.kind !== "ref_null") {
         // The compiled expression left a value on the stack — drop it so we
         // don't corrupt the running total (i32) that sits underneath.
-        if (srcType) {
-          fctx.body.push({ op: "drop" });
-        }
+        fctx.body.push({ op: "drop" });
         continue;
       }
       const srcVecTypeIdx = (srcType as { typeIdx: number }).typeIdx;

@@ -1415,22 +1415,34 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
       }
     }
 
-    // ── import.defer(...) / import.source(...) — Stage 3 proposals ──
-    // Reported as SyntaxError so negative parse/early test262 tests covering
-    // the import-defer / source-phase-imports proposals correctly count as
-    // detecting the unsupported syntax. This walk runs over the whole AST
-    // (including unreferenced async arrow bodies) so we catch the constructs
-    // even in dead code where the codegen pipeline never visits them. (#1315)
-    if (
-      ts.isCallExpression(node) &&
-      ts.isMetaProperty(node.expression) &&
-      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
-      (node.expression.name.text === "defer" || node.expression.name.text === "source")
-    ) {
-      addError(
-        node,
-        `SyntaxError: import.${node.expression.name.text}(...) is not supported (Stage 3 proposal — import-defer / source-phase-imports)`,
-      );
+    // ── import.X meta-property validation — covers Stage 3 proposals + unknown names ──
+    // ES spec (§13.3.10): the only standardized `import.<name>` meta-property is
+    // `import.meta`. The Stage 3 proposals add `import.source(...)` (source-phase
+    // imports) and `import.defer(...)` (import-defer). Any other meta-property
+    // name like `import.UNKNOWN` is a SyntaxError.
+    //
+    // Test262 has ~190 negative tests under
+    // `language/expressions/dynamic-import/syntax/invalid/` covering bare
+    // `import.source`, `import.source.X`, `import.UNKNOWN(...)`, `typeof
+    // import.source`, etc. The sharded test runner compiles with
+    // `skipSemanticDiagnostics: true`, suppressing TS's own diagnostics for these
+    // shapes, so the SyntaxError must be emitted by this syntactic pass (#1512).
+    //
+    // We catch the MetaProperty node itself, which fires for every position the
+    // meta-property appears in (call target, bare expression, typeof operand,
+    // PropertyAccessExpression base, etc.). The earlier call-only check (#1315)
+    // is subsumed by this. The walk runs over the whole AST including
+    // unreferenced bodies so we catch dead-code constructs too.
+    if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword && node.name.text !== "meta") {
+      const name = node.name.text;
+      if (name === "defer" || name === "source") {
+        addError(
+          node,
+          `SyntaxError: import.${name}(...) is not supported (Stage 3 proposal — import-defer / source-phase-imports)`,
+        );
+      } else {
+        addError(node, `SyntaxError: 'import.${name}' is not a valid meta-property; only 'import.meta' is allowed`);
+      }
     }
 
     // ── new import() — always a SyntaxError ────────────────────────
@@ -1751,9 +1763,40 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
       if (node.arguments.length === 0) {
         addError(node, "import() requires at least one argument");
       }
+      // ES spec / import-attributes proposal: at most 2 arguments (specifier,
+      // options). 3+ args is a SyntaxError — covered by the test262
+      // `not-extensible-args` negative tests (#1512).
+      if (node.arguments.length > 2) {
+        addError(node, "import() takes at most two arguments (specifier and options)");
+      }
       for (const arg of node.arguments) {
         if (ts.isSpreadElement(arg)) {
           addError(arg, "import() does not allow spread arguments");
+        }
+      }
+    }
+    // Same arg-count / spread restrictions for the Stage 3 `import.source(...)` and
+    // `import.defer(...)` calls. The meta-property itself is already rejected as a
+    // SyntaxError above, but test262 has negative tests that combine the bare
+    // proposal with extra args or spread, e.g. `import.source('a', {}, '')`. Emit
+    // an additional error so the test still fails parse phase even if the prior
+    // meta-property diagnostic is later relaxed for the proposal. (#1512)
+    if (
+      ts.isCallExpression(node) &&
+      ts.isMetaProperty(node.expression) &&
+      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      (node.expression.name.text === "source" || node.expression.name.text === "defer")
+    ) {
+      const name = node.expression.name.text;
+      if (node.arguments.length === 0) {
+        addError(node, `import.${name}() requires at least one argument`);
+      }
+      if (node.arguments.length > 2) {
+        addError(node, `import.${name}() takes at most two arguments`);
+      }
+      for (const arg of node.arguments) {
+        if (ts.isSpreadElement(arg)) {
+          addError(arg, `import.${name}() does not allow spread arguments`);
         }
       }
     }

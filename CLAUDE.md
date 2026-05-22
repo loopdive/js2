@@ -7,6 +7,7 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 - Run a specific test file: `npm test -- tests/issue-277.test.ts`
 - Run equivalence tests only: `npm test -- tests/equivalence.test.ts`
 - Test262: `pnpm run test:262` — vitest-based runner, creates its own worktree, writes to `benchmarks/results/`. Default 3 workers.
+- **Local CI on Claude Code on Web** (or any 16GB+ container): `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh` — idempotent pnpm install + test262 submodule init, then `pnpm run test:262` with `COMPILER_POOL_SIZE=$(nproc)`. Baseline 2026-05-20 on a 4-core/16GB container: ~68 min wall-clock, ~2.8 GB peak RAM. CI sharded is still faster end-to-end; this is for in-container validation runs. See `plan/issues/backlog/1522-race-local-test262-vs-ci.md` for the scoped pre-flight design.
 
 ## Dev scratch
 - **All ad-hoc probe / debug / repro files go in `.tmp/`** — gitignored, not picked up by vitest, doesn't pollute `git status`.
@@ -26,6 +27,10 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 ## Architecture Principles
 - **Dual-mode: JS host optional** — the compiler supports two modes: JS host mode (uses host imports for performance/completeness) and standalone mode (pure Wasm, no JS runtime). New features should have Wasm-native implementations for standalone mode; JS host imports are acceptable as a fast path when a JS runtime is available. Don't add new host imports without a standalone fallback.
 - This follows the pattern of #679 (dual string backend) and #682 (dual RegExp backend).
+- **Two orthogonal axes in codegen** (see #1527):
+  - **Backend lowering**: `src/codegen/` (WasmGC) vs `src/codegen-linear/` (linear memory). These are **alternatives, not one superseding the other** — the choice depends on target (browser/WasmGC vs WASI/linear) and tradeoffs. Both stay.
+  - **Front-end**: direct AST→Wasm (legacy, accumulated hacks) vs IR (`src/ir/`, typed representation). IR **replaces the hacks**; it does **not** compete with the backend choice. IR adopts AST node kinds step by step, only for parts that do not yet need to decide between linear and WasmGC lowering. IR-path failures currently demote to a warning channel (#1530 phases this fallback out).
+  - Full discussion: [docs/architecture/codegen-axes.md](docs/architecture/codegen-axes.md). Per-AST-kind adoption status: [plan/log/ir-adoption.md](plan/log/ir-adoption.md).
 
 ## Project Structure
 - Codegen: `src/codegen/expressions.ts`, `src/codegen/index.ts`, `src/codegen/statements.ts`, `src/codegen/type-coercion.ts`, `src/codegen/peephole.ts`

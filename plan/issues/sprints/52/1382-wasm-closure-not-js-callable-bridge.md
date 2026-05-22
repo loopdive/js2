@@ -499,7 +499,7 @@ Coarse upper bound from the original issue text and #1358's "452 assertion_fail"
 
 ## Suspended Work
 
-- **PR**: https://github.com/loopdive/js2wasm/pull/409
+- **PR**: https://github.com/loopdive/js2/pull/409
 - **Branch**: `issue-1382-wasm-closures-bridge`
 - **Worktree**: `/workspace/.claude/worktrees/issue-1382-wasm-closures-bridge/`
 - **HEAD SHA**: `ab5fe2d4ef25487985ebaa7b160c6cc39a6919c0`

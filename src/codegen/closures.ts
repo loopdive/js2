@@ -967,6 +967,49 @@ export function emitMethodParamDefaults(
   }
 }
 
+/**
+ * #1311 — Host method names whose callable arg ALWAYS needs a JS-callable
+ * `__make_callback` externref. These methods invoke the callback during the
+ * call itself (the JS-side host implementation calls back into the runtime),
+ * so the GC-struct closure shape can't satisfy them.
+ *
+ * Methods NOT in this set get the closure-struct path when their param is
+ * callable — the value is stored, not invoked, so the cast at the eventual
+ * dispatch site works. Examples: `Map.set`, `WeakMap.set`, `Set.add`,
+ * `Array.push`, `Array.unshift`, user-defined methods.
+ *
+ * Note: array HOFs (`forEach`, `map`, `filter`, `reduce`, etc.) have
+ * dedicated inline compilation in `src/codegen/array-methods.ts` and never
+ * reach `isHostCallbackArgument` for their callback arg. They're listed
+ * here defensively so that if the inline path is bypassed (e.g. on an
+ * untyped receiver), the host-callback path is still chosen.
+ */
+const HOST_CALLBACK_METHODS = new Set<string>([
+  // Array HOFs (defensive fallback — usually inlined upstream)
+  "forEach",
+  "map",
+  "filter",
+  "reduce",
+  "reduceRight",
+  "every",
+  "some",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+  "sort",
+  // Promise prototype methods — JS microtask scheduler invokes the callback
+  "then",
+  "catch",
+  "finally",
+  // Object/JSON callbacks
+  "fromEntries",
+  // String.replace(pattern, replacer) — replacer is a callback
+  "replace",
+  "replaceAll",
+]);
+
 /** Check if an arrow/function expression is used as a callback argument to a call
  *  that targets a HOST import (not a user-defined function). User-defined functions
  *  should receive closures via the GC struct path, not the __make_callback host path. */

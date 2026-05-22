@@ -319,6 +319,16 @@ export interface CodegenContext {
   stringLiteralValues: Map<string, string>;
   /** Counter for string literal imports */
   stringLiteralCounter: number;
+  /**
+   * #1463 — Source text per function declaration, keyed by function name.
+   * Populated in `collectDeclarations` from `stmt.getText(sourceFile)` so
+   * `Function.prototype.toString` can return spec-compliant source instead
+   * of the `function () { [native code] }` placeholder for identifier-typed
+   * receivers (`add.toString()` where `add` is a top-level declaration).
+   * Not populated for class methods, arrow functions, or expressions —
+   * those still fall back to the placeholder.
+   */
+  funcSourceText: Map<string, string>;
   /** Map from string literal value → global import index */
   stringGlobalMap: Map<string, number>;
   /** Number of imported globals (string constants) */
