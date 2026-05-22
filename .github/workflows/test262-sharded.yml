@@ -1,16 +1,15 @@
 name: Test262 Sharded
 
 on:
+  # pull_request: always fires, but the 16-shard matrix is conditionally
+  # skipped when the PR doesn't touch src/. The "merge shard reports" job
+  # always runs and produces a green check (either by aggregating shard
+  # results, or trivially when shards are skipped). This satisfies the
+  # merge queue's required-check requirement on PR HEAD without paying for
+  # full test262 on docs-only PRs. Real test262 still runs on every
+  # merge_group event (queue context) and every push to main.
   pull_request:
     branches: [main]
-    # Run on every PR push (no path filter). Path-filtering was causing the
-    # merge queue to stall: when auto-refresh-prs merged a docs-only main
-    # commit into a PR branch, the synchronize event's diff had no src/ files,
-    # the path filter skipped this workflow, and the queue's required
-    # "merge shard reports" check never produced a result on the new HEAD,
-    # blocking the PR forever. The cheap-gate job inside this workflow
-    # short-circuits to ~1 min for branches that don't need a full shard run.
-    # See task #109.
   push:
     branches: [main]
     paths:
@@ -64,13 +63,16 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  # PR branches: per-PR group so a new push cancels the old run for that PR only.
+  # pull_request: per-PR group so a new push cancels the older run for that PR.
+  #   The detect job is cheap (~20s) — most PRs will short-circuit on need_shards=false
+  #   and only the rare src-touching PR's shards actually consume capacity.
   # Push to main: shared queue (cancel-in-progress: false) so rapid merges queue
   #   rather than each evicting the previous — baseline always gets updated.
-  # workflow_dispatch: unique group so manual runs never cancel each other.
+  # merge_group: per-queue-ref (GitHub serializes the queue itself).
+  # workflow_dispatch: unique group so manual runs never collide.
   group: >-
     ${{ github.event_name == 'push' && 'test262-sharded-main'
-     || github.event_name == 'pull_request' && format('test262-sharded-pr-{0}', github.ref)
+     || github.event_name == 'pull_request' && format('test262-sharded-pr-{0}', github.event.pull_request.number)
      || github.event_name == 'merge_group' && format('test262-sharded-mq-{0}', github.ref)
      || format('test262-sharded-dispatch-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -117,9 +119,54 @@ jobs:
           # If lint script exists, run it (otherwise skip silently)
           if grep -q '"lint"' package.json; then pnpm run lint 2>&1 | tail -50; fi
 
+  detect:
+    name: detect path scope
+    runs-on: ubuntu-latest
+    outputs:
+      need_shards: ${{ steps.check.outputs.need_shards }}
+    steps:
+      - name: Checkout (PRs only — need full history for diff)
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Decide whether full sharded test262 is needed
+        id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "need_shards=true" >> "$GITHUB_OUTPUT"
+            echo "→ ${{ github.event_name }} event; full test262 will run"
+            exit 0
+          fi
+          git fetch origin "$BASE_SHA" --depth 1 2>/dev/null || git fetch origin main --depth 50
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || git diff --name-only main "$HEAD_SHA")
+          echo "Files changed in PR:"
+          echo "$changed" | head -20
+          if echo "$changed" | grep -qE '^(src/|scripts/(build-test262-report|compiler-fork-worker|compiler-pool|diff-test262|generate-editions|test262-worker)|tests/test262-|package\.json$|pnpm-lock\.yaml$|tsconfig|vitest\.config|\.github/workflows/test262-sharded\.yml$)'; then
+            echo "need_shards=true" >> "$GITHUB_OUTPUT"
+            echo "→ src/test/config files changed; full test262 will run"
+          else
+            echo "need_shards=false" >> "$GITHUB_OUTPUT"
+            echo "→ no src/test changes; skipping 16-shard test262 (queue context will validate)"
+          fi
+
   test262-shard:
-    if: (github.event_name != 'push' || github.actor != 'github-actions[bot]') && ((github.event_name != 'pull_request' && github.event_name != 'merge_group') || needs.gate.result == 'success')
-    needs: [gate]
+    # Heavy 16-shard test262 fires when:
+    #   - merge_group event (queue-context validation, the merge gate)
+    #   - push to main (baseline update; gated below by [skip ci] check)
+    #   - workflow_dispatch (manual trigger)
+    #   - pull_request AND detect.need_shards=true (PR touched src/test paths)
+    # Otherwise: skipped (saves ~30 min × 16 shards per non-src PR push).
+    # The merge-report job still runs and produces a green required check.
+    if: |
+      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
+      github.event_name == 'merge_group' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && needs.detect.outputs.need_shards == 'true' && needs.gate.result == 'success')
+    needs: [gate, detect]
     name: test262 shard ${{ matrix.chunk }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -204,10 +251,27 @@ jobs:
             benchmarks/results/test262-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn
 
-  merge-report:
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+  merge-report-stub:
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      needs.detect.outputs.need_shards == 'false'
     name: merge shard reports
-    needs: [test262-shard]
+    needs: [detect]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stub-pass (non-src PR — full test262 will run in merge_group)
+        run: |
+          echo "→ No shard runs for this PR (no src/test changes detected)."
+          echo "→ The merge queue will re-run the full test262 in merge_group context before merging."
+          echo "→ This stub produces a green required check to unblock queue entry."
+
+  merge-report:
+    if: |
+      (github.event_name != 'push' || github.actor != 'github-actions[bot]') &&
+      needs.detect.outputs.need_shards == 'true'
+    name: merge shard reports
+    needs: [detect, test262-shard]
     runs-on: ubuntu-latest
 
     steps:
@@ -260,9 +324,11 @@ jobs:
           if-no-files-found: warn
 
   regression-gate:
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+    # Only runs when real shards executed — for the stub path (non-src PR) there's
+    # no merged report to diff against the baseline, so the gate is trivially skipped.
+    if: (github.event_name != 'push' || github.actor != 'github-actions[bot]') && needs.detect.outputs.need_shards == 'true'
     name: check for test262 regressions
-    needs: merge-report
+    needs: [detect, merge-report]
     runs-on: ubuntu-latest
 
     steps:
