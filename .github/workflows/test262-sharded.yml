@@ -119,54 +119,18 @@ jobs:
           # If lint script exists, run it (otherwise skip silently)
           if grep -q '"lint"' package.json; then pnpm run lint 2>&1 | tail -50; fi
 
-  detect:
-    name: detect path scope
-    runs-on: ubuntu-latest
-    outputs:
-      need_shards: ${{ steps.check.outputs.need_shards }}
-    steps:
-      - name: Checkout (PRs only — need full history for diff)
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - name: Decide whether full sharded test262 is needed
-        id: check
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "need_shards=true" >> "$GITHUB_OUTPUT"
-            echo "→ ${{ github.event_name }} event; full test262 will run"
-            exit 0
-          fi
-          git fetch origin "$BASE_SHA" --depth 1 2>/dev/null || git fetch origin main --depth 50
-          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || git diff --name-only main "$HEAD_SHA")
-          echo "Files changed in PR:"
-          echo "$changed" | head -20
-          if echo "$changed" | grep -qE '^(src/|scripts/(build-test262-report|compiler-fork-worker|compiler-pool|diff-test262|generate-editions|test262-worker)|tests/test262-|package\.json$|pnpm-lock\.yaml$|tsconfig|vitest\.config|\.github/workflows/test262-sharded\.yml$)'; then
-            echo "need_shards=true" >> "$GITHUB_OUTPUT"
-            echo "→ src/test/config files changed; full test262 will run"
-          else
-            echo "need_shards=false" >> "$GITHUB_OUTPUT"
-            echo "→ no src/test changes; skipping 16-shard test262 (queue context will validate)"
-          fi
-
   test262-shard:
-    # Heavy 16-shard test262 fires when:
-    #   - merge_group event (queue-context validation, the merge gate)
-    #   - push to main (baseline update; gated below by [skip ci] check)
-    #   - workflow_dispatch (manual trigger)
-    #   - pull_request AND detect.need_shards=true (PR touched src/test paths)
-    # Otherwise: skipped (saves ~30 min × 16 shards per non-src PR push).
-    # The merge-report job still runs and produces a green required check.
+    # Heavy 16-shard test262 fires ONLY in merge_group / push:main / workflow_dispatch.
+    # NOT on pull_request — the merge queue runs the real validation on its
+    # temp merge-with-main branch (merge_group event), so PR-level test262 is
+    # redundant. PR-level CI is just cheap-gate + the merge-report-stub which
+    # produces a green "merge shard reports" check to unblock queue entry.
+    # If test262 fails in merge_group, the queue rejects the merge.
     if: |
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
       github.event_name == 'merge_group' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && needs.detect.outputs.need_shards == 'true' && needs.gate.result == 'success')
-    needs: [gate, detect]
+      github.event_name == 'workflow_dispatch'
+    needs: [gate]
     name: test262 shard ${{ matrix.chunk }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -252,26 +216,33 @@ jobs:
           if-no-files-found: warn
 
   merge-report-stub:
-    if: |
-      always() &&
-      github.event_name == 'pull_request' &&
-      needs.detect.outputs.need_shards == 'false'
+    # PR-level "merge shard reports" stub. Always green on pull_request events.
+    # The real validation happens in merge_group context (where the actual
+    # test262-shard matrix and merge-report run). This stub exists only to
+    # satisfy the queue's required-check requirement on PR HEAD.
+    if: github.event_name == 'pull_request'
     name: merge shard reports
-    needs: [detect]
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
-      - name: Stub-pass (non-src PR — full test262 will run in merge_group)
+      - name: Stub-pass (real test262 runs in merge_group / queue context)
         run: |
-          echo "→ No shard runs for this PR (no src/test changes detected)."
-          echo "→ The merge queue will re-run the full test262 in merge_group context before merging."
-          echo "→ This stub produces a green required check to unblock queue entry."
+          echo "→ PR-level stub — does not run test262."
+          echo "→ The merge queue (merge_group event) runs full test262 sharded on"
+          echo "  the temp merge-with-main branch before merging. That gate is what"
+          echo "  actually validates the merge."
+          echo "→ This stub produces a green 'merge shard reports' check to satisfy"
+          echo "  the PR-level required-check gate so the PR can enter the queue."
 
   merge-report:
+    # Real test262 aggregation. Only runs in contexts where shards actually
+    # executed: merge_group (queue), push to main, or workflow_dispatch.
+    # On pull_request, the merge-report-stub takes over (green pass).
     if: |
-      (github.event_name != 'push' || github.actor != 'github-actions[bot]') &&
-      needs.detect.outputs.need_shards == 'true'
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: merge shard reports
-    needs: [detect, test262-shard]
+    needs: [test262-shard]
     runs-on: ubuntu-latest
 
     steps:
@@ -324,11 +295,12 @@ jobs:
           if-no-files-found: warn
 
   regression-gate:
-    # Only runs when real shards executed — for the stub path (non-src PR) there's
-    # no merged report to diff against the baseline, so the gate is trivially skipped.
-    if: (github.event_name != 'push' || github.actor != 'github-actions[bot]') && needs.detect.outputs.need_shards == 'true'
+    # Only runs in contexts where real shards/merge-report executed.
+    if: |
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: check for test262 regressions
-    needs: [detect, merge-report]
+    needs: [merge-report]
     runs-on: ubuntu-latest
 
     steps:
