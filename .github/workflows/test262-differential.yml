@@ -29,13 +29,13 @@ name: Test262 Differential
 #   the landing-page dashboard history (acceptance criterion 5).
 
 on:
-  # Removed pull_request trigger — under the merge queue model, the queue
-  # builds its own merge_group ref and runs the diff there. Running this on
-  # every PR push was the single biggest source of CI cost (~16 shards × 95
-  # open PRs).
-  merge_group:
-    branches: [main]
-    types: [checks_requested]
+  # Removed pull_request trigger (under merge queue model, queue builds its
+  # own merge_group ref). Also removed merge_group trigger — Test262 Sharded's
+  # regression-gate already provides the same per-test pass→fail/CE check
+  # against the baseline JSONL, just with a different baseline source. Running
+  # both was duplicate work (32 extra shards per PR), eating the runner budget
+  # and preventing parallelism on Test262 Sharded itself. Kept as
+  # workflow_dispatch only for dev-driven detailed diff inspection.
   workflow_dispatch:
     inputs:
       include_proposals:

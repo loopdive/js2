@@ -1,11 +1,10 @@
 name: Test262 Sharded
 
 on:
-  # Serial-queue model: full test262 runs at PR-time AND in merge_group.
-  # The merge queue is set to batch=1 so each PR is validated alone with no
-  # ALLGREEN hiding. Same-name "merge shard reports" check is produced both
-  # at PR HEAD (gates queue entry) and at merge_group ref (gates the merge).
-  # Path filter restricts to src/test/config changes — docs-only PRs skip.
+  # Serial-queue model: full 32-shard test262 runs at PR-time AND in merge_group.
+  # Each PR is validated alone (no ALLGREEN hiding) and developers see test262
+  # regressions on PR push (not just at queue-time). Path filter restricts to
+  # src/test/config changes — docs-only PRs skip.
   pull_request:
     branches: [main]
     paths: &test262-paths
@@ -63,8 +62,7 @@ env:
 
 concurrency:
   # pull_request: per-PR group — a new push cancels the older run for that PR.
-  # push to main: shared serial queue so rapid main pushes queue rather than
-  #   evicting each other — baseline always gets updated.
+  # push to main: shared serial queue.
   # merge_group: per-queue-ref (GitHub serializes the queue itself).
   # workflow_dispatch: unique group so manual runs never collide.
   group: >-
@@ -132,7 +130,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        chunk: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        # 50 shards — maximizes parallelism within the 60-runner budget while
+        # leaving headroom (~5) for cheap-gate, quality, cla-check, differential-test.
+        # With Test262 Differential dropped from merge_group + PR contexts, this
+        # is the sweet spot for one PR in flight. Per-shard work shrinks to ~860
+        # tests / ~8 min wall, vs ~13 min at 32 shards. Concurrent PRs will see
+        # ~50 of their shards queue (no priority queue in GH Actions).
+        chunk: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+                31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
 
     env:
       COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '2' }}

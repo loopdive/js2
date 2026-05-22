@@ -50,6 +50,12 @@ echo "  state: $STATE_FILE"
 echo "  lock:  $LOCK_FILE (pid $$)"
 
 # ---- main loop ---------------------------------------------------------------
+# Each scan iteration:
+#  1. Collect ALL newly-drifted PRs (dedup via state file).
+#  2. If any: emit ONE summary line listing them — avoids notification spam
+#     when multiple PRs drift simultaneously (typical after a main push).
+#  3. Update state file atomically once per scan.
+# Silent scans produce no output — only actionable drift events surface.
 while true; do
   MAIN_HEAD=$(gh api "repos/$REPO/branches/main" --jq '.commit.sha' 2>/dev/null || echo "")
   if [ -z "$MAIN_HEAD" ]; then
@@ -57,47 +63,58 @@ while true; do
     continue
   fi
 
-  # List open PRs targeting main with auto-merge enabled — these are queue
-  # candidates. For each, fetch base.sha and check drift.
-  gh api "repos/$REPO/pulls?state=open&base=main&per_page=100" --paginate 2>/dev/null \
-    | jq -c '.[] | select(.auto_merge != null) | {number, base: .base.sha, title}' \
-    | while IFS= read -r pr; do
-        number=$(echo "$pr" | jq -r '.number')
-        base=$(echo "$pr" | jq -r '.base')
-        title=$(echo "$pr" | jq -r '.title' | head -c 80)
+  # Collect newly-drifted PRs this scan. Format: "<number>:<drift_count>"
+  # per line, joined with " ".
+  drifted=""
+  state_updates=""
+  while IFS= read -r pr; do
+    [ -z "$pr" ] && continue
+    number=$(echo "$pr" | jq -r '.number')
+    base=$(echo "$pr" | jq -r '.base')
 
-        # Skip if base already at main HEAD — no drift.
-        [ "$base" = "$MAIN_HEAD" ] && continue
+    # Skip if base already at main HEAD — no drift.
+    [ "$base" = "$MAIN_HEAD" ] && continue
 
-        # Skip if we've already alerted for this (PR, MAIN_HEAD) pair.
-        last_alerted=$(jq -r --arg n "$number" '.[$n] // ""' "$STATE_FILE")
-        [ "$last_alerted" = "$MAIN_HEAD" ] && continue
+    # Skip if we've already alerted for this (PR, MAIN_HEAD) pair.
+    last_alerted=$(jq -r --arg n "$number" '.[$n] // ""' "$STATE_FILE")
+    [ "$last_alerted" = "$MAIN_HEAD" ] && continue
 
-        # Count non-[skip ci] commits between base and main HEAD.
-        drift=$(gh api "repos/$REPO/compare/$base...$MAIN_HEAD" \
-                  --jq '[.commits[] | select(.commit.message | contains("[skip ci]") | not)] | length' \
-                  2>/dev/null || echo 0)
-        [ "$drift" -lt 1 ] && continue
+    # Count non-[skip ci] commits between base and main HEAD.
+    drift=$(gh api "repos/$REPO/compare/$base...$MAIN_HEAD" \
+              --jq '[.commits[] | select(.commit.message | contains("[skip ci]") | not)] | length' \
+              2>/dev/null || echo 0)
+    [ "$drift" -lt 1 ] && continue
 
-        ts=$(date -u +%H:%M:%SZ)
-        echo "[$ts] PR #$number drifted: $drift commits behind main (${MAIN_HEAD:0:9}) — $title"
+    drifted+="#$number(-$drift) "
+    state_updates+="$number "
+  done < <(gh api "repos/$REPO/pulls?state=open&base=main&per_page=100" --paginate 2>/dev/null \
+             | jq -c '.[] | select(.auto_merge != null) | {number, base: .base.sha}')
 
-        if [ -n "$NTFY_URL" ]; then
-          curl -fsS -m 5 -X POST \
-            -H "Title: PR #$number drifted" \
-            -H "Priority: default" \
-            -d "$drift commits behind main — $title" \
-            "$NTFY_URL" >/dev/null 2>&1 || true
-        fi
+  if [ -n "$drifted" ]; then
+    ts=$(date -u +%H:%M:%SZ)
+    count=$(echo "$drifted" | wc -w | tr -d ' ')
+    echo "[$ts] $count PR(s) drifted behind main (${MAIN_HEAD:0:9}): $drifted"
 
-        # Record alert so we don't re-emit until main moves.
-        tmp=$(mktemp)
-        jq --arg n "$number" --arg s "$MAIN_HEAD" '. + {($n): $s}' "$STATE_FILE" > "$tmp"
-        mv "$tmp" "$STATE_FILE"
-      done
+    if [ -n "$NTFY_URL" ]; then
+      curl -fsS -m 5 -X POST \
+        -H "Title: $count PR(s) drifted" \
+        -H "Priority: default" \
+        -d "$drifted" \
+        "$NTFY_URL" >/dev/null 2>&1 || true
+    fi
 
-  # Prune state entries for PRs that are now closed/merged, so the file
-  # doesn't grow unbounded. (Optional — drop a "GC every Nth iteration"
-  # pattern later if needed; the file is small.)
+    # Update state for all drifted PRs in one atomic write.
+    tmp=$(mktemp)
+    jq_args=()
+    jq_filter='.'
+    i=0
+    for n in $state_updates; do
+      jq_args+=(--arg "k$i" "$n")
+      jq_filter+=" + {(\$k$i): \"$MAIN_HEAD\"}"
+      i=$((i+1))
+    done
+    jq "${jq_args[@]}" "$jq_filter" "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE" || rm -f "$tmp"
+  fi
+
   sleep "$INTERVAL_SECS"
 done
