@@ -89,23 +89,13 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-      - name: Verify branch contains its base
+      - name: Skip explicit base-ancestry check (handled by simulated merge / queue)
         run: |
-          # Use the PR's recorded base sha (not freshly-fetched origin/main)
-          # to avoid TOCTOU false positives when main moves between checkout
-          # and this step. For merge_group the queue ref already merged base.
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            echo "✓ merge_group ref already includes base"
-            exit 0
-          fi
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          git fetch origin "$BASE_SHA" --depth 1 || git fetch origin main --depth 50
-          if git merge-base --is-ancestor "$BASE_SHA" HEAD; then
-            echo "✓ PR base ($BASE_SHA) is an ancestor of HEAD"
-          else
-            echo "::error::PR's recorded base is not an ancestor of HEAD — re-run the job."
-            exit 1
-          fi
+          # See ci.yml for full reasoning. The simulated PR-merge HEAD and the
+          # merge_group ref both inherently include base by construction; no
+          # extra ancestry check needed and the previous one had TOCTOU + shallow
+          # checkout false-positive issues.
+          echo "✓ ${{ github.event_name }} ref already includes base by construction"
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
