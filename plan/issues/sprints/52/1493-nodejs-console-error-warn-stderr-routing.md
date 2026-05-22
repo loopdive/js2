@@ -117,7 +117,7 @@ asserts each lands in the right stream.
 
 ## Suspended Work (dev-1493, 2026-05-20)
 
-- **PR**: #402 — https://github.com/loopdive/js2wasm/pull/402
+- **PR**: #402 — https://github.com/loopdive/js2/pull/402
 - **Branch**: `issue-1493-nodejs-console-stderr`
 - **Worktree**: `/workspace/.claude/worktrees/issue-1493-nodejs-console-stderr/`
 - **HEAD SHA**: `065683d3b2ae4c06349768f81f0bd186b0499617`

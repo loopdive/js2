@@ -30,7 +30,7 @@ This directory receives per-PR test262 CI completion signals from the **CI Statu
   "conclusion": "success",
   "head_branch": "issue-1024-destr-rest-holes-null",
   "head_sha": "b31d3ee1...",
-  "run_url": "https://github.com/loopdive/js2wasm/actions/runs/...",
+  "run_url": "https://github.com/loopdive/js2/actions/runs/...",
   "timestamp": "2026-04-11T12:03:13Z",
   "pass": 21190,
   "fail": 19199,

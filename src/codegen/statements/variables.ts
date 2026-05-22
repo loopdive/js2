@@ -360,10 +360,28 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // up-front so the local's wasm type and ctx.externrefAccessorVars
     // stay in sync; later reads/writes via resolveStructNameForExpr will
     // see the override.
+    //
+    // (#1433) Same routing for `[Symbol.dispose]` / `[Symbol.asyncDispose]`
+    // computed methods — they reach the JS-host plain-object path so the
+    // native runtime can find the disposer under the real Symbol property.
     const initIsAccessorLiteral =
       decl.initializer !== undefined &&
       ts.isObjectLiteralExpression(decl.initializer) &&
-      decl.initializer.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p));
+      decl.initializer.properties.some((p) => {
+        if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) return true;
+        if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
+          const inner = p.name.expression;
+          if (
+            ts.isPropertyAccessExpression(inner) &&
+            ts.isIdentifier(inner.expression) &&
+            inner.expression.text === "Symbol" &&
+            (inner.name.text === "dispose" || inner.name.text === "asyncDispose")
+          ) {
+            return true;
+          }
+        }
+        return false;
+      });
     if (initIsAccessorLiteral) {
       ctx.externrefAccessorVars.add(name);
     }

@@ -32,7 +32,7 @@ Pure import-only refactor that completed the dedup pass started by
 
 **Branch**: `issue-1086-body-uses-arguments-dedup`
 **Final HEAD**: `73ead9b7843e01a8ecef5a1c6a1d9d15d972b834`
-**PR**: https://github.com/loopdive/js2wasm/pull/26 (merged by team-lead)
+**PR**: https://github.com/loopdive/js2/pull/26 (merged by team-lead)
 
 ### CI noise diagnostic — useful precedent for future refactors
 

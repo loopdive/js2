@@ -1111,7 +1111,9 @@
         // Use test262-report.json as the authoritative pass rate (same source as landing page).
         // runs/index.json may contain PR runs that differ from the merged baseline.
         try {
-          const reportData = await loadJSON("../benchmarks/results/test262-report.json");
+          const reportData = await loadJSON(
+            "https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.json",
+          );
           if (reportData?.summary?.pass && reportData?.summary?.total) {
             const passRate = ((reportData.summary.pass / reportData.summary.total) * 100).toFixed(1);
             document.getElementById("m-passrate").textContent = passRate + "%";
@@ -1130,7 +1132,9 @@
 
         // ── Baseline age badge ──
         try {
-          const reportData = await loadJSON("../benchmarks/results/test262-current.json");
+          const reportData = await loadJSON(
+            "https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.json",
+          );
           if (reportData && reportData.baseline_generated_at) {
             const genTime = new Date(reportData.baseline_generated_at).getTime();
             const ageMs = Date.now() - genTime;

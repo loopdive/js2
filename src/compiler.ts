@@ -40,6 +40,18 @@ export type { ObjectCompileResult } from "./compiler/output.js";
 const HARD_TS_DIAG_CODES = new Set([
   2322, // "Type 'X' is not assignable to type 'Y'"
   2345, // "Argument of type 'X' is not assignable to parameter of type 'Y'"
+  // ── ECMA-262 §12.6.1 Early Errors: reserved word in auto-strict context ──
+  // TS1213/1214 fire when a strict-mode-reserved word (let/static/yield/…)
+  // is used as a class name or as a module-level binding. Per spec these
+  // are always parse-time SyntaxErrors regardless of an explicit `"use strict"`
+  // directive, because ClassDefinition/ModuleBody are strict mode code
+  // (ES2024 §10.2.1). TypeScript classifies these as semantic diagnostics,
+  // not syntactic, so they previously slipped past the syntactic-only gate
+  // and let `class let {}` / module-level `let` compile and instantiate.
+  // Treating them as hard errors aligns with test262 `negative.phase: parse`
+  // (#1435).
+  1213, // "Identifier expected. 'X' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+  1214, // "Identifier expected. 'X' is a reserved word in strict mode. Modules are automatically in strict mode."
 ]);
 
 /**

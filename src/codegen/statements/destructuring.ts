@@ -8,7 +8,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { shiftLateImportIndices } from "../expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import {
   ensureLetConstBindingPatternTdzFlags,
   ensureNativeStringHelpers,
@@ -898,6 +898,24 @@ export function compileExternrefArrayDestructuringDecl(
           else: [],
         });
       }
+    }
+  }
+
+  // #1454: Spec §13.15.5.2 ArrayAssignmentPattern requires GetIterator(value)
+  // before reading binding elements. The previous `tmpLocal[i]` via
+  // __extern_get path bypassed the @@iterator getter and .next() calls,
+  // so a throwing @@iterator (iter-get-err) or throwing .next() (iter-step-err)
+  // was silently swallowed. Materialize the source via __array_from_iter
+  // first — it invokes @@iterator + .next() and propagates throws.
+  // For plain arrays with the default @@iterator, __array_from_iter is a
+  // no-op fast path (returns the array unchanged).
+  if (resultType.kind === "externref" && pattern.elements.length > 0) {
+    const matIterIdx = ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (matIterIdx !== undefined) {
+      fctx.body.push({ op: "local.get", index: tmpLocal });
+      fctx.body.push({ op: "call", funcIdx: matIterIdx });
+      fctx.body.push({ op: "local.set", index: tmpLocal });
     }
   }
 

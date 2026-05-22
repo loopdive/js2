@@ -136,7 +136,7 @@ and verify the output matches.
 
 ## Suspended Work
 
-- **PR**: https://github.com/loopdive/js2wasm/pull/399
+- **PR**: https://github.com/loopdive/js2/pull/399
 - **Branch**: `issue-1491-nodejs-fs`
 - **Worktree**: `/workspace/.claude/worktrees/issue-1491-nodejs-fs/`
 - **HEAD SHA**: `19793b8555c1b698b9a747c7edd97b2bde1fd195`

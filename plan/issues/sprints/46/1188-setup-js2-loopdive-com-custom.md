@@ -56,7 +56,7 @@ TTL 3600 is fine. GitHub Pages accepts apex/subdomain CNAMEs equally.
 
 ### Step 3 — GitHub repository Pages settings (manual)
 
-In `loopdive/js2wasm` → Settings → Pages → Custom domain:
+In `loopdive/js2` → Settings → Pages → Custom domain:
 - Enter `js2.loopdive.com` and click Save
 - Wait for the DNS check to pass (usually < 5 min after Step 2 propagates)
 - Tick "Enforce HTTPS"

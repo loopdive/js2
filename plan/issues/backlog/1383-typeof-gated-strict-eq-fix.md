@@ -22,7 +22,7 @@ dropping the numeric-unboxing fallback in `binary-ops.ts` after
 `__host_eq` returned false. That made `null === 0` correctly return
 false but caused **net -12 test262 passes** (44 improvements vs. 56
 real regressions, 92 total) spread across 30+ buckets — see
-`https://github.com/loopdive/js2wasm/actions/runs/25538419546`.
+`https://github.com/loopdive/js2/actions/runs/25538419546`.
 
 The fallback was load-bearing for an unexpected pattern: V8's anyref
 representation of host-side primitives (booleans, undefined) doesn't
@@ -105,10 +105,10 @@ This:
 ## Notes
 
 The closed PR's diff is at:
-`https://github.com/loopdive/js2wasm/pull/272/files`
+`https://github.com/loopdive/js2/pull/272/files`
 
 The triage analysis is in the PR escalation message and the CI run:
-`https://github.com/loopdive/js2wasm/actions/runs/25538419546`.
+`https://github.com/loopdive/js2/actions/runs/25538419546`.
 
 Likely senior-dev territory given the test262 cascade risk; mark
 `reasoning_effort: high` accordingly.

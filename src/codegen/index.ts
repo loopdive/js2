@@ -2323,11 +2323,14 @@ function emitVecAccessExports(ctx: CodegenContext): void {
   // Emit vec access exports when the runtime may need to introspect WasmGC arrays:
   // - for-of iteration on non-array types (__iterator)
   // - JSON.stringify on arrays of structs (JSON_stringify)
-  // - (#779c) `vec.constructor === Array` identity via the runtime's
-  //   `extern_get` constructor path, which calls `__vec_len` to positively
-  //   distinguish vec wrappers from other null-prototype WasmGC structs.
-  //   When `__extern_get` is imported, the property-access lowering may
-  //   need this discrimination for `vec.constructor` lookups.
+  // - host-import paths that coerce a vec wrapper to externref and look up
+  //   `.constructor` — the runtime extern_get handler uses `__vec_len` to
+  //   identify vec wrappers and report `constructor === Array`
+  //   (#1441, #1057, #779c). Without the export, `["a","b"].constructor ===
+  //   Array` is silently false for split/map/filter/etc. results in modules
+  //   that don't otherwise use for-of or JSON.stringify. The `__extern_get`
+  //   constructor path calls `__vec_len` to positively distinguish vec
+  //   wrappers from other null-prototype WasmGC structs.
   if (
     !ctx.funcMap.has("__iterator") &&
     !ctx.funcMap.has("JSON_stringify") &&
@@ -3700,7 +3703,10 @@ export const STRING_METHODS: Record<string, { params: ValType[]; result: ValType
     params: [{ kind: "f64" }, { kind: "externref" }],
     result: { kind: "externref" },
   },
-  split: { params: [{ kind: "externref" }], result: { kind: "externref" } },
+  // split: separator (externref) + limit (f64, NaN sentinel for "no limit" — #1441).
+  // The host runtime in `string_method` detects NaN and calls `split(sep)` without
+  // the limit so the spec default 2^32-1 applies (instead of ToUint32(NaN) === 0).
+  split: { params: [{ kind: "externref" }, { kind: "f64" }], result: { kind: "externref" } },
   match: { params: [{ kind: "externref" }], result: { kind: "externref" } },
   search: { params: [{ kind: "externref" }], result: { kind: "f64" } },
   at: { params: [{ kind: "f64" }], result: { kind: "externref" } },
@@ -4474,6 +4480,14 @@ export const KNOWN_CONSTRUCTORS = new Set([
   "URIError",
   "EvalError",
   "ReferenceError",
+  // (#1467) AggregateError gets its own 3-param `__new_AggregateError` host
+  // import registered by new-super.ts (errors + message + options). The
+  // generic unknown-constructor pre-pass would register it with a 2-param
+  // signature (errors + message only), which then collides with new-super.ts's
+  // 3-param call site and silently drops the `options` argument. Keep this
+  // entry in `KNOWN_CONSTRUCTORS` so the pre-pass skips it and lets
+  // new-super.ts register the canonical signature.
+  "AggregateError",
   "Test262Error",
   "Object",
   "Function",
@@ -6250,6 +6264,34 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     ensureStructForType(ctx, propType);
     // Use resolveWasmType so nested structs get ref types, not externref
     let wasmType = resolveWasmType(ctx, propType);
+    // (#1468) `{ k: undefined }` makes TS infer the property's type as the
+    // literal `undefined`. `mapTsTypeToWasm` maps that to i32 because for
+    // function return types `undefined`/`void` indicate "no result". For a
+    // struct *field* the property is a value slot, so i32 silently loses the
+    // information that the slot holds `undefined`: codegen writes
+    // `i32.const 0` (which the host reads back as `false`) and destructuring
+    // defaults like `{ k = D }` never fire because the value isn't
+    // observably undefined. Widening the field to externref lets the
+    // existing `__get_undefined()` path in `compileExpression` preserve the
+    // identity of `undefined`, which then trips `__extern_is_undefined` in
+    // the destructuring default fast-path.
+    //
+    // Scope: only when the field's TS type is *exactly* the `undefined`
+    // (or `void`) primitive — for `T | undefined` unions the union branch
+    // in `mapTsTypeToWasm` already widens to externref / inner-T, so this
+    // never affects them.
+    if (
+      wasmType.kind === "i32" &&
+      (propType.flags & ts.TypeFlags.Undefined || propType.flags & ts.TypeFlags.Void) &&
+      !(propType.flags & ts.TypeFlags.Boolean) &&
+      !(propType.flags & ts.TypeFlags.BooleanLiteral) &&
+      !(propType.flags & ts.TypeFlags.Number) &&
+      !(propType.flags & ts.TypeFlags.NumberLiteral) &&
+      !(propType.flags & ts.TypeFlags.ESSymbol) &&
+      !(propType.flags & ts.TypeFlags.UniqueESSymbol)
+    ) {
+      wasmType = { kind: "externref" };
+    }
     const callSigs = propType.getCallSignatures();
     // For valueOf/toString callable properties, store as eqref instead of externref
     // so coercion can recover the closure and call it via call_ref
@@ -7738,7 +7780,35 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     if (fctx.localMap.has(name)) return;
     if (ctx.moduleGlobals.has(name)) return;
     const varType = ctx.checker.getTypeAtLocation(decl);
-    const wasmType = resolveWasmType(ctx, varType);
+    // (#1239 / #1433) Object literals carrying get/set accessor declarations,
+    // or `[Symbol.dispose]` / `[Symbol.asyncDispose]` computed methods, are
+    // routed through the JS-host plain-object (externref) path. The local
+    // must be allocated as externref so subsequent property reads/writes
+    // bind to the host object, not a struct slot. Tag the var here so
+    // resolveStructNameForExpr sees the override at every later access.
+    let initForcesExternref = false;
+    if (decl.initializer && ts.isObjectLiteralExpression(decl.initializer)) {
+      for (const p of decl.initializer.properties) {
+        if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) {
+          initForcesExternref = true;
+          break;
+        }
+        if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
+          const inner = p.name.expression;
+          if (
+            ts.isPropertyAccessExpression(inner) &&
+            ts.isIdentifier(inner.expression) &&
+            inner.expression.text === "Symbol" &&
+            (inner.name.text === "dispose" || inner.name.text === "asyncDispose")
+          ) {
+            initForcesExternref = true;
+            break;
+          }
+        }
+      }
+    }
+    const wasmType: ValType = initForcesExternref ? { kind: "externref" as const } : resolveWasmType(ctx, varType);
+    if (initForcesExternref) ctx.externrefAccessorVars.add(name);
     const localIdx = allocLocal(fctx, name, wasmType);
     // In JS, hoisted `var` variables are `undefined` before their declaration,
     // not `null`. For externref locals, emit __get_undefined() + local.set (#737).

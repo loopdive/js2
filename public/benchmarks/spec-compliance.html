@@ -316,11 +316,11 @@
 
     <p class="footer">
       Source:
-      <a href="https://github.com/loopdive/js2wasm/blob/main/spec-compliance/summary.json">
+      <a href="https://github.com/loopdive/js2/blob/main/spec-compliance/summary.json">
         spec-compliance/summary.json
       </a>
       ·
-      <a href="https://github.com/loopdive/js2wasm/tree/main/spec-compliance">per-section detail</a>
+      <a href="https://github.com/loopdive/js2/tree/main/spec-compliance">per-section detail</a>
     </p>
 
     <script src="../components/site-nav.js"></script>
@@ -402,7 +402,7 @@
           // Title
           const titleTd = document.createElement("td");
           const a = document.createElement("a");
-          a.href = "https://github.com/loopdive/js2wasm/blob/main/" + s.file;
+          a.href = "https://github.com/loopdive/js2/blob/main/" + s.file;
           a.textContent = s.title;
           titleTd.appendChild(a);
           tr.appendChild(titleTd);
@@ -446,9 +446,9 @@
               const filePath = s.issue_files && s.issue_files[i];
               const il = document.createElement("a");
               if (filePath) {
-                il.href = "https://github.com/loopdive/js2wasm/blob/main/" + filePath;
+                il.href = "https://github.com/loopdive/js2/blob/main/" + filePath;
               } else {
-                il.href = "https://github.com/loopdive/js2wasm/blob/main/plan/issues";
+                il.href = "https://github.com/loopdive/js2/blob/main/plan/issues";
               }
               il.title = "plan issue #" + id;
               il.textContent = "#" + id;

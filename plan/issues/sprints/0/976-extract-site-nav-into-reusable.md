@@ -41,7 +41,7 @@ The landing page has a navigation bar with links (Mission, Compatibility, How it
     <li><a href="./benchmarks/report.html">Report</a></li>
   </ul>
   <div class="nav-actions">
-    <a class="btn-outline" href="https://github.com/loopdive/js2wasm">GitHub</a>
+    <a class="btn-outline" href="https://github.com/loopdive/js2">GitHub</a>
     <a class="btn-solid" href="./playground/">Playground</a>
   </div>
 </nav>

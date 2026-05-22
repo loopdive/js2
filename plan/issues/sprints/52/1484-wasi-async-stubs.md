@@ -150,7 +150,7 @@ prefer to split this into 1484a / 1484b after the MVP lands.
 
 ## Suspended Work
 
-- **PR:** https://github.com/loopdive/js2wasm/pull/395
+- **PR:** https://github.com/loopdive/js2/pull/395
 - **Branch:** `issue-1484-wasi-async-stubs`
 - **Worktree:** `/workspace/.claude/worktrees/issue-1484-wasi-async-stubs`
 - **HEAD:** `ad3800cb9b3affbd2b46b2fc1fbf42246871d1ba`

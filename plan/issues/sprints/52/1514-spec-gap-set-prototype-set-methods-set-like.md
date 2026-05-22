@@ -95,3 +95,38 @@ check (SameValueZero, §7.2.11).
 - `built-ins/Set/prototype/difference/converts-negative-zero.js`
 - `built-ins/Set/prototype/isDisjointFrom/set-like-array.js`
 - `built-ins/Set/prototype/symmetricDifference/subclass.js`
+
+## Resolution (2026-05-20)
+
+Root cause was **not** in the runtime Set bridge — it was in array-literal
+spread codegen (`src/codegen/literals.ts`). When a spread element's
+source resolved to `externref` (V8 returns a real `Set` externref from
+`s.intersection(...)`, and the lib types reach the test body through the
+extern bridge), the existing branch dropped the value and emitted no
+copy code. Result: `[...new Set([1,2,3])]` produced an empty array,
+silently breaking every `[...combined]` assertion in the Set-methods
+test262 directory.
+
+Fix: when the spread expression compiles to an `externref` value,
+materialise it into a wasm vec matching the result element type via
+the existing `buildVecFromExternref` helper (which routes through
+`__array_from_iter` → `__extern_length` / `__extern_get`), then treat
+it as a regular vec spread in the existing copy loop.
+
+## Test Results
+
+- `tests/issue-1514.test.ts` — 5/5 new tests pass (Set spread, intersection
+  spread, Map argument, symmetricDifference order, ±0 normalisation).
+- `tests/issue-1352.test.ts` — 6/6 prior set-like tests still pass.
+- Set/prototype/{union,intersection,difference,symmetricDifference,
+  isSubsetOf,isSupersetOf,isDisjointFrom} (probe with `wrapTest` +
+  `skipSemanticDiagnostics: true`): pass 102 → 135 (+33 flips, ratio
+  72%). The remaining ~50 failures are:
+  - **set-like-class-\*** (28 tests, "size is NaN" / "has is not a
+    function") — wasm class instance method dispatch through the
+    host-side `_wrapForHost` proxy. Requires per-instance prototype
+    method registration; out of scope for this PR.
+  - **subclass-\*** (~15 tests) — Symbol.species fidelity for Set
+    subclasses; orthogonal.
+  - **size-is-a-number.js / set-like-iter-return.js** — ToNumber
+    coercion / iterator return edge cases.

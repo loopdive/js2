@@ -24,7 +24,7 @@ CI on PR #39 reported 93 regressions: 63 compile_timeout, 19 other, 7 promise_er
 5. Ran a vitest probe across all 1110 annexB tests through the test262-runner pipeline (`wrapTest` + `compile`), comparing IR-on vs IR-off byte-by-byte. **1084 byte-identical, 0 differing, 0 IR errors, 26 CE in both (identical).** The IR path produces no different output for any annexB test.
 6. Instantiated `planIrCompilation` directly against the wrapped sources for the 5 representative regressing tests. **Zero functions claimed in any of them.** Reason: helper functions are typed `(any, any)` (`resolveParamType` returns null for `any`), and `test()` has try/catch (rejected by `isPhase1StatementList`).
 7. Ran the 7 specific regressing tests on both pre-#1169b and post-#1169b states. All produced **identical** results — same `test()` return values, same pass/fail status. None actually regressed across the boundary.
-8. Downloaded the PR #39 CI regression artifact (`gh api repos/loopdive/js2wasm/actions/runs/24956550837/artifacts`) and confirmed the breakdown: 63/93 are `compile_timeout`, dominant cluster = environmental.
+8. Downloaded the PR #39 CI regression artifact (`gh api repos/loopdive/js2/actions/runs/24956550837/artifacts`) and confirmed the breakdown: 63/93 are `compile_timeout`, dominant cluster = environmental.
 9. Diffed the CI baseline jsonl against the PR-39 results jsonl — `pass → compile_error ([object WebAssembly.Exception])` and `pass → compile_timeout (timeout (30s))` are the dominant regression patterns. None match the "broken WAT" / `assert.sameValue` pattern.
 
 ## Key finding

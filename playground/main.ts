@@ -2211,7 +2211,15 @@ async function t262Render() {
   // ── EXAMPLES section ──
   const exampleGroups = [
     { folder: "dom", files: [{ name: "calendar.ts", path: "examples/dom/calendar.ts" }] },
-    { folder: "js", files: [{ name: "builtins.ts", path: "examples/js/builtins.ts" }] },
+    {
+      folder: "js",
+      files: [
+        { name: "algorithms.ts", path: "examples/js/algorithms.ts" },
+        { name: "async.ts", path: "examples/js/async.ts" },
+        { name: "builtins.ts", path: "examples/js/builtins.ts" },
+        { name: "classes.ts", path: "examples/js/classes.ts" },
+      ],
+    },
   ];
 
   function renderExampleFile(ex: { name: string; path: string }, parent: HTMLElement) {

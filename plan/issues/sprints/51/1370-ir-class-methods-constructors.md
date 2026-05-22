@@ -384,7 +384,7 @@ fallback (since MethodDeclaration `.name` is `PropertyName`, not `Identifier`).
 
 ## Phase A — Implementation Notes (2026-05-08, senior-dev-1370)
 
-PR: https://github.com/loopdive/js2wasm/pull/293
+PR: https://github.com/loopdive/js2/pull/293
 
 ### What landed
 
@@ -600,7 +600,7 @@ This requires either:
 
 ## Phase B — Implementation Notes (2026-05-08, senior-dev-1370)
 
-PR: https://github.com/loopdive/js2wasm/pull/295
+PR: https://github.com/loopdive/js2/pull/295
 
 Phase B wires the IR integration loop for class **instance methods**.
 Static methods and constructors are deferred (see scope notes below).
