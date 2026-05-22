@@ -113,11 +113,11 @@ Three independent bugs in `src/optimize.ts` stacked:
    `process.getBuiltinModule("node:module").createRequire(...)` for pure ESM.
 
 2. **`optimizeWithSystemBinary` only passed `--enable-gc / -reference-types /
--exception-handling`**. js2wasm emits `i32.trunc_sat_f64_*` (nontrapping
+   -exception-handling`**. js2wasm emits `i32.trunc_sat_f64_*` (nontrapping
    float-to-int), `array.copy` / `array.fill` (bulk-memory), tail calls in
    return position, multivalue blocks, and typed function references. Without
    those flags wasm-opt fatally rejects the binary, the outer `try { ... }
-catch {}` swallows the error, and the caller gets the "not available"
+   catch {}` swallows the error, and the caller gets the "not available"
    warning. Fix: pass `--all-features --disable-custom-descriptors` so every
    needed proposal is enabled, while excluding the unfinished
    custom-descriptors proposal (wasm-opt's GC passes would otherwise insert
@@ -157,12 +157,10 @@ plus a load).
 ### Verified results
 
 `benchmarks/results/wasm-host-wasmtime-hot-runtime.json` baseline (before):
-
 - `string-hash` cold = 72,085 us, warm = 63,659 us (54x slower than Engine/V8 JIT)
 
 After (measured locally, wasmtime 44.0.0 aarch64-linux, 20k input, median of
 10 samples):
-
 - Unoptimized + emitStringBuilderRead cache: warm ~22 ms (~3x slower than Engine/V8 JIT)
 - Optimized via `optimize: 3` + cache: warm ~22 ms (matches the unopt path;
   wasm-opt's SROA collapses additional allocations on the build loop too)
