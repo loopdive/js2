@@ -1,18 +1,13 @@
 name: Test262 Sharded
 
 on:
-  # pull_request: always fires, but the 16-shard matrix is conditionally
-  # skipped when the PR doesn't touch src/. The "merge shard reports" job
-  # always runs and produces a green check (either by aggregating shard
-  # results, or trivially when shards are skipped). This satisfies the
-  # merge queue's required-check requirement on PR HEAD without paying for
-  # full test262 on docs-only PRs. Real test262 still runs on every
-  # merge_group event (queue context) and every push to main.
+  # Serial-queue model: full 32-shard test262 runs at PR-time AND in merge_group.
+  # Each PR is validated alone (no ALLGREEN hiding) and developers see test262
+  # regressions on PR push (not just at queue-time). Path filter restricts to
+  # src/test/config changes — docs-only PRs skip.
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
-    paths:
+    paths: &test262-paths
       - ".github/workflows/test262-sharded.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -30,6 +25,9 @@ on:
       - "tests/test262-runner.ts"
       - "tests/test262-scope-classification.test.ts"
       - "tests/test262-shared.ts"
+  push:
+    branches: [main]
+    paths: *test262-paths
   merge_group:
     branches: [main]
     types: [checks_requested]
@@ -63,16 +61,13 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  # pull_request: per-PR group so a new push cancels the older run for that PR.
-  #   The detect job is cheap (~20s) — most PRs will short-circuit on need_shards=false
-  #   and only the rare src-touching PR's shards actually consume capacity.
-  # Push to main: shared queue (cancel-in-progress: false) so rapid merges queue
-  #   rather than each evicting the previous — baseline always gets updated.
+  # pull_request: per-PR group — a new push cancels the older run for that PR.
+  # push to main: shared serial queue.
   # merge_group: per-queue-ref (GitHub serializes the queue itself).
   # workflow_dispatch: unique group so manual runs never collide.
   group: >-
-    ${{ github.event_name == 'push' && 'test262-sharded-main'
-     || github.event_name == 'pull_request' && format('test262-sharded-pr-{0}', github.event.pull_request.number)
+    ${{ github.event_name == 'pull_request' && format('test262-sharded-pr-{0}', github.event.pull_request.number)
+     || github.event_name == 'push' && 'test262-sharded-main'
      || github.event_name == 'merge_group' && format('test262-sharded-mq-{0}', github.ref)
      || format('test262-sharded-dispatch-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -113,14 +108,19 @@ jobs:
           if grep -q '"lint"' package.json; then pnpm run lint 2>&1 | tail -50; fi
 
   test262-shard:
-    # Heavy 16-shard test262 fires ONLY in merge_group / push:main / workflow_dispatch.
-    # NOT on pull_request — the merge queue runs the real validation on its
-    # temp merge-with-main branch (merge_group event), so PR-level test262 is
-    # redundant. PR-level CI is just cheap-gate + the merge-report-stub which
-    # produces a green "merge shard reports" check to unblock queue entry.
-    # If test262 fails in merge_group, the queue rejects the merge.
+    # Heavy 16-shard test262 fires on all gate-relevant events:
+    #   pull_request → per-PR validation (serial queue model — each PR is
+    #     validated alone before entering the queue).
+    #   merge_group → final gate before merge (catches main-drift regressions).
+    #   push to main → baseline update.
+    #   workflow_dispatch → manual reruns.
+    # Cheap-gate must pass first (typecheck + lint). If shards fail, the
+    # regression-gate reports per-test transitions; bad PRs bounce back to
+    # their authors with actionable feedback rather than slipping into a
+    # batch.
     if: |
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
+      github.event_name == 'pull_request' ||
       github.event_name == 'merge_group' ||
       github.event_name == 'workflow_dispatch'
     needs: [gate]
@@ -130,7 +130,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        chunk: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        # 50 shards — maximizes parallelism within the 60-runner budget while
+        # leaving headroom (~5) for cheap-gate, quality, cla-check, differential-test.
+        # With Test262 Differential dropped from merge_group + PR contexts, this
+        # is the sweet spot for one PR in flight. Per-shard work shrinks to ~860
+        # tests / ~8 min wall, vs ~13 min at 32 shards. Concurrent PRs will see
+        # ~50 of their shards queue (no priority queue in GH Actions).
+        chunk: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+                31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
 
     env:
       COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '2' }}
@@ -208,32 +218,16 @@ jobs:
             benchmarks/results/test262-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn
 
-  merge-report-stub:
-    # PR-level "merge shard reports" stub. Always green on pull_request events.
-    # The real validation happens in merge_group context (where the actual
-    # test262-shard matrix and merge-report run). This stub exists only to
-    # satisfy the queue's required-check requirement on PR HEAD.
-    if: github.event_name == 'pull_request'
-    name: merge shard reports
-    needs: [gate]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Stub-pass (real test262 runs in merge_group / queue context)
-        run: |
-          echo "→ PR-level stub — does not run test262."
-          echo "→ The merge queue (merge_group event) runs full test262 sharded on"
-          echo "  the temp merge-with-main branch before merging. That gate is what"
-          echo "  actually validates the merge."
-          echo "→ This stub produces a green 'merge shard reports' check to satisfy"
-          echo "  the PR-level required-check gate so the PR can enter the queue."
-
   merge-report:
-    # Real test262 aggregation. Only runs in contexts where shards actually
-    # executed: merge_group (queue), push to main, or workflow_dispatch.
-    # On pull_request, the merge-report-stub takes over (green pass).
+    # Aggregate the 16 shard artifacts into a single test262 report and gate
+    # on shard results. Produces the "merge shard reports" required check
+    # for all gate-relevant contexts. Serial-queue model: this is the same
+    # job whether the trigger is pull_request (PR-level validation) or
+    # merge_group (final pre-merge validation).
     if: |
-      github.event_name != 'pull_request' &&
-      (github.event_name != 'push' || github.actor != 'github-actions[bot]')
+      always() &&
+      (github.event_name != 'push' || github.actor != 'github-actions[bot]') &&
+      needs.test262-shard.result == 'success'
     name: merge shard reports
     needs: [test262-shard]
     runs-on: ubuntu-latest
@@ -278,8 +272,8 @@ jobs:
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}
 
       - name: Upload merged reports
-        uses: actions/upload-artifact@v6
         if: always()
+        uses: actions/upload-artifact@v6
         with:
           retention-days: 1
           name: test262-merged-report
@@ -288,10 +282,9 @@ jobs:
           if-no-files-found: warn
 
   regression-gate:
-    # Only runs in contexts where real shards/merge-report executed.
-    if: |
-      github.event_name != 'pull_request' &&
-      (github.event_name != 'push' || github.actor != 'github-actions[bot]')
+    # Runs after merge-report in all non-bot push contexts (merge_group / manual
+    # push / workflow_dispatch). Compares branch report against baseline.
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     name: check for test262 regressions
     needs: [merge-report]
     runs-on: ubuntu-latest
@@ -315,7 +308,7 @@ jobs:
 
       - name: Fetch fresh baseline from baselines repo
         id: fetch_baseline
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: |
           # Clone the baselines repo to get the current baseline JSONL.
           # This avoids LFS bandwidth on the main repo (all jsonl files are
@@ -348,7 +341,7 @@ jobs:
 
       - name: Check baseline staleness (#1235)
         id: staleness
-        if: github.event_name == 'pull_request' && steps.fetch_baseline.outputs.baseline_ts != '0'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.fetch_baseline.outputs.baseline_ts != '0'
         run: |
           # If the baselines-repo JSONL hasn't been refreshed since several
           # commits landed on main, the regression-gate's wasm_change count

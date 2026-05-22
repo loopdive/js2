@@ -1,16 +1,9 @@
 name: Differential test
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "scripts/diff-test.ts"
-      - "scripts/diff-test-gate.ts"
-      - "scripts/diff-triage.ts"
-      - "tests/differential/**"
-      - "benchmarks/results/diff-test-baseline.json"
-      - ".github/workflows/diff-test.yml"
+  # Removed pull_request trigger — under the merge queue model the differential
+  # test runs in the merge_group context (where it tests the actual merge
+  # candidate against main). PR-level runs were redundant work for every push.
   push:
     branches: [main]
   merge_group:
