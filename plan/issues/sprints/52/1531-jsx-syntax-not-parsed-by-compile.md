@@ -14,6 +14,7 @@ es_edition: n/a
 language_feature: jsx
 goal: npm-library-support
 depends_on: []
+note: "Verified 2026-05-21: checker/index.ts L276-277 has analyzeSource() ScriptKind logic (only handles .jsx but NOT .tsx — confirms bug); L357-361 has scriptKindFor() in project-level path which DOES handle .tsx/.jsx — fix needs to thread tsx detection into analyzeSource"
 ---
 
 # #1522 — JSX syntax is not parsed when compiling .tsx/.jsx input

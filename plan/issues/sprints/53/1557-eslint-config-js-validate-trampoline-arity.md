@@ -13,6 +13,7 @@ language_feature: methods, trampolines, object-literal-methods
 goal: npm-library-support
 related: [1400, 1289, 1287, 1282]
 blocks: [eslint-tier-1d]
+note: "Verified 2026-05-21: compileCallExpression at src/codegen/expressions/calls.ts:965 (moved from expressions.ts); trampoline emit at src/codegen/closures.ts:3019/3085"
 ---
 
 # #1557 — ESLint config.js validate trampoline arity mismatch
@@ -93,10 +94,13 @@ variant.
 2. Trace the codegen call-site that emits the `call $__obj_meth_tramp_...`
    in the parent function — confirm whether the caller pushed all
    declared parameters (including defaulted/optional ones).
-3. Check `src/codegen/expressions.ts` around `compileCall` for the
-   object-method path, specifically the branch that resolves to a
-   generated trampoline rather than a direct method call. Compare with
-   the single-module pipeline's equivalent path to see if the
+3. Check `src/codegen/expressions/calls.ts` around `compileCallExpression`
+   (line 965, verified 2026-05-21) for the object-method path,
+   specifically the branch that resolves to a generated trampoline
+   rather than a direct method call. The trampoline itself is emitted
+   in `src/codegen/closures.ts` (lines 3019 and 3085 — per-call-site
+   and cached variants of `__obj_meth_tramp_*`). Compare with the
+   single-module pipeline's equivalent path to see if the
    multi-module variant skips a padding step.
 
 ## Acceptance criteria

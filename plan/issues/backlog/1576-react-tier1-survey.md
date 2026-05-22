@@ -1,5 +1,5 @@
 ---
-id: react-tier1-survey
+id: 1576
 title: "React Tier 1 compile/validate survey (probe of `react@19.2.6`)"
 status: survey
 created: 2026-05-20

@@ -13,6 +13,7 @@ language_feature: classes, super, spread
 goal: spec-completeness
 parent: 779
 related: [1455, 1456]
+note: "Verified 2026-05-21: compileSuperPropertyAccess at new-super.ts:258, compileSuperCall at class-bodies.ts:1629. No src/codegen/expressions/object.ts file exists — that ref was speculative."
 ---
 # #1551 — `super(...)` / `super[expr]` evaluation order and abrupt-completion handling
 

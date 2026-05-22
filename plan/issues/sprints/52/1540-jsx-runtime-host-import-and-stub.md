@@ -14,6 +14,7 @@ es_edition: n/a
 language_feature: jsx
 goal: npm-library-support
 depends_on: [1531]
+note: "Line numbers verified against main 2026-05-21: preprocessImports at src/import-resolver.ts:89, builtin classifier at src/compiler/import-manifest.ts:8"
 ---
 
 # #1540 — JSX runtime: bind _jsx/_jsxs/_Fragment as host import (default) and standalone stub

@@ -146,3 +146,95 @@ Primary files:
 - Object.defineProperties 15.2.3.7-1-*: 5/5 pass
 - const-invalid-assignment-statement-body-for-of: PASS
 - Regression tests (let mutation, defineProperty on object, basic const): all PASS
+
+## Implementation Plan (added 2026-05-21)
+
+### Strategic recommendation
+This issue covers 2,799 tests across 7+ orthogonal subareas. **Do not implement as one PR.** Decompose into per-subarea sibling issues so each is independently mergeable. The remaining work after dev-3's 2026-03-29 partial fix:
+
+| Subarea | Est. tests | Already partially done? | Suggested child issue |
+|---------|------------|--------------------------|------------------------|
+| Object.defineProperty/defineProperties type validation | ~426 | yes (dev-3) — verify and close | #846a — close out validation gaps |
+| Class static 'prototype' restriction (computed) | ~403 | no | #846b — static prototype TypeError |
+| Object.freeze/seal/preventExtensions | ~73 | no | #846c — freeze/seal type guards |
+| Type validation on receivers (RequireObjectCoercible) | ~117 | partial | #846d — `this` coercion checks on prototype methods |
+| Property descriptor constraints (defineProperty edge cases) | ~86 | partial | #846e — descriptor attribute conflicts |
+| Strict mode `arguments = ...` / `eval = ...` (parse-time) | ~212 | no | covered by #1264/#1265 (eval tiers) |
+| const reassignment in misc contexts | ~141 | partial (dev-3) | #846f — sweep remaining contexts |
+| Other (mixed) | ~1,341 | no | #846g — bucket triage; spec by spec |
+
+### Entry points per subarea
+
+**#846b — class static prototype restriction**
+- `src/codegen/index.ts` — class compilation around `compileClassDeclaration` / `compileClassExpression`
+- Find the static-member loop; for each `MethodDeclaration` with `static` modifier:
+  - Resolve member name via existing `compileComputedPropertyName` / literal-name path
+  - If it resolves to `"prototype"` (string) at compile time → emit a synthesised `throw new TypeError(...)` at the class body's entry, OR reject at compile time as a SyntaxError-equivalent
+  - For runtime-computed names (rare): emit a runtime guard around the class binding initialiser
+- Spec: ES2015 §14.5.14 step 21
+- Test cases: `test/language/computed-property-names/class/static/*-prototype.js`
+
+**#846c — Object.freeze/seal/preventExtensions**
+- `src/codegen/object-ops.ts` — `emitObjectFreeze` / `emitObjectSeal` / `emitObjectPreventExtensions`
+- Add: if input is primitive (string, number, boolean, symbol, bigint) → in strict mode throw TypeError; in sloppy mode return the primitive unchanged. ES2020 changed this — primitives are now silently accepted by `Object.freeze`. **Verify which version the failing tests target** before adding the guard.
+- Real failure surface: attempting to mutate a frozen object's property (`obj.foo = 1` on `Object.freeze({foo: 0})`) must throw in strict mode. This is the property-write path in `property-access.ts`, not the freeze call itself.
+
+**#846d — RequireObjectCoercible on prototype methods**
+- `src/codegen/expressions/calls.ts` — every Array/String prototype method dispatch
+- For methods that call `RequireObjectCoercible(this)`: emit a guard before the body
+  ```wasm
+  local.get $this
+  ref.is_null
+  if
+    ;; throw TypeError("Cannot read properties of <null|undefined>")
+  end
+  ```
+- Spec: §7.2.1 RequireObjectCoercible
+- This overlaps with #820 (nullish TypeError); coordinate before starting.
+
+**#846e — defineProperty descriptor conflicts**
+- `src/runtime.ts` — `__defineProperty_value` and friends
+- Spec §6.2.5.6 ValidateAndApplyPropertyDescriptor — non-configurable redefinition rules
+- Native `Object.defineProperty` already enforces these in host mode — the bug is likely in the standalone path. Trace through `emitExternDefinePropertyValue` for compile-time descriptor patterns.
+
+**#846f — const reassignment in remaining contexts**
+- `src/codegen/expressions/assignment.ts` and `compoundAssignment` — verify dev-3's `constBindings` set is checked in all assignment paths
+- Specifically: destructuring assignment to const (`[x] = arr` where `x` was declared `const`)
+- Update target: `src/codegen/expressions/assignment.ts` destructuring branch
+
+### Cross-cutting infrastructure (do this first)
+1. Audit `FunctionContext.constBindings: Set<string>` coverage. Add a debug assertion: any binding declaration that sets `const` must also call `markConst(fctx, name)`.
+2. Create a shared helper `emitTypeErrorThrow(ctx, fctx, message)` (probably already exists; confirm in `runtime.ts`). All subarea fixes should use this single emitter.
+3. Create a shared helper `emitRequireObjectCoercible(ctx, fctx, sourceLocal, opNameForError)`.
+
+### Wasm output pattern (RequireObjectCoercible)
+```wasm
+local.get $arg0
+ref.is_null
+if
+  ;; throw new TypeError("<opName> called on null or undefined")
+  call $__make_type_error
+  throw $__exception_tag
+end
+```
+
+### Edge cases
+- Sloppy mode vs strict mode — most TypeError throws are spec-required in both modes; verify per spec section before adding any guards.
+- BigInt / Symbol receivers — RequireObjectCoercible accepts these (returns them); ToObject boxes them. Don't guard against valid primitive receivers for methods like `String.prototype.length` (which is `this.length` on the boxed wrapper).
+- Frozen prototypes in the chain — `Object.freeze(Array.prototype)` then `arr.push(1)` must throw. This is the property-assignment-on-frozen path; defer to a tracked separate issue if scope creeps.
+
+### Test plan
+- Each child issue ships with its own targeted equivalence test file.
+- Per-subarea test262 buckets (use `pnpm run test:262 -- --filter <pattern>`).
+
+### Dependencies
+- #820 (nullish TypeError) — overlaps with #846d; land #820 first.
+- #1264/#1265 (eval strict mode) — covers the 212 eval-related tests in this bucket; don't duplicate.
+
+### Files touched (across all child issues)
+- `src/codegen/index.ts` (class compile)
+- `src/codegen/object-ops.ts` (freeze/seal/defineProperty)
+- `src/codegen/expressions/assignment.ts` (const re-assign)
+- `src/codegen/expressions/calls.ts` (this-coercion guards)
+- `src/runtime.ts` (host fallbacks)
+- `src/codegen/property-access.ts` (write-to-frozen guard)

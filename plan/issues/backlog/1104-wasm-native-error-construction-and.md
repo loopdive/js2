@@ -214,3 +214,66 @@ issues won't surface in CI's gate.
 4. Strongly recommend invoking `/architect-spec` to refine before coding, since the
    Phase 2 property-access surgery has many edge cases (typed vs untyped LHS, IR vs
    legacy lowering, Object/Function root-class fallback) not fully enumerated above.
+
+## Architect review (2026-05-21)
+
+The existing Implementation Plan (Phase 1-4) is solid and complete enough to
+dispatch. One refinement and a few edge cases to add before coding:
+
+### Refinement: tag field should be const, not mut
+
+The Phase 1 struct currently declares `$tag (mut i32)`. The tag is set once at
+construction and never mutated; declaring it const lets the codegen elide
+load-store fences and matches the existing builtin-tags pattern:
+
+```wat
+(type $Error_struct (sub (struct
+  (field $tag i32)                          ;; const — set at struct.new
+  (field $name (ref null extern))           ;; const after construction
+  (field $message (mut (ref null extern)))  ;; mut for stack-trace .stack later
+)))
+```
+
+If a future feature attaches a stack trace lazily, `$stack` would be the
+mutable field.
+
+### Additional edge cases for Phase 2/3
+
+- **Subclasses extending Error**: `class MyErr extends Error {}` — the user
+  class is its own WasmGC struct; instanceof must walk the parent chain via
+  the #1325 `BUILTIN_PARENT` table. Confirm Phase 3 handles this; if not,
+  add a Phase 3.5 that registers the user class's tag and parent at class
+  declaration time.
+- **`AggregateError`** carries an `errors` array field. Extend the struct:
+  ```wat
+  (type $AggregateError_struct (sub $Error_struct (struct
+    (field $tag i32)
+    (field $name (ref null extern))
+    (field $message (mut (ref null extern)))
+    (field $errors (ref null $vec_externref))
+  )))
+  ```
+  And the `__new_AggregateError` internal function takes the errors array
+  as its first arg per spec ordering.
+- **`Error.prototype.toString()`**: must return `"name: message"` (or just
+  `name` when message empty). Emit a wasm function `$__error_toString`
+  that concatenates via the native-string ops.
+- **`error.stack` access in WASI mode** (Phase 4): returning `undefined` is
+  fine — but the property must exist as a sidecar slot so `'stack' in err`
+  returns true if a future runtime fills it. Use existing sidecar
+  infrastructure.
+- **Thrown non-Error values**: `throw 42` or `throw "string"` — these aren't
+  Error structs but the catch block must still bind them. The existing
+  externref payload tag handles this; verify Phase 3's catch-side
+  `ref.test $Error_struct` correctly returns false for non-Error payloads.
+- **`null` / `undefined` message**: `new Error(undefined)` per spec produces
+  an error with no `message` own property. Our struct field can hold null;
+  property-access for `.message` returns the empty string default per
+  Error.prototype.message.
+
+### Dispatch recommendation
+
+Land Phase 1 alone first behind a smoke-test that confirms WASI module
+instantiation. Phases 2-3 should follow in separate PRs to keep blast
+radius small. Architect available to refine Phase 2 surgery in detail once
+Phase 1 lands.

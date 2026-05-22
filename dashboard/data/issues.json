@@ -1,6 +1,16 @@
 {
   "backlog": [
     {
+      "id": "1579",
+      "title": "TypeScript self-host Tier 0 survey — distance from `compileProject(tsc)` to a runnable Wasm",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "compiler-architecture",
+      "status": "backlog",
+      "sprint": ""
+    },
+    {
       "id": "1541",
       "title": "Opt-in icu_normalizer (icu4x) for String.prototype.normalize",
       "priority": "low",
@@ -241,6 +251,44 @@
   ],
   "blocked": [
     {
+      "id": "1560",
+      "title": "CJS module.exports = { Linter } — named class re-exports link to compiled class, not extern fallback",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [
+        "1559"
+      ],
+      "goal": "npm-library-support",
+      "status": "blocked",
+      "sprint": "53"
+    },
+    {
+      "id": "1553d",
+      "title": "decl-dstr: route array declaration (typed-vec + externref) through destructureParamArray (decl-mode)",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [
+        "1553a",
+        "1553c"
+      ],
+      "goal": "spec-completeness",
+      "status": "blocked",
+      "sprint": "53"
+    },
+    {
+      "id": "1553c",
+      "title": "decl-dstr: route externref-fallback object declaration through destructureParamObject (decl-mode)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [
+        "1553a",
+        "1553b"
+      ],
+      "goal": "spec-completeness",
+      "status": "blocked",
+      "sprint": "53"
+    },
+    {
       "id": "1530",
       "title": "wasi: Native Messaging host example (Chrome extension integration)",
       "priority": "medium",
@@ -338,6 +386,106 @@
   ],
   "ready": [
     {
+      "id": "1578-test262-analysis",
+      "title": "2026-05-20",
+      "priority": "medium",
+      "feasibility": "",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": ""
+    },
+    {
+      "id": "1576",
+      "title": "React Tier 1 compile/validate survey (probe of `react@19.2.6`)",
+      "priority": "high",
+      "feasibility": "",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "survey",
+      "sprint": ""
+    },
+    {
+      "id": "1575",
+      "title": "Node.js built-in module support — gap survey (js2wasm → npm)",
+      "priority": "high",
+      "feasibility": "",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "survey",
+      "sprint": ""
+    },
+    {
+      "id": "1573",
+      "title": "ESLint next-layer validation-error survey (post #1557 / #1558)",
+      "priority": "high",
+      "feasibility": "",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "survey",
+      "sprint": ""
+    },
+    {
+      "id": "1572-compat-testing-survey",
+      "title": "npm-package compat testing — 2026-05-20",
+      "priority": "medium",
+      "feasibility": "",
+      "depends_on": [],
+      "goal": "",
+      "status": "ready",
+      "sprint": ""
+    },
+    {
+      "id": "1571",
+      "title": "axios Tier 1 compile/validate survey (probe of `axios@1.16.1`)",
+      "priority": "high",
+      "feasibility": "",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "survey",
+      "sprint": ""
+    },
+    {
+      "id": "1558",
+      "title": "ESLint linter.js direct compile: Linter_verifyAndFix f64.eq missing i32→f64 coercion on call result",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "ready",
+      "sprint": "53"
+    },
+    {
+      "id": "1557",
+      "title": "ESLint config.js direct compile: __obj_meth_tramp validate arity mismatch (need 2, got 1)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "ready",
+      "sprint": "53"
+    },
+    {
+      "id": "1556",
+      "title": "architect-spec: struct-field type mismatch in binding-pattern param destructuring — root cause of #1543/#1544 illegal-cast cluster",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "spec-done",
+      "sprint": ""
+    },
+    {
+      "id": "1555",
+      "title": "refactor: destructureParamArray — streaming IteratorStep-per-element instead of __array_from_iter materialisation",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": ""
+    },
+    {
       "id": "1554",
       "title": "cli: --standalone should reject --allow-fs (logically mutually exclusive flags)",
       "priority": "low",
@@ -345,6 +493,36 @@
       "depends_on": [],
       "goal": "host-independence",
       "status": "ready",
+      "sprint": "52"
+    },
+    {
+      "id": "1553e",
+      "title": "decl-dstr: f64-array literal with explicit `undefined` element must trigger destructuring default",
+      "priority": "medium",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "53"
+    },
+    {
+      "id": "1553a",
+      "title": "destructure-helpers: thread decl-mode + bindingKind through destructureParamObject/Array (foundation)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": "53"
+    },
+    {
+      "id": "1553",
+      "title": "spec gap: let/const/var destructuring declarations — residuals after #1432/#1450/#1454/#1550",
+      "priority": "medium",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "decomposed",
       "sprint": "52"
     },
     {
@@ -516,7 +694,7 @@
       "feasibility": "hard",
       "depends_on": [],
       "goal": "spec-completeness",
-      "status": "moved-to-s52",
+      "status": "spec-ready",
       "sprint": "52"
     },
     {
@@ -943,16 +1121,6 @@
       "sprint": ""
     },
     {
-      "id": "1129",
-      "title": "ToObject (§7.1.18) not implemented — no primitive auto-boxing",
-      "priority": "low",
-      "feasibility": "hard",
-      "depends_on": [],
-      "goal": "core-semantics",
-      "status": "ready",
-      "sprint": ""
-    },
-    {
       "id": "1122",
       "title": "Keep standalone recursive numeric benchmark stable across non-run entry exports",
       "priority": "high",
@@ -961,6 +1129,16 @@
       "goal": "performance",
       "status": "ready",
       "sprint": "45"
+    },
+    {
+      "id": "1116b",
+      "title": "Promise subclass: Wasm-compiled class extends Promise must be a valid JS constructor (Wasm-class-as-JS-ctor bridge)",
+      "priority": "high",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "spec-completeness",
+      "status": "ready",
+      "sprint": ""
     },
     {
       "id": "1116",
@@ -1643,6 +1821,16 @@
       "sprint": ""
     },
     {
+      "id": "820c",
+      "title": "Async-gen object-method yield* iterator-protocol null deref (~39 fails)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "ready",
+      "sprint": "53"
+    },
+    {
       "id": "820",
       "title": "Nullish TypeError / null-pointer / illegal-cast umbrella (6,993 FAIL)",
       "priority": "critical",
@@ -1709,16 +1897,6 @@
       "feasibility": "easy",
       "depends_on": [],
       "goal": "core-semantics",
-      "status": "ready",
-      "sprint": ""
-    },
-    {
-      "id": "804",
-      "title": "Extract new expressions from expressions.ts → new-expression.ts",
-      "priority": "medium",
-      "feasibility": "easy",
-      "depends_on": [],
-      "goal": "maintainability",
       "status": "ready",
       "sprint": ""
     },
@@ -2005,6 +2183,28 @@
   ],
   "inprogress": [
     {
+      "id": "1559",
+      "title": "ModuleResolver: bare-package import resolves to implementation (default/main) for codegen, not .d.ts",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "npm-library-support",
+      "status": "in-progress",
+      "sprint": "53"
+    },
+    {
+      "id": "1553b",
+      "title": "decl-dstr: route typed-struct object declaration through destructureParamObject (decl-mode)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [
+        "1553a"
+      ],
+      "goal": "spec-completeness",
+      "status": "in-progress",
+      "sprint": "53"
+    },
+    {
       "id": "1534",
       "title": "test: Web API host import unit tests (fetch, timers, localStorage, crypto.getRandomValues)",
       "priority": "medium",
@@ -2165,6 +2365,26 @@
       "goal": "platform",
       "status": "in-progress",
       "sprint": "42"
+    },
+    {
+      "id": "820b",
+      "title": "Object literal computed-property accessor names silently dropped (~30 fails)",
+      "priority": "high",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "in-progress",
+      "sprint": "53"
+    },
+    {
+      "id": "820a",
+      "title": "RegExp Symbol.match/replace/search/matchAll/RegExpStringIterator null deref (~148 fails)",
+      "priority": "high",
+      "feasibility": "medium",
+      "depends_on": [],
+      "goal": "test262-conformance",
+      "status": "in-progress",
+      "sprint": "53"
     }
   ],
   "review": [
@@ -5158,6 +5378,16 @@
       "sprint": ""
     },
     {
+      "id": "1129",
+      "title": "ToObject (§7.1.18) not implemented — no primitive auto-boxing",
+      "priority": "low",
+      "feasibility": "hard",
+      "depends_on": [],
+      "goal": "core-semantics",
+      "status": "done",
+      "sprint": ""
+    },
+    {
       "id": "1128",
       "title": "Destructuring TDZ and AnnexB B.3.3 function-in-block hoisting (≥211 tests)",
       "priority": "medium",
@@ -7708,6 +7938,16 @@
       "goal": "maintainability",
       "status": "done",
       "sprint": "39"
+    },
+    {
+      "id": "804",
+      "title": "Extract new expressions from expressions.ts → new-expression.ts",
+      "priority": "medium",
+      "feasibility": "easy",
+      "depends_on": [],
+      "goal": "maintainability",
+      "status": "done",
+      "sprint": "53"
     },
     {
       "id": "801",

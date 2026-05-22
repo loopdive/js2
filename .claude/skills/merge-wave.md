@@ -90,11 +90,28 @@ Use plain `--merge` (no `--admin`) when `mergeStateStatus: CLEAN`.
 gh pr close <NUM> --comment "Net <DELTA> pass. <ROOT CAUSE IF KNOWN>. Reopening issue for a narrower retry."
 ```
 
-## Step 7: Ping DIRTY PRs
+## Step 7: Refresh ALL open PR branches (required after every wave)
 
-For every conflicting PR that had a good delta on its pre-merge-wave CI run, send a `SendMessage` to the assigned dev:
+After each merge, main advances. Every open PR branch needs origin/main merged in so the quality gate ("Verify origin/main is merged into branch") stays green. Do this for ALL open branches, not just DIRTY ones:
 
-> "PR #NNN is CONFLICTING against new main after today's merges. Please `git merge origin/main` in your worktree, resolve, push. Your pre-merge delta was +NNN — don't let it rot."
+```bash
+gh pr list --state open --json number,headRefName --jq '.[].headRefName' | while read branch; do
+  wt="/workspace/.claude/worktrees/$branch"
+  if [ -d "$wt" ]; then
+    git -C "$wt" fetch origin main
+    git -C "$wt" merge origin/main --no-edit \
+      && git -C "$wt" push origin "$branch" \
+      && echo "✓ refreshed $branch" \
+      || echo "⚠ CONFLICT on $branch"
+  else
+    echo "→ no local worktree for $branch — send dev a refresh request"
+  fi
+done
+```
+
+For every DIRTY (conflicting) PR with a good pre-wave delta, also `SendMessage` to the assigned dev:
+
+> "PR #NNN conflicts with new main after today's merges. Please `git merge origin/main` in your worktree, resolve, push. Your pre-merge delta was +NNN."
 
 ## Step 8: Verify and log
 

@@ -80,3 +80,85 @@ Memory fragmentation: bump allocation that resets at function exit avoids fragme
 This is the larger of the two Tier 2 architectural moves called out in the array-sum perf analysis. Big change but high leverage. Plan to land Part 1 only after #1195, #1196, #1197 are stable; Part 2 is a separate multi-week effort.
 
 Reference: AssemblyScript uses this approach by default for typed arrays. Our specialisation triggers under stricter conditions (must be provably i32 + non-escaping) but the codegen mechanics are the same.
+
+## Architect refinement (2026-05-21)
+
+The existing plan is already concrete. Adding the file-level
+breakdown plus the edge cases not yet enumerated.
+
+### Entry points
+
+- **Memory section emission**: `src/codegen/index.ts` — add a memory
+  declaration when the module needs linear memory (it likely already
+  exists for native-strings; reuse).
+- **Arena allocator**: new helper `emitArenaAlloc(ctx, sizeExpr)` in
+  `src/codegen/helpers/arena.ts` (new). Tracks a per-function arena
+  base via two locals `$arena_base` and `$arena_top`.
+- **Array-literal lowering**: branch in `compileArrayLiteral` (search
+  `src/codegen/expressions.ts`) — if `ctx.isI32Array(node) &&
+  ctx.isNonEscaping(node)` (from #1197/#1195), allocate from the
+  arena and store via `i32.store`.
+- **Element access**: branches in `src/codegen/property-access.ts`
+  for indexed read/write when the receiver is arena-backed.
+- **Length tracking**: per-array `length` lives as an i32 local,
+  same as the existing fast-path vec uses.
+
+### Arena scheme
+
+```wat
+(local $arena_base i32)        ;; bump pointer at function entry
+(local $arena_top i32)         ;; pointer to next free byte
+
+;; at function entry:
+global.get $heap_top
+local.set $arena_base
+local.get $arena_base
+local.set $arena_top
+
+;; at function exit (every return path):
+local.get $arena_base
+global.set $heap_top
+```
+
+Reset on every exit including `throw` (use existing finally
+machinery).
+
+### Edge cases not in the existing plan
+
+- **Tail-call** (`return_call`): arena reset must happen *before* the
+  tail call. Treat tail calls as exit points.
+- **Exception thrown through the function**: the existing finally
+  machinery in `src/codegen/statements/exceptions.ts` must wrap the
+  whole function body in a `try {} finally { arena reset }`.
+- **Loop-allocated arrays in a hot loop**: arena grows unboundedly
+  within one function call. Mitigation — emit a *loop-local* arena
+  reset at the loop back-edge when the loop-allocated array
+  doesn't escape the iteration. Detect via #1195's per-iteration
+  escape analysis.
+- **Nested function calls**: callee receives the parent's `$heap_top`
+  unchanged; allocates its own arena segment above; resets on its
+  own return. No cross-call leakage by construction.
+- **Bounds checks**: indexed read/write past length must throw — but
+  linear memory has no automatic bounds. Emit explicit
+  `i32.ge_u (length) → if → throw RangeError`. Existing peephole pass
+  should be extended to elide bounds checks when index is provably
+  in-range (constant-propagation analysis).
+- **`.push` / `.pop` on arena-backed arrays**: require capacity
+  growth. For non-escaping arrays with known max length (constant
+  bound), allocate the max up front; for unbounded, fall back to
+  WasmGC array.
+- **Mixed-type arrays sneaking in**: a single `arr.push("string")`
+  forces a bail to WasmGC for the whole array. Escape analysis must
+  detect this and fall back at allocation.
+
+### Test paths to add
+
+Add `tests/perf/issue-1199-arena.test.ts` validating both the
+backing choice (inspect emitted wasm) and the arena reset
+behaviour (call the function 1M times, observe `__heap_top`
+unchanged at end).
+
+### Dispatch
+
+Block this issue's start on #1195 + #1196 + #1197 landing and
+stable. Spec is ready; just sequence carefully.

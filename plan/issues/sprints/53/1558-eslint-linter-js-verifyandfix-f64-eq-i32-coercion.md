@@ -13,6 +13,7 @@ language_feature: equality, numeric-coercion, async
 goal: npm-library-support
 related: [1400, 1289, 1287, 1282]
 blocks: [eslint-tier-1d]
+note: "Verified 2026-05-21: BinaryExpression codegen lives in src/codegen/binary-ops.ts:173 (not expressions.ts); coerceType in type-coercion.ts"
 ---
 
 ## Resolution
@@ -129,10 +130,11 @@ operand type here is i32, not externref, so the path is distinct.
    `Linter_verifyAndFix`. Find the `f64.eq` instruction; trace which
    `call` produced the i32 result (likely a helper method on a typed
    class field).
-2. In `src/codegen/expressions.ts`, find the `BinaryExpression` /
-   `===` codegen path. Confirm whether it consults the operand
-   ValType returned from the left/right `compileExpression` calls
-   and inserts `f64.convert_i32_s` when one is i32 and the other f64.
+2. In `src/codegen/binary-ops.ts` (verified 2026-05-21:
+   `compileBinaryExpression` at line 173), find the `===` codegen
+   path. Confirm whether it consults the operand ValType returned
+   from the left/right `compileExpression` calls and inserts
+   `f64.convert_i32_s` when one is i32 and the other f64.
 3. The fix likely lives in `src/codegen/type-coercion.ts` —
    `coerceType(ctx, fctx, "i32", "f64")` already exists and emits
    `f64.convert_i32_s`. The bug is probably a missed call to it in

@@ -1,9 +1,9 @@
 ---
 id: 804
 title: "Extract new expressions from expressions.ts → new-expression.ts"
-status: ready
+status: done
 created: 2026-03-26
-updated: 2026-04-28
+updated: 2026-05-21
 priority: medium
 feasibility: easy
 reasoning_effort: medium
@@ -31,3 +31,7 @@ subtask_of: 688
 Self-contained — these functions call into `compileExpression` but nothing calls back into them except the switch dispatcher.
 
 ## Complexity: S
+
+## Resolution (2026-05-21)
+
+Already done in prior refactor. `compileNewExpression`, `compileNewFunctionExpression`, and `compileClassExpression` now live in `src/codegen/expressions/new-super.ts` (lines 1252, 851, 1212). `src/codegen/expressions.ts` (down to 1061 lines from 14k+) imports and re-exports them at lines 54, 140–141. Closed as done with no code change.
