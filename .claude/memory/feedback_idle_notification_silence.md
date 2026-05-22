@@ -1,11 +1,13 @@
 ---
 name: idle_notification_silence
-description: Do not respond to agent idle notifications unless CI has landed or there is actual work to assign
+description: Ignore idle_notification pings, but do respond to brief milestone pings from active agents
 type: feedback
 originSessionId: 0ffbd21c-b73d-429a-a76d-4fb742ea9794
 ---
-Do not respond to `{"type":"idle_notification",...}` teammate messages unless there is something actionable (CI landed, new task to assign, blocker to resolve).
+Agents now terminate after opening a PR, so the old CI-wait ping-loop problem is gone.
 
-**Why:** Every response re-triggers the agent's turn, which ends in another idle notification — creating a noisy ping loop that generates push notifications for the user.
+**Ignore:** `{"type":"idle_notification",...}` messages — still discarded, agents should never send these.
 
-**How to apply:** When an idle notification arrives and CI is still pending and there's no new work, output nothing. Only check CI status or respond if something has actually changed. Broadcast "stay dormant until CI lands" to all waiting agents at the start of a CI-wait phase.
+**Respond briefly to:** one-line milestone pings from active agents ("reproduced", "fix done", "PR #N open"). A quick acknowledgment ("got it, keep going") keeps the agent unblocked without creating a loop.
+
+**How to apply:** Milestone pings = respond once with a brief ack. Idle/CI-polling pings = ignore. The distinction: milestone pings carry new information (state change); idle pings carry no new information.

@@ -59,3 +59,96 @@ Add an opt-in flag `--regex=wasm` (default `host`) that bundles the [`regress`](
 ## Alternative considered
 - `re2-wasm` (Google) — smaller surface, ReDoS-safe, but **no backreferences and no lookbehind**, so it cannot pass the full test262 RegExp suite.
 - `onigasm` — too large (~700 KB) and PCRE-flavoured.
+
+## Implementation Plan (added 2026-05-21)
+
+The existing implementation steps already cover the high-level flow.
+Adding entry-point file refs, ABI, and edge cases.
+
+### Entry points
+
+- **CLI**: `src/cli.ts` — add `--regex=host|wasm|none`; default
+  `host`.
+- **Context**: `src/codegen/index.ts` — add
+  `ctx.regexBackend: "host"|"wasm"|"none"`.
+- **Side-module linker**: new `src/codegen/regex-link.ts` —
+  embed the precompiled `regress.wasm` as a `(data $regress
+  "...")` section, then use the existing module-link infrastructure
+  to merge it with the user's module via Binaryen `wasmMerge`.
+- **Codegen branches**: `src/codegen/typeof-delete.ts` and
+  `src/codegen/string-ops.ts` switch on `ctx.regexBackend`.
+
+### ABI (concrete)
+
+```wat
+(import "regress" "compile"  (func (param i32 i32 i32) (result i32))) ;; pattern_ptr, pattern_len, flags
+(import "regress" "exec"     (func (param i32 i32 i32 i32) (result i32))) ;; re_handle, str_ptr, str_len, start_idx
+(import "regress" "group"    (func (param i32 i32) (result i32))) ;; match_handle, group_idx -> packed start<<16|end
+(import "regress" "free"     (func (param i32)))
+```
+
+Pattern and string are passed as `(ptr, len)` pairs into a shared
+linear memory; copy from native-string `(array i16)` into linear
+memory at the call boundary.
+
+### Data structures
+
+```wat
+(type $RegExp (sub (struct
+  (field $tag i32)              ;; REGEXP_TAG (#1325)
+  (field $handle (mut i32))     ;; regress engine handle
+  (field $source (ref $StringArr))
+  (field $flags i32)            ;; bitfield: g=1 i=2 m=4 s=8 u=16 y=32
+  (field $lastIndex (mut f64))
+)))
+(type $MatchArr (struct
+  (field $matched (ref $StringArr))
+  (field $groups (ref $vec_StringArr))
+  (field $index i32)
+  (field $input (ref $StringArr))
+)))
+```
+
+### Edge cases
+
+- **Empty match advance** — when an empty match occurs with the `g`
+  flag, `lastIndex` must advance by 1 to avoid infinite loop.
+- **`y` sticky + non-zero lastIndex** — only match exactly at
+  lastIndex.
+- **Unicode property escapes (`\p{Letter}`)** — requires the full
+  Unicode-tables build (~400KB). Make this a sub-flag
+  `--regex=wasm-full` if size matters.
+- **GC of compiled regex** — regress holds memory inside the
+  side-module; the WasmGC `$RegExp` struct must trigger
+  `regress.free` when collected. Without WasmGC finalizers, leak or
+  use the existing dispose-pattern.
+- **String backend mismatch**: regress expects UTF-16; copy
+  one-shot into linear memory. For `--nativeStrings`, the array is
+  already UTF-16, so it's `array.copy` to memory.
+- **Cross-realm regexes** — N/A.
+- **`RegExp.prototype[Symbol.match]`** — must follow the spec's
+  branch on `g` flag. Reuse JS-host implementation but call the
+  wasm engine.
+- **`RegExp.prototype.flags`** — recompute from bitfield.
+
+### Test262 paths
+
+- `test/built-ins/RegExp/*` (~1400 tests).
+- `test/built-ins/String/prototype/{match,replace,replaceAll,search,split}/*`.
+
+Acceptance: ≥80% pass when `--regex=wasm`.
+
+### Dependencies
+
+- Coordinate with **#682** which proposed QuickJS libregexp.
+  Project leads must pick ONE; recommend regress (Rust) for its
+  modern Unicode support and active maintenance, accept the larger
+  size.
+- **#1105 Tier 2** — depends.
+
+### Risks
+
+- **Build pipeline**: Rust toolchain required. Mitigate by checking
+  in precompiled `vendor/regress.wasm` (~280KB binary) and only
+  rebuild when `vendor/regress-version.txt` changes.
+- **Size**: 300KB. Opt-in only. Document clearly.

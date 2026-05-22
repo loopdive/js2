@@ -9,7 +9,8 @@
     "jsStdUs": 12.064407842756312,
     "ratioStd": 0.002570687047295334,
     "warmupRounds": 2,
-    "measuredRounds": 9
+    "measuredRounds": 9,
+    "coldJsUs": 40213.1375
   },
   {
     "path": "examples/benchmarks/loop.ts",
@@ -21,7 +22,8 @@
     "jsStdUs": 1.333414621131256,
     "ratioStd": 0.0031621015234153975,
     "warmupRounds": 2,
-    "measuredRounds": 9
+    "measuredRounds": 9,
+    "coldJsUs": 7813.4687499999945
   },
   {
     "path": "examples/benchmarks/string.ts",
@@ -33,7 +35,8 @@
     "jsStdUs": 0.018522883967245878,
     "ratioStd": 0.0020676298884426294,
     "warmupRounds": 2,
-    "measuredRounds": 9
+    "measuredRounds": 9,
+    "coldJsUs": 8.899546028738355
   },
   {
     "path": "examples/benchmarks/array.ts",
@@ -45,6 +48,7 @@
     "jsStdUs": 0.4306401775436067,
     "ratioStd": 0.024807523876706535,
     "warmupRounds": 2,
-    "measuredRounds": 9
+    "measuredRounds": 9,
+    "coldJsUs": 239.79663204508856
   }
 ]

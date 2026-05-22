@@ -47,6 +47,7 @@
 - [feedback_idle_notification_silence.md](feedback_idle_notification_silence.md) — Don't respond to idle notifications unless CI landed or work to assign; silence breaks the ping loop
 - [feedback_no_ci_wait.md](feedback_no_ci_wait.md) — Dev agents open PR then immediately move on; CI monitoring = tech lead's job via auto-merge monitor
 - [feedback_no_keep_pane.md](feedback_no_keep_pane.md) — Never tell agents "do NOT kill your pane" — always terminate after PR; wait for a slot to open instead
+- [feedback_agent_self_termination.md](feedback_agent_self_termination.md) — Architects idle after finishing instead of self-terminating; added Termination section to architect.md; always include kill-pane in spawn prompts
 
 ### Dispatch
 - [feedback_dispatch_status.md](feedback_dispatch_status.md) — Update issue status to in-progress when dispatching an agent
@@ -72,7 +73,8 @@
 - [feedback_spec_first_fixes.md](feedback_spec_first_fixes.md) — Always fetch the ECMAScript spec (tc39.es/ecma262) before fixing test failures; implement from fetched spec text, never from memory; cite spec section in commits
 
 ### Model usage
-- [feedback_sonnet_for_sprint_loop.md](feedback_sonnet_for_sprint_loop.md) — Use Sonnet for routine sprint loop; Opus only for crisis/architecture
+- [feedback_sonnet_for_sprint_loop.md](feedback_sonnet_for_sprint_loop.md) — Use Sonnet for routine tech-lead loop; Opus only for crisis/architecture
+- [feedback_devs_default_opus.md](feedback_devs_default_opus.md) — Devs/sendevs/architects default to opus per agent defs; don't downgrade to sonnet without user OK
 
 ### Reporting
 - [feedback_sprint_status_format.md](feedback_sprint_status_format.md) — Sprint status format: `s52: 17/82 done`
@@ -89,6 +91,6 @@
 - [feedback_refactoring_failures.md](feedback_refactoring_failures.md) — After refactoring: check missing imports first, not circular deps
 - [feedback_sprint_tags.md](feedback_sprint_tags.md) — Tag sprint-N/begin at start, sprint/N at end
 - [feedback_no_stash_before_merge.md](feedback_no_stash_before_merge.md) — Never stash before merge, commit first
-- [feedback_regression_analysis.md](feedback_regression_analysis.md) — Regressions may be false-positive exposure, not real regressions
+- [feedback_regression_analysis.md](feedback_regression_analysis.md) — Regressions may be false-positive exposure, not real regressions; `pass → compile_timeout` is runner-load flake unless baseline compile >5s
 
 Most project context lives in `/workspace/CLAUDE.md`.

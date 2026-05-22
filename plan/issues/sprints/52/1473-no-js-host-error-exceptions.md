@@ -12,6 +12,7 @@ area: codegen, runtime
 language_feature: exceptions, throw/try/catch
 goal: host-independence
 related: []
+note: "Line numbers verified against main 2026-05-21: __throw_type_error registration moved 2464→2527; destructuring-params.ts:148, calls.ts:5600, expressions.ts:269, identifiers.ts:28 all still valid"
 ---
 
 # #1473 — Eliminate JS host error/exception ops for standalone Wasm
@@ -26,8 +27,8 @@ this is available under wasmtime / standalone Wasm.
 
 Imports with **no standalone fallback**:
 
-1. **`__throw_type_error`** (`src/runtime.ts` 2464 — JS impl
-   `throw new TypeError(msg)`). Emitted from:
+1. **`__throw_type_error`** (`src/runtime.ts` 2527, verified 2026-05-21 —
+   JS impl `throw new TypeError(msg)`). Emitted from:
    - `src/codegen/destructuring-params.ts:148,151` (parameter
      destructuring required-arg check)
    - `src/codegen/expressions/identifiers.ts:28,310,549` (TDZ /

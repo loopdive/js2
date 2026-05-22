@@ -243,3 +243,44 @@ fields follow header at known offsets (computed from struct type)
 This is NOT a borrow checker. The user writes normal TypeScript. The compiler silently manages memory. If analysis fails for a value, it falls back to runtime refcount or (on WasmGC targets) the GC. Zero user-facing changes.
 
 ## Complexity: XL overall (Phase 0: M, Phase 1: L)
+
+## Architect refinement (2026-05-21)
+
+The existing design is comprehensive. Adding entry-point file refs
+and dispatch sequencing.
+
+### Entry points
+
+- **Phase 0 (escape analysis)**: implemented under **#747**. Land
+  #747 first as the foundation.
+- **Phase 1 (intraprocedural)**: new `src/checker/lifetime.ts`.
+  Hooks into `src/codegen/expressions.ts` to inject `__free(offset)`
+  after the last-use instruction.
+- **Phase 2 (interprocedural)**: extends `src/checker/type-flow.ts`
+  (#743) with ownership transfer in the call-graph propagation
+  step.
+- **Phase 3 (refcount fallback)**: new runtime helpers `__rc_inc`
+  / `__rc_dec` + bump allocator in linear memory.
+
+### Dispatch sequencing
+
+1. Land **#747** (escape analysis) — gives Phase 0 directly.
+2. Land **#743** (type flow) — gives Phase 2's interprocedural
+   foundation.
+3. Land **#1199** (linear-memory typed arrays) — proves out the
+   allocator + free-list infrastructure.
+4. Then start Phase 1 of this issue.
+
+### Risk
+
+Building static ARC is months of work and risks regressing the
+GC-mode hot path. Recommend keeping behind `--memory-mode=arc`
+flag indefinitely; default remains WasmGC.
+
+### Dependencies
+
+- **#747** Phase 0 — direct dependency.
+- **#743** — needed for Phase 2.
+- **#1199** — proves linear-memory allocator infrastructure.
+- **#1535/#1536** — native bigint / externref-free runtime;
+  prerequisites for full standalone ARC.

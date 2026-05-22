@@ -13,6 +13,7 @@ language_feature: try-catch, destructuring
 goal: spec-completeness
 parent: 779
 related: [1432, 1450, 1454, 1550]
+note: "Verified 2026-05-21: catch-clause codegen lives in src/codegen/statements/exceptions.ts (compileTryStatement at L242) — NOT statements.ts as cited"
 ---
 # #1552 — `try { ... } catch (pattern) { ... }` — destructuring residuals
 

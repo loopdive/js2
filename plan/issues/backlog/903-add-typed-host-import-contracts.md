@@ -84,3 +84,74 @@ These should not all be treated the same way.
 - closed-world code can stay specialized across imports proven pure/non-retaining
 - conservative invalidation remains only on imports whose contract requires it
 - the runtime import surface remains explicit and auditable
+
+## Implementation Plan (added 2026-05-21)
+
+### Entry points
+- New `src/host-contracts.ts` — central registry of contract metadata
+- `src/codegen/index.ts` — every `addImport` call site reads from the registry
+- `src/runtime.ts` — `buildImports` validates host adheres to declared contract (debug-mode only)
+- New `src/checker/effect-analysis.ts` — uses contracts to prune conservative widening
+
+### Data structure
+```ts
+export interface ImportContract {
+  module: string;             // e.g. "env", "Math"
+  name: string;               // e.g. "Math.floor", "console.log"
+  params: WasmType[];
+  result: WasmType | "void";
+  // Effect summary:
+  pure: boolean;              // no side effects, same input → same output
+  retainsRefs: boolean;       // may store refs across calls
+  callsBack: boolean;         // may invoke a callback synchronously
+  reflective: boolean;        // may observe prototype / property layout
+  mayThrow: boolean;          // may throw an exception
+  shapeStable: boolean;       // does not mutate shapes of args
+}
+```
+
+### Algorithm
+1. **Registry seed**: bootstrap `host-contracts.ts` with entries for every existing built-in import:
+   - `Math.*` → all pure, no retention
+   - `Date.now / Date.UTC` → impure (clock) but no retention
+   - `console.log` → retains externref strings (logger may stash), reflective on object args
+   - `__box_number / __unbox_number` → pure, no retention
+   - `__extern_length / __extern_get_idx` → pure, no retention, reflective (reads .length / [k])
+   - `__defineProperty_value` → mutates first arg, callsBack getters, may throw
+   - `RegExp_new` → allocates, retains pattern internally, may throw on parse error
+   - DOM/Node imports (#1044/#1045) → most are reflective + retaining
+2. **Codegen integration**: at every `addImport` call, look up the contract; cache on `ctx.importContracts: Map<funcIdx, ImportContract>`.
+3. **Effect-aware analysis**: extend the shape inference / type flow pass:
+   - On a call to a `pure + !reflective + !callsBack` import, do NOT invalidate any locals/shapes.
+   - On `callsBack`, treat as a generic call that may mutate any escaped reference.
+   - On `reflective`, do NOT specialize the object's shape past this point unless the analysis can prove the import doesn't see THIS object.
+4. **Debug-mode validation**: in `runtime.ts`, when `JS2WASM_VALIDATE_CONTRACTS=1`, wrap each host import to record observed behaviour; warn on contract violations.
+
+### Wasm output
+Contracts are compile-time only — no Wasm changes. They drive analysis decisions that affect what other code paths emit.
+
+### Edge cases
+- **User-declared imports** (via `import { x } from "host"`): default to the most conservative contract; allow user to annotate via `@js2wasm-contract` JSDoc on the import declaration.
+- **Re-entrant imports** (`callsBack: true`): treat all globals and escaped refs as potentially observed/mutated; equivalent to a black-box call.
+- **Throwing imports**: must be visible to the exception-handling analysis (already a property in `mayThrow`).
+- **Variadic / overloaded imports**: split into named contracts per arity.
+- **Imports that wrap a callback** (e.g. `setTimeout(cb)`): mark `retainsRefs: true` and `callsBack: true` (later).
+
+### Test plan
+- New `tests/issue-903-contracts.test.ts`:
+  - Compile `Math.floor(x) + 1` and verify no externref widening of `x` past the call (WAT snapshot)
+  - Compile `console.log(obj); return obj.x` and verify `obj`'s shape is preserved (no full deopt)
+  - Negative: a `callsBack` import correctly invalidates downstream specialization
+- Microbench: hot loop calling `Math.floor` should not regress vs. the current generic path
+
+### Dependencies
+- **Hard**: #743 (whole-program type flow analysis) — uses contracts as the boundary condition
+- **Soft**: #1044/#1045 (Node/DOM host imports) — both need contracts populated; coordinate
+
+### Files touched
+- new `src/host-contracts.ts` (registry)
+- new `src/checker/effect-analysis.ts`
+- `src/codegen/index.ts` (consume contracts in addImport / call sites)
+- `src/runtime.ts` (debug-mode validator)
+- All existing `addImport` call sites adopt the contract lookup (~30 sites)
+- new `tests/issue-903-contracts.test.ts`

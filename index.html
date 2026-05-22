@@ -397,6 +397,89 @@
         overflow: visible;
       }
 
+      .bench-test-group {
+        grid-column: 1 / -1;
+        margin: 0 0 40px;
+        padding: 24px;
+        border: 1px solid var(--fg-faintest, rgba(255, 255, 255, 0.08));
+        border-radius: 8px;
+      }
+      .bench-test-group .conformance-diagrams {
+        margin-top: 20px;
+      }
+      .bench-test-title {
+        font-family: var(--mono);
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 8px;
+        color: var(--fg);
+      }
+      .bench-test-desc {
+        margin: 0 0 12px;
+        color: var(--fg-faint);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .bench-test-source {
+        margin: 0 0 8px;
+        font-size: 13px;
+      }
+      .bench-test-source summary {
+        cursor: pointer;
+        color: var(--fg-faint);
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 4px 0;
+      }
+      .bench-test-source summary:hover {
+        color: var(--fg);
+      }
+      .bench-test-source pre.how-code {
+        margin: 8px 0 0;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      .host-bench-section-title {
+        grid-column: 1 / -1;
+        font-family: var(--mono, ui-monospace, monospace);
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--fg, rgba(255, 255, 255, 0.92));
+        margin: 32px 0 16px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--fg-faintest, rgba(255, 255, 255, 0.08));
+      }
+      .host-bench-section-title:first-of-type {
+        margin-top: 8px;
+      }
+      .section-title-note {
+        text-transform: none;
+        font-weight: 400;
+        font-size: 12px;
+        color: var(--fg-faint, rgba(255, 255, 255, 0.55));
+        letter-spacing: 0.04em;
+        margin-left: 6px;
+      }
+      .bench-metric-row {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        margin: 0 0 16px;
+        align-items: start;
+      }
+      .host-bench-section-desc {
+        max-width: 780px;
+        margin: -8px 0 28px;
+        font-size: 17px;
+        line-height: 1.72;
+        color: var(--fg-faint);
+      }
+
       .diagram-title {
         font-family: var(--mono);
         font-size: 11px;
@@ -3047,7 +3130,7 @@ match (value) {
 
       <hr class="divider" />
 
-      <section class="section-pad" id="wasm-hosts">
+      <section class="section-pad" id="benchmarks">
         <div class="intro">
           <h2>Tiny modules that load and run fast.</h2>
           <p>
@@ -3057,94 +3140,395 @@ match (value) {
         </div>
 
         <div class="host-bench-group">
-          <h3 class="host-bench-title">JavaScript host (V8)</h3>
+          <h3 class="host-bench-title">JavaScript host</h3>
           <p class="host-bench-subcopy">
             Speedup of JS² compiled WebAssembly relative to the same source code running as JavaScript in V8 (Node.js).
-            Bars extending past the JS baseline mean Wasm is faster; bars falling short mean slower. The left chart is
-            the production setup — both runtimes use their full optimizing pipeline. The right chart pins both runtimes
-            to their baseline tier — the no-optimizing-JIT execution path that matters for cold-start, multi-tenant edge
-            runtimes, and engines without a top tier. Press the button to run the benchmark in your browser including
+            Bars extending past the JS baseline mean Wasm is faster; bars falling short mean slower. The left chart pins
+            both runtimes to their baseline tier — the no-optimizing-JIT execution path that matters for cold-start,
+            multi-tenant edge runtimes, and engines without a top tier. The right chart is the production setup — both
+            runtimes use their full optimizing pipeline. Press the button to run the benchmark in your browser including
             additional DOM benchmarks.
           </p>
           <div class="conformance-diagrams">
+            <div class="diagram-panel">
+              <perf-benchmark-chart
+                src="./benchmarks/results/playground-benchmark-sidebar-no-jit.json"
+                mode="perf"
+                title="cold speed"
+                baseline-label="JS"
+                legend="Baseline tiers only — V8 Liftoff for Wasm (no TurboFan), V8 Ignition for JS (jitless). Bars show speedup over the cold-jitless JS runtime."
+              ></perf-benchmark-chart>
+            </div>
             <div class="diagram-panel">
               <perf-benchmark-chart
                 src="./benchmarks/results/playground-benchmark-sidebar.json"
                 mode="perf"
                 rerun-src="./benchmarks/results/loadtime-benchmarks.json"
                 rerun-label="Run Browser Benchmark"
-                title="Speed relative to running in a JS engine (V8)"
-                baseline-label="JS in V8"
-                legend="Production tiers enabled — V8 TurboFan for JS, Liftoff→TurboFan for Wasm. 2x = Wasm twice as fast as JS. 0.8x = 20% slower."
-              ></perf-benchmark-chart>
-            </div>
-            <div class="diagram-panel">
-              <perf-benchmark-chart
-                src="./benchmarks/results/playground-benchmark-sidebar-no-jit.json"
-                mode="perf"
-                title="Speed relative to running in a JS engine (V8)"
-                baseline-label="JS in V8 (baseline tier)"
-                legend="Baseline tiers only — V8 Liftoff for Wasm (no TurboFan), V8 Ignition for JS (jitless). Same family as wasmtime cranelift opt-level 0. 2x = Wasm twice as fast as JS."
+                title="warm speed"
+                baseline-label="JS"
+                legend="Production tiers enabled — V8 TurboFan for JS, Liftoff→TurboFan for Wasm. Bars show speedup over the warm/hot JS runtime."
               ></perf-benchmark-chart>
             </div>
           </div>
         </div>
 
         <div class="host-bench-group" id="wasmtime-bench-group" style="display: none">
-          <h3 class="host-bench-title">WebAssembly host (Wasmtime, JIT disabled)</h3>
+          <h3 class="host-bench-title">WASI host</h3>
           <p class="host-bench-subcopy">
-            This test case approximates a multi-tenant Wasm native serverless environment. 5 small
-            <a href="./benchmarks/competitive/programs/">JavaScript programs</a>
-            are run as WebAssembly in three different setups: 1. compiled ahead of time with JS², 2. interpreted by a
-            separate dynamically linked interpreter module, 3. interpreted by a bundled JS engine (preinitialized +
-            partial AOT evaluation). As a baseline we show the same code running in its native environment inside a V8
-            engine in Node.js with JIT enabled, spawning a fresh runtime process.
+            Per-request cost of running the same JavaScript programs (source for each is shown inline below) across four
+            execution models on edge:
+            <strong>AOT</strong>
+            (Cranelift-compiled
+            <code>.cwasm</code>
+            , no runtime codegen),
+            <strong>JS in V8</strong>
+            (Ignition → Liftoff → TurboFan, all at request time, the implicit 1.0× baseline),
+            <strong>Interpreter</strong>
+            (a per-function tiny module — ~3 kB — delegating to a preloaded QuickJS-style plugin), and
+            <strong>Engine</strong>
+            (a full JS engine bundled inside Wasm with AOT pre-init — ~14 MB per function). Two scenarios per program:
+            fresh instance per request (cold) and reused instance (warm). Interpreter and Engine both run a JS
+            interpreter inside Wasm — the size and per-call cost tradeoff isn't free. One chart per benchmark; each
+            chart shows AOT vs Interpreter vs Engine for both scenarios.
           </p>
           <div class="conformance-diagrams">
-            <div
-              class="diagram-panel"
-              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
-              style="display: none"
-            >
-              <perf-benchmark-chart
-                src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
-                mode="perf"
-                title="Speed relative to V8 with JIT"
-                baseline-label="V8 with JIT"
-                legend="Speedup relative to V8 with JIT. 2x = twice as fast. 0.57x = 57% the speed. Geometric mean of repeated calls inside one fresh process after module load."
-              ></perf-benchmark-chart>
+            <h4 class="host-bench-section-title">Speed <span class="section-title-note">(higher is better)</span></h4>
+            <p class="host-bench-section-desc">
+              <strong>Cold speed</strong> shows first-invocation runtime — process start, module load, compile/instantiate, and the first call — with bars as speedup over the cold JS-in-V8 baseline. <strong>Warm speed</strong> shows steady-state per-call cost on a hot workload after warmup, with bars as speedup over the warm JS-in-V8 baseline.
+            </p>
+            <div class="bench-test-group" data-test="fib">
+              <h4 class="bench-test-title">Fibonacci loop</h4>
+              <p class="bench-test-desc">
+                Tight numeric loop with bit-ops and integer addition. Exercises hot-loop arithmetic throughput — the
+                kind of inner kernel where AOT is typically strongest.
+              </p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export const benchmark = {
+  id: "fib",
+  label: "Fibonacci loop",
+  coldArg: 5000,
+  runtimeArg: 20000000,
+  coldRuns: 7,
+  runtimeRuns: 5,
+};
+
+/** @param {number} n @returns {number} */
+export function run(n) {
+  let a = 0;
+  let b = 1;
+  for (let i = 0; i &lt; n; i++) {
+    const next = (a + b) | 0;
+    a = b;
+    b = next;
+  }
+  return a | 0;
+}</pre
+                >
+              </details>
+              <div class="conformance-diagrams">
+                <div
+                  class="diagram-panel"
+                  data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                  data-row-filter="fib"
+                  style="display: none"
+                >
+                  <perf-benchmark-chart
+                    src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                    benchmark="fib"
+                    src-filter="cold"
+                    mode="perf"
+                    title="cold speed"
+                    baseline-label="JS"
+                  ></perf-benchmark-chart>
+                </div>
+                <div
+                  class="diagram-panel"
+                  data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                  data-row-filter="fib"
+                  style="display: none"
+                >
+                  <perf-benchmark-chart
+                    src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                    benchmark="fib"
+                    src-filter="warm"
+                    mode="perf"
+                    title="warm speed"
+                    baseline-label="JS"
+                  ></perf-benchmark-chart>
+                </div>
+              </div>
             </div>
-            <div
-              class="diagram-panel"
-              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size.json"
-              style="display: none"
-            >
-              <perf-benchmark-chart
-                src="./benchmarks/results/wasm-host-wasmtime-module-size.json"
-                mode="absolute-lower-better"
-                title="Module Size"
-                baseline-label="JS source (minified)"
-                show-delta
-                delta-kind="factor"
-                legend="Geometric mean of raw deployable module size; JS source counts only the minified benchmark .js files. Parenthetical interpreter payload is not included in the bar or delta."
-              ></perf-benchmark-chart>
+            <div class="bench-test-group" data-test="fib-recursive">
+              <h4 class="bench-test-title">Fibonacci recursion</h4>
+              <p class="bench-test-desc">
+                Exponential recursive calls (no memoization). Exercises function-call overhead, call-stack depth, and
+                small-function dispatch.
+              </p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export const benchmark = {
+  id: "fib-recursive",
+  label: "Fibonacci recursion",
+  coldArg: 10,
+  runtimeArg: 30,
+  coldRuns: 7,
+  runtimeRuns: 5,
+};
+
+function fib(n) {
+  if (n &lt;= 1) return n;
+  return fib(n - 1) + fib(n - 2);
+}
+
+/** @param {number} n @returns {number} */
+export function run(n) {
+  return fib(n);
+}</pre
+                >
+              </details>
+              <div class="conformance-diagrams">
+                <div
+                  class="diagram-panel"
+                  data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                  data-row-filter="fib-recursive"
+                  style="display: none"
+                >
+                  <perf-benchmark-chart
+                    src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                    benchmark="fib-recursive"
+                    src-filter="cold"
+                    mode="perf"
+                    title="cold speed"
+                    baseline-label="JS"
+                  ></perf-benchmark-chart>
+                </div>
+                <div
+                  class="diagram-panel"
+                  data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                  data-row-filter="fib-recursive"
+                  style="display: none"
+                >
+                  <perf-benchmark-chart
+                    src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                    benchmark="fib-recursive"
+                    src-filter="warm"
+                    mode="perf"
+                    title="warm speed"
+                    baseline-label="JS"
+                  ></perf-benchmark-chart>
+                </div>
+              </div>
             </div>
-            <div
-              class="diagram-panel"
-              data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-coldstart.json"
-              style="display: none"
-            >
-              <perf-benchmark-chart
-                src="./benchmarks/results/wasm-host-wasmtime-coldstart.json"
-                mode="absolute-lower-better"
-                title="Cold Start"
-                baseline-label="JS in V8"
-                show-delta
-                delta-kind="runtime"
-                legend="Geometric mean of a fresh JS source process or fresh precompiled WebAssembly artifact process through first invocation."
-              ></perf-benchmark-chart>
+            <div class="bench-test-group" data-test="array-sum">
+              <h4 class="bench-test-title">Array fill + sum</h4>
+              <p class="bench-test-desc">
+                Fill an array with hashed integers then sum it. Exercises array allocation, indexed write+read, and a
+                second tight scalar loop.
+              </p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export const benchmark = {
+  id: "array-sum",
+  label: "Array fill + sum",
+  coldArg: 2000,
+  runtimeArg: 1000000,
+  coldRuns: 7,
+  runtimeRuns: 5,
+};
+
+/** @param {number} n @returns {number} */
+export function run(n) {
+  const values = [];
+  for (let i = 0; i &lt; n; i++) {
+    values[i] = ((i * 17) ^ (i &gt;&gt;&gt; 3)) &amp; 1023;
+  }
+
+  let sum = 0;
+  for (let i = 0; i &lt; values.length; i++) {
+    sum = (sum + values[i]) | 0;
+  }
+  return sum | 0;
+}</pre
+                >
+              </details>
+              <div class="conformance-diagrams">
+                <div
+                  class="diagram-panel"
+                  data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                  data-row-filter="array-sum"
+                  style="display: none"
+                >
+                  <perf-benchmark-chart
+                    src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                    benchmark="array-sum"
+                    src-filter="cold"
+                    mode="perf"
+                    title="cold speed"
+                    baseline-label="JS"
+                  ></perf-benchmark-chart>
+                </div>
+                <div
+                  class="diagram-panel"
+                  data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                  data-row-filter="array-sum"
+                  style="display: none"
+                >
+                  <perf-benchmark-chart
+                    src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                    benchmark="array-sum"
+                    src-filter="warm"
+                    mode="perf"
+                    title="warm speed"
+                    baseline-label="JS"
+                  ></perf-benchmark-chart>
+                </div>
+              </div>
             </div>
-          </div>
+            <div class="bench-test-group" data-test="string-hash">
+              <h4 class="bench-test-title">String build + hash</h4>
+              <p class="bench-test-desc">
+                Build a string via concatenation then compute a rolling hash. Exercises string allocation,
+                charAt/charCodeAt, and a per-character hot loop — currently the worst case for AOT (see issue #1580).
+              </p>
+              <details class="bench-test-source">
+                <summary>Show source</summary>
+                <pre class="how-code js">
+export const benchmark = {
+  id: "string-hash",
+  label: "String build + hash",
+  coldArg: 100,
+  runtimeArg: 20000,
+  coldRuns: 7,
+  runtimeRuns: 5,
+};
+
+/** @param {number} n @returns {number} */
+export function run(n) {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz012345";
+  let text = "";
+  for (let i = 0; i &lt; n; i++) {
+    const a = (i * 13) &amp; 31;
+    const b = (a + 7) &amp; 31;
+    text += alphabet.charAt(a);
+    text += alphabet.charAt(b);
+    text += ";";
+  }
+
+  let hash = 0;
+  for (let i = 0; i &lt; text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+  return hash | 0;
+}</pre
+                >
+              </details>
+              <div class="conformance-diagrams">
+                <div
+                  class="diagram-panel"
+                  data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                  data-row-filter="string-hash"
+                  style="display: none"
+                >
+                  <perf-benchmark-chart
+                    src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                    benchmark="string-hash"
+                    src-filter="cold"
+                    mode="perf"
+                    title="cold speed"
+                    baseline-label="JS"
+                  ></perf-benchmark-chart>
+                </div>
+                <div
+                  class="diagram-panel"
+                  data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                  data-row-filter="string-hash"
+                  style="display: none"
+                >
+                  <perf-benchmark-chart
+                    src="./benchmarks/results/wasm-host-wasmtime-hot-runtime.json"
+                    benchmark="string-hash"
+                    src-filter="warm"
+                    mode="perf"
+                    title="warm speed"
+                    baseline-label="JS"
+                  ></perf-benchmark-chart>
+                </div>
+              </div>
+            </div>
+            <h4 class="host-bench-section-title">Module size <span class="section-title-note">(smaller is better)</span></h4>
+            <p class="host-bench-section-desc">
+              Raw .wasm bytes you upload, version-control, or push to a registry per function. AOT is the user's source
+              compiled to Wasm directly; Interpreter is a small per-function bytecode that delegates to a preloaded
+              plugin (shared runtime cost not included in this bar); Engine bundles a full JS engine into the artifact.
+              JS source baseline is the minified .js file.
+            </p>
+            <div class="conformance-diagrams bench-metric-row">
+              <div
+                class="diagram-panel"
+                data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
+                style="display: none"
+              >
+                <perf-benchmark-chart
+                  src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
+                  benchmark="fib"
+                  mode="absolute-lower-better"
+                  title="Fibonacci loop"
+                  baseline-label="JS"
+                  show-delta
+                  delta-kind="factor"
+                ></perf-benchmark-chart>
+              </div>
+              <div
+                class="diagram-panel"
+                data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
+                style="display: none"
+              >
+                <perf-benchmark-chart
+                  src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
+                  benchmark="fib-recursive"
+                  mode="absolute-lower-better"
+                  title="Fibonacci recursion"
+                  baseline-label="JS"
+                  show-delta
+                  delta-kind="factor"
+                ></perf-benchmark-chart>
+              </div>
+              <div
+                class="diagram-panel"
+                data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
+                style="display: none"
+              >
+                <perf-benchmark-chart
+                  src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
+                  benchmark="array-sum"
+                  mode="absolute-lower-better"
+                  title="Array fill + sum"
+                  baseline-label="JS"
+                  show-delta
+                  delta-kind="factor"
+                ></perf-benchmark-chart>
+              </div>
+              <div
+                class="diagram-panel"
+                data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
+                style="display: none"
+              >
+                <perf-benchmark-chart
+                  src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
+                  benchmark="string-hash"
+                  mode="absolute-lower-better"
+                  title="String build + hash"
+                  baseline-label="JS"
+                  show-delta
+                  delta-kind="factor"
+                ></perf-benchmark-chart>
+              </div>
+            </div>
         </div>
       </section>
 

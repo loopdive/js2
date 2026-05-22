@@ -98,7 +98,7 @@ within a few minutes of CI reporting.
      specific `gh run view <id> --log-failed` command and a hypothesis about
      the regression cluster.
    - **No owner / orphan** (dev from an earlier session, dev non-responsive):
-     you admin-merge directly via `gh pr merge <N> --admin --merge`.
+     you enqueue via `gh pr merge <N> --merge --auto` (queue re-runs the required checks on the merged state). Reserve `--admin --merge` for true hotfix bypass.
    - **Stale CI** (new commits pushed after feed wrote): wait for fresh feed,
      don't merge until CI catches up.
 4. If the queue has >5 self-merge-eligible PRs, send a broadcast reminding devs
