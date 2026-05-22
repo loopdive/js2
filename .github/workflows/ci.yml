@@ -21,31 +21,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Verify branch contains its base
+      - name: Skip explicit base-ancestry check (handled by simulated merge / queue)
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: |
-          # NOTE: when GitHub Actions checks out a pull_request event it sets HEAD
-          # to refs/pull/N/merge — a simulated merge of the PR's head into the
-          # PR's base captured AT CHECKOUT TIME. The base sha embedded in that
-          # merge is what we should compare against, not 'git fetch origin main'
-          # (which races against any new push to main since checkout — leading
-          # to false-positive "branch missing main commits" failures).
-          # For pull_request events, github.event.pull_request.base.sha is the
-          # exact base sha used to compute the simulated merge.
-          # For merge_group events, the queue already merged main into the
-          # group ref, so the check is trivially true.
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            echo "✓ merge_group ref already merged base — skip explicit check"
-            exit 0
-          fi
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          git fetch origin "$BASE_SHA" --depth 1 || git fetch origin main --depth 50
-          if git merge-base --is-ancestor "$BASE_SHA" HEAD; then
-            echo "✓ PR base ($BASE_SHA) is an ancestor of HEAD"
-          else
-            echo "::error::PR's recorded base ($BASE_SHA) is not an ancestor of HEAD. This is a checkout state anomaly — try re-running the job."
-            exit 1
-          fi
+          # GitHub Actions checks out refs/pull/N/merge (a simulated merge of
+          # the PR's HEAD into the PR's BASE) for pull_request, and the queue
+          # ref for merge_group. Both inherently include the base in history.
+          # The previous explicit "git merge-base --is-ancestor origin/main HEAD"
+          # check had a TOCTOU race (false positives when main moved between
+          # checkout and the check), and using PR base.sha tripped over the
+          # shallow checkout's missing ancestry graph. Both contexts already
+          # guarantee base-ancestry by construction — no extra check needed.
+          echo "✓ ${{ github.event_name }} ref already includes base by construction"
 
       - uses: actions/setup-node@v6
         with:
