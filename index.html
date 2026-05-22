@@ -3154,22 +3154,20 @@ match (value) {
               <perf-benchmark-chart
                 src="./benchmarks/results/playground-benchmark-sidebar-no-jit.json"
                 mode="perf"
-                max-ratio="31"
                 title="cold speed"
                 baseline-label="JS"
-                legend="Baseline tiers only — V8 Liftoff for Wasm (no TurboFan), V8 Ignition for JS (jitless). Bars normalized to the cold JS runtime as 1.0× baseline; scale shared with the warm-speed chart for direct comparison."
+                legend="Baseline tiers only — V8 Liftoff for Wasm (no TurboFan), V8 Ignition for JS (jitless). Bars show speedup over the cold-jitless JS runtime."
               ></perf-benchmark-chart>
             </div>
             <div class="diagram-panel">
               <perf-benchmark-chart
                 src="./benchmarks/results/playground-benchmark-sidebar.json"
                 mode="perf"
-                max-ratio="31"
                 rerun-src="./benchmarks/results/loadtime-benchmarks.json"
                 rerun-label="Run Browser Benchmark"
                 title="warm speed"
                 baseline-label="JS"
-                legend="Production tiers enabled — V8 TurboFan for JS, Liftoff→TurboFan for Wasm. Bars normalized to the cold JS runtime so a warm-speed bar's length is directly comparable to a cold-speed bar — both show the same underlying speedup factor over the slowest baseline."
+                legend="Production tiers enabled — V8 TurboFan for JS, Liftoff→TurboFan for Wasm. Bars show speedup over the warm/hot JS runtime."
               ></perf-benchmark-chart>
             </div>
           </div>
