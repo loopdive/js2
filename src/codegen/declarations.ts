@@ -1079,6 +1079,25 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       // __make_getter_callback: same signature — wraps a function so 'this' is bound (#929)
       // Used for Object.defineProperty accessor descriptors (getter/setter callbacks).
       addImport(ctx, "env", "__make_getter_callback", { kind: "func", typeIdx });
+
+      // (#1130) The program installs accessor descriptors, so any array may have
+      // an index/length accessor getter. Flip the whole-program flag and register
+      // the helpers that array-method loops use to observe those getters. When
+      // this branch is not taken, none of these imports exist and array-method
+      // loops emit byte-identical output.
+      ctx.arrayAccessorObserved = true;
+      // __array_idx_accessor_get(obj: externref, idx: f64) -> externref
+      const idxAccTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+      addImport(ctx, "env", "__array_idx_accessor_get", { kind: "func", typeIdx: idxAccTypeIdx });
+      // __array_length_accessor_get(obj: externref) -> externref
+      const lenAccTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+      addImport(ctx, "env", "__array_length_accessor_get", { kind: "func", typeIdx: lenAccTypeIdx });
+      // __is_array_no_accessor(v: externref) -> i32
+      const sentinelTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);
+      addImport(ctx, "env", "__is_array_no_accessor", { kind: "func", typeIdx: sentinelTypeIdx });
+      // __to_length(v: externref) -> i32
+      const toLenTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);
+      addImport(ctx, "env", "__to_length", { kind: "func", typeIdx: toLenTypeIdx });
     }
   }
 

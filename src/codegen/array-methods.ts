@@ -4462,6 +4462,64 @@ interface ArrayLoopLocals {
   lenTmp: number;
   iTmp: number;
   getOp: string;
+  /**
+   * (#1130) Slow-path only (ctx.arrayAccessorObserved): externref view of the
+   * receiver, the argument to the accessor-probe host imports.
+   */
+  vecExternTmp?: number;
+  /** (#1130) Slow-path only: externref scratch for accessor-probe results. */
+  probeTmp?: number;
+  /** (#1130) elemType carried so emitElementLoad can coerce a getter result. */
+  elemType?: ValType;
+  /** (#1130) array data type index carried for emitElementLoad's fast read. */
+  arrTypeIdx?: number;
+}
+
+/**
+ * (#1130) Load `data[i]` for the current loop iteration onto the stack, typed
+ * as `elemType`. Fast path (ctx.arrayAccessorObserved === false) emits the
+ * exact same `local.get data; local.get i; getOp` sequence as before — byte
+ * identical. Slow path probes for an own index accessor getter
+ * (Object.defineProperty(arr, i, {get})) and uses its coerced result when
+ * present, else falls back to the raw array.get.
+ */
+function emitElementLoad(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  loop: ArrayLoopLocals,
+  arrTypeIdx: number,
+): Instr[] {
+  const fastRead: Instr[] = [
+    { op: "local.get", index: loop.dataTmp } as Instr,
+    { op: "local.get", index: loop.iTmp } as Instr,
+    { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
+  ];
+  if (!ctx.arrayAccessorObserved) return fastRead;
+
+  const elemType = loop.elemType!;
+  const idxAccIdx = ctx.funcMap.get("__array_idx_accessor_get")!;
+  const isNoAccIdx = ctx.funcMap.get("__is_array_no_accessor")!;
+  // Typed if-result block: a ref element type must widen to nullable for the
+  // block signature (matches the pattern used elsewhere in this file).
+  const blockValType: ValType =
+    elemType.kind === "ref" ? { kind: "ref_null", typeIdx: (elemType as { typeIdx: number }).typeIdx } : elemType;
+  return [
+    { op: "local.get", index: loop.vecExternTmp! } as Instr,
+    { op: "local.get", index: loop.iTmp } as Instr,
+    { op: "f64.convert_i32_s" } as Instr,
+    { op: "call", funcIdx: idxAccIdx } as Instr,
+    { op: "local.tee", index: loop.probeTmp! } as Instr,
+    { op: "call", funcIdx: isNoAccIdx } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "val" as const, type: blockValType },
+      then: fastRead,
+      else: [
+        { op: "local.get", index: loop.probeTmp! } as Instr,
+        ...coercionInstrs(ctx, { kind: "externref" }, elemType, fctx),
+      ],
+    } as Instr,
+  ];
 }
 
 /**
@@ -4491,10 +4549,58 @@ function setupArrayLoop(
   const lenTmp = allocLocal(fctx, `__arr_${tag}_len_${fctx.locals.length}`, { kind: "i32" });
   const iTmp = allocLocal(fctx, `__arr_${tag}_i_${fctx.locals.length}`, { kind: "i32" });
 
+  const getOp = elemType.kind === "i16" ? "array.get_s" : "array.get";
+
+  // (#1130) Fast path: no accessor defineProperty anywhere in the program — emit
+  // exactly the bytes we emitted before.
+  if (!ctx.arrayAccessorObserved) {
+    fctx.body.push({ op: "local.tee", index: vecTmp });
+    emitReceiverNullGuard(ctx, fctx, vecTmp);
+    fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "local.set", index: lenTmp });
+    fctx.body.push({ op: "local.get", index: vecTmp });
+    fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "local.set", index: dataTmp });
+
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: iTmp });
+    return { vecTmp, dataTmp, lenTmp, iTmp, getOp };
+  }
+
+  // (#1130) Slow path: the program may install index/length accessors.
+  const vecExternTmp = allocLocal(fctx, `__arr_${tag}_vx_${fctx.locals.length}`, { kind: "externref" });
+  const probeTmp = allocLocal(fctx, `__arr_${tag}_pr_${fctx.locals.length}`, { kind: "externref" });
+  const lenAccIdx = ctx.funcMap.get("__array_length_accessor_get")!;
+  const isNoAccIdx = ctx.funcMap.get("__is_array_no_accessor")!;
+  const toLenIdx = ctx.funcMap.get("__to_length")!;
+
   fctx.body.push({ op: "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp);
-  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+
+  // externref view of the receiver — same identity the defineProperty path used
+  // to key _wasmStructProps (extern.convert_any). Required for the accessor
+  // lookups to hit.
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.set", index: vecExternTmp });
+
+  // length (read ONCE at entry, spec §23.1.3.X): if a length accessor is
+  // installed, ToLength(getter()); otherwise the raw vec length.
+  fctx.body.push({ op: "local.get", index: vecExternTmp });
+  fctx.body.push({ op: "call", funcIdx: lenAccIdx });
+  fctx.body.push({ op: "local.tee", index: probeTmp });
+  fctx.body.push({ op: "call", funcIdx: isNoAccIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val" as const, type: { kind: "i32" } as ValType },
+    then: [
+      { op: "local.get", index: vecTmp } as Instr,
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr,
+    ],
+    else: [{ op: "local.get", index: probeTmp } as Instr, { op: "call", funcIdx: toLenIdx } as Instr],
+  } as Instr);
   fctx.body.push({ op: "local.set", index: lenTmp });
+
   fctx.body.push({ op: "local.get", index: vecTmp });
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
   fctx.body.push({ op: "local.set", index: dataTmp });
@@ -4502,8 +4608,7 @@ function setupArrayLoop(
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: iTmp });
 
-  const getOp = elemType.kind === "i16" ? "array.get_s" : "array.get";
-  return { vecTmp, dataTmp, lenTmp, iTmp, getOp };
+  return { vecTmp, dataTmp, lenTmp, iTmp, getOp, vecExternTmp, probeTmp, elemType, arrTypeIdx };
 }
 
 /**
@@ -4534,11 +4639,7 @@ function buildClosureCallInstrs(
       ? [
           ...(elemSource.kind === "local"
             ? [{ op: "local.get", index: elemSource.index } as Instr]
-            : [
-                { op: "local.get", index: loop.dataTmp } as Instr,
-                { op: "local.get", index: loop.iTmp } as Instr,
-                { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
-              ]),
+            : emitElementLoad(ctx, fctx, loop, arrTypeIdx)),
           ...elemCoerce,
         ]
       : []),
@@ -4575,6 +4676,7 @@ function buildClosureCallInstrs(
  */
 function buildBridgeCallInstrs(
   ctx: CodegenContext,
+  fctx: FunctionContext,
   setup: ArrayCallbackSetup,
   elemType: ValType,
   arrTypeIdx: number,
@@ -4589,9 +4691,7 @@ function buildBridgeCallInstrs(
           ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
         ]
       : [
-          { op: "local.get", index: loop.dataTmp } as Instr,
-          { op: "local.get", index: loop.iTmp } as Instr,
-          { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
+          ...emitElementLoad(ctx, fctx, loop, arrTypeIdx),
           ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
         ]),
     { op: "call", funcIdx: setup.callBridgeIdx! } as Instr,
@@ -4703,7 +4803,7 @@ function buildCallAndCheck(
 ): Instr[] {
   const callInstrs = setup.closureInfo
     ? buildClosureCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, elemSource)
-    : buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, elemSource);
+    : buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, elemSource);
   const checkInstrs =
     check === "truthy" ? buildTruthyCheck(ctx, setup) : check === "falsy" ? buildFalsyCheck(ctx, setup) : [];
   return [...callInstrs, ...checkInstrs];
@@ -4870,7 +4970,7 @@ function compileArrayMap(
     ];
   } else {
     callInstrs = [
-      ...buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" }),
+      ...buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" }),
       // Convert result to target element type if needed
       ...(!ctx.fast && mapResultElemType.kind === "i32" ? [{ op: "i32.trunc_sat_f64_s" } as Instr] : []),
     ];
@@ -5220,7 +5320,7 @@ function compileArrayForEach(
 
     emitArrayLoop(fctx, loopBody);
   } else {
-    const callInstrs = buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" });
+    const callInstrs = buildBridgeCallInstrs(ctx, fctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" });
 
     const loopBody: Instr[] = [...loopExitCheck(loop), ...callInstrs, { op: "drop" } as Instr, ...loopIncrement(loop)];
 

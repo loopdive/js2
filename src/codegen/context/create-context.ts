@@ -92,6 +92,7 @@ export function createCodegenContext(
     // for the implication chain so `wasi: false` doesn't short-circuit
     // `standalone: true` (`?? ` returns the LHS on `false`).
     nativeStrings: options?.nativeStrings ?? !!(options?.fast || options?.wasi || options?.standalone),
+    arrayAccessorObserved: false, // (#1130) set true in finalizeUnifiedCollector when getterCallbackFound
     testRuntime: options?.testRuntime ?? false,
     nativeStrDataTypeIdx: -1,
     anyStrTypeIdx: -1,

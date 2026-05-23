@@ -48,6 +48,16 @@ function _getNodeRequire(): ((id: string) => any) | undefined {
 const _wasmStructProps = new WeakMap<object, Record<string | symbol, any>>();
 
 /**
+ * (#1130) Sentinel returned by `__array_idx_accessor_get` /
+ * `__array_length_accessor_get` when the receiver has no own accessor for the
+ * requested index / length. Distinct from every user value (a getter may
+ * legitimately return `undefined`/`null`), so the Wasm side falls back to a
+ * raw `array.get` only when it sees this exact object via
+ * `__is_array_no_accessor`.
+ */
+const __array_no_accessor: unique symbol = Symbol("js2wasm.array.noacc");
+
+/**
  * (#1516) Per-generator-instance state: `{buf, index, pendingThrow}`.
  *
  * Storing state in a WeakMap (keyed by the generator instance) instead of as
@@ -3388,6 +3398,46 @@ assert._isSameValue = isSameValue;
           const getter = exports?.[`__sget_${strKey}`];
           if (typeof getter === "function") return getter(obj);
           return undefined;
+        };
+      // (#1130) __array_idx_accessor_get: returns the result of the own index
+      // accessor getter installed via Object.defineProperty(arr, numericKey,
+      // {get}) — stored in _wasmStructProps[arr]["__get_<idx>"] by
+      // __defineProperty_accessor. Returns the __array_no_accessor sentinel
+      // when no such getter exists, so the Wasm array-method loop falls back to
+      // a raw array.get. The getter was already _maybeWrapCallable-wrapped, so
+      // a plain `.call(obj)` routes through the __call_fn_<arity> bridge.
+      if (name === "__array_idx_accessor_get")
+        return (obj: any, idx: number): any => {
+          if (obj == null) return __array_no_accessor;
+          const sc = _wasmStructProps.get(obj);
+          if (!sc) return __array_no_accessor;
+          const getter = sc[`__get_${String(idx)}`];
+          if (typeof getter === "function") return getter.call(obj);
+          return __array_no_accessor;
+        };
+      // (#1130) __array_length_accessor_get: same as above for the "length"
+      // accessor (Object.defineProperty(arr, "length", {get})).
+      if (name === "__array_length_accessor_get")
+        return (obj: any): any => {
+          if (obj == null) return __array_no_accessor;
+          const sc = _wasmStructProps.get(obj);
+          const getter = sc?.["__get_length"];
+          if (typeof getter === "function") return getter.call(obj);
+          return __array_no_accessor;
+        };
+      // (#1130) __is_array_no_accessor: 1 iff v is the no-accessor sentinel.
+      // The Wasm side can't reach the host-private sentinel as a global, so it
+      // tests via this import rather than ref.eq.
+      if (name === "__is_array_no_accessor") return (v: any): number => (v === __array_no_accessor ? 1 : 0);
+      // (#1130) __to_length: ToLength(ToNumber(v)) -> i32, capped at 2^32-1 so
+      // the array-method loop counter stays i32 and always terminates. Used for
+      // length getters returning non-numbers (e.g. string "2" → 2).
+      if (name === "__to_length")
+        return (v: any): number => {
+          const n = Number(v);
+          if (Number.isNaN(n) || n <= 0) return 0;
+          const len = Math.floor(n);
+          return len > 0xffffffff ? 0xffffffff : len;
         };
       // __extern_has_idx: HasProperty(O, ToString(idx)) for array-like callback
       // loops. Spec §23.1.3.X uses HasProperty to skip holes (e.g. Array.prototype

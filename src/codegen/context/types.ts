@@ -501,6 +501,13 @@ export interface CodegenContext {
   fast: boolean;
   /** Use WasmGC-native strings instead of wasm:js-string imports */
   nativeStrings: boolean;
+  /**
+   * (#1130) Whole-program: the program calls Object.defineProperty /
+   * Reflect.defineProperty with an accessor descriptor, so any array *might*
+   * have an index/length accessor getter. When false, array-method loops emit
+   * byte-identical output to before — no per-iteration accessor probe.
+   */
+  arrayAccessorObserved: boolean;
   /** Native string support type indices */
   nativeStrDataTypeIdx: number;
   anyStrTypeIdx: number;
