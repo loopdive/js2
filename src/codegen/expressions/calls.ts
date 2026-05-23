@@ -372,6 +372,63 @@ function emitIterableArg(ctx: CodegenContext, fctx: FunctionContext, argExpr: ts
   compileExpression(ctx, fctx, argExpr, { kind: "externref" });
 }
 
+/**
+ * (#1116b) Resolve a Promise-combinator `thisArg`/receiver that names a
+ * Wasm-compiled `class X extends Promise`.
+ *
+ * Such a class is externref-backed (#1366a/b): its instances are real host
+ * Promises (built via `__new_Promise`), but the class *identifier itself* has
+ * no class-object singleton global, so `compileExpression(MyPromise)` yields
+ * `null`/opaque — and `Promise.all.call(MyPromise, iter)` then throws
+ * `[object Object] is not a constructor` in V8. The fix: resolve the
+ * identifier to a real JS-callable Promise subclass synthesized (and cached)
+ * by the `__promise_subclass_ctor` host import, keyed on the class name.
+ *
+ * Returns true if it emitted a JS-constructor externref for `argExpr`; false
+ * if the caller should fall back to plain `compileExpression`.
+ */
+function resolvePromiseSubclassThisArg(ctx: CodegenContext, fctx: FunctionContext, argExpr: ts.Expression): boolean {
+  // (E7) Standalone (WASI) mode has no JS host, so `__promise_subclass_ctor`
+  // is unsatisfiable. Never emit the import there.
+  if (isStandalonePromiseActive(ctx)) return false;
+  // Only fires for a bare identifier (or class-expr alias) naming a class.
+  if (!ts.isIdentifier(argExpr)) return false;
+  const resolved = ctx.classExprNameMap.get(argExpr.text) ?? argExpr.text;
+  // Walk the parent chain so a chained subclass (E3 — `class B extends A`,
+  // `class A extends Promise`) still resolves: `classBuiltinParentMap` only
+  // records the *immediate* builtin parent, so B maps to "A", not "Promise".
+  let cursor: string | undefined = resolved;
+  let extendsPromise = false;
+  const seen = new Set<string>();
+  while (cursor !== undefined && !seen.has(cursor)) {
+    seen.add(cursor);
+    if (ctx.classBuiltinParentMap.get(cursor) === "Promise") {
+      extendsPromise = true;
+      break;
+    }
+    cursor = ctx.classParentMap.get(cursor);
+  }
+  if (!extendsPromise) return false;
+  const importName = "__promise_subclass_ctor";
+  let funcIdx =
+    ctx.funcMap.get(importName) ?? ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  funcIdx = ctx.funcMap.get(importName) ?? funcIdx;
+  if (funcIdx === undefined) return false;
+  // Push the class name (the synthesized subclass is cached per name). Use the
+  // same host-string mechanism as extern method dispatch so it works in both
+  // string backends.
+  addStringConstantGlobal(ctx, resolved);
+  const nameIdx = ctx.stringGlobalMap.get(resolved);
+  if (nameIdx !== undefined) {
+    fctx.body.push({ op: "global.get", index: nameIdx } as Instr);
+  } else {
+    compileStringLiteral(ctx, fctx, resolved);
+  }
+  fctx.body.push({ op: "call", funcIdx });
+  return true;
+}
+
 function usesArguments(node: ts.Node): boolean {
   if (ts.isIdentifier(node) && node.text === "arguments") return true;
   if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
@@ -3985,13 +4042,32 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     // helper can construct via `thisArg.call(...)` for subclass support.
     // Resolve/reject keep their original 1-arg signature (no thisArg needed).
     {
+      const isAggregatorMethod =
+        propAccess.name.text === "all" ||
+        propAccess.name.text === "race" ||
+        propAccess.name.text === "allSettled" ||
+        propAccess.name.text === "any";
+      // (#1116b, E1) `Sub.all(iter)` where `Sub` is a `class extends Promise`
+      // is a subclass static inherited from Promise. Recognise the subclass
+      // receiver here too so it reaches the aggregator lowering (the thisArg
+      // resolution below switches it to directCall=0).
+      const isPromiseSubclassReceiver =
+        ts.isIdentifier(propAccess.expression) &&
+        (() => {
+          const name = ctx.classExprNameMap.get(propAccess.expression.text) ?? propAccess.expression.text;
+          let cursor: string | undefined = name;
+          const seen = new Set<string>();
+          while (cursor !== undefined && !seen.has(cursor)) {
+            seen.add(cursor);
+            if (ctx.classBuiltinParentMap.get(cursor) === "Promise") return true;
+            cursor = ctx.classParentMap.get(cursor);
+          }
+          return false;
+        })();
       const isAggregator =
         ts.isIdentifier(propAccess.expression) &&
-        propAccess.expression.text === "Promise" &&
-        (propAccess.name.text === "all" ||
-          propAccess.name.text === "race" ||
-          propAccess.name.text === "allSettled" ||
-          propAccess.name.text === "any");
+        (propAccess.expression.text === "Promise" || isPromiseSubclassReceiver) &&
+        isAggregatorMethod;
       const isResolveReject =
         ts.isIdentifier(propAccess.expression) &&
         propAccess.expression.text === "Promise" &&
@@ -4015,9 +4091,15 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         flushLateImportShifts(ctx, fctx);
         funcIdx = ctx.funcMap.get(importName) ?? funcIdx;
         if (funcIdx !== undefined) {
-          // Direct `Promise.METHOD(iter)` — no explicit thisArg.
-          // (Subclass `Sub.all(iter)` is handled below via the receiver-detection branch.)
-          fctx.body.push({ op: "ref.null.extern" });
+          // (#1116b, E1) Subclass static `Sub.all(iter)` — the receiver
+          // `Sub` is a `class extends Promise`. Resolve it to the synthesized
+          // JS subclass as thisArg and switch to directCall=0 so the runtime
+          // uses it instead of substituting globalThis.Promise.
+          const subclassThisArg = resolvePromiseSubclassThisArg(ctx, fctx, propAccess.expression);
+          if (!subclassThisArg) {
+            // Direct `Promise.METHOD(iter)` — no explicit thisArg.
+            fctx.body.push({ op: "ref.null.extern" });
+          }
           if (expr.arguments.length >= 1) {
             // (#1465) The runtime helper delegates to native
             // `Promise.METHOD.call(C, iter)` which drives `GetIterator(iter)`
@@ -4032,8 +4114,10 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
           } else {
             fctx.body.push({ op: "ref.null.extern" });
           }
-          // directCall=1 — runtime substitutes globalThis.Promise.
-          fctx.body.push({ op: "i32.const", value: 1 });
+          // directCall=1 — runtime substitutes globalThis.Promise. When a
+          // subclass receiver was resolved (E1), directCall=0 so the runtime
+          // uses the synthesized thisArg ctor instead.
+          fctx.body.push({ op: "i32.const", value: subclassThisArg ? 0 : 1 });
           fctx.body.push({ op: "call", funcIdx });
           return { kind: "externref" };
         }
@@ -4125,7 +4209,11 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       if (funcIdx !== undefined) {
         // arg0 = thisArg (user-provided — may be undefined/null/primitive,
         // in which case the runtime / V8 throws TypeError per spec §27.2.4.X step 2).
-        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        // (#1116b) When thisArg names a `class X extends Promise`, resolve it to
+        // a synthesized JS-callable Promise subclass; otherwise compile normally.
+        if (!resolvePromiseSubclassThisArg(ctx, fctx, expr.arguments[0]!)) {
+          compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        }
         // arg1 = iterable (or ref.null if missing). #1465: materialise array
         // literals to JS arrays so native GetIterator can drive them.
         if (expr.arguments.length >= 2) {

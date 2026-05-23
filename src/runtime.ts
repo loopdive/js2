@@ -5578,6 +5578,33 @@ assert._isSameValue = isSameValue;
         if (directCall) return Promise;
         return thisArg;
       };
+      // (#1116b) Synthesize (and cache) a JS subclass of Promise for a
+      // Wasm-compiled `class MyPromise extends Promise`. The instance is
+      // already a real host Promise (built via __new_Promise); this JS
+      // constructor only needs to be [[Construct]]-able and carry a distinct
+      // .prototype so the combinators' NewPromiseCapability + @@species
+      // resolution work. Keyed on class name. Synthesized from the lexical
+      // (intrinsic) `Promise`, never a user-shadowed global.
+      if (name === "__promise_subclass_ctor") {
+        const _promiseSubclassCtors = new Map<string, any>();
+        return (classNameRef: any): any => {
+          const className = String(classNameRef);
+          let C = _promiseSubclassCtors.get(className);
+          if (C === undefined) {
+            // Cast the base to a plain constructor: `class extends Promise {}`
+            // trips TS2508 (Promise's lib.d.ts type is generic) but is valid
+            // JS — the emitted runtime subclasses the intrinsic Promise.
+            C = class extends (Promise as unknown as { new (...args: any[]): any }) {};
+            try {
+              Object.defineProperty(C, "name", { value: className, configurable: true });
+            } catch {
+              /* Function.name redefinition is best-effort; non-fatal. */
+            }
+            _promiseSubclassCtors.set(className, C);
+          }
+          return C;
+        };
+      }
       if (name === "Promise_all")
         return (thisArg: any, arr: any, directCall: number) => {
           const C = _resolveCtor(thisArg, directCall);
