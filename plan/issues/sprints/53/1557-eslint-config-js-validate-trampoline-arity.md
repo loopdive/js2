@@ -2,7 +2,7 @@
 id: 1557
 sprint: 53
 title: "ESLint config.js direct compile: __obj_meth_tramp validate arity mismatch (need 2, got 1)"
-status: ready
+status: done
 created: 2026-05-20
 priority: high
 feasibility: medium

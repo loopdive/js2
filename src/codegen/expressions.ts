@@ -262,7 +262,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       body: inner,
       catches: [],
       catchAll,
-    } as unknown as Instr);
+    });
     return;
   }
   const rejectIdx = ensureLateImport(ctx, "Promise_reject", [{ kind: "externref" }], [{ kind: "externref" }]);
@@ -280,7 +280,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
     body: inner,
     catches: [],
     catchAll,
-  } as unknown as Instr);
+  });
 }
 
 /**
@@ -560,7 +560,7 @@ function compileExpressionBody(
           const boxSymIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
           if (boxSymIdx !== undefined) {
             flushLateImportShifts(ctx, fctx);
-            fctx.body.push({ op: "call", funcIdx: boxSymIdx } as unknown as Instr);
+            fctx.body.push({ op: "call", funcIdx: boxSymIdx });
             return expectedType;
           }
         }

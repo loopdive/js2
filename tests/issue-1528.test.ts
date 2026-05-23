@@ -1,0 +1,98 @@
+/**
+ * #1528 — Non-constructor TypeError must be a real `TypeError` instance.
+ *
+ * Per spec §10.1.13 / §7.3.13 `Construct(F, …)` requires `IsConstructor(F)`
+ * and throws `TypeError("<F> is not a constructor")` otherwise. test262 cases
+ * use `assert.throws(TypeError, …)` which checks `e instanceof TypeError`.
+ *
+ * Previously the three non-constructor codegen sites emitted a bare-string
+ * throw via `emitThrowString` — the thrown value was an externref string,
+ * not a TypeError instance, so `e instanceof TypeError` was false.
+ *
+ * Fix in `src/codegen/expressions/new-super.ts`:
+ *   - `new (() => {})()` — arrow functions are not constructors (#730 path).
+ *   - `new X.prototype.Y()` — prototype methods are not constructors.
+ *   - `new <call-only-callable>()` — TS knows call sigs but no construct sigs
+ *     (e.g. `new Math.abs()`).
+ *
+ * All three now use `emitThrowTypeError`, which registers `__new_TypeError`
+ * (an extern_class `new` import resolved to the real `TypeError` constructor
+ * by `src/runtime.ts`). Standalone fallback still produces a throwable
+ * externref so the trap is still observable.
+ */
+import { describe, expect, it } from "vitest";
+import { compileToWasm } from "./equivalence/helpers.js";
+
+describe("issue #1528 — non-constructor throws real TypeError instance", () => {
+  it("`new Math.abs()` throws an instance of TypeError", async () => {
+    // Pattern 2: TS knows `Math.abs` has call sigs but no construct sigs.
+    const source = `
+export function test(): number {
+  try {
+    // @ts-expect-error: Math.abs is not a constructor
+    const r = new Math.abs(1);
+    return -1;
+  } catch (e: any) {
+    if (e instanceof TypeError) return 1;
+    return -2;
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(1);
+  });
+
+  it("`new Array.prototype.forEach()` throws an instance of TypeError", async () => {
+    // Pattern 1: `new X.prototype.Y()` — prototype methods are never constructors.
+    const source = `
+export function test(): number {
+  try {
+    // @ts-expect-error: prototype methods are not constructors
+    const r = new Array.prototype.forEach();
+    return -1;
+  } catch (e: any) {
+    if (e instanceof TypeError) return 1;
+    return -2;
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(1);
+  });
+
+  it("`new (() => 0)()` throws an instance of TypeError", async () => {
+    // Arrow function detection (parenthesized arrow as the new target).
+    const source = `
+export function test(): number {
+  try {
+    // @ts-expect-error: arrow functions are not constructors
+    const r = new (() => 0)();
+    return -1;
+  } catch (e: any) {
+    if (e instanceof TypeError) return 1;
+    return -2;
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(1);
+  });
+
+  it("error message contains 'is not a constructor'", async () => {
+    // Sanity: the spec wording is preserved in the TypeError message.
+    const source = `
+export function test(): string {
+  try {
+    // @ts-expect-error
+    const r = new Math.abs(1);
+    return "no throw";
+  } catch (e: any) {
+    return String((e as Error).message);
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    const msg = exports.test!() as string;
+    expect(msg).toContain("is not a constructor");
+  });
+});

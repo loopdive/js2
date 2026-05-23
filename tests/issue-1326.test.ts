@@ -23,9 +23,6 @@ import {
   PROMISE_STATE_FULFILLED,
   PROMISE_STATE_REJECTED,
   MICROTASK_QUEUE_INITIAL_SLOTS,
-  MICROTASK_QUEUE_SLOT_BYTES,
-  emitMicrotaskEnqueue,
-  emitDrainMicrotasks,
   emitStandalonePromiseThen,
   isStandalonePromiseActive,
 } from "../src/codegen/async-scheduler.js";
@@ -38,10 +35,11 @@ describe("#1326 — async-scheduler module constants and gates", () => {
   });
 
   it("exports microtask queue dimensioning", () => {
-    // 1 page = 64 KiB. 8 bytes per slot. 8192 slots fits one page.
+    // Phase 1C-A: the queue is two WasmGC arrays (funcref + externref), not
+    // linear memory. Initial slots = 8,192 — covers most async kernels
+    // without forcing a grow on first use. The `SLOT_BYTES` constant from
+    // Phase 1A was dropped (linear-memory artifact, never used).
     expect(MICROTASK_QUEUE_INITIAL_SLOTS).toBe(8192);
-    expect(MICROTASK_QUEUE_SLOT_BYTES).toBe(8);
-    expect(MICROTASK_QUEUE_INITIAL_SLOTS * MICROTASK_QUEUE_SLOT_BYTES).toBe(65536);
   });
 
   it("isStandalonePromiseActive returns false in JS-host mode", () => {
@@ -57,15 +55,13 @@ describe("#1326 — async-scheduler module constants and gates", () => {
     expect(isStandalonePromiseActive(wasiCtx)).toBe(true);
   });
 
-  it("Phase 1C/1D emit helpers still throw with their sub-slice marker", () => {
-    // These remain stubbed until their respective sub-slices land. The
-    // throws force explicit "what changed" review when each sub-slice
-    // removes its own marker.
-    const fakeCtx = {} as unknown as Parameters<typeof emitMicrotaskEnqueue>[0];
-    const fakeFctx = {} as unknown as Parameters<typeof emitMicrotaskEnqueue>[1];
-    expect(() => emitMicrotaskEnqueue(fakeCtx, fakeFctx, [], [])).toThrow(/Phase 1C: emitMicrotaskEnqueue/);
-    expect(() => emitDrainMicrotasks(fakeCtx, fakeFctx)).toThrow(/Phase 1D: emitDrainMicrotasks/);
-    expect(() => emitStandalonePromiseThen(fakeCtx, fakeFctx, [], [])).toThrow(/Phase 1C: emitStandalonePromiseThen/);
+  it("Phase 1C-B emit helper still throws with sub-slice marker", () => {
+    // Phase 1C-A wired emitMicrotaskEnqueue + emitDrainMicrotasks to real
+    // Wasm bodies (queue + drain). emitStandalonePromiseThen remains
+    // stubbed until Phase 1C-B lands the .then continuation wrappers.
+    const fakeCtx = {} as unknown as Parameters<typeof emitStandalonePromiseThen>[0];
+    const fakeFctx = {} as unknown as Parameters<typeof emitStandalonePromiseThen>[1];
+    expect(() => emitStandalonePromiseThen(fakeCtx, fakeFctx, [], [])).toThrow(/Phase 1C-B/);
   });
 });
 

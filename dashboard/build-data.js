@@ -675,6 +675,23 @@ function buildFeatureStats(jsonlPath, examplesPath) {
   );
 }
 
-buildFeatureStats(join(ROOT, "benchmarks/results/test262-current.jsonl"), join(ROOT, "public/feature-examples.json"));
+// #1528 — the JSONL is no longer committed to the main repo. Prefer the
+// fetched cache from `scripts/fetch-baseline-jsonl.mjs`, then the legacy
+// in-repo path (for backwards compatibility with workflows that still write
+// it locally), then the `public/` copy populated by `deploy-pages.yml`.
+function resolveBaselineJsonl() {
+  const candidates = [
+    join(ROOT, ".test262-cache/test262-current.jsonl"),
+    join(ROOT, "benchmarks/results/test262-current.jsonl"),
+    join(ROOT, "public/benchmarks/results/test262-results.jsonl"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  // Return the legacy path so the "not found" warning still points
+  // somewhere informative.
+  return candidates[1];
+}
+buildFeatureStats(resolveBaselineJsonl(), join(ROOT, "public/feature-examples.json"));
 
 console.log("Done. Open dashboard/index.html in a browser.");

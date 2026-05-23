@@ -120,6 +120,19 @@ async function main() {
     }
   }
 
+  // #106 — split totals by ECMAScript-current-standard vs proposals.
+  // The headline `summary` already tracks current-standard tests only
+  // (~43k = standard + annex_b); proposals (~5k) are excluded and
+  // surfaced separately via `full_summary` and `scope_summaries.proposal`.
+  // Add a `summary.by_category` map so clients (statusline, landing-page
+  // toggle) can read both numbers from a single field without reaching
+  // into multiple top-level objects.
+  const standardSummary = buildSummary(scopeCounts.get("standard") ?? createCounts());
+  const annexBSummary = buildSummary(scopeCounts.get("annex_b") ?? createCounts());
+  const proposalSummary = buildSummary(scopeCounts.get("proposal") ?? createCounts());
+  const officialSummaryBuilt = buildSummary(officialStatuses);
+  const fullSummaryBuilt = buildSummary(statuses);
+
   const report = {
     timestamp: new Date().toISOString(),
     baseline_generated_at: args.baselineGeneratedAt || new Date().toISOString(),
@@ -128,9 +141,18 @@ async function main() {
       include_proposals: args.includeProposals ? 1 : 0,
       label: args.includeProposals ? "official test262 + proposals" : "official test262 (default scope)",
     },
-    summary: buildSummary(officialStatuses),
-    official_summary: buildSummary(officialStatuses),
-    full_summary: buildSummary(statuses),
+    summary: {
+      ...officialSummaryBuilt,
+      by_category: {
+        standard: { ...standardSummary, label: "ECMAScript current standard" },
+        annex_b: { ...annexBSummary, label: "Annex B (legacy web compat)" },
+        proposal: { ...proposalSummary, label: "TC39 proposals" },
+        official: { ...officialSummaryBuilt, label: "standard + annex_b (default)" },
+        full: { ...fullSummaryBuilt, label: "standard + annex_b + proposals" },
+      },
+    },
+    official_summary: officialSummaryBuilt,
+    full_summary: fullSummaryBuilt,
     strict_summary: buildSummary(strictCounts),
     scope_summaries: Object.fromEntries(
       [...scopeCounts.entries()]

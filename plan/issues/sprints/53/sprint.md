@@ -1,12 +1,22 @@
 ---
 sprint: 53
-status: active
+status: closed
 created: 2026-05-20
 planned: 2026-05-20
 started: 2026-05-20
+ended: 2026-05-23
 baseline_pass: 28233
 baseline_total: 43160
 baseline_pct: 65.5
+final_pass: 28842
+final_total: 43159
+final_pct: 66.8
+wrap_checklist:
+  status_closed: true
+  retro_written: true
+  diary_updated: false
+  end_tag_pushed: false
+  begin_tag_pushed: false
 ---
 
 # Sprint 53
@@ -183,3 +193,68 @@ _Generated from issue files. Update issue `status`, then rerun `node scripts/syn
 No issues currently assigned to this sprint.
 
 <!-- GENERATED_ISSUE_TABLES_END -->
+
+## Closeout (2026-05-23)
+
+### Test262 movement
+
+| Metric | Start | End | Delta |
+|--------|------:|----:|------:|
+| pass   | 28,233 | 28,842 | **+609** |
+| total  | 43,160 | 43,159 | -1 |
+| pct    | 65.5%  | 66.8%  | +1.3 pp |
+
+(Baselines from `benchmarks/results/test262-current.json` at sprint start and at
+close; the latest sharded baseline ran at ~04:50Z on 2026-05-23.)
+
+### Issue accounting (28 files in `plan/issues/sprints/53/`)
+
+**Done in sprint 53 (14):**
+- #1129 ToObject primitive auto-boxing
+- #1558 ESLint linter.js f64.eq i32→f64 coercion
+- #1560 CJS class re-export linkage
+- #804 extract new-expression
+- #806 extract increment/decrement
+- #1553a destructure-helpers thread decl-mode foundation
+- #1553e f64-array undefined dstr default
+- #1557 ESLint config.js trampoline arity
+- #1559 Resolver bare-package impl over .d.ts
+- #779b class elements multi-definition parsing (bumped to needs-spec, landed via cluster work)
+- #779c String.split result constructor
+- #820a RegExp Symbol.match/replace/search null deref
+- #820b object literal computed accessor names dropped
+- #820c async-gen object-method yield* iterator-protocol
+
+**Moved to sprint 54 (5):**
+- #1553b decl-dstr typed-struct object delegation
+- #1553c decl-dstr externref-fallback object delegation
+- #1553d decl-dstr array (typed-vec + externref) delegation
+- #820d class/dstr async-gen-meth `unresolvable` illegal cast
+- #1580 string-hash benchmark wasm-validator + perf
+
+**Kept in sprint 53 as artifacts (9 — session logs / analysis / specs):**
+- `sprint.md`, `sprint-candidates.md`
+- `async-cluster-architect-spec.md`
+- `779-820-cluster-decomposition.md`
+- `conflict-resolution-2026-05-21.md`
+- `ir-fallback-analysis-2026-05-21.md`
+- `post-wave-regression-investigation.md`
+- `pr-pre-review-2026-05-21.md`
+- `session-commit-log-2026-05-21.md`
+- `triage-2026-05-21.md`
+- `wasi-pr-audit-2026-05-21.md`
+
+### Notes
+
+- The five carried-forward issues are all from the destructuring-refactor
+  cluster (#1553b–#1553d, with #1553a foundation already landed) plus #820d
+  (async-gen-meth) and #1580 (perf). They remain `in-progress` / `blocked` /
+  `ready` and are tracked under sprint 54 ownership.
+- The big async cluster (#1042, #1116, #1151, #1373, #1373b) that was listed
+  in the sprint goal lives in `plan/issues/backlog/` or `sprints/52/` rather
+  than the sprint 53 directory; their status is tracked there independently
+  and was not in scope for this closeout.
+- Tag `sprint/53` is created locally but **not pushed** — tech lead will push
+  if appropriate.
+- Retrospective at `plan/log/retrospectives/sprint-53.md` written by SM agent
+  as part of this closeout.

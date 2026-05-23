@@ -1,3 +1,3 @@
-/** Test262 chunk 38/50 — round-robin by test for even distribution. */
+/** Test262 chunk 38/115 — round-robin by test for even distribution. */
 import { runTest262Chunk } from "./test262-shared.js";
-runTest262Chunk(37, 50);
+runTest262Chunk(37, 115);

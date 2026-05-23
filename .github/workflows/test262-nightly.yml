@@ -30,7 +30,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 25
 
       - name: Setup pnpm via Corepack
         run: |
@@ -53,15 +53,11 @@ jobs:
       - name: Run test262
         run: pnpm run test:262 -- --include-proposals
 
-      - name: Capture committed baseline
-        run: |
-          mkdir -p /tmp/js2wasm-before-refresh
-          cp benchmarks/results/test262-current.jsonl /tmp/js2wasm-before-refresh/test262-current.jsonl 2>/dev/null || true
-
       - name: Promote results to stable filename
-        # build-pages.js reads benchmarks/results/test262-current.* — copy the
-        # latest run there so the next deploy picks it up. Stable names so we
-        # don't keep adding new files to git.
+        # build-pages.js reads benchmarks/results/test262-current.json (small,
+        # committed) and now fetches the JSONL on demand from
+        # loopdive/js2wasm-baselines (#1528). We still produce a local JSONL
+        # for the edition-bucket regeneration step below; it is NOT committed.
         run: |
           set -e
           cd benchmarks/results
@@ -77,24 +73,16 @@ jobs:
       - name: Regenerate edition buckets
         run: node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
 
-      - name: Commit refreshed results
+      - name: Commit refreshed results (JSON only — JSONL lives in baselines repo since #1528)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f benchmarks/results/test262-current.jsonl \
-            benchmarks/results/test262-current.json \
+          # #1528 — never re-commit the JSONL. It lives in loopdive/js2wasm-baselines.
+          git add -f benchmarks/results/test262-current.json \
             public/benchmarks/results/test262-report.json \
             public/benchmarks/results/test262-editions.json
           if git diff --cached --quiet; then
             echo "No changes to commit."
-            exit 0
-          fi
-          if [ -f /tmp/js2wasm-before-refresh/test262-current.jsonl ] && \
-            node scripts/compare-test262-artifact.mjs \
-              --type jsonl \
-              --baseline /tmp/js2wasm-before-refresh/test262-current.jsonl \
-              --candidate benchmarks/results/test262-current.jsonl; then
-            echo "Only volatile test262 metadata/timing changed — skipping commit."
             exit 0
           fi
           PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('benchmarks/results/test262-current.json','utf8')).summary.pass)")

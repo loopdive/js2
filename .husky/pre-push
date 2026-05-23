@@ -101,3 +101,39 @@ if [ "$remote" = "origin" ]; then
     esac
   done
 fi
+
+# ---------- (3) typecheck + lint -----------------------------------------
+#
+# Run locally before push so failures don't waste a CI cycle. CI's cheap
+# gate is the safety net for --no-verify pushes and contributors without
+# the hook installed. Skip with `git push --no-verify`.
+#
+# Run in parallel to minimize push latency (typecheck ~5-10s, lint ~1-2s).
+
+echo "Pre-push: typecheck + lint (parallel) ..."
+tmp_tc=$(mktemp); tmp_lint=$(mktemp)
+( pnpm run typecheck > "$tmp_tc" 2>&1 ) &
+pid_tc=$!
+( if grep -q '"lint"' package.json 2>/dev/null; then pnpm run lint > "$tmp_lint" 2>&1; fi ) &
+pid_lint=$!
+wait $pid_tc; tc_rc=$?
+wait $pid_lint; lint_rc=$?
+
+if [ "$tc_rc" -ne 0 ]; then
+  echo "Pre-push: typecheck FAILED (rc=$tc_rc). Output:"
+  tail -50 "$tmp_tc"
+  echo ""
+  echo "Fix typecheck errors before pushing, or use --no-verify (CI will catch)."
+  rm -f "$tmp_tc" "$tmp_lint"
+  exit 1
+fi
+if [ "$lint_rc" -ne 0 ]; then
+  echo "Pre-push: lint FAILED (rc=$lint_rc). Output:"
+  tail -50 "$tmp_lint"
+  echo ""
+  echo "Fix lint errors before pushing, or use --no-verify (CI will catch)."
+  rm -f "$tmp_tc" "$tmp_lint"
+  exit 1
+fi
+rm -f "$tmp_tc" "$tmp_lint"
+echo "Pre-push: typecheck + lint OK."

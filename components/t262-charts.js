@@ -11,7 +11,21 @@
 
 class T262Donut extends HTMLElement {
   static get observedAttributes() {
-    return ["pass", "fail", "ce", "skip", "total", "src", "include-sloppy", "caption-main", "caption-sub"];
+    // #106 — `include-proposals`: when present, read `full_summary` (standard
+    //         + annex_b + TC39 proposals) instead of the default `summary`
+    //         (current-standard only). Drives the landing-page slider.
+    return [
+      "pass",
+      "fail",
+      "ce",
+      "skip",
+      "total",
+      "src",
+      "include-sloppy",
+      "include-proposals",
+      "caption-main",
+      "caption-sub",
+    ];
   }
 
   constructor() {
@@ -133,7 +147,18 @@ class T262Donut extends HTMLElement {
         // Default: exclude sloppy-mode-only tests (noStrict).
         // With include-sloppy attribute: show all tests including sloppy.
         const includeSloppy = this.hasAttribute("include-sloppy");
-        const s = !includeSloppy && report?.no_sloppy_summary ? report.no_sloppy_summary : report?.summary;
+        // #106 — When `include-proposals` is set, switch to `full_summary`
+        // (standard + annex_b + TC39 proposals). Otherwise the default
+        // `report.summary` already tracks current-standard only (~43k).
+        const includeProposals = this.hasAttribute("include-proposals");
+        let s;
+        if (includeProposals && report?.full_summary) {
+          s = report.full_summary;
+        } else if (!includeSloppy && report?.no_sloppy_summary) {
+          s = report.no_sloppy_summary;
+        } else {
+          s = report?.summary;
+        }
         if (!s) return;
         pass = Number(s.pass ?? 0);
         fail = Number(s.fail ?? 0);

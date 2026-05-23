@@ -28,9 +28,26 @@
  *     - unnamed
  *
  * Usage:
- *   pnpm run check:ir-fallbacks            # gate against baseline
- *   pnpm run check:ir-fallbacks -- --update # refresh the committed baseline
- *   pnpm run check:ir-fallbacks -- --json   # emit JSON only (machine-readable)
+ *   pnpm run check:ir-fallbacks                       # gate against baseline
+ *   pnpm run check:ir-fallbacks -- --update           # refresh the committed baseline
+ *   pnpm run check:ir-fallbacks -- --update-on-decrease
+ *                                                     # gate, but auto-ratchet
+ *                                                     # the committed baseline
+ *                                                     # downward when an
+ *                                                     # `unintended` bucket
+ *                                                     # shrinks (#1530). Growth
+ *                                                     # still fails. Decreases
+ *                                                     # are STAGED on disk
+ *                                                     # only — the PR author
+ *                                                     # commits the diff.
+ *   pnpm run check:ir-fallbacks -- --json             # emit JSON only (machine-readable)
+ *   pnpm run check:ir-fallbacks -- --verbose          # print per-file rejection
+ *                                                     # breakdown after the
+ *                                                     # gate result (used to
+ *                                                     # locate the single
+ *                                                     # `param-type-not-
+ *                                                     # resolvable` site
+ *                                                     # tracked by #1530).
  *
  * Corpus: every `.ts` file under `playground/examples/` (excluding `.d.ts`).
  */
@@ -218,14 +235,36 @@ function formatTable(label: string, rows: Array<{ reason: string; base: number; 
   return lines.join("\n");
 }
 
+function formatPerFile(perFile: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }>): string {
+  const rows = perFile.filter((r) => Object.keys(r.reasons).length > 0);
+  if (rows.length === 0) return "\nPer-file breakdown: (no rejections)\n";
+  const lines = ["\nPer-file breakdown (unintended + deferred):"];
+  for (const row of rows) {
+    const reasonStr = Object.entries(row.reasons)
+      .sort((a, b) => b[1] - a[1])
+      .map(([r, n]) => `${r}=${n}`)
+      .join(", ");
+    lines.push(`  ${row.file}: ${reasonStr}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
 function main(): void {
   const args = new Set(process.argv.slice(2));
-  const mode: "gate" | "update" | "json" = args.has("--update") ? "update" : args.has("--json") ? "json" : "gate";
+  // Mode precedence: --update > --update-on-decrease > --json > gate.
+  const mode: "gate" | "update" | "update-on-decrease" | "json" = args.has("--update")
+    ? "update"
+    : args.has("--update-on-decrease")
+      ? "update-on-decrease"
+      : args.has("--json")
+        ? "json"
+        : "gate";
+  const verbose = args.has("--verbose");
 
-  const { unintended, deferred } = aggregate();
+  const { unintended, deferred, perFile } = aggregate();
 
   if (mode === "json") {
-    process.stdout.write(JSON.stringify({ unintended, deferred }, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({ unintended, deferred, perFile }, null, 2) + "\n");
     return;
   }
 
@@ -237,6 +276,7 @@ function main(): void {
     process.stdout.write(`Updated ${relative(REPO_ROOT, BASELINE_PATH)}\n`);
     process.stdout.write(formatTable("Unintended (target = 0)", diffTable({}, unintended).rows));
     process.stdout.write(formatTable("Deferred (informational)", diffTable({}, deferred).rows) + "\n");
+    if (verbose) process.stdout.write(formatPerFile(perFile));
     return;
   }
 
@@ -257,12 +297,41 @@ function main(): void {
         `If the change was intentional (e.g. new IR-claimable feature added in a separate PR), ` +
         `run \`pnpm run check:ir-fallbacks -- --update\` and commit the refreshed baseline.\n`,
     );
+    if (verbose) process.stderr.write(formatPerFile(perFile));
     process.exit(1);
+  }
+
+  // #1530 — ratchet policy. When a PR decreases an unintended bucket, the
+  // gate writes the lower number back to the committed baseline so the next
+  // PR can't silently regress the gain. Decreases are STAGED on disk only;
+  // the PR author runs `git add scripts/ir-fallback-baseline.json` to
+  // include the diff (we deliberately avoid `git add` inside the script —
+  // it would surprise contributors running the gate from a clean tree).
+  //
+  // The ratchet only fires under `--update-on-decrease`. Default `gate`
+  // mode preserves the original behaviour (succeed on equal/decrease,
+  // never touch the file) so existing CI invocations are non-breaking.
+  // The ratchet flag is meant for the pre-merge job that runs against the
+  // merged result; opt-in keeps local `pnpm run check:ir-fallbacks` from
+  // dirtying the working tree.
+  const totalBase = Object.values(baseline.unintended).reduce((a: number, b) => a + (b ?? 0), 0);
+  const totalCur = Object.values(unintended).reduce((a: number, b) => a + (b ?? 0), 0);
+  const anyDecrease = unDiff.rows.some((r) => r.delta < 0);
+
+  if (mode === "update-on-decrease" && anyDecrease) {
+    writeFileSync(BASELINE_PATH, JSON.stringify(next, null, 2) + "\n", "utf-8");
+    process.stdout.write(
+      `\nIR fallback gate: ratcheted baseline (total unintended ${totalBase} -> ${totalCur}). ` +
+        `Staged update to ${relative(REPO_ROOT, BASELINE_PATH)} — commit it with the PR.\n`,
+    );
+    if (verbose) process.stdout.write(formatPerFile(perFile));
+    return;
   }
 
   // All decreases or equal — silently refresh on local runs is unsafe (would
   // cause main to drift). Just succeed; CI doesn't auto-update either.
   process.stdout.write("\nIR fallback gate: OK (no unintended increases vs. baseline).\n");
+  if (verbose) process.stdout.write(formatPerFile(perFile));
 }
 
 main();

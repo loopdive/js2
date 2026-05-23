@@ -289,12 +289,30 @@ elif [ -n "$vitesting" ]; then
   jsonl=$(ls -t /workspace/benchmarks/results/test262-results-*.jsonl 2>/dev/null | head -1)
   [ -z "$jsonl" ] && jsonl="/workspace/benchmarks/results/test262-results.jsonl"
   if [ -f "$jsonl" ]; then
-    pass=$(grep -c '"pass"' "$jsonl" 2>/dev/null || echo 0)
+    # #106 — pass-rate numerator and denominator are scoped to the ~43k
+    # ECMAScript current-standard tests (scope_official:true). The ~5k
+    # TC39 proposal tests are excluded from the headline so the in-progress
+    # statusline matches the landing-page default ("ECMAScript standard").
+    # `total` (denominator of the progress bar) still counts every line
+    # written so far; `expected` is the run's full size (~48k).
+    pass_denom=$(grep -c '"scope_official":true' "$jsonl" 2>/dev/null || echo 0)
+    if [ "$pass_denom" -gt 0 ]; then
+      # JSONL carries scope tagging — count passes among official-scope tests only.
+      pass=$(awk '/"scope_official":true/ && /"status":"pass"/ {n++} END{print n+0}' "$jsonl" 2>/dev/null || echo 0)
+    else
+      # Older runner without scope tagging — fall back to counting every pass.
+      pass=$(grep -c '"status":"pass"' "$jsonl" 2>/dev/null || echo 0)
+      pass_denom=$(wc -l < "$jsonl" 2>/dev/null || echo 0)
+    fi
     total=$(wc -l < "$jsonl" 2>/dev/null || echo 0)
     if [ "$total" -gt 0 ]; then
-      expected=$(jq -r '.summary.total // 48088' "$report" 2>/dev/null)
+      expected=$(jq -r '.full_summary.total // .summary.total // 48088' "$report" 2>/dev/null)
       pct=$((total * 100 / expected))
-      pass_pct=$(awk "BEGIN {printf \"%.1f\", $pass * 100 / $total}")
+      if [ "$pass_denom" -gt 0 ]; then
+        pass_pct=$(awk "BEGIN {printf \"%.1f\", $pass * 100 / $pass_denom}")
+      else
+        pass_pct="0.0"
+      fi
       free_mb=$(free -m | awk '/Mem/{print $7}')
       free_g=$(awk "BEGIN {printf \"%.0f\", $free_mb / 1024}")
       # ETA from timestamp in filename

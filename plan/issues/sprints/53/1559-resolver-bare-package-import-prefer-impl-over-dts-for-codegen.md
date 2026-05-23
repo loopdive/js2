@@ -2,7 +2,7 @@
 id: 1559
 sprint: 53
 title: "ModuleResolver: bare-package import resolves to implementation (default/main) for codegen, not .d.ts"
-status: needs-spec
+status: done
 created: 2026-05-20
 priority: high
 feasibility: hard

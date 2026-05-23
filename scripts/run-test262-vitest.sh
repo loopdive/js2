@@ -210,10 +210,14 @@ else
 fi
 
 # ── Run vitest chunk-by-chunk FROM THE WORKTREE ─────────────────
-# 1 fork per chunk, fork dies between chunks → memory fully freed.
-# Fork uses nproc compiler threads for max CPU utilization.
+# Local runs use 16 round-robin shards (tests/test262-local-shard{1..16}.test.ts).
+# CI uses the 50-chunk matrix (tests/test262-chunk{1..50}.test.ts) — needs many
+# parallel runners. Locally vitest.config.ts has maxForks=1, so wall time scales
+# linearly with shard count → fewer/larger shards = faster local runs.
+# Override pattern via TEST262_LOCAL_SHARD_GLOB env to scope a quick subset.
 cd "$WT_DIR"
-CHUNKS=$(ls tests/test262-chunk*.test.ts 2>/dev/null | sort)
+LOCAL_SHARD_GLOB="${TEST262_LOCAL_SHARD_GLOB:-tests/test262-local-shard*.test.ts}"
+CHUNKS=$(ls $LOCAL_SHARD_GLOB 2>/dev/null | sort)
 > /tmp/test262-vitest-run.log
 
 # Vitest loses TTY detection when piped through tee. Force ANSI colors so
@@ -223,15 +227,15 @@ export FORCE_COLOR=1
 export CLICOLOR_FORCE=1
 
 if [ -n "$CHUNKS" ]; then
-  # Run all chunk files in a single vitest invocation — vitest parallelizes across forks
+  # Run all shard files in a single vitest invocation — vitest parallelizes across forks
   CHUNK_COUNT=$(echo "$CHUNKS" | wc -l)
-  echo "Running $CHUNK_COUNT chunk files in one vitest invocation..."
+  echo "Running $CHUNK_COUNT local shard files in one vitest invocation..."
   if [ ${#forwarded_args[@]} -gt 0 ]; then
-    node node_modules/vitest/dist/cli.js run tests/test262-chunk*.test.ts \
+    node node_modules/vitest/dist/cli.js run $LOCAL_SHARD_GLOB \
       --reporter=verbose \
       "${forwarded_args[@]}" 2>&1 | tee /tmp/test262-vitest-run.log || true
   else
-    node node_modules/vitest/dist/cli.js run tests/test262-chunk*.test.ts \
+    node node_modules/vitest/dist/cli.js run $LOCAL_SHARD_GLOB \
       --reporter=verbose 2>&1 | tee /tmp/test262-vitest-run.log || true
   fi
 else

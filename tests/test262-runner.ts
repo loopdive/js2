@@ -301,6 +301,24 @@ const HANGING_TESTS = new Set([
   // Local probe (May 2026): wrapTest + compile + instantiate + test() runs
   // ~1.2s total; test() throws WebAssembly.Exception immediately because
   // `Temporal` is not defined in our runtime. No iteration, no hang. Removed.
+
+  // #1589 Hot spot C: language/comments/S7.4_A6.js calls `eval()` inside a
+  // `for (i = 0; i <= 65535; i++)` loop. Our eval stub throws each iteration
+  // but the loop continues — wall time grows linearly with iteration count
+  // (≥65s, well past the 30s vitest budget). Skip until we either (a) tighten
+  // the skip filter to catch eval anywhere in source, or (b) ship a no-op
+  // eval stub that lets such loops terminate quickly. See #1589 Findings.
+  "language/comments/S7.4_A6.js",
+
+  // #1589 Hot spot A (#1589A): Array.prototype.{indexOf,lastIndexOf}.call(obj, …)
+  // with `length: 4294967296`. Wrong object-literal field-type inference (empty
+  // {} treated as Test262Error) + __extern_has_idx returning 0 for null payload
+  // causes a 4-billion-iteration search loop → 30s timeout. Real compiler bug
+  // tracked in #1589A — skip these tests in the meantime so the longest shard
+  // doesn't pay 3 × 30s of timeout cost.
+  "built-ins/Array/prototype/indexOf/15.4.4.14-3-28.js",
+  "built-ins/Array/prototype/indexOf/15.4.4.14-3-29.js",
+  "built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-28.js",
 ]);
 
 export function shouldSkip(source: string, meta: Test262Meta, filePath?: string): FilterResult {

@@ -10,6 +10,7 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import {
+  addIteratorImports,
   ensureLetConstBindingPatternTdzFlags,
   ensureNativeStringHelpers,
   ensureStructForType,
@@ -18,8 +19,13 @@ import {
 } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { buildDestructureNullThrow } from "../destructuring-params.js";
-import { addImport, addStringConstantGlobal, localGlobalIdx } from "../registry/imports.js";
-import { addFuncType, getArrTypeIdxFromVec } from "../registry/types.js";
+import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
+import {
+  addFuncType,
+  getArrTypeIdxFromVec,
+  getOrRegisterRefCellType,
+  getOrRegisterVecType,
+} from "../registry/types.js";
 import {
   coerceType,
   compileExpression,
@@ -31,7 +37,7 @@ import {
   VOID_RESULT,
 } from "../shared.js";
 import { collectInstrs } from "./shared.js";
-import { emitLocalTdzInit } from "./tdz.js";
+import { emitLocalTdzInit, emitTdzInitForBindingPattern } from "./tdz.js";
 
 export function ensureBindingLocals(ctx: CodegenContext, fctx: FunctionContext, pattern: ts.BindingPattern): void {
   for (const element of pattern.elements) {
@@ -67,6 +73,15 @@ export function syncDestructuredLocalsToGlobals(
     if (ts.isBindingElement(element)) {
       if (ts.isIdentifier(element.name)) {
         const name = element.name.text;
+        // #1452 — every binding-pattern element that successfully ran
+        // through destructuring needs its TDZ flag flipped to
+        // "initialized". The struct-path object form already calls
+        // `emitLocalTdzInit` inline (destructuring.ts:677), but the
+        // externref array fallback, vec/tuple-struct array forms, and
+        // rest-element branches do not. Doing it here piggybacks on
+        // the central "destructure complete" callsite — and is a
+        // no-op for non-let/const bindings, which have no TDZ flag.
+        emitLocalTdzInit(fctx, name);
         const moduleGlobalIdx = ctx.moduleGlobals.get(name);
         const localIdx = fctx.localMap.get(name);
         if (moduleGlobalIdx !== undefined && localIdx !== undefined) {
@@ -130,7 +145,7 @@ export function emitNullGuard(
       if (undefIdx !== undefined) {
         fctx.body.push({ op: "local.get", index: srcLocal });
         fctx.body.push({ op: "call", funcIdx: undefIdx });
-        fctx.body.push({ op: "i32.or" } as unknown as Instr);
+        fctx.body.push({ op: "i32.or" });
       }
       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: guardInstrs });
     } else {
@@ -261,8 +276,8 @@ export function emitNestedBindingDefault(
     // Check for sNaN sentinel (0x7FF00000DEADC0DE) — NOT generic NaN.
     // This distinguishes missing/undefined from explicit NaN arguments (#866).
     fctx.body.push({ op: "local.get", index: nestedLocal });
-    fctx.body.push({ op: "i64.reinterpret_f64" } as unknown as Instr);
-    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
+    fctx.body.push({ op: "i64.reinterpret_f64" });
+    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
     fctx.body.push({ op: "i64.eq" });
     const defaultInstrs = collectInstrs(fctx, () => {
       compileExpression(ctx, fctx, initializer, valueType);
@@ -336,8 +351,8 @@ export function emitDefaultValueCheck(
     fctx.body.push({ op: "local.tee", index: tmpField });
     // Check for sNaN sentinel (0x7FF00000DEADC0DE) — NOT generic NaN.
     // This distinguishes missing/undefined from explicit NaN arguments (#866).
-    fctx.body.push({ op: "i64.reinterpret_f64" } as unknown as Instr);
-    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den } as unknown as Instr);
+    fctx.body.push({ op: "i64.reinterpret_f64" });
+    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
     fctx.body.push({ op: "i64.eq" });
     const thenInstrs = collectInstrs(fctx, () => {
       compileExpression(ctx, fctx, initializer, hintType);
@@ -952,51 +967,83 @@ export function compileExternrefArrayDestructuringDecl(
   // Pre-allocate all binding locals
   ensureBindingLocals(ctx, fctx, pattern);
 
+  // #1052 — Use the iterator protocol so user-overridden
+  // Array.prototype[Symbol.iterator] is respected. Register the iterator
+  // host imports (__iterator / __iterator_next / __iterator_done /
+  // __iterator_value / __iterator_rest) and call __iterator(tmp) once.
+  {
+    const importsBefore = ctx.numImportFuncs;
+    addIteratorImports(ctx);
+    if (ctx.numImportFuncs !== importsBefore) {
+      shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
+      // Refresh previously-looked-up indices that may have shifted
+      boxIdx = ctx.funcMap.get("__box_number");
+      getIdx = ctx.funcMap.get("__extern_get");
+    }
+  }
+  const iteratorIdx = ctx.funcMap.get("__iterator");
+  const nextIdx = ctx.funcMap.get("__iterator_next");
+  const doneIdx = ctx.funcMap.get("__iterator_done");
+  const valueIdx = ctx.funcMap.get("__iterator_value");
+  const restIdxFn = ctx.funcMap.get("__iterator_rest");
+  if (
+    iteratorIdx === undefined ||
+    nextIdx === undefined ||
+    doneIdx === undefined ||
+    valueIdx === undefined ||
+    restIdxFn === undefined
+  ) {
+    // Iterator imports missing — fall back to indexed access (legacy path).
+    // This should never happen in practice; addIteratorImports is idempotent.
+    return;
+  }
+
+  const iterLocal = allocLocal(fctx, `__ext_iter_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.get", index: tmpLocal });
+  fctx.body.push({ op: "call", funcIdx: iteratorIdx });
+  fctx.body.push({ op: "local.set", index: iterLocal });
+
   for (let i = 0; i < pattern.elements.length; i++) {
     const element = pattern.elements[i]!;
-    if (ts.isOmittedExpression(element)) continue;
+    if (ts.isOmittedExpression(element)) {
+      // Still advance the iterator — destructuring holes consume a slot.
+      fctx.body.push({ op: "local.get", index: iterLocal });
+      fctx.body.push({ op: "call", funcIdx: nextIdx });
+      fctx.body.push({ op: "drop" } as Instr);
+      continue;
+    }
     if (!ts.isBindingElement(element)) continue;
 
-    // Handle rest element: const [...rest] = arr
-    // Use __extern_get to build a JS array slice from index i onwards
+    // Rest element: const [...rest] = arr — drain the remaining iterator
+    // into a real JS Array via __iterator_rest(iter).
     if (element.dotDotDotToken) {
       if (ts.isIdentifier(element.name)) {
         const restName = element.name.text;
-        let restIdx = fctx.localMap.get(restName);
-        if (restIdx === undefined) {
-          restIdx = allocLocal(fctx, restName, { kind: "externref" });
+        let restLocalIdx = fctx.localMap.get(restName);
+        if (restLocalIdx === undefined) {
+          restLocalIdx = allocLocal(fctx, restName, { kind: "externref" });
         }
-        // Use Array.prototype.slice via __extern_call_slice if available,
-        // or build rest via __extern_get in a loop
-        // For now, use __extern_get to collect: rest = arr.slice(i)
-        // We need a host helper for slicing — just store the original array for now
-        // and let the JS side handle .slice() via externref
-        let sliceIdx = ctx.funcMap.get("__extern_slice");
-        if (sliceIdx === undefined) {
-          const importsBefore = ctx.numImportFuncs;
-          const sliceType = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
-          addImport(ctx, "env", "__extern_slice", { kind: "func", typeIdx: sliceType });
-          shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-          sliceIdx = ctx.funcMap.get("__extern_slice");
-          // Refresh other indices
-          boxIdx = ctx.funcMap.get("__box_number");
-          getIdx = ctx.funcMap.get("__extern_get");
-        }
-        if (sliceIdx !== undefined) {
-          fctx.body.push({ op: "local.get", index: tmpLocal });
-          fctx.body.push({ op: "f64.const", value: i });
-          fctx.body.push({ op: "call", funcIdx: sliceIdx });
-          fctx.body.push({ op: "local.set", index: restIdx });
-        }
+        fctx.body.push({ op: "local.get", index: iterLocal });
+        fctx.body.push({ op: "call", funcIdx: restIdxFn });
+        fctx.body.push({ op: "local.set", index: restLocalIdx });
       }
       continue;
     }
 
-    // Emit: __extern_get(tmpLocal, box(i)) -> externref
-    fctx.body.push({ op: "local.get", index: tmpLocal });
-    fctx.body.push({ op: "f64.const", value: i });
-    fctx.body.push({ op: "call", funcIdx: boxIdx! });
-    fctx.body.push({ op: "call", funcIdx: getIdx! });
+    // Fetch next element via the iterator protocol, leave externref on stack:
+    //   result = __iterator_next(iter)
+    //   if __iterator_done(result) { push ref.null.extern } else { push __iterator_value(result) }
+    const resultTmp = allocLocal(fctx, `__ext_iter_res_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.get", index: iterLocal });
+    fctx.body.push({ op: "call", funcIdx: nextIdx });
+    fctx.body.push({ op: "local.tee", index: resultTmp });
+    fctx.body.push({ op: "call", funcIdx: doneIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "ref.null.extern" } as Instr],
+      else: [{ op: "local.get", index: resultTmp } as Instr, { op: "call", funcIdx: valueIdx } as Instr],
+    });
 
     const elemType: ValType = { kind: "externref" };
 

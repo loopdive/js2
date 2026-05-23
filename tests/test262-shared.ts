@@ -65,6 +65,33 @@ function resolveFixtures(source: string, testFilePath: string): string[] {
   return [...new Set(fixtures)];
 }
 
+// ── Slow-test priority map ─────────────────────────────────────────
+// Maps test path (relative to test262/, e.g. "test/built-ins/Array/.../foo.js")
+// to its measured compile+exec wall time in ms. Used inside `runTest262Chunk`
+// to sort each shard's test list by descending duration so the slow tests run
+// FIRST. This evens out wall time across the 115 shards: a slow test in
+// position 0 finishes while the shard cruises through the fast tests behind
+// it; in position N it pushes the shard's tail past everyone else. Tests
+// absent from the map sort to 0 (they keep their natural order behind the
+// timed ones, since the sort is stable).
+//
+// Source: benchmarks/results/test262-current.jsonl (committed baseline).
+// Refresh by regenerating from a fresh baseline run.
+const SLOW_TESTS_PATH = join(import.meta.dirname ?? ".", "test262-slow-tests.json");
+const slowTestDurationMs: Map<string, number> = (() => {
+  try {
+    const raw = readFileSync(SLOW_TESTS_PATH, "utf-8");
+    const doc = JSON.parse(raw) as { tests?: Record<string, number> };
+    const map = new Map<string, number>();
+    for (const [k, v] of Object.entries(doc.tests ?? {})) {
+      if (typeof v === "number" && v > 0) map.set(k, v);
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+})();
+
 // ── Cache setup (for disk cache side-effect) ───────────────────────
 
 const CACHE_DIR = join(import.meta.dirname ?? ".", "..", ".test262-cache");
@@ -106,6 +133,30 @@ function getCachePaths(wrappedSource: string): { wasmPath: string; metaPath: str
 const POOL_SIZE = parseInt(process.env.COMPILER_POOL_SIZE || String(Math.max(1, availableParallelism() - 1)), 10);
 
 let pool: CompilerPool | null = null;
+
+// ── Compile-timeout retry (#1589) ──────────────────────────────────
+// CI fork-pool contention makes tests show `compile_timeout` (30 s, exec
+// 0 ms) when in isolation they pass in <300 ms. Per the #1589 investigation,
+// 95/100 baseline timeouts are this kind of flake. On a `compile_timeout`
+// result, we re-run the test serially with a tighter 10 s ceiling. If it
+// passes, we record `pass` with `retried: true`. If it still times out or
+// fails, we record the (new) failure. A per-shard counter caps retries at
+// MAX_RETRIES_PER_SHARD so a systemically broken pool doesn't add
+// MAX_RETRIES * RETRY_TIMEOUT_MS of wall time.
+const MAX_RETRIES_PER_SHARD = 10;
+const RETRY_TIMEOUT_MS = 10_000;
+let retriesUsed = 0;
+// Mutex (serial Promise chain) — only one retry runs at a time so retries
+// are truly isolated from each other on the fork pool.
+let retryMutex: Promise<void> = Promise.resolve();
+function runRetrySerial<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = retryMutex;
+  let release!: () => void;
+  retryMutex = new Promise<void>((r) => {
+    release = r;
+  });
+  return prev.then(fn).finally(() => release());
+}
 
 // ── Result tracking (JSONL output for report.html) ──────────────────
 
@@ -168,6 +219,7 @@ function recordResult(
   error?: string,
   timing?: { compileMs?: number; execMs?: number },
   scopeInfo?: { scope: Test262Scope; official: boolean; reason?: string; strict?: "only" | "no" | "both" },
+  retryInfo?: { retried?: boolean; retryCount?: number },
 ) {
   const errorCategory = status === "fail" || status === "compile_error" ? classifyError(error) : undefined;
 
@@ -184,6 +236,8 @@ function recordResult(
     scope_official: scopeInfo?.official ?? true,
     scope_reason: scopeInfo?.reason,
     strict: scopeInfo?.strict ?? "both",
+    retried: retryInfo?.retried || undefined,
+    retry_count: retryInfo?.retryCount || undefined,
   });
   fdWrite(jsonlFd, entry + "\n");
   summary.total++;
@@ -272,6 +326,19 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
   }
 
   const myTests = allTests.filter((_, i) => i % totalChunks === chunkIndex);
+
+  // Sort within the shard by descending known duration (slow tests first).
+  // Tests absent from `slowTestDurationMs` get 0 and keep their natural order
+  // behind the timed ones (Array.prototype.sort is stable on Node ≥ 12).
+  // Effect: a shard's worst-case wall time is dominated by max(timed test)
+  // rather than max + sum-of-tail. See tests/test262-slow-tests.json for the
+  // source of truth and how to refresh.
+  const durationOf = (filePath: string): number => {
+    const relPath = filePath.replace(/.*test262\//, "");
+    return slowTestDurationMs.get(relPath) ?? 0;
+  };
+  myTests.sort((a, b) => durationOf(b.filePath) - durationOf(a.filePath));
+
   const byCategory = new Map<string, string[]>();
   for (const { category, filePath } of myTests) {
     let arr = byCategory.get(category);
@@ -315,6 +382,9 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
     console.log(
       `\nTest262 chunk ${chunkIndex + 1}/${totalChunks}: ${summary.total} total — ${summary.pass} pass, ${summary.fail} fail, ${summary.compile_error} CE, ${summary.skip} skip`,
     );
+    if (retriesUsed > 0) {
+      console.log(`Compile-timeout retries (#1589): ${retriesUsed}/${MAX_RETRIES_PER_SHARD} used`);
+    }
   });
 
   for (const [category, files] of byCategory) {
@@ -459,6 +529,51 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             }
 
             if (r.status === "compile_error" || r.status === "compile_timeout") {
+              // #1589 — auto-retry compile_timeout in isolation. Most CI
+              // timeouts are fork-pool contention flakes that pass in <300 ms
+              // when not competing with siblings. Retry once with a tighter
+              // 10 s ceiling, serialized via a per-shard mutex. Capped at
+              // MAX_RETRIES_PER_SHARD so a broken pool doesn't blow up the
+              // shard's wall time.
+              if (r.status === "compile_timeout" && retriesUsed < MAX_RETRIES_PER_SHARD) {
+                retriesUsed++;
+                const retry = await runRetrySerial(() =>
+                  pool!.runTest(
+                    compileSource,
+                    {
+                      isNegative: isNegative || false,
+                      isRuntimeNegative: isRuntimeNegative || false,
+                      expectedErrorType: meta.negative?.type,
+                      wasmPath,
+                      metaPath,
+                      label: relPath + " [retry]",
+                    },
+                    RETRY_TIMEOUT_MS,
+                  ),
+                );
+                const retryTiming = { compileMs: retry.compileMs, execMs: retry.execMs };
+                const retryInfo = { retried: true, retryCount: 1 };
+
+                if (retry.status === "pass") {
+                  recordResult(relPath, category, "pass", undefined, retryTiming, scopeInfo, retryInfo);
+                  return;
+                }
+                if (retry.status === "fail") {
+                  // Retry executed but assertions failed — record as a real
+                  // fail with the retry error message (preserves the new
+                  // signal rather than the timeout-shaped one).
+                  const error = retry.error ? adjustErrorLines(retry.error, lineAdjustOffset) : "fail after retry";
+                  recordResult(relPath, category, "fail", error, retryTiming, scopeInfo, retryInfo);
+                  return;
+                }
+                // compile_error or another compile_timeout on retry → record
+                // the retry status (with retried flag) so we can distinguish
+                // genuine-slow tests from flakes in baseline analysis.
+                const retryError = retry.error ? adjustErrorLines(retry.error, lineAdjustOffset) : retry.status;
+                recordResult(relPath, category, retry.status, retryError, retryTiming, scopeInfo, retryInfo);
+                return;
+              }
+
               const error = r.error ? adjustErrorLines(r.error, lineAdjustOffset) : r.status;
               recordResult(relPath, category, r.status, error, timing, scopeInfo);
               return;

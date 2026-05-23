@@ -273,8 +273,11 @@ const ES_EARLY_ERROR_CODES = new Set([
  * In-memory CompilerHost – no filesystem needed.
  */
 export function analyzeSource(source: string, fileName = "input.ts", analyzeOptions?: AnalyzeOptions): TypedAST {
-  const isJs = fileName.endsWith(".js") || fileName.endsWith(".jsx");
-  const scriptKind = isJs ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+  const ext = fileName.match(/\.(tsx|jsx|ts|js|mjs|cjs)$/)?.[1] ?? "ts";
+  const isJsx = ext === "tsx" || ext === "jsx";
+  const isJs = ext === "js" || ext === "jsx" || ext === "mjs" || ext === "cjs";
+  const scriptKind =
+    ext === "tsx" ? ts.ScriptKind.TSX : ext === "jsx" ? ts.ScriptKind.JSX : isJs ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const useAllowJs = isJs || analyzeOptions?.allowJs === true;
 
   const compilerOptions: ts.CompilerOptions = {
@@ -283,6 +286,10 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
     strict: !isJs,
     noImplicitAny: false,
     noEmit: true,
+    // Enable JSX parsing for .tsx/.jsx files. ReactJSX desugars JSX to
+    // _jsx(tag, props) calls before codegen sees the AST — existing
+    // call-expression codegen handles them as extern calls. See #1531.
+    ...(isJsx ? { jsx: ts.JsxEmit.ReactJSX } : {}),
   };
 
   const compilerHost: ts.CompilerHost = {
@@ -527,6 +534,7 @@ export function analyzeMultiSource(
     },
   };
 
+  const hasJsxFile = rootNames.some((n) => n.endsWith(".tsx") || n.endsWith(".jsx"));
   const compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
@@ -534,6 +542,8 @@ export function analyzeMultiSource(
     strict: true,
     noImplicitAny: false,
     noEmit: true,
+    // Enable JSX parsing when any input file is .tsx/.jsx (#1531).
+    ...(hasJsxFile ? { jsx: ts.JsxEmit.ReactJSX } : {}),
   };
   if (analyzeOptions?.allowJs) {
     compilerOptions.allowJs = true;
@@ -616,6 +626,7 @@ export function analyzeFiles(entryPath: string, analyzeOptions?: AnalyzeOptions)
   const pathMod = require("node:path") as typeof import("node:path");
   const resolvedEntry = pathMod.resolve(entryPath);
 
+  const entryIsJsx = resolvedEntry.endsWith(".tsx") || resolvedEntry.endsWith(".jsx");
   const compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
@@ -624,6 +635,8 @@ export function analyzeFiles(entryPath: string, analyzeOptions?: AnalyzeOptions)
     noImplicitAny: false,
     noEmit: true,
     rootDir: pathMod.dirname(resolvedEntry),
+    // Enable JSX parsing when the entry file is .tsx/.jsx (#1531).
+    ...(entryIsJsx ? { jsx: ts.JsxEmit.ReactJSX } : {}),
   };
 
   if (analyzeOptions?.allowJs) {

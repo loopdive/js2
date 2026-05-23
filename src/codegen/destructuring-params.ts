@@ -924,7 +924,7 @@ export function destructureParamArray(
           // len = i32(__extern_length(materialized))
           { op: "local.get", index: fbMatTmp } as Instr,
           { op: "call", funcIdx: fbLenFn } as Instr,
-          { op: "i32.trunc_sat_f64_s" } as unknown as Instr,
+          { op: "i32.trunc_sat_f64_s" },
           { op: "local.set", index: fbLenTmp } as Instr,
           // arr = array.new_default(len)
           { op: "local.get", index: fbLenTmp } as Instr,

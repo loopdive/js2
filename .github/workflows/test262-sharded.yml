@@ -61,18 +61,20 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  # GLOBAL serialization: only ONE test262-sharded workflow runs at a time
-  # across pull_request, push, merge_group, workflow_dispatch. With 50 shards
-  # consuming 50 of 60 runner slots, running multiple test262 in parallel
-  # starves sequential follow-up jobs (regression-gate, merge-report) leading
-  # to merge-queue check_response_timeout failures.
+  # Per-ref concurrency. Global serialization (test262-sharded-global) was
+  # causing push:main runs to cancel within 8 seconds of start — most push:main
+  # test262 runs since 2026-05-23T02:00Z were aborted before baselines could
+  # refresh. The exact cancellation mechanism appears to be GitHub's merge
+  # queue rebuilding merge_groups whenever main moves, which cascaded through
+  # the shared concurrency group to abort the unrelated push:main runs queued
+  # behind them.
   #
-  # Serializing keeps ~10 slots free for those follow-ups + other workflows
-  # (CI quality, cla-check). Per-event groups would parallelize but produce
-  # the contention pattern above. Sub-cost: pull_request pushes during an
-  # in-flight run queue rather than cancel-and-restart — accept the waste.
-  group: test262-sharded-global
-  cancel-in-progress: false
+  # Per-ref concurrency: each ref (main, gh-readonly-queue/main/pr-N, PR N)
+  # gets its own slot. push:main runs no longer compete with merge_group runs.
+  # PR-level pushes still cancel previous in-flight runs for the same PR
+  # (cancel-in-progress: true) — that's the right behavior for PR updates.
+  group: test262-sharded-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   gate:
@@ -117,11 +119,24 @@ jobs:
           corepack prepare pnpm@10.30.2 --activate
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Typecheck + lint
+      - name: Typecheck + lint (parallel)
         run: |
-          pnpm run typecheck 2>&1 | tail -50 || (echo "::error::typecheck failed"; exit 1)
-          # If lint script exists, run it (otherwise skip silently)
-          if grep -q '"lint"' package.json; then pnpm run lint 2>&1 | tail -50; fi
+          # Run both in parallel; capture each to its own tail-buffer; wait;
+          # fail if either fails. typecheck is the heavier of the two (tsc
+          # incremental ~5-10s, biome lint <2s) so wall time is bounded by
+          # typecheck rather than typecheck+lint.
+          set -o pipefail
+          tmp_tc=$(mktemp); tmp_lint=$(mktemp)
+          ( pnpm run typecheck > "$tmp_tc" 2>&1 ) &
+          pid_tc=$!
+          ( if grep -q '"lint"' package.json; then pnpm run lint > "$tmp_lint" 2>&1; fi ) &
+          pid_lint=$!
+          wait $pid_tc; tc_rc=$?
+          wait $pid_lint; lint_rc=$?
+          echo "--- typecheck (last 50 lines) ---"; tail -50 "$tmp_tc"
+          echo "--- lint (last 50 lines) ---"; tail -50 "$tmp_lint"
+          if [ "$tc_rc" -ne 0 ]; then echo "::error::typecheck failed (rc=$tc_rc)"; exit "$tc_rc"; fi
+          if [ "$lint_rc" -ne 0 ]; then echo "::warning::lint failed (rc=$lint_rc) — not blocking"; fi
 
   test262-shard:
     # Heavy 16-shard test262 fires on all gate-relevant events:
@@ -139,24 +154,37 @@ jobs:
       (github.event_name == 'pull_request' && github.actor != 'github-actions[bot]') ||
       github.event_name == 'merge_group' ||
       github.event_name == 'workflow_dispatch'
-    needs: [gate]
+    # Runs in PARALLEL with `gate` — both are independently required by the
+    # ruleset (`cheap gate (main-ancestor + lint)` and `merge shard reports`),
+    # so PRs still can't merge unless both pass, but they don't block each
+    # other in execution. Saves ~80s of sequential gate→shards wait per run.
+    # Typecheck + lint also run locally via `.husky/pre-push` so most gate
+    # failures are caught before CI; CI gate is the safety net for
+    # --no-verify pushes and contributors without the hook.
     name: test262 shard ${{ matrix.chunk }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        # 50 shards — maximizes parallelism within the 60-runner budget while
-        # leaving headroom (~5) for cheap-gate, quality, cla-check, differential-test.
-        # With Test262 Differential dropped from merge_group + PR contexts, this
-        # is the sweet spot for one PR in flight. Per-shard work shrinks to ~860
-        # tests / ~8 min wall, vs ~13 min at 32 shards. Concurrent PRs will see
-        # ~50 of their shards queue (no priority queue in GH Actions).
+        # 115 shards — bumped from 50 per user request. Per-shard work shrinks
+        # to ~375 tests / ~3-4 min wall. On GH-hosted runners (60 concurrent
+        # max for public repos), the first ~60 shards run in parallel and the
+        # remaining ~55 queue as the first wave finishes. Net wall time should
+        # be similar to or slightly better than 50 shards once the queueing
+        # absorbs into the runner pool.
         chunk: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-                41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+                41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+                51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+                61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
+                71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
+                81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
+                91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+                101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+                111, 112, 113, 114, 115]
 
     env:
       COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '2' }}

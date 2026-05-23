@@ -1,7 +1,7 @@
 ---
 id: 779c
 title: "String.prototype.split result `.constructor` is not `Array`"
-status: ready
+status: done
 sprint: 53
 created: 2026-05-21
 updated: 2026-05-21

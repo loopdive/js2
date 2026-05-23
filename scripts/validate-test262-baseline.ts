@@ -1,14 +1,19 @@
 #!/usr/bin/env -S npx tsx
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #1218 — Auto-validate the committed test262 baseline by spot-checking 50
-// random "pass" entries against the current `main` HEAD compiler.
+// #1218 — Auto-validate the test262 baseline by spot-checking 50 random
+// "pass" entries against the current `main` HEAD compiler.
 //
-// Why: `benchmarks/results/test262-current.jsonl` is what `dev-self-merge`
-// Step 4 reads for bucket-by-path regression analysis. If the committed file
-// gets corrupted (mass-rewritten by a malformed merge, desynced by a workflow
-// bug), the bucket analysis silently produces wrong answers and the merge
-// gate becomes unreliable.
+// Why: the baseline JSONL is what `dev-self-merge` Step 4 reads for
+// bucket-by-path regression analysis. If the baseline gets corrupted
+// (mass-rewritten by a malformed merge, desynced by a workflow bug), the
+// bucket analysis silently produces wrong answers and the merge gate
+// becomes unreliable.
+//
+// As of #1528 the baseline JSONL is no longer committed to the main repo
+// — it lives in `loopdive/js2wasm-baselines` and is fetched on demand to
+// `.test262-cache/test262-current.jsonl` via
+// `scripts/fetch-baseline-jsonl.mjs`.
 //
 // This script picks 50 random "pass" entries from the JSONL, runs
 // `runTest262File` against each, and FAILS if any of them no longer pass.
@@ -30,9 +35,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { findTestFiles, runTest262File, TEST_CATEGORIES } from "../tests/test262-runner.ts";
+// #1528 — fetch baseline JSONL on demand from `loopdive/js2wasm-baselines`
+// instead of reading a committed copy. The helper handles caching and
+// graceful fallback if upstream is unreachable.
+import { BASELINE_CACHE_PATH, ensureBaselineJsonl } from "./fetch-baseline-jsonl.mjs";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
-const BASELINE_PATH = resolve(ROOT, "benchmarks/results/test262-current.jsonl");
+const BASELINE_PATH = BASELINE_CACHE_PATH;
 
 const SAMPLE_SIZE = Number(process.env.SAMPLE_SIZE ?? "50");
 
@@ -133,6 +142,20 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function main(): Promise<void> {
+  // #1528 — fetch the baseline JSONL on demand from the baselines repo and
+  // cache it locally. ensureBaselineJsonl is idempotent: it's a no-op if the
+  // cache file already exists and looks healthy.
+  try {
+    await ensureBaselineJsonl();
+  } catch (e: unknown) {
+    console.error(`fatal: could not fetch baseline JSONL: ${(e as Error).message}`);
+    console.error(
+      `       source: https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.jsonl`,
+    );
+    console.error(`       cache:  ${BASELINE_PATH}`);
+    process.exit(2);
+  }
+
   const baseline = loadBaseline();
   const passes = baseline.filter((e) => e.status === "pass");
   console.log(`Baseline: ${baseline.length} entries, ${passes.length} pass.`);
@@ -248,8 +271,9 @@ async function main(): Promise<void> {
   }
   if (failures.length > 5) console.error(`  ... ${failures.length - 5} more`);
   console.error("");
-  console.error(`Refresh the committed baseline by manually triggering refresh-committed-baseline.yml on main:`);
-  console.error(`  https://github.com/loopdive/js2/actions/workflows/refresh-committed-baseline.yml`);
+  console.error(`The baseline JSONL is published to loopdive/js2wasm-baselines by`);
+  console.error(`test262-sharded.yml's promote-baseline job after every push to main.`);
+  console.error(`Force a fresh fetch with:  node scripts/fetch-baseline-jsonl.mjs --force`);
   console.error("");
   console.error(
     `Reproduce locally with:  PR_NUMBER=${process.env.PR_NUMBER ?? "<n>"} SAMPLE_SIZE=${SAMPLE_SIZE} npx tsx scripts/validate-test262-baseline.ts`,

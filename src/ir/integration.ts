@@ -24,6 +24,7 @@
 
 import { ts } from "../ts-api.js";
 
+import { getOrRegisterPromiseType } from "../codegen/async-scheduler.js";
 import { addGeneratorImports, addIteratorImports, addStringImports } from "../codegen/index.js";
 import { ensureNativeStringHelpers } from "../codegen/native-strings.js";
 import { addStringConstantGlobal, ensureExnTag } from "../codegen/registry/imports.js";
@@ -1004,6 +1005,21 @@ function makeResolver(
     // -------------------------------------------------------------------
     ensureExnTag(): number {
       return ensureExnTag(ctx);
+    },
+    // -------------------------------------------------------------------
+    // Async / Promise dispatch (#1373b Slice 1).
+    //
+    // Lazily registers (or retrieves) the standalone `$Promise` WasmGC
+    // struct type. The struct layout matches the canonical registration
+    // in `src/codegen/async-scheduler.ts`:
+    //   { state: i32, value: externref, callbacks: externref }
+    //
+    // Lower's `async.return` / `async.throw` / `await` arms call this
+    // to construct or inspect Promise values without going through the
+    // JS-host `Promise.resolve` / `Promise.reject` imports.
+    // -------------------------------------------------------------------
+    resolvePromiseType(): number {
+      return getOrRegisterPromiseType(ctx);
     },
   };
 }

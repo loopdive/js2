@@ -106,3 +106,67 @@ statement / annex B and is left for #1387 / #1518).
 - `language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-basic.js`
 - `language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-1.js`
 - `language/arguments-object/func-expr-args-trailing-comma-spread-operator.js`
+
+## Implementation (partial — first pass)
+
+This PR addresses the **trailing-comma length** sub-cluster by propagating
+`__argc` and `__extras_argv` across **indirect / closure-dispatch** call
+paths (`compileCallExpression` in `src/codegen/expressions/calls.ts`).
+Previously these paths *dropped* overflow args silently and never set
+`__argc`, so when the callee's body read `arguments.length` it fell back
+to the formal-parameter count and returned the wrong value.
+
+Three indirect call paths were updated:
+
+1. **Callable-param dispatch** (line ~5650) — `ref(...)` where `ref` has
+   a TS callable type. Overflow args are now saved to externref locals
+   and packed into `__extras_argv` right before `call_ref`. `__argc` is
+   set to the call-site argument count.
+2. **CallExpression-as-callee closure dispatch** (line ~7290) and
+   **expression-callee closure dispatch** (line ~7920) — same treatment
+   via a new `emitClosureCallArgcExtras` helper (re-uses
+   `emitSetExtrasArgv` since args have not yet been compiled at that
+   point).
+3. **Generic ref-test guarded fallback** (line ~7445) — args are
+   already pre-compiled into locals at that point; the new
+   `buildArgcExtrasSetupFromLocals` helper packs the saved overflow
+   locals into a vec without re-running side effects.
+
+After every call_ref, the new `emitResetArgcExtras` helper resets the
+globals to their sentinels. This is required because the lifted callee
+only resets the globals in its prologue **when its body reads
+`arguments`** — for callees that don't, leaving stale extras in the
+global would corrupt the next caller that does read `arguments`.
+
+### Out of scope for this PR
+
+- **Mapped slot defineProperty fidelity** (#1432 follow-up). The
+  `mapped/nonconfigurable-*` cluster needs a "linked" bitset on the
+  arguments struct so writes after a `defineProperty(..., {writable:
+  false})` no longer propagate.
+- **Host-method externref calls** (`ref = obj.method; ref(...)` where
+  `obj.method` returns the host function value). The current closure
+  dispatch path casts externref to a closure-struct ref and throws
+  TypeError on cast failure. Fixing this needs a separate host-call
+  bridge (#1382).
+- **Legacy `S10.6_A*` cluster**: covers `with`-statement / Annex B
+  semantics — deferred to #1387 / #1518.
+
+## Test Results
+
+`tests/issue-1511.test.ts` — 6 new direct + closure-dispatch tests
+covering overflow args + trailing-comma length on class methods, static
+methods, object literal methods, async generators, and assigned
+function refs (matching arity). All pass.
+
+No regressions in:
+- `tests/equivalence/arguments-object.test.ts`
+- `tests/equivalence/arguments-nested-and-loops.test.ts`
+- `tests/equivalence/arrow-call-apply.test.ts`
+- `tests/equivalence/optional-direct-closure-call.test.ts`
+- `tests/equivalence/async-function.test.ts` / `async-iteration.test.ts`
+- `tests/equivalence/private-class-members.test.ts`
+- `tests/equivalence/nested-class-declarations.test.ts`
+
+Pre-existing failures in these files match the main baseline
+(verified via `git stash` comparison).

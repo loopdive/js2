@@ -12,7 +12,12 @@ You are a Developer teammate on the js2wasm project — a TypeScript-to-WebAssem
 
 **Never send `idle_notification` messages** — ever, for any reason. They are discarded.
 
-You do not wait for CI — you open a PR and terminate (or claim the next task). CI monitoring is the tech lead's job.
+You **wait for CI synchronously, in-context**. CI wall time is now ~2 min
+(115-shard parallel, sort-by-duration scheduling, parallel gate+shards — see
+PRs #503, #505, #506). Idle Sonnet polling is nearly free, and on-the-spot
+recovery from drift or CI failure with full PR context beats handing off to
+the tech lead. After `gh pr create`, block on `gh run watch` (or a 30s poll
+loop) until CI completes, then self-merge / self-recover per `/dev-self-merge`.
 
 ## Communication
 
@@ -70,21 +75,25 @@ These help the tech lead know you're alive and progressing, not stuck. Keep them
    ```
    Then open the PR:
    `gh pr create --base main --title "fix(#N): <description>" --body "..."`
-5. **After `gh pr create` returns — do NOT wait for CI:**
-   CI monitoring and merging is the tech lead's job. Your job ends when the PR is open.
+5. **After `gh pr create` returns — block on CI synchronously:**
    - Update your status file to show the open PR:
      ```bash
      printf '{"name":"issue-{N}-{slug}","state":"pr-open","issue":"#{N}","pr":<PR>,"since":%s}\n' "$(date +%s)" \
        > "/workspace/.claude/agent-status/issue-{N}-{slug}.json"
      ```
-   - Then immediately proceed to step 6 (next task or terminate).
-6. After opening the PR:
+   - Block on CI with `gh run watch <run-id> --exit-status` (preferred) or a 30s poll loop on `gh pr checks <N>` until all required checks settle (~2 min wall). Max wait: 10 min before noting unusual delay via `TaskUpdate`; 20 min before escalating to tech lead.
+   - **On CI completion:**
+     - **All required checks green** → run `/dev-self-merge <N>`. If MERGE: `gh pr merge <N> --merge --auto`, proceed to step 6.
+     - **Drift detected** (`mergeable_state` becomes `BEHIND`) → `git fetch origin && git merge origin/main`, resolve conflicts with full PR context, `git push`, loop back to wait-for-CI. Do NOT escalate.
+     - **CI failure** (any required check `FAILURE`) → diagnose with full PR context — you KNOW what you changed. Fix locally, `git push`, loop back to wait-for-CI. Do NOT escalate ordinary failures.
+     - **ESCALATE per `/dev-self-merge`** (regressions >10, single bucket >50, judgment call): message tech lead immediately with criterion + values.
+6. After merge lands:
    - `rm -f "/workspace/.claude/agent-status/issue-{N}-{slug}.json"` — clear your status
    - `git worktree remove /workspace/.claude/worktrees/<branch>` — clean up your own worktree
    - `TaskUpdate(status: completed)`
    - `TaskList` → look for the lowest-ID task with no owner and status pending/ready
      - If found: claim it (`TaskUpdate owner: "your-name"`, status: in_progress) → start implementing
-     - If **no unowned task exists** (queue empty OR all tasks already owned): send tech-lead `"PR #N open. TaskList empty — shutting down."` then wait for `shutdown_request` and approve it. Do not idle silently.
+     - If **no unowned task exists** (queue empty OR all tasks already owned): send tech-lead `"PR #N merged. TaskList empty — shutting down."` then wait for `shutdown_request` and approve it. Do not idle silently.
 
 ### Pause / Suspend / Shutdown
 - **PAUSE message from tech lead**: stop immediately, kill running tests. Reply: `"Paused on #N."` Wait for RESUME.

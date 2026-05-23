@@ -280,6 +280,10 @@ const test262ReportSource = resolvePreferredFile(
   latestNamedFile(BENCHMARKS_RESULTS_DIR, "test262-report-", ".json"),
 );
 const test262ResultsSource = resolvePreferredFileOrNull(
+  // #1528 — the JSONL is no longer committed; prefer the cache fetched
+  // from `loopdive/js2wasm-baselines` if present, then the public/ copy
+  // populated by `deploy-pages.yml`, then the legacy in-repo paths.
+  join(ROOT, ".test262-cache", "test262-current.jsonl"),
   join(BENCHMARKS_RESULTS_DIR, "test262-current.jsonl"),
   join(PUBLIC_BENCH, "test262-results.jsonl"),
   join(BENCHMARKS_RESULTS_DIR, "test262-results.jsonl"),

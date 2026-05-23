@@ -1367,6 +1367,60 @@
         color: #f87171;
       }
 
+      /* #1583 — explicit pass-rate percentage rendered next to a static
+         `✓ full` badge when the live test262 pass rate is below 95%.
+         Stays inside the 30px badge column by stacking under the glyph. */
+      .feat-badge {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        line-height: 1.05;
+      }
+      .feat-badge-pct {
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.02em;
+        margin-top: 1px;
+        font-weight: 600;
+      }
+      .feat-badge-pct[data-tone="pass"] {
+        color: var(--ok, #4ade80);
+      }
+      .feat-badge-pct[data-tone="partial"] {
+        color: var(--warn, #facc15);
+      }
+      .feat-badge-pct[data-tone="fail"] {
+        color: var(--err, #f87171);
+      }
+
+      /* #1583 — test262 source-path links inside an expanded feat-row
+         `<details>` body. */
+      .feat-test262-paths {
+        margin: 8px 0 4px;
+        font-size: 12px;
+        font-family: var(--mono);
+        color: var(--fg-faint);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+        align-items: baseline;
+      }
+      .feat-test262-paths-label {
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 10px;
+      }
+      .feat-test262-paths a {
+        color: var(--accent, #60a5fa);
+        text-decoration: none;
+        opacity: 0.85;
+      }
+      .feat-test262-paths a:hover {
+        opacity: 1;
+        text-decoration: underline;
+      }
+
       @media (max-width: 980px) {
         .feat-panel {
           columns: 1;
@@ -1508,6 +1562,19 @@
                 src="https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.json"
                 style="--t262-bg: var(--bg, #060a14)"
               ></t262-donut>
+            </div>
+            <!-- #106 — Slider lets readers expand the pass-rate to include
+                 ~5k TC39 proposal tests on top of the ~43k current-standard
+                 baseline. Off by default so the headline number reflects
+                 shipped ECMAScript only. -->
+            <div class="feat-filter conformance-scope-toggle">
+              <label
+                class="feat-toggle"
+                title="Include ~5k TC39 proposal tests (Temporal, decorators, etc.) on top of the ~43k ECMAScript current-standard tests."
+              >
+                <input type="checkbox" id="include-proposals-toggle" />
+                <span>Include TC39 proposals</span>
+              </label>
             </div>
           </div>
           <div class="diagram-panel">
@@ -4954,6 +5021,25 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             editionTimeline.removeAttribute("show-proposals");
           }
           editionTimeline.setAttribute("value", "overall");
+
+          // #106 — "Include TC39 proposals" toggle next to the donut.
+          // Off (default): pass rate counts only the ~43k ECMAScript
+          //   current-standard tests (scope: standard + annex_b).
+          // On: counts ~48k including ~5k TC39 proposals
+          //   (Temporal, decorators, source-phase imports, etc.).
+          // We piggy-back on the existing edition-timeline scope so the
+          // donut, feature rows, and history chart all stay consistent.
+          const proposalsToggle = document.getElementById("include-proposals-toggle");
+          if (proposalsToggle instanceof HTMLInputElement) {
+            // Only meaningful if the report actually carries proposal data.
+            if (!proposalDiffers) {
+              proposalsToggle.disabled = true;
+              proposalsToggle.parentElement?.setAttribute("title", "Current report has no proposal data");
+            }
+            proposalsToggle.addEventListener("change", () => {
+              editionTimeline.setAttribute("value", proposalsToggle.checked ? "overall+proposal" : "overall");
+            });
+          }
         } catch {
           window.__conformanceEditionScope = "overall";
         }
@@ -5229,6 +5315,9 @@ console.log(instance.exports.run()); // &rarr; 55</pre
       // #1201 — hydrate feature rows with live test262 pass counts.
       // #1327 — also append "View test results →" link to the expanded
       // feature body, deep-linking into the feature-report page.
+      // #1583 — surface an explicit `NN%` badge next to the static `✓`
+      // when the live pass rate is below 95%, and render direct
+      // test262 GitHub source links inside the expanded body.
       //
       // Each `.feat-row[data-t262-paths]` declares one or more depth-2
       // test262 path prefixes (e.g. `built-ins/Array,built-ins/Map`).
@@ -5238,57 +5327,107 @@ console.log(instance.exports.run()); // &rarr; 55</pre
       // or a path isn't present in the categories data — a wrong
       // mapping is then visible as a missing count rather than a
       // misleading number.
+      //
+      // Data source preference (#1583): `test262-report.json` is
+      // auto-refreshed on every push to main and its `categories`
+      // field is identical to the standalone `test262-categories.json`
+      // file. The standalone file is only refreshed when the CI
+      // promote step explicitly copies it (added in #1583). We try the
+      // report file first so the page is at most one CI run behind
+      // reality even when the standalone file is briefly stale.
       (async function hydrateFeatureRowCounts() {
-        try {
-          const resp = await fetch("./benchmarks/results/test262-categories.json");
-          if (!resp.ok) return;
-          const payload = await resp.json();
-          const categories = payload?.categories;
-          if (!Array.isArray(categories) || categories.length === 0) return;
-          const byPath = new Map();
-          for (const cat of categories) {
-            const key = cat?.path ?? cat?.name;
-            if (typeof key === "string") byPath.set(key, cat);
-          }
-          const rows = document.querySelectorAll(".feat-row[data-t262-paths]");
-          for (const row of rows) {
-            const paths = (row.getAttribute("data-t262-paths") || "")
-              .split(",")
-              .map((p) => p.trim())
-              .filter(Boolean);
-            let pass = 0;
-            let total = 0;
-            for (const p of paths) {
-              const cat = byPath.get(p);
-              if (!cat) continue;
-              pass += Number(cat.pass ?? 0);
-              const skip = Number(cat.skip ?? 0);
-              total += Number(cat.total ?? 0) - skip;
+        const fetchCategories = async () => {
+          try {
+            const resp = await fetch("./benchmarks/results/test262-report.json");
+            if (resp.ok) {
+              const payload = await resp.json();
+              const cats = payload?.categories;
+              if (Array.isArray(cats) && cats.length > 0) return cats;
             }
-            if (total <= 0) continue;
-            // Only render the count if at least one of the listed
-            // paths was found — otherwise leave the static badge alone
-            // so a stale mapping is visible rather than misleading.
-            const span = document.createElement("span");
-            span.className = "feat-row-counts feature-test-count";
-            span.textContent = `${pass} / ${total}`;
-            const ratio = pass / total;
-            if (ratio >= 0.9) span.dataset.tone = "pass";
-            else if (ratio >= 0.5) span.dataset.tone = "partial";
-            else span.dataset.tone = "fail";
-            // Append inside `.feat-name` to stay within its grid cell —
-            // the row uses a 3-col template (`30px 1fr 24px`) so any
-            // sibling span would land in column 3 (the badge column)
-            // and break alignment.
-            const nameEl = row.querySelector(".feat-name");
-            if (nameEl) nameEl.appendChild(span);
+          } catch {
+            // fall through to the standalone file
+          }
+          try {
+            const resp = await fetch("./benchmarks/results/test262-categories.json");
+            if (!resp.ok) return null;
+            const payload = await resp.json();
+            const cats = payload?.categories;
+            return Array.isArray(cats) && cats.length > 0 ? cats : null;
+          } catch {
+            return null;
+          }
+        };
 
-            // #1327 — Inject a "View test results →" link into the
-            // expanded body. Use the first path as the `?feature=`
-            // value (the report page resolves it against
-            // testCategories in feature-examples.json).
-            const details = row.querySelector("details");
-            if (details && paths.length > 0 && !details.querySelector(".feat-report-link")) {
+        const toneFor = (ratio) => {
+          if (ratio >= 0.9) return "pass";
+          if (ratio >= 0.5) return "partial";
+          return "fail";
+        };
+
+        const categories = await fetchCategories();
+        if (!categories) return;
+        const byPath = new Map();
+        for (const cat of categories) {
+          const key = cat?.path ?? cat?.name;
+          if (typeof key === "string") byPath.set(key, cat);
+        }
+        const rows = document.querySelectorAll(".feat-row[data-t262-paths]");
+        for (const row of rows) {
+          const paths = (row.getAttribute("data-t262-paths") || "")
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean);
+          let pass = 0;
+          let total = 0;
+          for (const p of paths) {
+            const cat = byPath.get(p);
+            if (!cat) continue;
+            pass += Number(cat.pass ?? 0);
+            const skip = Number(cat.skip ?? 0);
+            total += Number(cat.total ?? 0) - skip;
+          }
+          if (total <= 0) continue;
+          // Only render the count if at least one of the listed
+          // paths was found — otherwise leave the static badge alone
+          // so a stale mapping is visible rather than misleading.
+          const ratio = pass / total;
+          const tone = toneFor(ratio);
+
+          const span = document.createElement("span");
+          span.className = "feat-row-counts feature-test-count";
+          span.textContent = `${pass} / ${total}`;
+          span.dataset.tone = tone;
+          // Append inside `.feat-name` to stay within its grid cell —
+          // the row uses a 3-col template (`30px 1fr 24px`) so any
+          // sibling span would land in column 3 (the badge column)
+          // and break alignment.
+          const nameEl = row.querySelector(".feat-name");
+          if (nameEl) nameEl.appendChild(span);
+
+          // #1583 — surface the actual pass percentage next to a
+          // green `✓ full` badge when the live ratio is below 95%.
+          // The static badge stays green (it encodes "this compiles
+          // and the canonical case works"), but the percentage
+          // immediately tells the visitor that not every test262
+          // test for this feature passes today.
+          const badge = row.querySelector(".feat-badge");
+          if (badge && badge.classList.contains("full") && ratio < 0.95 && !badge.querySelector(".feat-badge-pct")) {
+            const pct = Math.round(ratio * 100);
+            const pctEl = document.createElement("span");
+            pctEl.className = "feat-badge-pct";
+            pctEl.dataset.tone = tone;
+            pctEl.textContent = `${pct}%`;
+            pctEl.title = `Live test262 pass rate for ${paths.join(", ")}: ${pass}/${total} (${pct}%)`;
+            badge.appendChild(pctEl);
+          }
+
+          // #1327 — Inject a "View test results →" link into the
+          // expanded body. Use the first path as the `?feature=`
+          // value (the report page resolves it against
+          // testCategories in feature-examples.json).
+          const details = row.querySelector("details");
+          if (details && paths.length > 0) {
+            if (!details.querySelector(".feat-report-link")) {
               const linkWrap = document.createElement("div");
               linkWrap.className = "feat-report-link";
               const a = document.createElement("a");
@@ -5298,9 +5437,25 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               linkWrap.appendChild(a);
               details.appendChild(linkWrap);
             }
+            // #1583 — Direct test262 source links per path.
+            if (!details.querySelector(".feat-test262-paths")) {
+              const wrap = document.createElement("div");
+              wrap.className = "feat-test262-paths";
+              const label = document.createElement("span");
+              label.className = "feat-test262-paths-label";
+              label.textContent = "test262 source:";
+              wrap.appendChild(label);
+              for (const p of paths) {
+                const a = document.createElement("a");
+                a.href = `https://github.com/tc39/test262/tree/main/test/${p}`;
+                a.target = "_blank";
+                a.rel = "noopener";
+                a.textContent = p;
+                wrap.appendChild(a);
+              }
+              details.appendChild(wrap);
+            }
           }
-        } catch {
-          // Static badges remain — graceful fallback.
         }
       })();
 

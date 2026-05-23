@@ -31,7 +31,10 @@ Compile a TypeScript file to WebAssembly (GC proposal).
 
 Options:
   -o, --out <dir>   Output directory (default: same as input)
-  --target <t>      Compilation target: gc (default), linear, wasi
+  --target <t>      Compilation target: gc (default), linear, wasi, standalone
+  --standalone      Shorthand for --target standalone (pure WasmGC, no JS host,
+                    no WASI). Forces nativeStrings: true and refuses to emit
+                    wasm:js-string or env JS-host imports.
   --allow-fs        Allow node:fs JS-host imports (readFileSync, writeFileSync)
                     for non-WASI targets (#1491). Off by default to prevent
                     accidental capability leakage.
@@ -70,7 +73,7 @@ let emitWat = true;
 let emitDts = true;
 let watOnly = false;
 let optimize: boolean | 1 | 2 | 3 | 4 = false;
-let target: "gc" | "linear" | "wasi" | undefined;
+let target: "gc" | "linear" | "wasi" | "standalone" | undefined;
 let emitWit = false;
 let allowFs = false;
 const defines: Record<string, string> = {};
@@ -81,12 +84,14 @@ for (let i = 0; i < args.length; i++) {
     outDir = args[++i];
   } else if (arg === "--target") {
     const t = args[++i];
-    if (t === "gc" || t === "linear" || t === "wasi") {
+    if (t === "gc" || t === "linear" || t === "wasi" || t === "standalone") {
       target = t;
     } else {
-      console.error(`Unknown target: ${t} (expected gc, linear, or wasi)`);
+      console.error(`Unknown target: ${t} (expected gc, linear, wasi, or standalone)`);
       process.exit(1);
     }
+  } else if (arg === "--standalone") {
+    target = "standalone";
   } else if (arg === "--wat") {
     watOnly = true;
   } else if (arg === "--no-wat") {

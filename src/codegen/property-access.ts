@@ -657,7 +657,7 @@ export function emitExternrefToStructGet(
         flushLateImportShifts(ctx, fctx);
         if (unboxIdx !== undefined) {
           externGetFallback.push({ op: "call", funcIdx: unboxIdx } as Instr);
-          externGetFallback.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+          externGetFallback.push({ op: "i32.trunc_sat_f64_s" });
         }
       }
       // For ref/ref_null result types, the externref from __extern_get needs
@@ -906,6 +906,31 @@ export function compilePropertyAccess(
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
 
+  // #1482 — `process.env.X` under `--target wasi`. Short-circuit BEFORE the
+  // generic `__extern_get` host-import path: the standalone WASI module has
+  // no `process` global, and even with a JS polyfill the generic extern lookup
+  // path wouldn't know how to route through the WASI environ table. Lower to
+  // a host-import call `__wasi_env_get_str(<key>) -> externref` (registered by
+  // `registerWasiImports` when usage is detected). The JS polyfill supplies a
+  // `(key) => process.env[key]` shim; a future pure-WASI implementation can
+  // replace the host import with an inline call to `environ_get`.
+  if (
+    ctx.wasi &&
+    ctx.wasiEnvGetStrIdx >= 0 &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "process" &&
+    expr.expression.name.text === "env"
+  ) {
+    // Push the property name as an externref string (NativeString → externref).
+    const keyType = compileStringLiteral(ctx, fctx, propName);
+    if (keyType && keyType.kind !== "externref") {
+      coerceType(ctx, fctx, keyType, { kind: "externref" });
+    }
+    fctx.body.push({ op: "call", funcIdx: ctx.wasiEnvGetStrIdx });
+    return { kind: "externref" };
+  }
+
   // (#1104 Phase 2) WASI/standalone-mode native Error property access.
   //
   // When the LHS TypeScript type resolves to a built-in Error subclass
@@ -1042,7 +1067,18 @@ export function compilePropertyAccess(
     expr.expression.name.text === "meta"
   ) {
     if (propName === "url") {
-      return compileStringLiteral(ctx, fctx, "module.wasm");
+      // #1494 — Bind to the host's `import.meta.url` (passed by the generated
+      // loader via deps.importMetaUrl). Falls back to undefined when no
+      // loader is present.
+      const funcIdx = ensureLateImport(ctx, "__get_import_meta_url", [], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx });
+        return { kind: "externref" };
+      }
+      // Fallback when the host import couldn't be registered.
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
     }
     // For any other import.meta property, return undefined
     fctx.body.push({ op: "ref.null.extern" });
@@ -1099,11 +1135,38 @@ export function compilePropertyAccess(
       flushLateImportShifts(ctx, fctx);
       if (unboxIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: unboxIdx });
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
       }
       return { kind: "i32" };
     }
     return { kind: "externref" };
+  }
+
+  // (#1490) Non-WASI Node.js host mode: process.argv / process.env / process.platform.
+  // These are JS host imports that read from the live Node process at runtime.
+  // The local `process` identifier must not be shadowed by a local variable.
+  // In WASI mode, `process.env` is handled separately via WASI environ (#1482),
+  // so this path is gated on !ctx.wasi.
+  if (!ctx.wasi && ts.isIdentifier(expr.expression) && expr.expression.text === "process") {
+    const isShadowed = fctx.localMap.has("process") || (fctx.boxedCaptures?.has("process") ?? false);
+    if (!isShadowed) {
+      const procProp = propName;
+      let hostImport: string | undefined;
+      if (procProp === "argv") hostImport = "__get_process_argv";
+      else if (procProp === "env") hostImport = "__get_process_env";
+      else if (procProp === "platform") hostImport = "__get_process_platform";
+      else if (procProp === "arch") hostImport = "__get_process_arch";
+      if (hostImport !== undefined) {
+        const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (idx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: idx });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        return { kind: "externref" };
+      }
+    }
   }
 
   // Handle BuiltIn.prop where BuiltIn is a known global constructor/namespace (String, Number,
@@ -1688,7 +1751,7 @@ export function compilePropertyAccess(
               ? [
                   { op: "local.get", index: extTmpIdx } as Instr,
                   { op: "call", funcIdx: lengthFuncIdx } as Instr,
-                  ...(ctx.fast ? [{ op: "i32.trunc_sat_f64_s" } as unknown as Instr] : []),
+                  ...(ctx.fast ? [{ op: "i32.trunc_sat_f64_s" } as Instr] : []),
                   { op: "local.set", index: lenTmp2 } as Instr,
                 ]
               : [
@@ -2252,7 +2315,7 @@ export function compilePropertyAccess(
               ...(effectiveResult.kind === "f64" && unboxIdx !== undefined
                 ? [{ op: "call", funcIdx: unboxIdx } as Instr]
                 : effectiveResult.kind === "i32" && unboxIdx !== undefined
-                  ? [{ op: "call", funcIdx: unboxIdx } as Instr, { op: "i32.trunc_sat_f64_s" } as unknown as Instr]
+                  ? [{ op: "call", funcIdx: unboxIdx } as Instr, { op: "i32.trunc_sat_f64_s" } as Instr]
                   : []),
             ],
           });
@@ -2301,7 +2364,7 @@ export function compilePropertyAccess(
             flushLateImportShifts(ctx, fctx);
             if (unboxIdx !== undefined) {
               fctx.body.push({ op: "call", funcIdx: unboxIdx });
-              fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+              fctx.body.push({ op: "i32.trunc_sat_f64_s" });
             }
             return { kind: "i32" };
           }
@@ -2501,7 +2564,7 @@ export function compilePropertyAccess(
             externGetFallback.push({ op: "call", funcIdx: unboxIdx } as Instr);
           } else if (resultWasm.kind === "i32" && unboxIdx !== undefined) {
             externGetFallback.push({ op: "call", funcIdx: unboxIdx } as Instr);
-            externGetFallback.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+            externGetFallback.push({ op: "i32.trunc_sat_f64_s" });
           }
           externGetFallback.push({ op: "local.set", index: resultLocal } as Instr);
 
@@ -2561,7 +2624,7 @@ export function compilePropertyAccess(
           if (unboxIdx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx });
           }
-          fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+          fctx.body.push({ op: "i32.trunc_sat_f64_s" });
           return { kind: "i32" };
         }
         return { kind: "externref" };
@@ -2613,7 +2676,7 @@ export function compilePropertyAccess(
         if (accessWasm.kind === "i32") {
           if (unboxIdx856 !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx856 });
-            fctx.body.push({ op: "i32.trunc_sat_f64_s" } as unknown as Instr);
+            fctx.body.push({ op: "i32.trunc_sat_f64_s" });
           }
           return { kind: "i32" };
         }
@@ -2729,6 +2792,27 @@ export function compileElementAccess(
   // Handle super[expr] — access parent class property via computed key on `this`
   if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return compileSuperElementAccess(ctx, fctx, expr);
+  }
+
+  // #1482 — `process.env[<expr>]` under `--target wasi`. Mirrors the
+  // PropertyAccess short-circuit but the key is a runtime expression, so we
+  // compile it inline rather than using compileStringLiteral. The key must be
+  // a string; we let the type checker enforce that and emit a coercion to
+  // externref before the host-import call.
+  if (
+    ctx.wasi &&
+    ctx.wasiEnvGetStrIdx >= 0 &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "process" &&
+    expr.expression.name.text === "env"
+  ) {
+    const keyType = compileExpression(ctx, fctx, expr.argumentExpression, { kind: "externref" });
+    if (keyType && keyType.kind !== "externref") {
+      coerceType(ctx, fctx, keyType, { kind: "externref" });
+    }
+    fctx.body.push({ op: "call", funcIdx: ctx.wasiEnvGetStrIdx });
+    return { kind: "externref" };
   }
 
   // Handle ClassName[key] for static accessors and static properties (#848)

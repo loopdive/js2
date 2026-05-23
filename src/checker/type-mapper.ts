@@ -60,9 +60,16 @@ export function mapTsTypeToWasm(type: ts.Type, checker: ts.TypeChecker, fast?: b
     return { kind: "i32" };
   }
 
-  // Union with null/undefined → unwrap to inner type
+  // Union with null/undefined/void → unwrap to inner type
+  // (#1550) Treat `void` the same as `undefined` here — JS-runtime-equivalent.
+  // TS infers binding types like `void | null` for `function f({w = counter()} = {w: null})`
+  // because `counter()` has return type `void`. Without filtering Void, the union
+  // collapses to just `void` → i32, losing the actual null/string/number type info
+  // and erasing the destructured value at runtime.
   if (type.isUnion()) {
-    const nonNullish = type.types.filter((t) => !(t.flags & ts.TypeFlags.Null) && !(t.flags & ts.TypeFlags.Undefined));
+    const nonNullish = type.types.filter(
+      (t) => !(t.flags & ts.TypeFlags.Null) && !(t.flags & ts.TypeFlags.Undefined) && !(t.flags & ts.TypeFlags.Void),
+    );
     if (nonNullish.length === 1) {
       const inner = mapTsTypeToWasm(nonNullish[0]!, checker, fast);
       if (inner.kind === "ref") return { kind: "ref_null", typeIdx: inner.typeIdx };

@@ -1427,7 +1427,7 @@ export function compileClassBodies(
         const createBufIdx = ctx.funcMap.get("__gen_create_buffer")!;
         fctx.body.push({ op: "call", funcIdx: createBufIdx });
         fctx.body.push({ op: "local.set", index: bufferLocal });
-        fctx.body.push({ op: "ref.null.extern" } as unknown as Instr);
+        fctx.body.push({ op: "ref.null.extern" });
         fctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
         // Wrap body in a block so return can br out
@@ -1455,13 +1455,10 @@ export function compileClassBodies(
         // Wrap generator body block in try/catch to capture exceptions as pending throw
         const tagIdx = ensureExnTag(ctx);
         const getCaughtIdx = ctx.funcMap.get("__get_caught_exception");
-        const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal } as unknown as Instr];
+        const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal }];
         const catchAllBody: Instr[] =
           getCaughtIdx !== undefined
-            ? [
-                { op: "call", funcIdx: getCaughtIdx } as Instr,
-                { op: "local.set", index: pendingThrowLocal } as unknown as Instr,
-              ]
+            ? [{ op: "call", funcIdx: getCaughtIdx } as Instr, { op: "local.set", index: pendingThrowLocal }]
             : [];
         fctx.body.push({
           op: "try",
@@ -1469,7 +1466,7 @@ export function compileClassBodies(
           body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
           catches: [{ tagIdx, body: catchBody }],
           catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-        } as unknown as Instr);
+        });
 
         // Return __create_generator or __create_async_generator depending on async flag
         const createGenName = isAsyncMethod ? "__create_async_generator" : "__create_generator";
@@ -1762,13 +1759,31 @@ export function compileSuperCall(
     const args = callExpr.arguments;
     const hasSpread = args.some((a) => ts.isSpreadElement(a));
     if (hasSpread || args.length === 0) {
-      // Spread or zero-arg: pass null (best-effort; #1366b refines spread).
+      // (#1551) Even when we cannot forward spread args to the host
+      // constructor, evaluate them left-to-right for side effects so that
+      // abrupt completions (throws from arg expressions) propagate to the
+      // user's try/catch around `super(...)`. The host import receives null
+      // (best-effort; #1366b refines spread forwarding).
+      for (const a of args) {
+        const inner = ts.isSpreadElement(a) ? a.expression : a;
+        const argResult = compileExpression(ctx, fctx, inner);
+        if (argResult !== null) {
+          fctx.body.push({ op: "drop" });
+        }
+      }
       fctx.body.push({ op: "ref.null.extern" });
     } else {
-      // Single message arg coerced to externref.
+      // Single message arg coerced to externref, plus side-effect-only
+      // evaluation of any trailing args (§13.3.7.1 step 4 — #1551).
       const argResult = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
       if (argResult && argResult.kind !== "externref") {
         coerceType(ctx, fctx, argResult, { kind: "externref" });
+      }
+      for (let i = 1; i < args.length; i++) {
+        const extra = compileExpression(ctx, fctx, args[i]!);
+        if (extra !== null) {
+          fctx.body.push({ op: "drop" });
+        }
       }
     }
     const importName = `__new_${builtinParent}`;
@@ -1839,15 +1854,35 @@ export function compileSuperCall(
           compileExpression(ctx, fctx, arg, field.type);
           fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
           fieldIdx2++;
+        } else {
+          // (#1551) Side-effect-only evaluation for non-spread args after
+          // parent fields are exhausted.
+          const sideRes = compileExpression(ctx, fctx, arg);
+          if (sideRes !== null) {
+            fctx.body.push({ op: "drop" });
+          }
         }
       }
     }
   } else {
-    for (let i = 0; i < callExpr.arguments.length && i < assignableParentFields.length; i++) {
-      const { field, fieldIdx } = assignableParentFields[i]!;
-      fctx.body.push({ op: "local.get", index: selfLocal });
-      compileExpression(ctx, fctx, callExpr.arguments[i]!, field.type);
-      fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+    // (#1551) ArgumentListEvaluation (§13.3.7.1 step 4) must evaluate every
+    // argument expression left-to-right, regardless of whether the parent
+    // struct has a slot to receive it. Side-effects (and abrupt completions
+    // from arg evaluation) must propagate to the user's try/catch around
+    // `super(...)`. Args beyond `assignableParentFields.length` are evaluated
+    // for side effects only and the produced value is dropped.
+    for (let i = 0; i < callExpr.arguments.length; i++) {
+      if (i < assignableParentFields.length) {
+        const { field, fieldIdx } = assignableParentFields[i]!;
+        fctx.body.push({ op: "local.get", index: selfLocal });
+        compileExpression(ctx, fctx, callExpr.arguments[i]!, field.type);
+        fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+      } else {
+        const argResult = compileExpression(ctx, fctx, callExpr.arguments[i]!);
+        if (argResult !== null) {
+          fctx.body.push({ op: "drop" });
+        }
+      }
     }
   }
 }

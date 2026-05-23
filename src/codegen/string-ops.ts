@@ -5,7 +5,7 @@
  * and native string method calls.
  */
 import { ts } from "../ts-api.js";
-import { isBooleanType, isStringType, isVoidType } from "../checker/type-mapper.js";
+import { isBigIntType, isBooleanType, isStringType, isSymbolType, isVoidType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { compileNumericBinaryOp } from "./binary-ops.js";
 import { pushBody } from "./context/bodies.js";
@@ -23,16 +23,16 @@ import { coerceType, emitGuardedRefCast, pushDefaultValue, pushParamSentinel } f
 // ── Guarded funcref cast (ref.test before ref.cast to avoid illegal cast traps) ──
 function emitGuardedFuncRefCast(fctx: FunctionContext, funcTypeIdx: number): void {
   const tmpFunc = allocLocal(fctx, `__gfc_${fctx.locals.length}`, { kind: "funcref" } as ValType);
-  fctx.body.push({ op: "local.tee", index: tmpFunc } as unknown as Instr);
-  fctx.body.push({ op: "ref.test", typeIdx: funcTypeIdx } as unknown as Instr);
+  fctx.body.push({ op: "local.tee", index: tmpFunc });
+  fctx.body.push({ op: "ref.test", typeIdx: funcTypeIdx });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "ref_null", typeIdx: funcTypeIdx } as ValType },
     then: [
-      { op: "local.get", index: tmpFunc } as unknown as Instr,
-      { op: "ref.cast_null", typeIdx: funcTypeIdx } as unknown as Instr,
+      { op: "local.get", index: tmpFunc },
+      { op: "ref.cast_null", typeIdx: funcTypeIdx },
     ],
-    else: [{ op: "ref.null", typeIdx: funcTypeIdx } as unknown as Instr],
+    else: [{ op: "ref.null", typeIdx: funcTypeIdx }],
   } as Instr);
 }
 
@@ -827,7 +827,14 @@ function compileAndCoerceConcatOperand(ctx: CodegenContext, fctx: FunctionContex
       fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("undefined")! });
     }
   } else if (valType.kind === "ref" || valType.kind === "ref_null") {
-    fctx.body.push({ op: "extern.convert_any" });
+    // #1525 — string concat is an explicit ToPrimitive("string") site, so
+    // walk @@toPrimitive("string") → toString() per §7.1.1.1. Routing through
+    // coerceType with an explicit hint reuses the dispatch table built in
+    // type-coercion.ts (ref → externref hint="string"). Without the hint,
+    // coerceType emits a bare `extern.convert_any`, and the wasm:js-string
+    // `concat` polyfill then calls V8 native String concat on the opaque
+    // struct, throwing "Cannot convert object to primitive value".
+    coerceType(ctx, fctx, valType, { kind: "externref" }, "string");
   }
 }
 
@@ -1121,10 +1128,27 @@ export function compileStringBinaryOp(
       fctx.body.push({ op: "drop" });
       addStringConstantGlobal(ctx, "undefined");
       fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("undefined")! });
+    } else if (!isStringType(leftTsType)) {
+      // #1525 — string concat is a ToPrimitive("string") site (§7.1.1.1).
+      // For externref operands that aren't statically known to be strings
+      // (e.g. `const obj: any = {...}; obj + "x"`), route through
+      // `__extern_toString` so the runtime walks valueOf/toString on
+      // wasmGC structs before handing a value to `wasm:js-string concat`.
+      // Without this, the concat polyfill calls V8's native string concat
+      // on an opaque struct and throws "Cannot convert object to
+      // primitive value" before our spec-conformant walker runs.
+      const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (toStrIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: toStrIdx });
+      }
     }
   } else if (op === ts.SyntaxKind.PlusToken && leftType && (leftType.kind === "ref" || leftType.kind === "ref_null")) {
-    // Struct ref → externref for concat (e.g. object toString → "[object Object]")
-    fctx.body.push({ op: "extern.convert_any" });
+    // Struct ref → externref for concat. #1525 — route through coerceType
+    // with hint "string" so the dispatch table walks @@toPrimitive("string")
+    // / toString() rather than emitting a bare `extern.convert_any` that
+    // would let `wasm:js-string concat` throw on the opaque struct.
+    coerceType(ctx, fctx, leftType, { kind: "externref" }, "string");
   }
   // For equality/inequality ops: String wrapper objects (new String("x")) are externrefs
   // but NOT wasm:js-string strings — the `equals` builtin would throw a WebAssembly trap.
@@ -1174,14 +1198,27 @@ export function compileStringBinaryOp(
       fctx.body.push({ op: "drop" });
       addStringConstantGlobal(ctx, "undefined");
       fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("undefined")! });
+    } else if (!isStringType(rightTsType)) {
+      // #1525 — see left-operand branch above. Route opaque externref
+      // operands through `__extern_toString` so wasmGC structs ride
+      // through the runtime ToPrimitive walker before reaching
+      // `wasm:js-string concat`.
+      const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (toStrIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: toStrIdx });
+      }
     }
   } else if (
     op === ts.SyntaxKind.PlusToken &&
     rightType &&
     (rightType.kind === "ref" || rightType.kind === "ref_null")
   ) {
-    // Struct ref → externref for concat
-    fctx.body.push({ op: "extern.convert_any" });
+    // Struct ref → externref for concat. #1525 — route through coerceType
+    // with hint "string" so toString()/@@toPrimitive("string") run rather
+    // than emitting a raw `extern.convert_any` that crashes the concat
+    // polyfill on opaque wasmGC structs.
+    coerceType(ctx, fctx, rightType, { kind: "externref" }, "string");
   }
   // Unwrap right-side String wrapper for equality/inequality (same as left above)
   const isRightStringWrapper =
@@ -1252,6 +1289,101 @@ export function compileStringBinaryOp(
 // ── Native string method calls (fast mode) ──────────────────────────
 
 /**
+ * Per ECMA-262 §7.1.4 ToNumber: invoking ToNumber on a BigInt or Symbol
+ * throws TypeError. String.prototype methods that take numeric arguments
+ * (charAt, indexOf, slice, padStart, repeat, …) feed those args through
+ * ToInteger/ToLength, which both call ToNumber. So when an arg has the
+ * static type `bigint` or `symbol`, we must emit a TypeError throw
+ * instead of silently converting (#1445).
+ *
+ * Returns true when a throw was emitted (caller should NOT consume the
+ * arg further — the throw was placed instead of the arg expression).
+ */
+function emitTypeErrorThrow(ctx: CodegenContext, fctx: FunctionContext, msg: string): void {
+  // Materialize the error message string. In nativeStrings mode the string
+  // lives as a GC struct (no host global), so build it inline + bridge
+  // to externref. In JS-host mode pull it from the imported string-constants
+  // global so JS sees the same intern as `String.raw`-style literals.
+  addStringConstantGlobal(ctx, msg);
+  const throwIdx = ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    compileNativeStringLiteral(ctx, fctx, msg);
+    if (throwIdx !== undefined) {
+      flushLateImportShifts(ctx, fctx);
+      // GC-ref → externref bridge so the host import receives a JS string.
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+      const funcIdx = ctx.funcMap.get("__throw_type_error")!;
+      fctx.body.push({ op: "call", funcIdx } as Instr);
+      fctx.body.push({ op: "unreachable" } as Instr);
+    } else {
+      const tagIdx = ensureExnTag(ctx);
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+      fctx.body.push({ op: "throw", tagIdx } as Instr);
+    }
+    return;
+  }
+  const strIdx = ctx.stringGlobalMap.get(msg)!;
+  if (throwIdx !== undefined) {
+    flushLateImportShifts(ctx, fctx);
+    const funcIdx = ctx.funcMap.get("__throw_type_error")!;
+    fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+    fctx.body.push({ op: "call", funcIdx } as Instr);
+    fctx.body.push({ op: "unreachable" } as Instr);
+  } else {
+    const tagIdx = ensureExnTag(ctx);
+    fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+    fctx.body.push({ op: "throw", tagIdx } as Instr);
+  }
+}
+
+function tryThrowOnBigIntOrSymbolArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): boolean {
+  let argTsType: ts.Type | undefined;
+  try {
+    argTsType = ctx.checker.getTypeAtLocation(arg);
+  } catch {
+    return false;
+  }
+  if (!argTsType) return false;
+  const isBig = isBigIntType(argTsType);
+  const isSym = isSymbolType(argTsType);
+  if (!isBig && !isSym) return false;
+
+  const msg = isBig
+    ? "TypeError: Cannot convert a BigInt value to a number"
+    : "TypeError: Cannot convert a Symbol value to a number";
+  emitTypeErrorThrow(ctx, fctx, msg);
+  return true;
+}
+
+/**
+ * Compile a numeric arg (index/length) for a String.prototype method,
+ * routing it through ToInteger semantics. Throws TypeError on BigInt
+ * or Symbol per §7.1.4 ToNumber. Otherwise leaves an i32 on the stack.
+ * Returns true when emission succeeded (caller continues building the
+ * arg list); false when an unreachable throw was emitted instead.
+ */
+function compileStringIntegerArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
+  if (tryThrowOnBigIntOrSymbolArg(ctx, fctx, arg)) {
+    // After unreachable, the wasm stack is polymorphic — but we still
+    // push a sentinel i32 so the (unreached) call site reads cleanly.
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return;
+  }
+  const argType = compileExpression(ctx, fctx, arg, { kind: "f64" });
+  if (!argType) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  } else if (argType.kind === "f64") {
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  } else if (argType.kind === "i64") {
+    // BigInt fell through static detection (e.g. `any` widened to bigint).
+    // Drop the i64 and throw TypeError per §7.1.4.
+    fctx.body.push({ op: "drop" } as Instr);
+    emitTypeErrorThrow(ctx, fctx, "TypeError: Cannot convert a BigInt value to a number");
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+}
+
+/**
  * Compile a method call on a native string in fast mode.
  * Handles: charCodeAt (inline), charAt, substring, slice (native helpers),
  * and delegates other methods to host via marshal.
@@ -1286,12 +1418,7 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "local.get", index: tmpLocal });
     fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }); // .off
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0 });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
@@ -1305,12 +1432,7 @@ export function compileNativeStringMethodCall(
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0 });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
@@ -1332,12 +1454,7 @@ export function compileNativeStringMethodCall(
     // Compile index
     const idxTmp = allocLocal(fctx, `__str_at_idx_${fctx.locals.length}`, { kind: "i32" });
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0 });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
@@ -1370,24 +1487,13 @@ export function compileNativeStringMethodCall(
     emitFlatten();
     // start
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-      if (!argType) {
-        // void/null result — push default 0
-        fctx.body.push({ op: "i32.const", value: 0 });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
     // end
     if (expr.arguments.length > 1) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0x7fffffff });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
     } else {
       // Default end = string length
       // We need to get the receiver again — use a temp local
@@ -1406,23 +1512,13 @@ export function compileNativeStringMethodCall(
     emitFlatten();
     // start
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0 });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
     // end
     if (expr.arguments.length > 1) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0x7fffffff });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0x7fffffff });
     }
@@ -1442,14 +1538,9 @@ export function compileNativeStringMethodCall(
     } else {
       fctx.body.push({ op: "ref.null", typeIdx: strTypeIdx });
     }
-    // fromIndex arg
+    // fromIndex arg (ToInteger per spec — throws TypeError on BigInt/Symbol)
     if (expr.arguments.length > 1) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0 });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
@@ -1469,12 +1560,7 @@ export function compileNativeStringMethodCall(
       fctx.body.push({ op: "ref.null", typeIdx: strTypeIdx });
     }
     if (expr.arguments.length > 1) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0x7fffffff });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0x7fffffff });
     }
@@ -1494,10 +1580,7 @@ export function compileNativeStringMethodCall(
       fctx.body.push({ op: "ref.null", typeIdx: strTypeIdx });
     }
     if (expr.arguments.length > 1) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[1]!);
-      if (argType && argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
@@ -1517,10 +1600,7 @@ export function compileNativeStringMethodCall(
       fctx.body.push({ op: "ref.null", typeIdx: strTypeIdx });
     }
     if (expr.arguments.length > 1) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[1]!);
-      if (argType && argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
@@ -1542,10 +1622,7 @@ export function compileNativeStringMethodCall(
     }
     // endPosition arg — default to string length
     if (expr.arguments.length > 1) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[1]!);
-      if (argType && argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0x7fffffff });
     }
@@ -1569,7 +1646,14 @@ export function compileNativeStringMethodCall(
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
+      // BigInt / Symbol args → TypeError per ToNumber spec (#1445)
+      if (tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[0]!)) {
+        fctx.body.push({ op: "i32.const", value: 0 });
+        const funcIdx = ctx.nativeStrHelpers.get("__str_repeat")!;
+        fctx.body.push({ op: "call", funcIdx });
+        return nativeStringType(ctx);
+      }
+      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
       // RangeError: count must be non-negative, finite, and not too large
       if (argType && argType.kind === "f64") {
         const countLocal = allocLocal(fctx, `__repeat_count_${fctx.locals.length}`, { kind: "f64" });
@@ -1610,12 +1694,9 @@ export function compileNativeStringMethodCall(
   if (method === "padStart") {
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
-    // targetLength
+    // targetLength (ToLength per spec — throws TypeError on BigInt/Symbol)
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
-      if (argType && argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
@@ -1640,12 +1721,9 @@ export function compileNativeStringMethodCall(
   if (method === "padEnd") {
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
-    // targetLength
+    // targetLength (ToLength per spec — throws TypeError on BigInt/Symbol)
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
-      if (argType && argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }
@@ -1675,19 +1753,37 @@ export function compileNativeStringMethodCall(
     return nativeStringType(ctx);
   }
 
-  // For replace/replaceAll/split with RegExp args, skip native handlers and
-  // fall through to the host import path which properly handles RegExp objects.
-  const firstArgIsRegExp =
+  // For replace/replaceAll/split with non-string args (RegExp or custom objects
+  // implementing Symbol.replace/replaceAll/split), skip the native helpers and
+  // fall through to the host import path. The host import dispatches via JS's
+  // String.prototype.* which honours @@replace / @@split / @@match
+  // (#1443). Native helpers are only safe when the search arg is statically a
+  // string-like type — otherwise we'd silently ignore custom Symbol.* methods.
+  const firstArgIsStringLike =
     (method === "replace" || method === "replaceAll" || method === "split") &&
     expr.arguments.length > 0 &&
     (() => {
       const argType = ctx.checker.getTypeAtLocation(expr.arguments[0]!);
-      const symName = argType.getSymbol()?.getName();
-      return symName === "RegExp";
+      if ((argType.flags & ts.TypeFlags.String) !== 0) return true;
+      if ((argType.flags & ts.TypeFlags.StringLiteral) !== 0) return true;
+      if ((argType.flags & ts.TypeFlags.Object) !== 0 && argType.getSymbol()?.getName() === "String") {
+        return true;
+      }
+      // Union of string-like types
+      if ((argType.flags & ts.TypeFlags.Union) !== 0) {
+        const union = argType as ts.UnionType;
+        return union.types.every(
+          (t) =>
+            (t.flags & ts.TypeFlags.String) !== 0 ||
+            (t.flags & ts.TypeFlags.StringLiteral) !== 0 ||
+            ((t.flags & ts.TypeFlags.Object) !== 0 && t.getSymbol()?.getName() === "String"),
+        );
+      }
+      return false;
     })();
 
   // replace(search, replacement): native helper
-  if (method === "replace" && !firstArgIsRegExp) {
+  if (method === "replace" && firstArgIsStringLike) {
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
     // search arg
@@ -1715,7 +1811,7 @@ export function compileNativeStringMethodCall(
   }
 
   // replaceAll(search, replacement): native helper
-  if (method === "replaceAll" && !firstArgIsRegExp) {
+  if (method === "replaceAll" && firstArgIsStringLike) {
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
     // search arg
@@ -1743,7 +1839,7 @@ export function compileNativeStringMethodCall(
   }
 
   // split: native helper, returns native string array
-  if (method === "split" && !firstArgIsRegExp) {
+  if (method === "split" && firstArgIsStringLike) {
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
     // separator arg
@@ -1780,12 +1876,7 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "local.get", index: tmpLocal });
     fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }); // .off
     if (expr.arguments.length > 0) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-      if (!argType) {
-        fctx.body.push({ op: "i32.const", value: 0 });
-      } else if (argType.kind === "f64") {
-        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      }
+      compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
       fctx.body.push({ op: "i32.const", value: 0 });
     }

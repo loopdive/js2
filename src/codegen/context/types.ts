@@ -34,6 +34,12 @@ export interface CodegenOptions {
   testRuntime?: boolean;
   /** WASI target: emit WASI imports (fd_write, proc_exit) instead of JS host imports */
   wasi?: boolean;
+  /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
+   *  runtime. Implies `nativeStrings: true` and refuses to emit any
+   *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
+   *  `__unbox_string` JS-host string imports. Used so the compiled module is
+   *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
+  standalone?: boolean;
   /**
    * Experimental: route a narrow set of functions through the middle-end IR
    * (see `src/ir/`). Defaults to off. Leave off in production until the IR
@@ -47,6 +53,8 @@ export interface CodegenOptions {
   wasiNodeFsFuncs?: Set<string>;
   /** Allow `node:fs` JS-host imports for non-WASI targets (#1491). Default: false. */
   allowFs?: boolean;
+  /** JSX runtime import detected during preprocessing (#1540). */
+  jsxRuntime?: import("../../import-resolver.js").JsxRuntimeImport;
 }
 
 /** Info about an externally declared class. */
@@ -598,6 +606,26 @@ export interface CodegenContext {
   methodClosureGlobals: Map<string, number>;
   /** Whether targeting WASI */
   wasi: boolean;
+  /** Whether targeting standalone (no JS host, no WASI runtime — #1470).
+   *  When true, the emitter MUST NOT add `wasm:js-string` namespace imports
+   *  or JS-host string helpers (`__concat_N`, `__extern_toString`,
+   *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
+   *  `__str_extern_len`). Implies `nativeStrings === true`. */
+  standalone: boolean;
+  /**
+   * (#1373b) When true, async functions flow through the IR's CPS lowering
+   * (Phase C). When false (default), the IR selector buckets async functions
+   * into the `"async-function"` fallback reason and they take the legacy
+   * direct-codegen path. The first scaffolding slice (#1373b Slice 1)
+   * keeps this hardcoded `false`; subsequent slices (Slice 2: PENDING-path
+   * CPS continuations, Slice 3: gate-flip) wire it on incrementally once
+   * the lowering is parity-tested against the legacy path.
+   *
+   * Read by `src/ir/select.ts`'s `isAsyncIrReady(ctx)` helper; threaded
+   * through `src/ir/integration.ts` into the selector via the
+   * `IrPlanOptions.supportsAsyncIr` field.
+   */
+  supportsAsyncIr: boolean;
   /** WASI import indices */
   wasiFdWriteIdx: number;
   wasiFdReadIdx?: number;
@@ -605,6 +633,24 @@ export interface CodegenContext {
   wasiPathOpenIdx: number;
   wasiFdCloseIdx: number;
   wasiBumpPtrGlobalIdx: number;
+  /** #1482: wasi_snapshot_preview1::environ_sizes_get import index (-1 = not registered) */
+  wasiEnvironSizesGetIdx: number;
+  /** #1482: wasi_snapshot_preview1::environ_get import index (-1 = not registered) */
+  wasiEnvironGetIdx: number;
+  /** #1482: env::__wasi_env_get_str late import index for JS-polyfill fast path (-1 = not registered) */
+  wasiEnvGetStrIdx: number;
+  /** (#1483) WASI clock_time_get import func idx — -1 if not yet registered. */
+  wasiClockTimeGetIdx?: number;
+  /** (#1483) Pending flag — emit `__wasi_write_string` after lib-globals scan. */
+  wasiPendingFdWriteHelper?: boolean;
+  /** (#1483 + #1493) Pending flag — emit `__wasi_write_string_stderr` after lib-globals scan. */
+  wasiPendingConsoleStderrHelper?: boolean;
+  /** (#1483) Pending flag — emit `__wasi_write_file_sync` after lib-globals scan. */
+  wasiPendingPathOpenHelper?: boolean;
+  /** (#1483) Pending flag — emit `__wasi_date_now` / `__wasi_performance_now` after lib-globals scan. */
+  wasiClockHelpersPending?: boolean;
+  /** (#1483 + #1481) Pending flag — emit `__wasi_read_stdin_all` after lib-globals scan. */
+  wasiPendingFdReadHelper?: boolean;
   /** Set of node:fs functions used in this compilation unit (both WASI and JS-host fs paths). */
   wasiNodeFsFuncs: Set<string>;
   /** Whether `node:fs` JS-host imports are permitted (non-WASI target only, #1491). */
@@ -627,6 +673,16 @@ export interface CodegenContext {
   ensureStructPending: Set<ts.Type>;
   /** Node builtin modules registered as externref globals (#1044) */
   nodeBuiltinGlobals: Map<string, number>; // localName → funcIdx
+  /**
+   * JSX runtime import detected during preprocessing (#1540). The codegen
+   * intercepts call expressions whose callee identifier matches one of the
+   * recorded local names (`localJsx`/`localJsxs`/`localJsxDev`) and routes
+   * them to the matching `__jsx_runtime_*` host import. The `Fragment`
+   * binding is exposed as a no-arg externref-returning function under
+   * `nodeBuiltinGlobals` so identifier resolution treats it like any
+   * declared externref.
+   */
+  jsxRuntime?: import("../../import-resolver.js").JsxRuntimeImport;
 }
 
 export type { SourcePos };

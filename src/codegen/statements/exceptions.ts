@@ -10,7 +10,11 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addUnionImports } from "../index.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "../shared.js";
-import { ensureBindingLocals } from "./destructuring.js";
+import {
+  compileExternrefArrayDestructuringDecl,
+  compileExternrefObjectDestructuringDecl,
+  ensureBindingLocals,
+} from "./destructuring.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
 
 /**
@@ -64,136 +68,42 @@ function compileExternrefCatchDestructure(
   ctx: CodegenContext,
   fctx: FunctionContext,
   pattern: ts.BindingPattern,
-  exnLocalIdx: number,
+  _exnLocalIdx: number,
 ): void {
-  // Drop the externref we pushed — we'll use local.get for each property
-  fctx.body.push({ op: "drop" });
-
+  // (#1552) Catch-clause pattern destructuring is spec-equivalent to
+  // function-parameter destructuring per ECMA-262 §14.15.2 (`CatchClause :
+  // catch ( CatchParameter ) Block`), step 5 of CatchClauseEvaluation
+  // invokes BindingInitialization with `thrownValue` and `catchEnv` — the
+  // same algorithm used for function-parameter destructuring.
+  //
+  // Previously the catch path had its own hand-rolled lowering that did
+  // bare `__extern_get(value, "key")` per property / `__array_from_iter`
+  // + indexed access — none of the default-value / fn-name / null-throw /
+  // rest-pattern / nested-pattern logic in `compileExternrefObject-
+  // DestructuringDecl` / `compileExternrefArrayDestructuringDecl`.
+  //
+  // The shared helpers expect the externref value to already be on the
+  // stack (matching `let { a } = expr` codegen, where the initializer
+  // result is on the stack), which is exactly what the caller pushed in
+  // exceptions.ts before invoking us. They internally store it in a fresh
+  // temp local and run the full BindingInitialization algorithm.
   if (ts.isObjectBindingPattern(pattern)) {
-    // Ensure __extern_get is available
-    let getIdx = ensureLateImport(
-      ctx,
-      "__extern_get",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-
-    for (const element of pattern.elements) {
-      if (!ts.isBindingElement(element)) continue;
-      const propNameNode = element.propertyName ?? element.name;
-      let propNameText: string | undefined;
-      if (ts.isIdentifier(propNameNode)) propNameText = propNameNode.text;
-      else if (ts.isStringLiteral(propNameNode)) propNameText = propNameNode.text;
-      if (!propNameText) continue;
-
-      // Get the local for this binding
-      const localName = ts.isIdentifier(element.name) ? element.name.text : undefined;
-      if (!localName) continue;
-      const localIdx = fctx.localMap.get(localName);
-      if (localIdx === undefined) continue;
-
-      addStringConstantGlobal(ctx, propNameText);
-      const strGlobalIdx = ctx.stringGlobalMap.get(propNameText);
-      if (strGlobalIdx === undefined) continue;
-
-      // Refresh getIdx after potential import shifts
-      getIdx = ctx.funcMap.get("__extern_get")!;
-
-      // __extern_get(exnLocal, "propName") -> externref, store to binding local
-      fctx.body.push({ op: "local.get", index: exnLocalIdx });
-      fctx.body.push({ op: "global.get", index: strGlobalIdx });
-      fctx.body.push({ op: "call", funcIdx: getIdx });
-
-      // Coerce externref to the local's declared type if needed
-      const localType = getLocalType(fctx, localIdx);
-      if (localType && localType.kind !== "externref") {
-        coerceType(ctx, fctx, { kind: "externref" }, localType);
-      }
-      fctx.body.push({ op: "local.set", index: localIdx });
-    }
-  } else if (ts.isArrayBindingPattern(pattern)) {
-    // Array destructuring follows the iterator protocol per
-    // §13.3.3.6 IteratorBindingInitialization: GetIterator(value) is called
-    // first, and any throw from `value[Symbol.iterator]()` (or the iterator's
-    // .next()) propagates out of the destructuring. Property-access on the
-    // raw value would silently miss those throws and bind `undefined` instead
-    // (#1378 — `catch ([x]) {}` on a thrown iterable that throws from
-    // `Symbol.iterator`).
-    //
-    // Empty pattern `[]` is a no-op per spec — skip materialization entirely
-    // (matches the param-destructure short-circuit at #1158/#1159).
-    if (pattern.elements.length === 0) return;
-
-    addUnionImports(ctx);
-    let getIdx = ensureLateImport(
-      ctx,
-      "__extern_get",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    let fromIterIdx = ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    const boxIdx = ctx.funcMap.get("__box_number");
-
-    // Materialize the thrown value into an iterated array via
-    // __array_from_iter — this invokes the iterator protocol and propagates
-    // any throws from Symbol.iterator() / .next().
-    const matLocal = allocLocal(fctx, `__catch_iter_${fctx.locals.length}`, { kind: "externref" });
-    fromIterIdx = ctx.funcMap.get("__array_from_iter") ?? fromIterIdx;
-    if (fromIterIdx !== undefined) {
-      fctx.body.push({ op: "local.get", index: exnLocalIdx });
-      fctx.body.push({ op: "call", funcIdx: fromIterIdx });
-      fctx.body.push({ op: "local.set", index: matLocal });
-    } else {
-      // Fallback: use the raw exception directly (no iterator protocol).
-      fctx.body.push({ op: "local.get", index: exnLocalIdx });
-      fctx.body.push({ op: "local.set", index: matLocal });
-    }
-
-    let idx = 0;
-    for (const element of pattern.elements) {
-      if (ts.isOmittedExpression(element)) {
-        idx++;
-        continue;
-      }
-      if (!ts.isBindingElement(element)) {
-        idx++;
-        continue;
-      }
-
-      const localName = ts.isIdentifier(element.name) ? element.name.text : undefined;
-      if (!localName) {
-        idx++;
-        continue;
-      }
-      const localIdx = fctx.localMap.get(localName);
-      if (localIdx === undefined) {
-        idx++;
-        continue;
-      }
-
-      getIdx = ctx.funcMap.get("__extern_get")!;
-
-      // __extern_get(matLocal, box(index)) -> externref. The matLocal holds
-      // the iterator-materialized array, so indexed access reads spec-correct
-      // values (with no extra side effects beyond GetIterator's already-run
-      // protocol calls).
-      fctx.body.push({ op: "local.get", index: matLocal });
-      fctx.body.push({ op: "f64.const", value: idx });
-      if (boxIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: boxIdx });
-      }
-      fctx.body.push({ op: "call", funcIdx: getIdx });
-
-      const localType = getLocalType(fctx, localIdx);
-      if (localType && localType.kind !== "externref") {
-        coerceType(ctx, fctx, { kind: "externref" }, localType);
-      }
-      fctx.body.push({ op: "local.set", index: localIdx });
-      idx++;
-    }
+    compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+    return;
   }
+  if (ts.isArrayBindingPattern(pattern)) {
+    // Empty pattern `[]` short-circuits — drop the externref to keep stack
+    // clean. The shared helper also handles empty patterns but emits no-op
+    // bookkeeping; an explicit drop is simpler.
+    if (pattern.elements.length === 0) {
+      fctx.body.push({ op: "drop" });
+      return;
+    }
+    compileExternrefArrayDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+    return;
+  }
+  // Unknown pattern kind — drop the externref to keep the stack consistent.
+  fctx.body.push({ op: "drop" });
 }
 
 export function compileThrowStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ThrowStatement): void {

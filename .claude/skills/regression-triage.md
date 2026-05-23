@@ -30,10 +30,17 @@ Files: `test262-report-merged.json`, `test262-regressions.txt`, `test262-results
 
 ## Step 2: Compute the regression list
 
+The baseline JSONL is fetched on demand from `loopdive/js2wasm-baselines`
+(#1528). Make sure the local cache is populated before diffing:
+
+```bash
+node scripts/fetch-baseline-jsonl.mjs
+```
+
 ```python
 import json
 base = {}
-with open('/workspace/benchmarks/results/test262-current.jsonl') as f:
+with open('.test262-cache/test262-current.jsonl') as f:
     for line in f:
         try:
             d = json.loads(line)

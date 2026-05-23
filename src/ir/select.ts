@@ -163,6 +163,36 @@ export interface IrSelectionOptions {
    *  along with the reason it was rejected. Off by default — populating
    *  this list adds a small per-function overhead. */
   readonly trackFallbacks?: boolean;
+  /**
+   * (#1373b Slice 1) When true, async functions (no `*`) are eligible to
+   * flow through the IR's CPS lowering (Phase C). When false (default),
+   * the selector buckets them into the `"async-function"` fallback reason
+   * and the legacy direct-codegen path takes over.
+   *
+   * Even when true, individual async functions are still rejected by the
+   * selector if their body uses features the Phase C lowering can't handle
+   * yet (try/catch around await — see `isAsyncIrReady`).
+   *
+   * Threaded from `CodegenContext.supportsAsyncIr` via `integration.ts`.
+   */
+  readonly supportsAsyncIr?: boolean;
+}
+
+/**
+ * (#1373b Slice 1) Centralised gate for whether the IR path can claim a
+ * given async function. The first scaffolding slice hardcodes the answer
+ * to `false` regardless of context — only later slices flip this on once
+ * the CPS continuation synthesis (Slice 2) is parity-tested.
+ *
+ * Body-shape checks (try/catch wrapping await, etc.) live here too so the
+ * selector and lowerer share a single source of truth on what's accepted.
+ */
+export function isAsyncIrReady(options: IrSelectionOptions | undefined, _fn: ts.FunctionLikeDeclaration): boolean {
+  if (!options?.supportsAsyncIr) return false;
+  // TODO(#1373b Slice 2): body-shape check — reject try/catch wrapping
+  // an `await` until catch-handler continuation routing lands.
+  // For now the gate is closed regardless of body shape.
+  return false;
 }
 
 const EMPTY: IrSelection = { funcs: new Set<string>() };

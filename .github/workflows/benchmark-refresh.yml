@@ -17,6 +17,13 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Wasm experimental flags propagated to all child Node processes:
+  # - stringref: stringview_wtf16 heap type (wasm:js-string ops)
+  # - custom-descriptors: 'exact' heap type
+  # Needed by generate-size-benchmarks + generate-playground-benchmark-sidebar
+  # which instantiate emitted Wasm modules. Without these, Node 25 rejects
+  # the modules at compile-time.
+  NODE_OPTIONS: "--experimental-wasm-stringref --experimental-wasm-custom-descriptors"
 
 concurrency:
   group: benchmark-refresh-${{ github.event.pull_request.number || github.ref }}
@@ -38,7 +45,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 25
 
       - name: Setup pnpm via Corepack
         run: |
@@ -96,26 +103,43 @@ jobs:
             echo "regressions=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Print performance regressions (informational on PR/push, gating on workflow_dispatch)
+      - name: Print performance regressions (informational on push, gating on PR + workflow_dispatch)
         if: steps.benchmark_diff.outputs.regressions == 'true'
         run: |
           echo "Landing-page benchmark regressions detected relative to benchmarks/results/playground-benchmark-sidebar.json:"
           cat benchmark-reports/performance-regressions.txt
           echo
-          echo "Note (#1214): on pull_request and push events, this step does NOT fail the workflow."
-          echo "  The committed baseline is generated locally, but CI runs on shared GitHub Actions"
-          echo "  runners (slower, noisier scheduling). Both wasm AND js measurements are affected,"
-          echo "  but wasm is more sensitive to cache/scheduling variance — so the wasm:js ratio"
-          echo "  drifts in a way that is NOT a real compiler regression."
-          echo "  To enforce regression gating manually: trigger via workflow_dispatch with"
-          echo "  allow_performance_regressions=false."
-          echo "  Architectural follow-up: regenerate baseline on push-to-main and commit it back"
-          echo "  (see #1214 option A) — this would make the gate meaningful again on PRs."
+          echo "Gating policy (#1525, docs/ci-policy.md §6):"
+          echo "  - pull_request:     HARD GATE — this workflow fails on regression."
+          echo "                      The committed baseline is now CI-runner-derived (#1216),"
+          echo "                      so wasm:js-ratio drift is small enough to gate against."
+          echo "  - push (main):      informational only — the auto-commit step below skips on"
+          echo "                      regression, which is the right outcome (don't promote"
+          echo "                      regressed numbers)."
+          echo "  - workflow_dispatch: enforced unless allow_performance_regressions=true."
+          echo
+          echo "Override (PR only): set BENCHMARK_STRICT=0 in the workflow env to demote back to"
+          echo "  informational. Only do this with explicit reviewer sign-off."
 
-      - name: Fail on performance regressions (workflow_dispatch only)
-        if: steps.benchmark_diff.outputs.regressions == 'true' && github.event_name == 'workflow_dispatch' && !inputs.allow_performance_regressions
+      - name: Fail on performance regressions (PR + workflow_dispatch)
+        # #1525 — PR path is now a hard gate (#1216 made the baseline
+        # CI-runner-derived, so wasm:js drift is small enough to enforce).
+        # workflow_dispatch: existing behaviour (enforced unless
+        # allow_performance_regressions=true).
+        # push to main: this step is skipped; the auto-commit step further
+        # below already refuses to promote regressed numbers.
+        if: |
+          steps.benchmark_diff.outputs.regressions == 'true' && (
+            (github.event_name == 'pull_request' && env.BENCHMARK_STRICT != '0') ||
+            (github.event_name == 'workflow_dispatch' && !inputs.allow_performance_regressions)
+          )
+        env:
+          # Escape hatch: set BENCHMARK_STRICT=0 in workflow env to demote the
+          # PR-event gate back to informational. Default (unset) = strict.
+          BENCHMARK_STRICT: ${{ env.BENCHMARK_STRICT || '1' }}
         run: |
-          echo "Failing workflow due to performance regressions (workflow_dispatch enforcement)."
+          echo "Failing workflow due to landing-page benchmark regressions."
+          echo "Event: ${{ github.event_name }}; strict=${BENCHMARK_STRICT}"
           exit 1
 
       - name: Upload benchmark artifacts

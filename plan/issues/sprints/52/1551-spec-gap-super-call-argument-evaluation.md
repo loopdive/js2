@@ -2,7 +2,7 @@
 id: 1551
 sprint: 52
 title: "spec gap: SuperCall — argument-list evaluation order, spread getter side-effects, uninitialized-this PutValue"
-status: ready
+status: in-progress
 created: 2026-05-20
 priority: medium
 feasibility: medium

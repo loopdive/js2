@@ -22,6 +22,13 @@ export interface WasmModule {
   externClasses: ExternClassMeta[];
   /** Node builtin module names detected from imports (#1044) */
   nodeBuiltinModules: Set<string>;
+  /**
+   * JSX runtime import specifier detected during import preprocessing (#1540).
+   * `"react/jsx-runtime"` by default; `preact/jsx-runtime`, etc. for other
+   * configured `jsxImportSource` values. Recorded so the import manifest
+   * classifier can attach it to `jsx_runtime` ImportIntent entries.
+   */
+  jsxImportSource?: string;
   /** Map from import func name → string literal value (e.g. "__str_0" → "Hello") */
   stringLiteralValues: Map<string, string>;
   /** Set of function names that are async (for .d.ts generation) */

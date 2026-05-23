@@ -167,3 +167,58 @@ whose message starts with `"js2wasm: fetch is not available"`.
 - The Node-builtin path `node_builtin` (#1044) is **not** the right model
   here — `fetch` is a global, not a module. Keep the new `fetch` intent
   separate from `node_builtin`.
+
+## Implementation notes (resolved)
+
+Implemented a minimal MVP wiring (no new `ImportIntent` variant required).
+The compiler already classifies `fetch(url)` identifier calls as a
+`{ type: "builtin", name: "fetch" }` host import (via `classifyImport` in
+`src/compiler/import-manifest.ts`). Previously this fell through to the
+`() => {}` default handler at the bottom of `resolveImport` — silent no-op.
+
+The fix adds a `if (name === "fetch")` clause inside `case "builtin":`
+(`src/runtime.ts` near L4483) that:
+
+1. Looks up `globalThis.fetch` on demand (browser, Node ≥18, Bun, Deno,
+   and vitest-mocked fetch all work).
+2. Throws a descriptive `Error("js2wasm: fetch is not available …")` when
+   no host fetch exists (WASI / pure-standalone fallback per the dual-mode
+   architecture principle).
+3. Forwards `(url, init)` to the host fetch, unwrapping WasmGC struct
+   `init` bags through `_wasmToPlain` so the host sees a plain JS object.
+
+Response method dispatch (`.status`, `.ok`, `.json()`, `.text()`) already
+works through the existing `extern_class` / `extern_get` paths when
+callers use the ambient lib.dom `Response` type — duck-typed at runtime so
+any Response-shaped object (real `Response`, vitest mock, sync stub)
+round-trips correctly.
+
+### Known limitation
+
+Full async unwrap (`await fetch(url)` returning the real `Response`, not
+the Promise wrapping it) waits on #1326c, the microtask-queue and proper
+`__await` overhaul. Today `__await` is the identity function; tests use
+synchronous fetch stubs to exercise the bridge end-to-end. Asynchronous
+host fetch still works when the JS caller awaits the exported async
+function — the host Promise propagates through the export return.
+
+### Local declaration vs ambient Response
+
+Declaring `interface Response { … }` in the compiled source makes the
+compiler synthesise a WasmGC struct type for `Response` and emit
+`struct.get` instructions, which won't match a JS Response handle at
+runtime. Callers should rely on the ambient lib.dom `Response` type
+(or `any`) so codegen routes through `extern_class` / `extern_get`.
+
+## Test Results
+
+`tests/issue-1500.test.ts` — 7 / 7 pass:
+
+- `.status` and `.ok` reads round-trip
+- `.json()` body parsing + `obj.name` access
+- `.text()` body
+- standalone-mode throw when `globalThis.fetch` is deleted
+- URL string forwarding to the host fetch (call-args correctness)
+
+`tests/issue-1326.test.ts` (11/11) and `tests/issue-1043.test.ts` (18/18)
+still pass on the branch.

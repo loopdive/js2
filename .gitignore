@@ -26,6 +26,11 @@ benchmarks/results/*.json
 !benchmarks/results/loadtime-benchmarks.json
 benchmarks/results/*.md
 benchmarks/results/*.txt
+# #1528 — the ~15 MB test262 baseline JSONL lives in loopdive/js2wasm-baselines.
+# Workflows still produce it locally as a build input for editions/feature-stats,
+# but it must never be re-committed to this repo.
+benchmarks/results/test262-current.jsonl
+benchmarks/results/test262-results.jsonl
 .pnpm-store/
 .claude/settings.local.json
 .claude/worktrees/

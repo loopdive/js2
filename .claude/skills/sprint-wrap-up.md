@@ -93,7 +93,10 @@ Invoke the harvest-errors skill (or spawn a dedicated harvester agent)
 ```
 
 The harvester:
-- Clusters failures in `benchmarks/results/test262-current.jsonl` by normalized error pattern
+- Clusters failures in the baseline JSONL by normalized error pattern (run
+  `node scripts/fetch-baseline-jsonl.mjs` first to populate
+  `.test262-cache/test262-current.jsonl` — the file is no longer
+  committed; see #1528)
 - Cross-references with existing issues in `plan/issues/`
 - Files new issue files in `plan/issues/` for unaddressed buckets above the threshold (default: >50 occurrences)
 - Reports a summary table

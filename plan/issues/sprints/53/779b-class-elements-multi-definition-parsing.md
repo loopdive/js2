@@ -1,7 +1,7 @@
 ---
 id: 779b
 title: "class/elements same-line / semicolon multi-definition parsing"
-status: needs-spec
+status: done
 sprint: 53
 created: 2026-05-21
 updated: 2026-05-21

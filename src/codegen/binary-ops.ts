@@ -23,7 +23,7 @@ import {
   compileLogicalAssignment,
   isCompoundAssignment,
 } from "./expressions/assignment.js";
-import { emitThrowString, resolveDeclaringClassForPrivateName } from "./expressions/helpers.js";
+import { emitThrowTypeError, resolveDeclaringClassForPrivateName } from "./expressions/helpers.js";
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
 import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from "./expressions/logical-ops.js";
 import { tryStaticToNumber } from "./expressions/misc.js";
@@ -599,14 +599,14 @@ export function compileBinaryExpression(
           flushLateImportShifts(ctx, fctx);
           const rightResult = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
           if (rightResult && rightResult.kind !== "externref") {
-            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+            fctx.body.push({ op: "extern.convert_any" });
           }
           if (rightResult === null) {
             fctx.body.push({ op: "ref.null.extern" });
           }
           const leftResult = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
           if (leftResult && leftResult.kind !== "externref") {
-            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+            fctx.body.push({ op: "extern.convert_any" });
           }
           if (leftResult === null) {
             fctx.body.push({ op: "ref.null.extern" });
@@ -682,14 +682,14 @@ export function compileBinaryExpression(
           // Push obj (RHS) then key (LHS) — runtime signature is (obj, key).
           const rightResult = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
           if (rightResult && rightResult.kind !== "externref") {
-            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+            fctx.body.push({ op: "extern.convert_any" });
           }
           if (rightResult === null) {
             fctx.body.push({ op: "ref.null.extern" });
           }
           const leftResult = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
           if (leftResult && leftResult.kind !== "externref") {
-            fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+            fctx.body.push({ op: "extern.convert_any" });
           }
           if (leftResult === null) {
             fctx.body.push({ op: "ref.null.extern" });
@@ -977,13 +977,21 @@ export function compileBinaryExpression(
         return { kind: "i32" };
       }
 
-      // Mixed BigInt + Number arithmetic (e.g. 1n + 1): always a TypeError in JS.
+      // Mixed BigInt + Number arithmetic (e.g. 1n + 1): per spec §6.1.6.2.1
+      // (and §13.15 ApplyStringOrNumericBinaryOperator), throw a real
+      // TypeError instance (so `assert.throws(TypeError, …)` catches it).
+      // Special case: `+` with a string operand is *concatenation*, not
+      // numeric add — route to the string path which calls ToString on the
+      // BigInt side (`1n + "" === "1"` per §13.15.4).
+      if (op === ts.SyntaxKind.PlusToken && (isStringType(leftTsType) || isStringType(rightTsType))) {
+        return compileStringBinaryOp(ctx, fctx, expr, op);
+      }
       // Compile both sides for side effects, drop their values, then throw.
       const lt = compileExpression(ctx, fctx, expr.left);
       if (lt) fctx.body.push({ op: "drop" });
       const rt = compileExpression(ctx, fctx, expr.right);
       if (rt) fctx.body.push({ op: "drop" });
-      emitThrowString(ctx, fctx, "Cannot mix BigInt and other types, use explicit conversions");
+      emitThrowTypeError(ctx, fctx, "Cannot mix BigInt and other types, use explicit conversions");
       return { kind: "i32" };
     }
 
@@ -1296,28 +1304,28 @@ export function compileBinaryExpression(
           // Stack: [leftAnyref]. Save and probe.
           const tmpLeftAny = allocTempLocal(fctx, { kind: "anyref" });
           fctx.body.push({ op: "local.tee", index: tmpLeftAny });
-          fctx.body.push({ op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr);
+          fctx.body.push({ op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR });
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
             then: [
               { op: "local.get", index: tmpRightAny } as Instr,
-              { op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+              { op: "ref.test", typeIdx: EQ_HEAP_TYPE_BR },
               {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "i32" } },
                 then: [
                   { op: "local.get", index: tmpLeftAny } as Instr,
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR },
                   { op: "local.get", index: tmpRightAny } as Instr,
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR } as unknown as Instr,
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE_BR },
                   { op: "ref.eq" } as Instr,
                 ],
                 else: [{ op: "i32.const", value: 0 } as Instr],
-              } as unknown as Instr,
+              },
             ],
             else: [{ op: "i32.const", value: 0 } as Instr],
-          } as unknown as Instr);
+          });
           releaseTempLocal(fctx, tmpLeftAny);
           releaseTempLocal(fctx, tmpRightAny);
           if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });

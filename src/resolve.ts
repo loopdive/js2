@@ -144,15 +144,22 @@ export class ModuleResolver {
       // Normalize the path
       resolved = path.resolve(resolved);
 
-      // TypeScript's standard resolver prefers `.d.ts` declarations from
-      // `@types/<pkg>` over the real implementation at `<pkg>/...`. For
-      // js2wasm's multi-file compile path we need the implementation body,
-      // not just the type signatures — otherwise the import site compiles
-      // to a stub that never calls the real function. When we detect an
-      // `@types` resolution, try to locate the matching `.js` / `.mjs` /
-      // `.cjs` / `.ts` body in a sibling `node_modules/<pkg>/<subpath>` and
-      // return that instead. See issue #1060.
-      if (pkgName && /[/\\]@types[/\\]/.test(resolved)) {
+      // TypeScript's standard resolver prefers `.d.ts` declarations over
+      // implementation bodies in two cases relevant to js2wasm:
+      //   1. `@types/<pkg>` declaration packages distinct from the impl
+      //      package (see issue #1060).
+      //   2. Self-typed packages with a `types` condition in `exports`
+      //      (e.g. ESLint's `{"types": "./lib/types/index.d.ts",
+      //      "default": "./lib/api.js"}`) — see issue #1559.
+      // For js2wasm's multi-file compile path we need the implementation
+      // body, not just the type signatures — otherwise the import site
+      // compiles to a stub that never calls the real function. When we
+      // detect a `.d.ts` resolution for a bare-package specifier, try to
+      // locate the matching `.js` / `.mjs` / `.cjs` / `.ts` body in a
+      // sibling `node_modules/<pkg>/<subpath>` and return that instead.
+      // If no implementation body is found (declaration-only package),
+      // the `.d.ts` is kept and codegen falls back to extern stubs.
+      if (pkgName && (/[/\\]@types[/\\]/.test(resolved) || resolved.endsWith(".d.ts"))) {
         const implPath = this.findImplementationBody(pkgName, specifier, containingFile);
         if (implPath) {
           resolved = implPath;

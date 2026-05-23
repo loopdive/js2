@@ -38,6 +38,10 @@ function findTest262Root(base: string): string {
 }
 
 const TEST262_ROOT = findTest262Root(ROOT);
+// #1528 — the JSONL is no longer committed to the main repo. Prefer the
+// on-demand fetched cache, then fall back to the legacy in-repo paths
+// (which workflows still populate locally as build inputs).
+const BASELINE_CACHE_JSONL = join(ROOT, ".test262-cache", "test262-current.jsonl");
 const CURRENT_RESULTS_JSONL = join(ROOT, "benchmarks", "results", "test262-current.jsonl");
 const RESULTS_JSONL = join(ROOT, "benchmarks", "results", "test262-results.jsonl");
 const OUTPUT_PATH = join(ROOT, "public", "benchmarks", "results", "test262-editions.json");
@@ -507,7 +511,12 @@ async function main() {
   // Parse CLI args
   const args = process.argv.slice(2);
   const resultsPath =
-    getArg(args, "--results") ?? (existsSync(CURRENT_RESULTS_JSONL) ? CURRENT_RESULTS_JSONL : RESULTS_JSONL);
+    getArg(args, "--results") ??
+    (existsSync(BASELINE_CACHE_JSONL)
+      ? BASELINE_CACHE_JSONL
+      : existsSync(CURRENT_RESULTS_JSONL)
+        ? CURRENT_RESULTS_JSONL
+        : RESULTS_JSONL);
   const outputPath = getArg(args, "--output") ?? OUTPUT_PATH;
   const test262Root = getArg(args, "--test262") ?? TEST262_ROOT;
 

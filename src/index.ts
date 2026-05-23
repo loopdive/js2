@@ -31,7 +31,20 @@ export type ImportIntent =
   | { type: "dynamic_import" }
   | { type: "proxy_create" }
   | { type: "node_builtin"; moduleName: string }
-  | { type: "node_builtin_fn"; moduleName: string; name: string };
+  | { type: "node_builtin_fn"; moduleName: string; name: string }
+  | { type: "node_dirname" }
+  | { type: "node_filename" }
+  | { type: "node_import_meta_url" }
+  | {
+      // (#1540) JSX runtime binding — `_jsx`/`_jsxs`/`_Fragment`/`_jsxDEV`
+      // emitted by TypeScript when `jsx: react-jsx` is set. The host binding
+      // is either a user-supplied runtime (`deps.jsxRuntime`) or a built-in
+      // React-shaped fallback that constructs `{ $$typeof, type, props, key,
+      // ref }` objects suitable for `React.isValidElement` consumers.
+      type: "jsx_runtime";
+      method: "jsx" | "jsxs" | "Fragment" | "jsxDEV";
+      specifier: string;
+    };
 
 export interface ImportDescriptor {
   module: "env" | "wasm:js-string" | "string_constants";
@@ -95,8 +108,12 @@ export interface CompileOptions {
   sourceMap?: boolean;
   /** Source map URL to embed in the wasm binary (default: "module.wasm.map") */
   sourceMapUrl?: string;
-  /** Compilation target: "gc" (WasmGC, default), "linear" (linear memory), or "wasi" (WASI-compatible GC) */
-  target?: "gc" | "linear" | "wasi";
+  /** Compilation target: "gc" (WasmGC, default), "linear" (linear memory),
+   *  "wasi" (WASI-compatible GC), or "standalone" (pure WasmGC, no JS host
+   *  and no WASI runtime — #1470). `target: "standalone"` implies
+   *  `nativeStrings: true` and refuses to emit any `wasm:js-string` or
+   *  `env` JS-host string imports. */
+  target?: "gc" | "linear" | "wasi" | "standalone";
   /** Enable fast mode — i32 default numbers, performance optimizations */
   fast?: boolean;
   /** Use WasmGC-native strings (array i16) instead of wasm:js-string imports.

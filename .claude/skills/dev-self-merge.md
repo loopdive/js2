@@ -5,18 +5,49 @@ description: Algorithmic gate for self-merging a PR. Reads CI JSON, applies 4 ha
 
 # /dev-self-merge \<N\>
 
-## Waiting for CI — how to poll
+## Waiting for CI — synchronous, in-context
 
-The CI feed commits `pr-<N>.json` to **origin/main** (not your branch). Your
-worktree never sees it until you fetch. While waiting for CI, poll with:
+CI wall time is now ~2 min (115-shard parallel, sort-by-duration scheduling,
+parallel gate+shards — see PRs #503, #505, #506). The dev agent **blocks
+in-context** waiting for CI rather than terminating and handing off. Idle
+Sonnet polling is nearly free, and on-the-spot recovery from drift or CI
+failure with full PR context beats the complexity of fire-and-forget.
+
+```bash
+# Watch the run live (preferred — exits when the run finishes):
+run_id=$(gh pr view <N> --json statusCheckRollup \
+  --jq '[.statusCheckRollup[] | select(.detailsUrl) | .detailsUrl][0]' \
+  | grep -oE 'runs/[0-9]+' | cut -d/ -f2)
+gh run watch "$run_id" --exit-status
+
+# Or poll every 30s with a timeout:
+deadline=$(( $(date +%s) + 1200 ))   # 20 min hard cap
+while :; do
+  pending=$(gh pr checks <N> --json state \
+    --jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS")] | length')
+  [ "$pending" = "0" ] && break
+  [ "$(date +%s)" -gt "$deadline" ] && { echo "CI > 20 min — escalate"; exit 2; }
+  sleep 30
+done
+```
+
+After the run exits:
+
+| Outcome | Action |
+|---|---|
+| **All required checks green** | Proceed to Step 0 (or directly to Step 1 if the CI feed JSON is present) |
+| **Drift** (mergeable_state becomes `BEHIND` while waiting) | `git fetch origin && git merge origin/main` in the worktree, resolve conflicts with full PR context, `git push`, loop back to wait-for-CI |
+| **CI failure** (any required check `FAILURE`) | Diagnose with full PR context — the agent KNOWS what it changed. Fix locally, `git push`, loop back to wait-for-CI |
+| **Long wait** (>10 min) | Emit a `TaskUpdate` noting the unusual wait but keep waiting |
+| **Very long wait** (>20 min) | Escalate to tech lead |
+
+The CI feed `pr-<N>.json` still drives the merge gate below — fetch it once
+CI completes:
 
 ```bash
 git fetch origin
 git show origin/main:.claude/ci-status/pr-<N>.json 2>/dev/null
 ```
-
-Run this every few minutes. When output appears and the `head_sha` matches
-`git rev-parse HEAD`, CI is done — proceed to Step 0 below.
 
 Do NOT `git merge origin/main` just to check — `git show` reads the remote ref
 without touching your working tree.
@@ -174,12 +205,17 @@ If `regressions` is `null` in the feed (older CI format without per-test trackin
 
 ## Step 4 — bucket regressions (only if regressions > 0)
 
-Download the merged report artifact:
+Download the merged report artifact and ensure the baseline JSONL is cached
+locally (#1528 — the baseline is no longer committed to the repo; it's
+fetched on demand from `loopdive/js2wasm-baselines`):
 
 ```bash
 run_id=$(jq -r '.run_url' .claude/ci-status/pr-<N>.json | grep -oE 'runs/[0-9]+' | cut -d/ -f2)
 mkdir -p output/sm-<N>
 gh run download "$run_id" -n test262-merged-report -D output/sm-<N>
+
+# Fetch the baseline JSONL to .test262-cache/ if not already present.
+node scripts/fetch-baseline-jsonl.mjs
 ```
 
 Bucket by path prefix:
@@ -190,7 +226,7 @@ import json
 from collections import Counter
 
 base = {}
-with open('benchmarks/results/test262-current.jsonl') as f:
+with open('.test262-cache/test262-current.jsonl') as f:
     for line in f:
         try: d = json.loads(line); base[d['file']] = d['status']
         except: pass

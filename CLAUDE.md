@@ -85,21 +85,28 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 
 | File | Lives in | Authoritative for | Refreshed by | Validated by |
 |------|----------|-------------------|--------------|--------------|
-| `benchmarks/results/test262-current.jsonl` | main repo (committed, ~15MB) | `dev-self-merge` Step 4 bucket-by-path regression analysis | `refresh-committed-baseline.yml` (after every `Test262 Sharded` push to main) | `test262-baseline-validate.yml` spot-checks 50 random `pass` entries on every PR (#1218); fails the PR if any sampled entry no longer passes on main HEAD |
 | `benchmarks/results/test262-current.json` | main repo (committed, ~kB) | landing-page summary, pass/total badges | `test262-sharded.yml` `promote-baseline` job (every push to main) | (none) |
-| `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo | PR regression-gate baseline (fetched fresh per CI run) | `test262-sharded.yml` `promote-baseline` job (every push to main) | (none) |
+| `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo | PR regression-gate baseline (fetched fresh per CI run); `dev-self-merge` Step 4 bucket-by-path regression analysis (#1528) | `test262-sharded.yml` `promote-baseline` job (every push to main) | `test262-baseline-validate.yml` spot-checks 50 random `pass` entries on every PR (#1218); fails the PR if any sampled entry no longer passes on main HEAD |
 | `benchmarks/results/playground-benchmark-sidebar.json` | main repo (committed, ~1KB) | landing-page sidebar wasm/js perf chart; `benchmark-refresh.yml` regression diff baseline | `benchmark-refresh.yml` auto-commit step on every push to main (#1216) | (none) |
 
-The committed JSONL must be kept in sync with the JSON; otherwise the dev-self-merge bucket analysis reads stale "pass" entries and silently miscounts regressions. `refresh-committed-baseline.yml` is the dedicated workflow for that sync — it downloads the merged JSONL artifact from the most-recent successful `Test262 Sharded` run on main and commits it back with `[skip ci]`.
+**Baseline JSONL is no longer committed to the main repo (#1528).** It lives only in `loopdive/js2wasm-baselines` and is fetched on demand by `scripts/fetch-baseline-jsonl.mjs` to `.test262-cache/test262-current.jsonl` (gitignored). Consumers (validator, `dev-self-merge` bucket analysis, regression triage, sprint wrap-up harvest) either call the helper directly or accept the cache path via fallback. This removes the ~15 MB blob from every clone and retired the dedicated `refresh-committed-baseline.yml` workflow.
 
-To validate the committed JSONL on demand, run `pnpm run test:262:validate-baseline` (uses a deterministic seed; pass `PR_NUMBER=N` to reproduce a specific CI run, or `SAMPLE_SIZE=10 SEED=12345` for a quicker check). Set `SAMPLE_SIZE=50` to match CI exactly. The validator fails fast on the first 5 most-affected entries with a pointer to `refresh-committed-baseline.yml`.
+To validate the baseline on demand, run `pnpm run test:262:validate-baseline` — the validator calls the fetch helper itself, then spot-checks 50 random `pass` entries against current HEAD (uses a deterministic seed; pass `PR_NUMBER=N` to reproduce a specific CI run, or `SAMPLE_SIZE=10 SEED=12345` for a quicker check). Set `SAMPLE_SIZE=50` to match CI exactly. The validator fails fast on the first 5 most-affected entries with a pointer to the fetch helper for forcing a refresh.
 
-## IR Fallback Budget (#1376)
+## IR Fallback Budget (#1376) — being phased out (#1530)
 
 The IR retirement gate `pnpm run check:ir-fallbacks` walks every `.ts` file
 under `playground/examples/` with `trackFallbacks: true` and aggregates
 rejection reasons against `scripts/ir-fallback-baseline.json`. CI fails when
 any **unintended** bucket grows.
+
+**Direction**: this budget is a transitional safety net, not a permanent
+ceiling. #1530 prioritises ratcheting the unintended buckets to zero so the
+IR path becomes the only path for the affected node kinds. Once a bucket
+hits zero, the rejection reason gets added to `STRICT_IR_REASONS` in
+`src/codegen/index.ts`, which promotes any future regression of that
+reason from a silent legacy fallback to a hard compile error. Per-bucket
+ownership + target dates live in `plan/log/ir-adoption.md`.
 
 | Reason                       | Category   | Reduces with                         |
 |------------------------------|------------|--------------------------------------|
@@ -122,6 +129,13 @@ Refresh the baseline on PRs that intentionally retire a bypass:
 pnpm run check:ir-fallbacks -- --update
 git add scripts/ir-fallback-baseline.json
 ```
+
+**Ratchet** (#1530): `pnpm run check:ir-fallbacks -- --update-on-decrease`
+auto-writes the new (lower) counts to `scripts/ir-fallback-baseline.json`
+when a PR shrinks any unintended bucket. Growth still fails. The
+post-merge CI job is the intended caller of this mode so improvements
+bank automatically; use `--verbose` on either mode to print the per-file
+rejection breakdown.
 
 ## CLI Flags
 - `--target wasi` — emit WASI imports (fd_write, proc_exit) instead of JS host
@@ -271,6 +285,14 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 
 ### Merge protocol (PR + CI, devs self-merge)
 
+**Authoritative ruleset**: see [`docs/ci-policy.md`](docs/ci-policy.md) for
+the required-checks list, reviewer rules, force-push policy, linear-history
+mode, and the admin script (`scripts/enable-branch-protection.sh`) that
+applies them. Required checks today: `cheap gate (main-ancestor + lint)`
+(test262-sharded.yml), `merge shard reports` (test262-sharded.yml),
+`quality` (ci.yml). The dev-self-merge skill is a UX layer on top —
+GitHub branch protection is the hard block.
+
 **Devs do NOT run local test262.** Branch validation happens in GitHub Actions:
 
 1. **Dev merges `origin/main` INTO their branch** — `git merge origin/main` (not rebase), BEFORE opening a PR
@@ -278,10 +300,13 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
    - Compiler source conflicts (`src/**/*.ts`) → create a priority `[CONFLICT]` TaskList item; assign to `senior-developer` (Opus); do NOT resolve inline
 2. **Dev runs scoped local checks** — issue-targeted compile/run checks for confidence
 3. **Dev pushes the branch to origin and opens a PR against `main`**
-4. **Dev waits for CI** — monitors `.claude/ci-status/pr-<N>.json` until it appears with a SHA matching HEAD (idle wait, no token burn)
-5. **Dev self-merges** — if `net_per_test > 0`, SHA matches, ratio <10%, no bucket >50: `gh pr merge <N> --merge --auto` (enqueues; queue does the final verification)
-6. **If regressions**: dev fixes on branch, pushes again, loops back to step 4
-7. **Escalate to tech lead** only when: regressions >10, single bucket >50, or judgment call needed
+4. **Dev blocks on CI** — polls `gh pr checks <N>` every 30s for ~2 min wall time, in-context (Sonnet idle is nearly free). Use `gh run watch <run-id>` or a `while ! done; do sleep 30; done` loop with a max timeout (~10 min before noting unusual wait, ~20 min before escalating).
+5. **On CI completion**:
+   - **All required checks green** → run `/dev-self-merge`; if MERGE, `gh pr merge <N> --merge --auto`, then proceed to step 8
+   - **Drift detected** (mergeable_state becomes "behind") → `git merge origin/main` in the worktree, resolve conflicts with full PR context, push again, loop back to step 4
+   - **CI failure** (any required check failed) → diagnose with full PR context (the agent KNOWS what it changed), fix locally, push again, loop back to step 4
+6. **If regressions per `/dev-self-merge`**: dev fixes on branch, pushes again, loops back to step 4
+7. **Escalate to tech lead** only when: regressions >10, single bucket >50, or judgment call needed. **Drift and ordinary CI failures are NOT escalations — dev handles them with full context.**
 8. **After merge**: dev marks task `completed`, claims next task
 9. **Never use `git merge` on main directly.** All merges go through PRs + CI.
 10. **Never rebase.** Merge preserves history and is safely reversible.

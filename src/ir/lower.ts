@@ -300,7 +300,30 @@ export interface IrLowerResolver {
    * through the same single tag.
    */
   ensureExnTag?(): number;
+  /**
+   * #1373b Phase C scaffolding — resolve (and lazily register) the
+   * standalone `$Promise` WasmGC struct type. The struct's layout is
+   * `{ state: i32, value: externref, callbacks: externref }` (see
+   * `src/codegen/async-scheduler.ts` for the canonical registration).
+   *
+   * Returns the struct's typeIdx. Used by IR's `async.return`,
+   * `async.throw`, and `await` lowering to construct or inspect
+   * Promise values without going through the JS-host `Promise.resolve`
+   * / `Promise.reject` imports.
+   *
+   * Optional — Phase-1 resolvers (pre-#1373b) can omit it; lowering
+   * falls back to a throw stub when missing.
+   */
+  resolvePromiseType?(): number;
 }
+
+/**
+ * #1373b — Sentinel values for `$Promise.state`. Mirrors the constants
+ * exported from `src/codegen/async-scheduler.ts`. Duplicated here as
+ * locals to avoid a cross-package import from `ir/` into `codegen/`.
+ */
+const PROMISE_STATE_FULFILLED = 1;
+const PROMISE_STATE_REJECTED = 2;
 
 export interface IrLowerResult {
   readonly func: WasmFunction;
@@ -568,6 +591,11 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
   let jsBitwiseRhsIdxF64: number | null = null;
   let jsBitwiseRhsIdxI32: number | null = null;
   let jsBitwiseTmpIdx: number | null = null;
+  // #1373b Slice 1 — scratch local for `await` lowering. Holds the
+  // ref-cast `$Promise` value across the state-branch dispatch. Allocated
+  // lazily on the first await in the function; reused across subsequent
+  // awaits in the same function body.
+  let awaitScratchPromiseIdx: number | null = null;
   const ensureJsBitwiseScratch = (rhsIsI32: boolean): { rhs: number; tmp: number } => {
     if (jsBitwiseTmpIdx === null) {
       jsBitwiseTmpIdx = func.params.length + locals.length;
@@ -723,12 +751,12 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
           // domain. No ToInt32 needed; emit native i32.* directly.
           emitValue(instr.lhs, out);
           emitValue(instr.rhs, out);
-          out.push({ op: jsBitwiseToI32(instr.op) } as unknown as Instr);
+          out.push({ op: jsBitwiseToI32(instr.op) });
           if (!resultIsI32) {
             // Convert i32 → f64 to honour the legacy js.bit* result-type
             // contract. `>>>` is unsigned, others signed.
             if (instr.op === "js.shr_u") {
-              out.push({ op: "f64.convert_i32_u" } as unknown as Instr);
+              out.push({ op: "f64.convert_i32_u" });
             } else {
               out.push({ op: "f64.convert_i32_s" });
             }
@@ -769,25 +797,25 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
           // Stack: [lhs_i32, rhs]
           if (!rhsIsI32) emitJsToInt32(out, tmpSlot);
           // Stack: [lhs_i32, rhs_i32]
-          out.push({ op: jsBitwiseToI32(instr.op) } as unknown as Instr);
+          out.push({ op: jsBitwiseToI32(instr.op) });
           // `>>>` returns a Uint32; everything else is Int32. Convert
           // back to f64 with the matching signedness — UNLESS the IR
           // result type was already narrowed to i32 by Stage 3.
           if (!resultIsI32) {
             if (instr.op === "js.shr_u") {
-              out.push({ op: "f64.convert_i32_u" } as unknown as Instr);
+              out.push({ op: "f64.convert_i32_u" });
             } else {
               out.push({ op: "f64.convert_i32_s" });
             }
           }
           return;
         }
-        out.push({ op: instr.op } as unknown as Instr);
+        out.push({ op: instr.op });
         return;
       }
       case "unary":
         emitValue(instr.rand, out);
-        out.push({ op: instr.op } as unknown as Instr);
+        out.push({ op: instr.op });
         return;
       case "select":
         // Wasm `select` pops [val1, val2, cond] and pushes val1 if cond != 0
@@ -1006,7 +1034,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         }
         const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
         // ref.func $lifted, push captures, struct.new <subtype>.
-        out.push({ op: "ref.func", funcIdx: liftedIdx } as unknown as Instr);
+        out.push({ op: "ref.func", funcIdx: liftedIdx });
         for (const cap of instr.captures) emitValue(cap, out);
         out.push({ op: "struct.new", typeIdx: sub.structTypeIdx });
         return;
@@ -1024,7 +1052,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
           throw new Error(`ir/lower: resolver cannot resolve closure subtype for ${func.name}`);
         }
         emitValue(instr.self, out);
-        out.push({ op: "ref.cast", typeIdx: sub.structTypeIdx } as unknown as Instr);
+        out.push({ op: "ref.cast", typeIdx: sub.structTypeIdx });
         out.push({ op: "struct.get", typeIdx: sub.structTypeIdx, fieldIdx: sub.capFieldIdx(instr.index) });
         return;
       }
@@ -1051,8 +1079,8 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         // which avoids a circular type reference between the struct and
         // its lifted func type). `call_ref` requires a typed funcref, so
         // we emit `ref.cast` to convert.
-        out.push({ op: "ref.cast", typeIdx: cl.funcTypeIdx } as unknown as Instr);
-        out.push({ op: "call_ref", typeIdx: cl.funcTypeIdx } as unknown as Instr);
+        out.push({ op: "ref.cast", typeIdx: cl.funcTypeIdx });
+        out.push({ op: "call_ref", typeIdx: cl.funcTypeIdx });
         return;
       }
       case "refcell.new": {
@@ -1184,7 +1212,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         emitValue(instr.vec, out);
         out.push({ op: "struct.get", typeIdx: vec.vecStructTypeIdx, fieldIdx: vec.dataFieldIdx });
         emitValue(instr.index, out);
-        out.push({ op: "array.get", typeIdx: vec.arrayTypeIdx } as unknown as Instr);
+        out.push({ op: "array.get", typeIdx: vec.arrayTypeIdx });
         return;
       }
       // Slice 7a/7b (#1169f): generator ops.
@@ -1241,7 +1269,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         }
         const fnIdx = resolver.resolveFunc({ kind: "func", name: "__create_generator" });
         out.push({ op: "local.get", index: slotWasmIdx(func.generatorBufferSlot) });
-        out.push({ op: "ref.null.extern" } as unknown as Instr);
+        out.push({ op: "ref.null.extern" });
         out.push({ op: "call", funcIdx: fnIdx });
         return;
       }
@@ -1302,7 +1330,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         // element = data[counter]
         loopBody.push({ op: "local.get", index: slotWasmIdx(instr.dataSlot) });
         loopBody.push({ op: "local.get", index: slotWasmIdx(instr.counterSlot) });
-        loopBody.push({ op: "array.get", typeIdx: vec.arrayTypeIdx } as unknown as Instr);
+        loopBody.push({ op: "array.get", typeIdx: vec.arrayTypeIdx });
         loopBody.push({ op: "local.set", index: slotWasmIdx(instr.elementSlot) });
 
         // Body instrs
@@ -1348,7 +1376,7 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         // ref-typed inputs the wasm engine simply re-tags the reference
         // so it can flow into externref-typed positions.
         emitValue(instr.value, out);
-        out.push({ op: "extern.convert_any" } as unknown as Instr);
+        out.push({ op: "extern.convert_any" });
         return;
       }
       case "iter.new": {
@@ -1764,18 +1792,146 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         });
         return;
       }
-      // (#1373 Phase B) Async / await IR nodes are type-only in this
-      // slice — Phase C (#1373b) wires the CPS lowering. Until then
-      // the selector rejects async functions (returns "async-function"
-      // bucket), so these IrInstrs never reach the lowerer in practice.
-      // Throwing here makes accidental construction surface clearly
-      // rather than silently emitting nothing.
-      case "await":
-      case "async.return":
-      case "async.throw":
-        throw new Error(
-          `ir/lower: ${instr.kind} not yet implemented (#1373 Phase C / #1373b — see issue plan/issues/sprints/51/1373-ir-async-function.md)`,
-        );
+      // (#1373b Phase C Slice 1) Async / await IR node lowering.
+      //
+      // The IR selector still rejects async functions today (gate
+      // hardcoded `false` in `isAsyncIrReady`), so these arms only fire
+      // when a future caller flips the flag OR when a synthesised IR
+      // construction reaches the lowerer directly (e.g. from tests).
+      // The Slice 1 implementation covers the synchronous cases:
+      //
+      //   - `async.return v` → struct.new $Promise with state=FULFILLED
+      //     and value=v. Result is a settled-fulfilled Promise as
+      //     externref. Reuses the same struct shape as
+      //     `emitStandalonePromiseResolve` in async-scheduler.ts.
+      //
+      //   - `async.throw r` → struct.new $Promise with state=REJECTED
+      //     and value=r. Result is a settled-rejected Promise as
+      //     externref. Mirrors `emitStandalonePromiseReject`.
+      //
+      //   - `await p` → cast p to ref $Promise and branch on its state:
+      //     * FULFILLED (1): read $value field → push as externref result
+      //     * REJECTED  (2): throw $value via the shared exn tag
+      //     * PENDING   (0): blocked on #1326c Phase 1C-B
+      //       (`emitStandalonePromiseThen`). Slice 1 emits an
+      //       `unreachable` after a runtime-throw marker so the
+      //       failure mode is observable but the gate's hardcoded
+      //       `false` prevents it from ever firing.
+      case "async.return": {
+        const promiseTypeIdx = resolver.resolvePromiseType?.();
+        if (promiseTypeIdx === undefined) {
+          throw new Error(
+            "ir/lower: async.return requires resolver.resolvePromiseType (#1373b Slice 1) — not wired for this backend",
+          );
+        }
+        // Stack effect: → externref ($Promise wrapped in extern)
+        out.push({ op: "i32.const", value: PROMISE_STATE_FULFILLED });
+        emitValue(instr.value, out);
+        out.push({ op: "ref.null.extern" } as Instr);
+        out.push({ op: "struct.new", typeIdx: promiseTypeIdx });
+        out.push({ op: "extern.convert_any" } as Instr);
+        return;
+      }
+      case "async.throw": {
+        const promiseTypeIdx = resolver.resolvePromiseType?.();
+        if (promiseTypeIdx === undefined) {
+          throw new Error(
+            "ir/lower: async.throw requires resolver.resolvePromiseType (#1373b Slice 1) — not wired for this backend",
+          );
+        }
+        // Stack effect: → externref ($Promise wrapped in extern, REJECTED state)
+        out.push({ op: "i32.const", value: PROMISE_STATE_REJECTED });
+        emitValue(instr.reason, out);
+        out.push({ op: "ref.null.extern" } as Instr);
+        out.push({ op: "struct.new", typeIdx: promiseTypeIdx });
+        out.push({ op: "extern.convert_any" } as Instr);
+        return;
+      }
+      case "await": {
+        const promiseTypeIdx = resolver.resolvePromiseType?.();
+        if (promiseTypeIdx === undefined) {
+          throw new Error(
+            "ir/lower: await requires resolver.resolvePromiseType (#1373b Slice 1) — not wired for this backend",
+          );
+        }
+        // Strategy:
+        //   1. Push the operand (a Promise as externref)
+        //   2. extern.convert_any → anyref → ref.cast $Promise
+        //   3. Save to a scratch local so we can read state + value
+        //   4. Branch on state:
+        //      - FULFILLED: return $value (externref) — fast path
+        //      - REJECTED: read $value, throw via exn tag
+        //      - PENDING: throw "Phase 1C-B not yet landed" marker
+        //
+        // Result type: externref (the resolved value, OR the function
+        // ungracefully terminates via throw on REJECTED/PENDING).
+        //
+        // SSA scope note: this implementation evaluates the operand
+        // exactly once and binds the result inline. There is no
+        // continuation closure here — the function continues in the
+        // same wasm frame. PENDING-path continuation synthesis is
+        // Slice 2 (blocked on #1326c Phase 1C-B).
+        emitValue(instr.operand, out);
+        out.push({ op: "any.convert_extern" } as Instr);
+        out.push({ op: "ref.cast", typeIdx: promiseTypeIdx });
+        // The next emit needs a scratch local. Reuse the
+        // jsBitwiseTmp pattern: allocate lazily into `locals` and
+        // remember the index for any further await in the same fn.
+        if (awaitScratchPromiseIdx === null) {
+          awaitScratchPromiseIdx = func.params.length + locals.length;
+          locals.push({
+            name: "$await_promise",
+            type: { kind: "ref", typeIdx: promiseTypeIdx } as ValType,
+          });
+        }
+        out.push({ op: "local.tee", index: awaitScratchPromiseIdx });
+        out.push({ op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 }); // state: i32
+        // Build:
+        //   if state == FULFILLED then
+        //     local.get $await_promise
+        //     struct.get $Promise $value      ;; externref
+        //   else
+        //     if state == REJECTED then
+        //       throw $exn ( $value )
+        //     else
+        //       unreachable + #1326c-1C-B marker
+        //     end
+        //   end
+        const exnTagIdx = resolver.ensureExnTag?.();
+        const rejectedBranch: Instr[] = [];
+        if (exnTagIdx !== undefined) {
+          rejectedBranch.push({ op: "local.get", index: awaitScratchPromiseIdx });
+          rejectedBranch.push({ op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 } as Instr);
+          rejectedBranch.push({ op: "throw", tagIdx: exnTagIdx } as Instr);
+        }
+        rejectedBranch.push({ op: "unreachable" } as Instr);
+        // PENDING / fall-through marker. Slice 2 (#1373b) replaces with
+        // the CPS continuation synthesis once #1326c Phase 1C-B lands.
+        const pendingBranch: Instr[] = [{ op: "unreachable" } as Instr];
+        out.push({ op: "i32.const", value: PROMISE_STATE_FULFILLED });
+        out.push({ op: "i32.eq" });
+        out.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: [
+            { op: "local.get", index: awaitScratchPromiseIdx },
+            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 } as Instr,
+          ],
+          else: [
+            { op: "local.get", index: awaitScratchPromiseIdx },
+            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 } as Instr,
+            { op: "i32.const", value: PROMISE_STATE_REJECTED } as Instr,
+            { op: "i32.eq" } as Instr,
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } as ValType },
+              then: rejectedBranch,
+              else: pendingBranch,
+            } as Instr,
+          ],
+        } as Instr);
+        return;
+      }
     }
   };
 
@@ -2253,19 +2409,19 @@ function jsBitwiseToI32(
 
 function emitJsToInt32(out: Instr[], tmpLocalIdx: number): void {
   // Stack: [f64]
-  out.push({ op: "f64.trunc" } as unknown as Instr);
+  out.push({ op: "f64.trunc" });
   // Stack: [f64_trunc]
   out.push({ op: "local.tee", index: tmpLocalIdx });
   out.push({ op: "local.get", index: tmpLocalIdx });
   // Stack: [f64_trunc, f64_trunc]
   out.push({ op: "f64.const", value: 4294967296 });
   out.push({ op: "f64.div" });
-  out.push({ op: "f64.floor" } as unknown as Instr);
+  out.push({ op: "f64.floor" });
   out.push({ op: "f64.const", value: 4294967296 });
   out.push({ op: "f64.mul" });
   out.push({ op: "f64.sub" });
   // Stack: [f64_in_range]
-  out.push({ op: "i32.trunc_sat_f64_u" } as unknown as Instr);
+  out.push({ op: "i32.trunc_sat_f64_u" });
   // Stack: [i32]
 }
 
@@ -2290,7 +2446,7 @@ function emitConst(instr: Extract<IrInstr, { kind: "const" }>, out: Instr[], fun
     case "null": {
       const valTy = instr.resultType ? asVal(instr.resultType) : null;
       if (valTy && valTy.kind === "ref_null") {
-        out.push({ op: "ref.null", typeIdx: (valTy as { typeIdx: number }).typeIdx } as unknown as Instr);
+        out.push({ op: "ref.null", typeIdx: (valTy as { typeIdx: number }).typeIdx });
         return;
       }
       // Slice 7b (#1169f): bare `yield;` lowers to a `gen.push` of
@@ -2299,7 +2455,7 @@ function emitConst(instr: Extract<IrInstr, { kind: "const" }>, out: Instr[], fun
       // `ref.null.extern` Wasm op. Same shape the legacy generator
       // path uses for the "no value" yield (see misc.ts:212-215).
       if (valTy && valTy.kind === "externref") {
-        out.push({ op: "ref.null.extern" } as unknown as Instr);
+        out.push({ op: "ref.null.extern" });
         return;
       }
       throw new Error(`ir/lower: const null must have ref_null or externref resultType (${funcName})`);
