@@ -205,7 +205,7 @@ expect(fn()).toBe(42);
 
 ## Suspended Work
 
-- **PR**: https://github.com/loopdive/js2wasm/pull/404
+- **PR**: https://github.com/loopdive/js2/pull/404
 - **Branch**: `issue-1504-browser-export-interop`
 - **Worktree**: `/workspace/.claude/worktrees/issue-1504-browser-export-interop`
 - **HEAD SHA**: `5742e3da255a3c133a863d4b4c3516815a61ae9e`

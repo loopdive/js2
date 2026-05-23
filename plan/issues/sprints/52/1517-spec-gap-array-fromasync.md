@@ -88,3 +88,35 @@ custom subclass `new this(0)` paths that depend on #1455).
 - `built-ins/Array/fromAsync/asyncitems-array-remove.js`
 - `built-ins/Array/fromAsync/asyncitems-iterator-null.js`
 - `built-ins/Array/fromAsync/mapfn-awaits-result.js` (if present)
+
+## Suspended Work
+
+- **PR**: https://github.com/loopdive/js2wasm/pull/381
+- **Branch**: `issue-1517-array-fromasync`
+- **Worktree**: `/workspace/.claude/worktrees/issue-1517-array-fromasync/`
+- **HEAD SHA**: `1b4992a109a2f9aeb7efd6fba1d569dfedeb7ac8`
+- **State**: PR pushed, waiting for CI (`/workspace/.claude/ci-status/pr-381.json` not yet present at suspend time).
+
+### What was implemented
+- `src/codegen/expressions/calls.ts`: new dispatch block before the existing `Array.from` handler that lowers `Array.fromAsync(items, mapFn?, thisArg?)` into a host call. Compiles all three args to `externref`, registers `__array_from_async` via `ensureLateImport`, flushes late-import shifts, then `call` it. Returns `externref` (the Promise).
+- `src/runtime.ts`: new `__array_from_async` host import next to `__array_from`. Implements ES2024 §23.1.2.2:
+  1. Async iterable branch (`Symbol.asyncIterator`) — manual `iter.next()` + `await` loop.
+  2. Sync iterable / string branch — `for (const raw of src)` + `await raw` per element.
+  3. Array-like fallback — `ToObject` + `ToLength(o.length)` + `await o[k]` per index.
+  - Wraps Wasm closures via `_wrapWasmClosure(mapFn, 2, callbackState)` (arity 2 — `(value, index)`).
+  - Materializes opaque Wasm vec sources via `_materializeIterable`.
+- `tests/issue-1517.test.ts`: 7 unit tests (array, async generator, mapFn, awaited mapFn result, mapFn with index, empty source, promise-return).
+
+### Local validation
+- `npm test -- tests/issue-1517.test.ts` → 7/7 pass.
+- `Array.from` regression checks via `tests/stdlib.test.ts` → unchanged from main (pre-existing `Array.at` / `String.at` failures are unrelated).
+
+### Resume steps (for the next dev)
+1. `cd /workspace/.claude/worktrees/issue-1517-array-fromasync && git fetch origin`
+2. Check `/workspace/.claude/ci-status/pr-381.json` exists and `head_sha == 1b4992a1…`.
+3. Run `/dev-self-merge 381`. If MERGE → `gh pr merge 381 --admin --merge`. If ESCALATE → message team-lead with criterion + values.
+4. After merge: set `status: done` in this file, update `plan/log/dependency-graph.md`, `git worktree remove /workspace/.claude/worktrees/issue-1517-array-fromasync`, mark task #45 completed.
+
+### Known limitations / non-goals (out of scope for #1517)
+- The dispatch returns `externref`, but TypeScript types `Array.fromAsync` as `Promise<U[]>`. When the awaited result is bound to a Wasm-vec-typed local, `.length` reads field 0 of an opaque externref and returns 0. The unit tests work around this by returning the awaited externref directly to the host (where it is a real JS array). Test262 cases route comparisons through host-injected `assert_compareArray`, so they should work — CI will confirm.
+- Subclass `new this(0)` paths (test262 cases that exercise `Array.fromAsync.call(Subclass, …)`) depend on #1455 and may not flip.

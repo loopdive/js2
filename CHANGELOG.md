@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Repository rename
+
+- The repo has been renamed `loopdive/js2wasm` → `loopdive/js2`.
+  GitHub provides a permanent redirect for the old URL, so existing
+  clones and PR links continue to work. New clones and CI should use
+  the new name. The `loopdive/js2wasm-baselines` baselines repo is
+  tracked separately and will be renamed in a follow-up.
+
 ## Historical sprint tags
 
 This file records the historical sprint boundary tags created from the sprint history in `plan/sprints/` and the Git history on `main`.

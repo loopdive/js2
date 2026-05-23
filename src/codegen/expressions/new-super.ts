@@ -33,6 +33,7 @@ import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
 import {
   emitThrowString,
+  emitThrowTypeError,
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
@@ -1330,6 +1331,46 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     }
   }
 
+  // (#1519 sub-issue B) Built-in non-constructor namespaces — `Math`, `JSON`,
+  // `Reflect`, `Atomics` — have neither call nor construct signatures. Per
+  // ECMA-262 §7.2.10 IsConstructor, `new`-on a value lacking `[[Construct]]`
+  // must throw TypeError. We detect them by name on the unwrapped expression
+  // (so `new Math()`, `new (Math)()`, and `new (Math as any)()` all fire).
+  // User-defined identifier shadowing keeps its own value-type with
+  // construct signatures, so this fires only for the actual builtin symbols
+  // (verified via the type checker's `Math`/`JSON`/`Reflect`/`Atomics`
+  // namespace lookups in lib.es*.d.ts).
+  {
+    let unwrapped: ts.Expression = expr.expression;
+    while (
+      ts.isParenthesizedExpression(unwrapped) ||
+      ts.isAsExpression(unwrapped) ||
+      ts.isNonNullExpression(unwrapped) ||
+      ts.isTypeAssertionExpression(unwrapped)
+    ) {
+      unwrapped = ts.isParenthesizedExpression(unwrapped)
+        ? unwrapped.expression
+        : ts.isAsExpression(unwrapped)
+          ? unwrapped.expression
+          : ts.isNonNullExpression(unwrapped)
+            ? unwrapped.expression
+            : (unwrapped as ts.TypeAssertion).expression;
+    }
+    if (ts.isIdentifier(unwrapped)) {
+      const name = unwrapped.text;
+      const NAMESPACE_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"]);
+      if (NAMESPACE_NON_CONSTRUCTORS.has(name)) {
+        // Use the real-TypeError throw path so `assert.throws(TypeError, …)`
+        // in test262 negative cases (S11.2.2_A4_T*) observes a TypeError
+        // instance, not a bare string. Falls back to a string throw when
+        // `__new_TypeError` isn't registered (standalone mode).
+        emitThrowTypeError(ctx, fctx, `${name} is not a constructor`);
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+    }
+  }
+
   // Handle `new Promise(executor)` — delegate to host import
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Promise") {
     let funcIdx =
@@ -2034,22 +2075,34 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       }
     }
 
-    // new DataView(buffer, byteOffset, byteLength) — validate offset and length
+    // new DataView(buffer, byteOffset, byteLength) — validate offset and length.
+    // #1515 — apply ToIndex semantics: NaN→0, truncate toward 0, > 2^53-1 → RangeError.
     if (ctorName === "DataView") {
       // Validate byteOffset (2nd arg) if provided
       if (args.length >= 2) {
         compileExpression(ctx, fctx, args[1]!, { kind: "f64" });
         const offsetF64 = allocLocal(fctx, `__dv_offset_f64_${fctx.locals.length}`, { kind: "f64" });
         fctx.body.push({ op: "local.set", index: offsetF64 });
-        // Check: offset < 0
+        // NaN → 0
+        fctx.body.push({ op: "local.get", index: offsetF64 });
+        fctx.body.push({ op: "local.get", index: offsetF64 });
+        fctx.body.push({ op: "f64.ne" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "f64.const", value: 0 } as Instr, { op: "local.set", index: offsetF64 } as Instr],
+          else: [],
+        });
+        fctx.body.push({ op: "local.get", index: offsetF64 });
+        fctx.body.push({ op: "f64.trunc" } as unknown as Instr);
+        fctx.body.push({ op: "local.set", index: offsetF64 });
+        // Check: offset < 0 OR offset > 2^53-1
         fctx.body.push({ op: "local.get", index: offsetF64 });
         fctx.body.push({ op: "f64.const", value: 0 });
         fctx.body.push({ op: "f64.lt" });
-        // Check: offset != floor(offset) (NaN/non-integer)
         fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
-        fctx.body.push({ op: "f64.ne" });
+        fctx.body.push({ op: "f64.const", value: 9007199254740991 });
+        fctx.body.push({ op: "f64.gt" });
         fctx.body.push({ op: "i32.or" });
         {
           const rangeErrMsg = "RangeError: Start offset is outside the bounds of the buffer";
@@ -2069,15 +2122,26 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         compileExpression(ctx, fctx, args[2]!, { kind: "f64" });
         const lenF64 = allocLocal(fctx, `__dv_len_f64_${fctx.locals.length}`, { kind: "f64" });
         fctx.body.push({ op: "local.set", index: lenF64 });
-        // Check: len < 0
+        // NaN → 0
+        fctx.body.push({ op: "local.get", index: lenF64 });
+        fctx.body.push({ op: "local.get", index: lenF64 });
+        fctx.body.push({ op: "f64.ne" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "f64.const", value: 0 } as Instr, { op: "local.set", index: lenF64 } as Instr],
+          else: [],
+        });
+        fctx.body.push({ op: "local.get", index: lenF64 });
+        fctx.body.push({ op: "f64.trunc" } as unknown as Instr);
+        fctx.body.push({ op: "local.set", index: lenF64 });
+        // Check: len < 0 OR len > 2^53-1
         fctx.body.push({ op: "local.get", index: lenF64 });
         fctx.body.push({ op: "f64.const", value: 0 });
         fctx.body.push({ op: "f64.lt" });
-        // Check: len != floor(len) (NaN/non-integer)
         fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
-        fctx.body.push({ op: "f64.ne" });
+        fctx.body.push({ op: "f64.const", value: 9007199254740991 });
+        fctx.body.push({ op: "f64.gt" });
         fctx.body.push({ op: "i32.or" });
         {
           const rangeErrMsg = "RangeError: Invalid DataView length";
@@ -2376,17 +2440,37 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const lenF64 = allocLocal(fctx, `__dv_len_f64_${fctx.locals.length}`, { kind: "f64" });
 
       if (args.length >= 2) {
-        // Validate byteOffset
+        // #1515 ToIndex(byteOffset) per ECMA §7.1.22:
+        //   1. If undefined → 0
+        //   2. integer = ToIntegerOrInfinity(ToNumber(value))   (NaN → 0; truncate toward 0)
+        //   3. If integer < 0 or integer > 2^53-1 → RangeError
+        // Previous code threw for any non-integer (1.5 → RangeError) and treated NaN
+        // as invalid; spec wants 1.5 → 1 and NaN → 0. Both incorrect behaviors
+        // failed `toindex-byteoffset.js` test262 cases.
         compileExpression(ctx, fctx, args[1]!, { kind: "f64" });
-        fctx.body.push({ op: "local.tee", index: offsetF64 });
-        // Check: offset < 0
+        fctx.body.push({ op: "local.set", index: offsetF64 });
+        // If NaN, replace with 0 (NaN != NaN is the only condition where v != v).
+        fctx.body.push({ op: "local.get", index: offsetF64 });
+        fctx.body.push({ op: "local.get", index: offsetF64 });
+        fctx.body.push({ op: "f64.ne" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "f64.const", value: 0 } as Instr, { op: "local.set", index: offsetF64 } as Instr],
+          else: [],
+        });
+        // Truncate toward zero (ToIntegerOrInfinity for finite non-NaN).
+        fctx.body.push({ op: "local.get", index: offsetF64 });
+        fctx.body.push({ op: "f64.trunc" } as unknown as Instr);
+        fctx.body.push({ op: "local.set", index: offsetF64 });
+
+        // Check: offset < 0 OR offset > 2^53-1 (ToIndex bounds → RangeError)
+        fctx.body.push({ op: "local.get", index: offsetF64 });
         fctx.body.push({ op: "f64.const", value: 0 });
         fctx.body.push({ op: "f64.lt" });
-        // Check: offset != floor(offset) (NaN/non-integer)
         fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
-        fctx.body.push({ op: "f64.ne" });
+        fctx.body.push({ op: "f64.const", value: 9007199254740991 }); // 2^53 - 1
+        fctx.body.push({ op: "f64.gt" });
         fctx.body.push({ op: "i32.or" });
 
         // If buffer is a vec struct, also check offset > bufferByteLength
@@ -2418,17 +2502,31 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       }
 
       if (args.length >= 3) {
-        // Validate byteLength
+        // #1515 ToIndex(byteLength) — same ToIndex semantics as byteOffset above.
         compileExpression(ctx, fctx, args[2]!, { kind: "f64" });
-        fctx.body.push({ op: "local.tee", index: lenF64 });
-        // Check: len < 0
+        fctx.body.push({ op: "local.set", index: lenF64 });
+        // NaN → 0
+        fctx.body.push({ op: "local.get", index: lenF64 });
+        fctx.body.push({ op: "local.get", index: lenF64 });
+        fctx.body.push({ op: "f64.ne" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "f64.const", value: 0 } as Instr, { op: "local.set", index: lenF64 } as Instr],
+          else: [],
+        });
+        // Truncate toward zero
+        fctx.body.push({ op: "local.get", index: lenF64 });
+        fctx.body.push({ op: "f64.trunc" } as unknown as Instr);
+        fctx.body.push({ op: "local.set", index: lenF64 });
+
+        // Check: len < 0 OR len > 2^53-1 → RangeError
+        fctx.body.push({ op: "local.get", index: lenF64 });
         fctx.body.push({ op: "f64.const", value: 0 });
         fctx.body.push({ op: "f64.lt" });
-        // Check: len != floor(len) (NaN/non-integer)
         fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "local.get", index: lenF64 });
-        fctx.body.push({ op: "f64.floor" } as unknown as Instr);
-        fctx.body.push({ op: "f64.ne" });
+        fctx.body.push({ op: "f64.const", value: 9007199254740991 }); // 2^53 - 1
+        fctx.body.push({ op: "f64.gt" });
         fctx.body.push({ op: "i32.or" });
 
         // Check: offset + length > bufferByteLength

@@ -103,3 +103,52 @@ fix re-uses #1364's machinery once it lands.
 - `built-ins/GeneratorPrototype/Symbol.toStringTag.js`
 - `built-ins/GeneratorPrototype/throw/name.js`
 - `built-ins/AsyncGeneratorPrototype/throw/length.js`
+
+## Implementation notes (delivered)
+
+`%GeneratorPrototype%`, `%AsyncGeneratorPrototype%`, and their associated
+`%GeneratorFunction.prototype%` / `%AsyncGeneratorFunction.prototype%`
+singletons now live in `src/runtime.ts`:
+
+- `_getGeneratorPrototype()` lazily builds an object inheriting from
+  `Iterator.prototype` (per #1367) with shared `next`/`return`/`throw`,
+  `Symbol.toStringTag = "Generator"`, and a `constructor` slot pointing at
+  `%Generator%`. Property descriptors are spec-shaped:
+  `{writable: true, enumerable: false, configurable: true}` for the methods,
+  `{value: 1, writable: false, enumerable: false, configurable: true}` for
+  each method's `length`. The methods read instance state from
+  `_GeneratorState` (a `WeakMap`) — when `this` is not a key, they throw
+  `TypeError("Generator.prototype.X called on incompatible receiver")` per
+  spec §27.5.3.2 (GeneratorValidate).
+- `__create_generator` now returns `Object.create(_GeneratorPrototype)` with
+  state stored in `_GeneratorState` (so `next` is no longer an own property
+  of the instance — it inherits from the shared prototype).
+- Same shape for async (`_AsyncGeneratorState`, `_getAsyncGeneratorPrototype`).
+- `Object.getPrototypeOf(g)` where `g` is a generator-function declaration:
+  the compiled-Wasm closure for `g` is opaque to the host so the generic
+  `__getPrototypeOf` returns `null` (or unrelated). Codegen
+  (`src/codegen/expressions/calls.ts`) now special-cases call sites where
+  the argument is an identifier of a registered generator function, routing
+  to a dedicated `__get_generator_function_prototype` (or
+  `__get_async_generator_function_prototype`) host import. This makes
+  `Object.getPrototypeOf(g).prototype === %GeneratorPrototype%` resolve.
+
+## Test Results
+
+Local equivalence — `tests/issue-1516.test.ts` (new, 8 cases): all pass.
+`tests/issue-928.test.ts` (generator pending-throw semantics, 6 cases): all
+pass. No regression in `tests/generator-iife.test.ts`,
+`tests/for-of-string-generator.test.ts`,
+`tests/generator-method-destructuring.test.ts`,
+`tests/issue-862-func-decl-iter.test.ts`, `tests/iterators.test.ts`,
+`tests/symbol-iterator-protocol.test.ts` (16/16 pass).
+
+Pre-existing failures unrelated to this issue: `symbol-async-iterator.test.ts`
+("string_constants module is not an object"),
+`generator-yield-contexts.test.ts > yield in a generator function expression`
+("illegal cast"), `for-of-generator.test.ts` (missing `./helpers.js`).
+Confirmed pre-existing by stashing the patch and rerunning on the parent
+commit.
+
+CI test262 regression analysis pending.
+

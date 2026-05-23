@@ -29,7 +29,7 @@ Missing committed playground benchmark baseline.
 ##[error]Process completed with exit code 2.
 ```
 
-Confirmed on PR #104 (Apr 30, 2026, run [25187412611](https://github.com/loopdive/js2wasm/actions/runs/25187412611)).
+Confirmed on PR #104 (Apr 30, 2026, run [25187412611](https://github.com/loopdive/js2/actions/runs/25187412611)).
 
 ## Root cause
 

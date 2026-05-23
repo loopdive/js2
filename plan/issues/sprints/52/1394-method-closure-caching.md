@@ -459,7 +459,7 @@ settled. New risks:
 
 ## Suspended Work
 
-- **PR:** https://github.com/loopdive/js2wasm/pull/410
+- **PR:** https://github.com/loopdive/js2/pull/410
 - **Branch:** `issue-1394-method-closure-caching`
 - **Worktree:** `/workspace/.claude/worktrees/issue-1394-method-closure-caching`
 - **HEAD:** `e34c6e7937ce34d8bfe13b71fb350d5efea364bd`

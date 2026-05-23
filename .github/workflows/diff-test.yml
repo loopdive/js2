@@ -1,16 +1,9 @@
 name: Differential test
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "scripts/diff-test.ts"
-      - "scripts/diff-test-gate.ts"
-      - "scripts/diff-triage.ts"
-      - "tests/differential/**"
-      - "benchmarks/results/diff-test-baseline.json"
-      - ".github/workflows/diff-test.yml"
+  # Removed pull_request trigger — under the merge queue model the differential
+  # test runs in the merge_group context (where it tests the actual merge
+  # candidate against main). PR-level runs were redundant work for every push.
   push:
     branches: [main]
   merge_group:
@@ -77,14 +70,23 @@ jobs:
 
       # On merge to main, refresh the committed baseline so the next PR
       # compares against the latest known-good state.
-      - name: Refresh baseline on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          cp benchmarks/results/diff-test.json benchmarks/results/diff-test-baseline.json
-          if ! git diff --quiet benchmarks/results/diff-test-baseline.json; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add benchmarks/results/diff-test-baseline.json
-            git commit -m "chore(diff-test): refresh baseline [skip ci]"
-            git push
-          fi
+      #
+      # DISABLED (post #491): The main branch ruleset enforces the merge
+      # queue, so direct `git push` from a workflow job fails with
+      # `GH013: Changes must be made through the merge queue`. The whole
+      # commit-and-push block below is commented out; the diff-test still
+      # RUNS on every push to main (its results are uploaded as artifacts
+      # above), it just no longer auto-refreshes the committed baseline.
+      # The baseline can be refreshed manually via a normal PR when it
+      # drifts too far.
+      # - name: Refresh baseline on main
+      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   run: |
+      #     cp benchmarks/results/diff-test.json benchmarks/results/diff-test-baseline.json
+      #     if ! git diff --quiet benchmarks/results/diff-test-baseline.json; then
+      #       git config user.name "github-actions[bot]"
+      #       git config user.email "github-actions[bot]@users.noreply.github.com"
+      #       git add benchmarks/results/diff-test-baseline.json
+      #       git commit -m "chore(diff-test): refresh baseline [skip ci]"
+      #       git push
+      #     fi

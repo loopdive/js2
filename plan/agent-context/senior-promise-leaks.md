@@ -4,7 +4,7 @@
 **Issue:** #1220 (`test262-worker: Promise snapshot + prototype cleanup gaps`)
 **Task:** #29
 **Branch / worktree:** `/workspace/.claude/worktrees/issue-1220-test262-worker-snapshots`
-**PR:** https://github.com/loopdive/js2wasm/pull/114
+**PR:** https://github.com/loopdive/js2/pull/114
 **Last commit:** `81ada19b8` (v2 — drops FATAL exit, keeps cleanup + Promise snapshot)
 **Status at shutdown:** PR open, CI in progress on `81ada19b8`, awaiting status file update.
 

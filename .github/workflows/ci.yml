@@ -77,15 +77,23 @@ jobs:
             echo "No private planning artifacts in this checkout; skipping regeneration."
           fi
 
-      - name: Commit regenerated planning artifacts
-        if: github.event_name == 'push'
-        run: |
-          if [ -d plan ] || [ -d dashboard ]; then
-            if ! git diff --quiet -- plan/goals plan/issues/sprints dashboard/data.js dashboard/data public/graph-data.json; then
-              git config user.name "github-actions[bot]"
-              git config user.email "github-actions[bot]@users.noreply.github.com"
-              git add -f plan/goals plan/issues/sprints dashboard/data.js dashboard/data public/graph-data.json
-              git commit -m "chore(planning-artifacts): regen after merge [skip ci]"
-              git push
-            fi
-          fi
+      # DISABLED (post #491): The main branch ruleset enforces the merge
+      # queue, so direct `git push` from this workflow fails with
+      # `GH013: Changes must be made through the merge queue`. The whole
+      # auto-commit step is commented out; the typecheck/lint/format/IR
+      # gates above still RUN on every push and PR — only the
+      # auto-regeneration of planning artifacts back into main is disabled.
+      # Planning artifacts are regenerated locally by tech-lead-driven
+      # PRs (`pnpm run build:planning-artifacts`) instead.
+      # - name: Commit regenerated planning artifacts
+      #   if: github.event_name == 'push'
+      #   run: |
+      #     if [ -d plan ] || [ -d dashboard ]; then
+      #       if ! git diff --quiet -- plan/goals plan/issues/sprints dashboard/data.js dashboard/data public/graph-data.json; then
+      #         git config user.name "github-actions[bot]"
+      #         git config user.email "github-actions[bot]@users.noreply.github.com"
+      #         git add -f plan/goals plan/issues/sprints dashboard/data.js dashboard/data public/graph-data.json
+      #         git commit -m "chore(planning-artifacts): regen after merge [skip ci]"
+      #         git push
+      #       fi
+      #     fi

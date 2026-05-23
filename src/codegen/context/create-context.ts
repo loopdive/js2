@@ -36,6 +36,7 @@ export function createCodegenContext(
     stringLiteralMap: new Map(),
     stringLiteralValues: new Map(),
     stringLiteralCounter: 0,
+    funcSourceText: new Map(),
     stringGlobalMap: new Map(),
     numImportGlobals: 0,
     hasStringImports: false,

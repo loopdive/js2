@@ -143,6 +143,12 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // __new_plain_object is a builtin factory, not an extern class constructor
   if (name === "__new_plain_object") return { type: "builtin", name: "__new_plain_object" };
 
+  // (#1467) AggregateError needs spec-specific coercion (ToString on message,
+  // IterableToList on errors, CreateMethodProperty for non-enumerable own
+  // properties) that the generic `extern_class` path can't provide. Route
+  // through the dedicated builtin handler in the runtime.
+  if (name === "__new_AggregateError") return { type: "builtin", name };
+
   // Unknown constructor imports (__new_ClassName)
   if (name.startsWith("__new_")) {
     return { type: "extern_class", className: name.slice(6), action: "new" };

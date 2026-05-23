@@ -9,7 +9,7 @@
 ### Issue #906 — Compile away TDZ tracking → PR #28 OPEN, CI in progress
 - **Worktree**: `/workspace/.claude/worktrees/issue-906`
 - **Branch**: `issue-906-compile-away-tdz` HEAD `9662ac0cb71ec54331b45db3c27026208d673858`
-- **PR**: https://github.com/loopdive/js2wasm/pull/28 (base=main, head=9662ac0cb)
+- **PR**: https://github.com/loopdive/js2/pull/28 (base=main, head=9662ac0cb)
 - **Status**: 16 test262 shards + quality + benchmarks `IN_PROGRESS` at shutdown time
 
 ### What I did this session

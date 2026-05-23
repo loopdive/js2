@@ -29,26 +29,13 @@ name: Test262 Differential
 #   the landing-page dashboard history (acceptance criterion 5).
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/test262-differential.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "tsconfig.json"
-      - "scripts/tsconfig.json"
-      - "vitest.config.ts"
-      - "src/**"
-      - "scripts/build-test262-report.mjs"
-      - "scripts/compiler-fork-worker.mjs"
-      - "scripts/compiler-pool.ts"
-      - "scripts/diff-test262.ts"
-      - "scripts/generate-editions.ts"
-      - "scripts/test262-worker.mjs"
-      - "tests/test262-chunk*.test.ts"
-      - "tests/test262-runner.ts"
-      - "tests/test262-scope-classification.test.ts"
-      - "tests/test262-shared.ts"
+  # Removed pull_request trigger (under merge queue model, queue builds its
+  # own merge_group ref). Also removed merge_group trigger — Test262 Sharded's
+  # regression-gate already provides the same per-test pass→fail/CE check
+  # against the baseline JSONL, just with a different baseline source. Running
+  # both was duplicate work (32 extra shards per PR), eating the runner budget
+  # and preventing parallelism on Test262 Sharded itself. Kept as
+  # workflow_dispatch only for dev-driven detailed diff inspection.
   workflow_dispatch:
     inputs:
       include_proposals:

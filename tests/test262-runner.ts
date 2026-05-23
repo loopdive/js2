@@ -1392,6 +1392,7 @@ function buildPreamble(
   needsAssertThrowsAsync: boolean,
   needsTypedArrayBinding: boolean,
   needsIteratorBinding: boolean,
+  needsDetachBuffer: boolean,
 ): string {
   let p = `let __fail: number = 0;
 let __assert_count: number = 1;
@@ -1613,6 +1614,19 @@ function $DONE(err?: any): void {
   if (err) { if (!__fail) __fail = __assert_count; }
 }`;
     }
+  }
+
+  if (needsDetachBuffer) {
+    // #1515: $DETACHBUFFER is test262 harness for detaching an ArrayBuffer.
+    // Implemented by setting a sidecar marker `__detached__` on the buffer
+    // struct. The runtime DataView/TypedArray method dispatch in
+    // `__extern_method_call` reads this via `_sidecarGet` and throws TypeError.
+    p += `
+
+function $DETACHBUFFER(buf: any): void {
+  if (buf == null) { return; }
+  (buf as any).__detached__ = true;
+}`;
   }
 
   if (needsTestTypedArray) {
@@ -1922,6 +1936,10 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
   const needsIteratorBinding =
     /\bIterator\b/.test(body) && !/\b(?:var|let|const|function|class)\s+Iterator\b/.test(body);
 
+  // #1515: detached-buffer test262 harness — inject $DETACHBUFFER shim that
+  // sets a sidecar `__detached__` marker the runtime DataView dispatch checks.
+  const needsDetachBuffer = /\$DETACHBUFFER\b/.test(body);
+
   // Build cache key as a bitmask string
   const cacheKey = [
     needsAssertThrows,
@@ -1944,6 +1962,7 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
     needsAssertThrowsAsync,
     needsTypedArrayBinding,
     needsIteratorBinding,
+    needsDetachBuffer,
   ]
     .map((b) => (b ? "1" : "0"))
     .join("");
@@ -1971,6 +1990,7 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
       needsAssertThrowsAsync,
       needsTypedArrayBinding,
       needsIteratorBinding,
+      needsDetachBuffer,
     );
     preambleCache.set(cacheKey, preamble);
   }

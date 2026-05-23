@@ -111,3 +111,39 @@ codegen).
 - `built-ins/DataView/prototype/byteLength/detached-buffer.js`
 - `built-ins/DataView/prototype/setBigInt64/set-values-little-endian-order.js`
 - `built-ins/DataView/prototype/getBigUint64/toindex-byteoffset-errors.js`
+
+## Test Results
+
+- Smoke suite: `tests/issue-1515.test.ts` — 8/8 pass
+  - ToIndex(byteOffset): 1.5 → 1 (no RangeError)
+  - ToIndex(byteOffset): NaN → 0
+  - ToIndex(byteOffset): undefined → 0
+  - ToIndex(byteOffset): -1 still throws RangeError
+  - setBigInt64 with BigInt round-trips
+  - DataView setter returns undefined
+  - Detached buffer throws TypeError on getInt32
+  - Detached buffer throws TypeError on setUint32
+- Existing equivalence: `tests/equivalence/ir-slice10-arraybuffer-dataview.test.ts` — 7/7 still pass (no regression)
+
+## Implementation summary
+
+1. `src/codegen/expressions/new-super.ts` — replaced the
+   `offset !== floor(offset)` check in the DataView constructor with proper
+   ToIndex semantics (ECMA §7.1.22):
+   - NaN → 0
+   - `f64.trunc` (truncate toward zero), so 1.5 → 1
+   - RangeError only for `< 0` or `> 2^53-1`
+   - Same fix applied to both the unknown-constructor path and the structural
+     DataView builder.
+2. `src/runtime.ts` — `__extern_method_call` DataView fallback now:
+   - Throws TypeError when the buffer struct is marked detached via either
+     the `_detachedBuffers` WeakSet or the `__detached__` sidecar property.
+   - Coerces the value arg of `setBigInt64`/`setBigUint64` via ToBigInt
+     semantics (Number→BigInt for safe integers, Boolean→0n/1n, String→BigInt,
+     null/undefined/Symbol→TypeError).
+   - Returns `undefined` from every setter (was returning the native result).
+   - Added `__detach_buffer` and `__is_detached_buffer` host imports
+     (available for future codegen use).
+3. `tests/test262-runner.ts` — injects a `$DETACHBUFFER` shim into the test
+   preamble when the test body references it. The shim sets the
+   `__detached__` sidecar marker, which the runtime check reads.

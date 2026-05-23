@@ -178,7 +178,7 @@ matches the JS reference behavior.
 
 ## Suspended Work
 
-- **PR:** https://github.com/loopdive/js2wasm/pull/403
+- **PR:** https://github.com/loopdive/js2/pull/403
 - **Branch:** `issue-1501-browser-timer`
 - **Worktree:** `/workspace/.claude/worktrees/issue-1501-browser-timer`
 - **HEAD:** `5c7a46e5e2685f9d3c35189cfde508d49533c3ea`

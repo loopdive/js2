@@ -136,9 +136,25 @@ function ensureWasmtime() {
 function compileProgram(id) {
   const sourcePath = resolve(PROGRAMS_DIR, `${id}.js`);
   const source = readFileSync(sourcePath, "utf8");
-  const result = compile(source, { fileName: `${id}.js`, target: "wasi", nativeStrings: true });
+  // #1580: enable `-O3` post-processing via Binaryen wasm-opt. The unoptimized
+  // emitter spills a fresh `$NativeString` struct on every `s.length` /
+  // `s.charCodeAt(i)` read inside hot loops; wasm-opt's SROA collapses those
+  // allocations and turns the string-hash inner loop into a tight
+  // `array.get_u $u16Array` sequence, bringing it within ~3× of V8 with JIT
+  // (instead of the previous Interpreter-class ~63ms). The optimizer is also
+  // a no-op when wasm-opt isn't available — `compile` returns the unoptimized
+  // binary plus a warning we surface below.
+  const result = compile(source, { fileName: `${id}.js`, target: "wasi", nativeStrings: true, optimize: 3 });
   if (!result.success) {
     throw new Error(`Failed to compile ${id}: ${result.errors?.[0]?.message ?? "unknown error"}`);
+  }
+  // Surface optimization warnings so a missing wasm-opt or a validator
+  // rejection is visible in the script output rather than silently producing
+  // an "Interpreter-class" hot-runtime number.
+  for (const err of result.errors ?? []) {
+    if (err.severity === "warning") {
+      console.warn(`[${id}] ${err.message}`);
+    }
   }
   if ((result.imports ?? []).length > 0) {
     throw new Error(

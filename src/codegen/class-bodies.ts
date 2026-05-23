@@ -944,7 +944,22 @@ export function compileClassBodies(
 
         // Build the "then" block: compile default expression, local.set
         const savedBody = pushBody(fctx);
-        const ctorDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
+        // (#1451) For array binding patterns with externref param, force the
+        // default's array literals to compile as vec (not tuple) — same
+        // rationale as the method site below. See function-body.ts:701.
+        const ctorIsArrayPatternExternref = ts.isArrayBindingPattern(param.name) && paramType.kind === "externref";
+        const ctorPrevForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
+        if (ctorIsArrayPatternExternref) {
+          (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+        }
+        let ctorDfltType: ValType | null;
+        try {
+          ctorDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
+        } finally {
+          if (ctorIsArrayPatternExternref) {
+            (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = ctorPrevForceVec;
+          }
+        }
         if (ctorDfltType && !valTypesMatch(ctorDfltType, paramType)) {
           coerceType(ctx, fctx, ctorDfltType, paramType);
         }
@@ -1311,7 +1326,26 @@ export function compileClassBodies(
         if (dstrNullDefault) {
           for (const ins of buildDestructureNullThrow(ctx, fctx)) fctx.body.push(ins);
         } else {
-          const methDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
+          // (#1451) For array binding patterns with externref param, force the
+          // default's array literals to compile as vec (not tuple) so the
+          // destructure path can iterate them via __array_from_iter. Without
+          // this, `method([_a, _b, ...x] = [1, 2])` produces a tuple struct
+          // for the default, and the rest-element handler's array.copy traps
+          // when it casts the tuple to an array. Mirrors function-body.ts:701
+          // (function-decl) and closures.ts:935 (object-literal methods).
+          const isArrayPatternExternref = ts.isArrayBindingPattern(param.name) && paramType.kind === "externref";
+          const prevForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
+          if (isArrayPatternExternref) {
+            (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+          }
+          let methDfltType: ValType | null;
+          try {
+            methDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
+          } finally {
+            if (isArrayPatternExternref) {
+              (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = prevForceVec;
+            }
+          }
           if (methDfltType && !valTypesMatch(methDfltType, paramType)) {
             coerceType(ctx, fctx, methDfltType, paramType);
           }
@@ -1634,7 +1668,22 @@ export function compileClassBodies(
 
         // Build the "then" block: compile default expression, local.set
         const savedBody = pushBody(fctx);
-        const getSetDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
+        // (#1451) For array binding patterns with externref param, force the
+        // default's array literals to compile as vec (not tuple). See
+        // function-body.ts:701 / method site above for full rationale.
+        const setterIsArrayPatternExternref = ts.isArrayBindingPattern(param.name) && paramType.kind === "externref";
+        const setterPrevForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
+        if (setterIsArrayPatternExternref) {
+          (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+        }
+        let getSetDfltType: ValType | null;
+        try {
+          getSetDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
+        } finally {
+          if (setterIsArrayPatternExternref) {
+            (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = setterPrevForceVec;
+          }
+        }
         if (getSetDfltType && !valTypesMatch(getSetDfltType, paramType)) {
           coerceType(ctx, fctx, getSetDfltType, paramType);
         }
