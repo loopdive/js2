@@ -469,7 +469,29 @@ spec §5: ≤ 10 regressions, no single bucket > 50. Net target: **−5 ≤ Δ �
 
 | Gap | Owner | Status |
 |-----|-------|--------|
-| B — `closures.ts:1170` binding-pattern coercion | dev (1-line + mirror) | ready, ship first |
-| A1 — `expressions.ts:154` detector broadening | dev (~15 LOC) | ready, ship second |
+| B — `closures.ts:1170` binding-pattern coercion (arrow/fn-expr) | dev | DONE — guard landed on main at closures.ts:1229-1232 |
+| A1 — `expressions.ts:154` detector broadening | dev (~15 LOC) | DONE — getCallSignatures fallback, gated on !isNewExpression + asteriskToken exclusion |
 | A2 — body-wrap safety net | defer | open sub-issue only if residual traps remain |
 | C — `src/ir/lower.ts` comment + assertion | senior-dev | bundled with #1373b gate flip |
+
+### Gap A1 implementation note (2026-05-23)
+
+`isAsyncCallExpression` (expressions.ts:154) now adds a structural fallback
+after the declaration-modifier check: for any callee not under a
+`NewExpression`, iterate the callee TS type's call signatures and return true
+if any return type satisfies `isPromiseType(...)`. This catches variable-typed
+async refs (`const f = asyncFn; f()`) and `() => Promise<T>` callbacks that
+carried no `async` modifier on a resolvable declaration, so their synchronous
+throws now route through `wrapAsyncCallInTryCatch` → rejected Promise.
+
+Async generators stay excluded (the earlier `asteriskToken` check returns
+false before the fallback runs, and a generator's return type is
+`AsyncGenerator`, not `Promise`, so `isPromiseType` is false anyway).
+
+Regression check (clean-main baseline vs branch, identical): async-function,
+async-iteration, binding-null-guard, async-await, issue-1151-gap-b all show
+the SAME pre-existing failures (Gap B fn-expr `illegal cast`, async iterator
+buckets) with ZERO new regressions; the 4 new `tests/issue-1151-gap-a1.test.ts`
+cases pass. The remaining fn-expr Gap B `illegal cast` failures are the
+un-mirrored `compileFunctionExpression` path (closures.ts:2356-2357) — out of
+scope for A1, tracked under Gap B.

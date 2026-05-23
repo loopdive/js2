@@ -12,7 +12,7 @@
  *   4. Registers delegates in shared.ts (registerCompileExpression, etc.)
  */
 import { ts } from "../ts-api.js";
-import { mapTsTypeToWasm } from "../checker/type-mapper.js";
+import { mapTsTypeToWasm, isPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import {
   emitStandalonePromiseReject,
@@ -165,6 +165,24 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
       for (const mod of (decl as any).modifiers) {
         if (mod.kind === ts.SyntaxKind.AsyncKeyword) return true;
       }
+    }
+  }
+
+  // Fallback (#1151 Gap A1): the declaration-modifier check above misses async
+  // callees reached indirectly — a variable holding an async function
+  // (`const f = asyncFn; f()`), an externref-typed callback (`cb: () => Promise<T>`),
+  // or a synthetic/anonymous callee — because there is no `async` modifier on a
+  // resolvable declaration. Detect these structurally: if any call signature of
+  // the callee's TS type returns `Promise<T>`, treat the call as async so its
+  // synchronous throws are wrapped into a rejected Promise per spec.
+  //
+  // `new Expr()` always allocates an object (never a Promise from a constructor),
+  // so exclude callees under a NewExpression.
+  if (!ts.isNewExpression(expr.parent)) {
+    const calleeType = ctx.checker.getTypeAtLocation(expr.expression);
+    for (const callSig of calleeType.getCallSignatures()) {
+      const retType = ctx.checker.getReturnTypeOfSignature(callSig);
+      if (isPromiseType(retType)) return true;
     }
   }
 
