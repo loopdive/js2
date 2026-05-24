@@ -117,6 +117,94 @@ function isStaticallyNonObjectDescArg(descArg: ts.Expression): boolean {
   return false;
 }
 
+// ── #1130 PR-0: array-index-exotic length growth on defineProperty ───
+/**
+ * Parse a property key string as a canonical array index per the array
+ * exotic-object rules (`ToString(ToUint32(n)) === key`, ES §10.4.2.1).
+ * Returns the index when `key` is a canonical array index in `[0, 2^32-2]`,
+ * else undefined. "length", "01", "-1", "1.5", "4294967295" are NOT
+ * canonical array indices.
+ */
+function parseCanonicalArrayIndex(key: string): number | undefined {
+  if (!/^(0|[1-9][0-9]*)$/.test(key)) return undefined;
+  const n = Number(key);
+  // Array indices are < 2^32 - 1 (4294967295 is the max length, not an index).
+  if (!Number.isInteger(n) || n < 0 || n >= 0xffffffff) return undefined;
+  return n;
+}
+
+/**
+ * Resolve the vec struct typeIdx (length+data shape) for a defineProperty
+ * receiver expression, or undefined when the receiver is not a statically
+ * known WasmGC array (vec) struct.
+ */
+function resolveVecTypeIdx(ctx: CodegenContext, objArg: ts.Expression): number | undefined {
+  const objTsType = ctx.checker.getTypeAtLocation(objArg);
+  const wasmType = resolveWasmType(ctx, objTsType);
+  if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return undefined;
+  const typeIdx = (wasmType as { typeIdx?: number }).typeIdx;
+  if (typeIdx === undefined) return undefined;
+  const typeDef = ctx.mod.types[typeIdx];
+  if (typeDef?.kind === "struct" && typeDef.fields[0]?.name === "length" && typeDef.fields[1]?.name === "data") {
+    return typeIdx;
+  }
+  return undefined;
+}
+
+/**
+ * #1130 PR-0: emit array-index-exotic `length` growth.
+ *
+ * `Object.defineProperty(arr, "n", desc)` on an array with `n >= arr.length`
+ * sets `arr.length = n + 1` (ES §10.4.2.1 ArraySetLength via array exotic
+ * `[[DefineOwnProperty]]`). Our WasmGC vec stores the logical length in
+ * struct field 0; this emits a guarded bump on the saved raw vec ref.
+ *
+ * `vecRefLocal` must hold the raw vec struct ref; `vecRefType` is that
+ * local's ValType. Emits nothing unless the local is a ref to the
+ * statically-resolved vec type — this guards against an externref-typed
+ * local (where `struct.get` would be a Wasm validation error) and against
+ * a static/runtime type mismatch. Emits nothing when `objArg` is not a vec
+ * or `propArg` is not a canonical array index. Leaves the stack unchanged.
+ */
+function maybeEmitVecLengthGrowth(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  objArg: ts.Expression,
+  propArg: ts.Expression,
+  vecRefLocal: number,
+  vecRefType: ValType,
+): void {
+  if (!ts.isStringLiteral(propArg)) return;
+  const idx = parseCanonicalArrayIndex(propArg.text);
+  if (idx === undefined) return;
+  const vecTypeIdx = resolveVecTypeIdx(ctx, objArg);
+  if (vecTypeIdx === undefined) return;
+  // The saved local must be a ref to this exact vec type, or struct.get on
+  // it is invalid. An externref-typed local is skipped (the value path
+  // stores a separate raw-ref local for this purpose).
+  if (
+    (vecRefType.kind !== "ref" && vecRefType.kind !== "ref_null") ||
+    (vecRefType as { typeIdx?: number }).typeIdx !== vecTypeIdx
+  ) {
+    return;
+  }
+
+  // if (idx >= vec.length) vec.length = idx + 1
+  fctx.body.push({ op: "i32.const", value: idx });
+  fctx.body.push({ op: "local.get", index: vecRefLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "i32.ge_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: vecRefLocal },
+      { op: "i32.const", value: idx + 1 },
+      { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 },
+    ],
+  });
+}
+
 // ── Compile-time primitive type check for Object methods ─────────────
 
 /**
@@ -895,6 +983,12 @@ export function compileObjectDefineProperty(
       }
     }
 
+    // #1130 PR-0: array-index-exotic length growth. For a vec receiver the
+    // accessor compiles to a struct accessor func (not a host import); the
+    // backing vec's logical length still must grow so iteration reaches the
+    // index. objLocal holds the raw ref here.
+    maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg, objLocal, objType);
+
     // Return obj
     fctx.body.push({ op: "local.get", index: objLocal });
     return objType;
@@ -1374,7 +1468,15 @@ function emitExternDefinePropertyValue(
   // directly to get a stable externref identity for the WasmGC struct (#856).
   const objType = compileExpression(ctx, fctx, objArg);
   if (!objType) return null;
+  // #1130 PR-0: capture the raw vec ref (before extern.convert_any) so the
+  // array-index-exotic length bump below can struct.set field 0. Only when
+  // the receiver is statically a vec — otherwise no raw local is needed.
+  let rawVecLocal: number | undefined;
   if (objType.kind === "ref" || objType.kind === "ref_null") {
+    if (resolveVecTypeIdx(ctx, objArg) !== undefined) {
+      rawVecLocal = allocLocal(fctx, `__defprop_rawvec_${fctx.locals.length}`, objType);
+      fctx.body.push({ op: "local.tee", index: rawVecLocal });
+    }
     fctx.body.push({ op: "extern.convert_any" } as Instr);
   } else if (objType.kind !== "externref") {
     coerceType(ctx, fctx, objType, { kind: "externref" });
@@ -1455,6 +1557,11 @@ function emitExternDefinePropertyValue(
   flushLateImportShifts(ctx, fctx);
   if (funcIdx !== undefined) {
     fctx.body.push({ op: "call", funcIdx });
+  }
+
+  // #1130 PR-0: array-index-exotic length growth (raw vec ref captured above).
+  if (rawVecLocal !== undefined) {
+    maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg, rawVecLocal, objType);
   }
 
   // __defineProperty_value returns obj, so we're done
@@ -1695,6 +1802,8 @@ function emitExternDefinePropertyNoValue(
       if (accFuncIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: accFuncIdx });
       }
+      // #1130 PR-0: array-index-exotic length growth (objLocal holds the raw ref).
+      maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg, objLocal, objType);
       return { kind: "externref" };
     }
 
@@ -1734,6 +1843,8 @@ function emitExternDefinePropertyNoValue(
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
     }
+    // #1130 PR-0: array-index-exotic length growth (objLocal holds the raw ref).
+    maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg, objLocal, objType);
     return { kind: "externref" };
   }
 

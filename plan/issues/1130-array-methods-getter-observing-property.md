@@ -3,7 +3,7 @@ id: 1130
 title: "Array methods — getter-observing property access on indices and length"
 status: ready
 created: 2026-04-20
-updated: 2026-04-28
+updated: 2026-05-25
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -912,3 +912,40 @@ codegen) and, if holes are not tracked, **scope PR-1/2 to the `[]`-or-dense
 than expanding #1130. This is the one place this issue could legitimately
 need more than a spec — flag it to the architect/PO if hole tracking turns
 out to be a prerequisite for a majority of the 96.
+
+---
+
+## PR-0 landed (2026-05-25, dev-c)
+
+Array-index-exotic `length` growth on `defineProperty` (item A of the
+2026-05-24 authoritative re-spec). `Object.defineProperty(arr, "n", desc)`
+with a canonical array index `n >= arr.length` now bumps the vec's logical
+length (struct field 0) to `n + 1`, per ES §10.4.2.1.
+
+- `src/codegen/object-ops.ts` — new helpers `parseCanonicalArrayIndex`,
+  `resolveVecTypeIdx`, `maybeEmitVecLengthGrowth` (emits a guarded
+  `if (n >= vec.length) vec.length = n+1` on the raw vec ref). Wired into
+  all three array-receiver defineProperty paths:
+  - struct-accessor branch (`get`/`set` on a typed vec → `<vec>_get_n`
+    accessor func; objLocal holds the raw ref),
+  - `emitExternDefinePropertyNoValue` (accessor + flag-only on externref),
+  - `emitExternDefinePropertyValue` (value descriptor; a raw vec ref is
+    captured via `local.tee` before `extern.convert_any`).
+- Only canonical array indices in `[0, 2^32-2]` grow length; `"length"`,
+  `"01"`, `"-1"`, `"1.5"`, `"4294967295"` do not. Gated on the receiver
+  statically resolving to a vec struct (length+data), so non-array
+  defineProperty and externref-typed locals are untouched (the type guard
+  prevents an invalid `struct.get`).
+- Test: `tests/issue-1130.test.ts` (7 tests) — accessor/value growth,
+  no-grow-within-length, non-index keys, string-element vec, and a
+  forEach-unaffected guard.
+
+**Note on the re-spec premise**: the 2026-05-24 claim that *every* array
+shape routes accessor `defineProperty` through `__defineProperty_accessor`
+is only true for `any`-typed arrays. A statically-typed `number[]` with an
+accessor descriptor routes to the struct-accessor branch (`<vec>_get_n`),
+NOT the host import — so PR-0 wires growth into that branch too. PR-1's
+accessor-observation probe will need to account for this (the getter on a
+typed vec is a compiled Wasm accessor func, not a `_wasmStructProps`
+sidecar entry). Element-read accessor observation is still PR-1 scope; PR-0
+only fixes the loop bound.
