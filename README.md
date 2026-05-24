@@ -267,10 +267,6 @@ Loopdive develops `js2wasm` with an **Automated Agile Team** model. The goal is 
 
 ### Why It Matters
 
-This model is designed around one claim:
-
-**Velocity is our moat.**
-
 The project is optimized for:
 
 - short implementation-to-validation cycles
