@@ -1,9 +1,8 @@
 ---
 id: 1666
 title: "bug: --target wasi emits INVALID wasm for class/closure/callback/number→string/regex/generator/typed-array (native helper type mismatch + unbound late global)"
-status: done
+status: ready
 created: 2026-05-25
-completed: 2026-05-25
 priority: high
 feasibility: hard
 task_type: bugfix
@@ -14,6 +13,11 @@ sprint: Backlog
 related: [1662, 1335, 1470, 1472]
 ---
 # #1666 — `--target wasi` produces invalid (non-instantiable) Wasm for several constructs
+
+> **REVERTED by #618** (the eager `fixupModuleFuncIndices` in `addImport`
+> corrupted the default-GC trampoline path → −3,600 test262). Re-land must
+> scope the func-index fixup so it never re-shifts already-emitted bodies in
+> the default (non-standalone) path. See #1668. Status stays `ready`.
 
 ## Problem
 
@@ -108,109 +112,3 @@ because the modules fail full validation.
 This bug likely **masks** part of the residual-leak analysis in #1664 — fix
 this first; some leaks may resolve once the native lowering path is
 exercised correctly.
-
-## Resolution (2026-05-25)
-
-Both signatures were distinct **index-shift** bugs, plus one knock-on
-**string-materialization** bug. Root-caused and fixed:
-
-### Root cause A — func-index drift in already-emitted helper bodies
-
-`finalizeUnifiedCollector` (declarations.ts) emits the native-string helpers
-(`__str_copy_tree`, `__str_flatten`, …) into `ctx.mod.functions`, then later in
-the *same* pass adds late func imports (`__make_callback`, `number_toString*`,
-`__call_*`, …) via `addImport`. `addImport` bumped `ctx.numImportFuncs` and the
-`funcMap`, but — unlike `addStringConstantGlobal`, which has called
-`fixupModuleGlobalIndices` for *globals* since #1174 — it never patched the
-`call` indices already baked into the emitted helper bodies. So `__str_flatten`'s
-`call $__str_copy_tree` (originally `call 0`) kept pointing at index 0, which the
-later import insertion had reassigned to `__make_callback`. wasmtime/V8 then
-rejected the module with `call[k] expected type <T>, found <U>` *inside the
-helper*, not at the user call site.
-
-**Fix**: an eager func-index fixup in `addImport` (`registry/imports.ts`,
-`fixupModuleFuncIndices`) — symmetric with the global fixup. It shifts every
-`call`/`return_call`/`ref.func` ≥ threshold across all live bodies
-(mod.functions, currentFunc, funcStack, parentBodiesStack, liveBodies,
-pendingInitBody, global inits), plus `funcMap`, exports, table elements,
-declaredFuncRefs, and `startFuncIdx`. The four self-shifting batch adders
-(`addUnionImports`, `addStringImports` in index.ts) bump a re-entrancy guard
-(`ctx.suppressFuncIndexFixup`) so they keep doing their single batched shift
-without double-shifting; `addArrayIteratorImports` / `addGeneratorImports`
-previously did **no** shift at all (a latent sibling of this bug) and are now
-fixed for free by the eager path.
-
-### Root cause B — unbound late global (`global.get -1`)
-
-Under nativeStrings (auto-on for wasi/standalone) a string constant carries the
-`-1` sentinel in `stringGlobalMap` (no `string_constants` global exists). Many
-dynamic-dispatch sites used the shape
-`addStringConstantGlobal(v); const i = stringGlobalMap.get(v); if (i !==
-undefined) global.get i`. Because `-1 !== undefined`, the guard emitted
-`global.get -1` → `Invalid global index: 4294967295`. Sites: the `toString`/
-`toFixed`/`toPrecision`/`toExponential` RangeError throw payloads
-(`expressions/calls.ts`), the extern method-name / builtin-name / `__extern_get`
-property-key pushes (`calls.ts` + `property-access.ts`).
-
-**Fix**: materialize the constant inline via `stringConstantExternrefInstrs`
-(which already handles both string backends) at every such site; added a local
-`pushStringConstantExternref` helper in calls.ts.
-
-### Knock-on — template literal number substitution
-
-`compileNativeTemplateExpression` round-tripped a non-string span through the
-JS-host extern bridge (`__str_to_extern`/`__str_from_extern`, backed by
-`__str_to_mem`/`__str_from_mem` host imports the strict wasi gate drops). Under
-nativeStrings, `number_toString` already returns a boxed NativeString-as-
-externref, so the span is now brought back to a string ref with a pure
-`any.convert_extern` + guarded `ref.cast` (the same pattern `String(n)` uses) —
-no host bridge.
-
-### Outcome (which became valid vs which refuse vs which still leak)
-
-| Construct | Before | After |
-|---|---|---|
-| closure (captured local) | INVALID | **valid + fully standalone** (0 env imports, runs under wasmtime → 10) |
-| class extends/super | INVALID | **valid + fully standalone** (0 env imports, → 5) |
-| array .map/.filter/.reduce | INVALID | **valid + fully standalone** (0 env imports, → 12) |
-| template `` `val=${x}` `` | INVALID | **valid** (leaks `number_toString` — #1335) |
-| `(255).toString(16)` / `.toFixed` | INVALID | **valid** (leaks `number_toString*` — #1335) |
-| `String(42)` | (already valid) | valid (leaks `number_toString` — #1335) |
-| `Uint8Array.set` | INVALID | **valid** (leaks `__extern_get` — #1664) |
-
-The audit's "INVALID WASM + leaks" entries were misleading: the leak counts came
-from a *tolerant* import-section parser reading a malformed module. Once valid,
-classes/closures/array-methods carry **zero** env imports. The remaining leaks
-(`number_toString*`, `__extern_get`) are genuine feature gaps owned by #1335 /
-#1664; this issue delivers **validity**, which is independent of
-leak-elimination per the original acceptance note.
-
-### Verification
-
-- New regression suite `tests/issue-1666-standalone-valid-wasm.test.ts`:
-  asserts `WebAssembly.compile` validity for every construct under both
-  `--target wasi` and `--target standalone`; instantiates the three
-  zero-host-import constructs with an empty import object and checks return
-  values (10 / 5 / 12); plus a gc-mode regression guard.
-- Confirmed end-to-end under real `wasmtime -W gc=y,function-references=y,
-  tail-call=y,exceptions=y --invoke test`: closure→10, arrmap→12, cls→5.
-- Targeted equivalence sweep (~250 tests across strings/classes/closures/
-  arrays/templates/typed-arrays/map-set/standalone/wasi-stdout): no new
-  failures; the handful of red tests (json-stringify boolean-coercion quirk,
-  iife-tagged-templates, optional-direct-closure-call, object-literal
-  getters/setters) fail identically on `origin/main` — pre-existing, unrelated.
-- `tsc --noEmit` clean; biome lint introduces no new diagnostics.
-
-### Files
-
-- `src/codegen/registry/imports.ts` — eager func-index fixup in `addImport` +
-  `fixupModuleFuncIndices`.
-- `src/codegen/context/types.ts` — `suppressFuncIndexFixup` re-entrancy guard.
-- `src/codegen/index.ts` — guard the two self-shifting batch import adders.
-- `src/codegen/expressions/calls.ts` — RangeError throw payloads +
-  dynamic-name pushes via `stringConstantExternrefInstrs` /
-  `pushStringConstantExternref`.
-- `src/codegen/property-access.ts` — `__extern_get` property-key pushes via
-  `stringConstantExternrefInstrs`.
-- `src/codegen/string-ops.ts` — template number substitution avoids the host
-  extern bridge under nativeStrings.

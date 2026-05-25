@@ -36,6 +36,12 @@ on:
     types: [opened, synchronize, reopened]
   issue_comment:
     types: [created]
+  # #1668 — must report on merge_group so the required `cla-check` context is
+  # satisfied in the merge queue. There is no PR author to gate here (the
+  # PR-level pull_request_target run already enforced acceptance); the job
+  # below short-circuits to success on merge_group. Without this trigger the
+  # required check never posts on the merge-group commit and the queue wedges.
+  merge_group:
 
 permissions:
   contents: write # to commit appended signatures to the base repo
@@ -49,17 +55,30 @@ jobs:
     # issue_comment fires on ALL issues; only run for PR comments.
     if: ${{ github.event_name != 'issue_comment' || github.event.issue.pull_request != null }}
     steps:
+      # Non-PR events (merge_group, and the queue's gh-readonly-queue branch
+      # activity) have no PR author to gate — CLA is enforced at PR submission
+      # via pull_request_target. Pass immediately so the required `cla-check`
+      # context reports success and the merge queue can proceed. The real CLA
+      # evaluation below runs ONLY for pull_request_target / issue_comment, so
+      # it never executes in a non-PR context (which previously errored). (#1668)
+      - name: Non-PR event — CLA enforced at PR time, pass
+        if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
+        run: echo "Non-PR event (${{ github.event_name }}): CLA acceptance is enforced at PR submission; nothing to gate here."
+
       # BASE checkout only (default for pull_request_target). Never the PR head.
       - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: true
 
       - uses: actions/setup-node@v6
+        if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'
         with:
           node-version: 25
 
       - name: Evaluate / record CLA acceptance
+        if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'
         uses: actions/github-script@v7
         env:
           # Exposed so the gate module's own fetch()-based org-membership check

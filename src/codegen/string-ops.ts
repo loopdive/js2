@@ -176,31 +176,13 @@ export function compileNativeTemplateExpression(
   // externref marshaling, i.e. it has a NON-string substitution (number/bigint/
   // object → number_toString returns externref → __str_from_extern). A template
   // whose spans are all strings concatenates natively with zero host calls.
-  //
-  // #1666: under nativeStrings (auto-on for --target wasi/standalone) the host
-  // bridge is unavailable. `number_toString` already returns a boxed
-  // NativeString-as-externref there, so a non-string span is brought back to a
-  // string ref with a pure `any.convert_extern` + guarded ref.cast (the same
-  // pattern `String(n)` uses) instead of the `__str_from_extern` host bridge.
   const hasNonStringSpan = expr.templateSpans.some((s) => !isStringType(ctx.checker.getTypeAtLocation(s.expression)));
-  const useNativeExternToStr = noJsHost(ctx) || ctx.nativeStrings;
-  if (hasNonStringSpan && !useNativeExternToStr) {
+  if (hasNonStringSpan) {
     ensureNativeStringExternBridge(ctx);
     flushLateImportShifts(ctx, fctx);
   }
   const fromExternIdx = ctx.nativeStrHelpers.get("__str_from_extern");
   if (concatIdx === undefined) return null;
-  // Marshal the externref result of `number_toString` (etc.) back to a native
-  // string ref. Prefers the host bridge when present (JS-host mode); otherwise
-  // converts the externref directly via the WasmGC anyref cast.
-  const marshalExternToNativeStr = (): void => {
-    if (fromExternIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: fromExternIdx });
-    } else {
-      fctx.body.push({ op: "any.convert_extern" } as Instr);
-      emitGuardedRefCast(fctx, ctx.anyStrTypeIdx);
-    }
-  };
 
   if (expr.head.text) {
     compileStringLiteral(ctx, fctx, expr.head.text, expr.head);
@@ -226,19 +208,27 @@ export function compileNativeTemplateExpression(
     } else if (spanType && spanType.kind === "f64" && toStrIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       // number_toString returns externref, marshal to native string
-      marshalExternToNativeStr();
+      if (fromExternIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
+      }
     } else if (spanType && spanType.kind === "i32" && toStrIdx !== undefined) {
       fctx.body.push({ op: "f64.convert_i32_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
-      marshalExternToNativeStr();
+      if (fromExternIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
+      }
     } else if (spanType && spanType.kind === "i64" && toStrIdx !== undefined) {
       fctx.body.push({ op: "f64.convert_i64_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
-      marshalExternToNativeStr();
+      if (fromExternIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
+      }
     } else if (spanType && (spanType.kind === "ref" || spanType.kind === "ref_null") && toStrIdx !== undefined) {
       // Struct ref → externref: use coerceType which checks @@toPrimitive("string") first
       coerceType(ctx, fctx, spanType, { kind: "externref" }, "string");
-      marshalExternToNativeStr();
+      if (fromExternIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
+      }
     }
     // ref $NativeString is already the right type
 

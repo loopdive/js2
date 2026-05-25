@@ -1093,13 +1093,31 @@ export function compileObjectLiteralForStruct(
     const existingFuncIdx = ctx.funcMap.get(fullName);
     if (existingFuncIdx === undefined) continue;
 
-    // Compute the signature this method would compile to.
+    // Compute the signature this method would compile to. This MUST mirror the
+    // body-compile param-type derivation below (search "methodParams") exactly,
+    // otherwise the fork decision diverges from reality: it would think this
+    // single-literal method's params differ from the registered func type and
+    // fork a per-literal funcIdx, orphaning the shared `funcMap` entry with an
+    // empty stub body — a *direct* call `obj.method()` (dispatched via funcMap,
+    // not the per-literal map) then lands on the empty func and traps
+    // ("dereferencing a null pointer" / iterator-protocol "reading 'next' of
+    // null"). (#1671 — completes #1669/#1602.)
     const newParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
     for (const param of prop.parameters) {
       const paramType = ctx.checker.getTypeAtLocation(param);
       let wasmType = resolveWasmType(ctx, paramType);
       if (param.initializer && wasmType.kind === "ref") {
         wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
+      }
+      // (#1671) Binding-pattern params route through the externref destructure
+      // path during body compilation (#1151 Gap B — see line ~1524). The
+      // fork-decision sig must apply the SAME widening, or
+      // `async *method([, , ...x] = […]) {}` (array binding pattern) computes
+      // `(ref null vec)` here while the real body uses `externref`, a `kind`
+      // divergence `refTypesMatch` cannot reconcile, spuriously forking.
+      const hasBindingPattern = ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name);
+      if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
+        wasmType = { kind: "externref" };
       }
       newParams.push(wasmType);
     }

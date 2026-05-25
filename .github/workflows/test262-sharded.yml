@@ -475,6 +475,80 @@ jobs:
             --baseline-generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}
 
+      # #1668 — HARD catastrophic-regression guard. Lives INSIDE the REQUIRED
+      # "merge shard reports" check so it blocks the merge queue. The
+      # fine-grained `regression-gate` job below fails on ANY regression but is
+      # advisory / NOT a required check — which is exactly how PR #608/#1666
+      # merged a −3,600-pass test262 harness corruption. This guard is the
+      # belt-and-suspenders that a catastrophe cannot slip past. Threshold is
+      # deliberately HIGH so baseline drift (#1235, typically <50 tests) never
+      # trips it; only a genuine codegen/harness break (hundreds–thousands of
+      # pass→fail with changed wasm) fails the build. On the no-shards path
+      # (SHARDS_RAN != true) it's skipped, matching the required check's
+      # existing no-op-pass behaviour for non-test262 changes.
+      - name: Catastrophic regression guard (#1668)
+        if: env.SHARDS_RAN == 'true'
+        env:
+          CATASTROPHIC_REGRESSION_THRESHOLD: "200"
+        run: |
+          git clone --depth=1 https://github.com/loopdive/js2wasm-baselines.git /tmp/cat-baselines 2>/dev/null || true
+          if [ ! -f /tmp/cat-baselines/test262-current.jsonl ]; then
+            echo "::warning::No baseline JSONL available — skipping catastrophic guard (first seed)."
+            exit 0
+          fi
+          set +e
+          npx tsx scripts/diff-test262.ts /tmp/cat-baselines/test262-current.jsonl \
+            merged-reports/test262-results-merged.jsonl --quiet > /tmp/cat-diff.txt 2>&1
+          diff_exit=$?
+          set -e
+          if [ "$diff_exit" -gt 1 ]; then
+            echo "::error::diff-test262 failed (exit $diff_exit) — cannot evaluate catastrophic guard."
+            cat /tmp/cat-diff.txt
+            exit "$diff_exit"
+          fi
+          NET=$(grep -oE 'Regressions with wasm-hash change: [0-9]+' /tmp/cat-diff.txt | grep -oE '[0-9]+' | head -1)
+          NET="${NET:-0}"
+          echo "Catastrophic guard: ${NET} wasm-change regressions vs baseline (threshold ${CATASTROPHIC_REGRESSION_THRESHOLD})."
+          if [ "$NET" -gt "$CATASTROPHIC_REGRESSION_THRESHOLD" ]; then
+            echo "::error::CATASTROPHIC test262 regression: ${NET} tests went pass→fail with changed wasm, exceeding the ${CATASTROPHIC_REGRESSION_THRESHOLD} threshold. This blocks the merge queue. A regression this large is almost always a codegen/harness corruption (cf. #608). Investigate before merging."
+            echo "----- regression sample (first 40 lines) -----"
+            head -40 /tmp/cat-diff.txt
+            exit 1
+          fi
+
+      # #1668 — HARD stale-baseline guard. The catastrophic guard above (and the
+      # advisory regression-gate) are only as trustworthy as the baseline they
+      # diff against. The baseline is refreshed per-merge by the promote-baseline
+      # job → js2wasm-baselines repo. If that pipeline ever silently breaks, the
+      # baseline falls behind main and the gates go blind to new regressions
+      # (they'd compare against an ancient state). This fails the REQUIRED check
+      # when the baseline's recorded main-sha is too far behind main HEAD.
+      # Normal operation is 0–1 behind; a quiet period is 0 behind (no merges →
+      # no drift), so a large lag specifically means promotion is broken — the
+      # threshold is generous so only genuine breakage trips it.
+      - name: Stale-baseline guard (#1668)
+        if: env.SHARDS_RAN == 'true'
+        env:
+          MAX_BASELINE_COMMITS_BEHIND: "50"
+        run: |
+          if [ ! -d /tmp/cat-baselines ]; then
+            echo "::warning::baselines clone missing — skipping stale-baseline guard."
+            exit 0
+          fi
+          # Baseline commit subject: "chore(test262): refresh baseline — N/T pass (<main-sha>)"
+          BSHA=$(git -C /tmp/cat-baselines log -1 --format=%s | grep -oE '[0-9a-f]{7,40}' | tail -1)
+          if [ -z "$BSHA" ]; then
+            echo "::warning::could not parse baseline main-sha from commit subject — skipping stale-baseline guard."
+            exit 0
+          fi
+          git fetch --depth=200 origin main 2>/dev/null || true
+          BEHIND=$(git rev-list --count "${BSHA}..origin/main" 2>/dev/null || echo 999)
+          echo "Baseline main-sha ${BSHA} is ${BEHIND} commit(s) behind origin/main (max ${MAX_BASELINE_COMMITS_BEHIND})."
+          if [ "$BEHIND" -gt "$MAX_BASELINE_COMMITS_BEHIND" ]; then
+            echo "::error::STALE BASELINE: the js2wasm-baselines JSONL is ${BEHIND} commits behind main HEAD (baseline main-sha ${BSHA}). The promote-baseline pipeline is likely broken, so the regression gates are blind to new regressions. Fix baseline promotion before merging. See #1668."
+            exit 1
+          fi
+
       - name: Upload merged reports
         if: always() && env.SHARDS_RAN == 'true'
         uses: actions/upload-artifact@v6

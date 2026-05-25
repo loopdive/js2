@@ -2,7 +2,10 @@
 
 Direct AOT compilation from JavaScript and TypeScript to WebAssembly GC.
 
-`js2wasm` compiles source code into WasmGC binaries without embedding a JavaScript interpreter or shipping a bundled runtime. That removes the runtime tax common in interpreter-in-Wasm and bundled-engine stacks, where interpreters often land in the high-hundreds-of-kilobytes range and full-fledged JavaScript engines in the megabytes, and keeps the output aligned with Wasm-native deployment models.
+> **Status: early-stage research prototype — a tech demo, not a production-ready compiler.**
+> `js2wasm` is an experimental ahead-of-time JavaScript/TypeScript-to-WasmGC compiler under active development. It explores one specific point in the design space: full ECMAScript backwards compatibility via direct AOT compilation, with no JavaScript engine or interpreter bundled into the output. It does **not** claim production readiness, full language coverage, or stable APIs — expect rough edges, gaps, and breaking changes. Live conformance and benchmark figures are in **[STATUS.md](./STATUS.md)** (numbers change frequently and are not duplicated in this README).
+
+`js2wasm` compiles source code into WasmGC binaries without embedding a JavaScript interpreter or shipping a bundled runtime. That avoids the runtime tax common in the interpreter-based and engine-embedding approaches — where a JavaScript interpreter or full engine is compiled to Wasm and shipped inside every module — and keeps the output aligned with Wasm-native deployment models.
 
 `js2wasm` is the core compiler product of **Loopdive GmbH**, released under **Apache License 2.0 with LLVM Exceptions** — and developed fully in the open, including its agentic engineering workflow. The repository contains the compiler source, the complete planning surface (`plan/`), and the agent coordination infrastructure (`.claude/`) that a small team uses to ship fixes in parallel.
 
@@ -33,7 +36,7 @@ It also matters for security boundaries. In browsers, Node.js, and other JavaScr
 
 That includes practical combinations with hosts like Tauri, where compiler output can be shipped as executable Wasm artifacts instead of bundling a full browser-plus-JS-engine runtime into the application.
 
-The current public benchmark and conformance work is aimed at proving that direct compilation can become a viable alternative to interpreter bundling for production infrastructure.
+The current public benchmark and conformance work exists to test an open question: whether direct AOT compilation can become a viable alternative to bundling a runtime for these workloads. That has not been settled yet — it is what the project is investigating.
 
 Many alternatives in adjacent spaces solve the problem by narrowing the language instead:
 
@@ -44,85 +47,85 @@ Many alternatives in adjacent spaces solve the problem by narrowing the language
 
 Projects in this category usually take years to reach meaningful semantic coverage. A large part of the Loopdive thesis is that an AI-native compiler workflow can compress that timeline substantially without giving up on the harder target.
 
-Current public milestone:
+Current Test262 conformance and benchmark numbers are tracked in one place and
+change frequently — see **[STATUS.md](./STATUS.md)** for the live figures, the
+[Playground](https://loopdive.github.io/js2wasm/playground/), and the
+[Roadmap](./ROADMAP.md). The single auto-updated conformance figure (refreshed
+by CI on every merge) is below; everything else links to STATUS.md rather than
+duplicating numbers that go stale.
 
 <!-- AUTO:conformance-start -->
 **test262 conformance**: 28,842 / 43,159 (66.8 %) — baseline 1f5208c8, 2026-05-22T19:51:21Z
 <!-- AUTO:conformance-end -->
 
-See the [Playground](https://loopdive.github.io/js2wasm/playground/) and [Roadmap](./ROADMAP.md) for the current public surface.
-
 ## Current Status
 
-`js2wasm` is still an active compiler effort, but it is no longer just a research prototype. The project now has:
+`js2wasm` is an early-stage research prototype: an experimental compiler under
+active development, not a production-ready tool. It is being explored as a
+public, in-the-open project, and the conformance story, runtime boundary, and
+standalone path are all still hardening. What exists today:
 
-- **~60% Test262 compliance**
+- a JS-hosted compilation path passing a substantial subset of Test262 (see
+  [STATUS.md](./STATUS.md) for the current figure)
 - a public browser playground
-- ongoing benchmark and compatibility reporting
-- both JS-hosted and standalone-oriented compiler work, with standalone support still in progress and not yet the primary conformance path
+- continuous conformance and benchmark reporting on every change
+- a standalone (no-JS-host) path that is in progress and not yet the primary
+  conformance target
 
-The project is being positioned for a community-first release while the compiler, runtime boundary, and conformance story continue to harden.
+Treat it as a tech demo to evaluate the approach, not as something to deploy.
 
-## How It Compares
+## The AOT JavaScript compilation landscape
 
-Most JavaScript-on-Wasm approaches fit into one of four broad categories:
+There are several established ways to get JavaScript running on WebAssembly.
+Each makes a different, reasonable trade-off, and most have years of engineering
+behind them. The point of this map is not to rank them — it is to locate the
+specific gap `js2wasm` is exploring. Described by architecture rather than by
+product:
 
-1. bundled JavaScript interpreters,
-2. bundled JavaScript engines,
-3. incompatible JavaScript or TypeScript subsets, supersets, and new languages,
-4. direct AOT compilation of JavaScript semantics to WasmGC.
+- **Interpreter-based approach** — compile a JavaScript *interpreter* to Wasm
+  and run the user's program on top of it. Gets broad ECMAScript compatibility
+  more or less for free, because a real interpreter is doing the work. The cost:
+  every deployed module ships and initializes the interpreter, which adds size
+  and startup overhead and means application code runs interpreted rather than
+  compiled.
 
-`js2wasm` is in the fourth category.
+- **Engine-embedding approach** — compile a full production JavaScript *engine*
+  to Wasm (optionally specialized per-script, e.g. via partial evaluation).
+  Inherits mature, battle-tested engine semantics and very high compatibility.
+  The cost: the engine is large, and even when specialized the engine itself is
+  still part of what ships.
 
-Bundled-runtime approaches inherit compatibility from an interpreter or engine,
-but every deployed module pays for that runtime. Subset, superset, and
-new-language approaches can generate compact Wasm by changing the language
-contract.
+- **Typed JS/TS subset languages** — a statically typed language with
+  JavaScript-like or TypeScript-like syntax that compiles ahead of time to
+  compact Wasm. Output is small and fast precisely *because* it deliberately
+  does **not** accept full ECMAScript: dynamic semantics are excluded by design
+  and the type system is the contract. Excellent when you can write to that
+  language; not a path to running existing JavaScript unchanged.
 
-`js2wasm` is aimed at a different target: **JavaScript semantics without
-shipping a JavaScript engine or interpreter inside the deployed artifact**.
-Where the compiler can prove stable types and shapes, it lowers them directly to
-WasmGC structs, arrays, primitives, and functions. Where JavaScript remains
-dynamic, it inserts guards, uses dynamic representations, or delegates at host
-boundaries.
+- **Linear-memory AOT compilers** — compile JavaScript ahead of time to Wasm
+  using linear memory, implementing object model, allocation, and (typically) a
+  garbage collector inside the module. This shares the "compile, don't embed a
+  runtime" goal; the distinguishing axis from `js2wasm` is the lowering target
+  (linear memory and a self-managed heap vs. host-managed WasmGC) and, in
+  current projects, how much of full ECMAScript compatibility is an explicit
+  goal.
 
-### How does this compare to specific projects?
+**Where `js2wasm` sits.** Direct AOT compilation to **WasmGC** (objects,
+closures, and arrays lower to host-managed GC structs/arrays/references), with
+**full ECMAScript backwards compatibility as the explicit goal**, and **no
+JavaScript engine or interpreter bundled into the output**. Where the compiler
+can prove stable types and shapes it lowers them directly; where JavaScript
+stays dynamic it inserts guards, boxed representations, or host fallbacks.
 
-These projects share parts of the design space with `js2wasm` and each makes a
-different, reasonable trade-off:
-
-- **[AssemblyScript](https://www.assemblyscript.org/)** — a well-engineered
-  compiler for a TypeScript-*like* language with its own stricter type system,
-  lowering to compact Wasm via Binaryen. It achieves small output by defining a
-  new language contract rather than accepting mainstream JavaScript semantics.
-  `js2wasm` targets existing TypeScript/JavaScript semantics directly, which is
-  a harder compatibility goal; AssemblyScript is the better fit when you can
-  write to its language and want maximally lean output.
-
-- **[Javy](https://github.com/bytecodealliance/javy)** — embeds the QuickJS
-  interpreter inside the Wasm module and runs your JS on top of it. That
-  inherits broad JavaScript compatibility immediately, at the cost of shipping
-  and initializing an interpreter in every module. `js2wasm` instead compiles
-  the code ahead-of-time with no embedded interpreter, trading some
-  compatibility for a smaller, engine-free artifact.
-
-- **[Porffor](https://porffor.dev/)** — like `js2wasm`, an ahead-of-time
-  JavaScript-to-Wasm compiler aiming at real JS semantics rather than a subset,
-  which puts it in the same fourth category. It is an early-stage project that
-  lowers to linear memory; `js2wasm` lowers to WasmGC, leaning on the host
-  garbage collector for objects, closures, and arrays. The two are close
-  neighbors exploring different lowering strategies for the same hard target.
-
-- **StarlingMonkey + [weval](https://github.com/bytecodealliance/weval)** —
-  StarlingMonkey is a WASI-oriented build of the SpiderMonkey engine; weval
-  applies Wasm partial evaluation (a Futamura projection) to specialize the
-  engine for a given script, reducing interpreter overhead. This is a
-  bundled-engine approach made faster through specialization, so it keeps full
-  engine compatibility while still shipping the engine. `js2wasm` avoids
-  bundling an engine at all, accepting a narrower compatibility surface in
-  exchange.
-
-For a more detailed category-level comparison, see the [FAQ](./docs/faq.md).
+The structural observation behind the project is that this *combination* of
+trade-offs is largely unoccupied: the typed-subset languages excluded full
+ECMAScript compatibility on purpose; the linear-memory AOT compilers do not
+currently center it; and the interpreter-based and engine-embedding approaches
+reach compatibility only by shipping a runtime (paying in size and startup).
+Targeting WasmGC + full backwards compatibility + no bundled runtime is a point
+that has not been seriously attempted. `js2wasm` is testing whether it is
+viable — that is an open question, not a settled result, and the honest answer
+today is "we don't know yet."
 
 ## Quick Start
 
@@ -143,17 +146,38 @@ Programmatic API:
 ```ts
 import { compile } from "js2wasm";
 
-const result = compile(`
+const result = compile(
+  `
   export function add(a: number, b: number): number {
     return a + b;
   }
-`);
+`,
+  { target: "standalone" },
+);
 
 if (result.success) {
+  // standalone modules have no host imports, so {} is sufficient
   const { instance } = await WebAssembly.instantiate(result.binary, {});
-  console.log((instance.exports as any).add(2, 3));
+  console.log((instance.exports as any).add(2, 3)); // → 5
 }
 ```
+
+### Compile modes and imports
+
+The imports a module needs depend on the compile target:
+
+- **Default (JS-host) mode** (no `target`, or `target: "gc"`) emits runtime
+  imports — a `string_constants` module plus `env.*` helpers such as
+  `__box_number`, `__extern_get`, and `__throw_reference_error`. These are
+  supplied by the js2wasm JS runtime, so instantiating with an empty `{}`
+  throws `Import #0 "string_constants": module is not an object or function`.
+  Use this mode when you run the output alongside the JS runtime that provides
+  those imports.
+- **Standalone mode** (`target: "standalone"`, also `target: "wasi"`) emits a
+  pure WasmGC module with Wasm-native intrinsics and **no host imports**, so it
+  instantiates with `WebAssembly.instantiate(binary, {})` and runs anywhere
+  WasmGC is available. Prefer this for portable, host-independent output — it is
+  what the snippet above uses.
 
 Useful local commands:
 
@@ -216,11 +240,14 @@ output, see [docs/standalone-io.md](./docs/standalone-io.md).
 
 ## Current coverage and limitations
 
-`js2wasm` passes roughly two-thirds of Test262 in a JS host (see the conformance
-figure above and the full [Test262 report](./benchmarks/results/report.html)).
-That means a large, useful subset of the language works — but there are real
-gaps, and you will hit them. This section is the honest high-level shape; the
-report is the authoritative per-feature detail.
+In a JS host, `js2wasm` passes a substantial subset of Test262 — enough that a
+large, useful slice of the language works — but there are real gaps, and you
+will hit them. The current pass rate lives in [STATUS.md](./STATUS.md) and the
+full [Test262 report](./benchmarks/results/report.html); this section is the
+qualitative high-level shape, and the report is the authoritative per-feature
+detail. Note that Test262 measures conformance to the ECMAScript *language*
+specification — it does not cover Web APIs, Node.js host behavior, or whether an
+arbitrary real-world npm package runs unchanged.
 
 **Solid** (broadly works):
 
@@ -249,9 +276,65 @@ report is the authoritative per-feature detail.
 - dropping in an arbitrary npm package unchanged
 
 If a pattern you rely on does not work, check the [Test262 report](./benchmarks/results/report.html)
-or open an issue. This is a serious compiler with a growing compatibility
-baseline and a clear infrastructure target — not yet a "drop in any npm package"
-story.
+or open an issue. This is an actively developed compiler with a growing
+compatibility baseline and a clear infrastructure target — but it is a research
+prototype, not yet a "drop in any npm package" story.
+
+## FAQ
+
+**Why not embed an existing interpreter or engine?**
+That is the interpreter-based / engine-embedding approach, and it is a perfectly
+reasonable way to get compatibility — but every deployed module then ships and
+initializes a runtime, which is exactly the size and startup cost `js2wasm` is
+trying to avoid. The bet here is that *compiling* the code, rather than shipping
+something to run it, is worth pursuing for size- and cold-start-sensitive
+deployments. Whether that bet holds across enough real code is the open
+question.
+
+**Isn't the Test262 conformance still incomplete?**
+Yes, and the live figure is in [STATUS.md](./STATUS.md) and the
+[Test262 report](./benchmarks/results/report.html) rather than rounded up here.
+Two caveats matter more than the number: Test262 measures the ECMAScript
+*language* spec, **not** Web APIs, host/Node.js behavior, or whether an arbitrary
+npm package runs unchanged; and the standalone (no-JS-host) path is less complete
+than the JS-host path. A high pass rate is necessary but not sufficient for "runs
+real JavaScript."
+
+**Won't you eventually re-implement a JavaScript engine?**
+That is the real risk, treated as an empirical question, not a solved one. The
+design is compiled-code-first: resolve what can be resolved statically and lower
+it directly, with no interpreter on the common paths. The genuinely unstatic
+corners (`eval`, dynamic `Function`) would need a small interpreter fallback that
+runs only on those paths — not a full engine in every module. Whether that
+fallback stays small, and how much real code avoids it, is what the prototype is
+testing. If compatibility turns out to require shipping an engine, that is a
+negative result worth knowing.
+
+**Why not extend an existing typed JS/TS subset language?**
+Typed JS/TS subset languages produce small, fast Wasm *because* they deliberately
+exclude full ECMAScript — dynamic semantics are dropped by design and the static
+type system is the contract. Extending one toward full backwards compatibility
+means re-adding the dynamics it was built to avoid. `js2wasm` instead targets
+existing JavaScript semantics directly, so existing code is the input rather than
+a rewrite into a new dialect.
+
+**Why WasmGC rather than linear memory?**
+WasmGC gives the compiler host-managed structs, arrays, references, and function
+references, which map onto JavaScript objects, closures, and arrays fairly
+directly and let the host GC manage memory instead of shipping a collector inside
+the module. Linear-memory AOT compilation is a legitimate alternative with its
+own trade-offs (more control, broader runtime support today, but a self-managed
+heap); `js2wasm` keeps a linear-memory backend for WASI-oriented targets, so this
+is a per-target choice rather than a one-way bet. See the
+[ADRs](./docs/adr/README.md) for the reasoning.
+
+**What is the realistic timeline to production-ready?**
+Unknown. This is research-stage work, and a firm date would be a guess dressed up
+as a commitment. The viability of the core bet — full ECMAScript backwards
+compatibility, AOT-compiled to WasmGC, no bundled runtime — is still being
+established. The conformance and benchmark trends are public so progress can be
+judged from data. Until they say otherwise, treat it as something to evaluate,
+not to deploy.
 
 ## The Methodology
 
@@ -267,7 +350,11 @@ Loopdive develops `js2wasm` with an **Automated Agile Team** model. The goal is 
 
 ### Why It Matters
 
-The project is optimized for:
+This model is a bet that a tight, automated feedback loop lets a small team
+iterate on a hard compatibility target faster than a conventional one would.
+Whether that bet pays off is part of what this prototype is testing.
+
+The workflow is optimized for:
 
 - short implementation-to-validation cycles
 - continuous spec-aligned compiler iteration

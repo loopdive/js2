@@ -405,6 +405,19 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // For let/const: the pre-pass (hoistLetConstWithTdz) always pre-allocates a slot
     // regardless of whether a TDZ flag is also allocated, so we check only the localMap.
     const existingIdx = fctx.localMap.get(name);
+    // (#1672) An object/class literal initializer whose method/accessor body
+    // references THIS same variable (e.g. `var obj = { async *m() { ...obj... } }`)
+    // triggers `promoteAccessorCapturesToGlobals` MID-evaluation: it copies the
+    // pre-assignment local value into a fresh `__captured_<name>` global, then
+    // deletes `name` from `localMap` so later reads resolve via that global.
+    // The problem: the promotion copies the STALE value (whatever the local held
+    // before this declaration), and the subsequent store writes only the LOCAL.
+    // Every later read of `name` then sees the stale global, not the freshly
+    // built object — so `obj.method` misses the method and dynamic dispatch
+    // returns null. Record whether the name was already a captured global before
+    // the initializer runs; if promotion adds it during the initializer, we
+    // re-sync the global from the local after the store below.
+    const wasCapturedGlobalBefore = ctx.capturedGlobals.has(name);
     // #1177: `using`/`await using` declarations are NOT `var` — they have
     // block-scoped lifetimes and TDZ semantics like let/const.
     const isVar = !(
@@ -622,5 +635,29 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     }
     // Set local TDZ flag to 1 (initialized) if this is a hoisted let/const
     emitLocalTdzInit(fctx, name);
+
+    // (#1672) If compiling this initializer promoted `name` to a captured
+    // global (because a method/accessor body in the initializer referenced
+    // `name` itself), the store above wrote only the local — but the promotion
+    // seeded the global with the STALE pre-assignment value and every later
+    // read of `name` now goes through the global. Re-sync the global from the
+    // local so subsequent reads observe the freshly-initialized value. We only
+    // do this for the promotion-during-this-init case (not pre-existing
+    // captured globals, which the normal module-global store path handles).
+    const capturedGlobalIdx = ctx.capturedGlobals.get(name);
+    if (capturedGlobalIdx !== undefined && !wasCapturedGlobalBefore && localIdx >= fctx.params.length) {
+      const localSlot = fctx.locals[localIdx - fctx.params.length];
+      const globalSlot = ctx.mod.globals[localGlobalIdx(ctx, capturedGlobalIdx)];
+      if (localSlot && globalSlot) {
+        fctx.body.push({ op: "local.get", index: localIdx } as Instr);
+        // Coerce the local value to the global's declared type if they differ
+        // (e.g. local is `(ref N)` while the captured global was widened to
+        // `ref_null`/`externref`). Reuse the shared coercion helper.
+        if (!valTypesMatch(localSlot.type, globalSlot.type)) {
+          coerceType(ctx, fctx, localSlot.type, globalSlot.type);
+        }
+        fctx.body.push({ op: "global.set", index: capturedGlobalIdx } as Instr);
+      }
+    }
   }
 }

@@ -103,7 +103,7 @@ import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
-import { ensureNativeStringExternBridge, stringConstantExternrefInstrs } from "../native-strings.js";
+import { ensureNativeStringExternBridge } from "../native-strings.js";
 import { emitDataViewAccessor, isDataViewAccessor } from "../dataview-native.js";
 
 /**
@@ -178,26 +178,6 @@ function resolveClosureInfoFromLocal(
     return ctx.closureInfoByTypeIdx.get(localType.typeIdx);
   }
   return undefined;
-}
-
-/**
- * #1666: push a string constant onto the stack as an externref, correct in
- * BOTH string backends. Many dynamic-dispatch sites (extern method name,
- * builtin name, property key for `__extern_get`) used to do
- * `addStringConstantGlobal(v); const idx = stringGlobalMap.get(v); if (idx !==
- * undefined) global.get idx`. Under nativeStrings (auto-on for --target wasi/
- * standalone) `addStringConstantGlobal` records the `-1` sentinel — which is
- * `!== undefined`, so the old guard emitted `global.get -1`, an unbound global
- * index that fails validation (`Invalid global index: 4294967295`). This helper
- * materializes the constant inline as a NativeString → externref in
- * nativeStrings mode and falls back to `global.get` of the string_constants
- * import in legacy mode.
- */
-function pushStringConstantExternref(ctx: CodegenContext, fctx: FunctionContext, value: string): void {
-  addStringConstantGlobal(ctx, value);
-  for (const instr of stringConstantExternrefInstrs(ctx, value)) {
-    fctx.body.push(instr);
-  }
 }
 
 /**
@@ -442,7 +422,13 @@ function resolvePromiseSubclassThisArg(ctx: CodegenContext, fctx: FunctionContex
   // Push the class name (the synthesized subclass is cached per name). Use the
   // same host-string mechanism as extern method dispatch so it works in both
   // string backends.
-  pushStringConstantExternref(ctx, fctx, resolved);
+  addStringConstantGlobal(ctx, resolved);
+  const nameIdx = ctx.stringGlobalMap.get(resolved);
+  if (nameIdx !== undefined) {
+    fctx.body.push({ op: "global.get", index: nameIdx } as Instr);
+  } else {
+    compileStringLiteral(ctx, fctx, resolved);
+  }
   fctx.body.push({ op: "call", funcIdx });
   return true;
 }
@@ -549,7 +535,13 @@ function emitWrapperDynamicMethodCall(
   }
 
   // Push method name as a string constant.
-  pushStringConstantExternref(ctx, fctx, methodName);
+  addStringConstantGlobal(ctx, methodName);
+  const methodNameIdx = ctx.stringGlobalMap.get(methodName);
+  if (methodNameIdx !== undefined) {
+    fctx.body.push({ op: "global.get", index: methodNameIdx } as Instr);
+  } else {
+    compileStringLiteral(ctx, fctx, methodName);
+  }
 
   // Empty args array: __js_array_new() → externref.
   fctx.body.push({ op: "call", funcIdx: arrNewIdx });
@@ -2269,10 +2261,22 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
 
             if (protoCallIdx !== undefined && arrNewIdx !== undefined && arrPushIdx !== undefined) {
               // Push typeName string
-              pushStringConstantExternref(ctx, fctx, typeName);
+              addStringConstantGlobal(ctx, typeName);
+              const typeNameIdx = ctx.stringGlobalMap.get(typeName);
+              if (typeNameIdx !== undefined) {
+                fctx.body.push({ op: "global.get", index: typeNameIdx } as Instr);
+              } else {
+                compileStringLiteral(ctx, fctx, typeName);
+              }
 
               // Push methodName string
-              pushStringConstantExternref(ctx, fctx, methodName);
+              addStringConstantGlobal(ctx, methodName);
+              const methodNameIdx = ctx.stringGlobalMap.get(methodName);
+              if (methodNameIdx !== undefined) {
+                fctx.body.push({ op: "global.get", index: methodNameIdx } as Instr);
+              } else {
+                compileStringLiteral(ctx, fctx, methodName);
+              }
 
               // Compile receiver (first argument to .call).
               // (#1442) When the receiver's static TS type is `boolean`, the
@@ -3388,7 +3392,13 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
               // obj
               fctx.body.push({ op: "local.get", index: objLocal });
               // prop name as string constant
-              pushStringConstantExternref(ctx, fctx, propName);
+              addStringConstantGlobal(ctx, propName);
+              const strGlobalIdx = ctx.stringGlobalMap.get(propName);
+              if (strGlobalIdx !== undefined) {
+                fctx.body.push({ op: "global.get", index: strGlobalIdx } as Instr);
+              } else {
+                fctx.body.push({ op: "ref.null.extern" });
+              }
               // value (or null for accessor descriptors)
               if (valueExpr) {
                 const vt = compileExpression(ctx, fctx, valueExpr);
@@ -3448,7 +3458,13 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
 
             if (dpDescIdx !== undefined) {
               fctx.body.push({ op: "local.get", index: objLocal });
-              pushStringConstantExternref(ctx, fctx, propName);
+              addStringConstantGlobal(ctx, propName);
+              const strGlobalIdx = ctx.stringGlobalMap.get(propName);
+              if (strGlobalIdx !== undefined) {
+                fctx.body.push({ op: "global.get", index: strGlobalIdx } as Instr);
+              } else {
+                fctx.body.push({ op: "ref.null.extern" });
+              }
               const descValType = compileExpression(ctx, fctx, prop.initializer);
               if (!descValType) {
                 fctx.body.push({ op: "ref.null.extern" });
@@ -3729,7 +3745,13 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       let objType: ReturnType<typeof compileExpression>;
       if (arg0IsBuiltin && getBuiltinFuncIdx !== undefined) {
         const builtinName = (arg0 as ts.Identifier).text;
-        pushStringConstantExternref(ctx, fctx, builtinName);
+        addStringConstantGlobal(ctx, builtinName);
+        const strIdx = ctx.stringGlobalMap.get(builtinName);
+        if (strIdx !== undefined) {
+          fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+        } else {
+          compileStringLiteral(ctx, fctx, builtinName);
+        }
         fctx.body.push({ op: "call", funcIdx: getBuiltinFuncIdx });
         objType = { kind: "externref" };
       } else {
@@ -5597,11 +5619,12 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         {
           const rangeErrMsg = "RangeError: toString() radix must be between 2 and 36";
           addStringConstantGlobal(ctx, rangeErrMsg);
+          const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
           const tagIdx = ensureExnTag(ctx);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
+            then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
             else: [],
           });
         }
@@ -5652,11 +5675,12 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         {
           const rangeErrMsg = "RangeError: toFixed() digits argument must be between 0 and 100";
           addStringConstantGlobal(ctx, rangeErrMsg);
+          const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
           const tagIdx = ensureExnTag(ctx);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
+            then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
             else: [],
           });
         }
@@ -5713,6 +5737,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         fctx.body.push({ op: "local.get", index: isFiniteLocal });
         const rangeErrMsg = "RangeError: toPrecision() argument must be between 1 and 100";
         addStringConstantGlobal(ctx, rangeErrMsg);
+        const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
         const tagIdx = ensureExnTag(ctx);
         const rangeCheckBody: Instr[] = [];
         // Build: if (p < 1 || p > 100 || p != p) throw RangeError
@@ -5730,7 +5755,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         rangeCheckBody.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
+          then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
           else: [],
         });
         fctx.body.push({
@@ -5786,6 +5811,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         // Range check gate: only when v is finite.
         const rangeErrMsg = "RangeError: toExponential() argument must be between 0 and 100";
         addStringConstantGlobal(ctx, rangeErrMsg);
+        const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
         const tagIdx = ensureExnTag(ctx);
         const rangeCheckBody: Instr[] = [];
         rangeCheckBody.push({ op: "local.get", index: digitsLocal });
@@ -5798,7 +5824,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         rangeCheckBody.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
+          then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
           else: [],
         });
         fctx.body.push({ op: "local.get", index: isFiniteLocal });
@@ -6291,7 +6317,13 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
             let recvType: ValType | null;
             if (receiverIsBuiltin && getBuiltinIdx !== undefined) {
               const builtinName = (propAccess.expression as ts.Identifier).text;
-              pushStringConstantExternref(ctx, fctx, builtinName);
+              addStringConstantGlobal(ctx, builtinName);
+              const strIdx = ctx.stringGlobalMap.get(builtinName);
+              if (strIdx !== undefined) {
+                fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+              } else {
+                compileStringLiteral(ctx, fctx, builtinName);
+              }
               fctx.body.push({ op: "call", funcIdx: getBuiltinIdx });
               recvType = { kind: "externref" };
             } else {
@@ -6322,7 +6354,13 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
 
             // Push receiver, method name, args array → call __extern_method_call
             fctx.body.push({ op: "local.get", index: recvLocal });
-            pushStringConstantExternref(ctx, fctx, methodName);
+            addStringConstantGlobal(ctx, methodName);
+            const strIdx = ctx.stringGlobalMap.get(methodName);
+            if (strIdx !== undefined) {
+              fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+            } else {
+              compileStringLiteral(ctx, fctx, methodName);
+            }
             fctx.body.push({ op: "local.get", index: argsLocal });
             fctx.body.push({ op: "call", funcIdx: methodCallIdx });
             return { kind: "externref" };
@@ -8404,11 +8442,12 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
           {
             const rangeErrMsg = "RangeError: toString() radix must be between 2 and 36";
             addStringConstantGlobal(ctx, rangeErrMsg);
+            const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
             const tagIdx = ensureExnTag(ctx);
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
+              then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
               else: [],
             });
           }
@@ -8433,11 +8472,12 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
           {
             const rangeErrMsg = "RangeError: toFixed() digits argument must be between 0 and 100";
             addStringConstantGlobal(ctx, rangeErrMsg);
+            const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
             const tagIdx = ensureExnTag(ctx);
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
+              then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
               else: [],
             });
           }

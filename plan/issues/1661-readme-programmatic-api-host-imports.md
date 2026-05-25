@@ -1,9 +1,10 @@
 ---
 id: 1661
 title: "README programmatic-API example fails: instantiate(binary, {}) but default mode requires host imports"
-status: ready
+status: done
 created: 2026-05-25
 updated: 2026-05-25
+completed: 2026-05-25
 priority: high
 feasibility: easy
 reasoning_effort: low

@@ -1446,7 +1446,7 @@
           <img class="hero-logo" src="./js2logo-squaring-the-circle-white.svg" alt="JS2 logo" />
           <h1
             id="hero-title"
-            data-texts='["A next generation JavaScript compiler.", "Compile JavaScript without embedding a JS engine.",
+            data-texts='["An ahead-of-time JavaScript compiler.", "Compile JavaScript without embedding a JS engine.",
             "JavaScript compiled ahead of time, for fast cold starts and speed.", "Reduce supply chain attack surface with module sandboxing.", "Target existing Javascript code, not a new language."]'
           >
             <span class="hero-title-shell">
@@ -1471,7 +1471,11 @@
 
       <section class="section-pad" id="mission">
         <div class="intro">
-          <h2>Mission: Next generation JavaScript.</h2>
+          <h2>Mission: JavaScript, compiled.</h2>
+          <p>
+            <strong>This is an early-stage research prototype and technical demo, not a production-ready compiler.</strong>
+            Expect rough edges, incomplete language and standard-library coverage, and breaking changes between versions.
+          </p>
           <p>
             The mission of the JS² compiler project is to make WebAssembly a drop-in deployment target for existing
             JavaScript and npm packages, running modules without embedding a JS runtime and enabling more secure,
@@ -1479,8 +1483,8 @@
           </p>
           <p>
             The project is motivated by the idea that JavaScript, despite being a dynamic language, can be compiled
-            efficiently ahead of time without limiting it to an incompatible subset or shipping a full JS runtime like
-            V8, SpiderMonkey or JavaScriptCore.
+            efficiently ahead of time without limiting it to an incompatible subset or shipping a full JS engine
+            inside every module. Whether that idea holds up at scale is an open question the project is testing.
           </p>
           <p>The project is guided by the following goals:</p>
         </div>
@@ -3243,9 +3247,9 @@ match (value) {
             <strong>JS in V8</strong>
             (Ignition → Liftoff → TurboFan, all at request time, the implicit 1.0× baseline),
             <strong>Interpreter</strong>
-            (a per-function tiny module — ~3 kB — delegating to a preloaded QuickJS-style plugin), and
+            (a per-function tiny module delegating to a preloaded embedded-interpreter plugin), and
             <strong>Engine</strong>
-            (a full JS engine bundled inside Wasm with AOT pre-init — ~14 MB per function). Two scenarios per program:
+            (a full JS engine bundled inside Wasm with AOT pre-init — multiple megabytes per function). Two scenarios per program:
             fresh instance per request (cold) and reused instance (warm). Interpreter and Engine both run a JS
             interpreter inside Wasm — the size and per-call cost tradeoff isn't free. One chart per benchmark; each
             chart shows AOT vs Interpreter vs Engine for both scenarios.
@@ -3541,51 +3545,6 @@ export function run(n) {
                   delta-kind="factor"
                 ></perf-benchmark-chart>
               </div>
-              <div
-                class="diagram-panel"
-                data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
-                style="display: none"
-              >
-                <perf-benchmark-chart
-                  src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
-                  benchmark="fib-recursive"
-                  mode="absolute-lower-better"
-                  title="Fibonacci recursion"
-                  baseline-label="JS"
-                  show-delta
-                  delta-kind="factor"
-                ></perf-benchmark-chart>
-              </div>
-              <div
-                class="diagram-panel"
-                data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
-                style="display: none"
-              >
-                <perf-benchmark-chart
-                  src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
-                  benchmark="array-sum"
-                  mode="absolute-lower-better"
-                  title="Array fill + sum"
-                  baseline-label="JS"
-                  show-delta
-                  delta-kind="factor"
-                ></perf-benchmark-chart>
-              </div>
-              <div
-                class="diagram-panel"
-                data-benchmark-src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
-                style="display: none"
-              >
-                <perf-benchmark-chart
-                  src="./benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"
-                  benchmark="string-hash"
-                  mode="absolute-lower-better"
-                  title="String build + hash"
-                  baseline-label="JS"
-                  show-delta
-                  delta-kind="factor"
-                ></perf-benchmark-chart>
-              </div>
             </div>
         </div>
       </section>
@@ -3776,15 +3735,28 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           <div class="approach-faq-list">
             <details>
               <summary>
+                <span class="approach-faq-question">Is the compiler production ready?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  No. JS<sup>2</sup> is an early-stage research prototype and technical demo, not a production-ready
+                  compiler. It is under active development with incomplete language and standard-library coverage, known
+                  bugs, and breaking changes between versions. Treat it as something to explore and experiment with
+                  &mdash; not to deploy in production.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
                 <span class="approach-faq-question">Why not just use a JavaScript engine or interpreter?</span>
               </summary>
               <div class="approach-faq-answer">
                 <p>
-                  Good question! JavaScript engines like V8 are highly optimized multi-tier streaming JIT compilers that
-                  often run code two magnitudes faster than interpreters - within reach of native performance - and have
-                  a mature battle tested sandbox. WebAssembly has an edge in some scenarios, but overall it is not
-                  always faster or even on par. Interpreters like QuickJS on the other hand trade simplicity for
-                  performance.
+                  Good question! Large production JavaScript engines are highly optimized multi-tier streaming JIT
+                  compilers that often run code orders of magnitude faster than an interpreter - within reach of native
+                  performance - and have mature, battle-tested sandboxes. WebAssembly has an edge in some scenarios, but
+                  overall it is not always faster or even on par. Embedded JavaScript interpreters, on the other hand,
+                  trade peak performance for a small, portable footprint.
                 </p>
                 <h3>Runtime overhead</h3>
                 <p>
@@ -3886,6 +3858,77 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               </div>
             </details>
 
+            <details>
+              <summary>
+                <span class="approach-faq-question">Isn't the Test262 conformance still incomplete?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  Yes &mdash; and the live figures are published openly on the
+                  <a href="#goals">compatibility</a>
+                  page rather than rounded up in prose. Two honest caveats matter more than the headline number. First,
+                  Test262 measures conformance to the ECMAScript
+                  <em>language</em>
+                  specification; it does
+                  <strong>not</strong>
+                  cover Web APIs, Node.js or other host behavior, or whether an arbitrary real-world npm package runs
+                  unchanged. A high pass rate is necessary but not sufficient for &ldquo;runs real JavaScript.&rdquo;
+                  Second, the standalone (no-JS-host) path is less complete than the JS-host path. Check the per-feature
+                  report before relying on anything specific.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <span class="approach-faq-question">Won't you eventually end up re-implementing a JavaScript engine?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  That is the real risk, and we treat it as an open empirical question rather than a solved one. The
+                  approach is compiled-code-first: resolve as much as possible statically and lower it directly, so the
+                  common paths carry no interpreter. The genuinely unstatic corners of the language &mdash;
+                  <code>eval</code>
+                  and dynamic
+                  <code>Function</code>
+                  construction &mdash; would need a small interpreter fallback that runs only on those paths, not a full
+                  engine in every module. Whether that fallback can stay small while the rest is compiled, and how much
+                  real code can avoid it, is precisely what the prototype is testing. If it turns out the only way to be
+                  compatible is to ship an engine, that would be a negative result worth knowing.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <span class="approach-faq-question">Why not just extend an existing typed JavaScript/TypeScript subset language?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  Typed JS/TS subset languages compile to small, fast Wasm precisely
+                  <em>because</em>
+                  they deliberately exclude full ECMAScript: dynamic semantics are dropped by design and the static type
+                  system becomes the contract. That is a sound engineering choice, but it is a different goal. Extending
+                  one toward full backwards compatibility would mean re-adding the dynamic semantics it was built to
+                  avoid &mdash; you would be fighting the language's own design. We are targeting existing JavaScript
+                  semantics as the north star instead, so that existing code and npm packages are the input, not a
+                  rewrite into a new dialect.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <span class="approach-faq-question">What is the realistic timeline to production-ready?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  Honestly: unknown. This is research-stage work, and a credible production date would be a guess
+                  dressed up as a commitment. The viability of the core bet &mdash; full ECMAScript backwards
+                  compatibility, AOT-compiled to WasmGC, with no bundled runtime &mdash; is still being established. The
+                  conformance and benchmark trends are public so progress can be judged from data rather than promises.
+                  Until those tell a clearly different story, treat the project as something to evaluate and experiment
+                  with, not to deploy.
+                </p>
+              </div>
+            </details>
             <details>
               <summary>
                 <span class="approach-faq-question">Do you plan to support all dynamic parts of the language?</span>

@@ -38,6 +38,7 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
+  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -1880,8 +1881,19 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // ArrayBuffer/DataView is backed by an i32_byte vec; copy the bytes
         // into this TypedArray's f64 backing array. Must precede the
         // size-constructor path (an ArrayBuffer is NOT a numeric length).
+        //
+        // #1670 — only in no-JS-host mode. The byte-buffer view path emits an
+        // unconditional `ref.cast` to the native `i32_byte` vec. In JS-host
+        // mode an ArrayBuffer / SharedArrayBuffer is NOT lowered to that vec
+        // (e.g. `new SharedArrayBuffer(n)` has no native struct), so the cast
+        // traps with `illegal cast` before any spec validation runs — this
+        // regressed 28 Atomics negative tests built on
+        // `new Int32Array(new SharedArrayBuffer(...))`. Host mode already
+        // handles the buffer arg correctly via the runtime, so skip the
+        // native view path there.
         const argSymName = argSym?.name;
         if (
+          noJsHost(ctx) &&
           (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer" || argSymName === "DataView") &&
           !ts.isNumericLiteral(args[0]!) &&
           emitTypedArrayFromByteBuffer(ctx, fctx, args[0]!, vecTypeIdx, arrTypeIdx)
@@ -2405,8 +2417,13 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // process.stdout.write, which expects a vec_f64, sees the real bytes).
         const argTsType = ctx.checker.getTypeAtLocation(args[0]!);
         const argSymName = argTsType.getSymbol?.()?.name;
+        // #1670 — gate on no-JS-host (see the matching guard above): the
+        // native byte-buffer view emits an unconditional `ref.cast` to the
+        // `i32_byte` vec that traps in JS-host mode, where the buffer is not
+        // that struct.
         const isBufferArg =
-          argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer" || argSymName === "DataView";
+          noJsHost(ctx) &&
+          (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer" || argSymName === "DataView");
         if (isBufferArg && emitTypedArrayFromByteBuffer(ctx, fctx, args[0]!, vecTypeIdx, arrTypeIdx)) {
           return { kind: "ref_null", typeIdx: vecTypeIdx };
         }
