@@ -580,6 +580,18 @@ export function destructureParamObject(
         const convertedType: ValType = { kind: "ref_null", typeIdx: structTypeIdx };
         const tmpLocal = allocLocal(fctx, `__dparam_cvt_${fctx.locals.length}`, convertedType);
         const thenInstrs: Instr[] = [];
+        const elseInstrs: Instr[] = [];
+        // (#779d) Register both branch buffers in liveBodies for the whole
+        // construction window. Each branch compiles a binding default that may
+        // emit a forward `call` to a function declared later (e.g.
+        // `method({ x = thrower() })`). When the *second* branch's compilation
+        // adds a late/union import, the function indices shift — but the *first*
+        // branch's buffer is detached from fctx.body at that moment (swapped back
+        // to savedBody), so the shift walk would miss its stale `call` funcIdx,
+        // leaving an off-by-one call. liveBodies is walked by every shift path, so
+        // keeping them tracked until the `if` is emitted closes the orphan window.
+        ctx.liveBodies.add(thenInstrs);
+        ctx.liveBodies.add(elseInstrs);
         const savedBody = fctx.body;
         fctx.body = thenInstrs;
         fctx.body.push({ op: "local.get", index: anyTmp });
@@ -589,12 +601,13 @@ export function destructureParamObject(
         fctx.body = savedBody;
 
         // Else branch: cast would fail (primitive/different struct) — use __extern_get (#852)
-        const elseInstrs: Instr[] = [];
         fctx.body = elseInstrs;
         destructureParamObjectExternref(ctx, fctx, paramIdx, pattern, opts);
         fctx.body = savedBody;
 
         fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs, else: elseInstrs });
+        ctx.liveBodies.delete(thenInstrs);
+        ctx.liveBodies.delete(elseInstrs);
       } else {
         // No struct type found — use __extern_get for all properties (#852)
         destructureParamObjectExternref(ctx, fctx, paramIdx, pattern, opts);

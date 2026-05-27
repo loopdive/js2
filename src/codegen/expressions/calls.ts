@@ -1644,6 +1644,18 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         fctx.body.push({ op: "call", funcIdx: finalBoolIdx });
         return { kind: "externref" };
       }
+    } else if (isBigIntType(argTsType)) {
+      // (#1568) Object(bigint) → BigInt wrapper object (§7.1.18 Table 13).
+      // BigInt is i64-represented; `__new_BigInt` boxes via the spec's literal
+      // `Object(v)` — `BigInt` is not a constructor, so `new BigInt(v)` throws.
+      compileExpression(ctx, fctx, args[0]!, { kind: "i64" });
+      const newBigIntIdx = ensureLateImport(ctx, "__new_BigInt", [{ kind: "i64" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const finalBigIntIdx = ctx.funcMap.get("__new_BigInt") ?? newBigIntIdx;
+      if (finalBigIntIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalBigIntIdx });
+        return { kind: "externref" };
+      }
     }
     // Unknown / object / externref / union — per spec, `Object(o)` returns `o`
     // unchanged for objects. We can't distinguish primitive-boxed-as-externref

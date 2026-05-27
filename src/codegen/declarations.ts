@@ -587,7 +587,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
     const method = node.expression.name.text;
     if (FUNCTIONAL_ARRAY_METHODS.has(method)) {
-      if (method === "reduce") {
+      if (method === "reduce" || method === "reduceRight") {
         state.funcArrayNeed2 = true;
       } else {
         state.funcArrayNeed1 = true;
@@ -596,7 +596,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     if (method === "call" && ts.isPropertyAccessExpression(node.expression.expression)) {
       const innerMethod = node.expression.expression.name.text;
       if (FUNCTIONAL_ARRAY_METHODS.has(innerMethod)) {
-        if (innerMethod === "reduce") {
+        if (innerMethod === "reduce" || innerMethod === "reduceRight") {
           state.funcArrayNeed2 = true;
         } else {
           state.funcArrayNeed1 = true;

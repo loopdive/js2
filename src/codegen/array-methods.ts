@@ -4884,8 +4884,11 @@ function compileArrayMap(
   } else {
     callInstrs = [
       ...buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" }),
-      // Convert result to target element type if needed
-      ...(!ctx.fast && mapResultElemType.kind === "i32" ? [{ op: "i32.trunc_sat_f64_s" } as Instr] : []),
+      // The host bridge returns f64. Coerce it to the result element type so the
+      // downstream `array.set` validates — notably f64 → externref must box via
+      // __box_number when the source array is untyped (`new Array(n)`). Without
+      // this, `array.set` sees f64 where it expects externref. (#1601)
+      ...(!ctx.fast ? coercionInstrs(ctx, { kind: "f64" }, mapResultElemType, fctx) : []),
     ];
   }
 

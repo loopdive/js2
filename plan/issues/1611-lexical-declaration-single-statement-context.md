@@ -1,9 +1,10 @@
 ---
 id: 1611
 title: "parser: lexical declaration in single-statement context rejected for valid newline-separated cases"
-status: ready
+status: done
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 task_type: bugfix
@@ -49,3 +50,24 @@ lexical-declaration early error to respect the newline-based disambiguation.
 - The newline-separated `let` identifier/block cases compile (or correctly
   pass/fail per the test's `negative` expectation).
 - >=12 of the 16 tests move off `compile_error`.
+
+## Fix
+
+`src/compiler/validation.ts` — new `isAsiLetExpressionStatement` helper, wired
+into both the single-statement-position check and the labeled-statement check.
+Per ECMA-262 the ExpressionStatement lookahead restriction is only `let [`
+(with **no** `[no LineTerminator here]`), so `let` + LineTerminator +
+(identifier | `{`) is an ExpressionStatement (`let` identifier reference)
+closed by ASI — valid in single-statement / labeled position. `let [` stays a
+lexical declaration even across a newline; `const` is always a reserved word so
+it is never relaxed.
+
+## Test Results
+
+Checked all 25 `*with-newline*` test262 files under `language/statements`
+(for/for-in/for-of/for-await-of/if/while/do-while/labeled/with): 25/25 now
+classify correctly — 17 positive (`let-identifier` / `let-block`) no longer
+emit the single-statement/labeled early error, 8 negative (`let-array`) still
+correctly error. Regression test: `tests/issue-1611.test.ts` (14 cases, all
+pass). `labeled-loops.test.ts` (7 fail) and `issue-202` "var used before
+declaration" failures pre-exist on `origin/main` — unrelated to this change.

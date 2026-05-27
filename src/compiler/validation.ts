@@ -1005,7 +1005,10 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
       // label: let x; or label: const x;
       if (ts.isVariableStatement(stmt)) {
         const flags = stmt.declarationList.flags;
-        if ((flags & ts.NodeFlags.Let) !== 0 || (flags & ts.NodeFlags.Const) !== 0) {
+        if (
+          ((flags & ts.NodeFlags.Let) !== 0 || (flags & ts.NodeFlags.Const) !== 0) &&
+          !isAsiLetExpressionStatement(stmt, flags)
+        ) {
           addError(node, "Lexical declaration (let/const) cannot appear in a labeled statement");
         }
       }
@@ -1022,7 +1025,7 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
       const flags = node.declarationList.flags;
       if ((flags & ts.NodeFlags.Let) !== 0 || (flags & ts.NodeFlags.Const) !== 0) {
         const parent = node.parent;
-        if (parent && isStatementPosition(parent, node)) {
+        if (parent && isStatementPosition(parent, node) && !isAsiLetExpressionStatement(node, flags)) {
           addError(node, "Lexical declaration cannot appear in a single-statement context");
         }
       }
@@ -2578,6 +2581,36 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
         return false; // Found a non-generator function boundary
       }
       current = current.parent;
+    }
+    return false;
+  }
+
+  /**
+   * TypeScript parses `let` followed by a LineTerminator and then an identifier
+   * or `{` (e.g. `if (false) let\nx = 1;`) as a LexicalDeclaration, but per
+   * ECMA-262 the ExpressionStatement lookahead restriction is only `let [`
+   * (with NO `[no LineTerminator here]`). So `let` + newline + (anything but
+   * `[`) is actually an ExpressionStatement (`let` identifier reference) closed
+   * by ASI, which is valid in single-statement position. `let [` stays a
+   * lexical declaration even across a newline, and `const` is always a reserved
+   * word so it is never an expression statement.
+   */
+  function isAsiLetExpressionStatement(node: ts.VariableStatement, flags: ts.NodeFlags): boolean {
+    if ((flags & ts.NodeFlags.Let) === 0) return false;
+    const decls = node.declarationList.declarations;
+    if (decls.length !== 1) return false;
+    const binding = decls[0].name;
+    // `let [` is a lexical declaration / array destructuring even after a newline.
+    if (ts.isArrayBindingPattern(binding)) return false;
+    // Source text between the `let` keyword and the first binding: a line
+    // terminator there means ASI applies and `let` is an identifier reference.
+    const declList = node.declarationList;
+    const keywordEnd = declList.getStart(sourceFile) + "let".length;
+    const between = sourceFile.text.slice(keywordEnd, binding.getStart(sourceFile));
+    for (const ch of between) {
+      const c = ch.charCodeAt(0);
+      // LF, CR, LINE SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029)
+      if (c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029) return true;
     }
     return false;
   }

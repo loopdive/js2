@@ -1,9 +1,10 @@
 ---
 id: 1600
 title: "FinalizationRegistry: host-delegate (JS mode) + no-op standalone stub (~12 CEs)"
-status: ready
+status: done
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: low
 feasibility: medium
 reasoning_effort: medium
@@ -71,3 +72,42 @@ and acceptable.
 - The ~12 built-ins/FinalizationRegistry CEs that only exercise the API surface
   (construct/register/unregister, no forced-GC assertion) flip from CE to pass.
 - No regression to the existing WeakRef path.
+
+## Implementation
+
+Wired `FinalizationRegistry` as a host-constructible extern class, mirroring the
+`WeakMap`/`WeakSet` pattern:
+
+- `src/codegen/index.ts` — registered `FinalizationRegistry` in `ctx.externClasses`
+  (constructor takes the cleanup callback as externref; `register(target,
+  heldValue, token?)` → undefined, `unregister(token)` → boolean). This routes
+  `new FinalizationRegistry(...)` through the `externInfo` path in
+  `new-super.ts:2338` instead of falling through to "Unsupported new expression".
+- `src/runtime.ts` — added `FinalizationRegistry` to the `builtinCtors` resolver
+  map (guarded by `typeof`), and substituted a no-op `() => {}` for the cleanup
+  callback when the wasm-closure externref isn't a callable JS function (the
+  engine's constructor otherwise throws "cleanup must be callable"; spec permits
+  callbacks to never fire).
+
+**Root cause**: when the TS checker resolves the `FinalizationRegistry` lib type,
+`className` becomes `"FinalizationRegistry"`, bypassing the `!className`
+unknown-constructor host-import path and falling through to the "Unsupported new
+expression" error at `new-super.ts:2790`.
+
+## Test Results
+
+built-ins/FinalizationRegistry (JS-host runner):
+- Before: pass 18, fail 15, compile_error 14
+- After:  pass 31, fail 14, compile_error 2
+
+The 2 remaining CEs are an unrelated `for-of requires an array expression` codegen
+limitation (returns-new-object-from-constructor.js, unnaffected-by-poisoned-
+cleanupCallback.js), not FinalizationRegistry. Remaining fails are pre-existing
+limitations (Reflect.construct/isConstructor harness stub, Symbol coercion,
+prototype-chain, $262/forced-GC) shared with the WeakRef path.
+
+WeakRef regression check: pass 19, fail 9, compile_error 1 — unchanged.
+
+Standalone (`--target wasi`) `new FinalizationRegistry(cb)` compiles byte-valid.
+
+Unit test: `tests/issue-1600.test.ts` (3 cases, all pass).

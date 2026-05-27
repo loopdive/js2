@@ -10,7 +10,7 @@ import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitCoercedLocalSet } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
-import { resolveWasmType } from "../index.js";
+import { needsTdzFlag, resolveWasmType } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { getOrRegisterVecType } from "../registry/types.js";
@@ -425,10 +425,28 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)
     );
     const isHoistedLetConst = !isVar && existingIdx !== undefined && existingIdx >= fctx.params.length;
+    const freshLocalForLetConst = !isVar && !isHoistedLetConst;
     const localIdx =
       (isVar || isHoistedLetConst) && existingIdx !== undefined && existingIdx >= fctx.params.length
         ? existingIdx
         : allocLocal(fctx, name, wasmType);
+
+    // #1607: A block-scoped let/const that did NOT reuse a pre-hoisted slot
+    // (because `saveBlockScopedShadows` removed its hoisted localMap/TDZ entry
+    // on block entry) gets a fresh local with no TDZ flag. A self-referential
+    // initializer like `{ const x = x + 1; }` would then read the
+    // zero/undefined-initialized fresh local instead of throwing a TDZ
+    // ReferenceError. Re-allocate the TDZ flag here, BEFORE the initializer is
+    // compiled, and zero-init it so the self-reference read fires the check.
+    if (freshLocalForLetConst && needsTdzFlag(ctx, decl)) {
+      if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+      if (!fctx.tdzFlagLocals.has(name)) {
+        const tdzFlagIdx = allocLocal(fctx, `__tdz_${name}`, { kind: "i32" });
+        fctx.tdzFlagLocals.set(name, tdzFlagIdx);
+        // Wasm i32 locals zero-init to 0 (uninitialized) automatically — no
+        // explicit store needed before the initializer runs.
+      }
+    }
 
     // If we reused a pre-hoisted slot but inference found a more precise type
     // (e.g. Array<any> hoisted as vec_externref, but inferred as vec_f64),

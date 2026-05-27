@@ -43,3 +43,40 @@ describe("#1607 self-referential lexical initializer (TDZ) must not overflow the
     expect(hasInternalError(r.errors)).toBe(false);
   });
 });
+
+// A block-scoped lexical self-reference (`{ const x = x + 1; }`) does not hit
+// the static numeric folder's cycle guard (the initializer is a runtime read),
+// so it must instead emit the spec-required TDZ ReferenceError. Before this fix
+// `saveBlockScopedShadows` stripped the hoisted TDZ flag on block entry, so the
+// fresh block-local was allocated WITHOUT a flag and the self-reference silently
+// read the zero/undefined-initialized slot instead of throwing.
+describe("#1607 block-scoped lexical self-reference emits a TDZ throw", () => {
+  const throwingCases = [
+    "function f(): number { { const x = x + 1; } return 0; }",
+    "function f(): number { { let x = x + 1; } return 0; }",
+  ];
+
+  for (const src of throwingCases) {
+    it(`emits a static TDZ throw: ${JSON.stringify(src)}`, () => {
+      const r = compile(src, { fileName: "test.ts", emitWat: true, skipSemanticDiagnostics: true });
+      expect(r.success).toBe(true);
+      const wat = r.wat ?? "";
+      const fnStart = wat.indexOf("(func $f");
+      const fnBody = wat.slice(fnStart, fnStart + 200);
+      expect(fnBody).toContain("unreachable");
+    });
+  }
+
+  it("does NOT inject a TDZ throw for a valid block-scoped const", () => {
+    const r = compile("function f(): number { { const x = 5; return x; } }", {
+      fileName: "test.ts",
+      emitWat: true,
+      skipSemanticDiagnostics: true,
+    });
+    expect(r.success).toBe(true);
+    const wat = r.wat ?? "";
+    const fnStart = wat.indexOf("(func $f");
+    const fnBody = wat.slice(fnStart, fnStart + 120);
+    expect(fnBody).not.toContain("unreachable");
+  });
+});
