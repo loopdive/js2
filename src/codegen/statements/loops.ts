@@ -3575,18 +3575,26 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   const init = stmt.initializer;
   let varName: string;
   let keyLocal: number;
+  // When the head is a binding pattern (`for (var [a,b] in obj)`), the key
+  // string is destructured into the pattern each iteration. keyLocal holds the
+  // raw key string; bindingPattern (if set) is applied per-iteration below.
+  let bindingPattern: ts.ObjectBindingPattern | ts.ArrayBindingPattern | undefined;
   if (ts.isVariableDeclarationList(init)) {
     const decl = init.declarations[0]!;
     if (!ts.isIdentifier(decl.name)) {
-      // Destructuring patterns in for-in (e.g. `for (var [a] in obj)`)
-      // are exotic — the key is a string, destructuring it gives characters.
-      // For now, skip gracefully rather than crash.
-      reportError(ctx, decl, "for-in variable must be an identifier");
-      return;
+      if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
+        bindingPattern = decl.name;
+        varName = `__forin_key_${fctx.locals.length}`;
+        keyLocal = allocLocal(fctx, varName, { kind: "externref" });
+      } else {
+        reportError(ctx, decl, "for-in variable must be an identifier");
+        return;
+      }
+    } else {
+      varName = decl.name.text;
+      // Allocate a local for the loop variable (string / externref)
+      keyLocal = allocLocal(fctx, varName, { kind: "externref" });
     }
-    varName = decl.name.text;
-    // Allocate a local for the loop variable (string / externref)
-    keyLocal = allocLocal(fctx, varName, { kind: "externref" });
   } else if (ts.isIdentifier(init)) {
     // Bare identifier: `for (x in obj)` — look up existing local
     varName = init.text;
@@ -3674,6 +3682,20 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
 
   fctx.breakStack.push(2); // break = depth 2 (exit $break block)
   fctx.continueStack.push(0); // continue = depth 0 (exit $continue block -> falls to incr)
+
+  // Binding-pattern head (`for (var [a,b] in obj)`): destructure the key string
+  // into the pattern's bound names at the top of each iteration. The key is a
+  // string (externref); array-pattern destructuring iterates its characters.
+  if (bindingPattern) {
+    compileForOfDestructuring(
+      ctx,
+      fctx,
+      bindingPattern,
+      keyLocal,
+      { kind: "externref" },
+      stmt as unknown as ts.ForOfStatement,
+    );
+  }
 
   // Compile the user's loop body — save/restore block-scoped shadows for let/const (#817).
   if (ts.isBlock(stmt.statement)) {
