@@ -732,6 +732,9 @@ jobs:
     name: promote merged report to main baseline
     needs: merge-report
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout
@@ -739,10 +742,6 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 1
-          # Authenticate via SSH deploy key so the post-merge baseline-refresh
-          # commit can be pushed. The merge_queue ruleset blocks GITHUB_TOKEN
-          # pushes — MAIN_DEPLOY_KEY is in the ruleset's bypass_actors list.
-          ssh-key: ${{ secrets.MAIN_DEPLOY_KEY }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -874,10 +873,12 @@ jobs:
       # phantom ~500-test regression. This step restores main/baselines parity.
       #
       # Only the *small* JSON files go to main (the large jsonl lives only in the
-      # baselines repo, per #1528). `[skip ci]` prevents self-retrigger. Pushes
-      # over the SSH remote that the checkout configured (origin = git@github:…),
-      # which is what makes the bypass work — do NOT add an https token here.
+      # baselines repo, per #1528). `[skip ci]` prevents self-retrigger. The PR
+      # path uses GITHUB_TOKEN — no deploy key needed. JSON-only changes skip
+      # test262 shards in the merge queue, so the PR lands in ~2 min.
       - name: Commit refreshed summary JSON to main repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
           git config user.name "github-actions[bot]"
@@ -912,36 +913,24 @@ jobs:
             echo "Only volatile test262 report metadata changed — skipping main commit."
             exit 0
           fi
+          # Open a PR so the summary JSON reaches main through the merge queue.
+          # This avoids needing MAIN_DEPLOY_KEY: the merge-queue ruleset only
+          # blocks direct pushes to main, not feature-branch pushes or PRs.
+          # JSON-only changes skip the test262 shard matrix (no test262-relevant
+          # paths changed), so the merge-report job passes trivially and the
+          # PR lands in ~2 min via cheap-gate + quality alone.
+          BRANCH="baseline-refresh-${GITHUB_SHA:0:8}-${GITHUB_RUN_ID}"
+          git checkout -b "$BRANCH"
           git commit -m "chore(test262): refresh sharded baseline — ${PASS}/${TOTAL} pass [skip ci]"
-          # Race handling: another push to main may have landed while this job
-          # ran. Rebase onto the latest main and re-stage the (regenerated)
-          # summary files, then retry the push. GIT_LFS_SKIP_SMUDGE avoids LFS
-          # smudge on the shallow checkout.
-          push_ok=0
-          for attempt in 1 2 3; do
-            if GIT_LFS_SKIP_SMUDGE=1 git push origin HEAD:main; then
-              push_ok=1
-              break
-            fi
-            echo "Push attempt $attempt failed — rebasing onto origin/main and retrying."
-            GIT_LFS_SKIP_SMUDGE=1 git fetch origin main || true
-            if ! GIT_LFS_SKIP_SMUDGE=1 git rebase origin/main; then
-              git rebase --abort 2>/dev/null || true
-              GIT_LFS_SKIP_SMUDGE=1 git reset --hard origin/main
-              # Re-apply the fresh artifacts on top of the new main tip.
-              cp shard-artifacts/test262-report-merged.json benchmarks/results/test262-current.json
-              cp shard-artifacts/test262-report-merged.json benchmarks/results/test262-report.json
-              cp shard-artifacts/test262-report-merged.json public/benchmarks/results/test262-report.json
-              node --experimental-strip-types scripts/generate-editions.ts \
-                --results shard-artifacts/test262-results-merged.jsonl || true
-              stage_files
-              git diff --cached --quiet && { echo "Nothing to commit after reset — done."; push_ok=1; break; }
-              git commit -m "chore(test262): refresh sharded baseline — ${PASS}/${TOTAL} pass [skip ci]"
-            fi
-          done
-          if [ "$push_ok" -ne 1 ]; then
-            echo "::warning::Could not push refreshed baseline to main after retries; baselines repo is still authoritative for the landing page."
-          fi
+          git push origin "$BRANCH"
+          PR_URL=$(gh pr create \
+            --title "chore(test262): baseline — ${PASS}/${TOTAL} pass" \
+            --body "Automated baseline promotion (JSON summary only). Pass: ${PASS}/${TOTAL}. Triggered by merge of \`${GITHUB_SHA:0:8}\`." \
+            --base main \
+            --head "$BRANCH" 2>&1)
+          echo "Opened baseline PR: $PR_URL"
+          gh pr merge --auto "$BRANCH" 2>/dev/null || \
+            echo "::warning::auto-merge enable failed — PR may need manual queue."
 
       - name: Audit forced baseline refresh
         if: github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES'
