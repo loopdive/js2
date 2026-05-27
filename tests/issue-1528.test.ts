@@ -95,4 +95,41 @@ export function test(): string {
     const msg = exports.test!() as string;
     expect(msg).toContain("is not a constructor");
   });
+
+  // (#1528b) The static non-constructor guards must also fire when the target
+  // is hidden behind an `as`/`!`/type-assertion wrapper, not just bare parens.
+  // Before the unwrap fix, `new ((() => {}) as any)()` slipped past the
+  // paren-only unwrap into the dynamic path and silently did NOT throw.
+  it("`new ((() => {}) as any)()` throws an instance of TypeError", async () => {
+    const source = `
+export function test(): number {
+  try {
+    new ((() => {}) as any)();
+    return -1;
+  } catch (e: any) {
+    return e instanceof TypeError ? 1 : -2;
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(1);
+  });
+
+  // (#1528b) Cast-wrapped prototype-method / call-only-callable targets must
+  // resolve through the unwrap so the call-sig-only guard still sees the real
+  // (pre-cast) type rather than the widened `any`.
+  it("`new (Math.abs as any)()` throws an instance of TypeError", async () => {
+    const source = `
+export function test(): number {
+  try {
+    new (Math.abs as any)(1);
+    return -1;
+  } catch (e: any) {
+    return e instanceof TypeError ? 1 : -2;
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(1);
+  });
 });

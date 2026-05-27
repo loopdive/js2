@@ -1,8 +1,10 @@
 ---
 id: 1687
 title: "spec gap: eager generator model can't thread .next(arg) / .throw() / .return() into yield (44/63 yield fails)"
-status: ready
+status: blocked
 created: 2026-05-27
+blocked_on: 1665
+escalation: ESCALATED-NEEDS-SPEC — requires #1665 state-machine coroutine lowering (sendev-1687, 2026-05-27)
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -112,6 +114,72 @@ generator-CPS with async-CPS avoids two parallel coroutine engines.
 5. No regression in currently-passing generator tests
    (`built-ins/Generator*`, `built-ins/GeneratorFunction`,
    `built-ins/GeneratorPrototype`).
+
+## Senior-dev analysis (sendev-1687, 2026-05-27)
+
+I confirmed the root cause and surveyed the full blast radius before writing
+any code. **This is not a localized fix and not a single self-merge PR — it is
+the #1665 state-machine coroutine lowering, which is currently
+ESCALATED-NEEDS-SPEC and blocked (task #93).** Recommending it be driven as
+#1665 with #1687 as the conformance acceptance gate, exactly as the issue's own
+"Fix approach" section already proposed.
+
+### Why no shortcut exists
+
+The failing tests (`rhs-yield.js`: `function* g(){ yield yield 1 }`,
+`it.next(3)` must make the *paused inner* `yield` evaluate to `3`) require the
+generator body to **physically suspend at the yield point and resume with a
+host-supplied value**. The eager model runs the body to completion at creation
+time (`__create_generator`, runtime.ts:6227) and buffers every yield
+(misc.ts:162 `compileYieldExpression` hard-codes `ref.null.extern` as the
+yield expression's own value, runtime.ts:71 stores a pre-filled `buf`). There
+is no live suspension to thread a value into, throw into, or abandon.
+
+I verified the two routes that could avoid a Wasm-side rewrite are both
+unavailable in this codebase today:
+
+1. **Host-driven coroutine of the Wasm body** — would need Asyncify or
+   Wasm stack-switching (`cont`/`resume`). Neither is present:
+   `grep` for `asyncify`/`stack-switch`/`resume` in `src/` finds only comments
+   noting their absence (`expressions.ts:920`: "would need JSPI /
+   stack-switching"). `src/optimize.ts` does not run the Binaryen Asyncify pass.
+2. **Wasm-side state-machine (regenerator-style) transform** — the genuine fix,
+   = #1665. Requires rewriting the generator body into a `switch(state: i32)`
+   resumable function, saving/restoring live locals across each yield, at FOUR
+   independent emission sites that all currently emit the eager buffer model:
+   - `src/codegen/declarations.ts:2366` (function declarations)
+   - `src/codegen/class-bodies.ts:1523` (class generator methods)
+   - `src/codegen/literals.ts:1700` (object-literal generator methods)
+   - the IR path (`src/ir/from-ast.ts:342/535`, `src/ir/builder.ts:787`,
+     `src/ir/nodes.ts` gen.push/gen.create/gen.yield_star nodes)
+   plus runtime.ts `next/return/throw` (lines 191-223) re-driving the body.
+
+### Regression risk if attempted partially
+
+`built-ins/Generator*`, `built-ins/GeneratorFunction`,
+`built-ins/GeneratorPrototype` and the 18 currently-passing
+`language/expressions/yield` tests all rely on the eager buffer's exact
+value/done shape and the GeneratorValidate brand checks (runtime.ts:191-223).
+A half-migrated state machine (some sites coroutine, some still eager) would
+desync `_GeneratorState` and risk broad regressions in stack-balance-sensitive
+codegen across all four sites. This is precisely why #1665 was specced as a
+single coordinated lowering, not an incremental patch.
+
+### Recommendation
+
+- Keep #1687 OPEN as the **spec-conformance acceptance gate** for #1665, not as
+  independent work. Acceptance criteria here become #1665's exit test.
+- Unblock #1665 (task #93) first: it needs the shared `$Iterator` design
+  decision (gated on #1666/#1664, both now `done` per TaskList) plus an
+  architect spec for the state-machine local-save/restore + the
+  generator-CPS / async-CPS coordination called out in this issue (avoid two
+  parallel coroutine engines — reuse the #1373/#1042 continuation machinery).
+- Do NOT land a partial eager→state-machine migration; the regression surface
+  outweighs any sub-cluster win.
+
+Status left at `ready` (not started) — no code changed; this is an
+escalation, not an implementation. Worktree `issue-1687-generator-model`
+contains only this analysis note.
 
 ## Notes
 

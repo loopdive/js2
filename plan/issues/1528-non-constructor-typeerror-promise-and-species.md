@@ -1,9 +1,9 @@
 ---
 id: 1528
 title: "spec gap: non-constructor TypeError — Promise.all / allSettled species and executor paths"
-status: ready
+status: in-progress
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -69,3 +69,44 @@ thrown object isn't recognised as `TypeError`. Two cases are related:
 
 **~79 test262 tests** plus indirect downstream unblocks once Promise
 combinators round-trip species correctly.
+
+## Investigation + decomposition (2026-05-27)
+
+Ran the five named test262 files and ground-truth compile/instantiate/run
+probes on current main. The cluster is NOT a single Promise/species bug; it is
+dominated by a **missing dynamic `[[Construct]]` path**, and the species half
+is already spec-correct.
+
+### Confirmed by probe
+1. **Dynamic `new <runtime-value>()` does not perform IsConstructor + throw.**
+   `new executorFunction()` where the callee is a runtime function value (the
+   `isConstructor.js`-harness tests) is the dominant failing shape. Today such
+   identifiers fall into the unknown-constructor `__new_<name>` extern-import
+   path (throws a generic `No dependency provided` Error, not a TypeError) or
+   silently no-throw. A type-checker heuristic cannot fix this safely: TS models
+   plain function *declarations* as call-only (`construct=0, call=1`), identical
+   to non-constructable function *expression values* — but `new f()` on a
+   function value IS valid JS, so rejecting on the signature shape would regress
+   valid constructions. This needs the architect-spec'd dynamic-construct path
+   (route to `__reflect_construct` / Wasm-native IsConstructor), which touches
+   the most-trafficked `new` dispatch. **Tracked as #1528a — needs architect
+   sign-off; NOT landed here.**
+2. **Species half already correct.** `Promise.allSettled.call(C, [])` does not
+   spuriously read `@@species` (probe passed); the JS-host delegation in
+   `runtime.ts` `Promise_allSettled` → native `Promise.allSettled.call` is
+   spec-correct.
+3. **`10.4.3-1-26gs.js` is mis-bucketed** — a strict-mode `new (anon fn)`
+   returning `this` case, unrelated to non-constructor TypeError.
+
+### Landed here (#1528b — safe static subset)
+Broadened the static non-constructor guards in `new-super.ts` to unwrap
+`as`/`!`/type-assertion wrappers (not just parens) via a shared
+`unwrapNewTarget` helper, so `new ((() => {}) as any)()` and
+`new (Math.abs as any)()` hit the real-TypeError throw path instead of slipping
+into the dynamic path and silently no-throwing. The call-sig-only / prototype-
+method guards now resolve the type on the *pre-cast* target. ~30 LOC, additive,
+zero regressions in the constructor/new unit suites. Spec §7.3.15 Construct /
+§7.2.4 IsConstructor.
+
+**Status:** #1528b landed; #1528a (the dominant 79-test cluster) remains open,
+escalated for an architect dynamic-construct spec.

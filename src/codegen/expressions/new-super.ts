@@ -1438,12 +1438,32 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     return compileNewFunctionExpression(ctx, fctx, expr, expr.expression);
   }
 
+  // (#1528b) Unwrap parens AND `as`/`!`/type-assertion wrappers so the static
+  // non-constructor guards below still fire on `new ((() => {}) as any)()` etc.
+  // — the bare paren-only unwrap let cast arrows slip through to the dynamic
+  // path and silently no-throw. Mirrors the builtin-namespace unwrap below.
+  const unwrapNewTarget = (e: ts.Expression): ts.Expression => {
+    let cur = e;
+    while (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = ts.isParenthesizedExpression(cur)
+        ? cur.expression
+        : ts.isAsExpression(cur)
+          ? cur.expression
+          : ts.isNonNullExpression(cur)
+            ? cur.expression
+            : (cur as ts.TypeAssertion).expression;
+    }
+    return cur;
+  };
+
   // Arrow functions are NOT constructors — `new (() => {})` throws TypeError (#730)
   {
-    let unwrappedNew: ts.Expression = expr.expression;
-    while (ts.isParenthesizedExpression(unwrappedNew)) {
-      unwrappedNew = unwrappedNew.expression;
-    }
+    const unwrappedNew = unwrapNewTarget(expr.expression);
     if (ts.isArrowFunction(unwrappedNew)) {
       // #1528: throw a real TypeError instance so `assert.throws(TypeError, …)`
       // catches it (the bare-string throw is only `instanceof Error`/string).
@@ -1490,12 +1510,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   }
 
   // Non-identifier constructor: detect non-constructable functions.
-  if (!ts.isIdentifier(expr.expression) && !ts.isFunctionExpression(expr.expression)) {
+  // (#1528b) Unwrap `as`/`!`/type-assertion/paren wrappers so the guards fire
+  // on `new (Array.prototype.map as any)()` etc., not just the bare form.
+  const unwrappedNonId = unwrapNewTarget(expr.expression);
+  if (!ts.isIdentifier(unwrappedNonId) && !ts.isFunctionExpression(unwrappedNonId)) {
     // Pattern 1: `new X.prototype.Y()` — prototype methods are NEVER constructors.
     // This covers both ES2022 (forEach) and ES2023 (with, toSorted) methods,
     // even when TypeScript lib doesn't know about the method (type resolves to `any`).
-    if (ts.isPropertyAccessExpression(expr.expression)) {
-      const obj = expr.expression.expression; // e.g. Array.prototype
+    if (ts.isPropertyAccessExpression(unwrappedNonId)) {
+      const obj = unwrappedNonId.expression; // e.g. Array.prototype
       if (ts.isPropertyAccessExpression(obj) && obj.name.text === "prototype") {
         // #1528: real TypeError instance so test262 `assert.throws(TypeError, …)`
         // catches it (prototype methods are not constructors per spec §9.2.2).
@@ -1507,7 +1530,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
 
     // Pattern 2: TypeScript knows the expression has call sigs but no construct sigs.
     // e.g. `new decodeURIComponent()`, `new Math.abs()`, `new Array.from()`.
-    const exprType = ctx.checker.getTypeAtLocation(expr.expression);
+    // Resolve on the unwrapped target so a cast doesn't widen it to `any`.
+    const exprType = ctx.checker.getTypeAtLocation(unwrappedNonId);
     const constructSigs = ctx.checker.getSignaturesOfType(exprType, ts.SignatureKind.Construct);
     const callSigs = ctx.checker.getSignaturesOfType(exprType, ts.SignatureKind.Call);
     if (callSigs.length > 0 && constructSigs.length === 0) {
@@ -1802,14 +1826,18 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // expecting a real object, e.g. `Boolean(new Object())` returned `false`
   // because `__to_boolean(null) === 0`.
   //
-  // Use `__object_create(null)` host import to produce a fresh empty
-  // object. Falls back to `ref.null.extern` only if the import can't be
-  // registered (preserving the legacy shape so we never regress further).
+  // Use `__new_plain_object` host import to produce a fresh empty object
+  // with the ordinary `Object.prototype` prototype (#1525). `new Object()`
+  // per §20.1.1.1 must inherit `Object.prototype` — using `__object_create(null)`
+  // gave it a null prototype, so it had no `toString`/`valueOf` and any
+  // ToPrimitive coercion (`==`, arithmetic, `String(...)`) threw
+  // "Cannot convert object to primitive value" instead of producing
+  // "[object Object]". Falls back to `ref.null.extern` only if the import
+  // can't be registered.
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Object") {
-    const createIdx = ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
+    const createIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (createIdx !== undefined) {
-      fctx.body.push({ op: "ref.null.extern" });
       fctx.body.push({ op: "call", funcIdx: createIdx });
       return { kind: "externref" };
     }

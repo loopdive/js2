@@ -5,6 +5,7 @@ status: blocked
 escalation: needs-architect-spec
 created: 2026-05-27
 updated: 2026-05-27
+verified: 2026-05-27
 priority: low
 feasibility: medium
 reasoning_effort: medium
@@ -103,3 +104,27 @@ property-retention gap — two cross-cutting representation features — this is
 **not** a single localized runtime fix. Marked `status: blocked`,
 `escalation: needs-architect-spec`. No code changed; the `intent.className ===
 "Set"` bridge is untouched.
+
+## Re-verification 2026-05-27 (dev-1605)
+
+Independently re-ran the representative union set-like tests through
+`runTest262File` on current main. Confirms dev-1604's three-way decomposition
+and, crucially, that **implementing our own GetSetRecord would regress
+currently-passing tests**:
+
+| test (`union/…`) | result on main | gap |
+|------------------|----------------|-----|
+| `has-is-callable.js` | **PASS** | plain-object → native V8 GetSetRecord |
+| `keys-is-callable.js` | **PASS** | plain-object → native V8 GetSetRecord |
+| `allows-set-like-object.js` | **PASS** | plain-object → native V8 GetSetRecord |
+| `size-is-a-number.js` | FAIL | `returned 5 \| assert #4 L54: assert.sameValue(coercionCalls, 1)` — asserts #1–#3 (size undefined/NaN/valueOf→NaN all throw TypeError) PASS; the **valueOf coercion-count** sub-assert fails. The `s2.size = {valueOf(){++coercionCalls; return NaN}}` mutation + the `coercionCalls` closure read-back is not observed as exactly 1 — an object-mutation / closure-observation gap, not the GetSetRecord shim |
+| `set-like-array.js` | FAIL | plain-array drops dynamically-added `size`/`has`/`keys` props (wasm-array arbitrary-property retention) |
+| `allows-set-like-class.js` | FAIL | wasm class-instance accessor/method dispatch through `_wrapForHost` proxy → **#1364b** |
+
+So the has/keys-callable cluster the task summary lists is **already green** via
+native V8; the live residuals are (a) #1364b proxy dispatch, (b) wasm-array
+property retention, (c) the valueOf-coercion-count observation in
+`size-is-a-number`. None is a localized GetSetRecord shim, and adding one risks
+regressing the three passing plain-object tests. Confirmed `status: blocked` /
+`escalation: needs-architect-spec`; the `intent.className === "Set"` bridge
+stays untouched.

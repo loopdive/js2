@@ -1316,9 +1316,21 @@ export function coerceType(
     fctx.body.push({ op: "f64.const", value: 0 });
     return;
   }
-  // externref → i64 (unbox number then truncate to i64)
+  // externref → i64
   if (from.kind === "externref" && to.kind === "i64") {
     addUnionImports(ctx);
+    // (#1644) A bigint-branded target unboxes via __to_bigint (§7.1.13
+    // ToBigInt): identity on a JS bigint, parse on a string (SyntaxError on
+    // bad syntax), TypeError on a number. Preserves full i64 precision —
+    // the legacy __unbox_number→f64→trunc path loses precision above 2^53.
+    // A native (unbranded) i64 keeps the legacy number-unbox path unchanged.
+    if (to.bigint) {
+      const toBigIdx = ctx.funcMap.get("__to_bigint");
+      if (toBigIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: toBigIdx });
+        return;
+      }
+    }
     const funcIdx = ctx.funcMap.get("__unbox_number");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
@@ -1404,9 +1416,21 @@ export function coerceType(
     fctx.body.push({ op: "ref.null.extern" });
     return;
   }
-  // i64 → externref (box as number: convert i64 → f64, then box)
+  // i64 → externref
   if (from.kind === "i64" && to.kind === "externref") {
     addUnionImports(ctx);
+    // (#1644) A bigint-branded i64 boxes as a JS bigint via __box_bigint
+    // (JS-BigInt-integration makes the i64 cross the boundary already a JS
+    // bigint, so the host body is identity). A native (unbranded) i64 keeps
+    // the legacy number boxing — byte-identical to before — so `type i64 =
+    // number` code is unaffected.
+    if (from.bigint) {
+      const boxBigIdx = ctx.funcMap.get("__box_bigint");
+      if (boxBigIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: boxBigIdx });
+        return;
+      }
+    }
     const funcIdx = ctx.funcMap.get("__box_number");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "f64.convert_i64_s" });

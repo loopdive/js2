@@ -1088,7 +1088,14 @@ export function compileBinaryExpression(
       }
       return compileNumericBinaryOp(ctx, fctx, op, expr);
     }
-    return compileI64BinaryOp(ctx, fctx, op, expr);
+    // (#1644 §2.4) Both operands are bigint, so an i64-valued result is itself
+    // brand-bigint — propagate the brand so it boxes as a JS bigint downstream.
+    // Comparison ops return i32 (a boolean) and are left unbranded.
+    const i64Result = compileI64BinaryOp(ctx, fctx, op, expr);
+    if (i64Result?.kind === "i64") {
+      return { kind: "i64", bigint: true };
+    }
+    return i64Result;
   }
 
   // Determine expected operand type from operator and context

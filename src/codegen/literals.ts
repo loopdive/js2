@@ -2308,6 +2308,23 @@ export function compileArrayLiteral(
       const hasNullLiteral = expr.elements.some((e) => e.kind === ts.SyntaxKind.NullKeyword);
       if (hasNullLiteral) {
         elemWasm = { kind: "externref" };
+      } else if (elemWasm.kind === "f64" || elemWasm.kind === "i32") {
+        // A literal whose first element is numeric but which also contains a
+        // genuine object/reference element (e.g. `[0, 1, obj]`) must not store
+        // that object into an f64/i32 vec — the object reference would be
+        // coerced to a number and lost, so `[0,1,o].indexOf(o)` could never
+        // match (#786). Promote the whole vec to externref so object identity
+        // survives. Scoped to struct-ref / non-undefined externref elements:
+        // strings and numbers keep the numeric/native-string fast path.
+        const hasObjectElem = expr.elements.some((el) => {
+          if (ts.isOmittedExpression(el) || _isUndefinedLike(el) || ts.isSpreadElement(el)) return false;
+          if (el.kind === ts.SyntaxKind.StringLiteral) return false;
+          const t = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(el));
+          return t.kind === "ref" || t.kind === "ref_null" || t.kind === "externref";
+        });
+        if (hasObjectElem) {
+          elemWasm = { kind: "externref" };
+        }
       }
     }
   }

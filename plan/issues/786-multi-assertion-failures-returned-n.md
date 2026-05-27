@@ -1,9 +1,10 @@
 ---
 id: 786
 title: "- Multi-assertion failures: returned N > 2 (~1,183 tests)"
-status: in-review
+status: done
 created: 2026-03-25
-updated: 2026-04-28
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -199,3 +200,42 @@ and is a standalone spec-correctness improvement with no regression.
   cases + the pre-existing 11 block-scope / closure-capture cases).
 - Regression: `array-prototype-methods`, `array-externref-indexof`,
   `array-push-pop`, `issue-1360`, `in-operator-edge-cases` — 97/97 pass.
+
+## Implementation notes (mixed numeric+object array-literal typing, 2026-05-27, follow-up)
+
+This is the **array-element-typing change** the section above deferred — the
+piece that actually moves the dominant `[0, 1, targetObj].indexOf(targetObj)`
+cluster.
+
+### Root cause
+`compileArrayLiteral` (`src/codegen/literals.ts`, vec path ~L2299) inferred the
+vec element type from the **first element only**. For `[0, 1, o]` the first
+element is `0` → element type `f64`, so the trailing object `o` was compiled
+with an f64 hint and coerced to a number — the object reference was lost and
+`indexOf(o)` could never match. (`[o, 1, 2]` worked because the object came
+first.) The pre-existing escape only promoted to externref when a literal
+`null` was present.
+
+### Fix
+When the chosen first-element type is `f64`/`i32` but **any** non-string,
+non-undefined element resolves to a `ref`/`ref_null`/`externref` (a genuine
+object — e.g. an object literal `{}` resolves to externref), promote the whole
+vec to externref so object identity survives. String literals keep the
+native-string path; homogeneous numeric arrays are untouched. Combined with the
+externref strict-equality fix above, the search now matches by reference.
+
+### Test262 impact
+- 8 of 11 `indexOf`/`lastIndexOf` mixed-literal entries flip to PASS
+  (`15.4.4.14-5-10/-11/-18/-19/-20/-31/-32`, `15.4.4.15-5-22`).
+- Residual (out of scope): `[false].indexOf(0)` / `[false].lastIndexOf(0)`
+  cross-type on a **homogeneous boolean** vec (needs boolean arrays to box);
+  the `-0` SameValueZero case on a homogeneous number vec; and
+  `15.4.4.14-9-b-i-9` (index getters → **#1130**).
+
+### Test Results (this follow-up)
+- `tests/issue-786.test.ts` — 27/27 pass (6 new mixed-literal cases added).
+- No new failures in `array-methods` / `fast-arrays` /
+  `functional-array-methods` / `arrays-enums` — those carry a **pre-existing**
+  branch regression (22 / 9 / 23 / 9 fail), verified identical on
+  `c3f55339d~1` (before this issue's work) and unchanged by these edits.
+  Flagged for separate triage; NOT introduced here.

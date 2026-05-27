@@ -1,9 +1,10 @@
 ---
 id: 1332
 title: "RegExp host-mode: prototype method edge cases (exec, test, flag accessors, RegExpStringIterator)"
-status: ready
+status: done
 created: 2026-05-08
-updated: 2026-05-08
+updated: 2026-05-27
+completed: 2026-05-27
 priority: low
 feasibility: medium
 reasoning_effort: medium
@@ -96,3 +97,46 @@ Fix: nothing dedicated. `Object.getPrototypeOf` on an externref already routes t
 ### Test files to verify
 - `tests/equivalence/regexp-methods.test.ts` — add: `RegExp.prototype.exec.call(/a/, "ab")` returns array; `Object.getOwnPropertyDescriptor(RegExp.prototype, "flags").get` is a function.
 - Re-run test262: `built-ins/RegExp/prototype/exec/*`, `built-ins/RegExp/prototype/test/*`, `built-ins/RegExp/prototype/flags/*` (and the per-flag accessor dirs), `built-ins/RegExpStringIteratorPrototype/*`.
+
+## Resolution (2026-05-27)
+
+The load-bearing change is **sub-bucket (c)**: in `src/runtime.ts` the
+`extern_class` `method` handler now wraps wasmGC-struct args through
+`_wrapForHost` before calling the native prototype method (mirrors
+`__extern_method_call`). Without it, `regex.exec(<wasm struct>)` /
+`regex.test(...)` passed an opaque struct that V8 ToString'd to
+`"[object Object]"`. Sub-buckets (a) method/getter dispatch via `.call`,
+(b) flag-accessor descriptors, and (d) RegExpStringIterator prototype chain
+**already work on this branch** — they round-trip through V8 correctly once
+the receiver/descriptor reaches the host; the equivalence test confirms all
+four shapes.
+
+### Measured test262 impact (per-dir, isolated processes)
+
+Each affected dir, measured running every file in its own process (the
+`runTest262File` runner poisons sequential same-process state, so a batch
+run massively over-reports failures — measure in fresh processes):
+
+| dir | pass / total | residual cause |
+|---|---|---|
+| exec | 58 / 79 | mostly `cross-realm` (`$262` realm, out of scope) |
+| test | 35 / 45 | ditto |
+| flags | 8 / 16 | descriptor enumerability + cross-realm |
+| global | 6 / 8 | `S15.10.7.2_A8` (DontEnm descriptor), cross-realm |
+| ignoreCase | 6 / 10 | descriptor enumerability, cross-realm |
+| multiline | 6 / 10 | ditto |
+| unicode | 7 / 8 | cross-realm |
+| dotAll | 7 / 8 | cross-realm |
+| source | 11 / 12 | cross-realm |
+| hasIndices | 7 / 8 | cross-realm |
+
+The dominant residual is **`cross-realm.js`** (needs `$262.createRealm` —
+out of scope for this issue) and **descriptor-enumerability fidelity** on the
+flag accessors (the `global`/etc. accessors must carry the DontEnum attribute;
+this is shared with #1631/#1460 defineProperty-descriptor fidelity, not a
+localized RegExp fix). Sub-buckets (a)/(b)/(d) need no code change.
+
+## Test Results
+
+- `tests/issue-1332.test.ts` — 7/7 pass (3 arg-coercion + 4 dispatch/getter/iterator).
+- `tests/regexp.test.ts` (10) + `tests/equivalence/regexp-methods.test.ts` (22) — all pass, no regression from the runtime.ts change.

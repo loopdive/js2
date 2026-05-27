@@ -37,7 +37,11 @@ const BUILTIN_TYPES = new Set([
 
 export function mapTsTypeToWasm(type: ts.Type, checker: ts.TypeChecker, fast?: boolean): ValType {
   if (type.flags & ts.TypeFlags.BigInt || type.flags & ts.TypeFlags.BigIntLiteral) {
-    return { kind: "i64" };
+    // (#1644) Brand the i64 as bigint so coercion sites box/unbox it as a JS
+    // bigint (not a number). A `: bigint`-typed local/param/return carries the
+    // brand, so reads re-emit it. Native `type i64 = number` resolves through a
+    // different path and stays unbranded.
+    return { kind: "i64", bigint: true };
   }
   if (type.flags & ts.TypeFlags.Number || type.flags & ts.TypeFlags.NumberLiteral) {
     return { kind: fast ? "i32" : "f64" };

@@ -3351,7 +3351,17 @@ function resolveImport(
         if (self == null) return undefined;
         // Method call — check sidecar if direct method missing
         const fn = self[m] ?? _sidecarGet(self, m);
-        if (typeof fn === "function") return fn.call(self, ...args);
+        if (typeof fn === "function") {
+          // (#1332) Wrap wasmGC-struct args via _wrapForHost so a native
+          // prototype method (e.g. RegExp.prototype.exec/test) can ToString
+          // or read properties off an opaque wasm struct argument. Mirrors
+          // the Set-method path above and __extern_method_call.
+          const exports = callbackState?.getExports();
+          const hasStructArg = args.some((a) => _isWasmStruct(a));
+          if (!hasStructArg) return fn.call(self, ...args);
+          const wrappedArgs = args.map((a) => (_isWasmStruct(a) ? _wrapForHost(a, exports) : a));
+          return fn.call(self, ...wrappedArgs);
+        }
         return undefined;
       };
     }
@@ -7146,36 +7156,57 @@ assert._isSameValue = isSameValue;
       // biome-ignore lint/suspicious/useValidTypeof: targetType is a runtime string from compiled code
       return (v: any) => (typeof v === intent.targetType ? 1 : 0);
     case "box":
-      return intent.targetType === "boolean" ? (v: number) => Boolean(v) : (v: number) => v;
+      if (intent.targetType === "boolean") return (v: number) => Boolean(v);
+      // (#1644) __box_bigint: JS-BigInt-integration already delivers the wasm
+      // i64 as a JS bigint at the boundary, so boxing is identity.
+      if (intent.targetType === "bigint") return (v: bigint) => v;
+      return (v: number) => v;
     case "unbox":
-      return intent.targetType === "boolean"
-        ? (v: any) => (v ? 1 : 0)
-        : (v: any) => {
-            // For objects, try our ToPrimitive first — Number() on WasmGC structs
-            // returns NaN without throwing (#866), and proxied structs may have
-            // WasmGC closures for Symbol.toPrimitive that V8 can't call (#1090).
-            if (v != null && typeof v === "object") {
-              const prim = _toPrimitive(v, "number", callbackState);
-              if (prim !== undefined) {
-                // #1434 — Number() throws TypeError on Symbol/BigInt primitives.
-                // Per ECMA-262 §7.1.4 ToNumber, Symbol MUST throw TypeError; the
-                // unbox/number intent is the centralized ToNumber funnel, so we
-                // let the exception propagate to Wasm catch_all instead of
-                // silently turning it into NaN.
-                return Number(prim);
-              }
-              // _toPrimitive returned undefined — try the full host ToPrimitive (#1090)
-              // which checks real JS properties, sidecar, and Wasm exports.
-              // Let TypeError propagate so Wasm catch_all can intercept it.
-              const prim2 = _hostToPrimitive(v, "number", callbackState);
-              return Number(prim2);
-            }
-            // #1434 — Symbol/BigInt primitives: Number() throws TypeError per
-            // §7.1.4. The previous try/catch swallowed this and returned NaN,
-            // letting `Number(Symbol())`, `+Symbol()`, `-Symbol()`, `~Symbol()`,
-            // `0 + Symbol()` etc. silently coerce. Let the exception propagate.
-            return Number(v);
-          };
+      if (intent.targetType === "boolean") return (v: any) => (v ? 1 : 0);
+      // (#1644) __to_bigint: §7.1.13 ToBigInt. Identity on a bigint; parse
+      // strings / coerce booleans via the BigInt() constructor (SyntaxError on
+      // bad string syntax); number and Symbol arguments throw TypeError. The
+      // returned bigint crosses back to wasm as an i64 (JS-BigInt-integration).
+      if (intent.targetType === "bigint") {
+        return (v: any): bigint => {
+          if (typeof v === "bigint") return v;
+          if (typeof v === "number") {
+            throw new TypeError("Cannot convert a Number to a BigInt");
+          }
+          if (typeof v === "symbol") {
+            throw new TypeError("Cannot convert a Symbol value to a BigInt");
+          }
+          // string / boolean / object-with-primitive — defer to spec BigInt()
+          // (throws SyntaxError on malformed numeric strings).
+          return BigInt(v);
+        };
+      }
+      return (v: any) => {
+        // For objects, try our ToPrimitive first — Number() on WasmGC structs
+        // returns NaN without throwing (#866), and proxied structs may have
+        // WasmGC closures for Symbol.toPrimitive that V8 can't call (#1090).
+        if (v != null && typeof v === "object") {
+          const prim = _toPrimitive(v, "number", callbackState);
+          if (prim !== undefined) {
+            // #1434 — Number() throws TypeError on Symbol/BigInt primitives.
+            // Per ECMA-262 §7.1.4 ToNumber, Symbol MUST throw TypeError; the
+            // unbox/number intent is the centralized ToNumber funnel, so we
+            // let the exception propagate to Wasm catch_all instead of
+            // silently turning it into NaN.
+            return Number(prim);
+          }
+          // _toPrimitive returned undefined — try the full host ToPrimitive (#1090)
+          // which checks real JS properties, sidecar, and Wasm exports.
+          // Let TypeError propagate so Wasm catch_all can intercept it.
+          const prim2 = _hostToPrimitive(v, "number", callbackState);
+          return Number(prim2);
+        }
+        // #1434 — Symbol/BigInt primitives: Number() throws TypeError per
+        // §7.1.4. The previous try/catch swallowed this and returned NaN,
+        // letting `Number(Symbol())`, `+Symbol()`, `-Symbol()`, `~Symbol()`,
+        // `0 + Symbol()` etc. silently coerce. Let the exception propagate.
+        return Number(v);
+      };
     case "truthy_check":
       return (v: any) => (v ? 1 : 0);
     case "extern_get":

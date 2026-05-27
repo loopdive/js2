@@ -423,8 +423,12 @@ function compileExpressionBody(
     }
   }
 
-  // Fast-path: null/undefined in struct ref context
-  if (expectedType && (expectedType.kind === "ref_null" || expectedType.kind === "ref")) {
+  // Fast-path: null/undefined in struct ref context (skip for $AnyValue — handled below)
+  if (
+    expectedType &&
+    (expectedType.kind === "ref_null" || expectedType.kind === "ref") &&
+    !isAnyValue(expectedType, ctx)
+  ) {
     let inner: ts.Expression = expr;
     while (
       ts.isAsExpression(inner) ||
@@ -708,7 +712,7 @@ function compileExpressionInner(ctx: CodegenContext, fctx: FunctionContext, expr
     const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
     const value = BigInt(text);
     fctx.body.push({ op: "i64.const", value });
-    return { kind: "i64" };
+    return { kind: "i64", bigint: true };
   }
 
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {

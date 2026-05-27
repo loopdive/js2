@@ -6253,6 +6253,15 @@ export function addUnionImports(ctx: CodegenContext): void {
     typeIdx: boxBoolType,
   });
 
+  // __box_bigint: (i64) → externref  (#1644 — boxes a branded-bigint i64 as a
+  // JS bigint; JS-BigInt-integration makes the host body identity)
+  const boxBigType = addFuncType(ctx, [{ kind: "i64" }], [{ kind: "externref" }]);
+  addImport(ctx, "env", "__box_bigint", { kind: "func", typeIdx: boxBigType });
+
+  // __to_bigint: (externref) → i64  (#1644 — §7.1.13 ToBigInt)
+  const toBigType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i64" }]);
+  addImport(ctx, "env", "__to_bigint", { kind: "func", typeIdx: toBigType });
+
   // __typeof: (externref) → externref (returns type string)
   const typeofStrType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
   addImport(ctx, "env", "__typeof", {
@@ -6280,6 +6289,8 @@ export function addUnionImports(ctx: CodegenContext): void {
       "__unbox_boolean",
       "__box_number",
       "__box_boolean",
+      "__box_bigint",
+      "__to_bigint",
       "__typeof",
     ]);
     // Update funcMap entries for defined functions (not imports)

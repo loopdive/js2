@@ -264,3 +264,43 @@ describe("Issue #786: Array search methods use spec equality for externref eleme
     ).toBe(1);
   });
 });
+
+// #786 — A mixed array literal whose first element is numeric but which also
+// contains a genuine object element (e.g. `[0, 1, obj]`) was typed as an f64
+// vec from the first element, so the object reference was coerced to a number
+// and lost. `[0,1,o].indexOf(o)` could then never match. The fix promotes the
+// whole vec to externref when any element resolves to an object/ref type.
+describe("Issue #786: mixed numeric+object array literal preserves object refs", () => {
+  async function runExtern(src: string): Promise<number | boolean> {
+    const ex = await compileToWasm(src);
+    return ex.test() as number | boolean;
+  }
+
+  it("indexOf finds an object after leading numbers", async () => {
+    expect(await runExtern(`export function test(): number { const o={}; return [0,1,o].indexOf(o); }`)).toBe(2);
+  });
+
+  it("indexOf honours fromIndex for object after numbers", async () => {
+    expect(await runExtern(`export function test(): number { const o={}; return [0,1,o].indexOf(o,2); }`)).toBe(2);
+  });
+
+  it("indexOf object not found when fromIndex skips it", async () => {
+    expect(await runExtern(`export function test(): number { const o={}; return [0,o,2].indexOf(o,2); }`)).toBe(-1);
+  });
+
+  it("indexOf with string fromIndex coercion finds object", async () => {
+    expect(
+      await runExtern(`export function test(): number { const o={}; return [0,1,2,o,4].indexOf(o,"3E0" as any); }`),
+    ).toBe(3);
+  });
+
+  it("includes finds an object after leading numbers", async () => {
+    expect(await runExtern(`export function test(): boolean { const o={}; return [0,1,o].includes(o as any); }`)).toBe(
+      1,
+    );
+  });
+
+  it("homogeneous number array still uses numeric path", async () => {
+    expect(await runExtern(`export function test(): number { return [10,20,30].indexOf(20); }`)).toBe(1);
+  });
+});
