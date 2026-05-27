@@ -7286,11 +7286,29 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     // Check if this function is eligible for call-site inlining
     const inlineInfo = ctx.inlinableFunctions.get(funcName);
     if (inlineInfo && !expr.arguments.some((a: any) => ts.isSpreadElement(a))) {
-      // Inline the function body: compile arguments into temp locals, then emit body
+      // Inline the function body: compile arguments into temp locals, then emit body.
+      // #1658: an inlinable callee has had its callee-side default guard elided —
+      // for constant defaults the guard is skipped entirely (#869), and the body
+      // is too small to carry one — so the caller MUST materialize the parameter
+      // default here. Look up the callee's optional-param table and, when an
+      // argument is missing OR an explicit `undefined`-like literal, emit the
+      // recorded default (constant value, or sNaN/undefined sentinel) instead of a
+      // plain zero. `pushParamSentinel` already encodes that choice via optInfo.
+      const inlineOptInfo = ctx.funcOptionalParams.get(funcName);
       const argLocals: number[] = [];
       for (let i = 0; i < inlineInfo.paramCount; i++) {
-        if (i < expr.arguments.length) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, inlineInfo.paramTypes[i]);
+        const optEntry = inlineOptInfo?.find((o) => o.index === i);
+        const providedArg = i < expr.arguments.length ? expr.arguments[i]! : undefined;
+        const argIsUndefinedLike =
+          providedArg !== undefined &&
+          (providedArg.kind === ts.SyntaxKind.UndefinedKeyword ||
+            (ts.isIdentifier(providedArg) && providedArg.text === "undefined") ||
+            providedArg.kind === ts.SyntaxKind.VoidExpression);
+        if (providedArg !== undefined && !(optEntry && argIsUndefinedLike)) {
+          compileExpression(ctx, fctx, providedArg, inlineInfo.paramTypes[i]);
+        } else if (optEntry) {
+          // Missing arg, or explicit `undefined` with a default → apply the default.
+          pushParamSentinel(fctx, inlineInfo.paramTypes[i]!, ctx, optEntry);
         } else {
           pushDefaultValue(fctx, inlineInfo.paramTypes[i]!, ctx);
         }

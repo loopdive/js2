@@ -1,10 +1,11 @@
 ---
 id: 1658
 title: "Destructured/scalar function-parameter default not applied (returns wrong value)"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -63,3 +64,25 @@ runtime is correct. This issue is the opposite: the real runtime is **wrong**.)
   full `tests/equivalence/` suite (it OOMs in the runner). See **#1659** for the
   CI coverage gap; until that lands, this regression class is invisible to CI and
   must be validated locally.
+
+## Root cause & fix
+
+The failure was in the **call-site inlining** path, not the destructuring step.
+`process` is a small expression-shaped function, so `registerInlinableFunction`
+marks it inlinable. For a **constant** parameter default (e.g. `y = 10`), the
+callee-side default guard is elided entirely (#869) — the caller is responsible
+for materializing the default. But the inline path
+(`src/codegen/expressions/calls.ts`) padded any missing argument with
+`pushDefaultValue` (a plain `f64.const 0`), ignoring the declared default. So
+`process(5)` inlined to `y = 0` instead of `y = 10`, and the suite returned 30
+instead of 40.
+
+Fix: in the inline path, consult `ctx.funcOptionalParams` for the callee and,
+when an argument is missing OR an explicit `undefined`-like literal, emit the
+recorded default via `pushParamSentinel(..., optEntry)` (which yields the
+constant value for constant defaults). Expression defaults can't reach this path
+— their callee guard emits an `if`/`local.set`, which `INLINE_DISALLOWED_OPS`
+already excludes from inlining.
+
+Regression test: `tests/issue-1658.test.ts` (scalar omitted, explicit
+`undefined`, default-of-0, and multiple trailing defaults).
