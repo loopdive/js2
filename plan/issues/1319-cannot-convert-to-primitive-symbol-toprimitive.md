@@ -1,9 +1,10 @@
 ---
 id: 1319
 title: "Cannot convert object to primitive — Symbol.toPrimitive / valueOf / toString chain incomplete (234 failures)"
-status: ready
+status: done
 created: 2026-05-07
-updated: 2026-05-07
+updated: 2026-05-27
+completed: 2026-05-27
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -64,3 +65,31 @@ This is the full ECMA-262 §7.1.1 `OrdinaryToPrimitive` algorithm.
 - `({[Symbol.toPrimitive](hint) { return hint; }} + "")` evaluates to `"default"`.
 - The 234 failure count drops substantially.
 - No regressions in existing coercion tests.
+
+## Resolution (2026-05-27)
+
+Fixed by commit `ef0e86c46` — *"fix(#1319): wasm-struct ToPrimitive falls back to
+`[object Object]` instead of throwing"*.
+
+Root cause was narrower than the issue's original hypothesis. `_hostToPrimitive`
+in `src/runtime.ts` already walked the full `Symbol.toPrimitive → valueOf →
+toString` chain per §7.1.1. The actual gap: a user class with **none** of those
+methods has a WasmGC struct with a null prototype, so the chain found nothing and
+threw — whereas a plain JS `{}` inherits `Object.prototype.toString` and yields
+`"[object Object]"`. The fix adds a wasm-struct fallback that returns
+`"[object Object]"` before throwing, in both `_toPrimitiveSync` (line ~1278) and
+`_hostToPrimitive` (line ~1509), matching V8's `String({})` behaviour.
+
+Verified on current main (commit f102ff55c):
+
+```
+npm test -- tests/issue-1319.test.ts
+  ✓ 3 tests passing
+    - Math.floor on a no-method class instance does not throw 'Cannot convert object'
+    - class with valueOf is invoked correctly (regression guard)
+    - class with Symbol.toPrimitive is invoked correctly (regression guard)
+```
+
+Both `src/runtime.ts` and `tests/issue-1319.test.ts` are committed and clean. The
+prior "STALE, already fixed" assessment was correct; only the frontmatter status
+was never flipped. Closing as done.
