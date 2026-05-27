@@ -1,8 +1,9 @@
 ---
 id: 1666
 title: "bug: --target wasi emits INVALID wasm for class/closure/callback/number→string/regex/generator/typed-array (native helper type mismatch + unbound late global)"
-status: ready
+status: done
 created: 2026-05-25
+completed: 2026-05-27
 priority: high
 feasibility: hard
 task_type: bugfix
@@ -11,13 +12,22 @@ language_feature: classes, closures, number-formatting, typed-arrays
 goal: standalone-mode
 sprint: Backlog
 related: [1662, 1335, 1470, 1472]
+status_note: "Signature B re-landed (done); Signature A carved out to a follow-up architect-routed issue."
 ---
 # #1666 — `--target wasi` produces invalid (non-instantiable) Wasm for several constructs
 
 > **REVERTED by #618** (the eager `fixupModuleFuncIndices` in `addImport`
 > corrupted the default-GC trampoline path → −3,600 test262). Re-land must
 > scope the func-index fixup so it never re-shifts already-emitted bodies in
-> the default (non-standalone) path. See #1668. Status stays `ready`.
+> the default (non-standalone) path. See #1668.
+>
+> **SAFE RE-LAND (2026-05-27) — DONE.** Signature B (unbound late global) is
+> re-landed with a mode-agnostic, no-func-index-bookkeeping fix that does
+> NOT touch the trampoline shift path — it cannot reproduce the #618
+> regression. Signature A (native string helper func-index shift
+> collisions) is the actual #618 shift-regime hazard and is **explicitly
+> carved out** to a follow-up architect-routed issue (see "Remaining —
+> Signature A" below); it is NOT in this re-land.
 
 ## Problem
 

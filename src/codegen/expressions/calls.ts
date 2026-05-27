@@ -103,7 +103,7 @@ import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
-import { ensureNativeStringExternBridge } from "../native-strings.js";
+import { ensureNativeStringExternBridge, stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitDataViewAccessor, isDataViewAccessor } from "../dataview-native.js";
 
 /**
@@ -5631,12 +5631,11 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         {
           const rangeErrMsg = "RangeError: toString() radix must be between 2 and 36";
           addStringConstantGlobal(ctx, rangeErrMsg);
-          const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
           const tagIdx = ensureExnTag(ctx);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
             else: [],
           });
         }
@@ -5687,12 +5686,11 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         {
           const rangeErrMsg = "RangeError: toFixed() digits argument must be between 0 and 100";
           addStringConstantGlobal(ctx, rangeErrMsg);
-          const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
           const tagIdx = ensureExnTag(ctx);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
             else: [],
           });
         }
@@ -5749,7 +5747,6 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         fctx.body.push({ op: "local.get", index: isFiniteLocal });
         const rangeErrMsg = "RangeError: toPrecision() argument must be between 1 and 100";
         addStringConstantGlobal(ctx, rangeErrMsg);
-        const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
         const tagIdx = ensureExnTag(ctx);
         const rangeCheckBody: Instr[] = [];
         // Build: if (p < 1 || p > 100 || p != p) throw RangeError
@@ -5767,7 +5764,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         rangeCheckBody.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
           else: [],
         });
         fctx.body.push({
@@ -5823,7 +5820,6 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         // Range check gate: only when v is finite.
         const rangeErrMsg = "RangeError: toExponential() argument must be between 0 and 100";
         addStringConstantGlobal(ctx, rangeErrMsg);
-        const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
         const tagIdx = ensureExnTag(ctx);
         const rangeCheckBody: Instr[] = [];
         rangeCheckBody.push({ op: "local.get", index: digitsLocal });
@@ -5836,7 +5832,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         rangeCheckBody.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
           else: [],
         });
         fctx.body.push({ op: "local.get", index: isFiniteLocal });
