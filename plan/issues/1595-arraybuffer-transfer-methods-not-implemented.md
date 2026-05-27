@@ -3,7 +3,7 @@ id: 1595
 title: "ArrayBuffer.prototype.transfer / transferToFixedLength / transferToImmutable not implemented (~40 fails)"
 status: blocked
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -105,3 +105,26 @@ ops must honor.
 
 Marking `status: blocked` (depends on #1645). No source changed; worktree
 `issue-1595-arraybuffer-transfer` left in place (only this doc edit committed).
+
+## Re-confirmation 2026-05-27 (dev-1605, after #1645 merged)
+
+Re-checked the premise after PR #666 (#1645) landed, which was dispatched as
+"now unblocks #1595". **#666 was itself docs-only** — its merge commit is
+`docs(#1645): escalate ArrayBuffer resizable — needs representation spec`. It
+did NOT implement `resize` / `maxByteLength` / a resizable representation. The
+only detach machinery in the tree is the host-side `_detachedBuffers` WeakSet
++ `__is_detached_buffer` import, which came from **#1515** (DataView ToIndex /
+detached-buffer guards), not #1645.
+
+Probe on this branch (post-merge of current main):
+`new ArrayBuffer(8).transfer()` → runtime `transfer is not a function`. There
+is no ArrayBuffer prototype-method routing table in `src/codegen/` or
+`src/runtime.ts` for `transfer` / `transferToFixedLength` /
+`transferToImmutable`, and the Wasm-side vec struct still carries no
+detach/resizable state field.
+
+**Conclusion:** #1595 remains blocked on the resizable-ArrayBuffer
+representation spec (overlaps #1351). The dependency note pointing at #1645 was
+based on the expectation that #1645 would land the representation; it did not.
+Re-pointing the block at the #1351 representation spec. Released back to the
+queue without code changes.
