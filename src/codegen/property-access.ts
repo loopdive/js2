@@ -794,8 +794,12 @@ export function compileOptionalPropertyAccess(
   // else branch (non-null path): get the property from the temp
   fctx.body = [];
   fctx.body.push({ op: "local.get", index: tmp });
-  // Compile the property access part without the receiver
-  const tsObjType = ctx.checker.getTypeAtLocation(expr.expression);
+  // Compile the property access part without the receiver. After the
+  // `ref.is_null` short-circuit the receiver is known non-null, so resolve
+  // the property against the non-nullable part of the union — the bare
+  // `C | null` union symbol is anonymous and would fail struct resolution,
+  // leaving the receiver ref stranded on the stack (#1603).
+  const tsObjType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(expr.expression));
   const propName = expr.name.text;
   let elseResultType: ValType | null = null;
   if (isExternalDeclaredClass(tsObjType, ctx.checker)) {
@@ -867,8 +871,15 @@ export function compileOptionalPropertyAccess(
     }
   }
 
+  if (elseResultType === null) {
+    // Property could not be resolved to a concrete struct field/getter. The
+    // receiver ref is still on the stack from `local.get tmp`; coerce it to
+    // the block result type so the `if` typechecks rather than leaving a
+    // mismatched ref as the else-branch fallthrough (#1603).
+    elseResultType = objType;
+  }
   // Coerce else branch result to match the block result type
-  if (elseResultType && !valTypesMatch(elseResultType, resultType)) {
+  if (!valTypesMatch(elseResultType, resultType)) {
     coerceType(ctx, fctx, elseResultType, resultType);
   }
   const elseInstrs = fctx.body;
