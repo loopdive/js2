@@ -15,6 +15,7 @@ import { dirname, join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { availableParallelism } from "os";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
+import { findNthAssert } from "./test262-assert-locator.js";
 import {
   buildNegativeCompileSource,
   classifyError,
@@ -275,30 +276,9 @@ function adjustErrorLines(msg: string, offset: number): string {
   });
 }
 
-function findNthAssert(source: string, retVal: number): string {
-  if (retVal === -1) return "exception caught in test body";
-  const idx = retVal - 1;
-  if (idx < 1) return `early return (${retVal})`;
-
-  const lines = source.split("\n");
-  const assertStarts: { line: number; text: string }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*(assert\b|assert\.\w+|\$DONOTEVALUATE|verify\w+)/.test(lines[i])) {
-      const text = lines
-        .slice(i, Math.min(i + 3, lines.length))
-        .join(" ")
-        .trim();
-      assertStarts.push({ line: i + 1, text: text.substring(0, 120) });
-    }
-  }
-
-  const target = idx - 1;
-  if (target >= 0 && target < assertStarts.length) {
-    const a = assertStarts[target];
-    return `assert #${idx} at L${a.line}: ${a.text}`;
-  }
-  return `assert #${idx} (found ${assertStarts.length} asserts in source)`;
-}
+// findNthAssert / extractFullAssert moved to ./test262-assert-locator (#1318):
+// shared with the legacy vitest runner and unit-testable without the
+// result-file side effects this module performs at import time.
 
 // ── Test generation ─────────────────────────────────────────────────
 

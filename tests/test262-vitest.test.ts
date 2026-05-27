@@ -15,6 +15,7 @@ process.on("unhandledRejection", () => {});
 import { createHash } from "crypto";
 import { join, relative, dirname, basename } from "path";
 import { buildImports } from "../src/runtime.js";
+import { findNthAssert } from "./test262-assert-locator.js";
 // Lazy-load compileMulti only when needed (FIXTURE tests) to avoid
 // loading the full compiler into the fork alongside the pool worker.
 let _compileMulti: typeof import("../src/index.js").compileMulti | null = null;
@@ -474,30 +475,7 @@ function adjustErrorLines(msg: string, offset: number): string {
   });
 }
 
-function findNthAssert(source: string, retVal: number): string {
-  if (retVal === -1) return "exception caught in test body";
-  const idx = retVal - 1;
-  if (idx < 1) return `early return (${retVal})`;
-
-  const lines = source.split("\n");
-  const assertStarts: { line: number; text: string }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (/\b(assert|verify\w+)\b/.test(lines[i])) {
-      const text = lines
-        .slice(i, Math.min(i + 3, lines.length))
-        .join(" ")
-        .trim();
-      assertStarts.push({ line: i + 1, text: text.substring(0, 120) });
-    }
-  }
-
-  const target = idx - 1;
-  if (target >= 0 && target < assertStarts.length) {
-    const a = assertStarts[target];
-    return `assert #${idx} at L${a.line}: ${a.text}`;
-  }
-  return `assert #${idx} (found ${assertStarts.length} asserts in source)`;
-}
+// findNthAssert moved to ./test262-assert-locator (#1318).
 
 // ── Test generation ──────────────────────────────────────────────
 
