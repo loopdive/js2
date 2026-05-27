@@ -17,6 +17,6 @@
     "./runtime-bundle.mjs",
     "../node_modules",
     "../dist",
-    "../playground/dist"
+    "../website/playground/dist"
   ]
 }

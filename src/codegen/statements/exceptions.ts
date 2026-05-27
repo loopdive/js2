@@ -15,6 +15,7 @@ import {
   compileExternrefObjectDestructuringDecl,
   ensureBindingLocals,
 } from "./destructuring.js";
+import { emitExternrefDestructureGuard } from "../destructuring-params.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
 
 /**
@@ -88,15 +89,31 @@ function compileExternrefCatchDestructure(
   // exceptions.ts before invoking us. They internally store it in a fresh
   // temp local and run the full BindingInitialization algorithm.
   if (ts.isObjectBindingPattern(pattern)) {
+    // (#1552) Empty object pattern `catch ({})` still performs
+    // RequireObjectCoercible per ECMA-262 §8.5.2 BindingInitialization
+    // (`ObjectBindingPattern : { }` runs through CatchParameter binding,
+    // whose value is `thrownValue`). A thrown `null`/`undefined` must raise
+    // TypeError. The decl helper deliberately short-circuits the empty
+    // pattern (to keep `let {} = null` non-throwing, see #1553c), so the
+    // catch path must emit the coercibility guard itself.
+    if (pattern.elements.length === 0) {
+      const tmp = allocLocal(fctx, `__catch_empty_obj_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: tmp });
+      emitExternrefDestructureGuard(ctx, fctx, tmp);
+      return;
+    }
     compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
     return;
   }
   if (ts.isArrayBindingPattern(pattern)) {
-    // Empty pattern `[]` short-circuits — drop the externref to keep stack
-    // clean. The shared helper also handles empty patterns but emits no-op
-    // bookkeeping; an explicit drop is simpler.
+    // (#1552) Empty array pattern `catch ([])` performs GetIterator on the
+    // thrown value (ECMA-262 §8.5.3), which begins with RequireObjectCoercible
+    // — a thrown `null`/`undefined` must raise TypeError. Emit the same guard
+    // before dropping the value.
     if (pattern.elements.length === 0) {
-      fctx.body.push({ op: "drop" });
+      const tmp = allocLocal(fctx, `__catch_empty_ary_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: tmp });
+      emitExternrefDestructureGuard(ctx, fctx, tmp);
       return;
     }
     compileExternrefArrayDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });

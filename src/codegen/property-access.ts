@@ -1299,6 +1299,29 @@ export function compilePropertyAccess(
     if (enumStrVal !== undefined) {
       return compileStringLiteral(ctx, fctx, enumStrVal);
     }
+
+    // (#1639) `g.prototype` where `g` is a generator-function declaration must
+    // return `%GeneratorPrototype%` (the object whose `next`/`return`/`throw`
+    // carry the brand check). The compiled closure backing a `function*` is
+    // opaque to the host, so resolve the member access statically here by
+    // routing to a dedicated runtime import. Tests reach
+    // `%AsyncIteratorPrototype%` via `getPrototypeOf(getPrototypeOf(g.prototype))`.
+    if (propName === "prototype" && ctx.generatorFunctions.has(objName)) {
+      const sym = ctx.checker.getSymbolAtLocation(expr.expression);
+      const decl = sym?.valueDeclaration ?? sym?.declarations?.[0];
+      const isAsyncGen =
+        !!decl &&
+        (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl)) &&
+        decl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
+      const helperName = isAsyncGen ? "__get_async_generator_prototype" : "__get_generator_prototype";
+      const helperIdx = ensureLateImport(ctx, helperName, [], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (helperIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: helperIdx });
+        return { kind: "externref" };
+      }
+      // Standalone mode (no host): fall through to legacy path.
+    }
   }
 
   // Check for static property access via 'this' in a static method context.

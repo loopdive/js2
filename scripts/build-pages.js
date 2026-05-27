@@ -15,18 +15,19 @@ import {
 import { dirname, join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
+const WEBSITE = join(ROOT, "website");
 const PLAYGROUND_DIST = join(ROOT, "dist", "playground");
 const PAGES_DIST = join(ROOT, "dist", "pages");
-const DASHBOARD_DIR = join(ROOT, "dashboard");
+const DASHBOARD_DIR = join(WEBSITE, "dashboard");
 const PLAN_DIR = join(ROOT, "plan");
 const BENCHMARKS_RESULTS_DIR = join(ROOT, "benchmarks", "results");
-const PUBLIC_BENCH = join(ROOT, "public", "benchmarks", "results");
+const PUBLIC_BENCH = join(WEBSITE, "public", "benchmarks", "results");
 const RUNS_DIR = join(BENCHMARKS_RESULTS_DIR, "runs");
 const PLAYGROUND_DATA_DIR = join(PAGES_DIST, "playground-data");
 const PLAYGROUND_APP_DATA_DIR = join(PAGES_DIST, "playground", "playground-data");
 const PLAYGROUND_BENCHMARKS_RESULTS_DIR = join(PAGES_DIST, "playground", "benchmarks", "results");
 const TEST262_REPO_ROOT = join(ROOT, "test262");
-const PLAYGROUND_EXAMPLES_DIR = join(ROOT, "playground", "examples");
+const PLAYGROUND_EXAMPLES_DIR = join(WEBSITE, "playground", "examples");
 const EQUIV_DIR = join(ROOT, "tests", "equivalence");
 const TS_WASM_EQUIV_FILE = join(ROOT, "tests", "ts-wasm-equivalence.test.ts");
 
@@ -241,8 +242,8 @@ copyDirectory(PLAYGROUND_EXAMPLES_DIR, join(PAGES_DIST, "examples"));
 
 // Overwrite Vite-built report pages with the latest public/ versions (which include
 // web components like <t262-donut> that Vite doesn't process).
-const PUBLIC_REPORT = join(ROOT, "public", "benchmarks", "results", "report.html");
-const PUBLIC_REPORT_SHORT = join(ROOT, "public", "benchmarks", "report.html");
+const PUBLIC_REPORT = join(WEBSITE, "public", "benchmarks", "results", "report.html");
+const PUBLIC_REPORT_SHORT = join(WEBSITE, "public", "benchmarks", "report.html");
 copyFileIfExists(PUBLIC_REPORT, join(PAGES_DIST, "benchmarks", "results", "report.html"));
 copyFileIfExists(PUBLIC_REPORT_SHORT, join(PAGES_DIST, "benchmarks", "report.html"));
 
@@ -343,7 +344,7 @@ copyFileIfExists(
 );
 
 // Iframe nav-sync glue (referenced from the landing page header at /).
-copyFileIfExists(join(ROOT, "frame-nav-sync.js"), join(PAGES_DIST, "frame-nav-sync.js"));
+copyFileIfExists(join(WEBSITE, "frame-nav-sync.js"), join(PAGES_DIST, "frame-nav-sync.js"));
 
 // Disable Jekyll processing so all generated assets are published as-is.
 writeFileSync(join(PAGES_DIST, ".nojekyll"), "");
@@ -355,7 +356,7 @@ writeFileSync(join(PAGES_DIST, ".nojekyll"), "");
 writeFileSync(join(PAGES_DIST, "CNAME"), "js2.loopdive.com\n");
 
 // Copy web components to pages-dist root and dashboard
-const COMPONENTS_DIR = join(ROOT, "components");
+const COMPONENTS_DIR = join(WEBSITE, "components");
 for (const file of ["site-nav.js", "t262-charts.js", "trend-chart.js", "perf-benchmark-chart.js"]) {
   copyFileIfExists(join(COMPONENTS_DIR, file), join(PAGES_DIST, "components", file));
 }
@@ -370,7 +371,7 @@ buildAdrPages();
 // Copy sprint-stats.json to dashboard data when dashboard artifacts exist.
 if (hasDashboardBundle) {
   copyFileIfExists(
-    join(ROOT, "dashboard", "data", "sprint-stats.json"),
+    join(WEBSITE, "dashboard", "data", "sprint-stats.json"),
     join(PAGES_DIST, "dashboard", "data", "sprint-stats.json"),
   );
 }

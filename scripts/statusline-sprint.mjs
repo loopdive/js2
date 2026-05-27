@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ISSUES_DIR = join(ROOT, "plan", "issues");
-const SPRINTS_JSON = join(ROOT, "dashboard", "data", "sprints.json");
+const SPRINTS_JSON = join(ROOT, "website", "dashboard", "data", "sprints.json");
 
 function fromJson() {
   if (!existsSync(SPRINTS_JSON)) return null;

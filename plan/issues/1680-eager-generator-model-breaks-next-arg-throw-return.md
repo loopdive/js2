@@ -1,0 +1,122 @@
+---
+id: 1680
+title: "spec gap: eager generator model can't thread .next(arg) / .throw() / .return() into yield (44/63 yield fails)"
+status: ready
+created: 2026-05-27
+priority: high
+feasibility: hard
+reasoning_effort: high
+task_type: bugfix
+area: codegen, runtime
+language_feature: generators, yield
+goal: spec-completeness
+sprint: Backlog
+related: [1665, 1373, 1042, 1639]
+---
+# #1680 — Eager generator model breaks suspend/resume semantics
+
+## Problem
+
+`language/expressions/yield`: **18 / 63 pass, 44 fail, 1 CE** (measured
+2026-05-27 via the real test262 runner, `runTest262File`, current main HEAD).
+
+The failures are NOT heterogeneous — they share **one root cause**: generators
+are compiled with an **eager-yield model** (see `src/runtime.ts:62` "eager-yield
+buffer (filled by the generator body)" and the explicit comments in
+`src/codegen/expressions/misc.ts:212-214` and `:253-255`:
+*"In the eager generator model, yield always 'receives' undefined from .next()."*).
+
+The generator body runs **to completion** when the generator object is created,
+buffering every yielded value into an array. `next()` then drains that buffer.
+This means three spec-required behaviours are impossible in the current design:
+
+1. **`yield` cannot receive the value passed to `.next(v)`** — the yield
+   expression always evaluates to `undefined` (hard-coded `ref.null.extern` at
+   misc.ts:214/255). Spec §27.5.1.2 / §15.5: `it.next(v)` makes the *paused*
+   `yield` expression evaluate to `v`.
+2. **`.throw(e)` cannot be injected at the suspended `yield` point** — the body
+   already ran, so there is no live suspension to throw into.
+3. **`.return(v)` cannot interrupt mid-iteration** — same reason; the body
+   cannot be abandoned partway because it never paused.
+
+## Evidence (real runner, current main)
+
+Representative failures (assert index = how far the test got before the first
+mismatch):
+
+- **`.next(arg)` threading** (yield-as-expression returns wrong value):
+  - `rhs-yield.js` — `yield yield 1`; `it.next(3)` should yield `3`, got the
+    original. (assert #3)
+  - `iter-value-specified.js`, `then-return.js`, `in-rltn-expr.js`,
+    `rhs-regexp.js`, `rhs-template-middle.js`,
+    `formal-parameters-after-reassignment-strict.js`.
+- **`yield*` delegation observing inner `.throw()` / `.return()`**
+  (all return `null` or a stale value — the delegated iterator's
+  throw/return protocol never runs because the outer body already
+  drained eagerly):
+  - `star-rhs-iter-thrw-*` (10 files): `*-res-done-err`, `*-res-value-err`,
+    `*-thrw-call-err`, `*-thrw-call-non-obj`, `*-thrw-get-err`,
+    `*-thrw-invoke`, `*-violation-*` (5).
+  - `star-rhs-iter-rtrn-*` (9 files): `*-no-rtrn`, `*-res-done-err`,
+    `*-res-value-err`, `*-rtrn-call-err`, `*-rtrn-call-non-obj`,
+    `*-rtrn-get-err`, `*-rtrn-invoke`, etc.
+  - `star-rhs-iter-nrml-*` (10 files): next-protocol step ordering.
+  - `star-return-is-null.js`, `star-throw-is-null.js`, `star-iterable.js`,
+    `star-in-rltn-expr.js`.
+
+## Deferred / out of scope for this issue
+
+- `from-with.js` — `WithStatement` (compile_error) — deferred per CLAUDE.md
+  (eval/with wont-fix).
+
+## Root cause (confirmed)
+
+`compileYieldExpression` (`src/codegen/expressions/misc.ts:162`) pushes each
+yielded value into `__gen_buffer` and returns a hard-coded
+`ref.null.extern` for the yield expression's own value. The runtime
+(`src/runtime.ts` `__create_generator` / `__gen_*`) wraps the pre-filled
+buffer in an iterator. There is **no suspension point** — the body is not a
+resumable coroutine.
+
+## Fix approach — NOT localized; requires architecture
+
+This cannot be fixed by patching `compileYieldExpression`. It requires
+replacing the eager model with **true suspend/resume**, i.e. a coroutine
+lowering. Two routes, both already scoped under sibling issues:
+
+1. **State-machine (regenerator-style) transform** — lower the generator body
+   to a `switch` over a `state: i32` in a WasmGC `$GeneratorState` struct;
+   each `yield` saves live locals + returns; `next(v)` re-enters at the saved
+   state with `v` bound to the yield result. This is exactly the design in
+   **[[1665]] §"Standalone alternative" item 1**, which proposes it for
+   host-independence — but it ALSO fixes the spec-correctness gap here (in
+   both JS-host and standalone modes). **Recommend implementing #1665's
+   state-machine lowering and treating #1680 as the spec-conformance
+   acceptance gate for it.**
+2. **Wasm stack-switching (`cont`/`resume`)** — cleaner but proposal not yet
+   broadly shipping; defer.
+
+The IR async/CPS work ([[1373]]/#1373b/[[1042]]) lowers `await` via CPS; the
+same continuation machinery is what generators need. Coordinating
+generator-CPS with async-CPS avoids two parallel coroutine engines.
+
+## Acceptance criteria
+
+1. `language/expressions/yield/rhs-yield.js` passes (`.next(arg)` threads into
+   `yield`).
+2. `language/expressions/yield/iter-value-specified.js` passes.
+3. The `star-rhs-iter-thrw-*` and `star-rhs-iter-rtrn-*` clusters pass
+   (yield* observes inner throw/return protocol).
+4. `language/expressions/yield` pass-rate rises from 18/63 (28.6%) to ≥ 55/63
+   (excluding the `with`-statement file).
+5. No regression in currently-passing generator tests
+   (`built-ins/Generator*`, `built-ins/GeneratorFunction`,
+   `built-ins/GeneratorPrototype`).
+
+## Notes
+
+- Smoke-tested via `runTest262File` directly (the real source-transform
+  pipeline), NOT a naive harness — the "sameValue is not a function" results
+  a naive `assert.sameValue` harness produces are probe artifacts; the real
+  runner rewrites `assert.sameValue` → `assert_sameValue` and the failures
+  above are genuine value mismatches.

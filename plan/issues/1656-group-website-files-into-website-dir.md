@@ -1,10 +1,11 @@
 ---
 id: 1656
 title: "Consolidate all website/frontend files under website/"
-status: ready
+status: done
 sprint: 55
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: medium

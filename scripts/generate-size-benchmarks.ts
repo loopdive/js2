@@ -23,13 +23,20 @@ import * as ts from "typescript";
 import { compile, compileMulti, optimizeBinaryAsync } from "./compiler-bundle.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const HELPERS_PATH = path.resolve(ROOT, "playground", "examples", "benchmarks", "helpers.ts");
+const HELPERS_PATH = path.resolve(ROOT, "website", "playground", "examples", "benchmarks", "helpers.ts");
 const RESULTS_PATH = path.resolve(ROOT, "benchmarks", "results", "size-benchmarks.json");
-const PUBLIC_PATH = path.resolve(ROOT, "public", "benchmarks", "results", "size-benchmarks.json");
+const PUBLIC_PATH = path.resolve(ROOT, "website", "public", "benchmarks", "results", "size-benchmarks.json");
 const LOADTIME_RESULTS_PATH = path.resolve(ROOT, "benchmarks", "results", "loadtime-benchmarks.json");
-const LOADTIME_PUBLIC_PATH = path.resolve(ROOT, "public", "benchmarks", "results", "loadtime-benchmarks.json");
+const LOADTIME_PUBLIC_PATH = path.resolve(
+  ROOT,
+  "website",
+  "public",
+  "benchmarks",
+  "results",
+  "loadtime-benchmarks.json",
+);
 const LOADTIME_RESULTS_DIR = path.resolve(ROOT, "benchmarks", "results", "loadtime");
-const LOADTIME_PUBLIC_DIR = path.resolve(ROOT, "public", "benchmarks", "results", "loadtime");
+const LOADTIME_PUBLIC_DIR = path.resolve(ROOT, "website", "public", "benchmarks", "results", "loadtime");
 const BINARYEN_BUNDLE_PATH = path.resolve(ROOT, "node_modules", "binaryen", "index.js");
 
 const LOADTIME_RUNTIME_SOURCE = `const jsString = {
@@ -482,7 +489,7 @@ async function measureSizes(name: string, label: string, jsSrc: string, tsSrc: s
 }
 
 async function measureMultiSizes(name: string, label: string, entryPath: string): Promise<SizeEntry | null> {
-  const absPath = path.resolve(ROOT, "playground", entryPath);
+  const absPath = path.resolve(ROOT, "website", "playground", entryPath);
   const tsSrc = fs.readFileSync(absPath, "utf8");
   const usesBenchmarkHelpers =
     entryPath === "examples/benchmarks.ts" ||

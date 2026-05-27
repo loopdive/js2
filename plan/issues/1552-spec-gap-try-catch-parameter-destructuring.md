@@ -1,9 +1,10 @@
 ---
 id: 1552
 title: "spec gap: catch parameter destructuring (`try/dstr`) — share dstr-binding helper with function decls"
-status: ready
+status: done
 created: 2026-05-20
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: easy
 reasoning_effort: high
@@ -184,3 +185,38 @@ land them first to maximise ripple.
 
 - `catch` clause without binding (`catch { ... }`) — already supported.
 - `try { } catch(e) { } finally { }` completion semantics — separate issue.
+
+## Resolution (2026-05-27)
+
+Most of the 58 fails had already resolved as ripple from the sibling issues
+(#1450 fn-name, #1454 iterator protocol, #1550 init-skipped) landing — the
+catch path was already routing non-empty patterns through the shared
+`compileExternrefObjectDestructuringDecl` / `compileExternrefArrayDestructuring-
+Decl` helpers. Re-running `test/language/statements/try/dstr/` (93 files) found
+**92 pass, 1 CE** before this PR. The lone remaining CE
+(`ary-ptrn-elem-id-iter-val-array-prototype.js`) is a TypeScript type-check
+error from assigning a generator to `Array.prototype[Symbol.iterator]` — a
+shared iterator-override typing gap, not catch-specific.
+
+Two real behavioural gaps remained, fixed here:
+
+1. **Object-rest non-enumerable leak** (`src/runtime.ts` `__extern_rest_object`):
+   for WasmGC-struct sources the struct-field and sidecar copy loops did not
+   consult the sidecar property-descriptor map, so a `defineProperty`-marked
+   non-enumerable own property leaked into `catch ({ ...rest })`. Per
+   ECMA-262 §14.7.4 CopyDataProperties only enumerable own properties are
+   copied. Now filtered via `_wasmPropDescs` / `_SC_ENUMERABLE`. (Also fixes
+   the same leak for `let { ...r } = obj` declarations.)
+
+2. **Empty-pattern RequireObjectCoercible** (`src/codegen/statements/exceptions.ts`):
+   `catch ({})` / `catch ([])` over a thrown `null` / `undefined` must throw
+   TypeError (§8.5.2 / §8.5.3 begin with RequireObjectCoercible / GetIterator).
+   The decl helper deliberately short-circuits empty patterns (to keep
+   `let {} = null` behaviour per #1553c), so the catch path now emits the
+   `emitExternrefDestructureGuard` coercibility check itself for empty
+   patterns. A coercible value (object / array / number) still binds without
+   throwing.
+
+Acceptance criteria 1-6 verified; `tests/issue-1552.test.ts` extended with
+non-enumerable-rest, empty-pattern null/undefined-throw, empty-pattern
+coercible-no-throw, and fn-name cases (15 tests, all green).

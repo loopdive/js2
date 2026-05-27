@@ -7,5 +7,5 @@ function run(cmd, args) {
 
 run(process.execPath, ["scripts/sync-sprint-issue-tables.mjs"]);
 run(process.execPath, ["scripts/sync-goal-issue-tables.mjs"]);
-run(process.execPath, ["dashboard/build-data.js"]);
+run(process.execPath, ["website/dashboard/build-data.js"]);
 run(process.execPath, ["--experimental-strip-types", "plan/generate-graph.ts"]);

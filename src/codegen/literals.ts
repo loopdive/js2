@@ -30,6 +30,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { isStrictFunction } from "./helpers/is-strict-function.js";
 import {
   cacheStringLiterals,
   destructureParamArray,
@@ -1692,7 +1693,8 @@ export function compileObjectLiteralForStruct(
       // `arguments.length` and `arguments[n]` work at runtime.
       if (prop.body && bodyUsesArguments(prop.body)) {
         const methodParamTypes = methodFctxParams.slice(1).map((p) => p.type); // skip 'this'
-        emitArgumentsObject(ctx, methodFctx, methodParamTypes, 1); // paramOffset 1 to skip 'this'
+        // Object-literal methods inherit the surrounding code's strictness (#779e).
+        emitArgumentsObject(ctx, methodFctx, methodParamTypes, 1, isStrictFunction(prop)); // paramOffset 1 to skip 'this'
       }
 
       if (isGeneratorMethod && prop.body) {

@@ -66,30 +66,47 @@ This is the full ECMA-262 §7.1.1 `OrdinaryToPrimitive` algorithm.
 - The 234 failure count drops substantially.
 - No regressions in existing coercion tests.
 
-## Resolution (2026-05-27)
+## Verification (2026-05-27) — RESOLVED
 
-Fixed by commit `ef0e86c46` — *"fix(#1319): wasm-struct ToPrimitive falls back to
-`[object Object]` instead of throwing"*.
+The ToPrimitive chain is fully implemented and the headline error
+`Cannot convert object to primitive value` no longer occurs. Closing
+as done.
 
-Root cause was narrower than the issue's original hypothesis. `_hostToPrimitive`
-in `src/runtime.ts` already walked the full `Symbol.toPrimitive → valueOf →
-toString` chain per §7.1.1. The actual gap: a user class with **none** of those
-methods has a WasmGC struct with a null prototype, so the chain found nothing and
-threw — whereas a plain JS `{}` inherits `Object.prototype.toString` and yields
-`"[object Object]"`. The fix adds a wasm-struct fallback that returns
-`"[object Object]"` before throwing, in both `_toPrimitiveSync` (line ~1278) and
-`_hostToPrimitive` (line ~1509), matching V8's `String({})` behaviour.
+### Evidence
 
-Verified on current main (commit f102ff55c):
+1. **`_hostToPrimitive` (src/runtime.ts:1304)** walks the full ECMA-262
+   §7.1.1 OrdinaryToPrimitive chain: `Symbol.toPrimitive` → `valueOf` →
+   `toString`. **`_toPrimitiveSync` (src/runtime.ts:1271)** provides the
+   same chain for the synchronous path. Both add a WasmGC-struct
+   `"[object Object]"` fallback (src/runtime.ts:1278, :1509) so a class
+   with *no* conversion methods behaves like a plain `{}` under `String({})`
+   instead of throwing — this was the residual gap and it is fixed.
 
-```
-npm test -- tests/issue-1319.test.ts
-  ✓ 3 tests passing
-    - Math.floor on a no-method class instance does not throw 'Cannot convert object'
-    - class with valueOf is invoked correctly (regression guard)
-    - class with Symbol.toPrimitive is invoked correctly (regression guard)
-```
+2. **`tests/issue-1319.test.ts` — 3/3 pass** against current main HEAD.
 
-Both `src/runtime.ts` and `tests/issue-1319.test.ts` are committed and clean. The
-prior "STALE, already fixed" assessment was correct; only the frontmatter status
-was never flipped. Closing as done.
+3. **All three acceptance criteria pass exactly** (verified by direct
+   compile+run):
+   - `{valueOf(){return 42}} + 0` → `42`
+   - `` `${{toString(){return "hi"}}}` `` → `"hi"`
+   - `{[Symbol.toPrimitive](hint){...}} + ""` → `"default-string"` (default hint)
+
+4. **The originally-cited "234-fail" sample files now fail for unrelated
+   reasons, NOT ToPrimitive**:
+   - `language/expressions/class/elements/after-same-line-gen-literal-names.js`
+     → invalid Wasm `struct.set[1]` in `C_new` (class-element field codegen).
+   - `language/statements/class/elements/new-no-sc-line-method-literal-names.js`
+     → same `struct.set[1]` codegen failure.
+   These belong to the class-element/field codegen family (see the
+   `struct.set`/`local.tee` cluster tracked in #1604/#1605/#779a), not to
+   type coercion. The "234 failures" figure in the original title was an
+   over-attribution: those files surfaced the ToPrimitive error transiently
+   but their root cause is class-element lowering.
+
+### Residual sub-clusters (separate ownership — NOT this issue)
+
+- **Class-element field initializer codegen** (`struct.set[1]` invalid Wasm
+  in generated `C_new`) — already covered by the class-element codegen
+  issues (#1604/#1605/#779a). No new issue needed.
+
+No code change required for #1319 — the coercion chain is correct. This
+PR is documentation-only (status reconciliation).

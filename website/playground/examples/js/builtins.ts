@@ -9,10 +9,12 @@ function el(tag: string, css: string): HTMLElement {
 }
 
 function crd(title: string, parent: HTMLElement): HTMLElement {
-  const c = el("div",
+  const c = el(
+    "div",
     "padding:0.5rem 0.75rem;background:#1a1a35;" +
-    "border-radius:6px;border:1px solid #2a2a4a;" +
-    "margin-bottom:0.5rem");
+      "border-radius:6px;border:1px solid #2a2a4a;" +
+      "margin-bottom:0.5rem",
+  );
   const t = el("div", "font-size:0.8rem;color:#7c3aed;font-weight:bold;margin-bottom:4px");
   t.textContent = title;
   c.appendChild(t);
@@ -21,9 +23,7 @@ function crd(title: string, parent: HTMLElement): HTMLElement {
 }
 
 function rw(label: string, value: string, parent: HTMLElement): void {
-  const r = el("div",
-    "display:flex;justify-content:space-between;" +
-    "font-size:0.7rem;padding:1px 0");
+  const r = el("div", "display:flex;justify-content:space-between;" + "font-size:0.7rem;padding:1px 0");
   const l = el("span", "color:#888");
   l.textContent = label;
   const v = el("span", "color:#ddd;font-family:monospace");
@@ -36,9 +36,7 @@ function rw(label: string, value: string, parent: HTMLElement): void {
 export function main(): void {
   const host = document.body;
   host.innerHTML = "";
-  host.style.cssText =
-    "margin:0;background:#111;color:#ddd;" +
-    "font-family:system-ui,sans-serif;overflow-y:auto";
+  host.style.cssText = "margin:0;background:#111;color:#ddd;" + "font-family:system-ui,sans-serif;overflow-y:auto";
 
   const wrap = el("div", "padding:0.75rem");
 
@@ -82,10 +80,10 @@ export function main(): void {
 
   // Bitwise
   const b = crd("Bitwise", wrap);
-  rw("0xFF << 8", (0xFF << 8).toString(), b);
-  rw("0xABCD & 0xFF", (0xABCD & 0xFF).toString(), b);
-  rw("0x55 | 0xAA", (0x55 | 0xAA).toString(), b);
-  rw("0xFF ^ 0x0F", (0xFF ^ 0x0F).toString(), b);
+  rw("0xFF << 8", (0xff << 8).toString(), b);
+  rw("0xABCD & 0xFF", (0xabcd & 0xff).toString(), b);
+  rw("0x55 | 0xAA", (0x55 | 0xaa).toString(), b);
+  rw("0xFF ^ 0x0F", (0xff ^ 0x0f).toString(), b);
   rw("~0", (~0).toString(), b);
 
   host.appendChild(wrap);

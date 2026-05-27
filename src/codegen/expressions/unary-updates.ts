@@ -8,6 +8,7 @@
  * (`+`, `-`, `!`, `~`) live in ./unary.ts.
  */
 import { ts } from "../../ts-api.js";
+import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { reportError } from "../context/errors.js";
@@ -17,9 +18,22 @@ import { addUnionImports, ensureStructForType, getArrTypeIdxFromVec, localGlobal
 import { emitBoundsGuardedArraySet } from "../property-access.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { defaultValueInstrs } from "../type-coercion.js";
-import { emitThrowString, getFuncParamTypes } from "./helpers.js";
+import { emitThrowString, emitThrowTypeError, getFuncParamTypes } from "./helpers.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
+
+/**
+ * §13.4 UpdateExpression evaluation applies ToNumeric to the operand's current
+ * value before the +1/-1 step. ToNumeric on a Symbol throws TypeError per
+ * §7.1.3 step 3. Symbols are lowered to i32 ids, so without this guard `s++` /
+ * `--s` would silently treat the id as a number. Returns true (and emits the
+ * throw) when the operand's TS type is Symbol.
+ */
+function emitSymbolUpdateThrow(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
+  if (!isSymbolType(ctx.checker.getTypeAtLocation(unwrapParens(operand)))) return false;
+  emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+  return true;
+}
 
 function unwrapParens(node: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(node)) {
@@ -452,6 +466,10 @@ function compilePrefixUpdate(
   fctx: FunctionContext,
   expr: ts.PrefixUnaryExpression,
 ): ValType | null {
+  // §13.4 / §7.1.3 — ++/-- on a Symbol throws TypeError before the update step.
+  if (emitSymbolUpdateThrow(ctx, fctx, expr.operand)) {
+    return { kind: "f64" };
+  }
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
       // Unwrap parenthesized expressions: ++(x) -> ++x
@@ -880,6 +898,10 @@ function compilePostfixUnary(
   fctx: FunctionContext,
   expr: ts.PostfixUnaryExpression,
 ): ValType | null {
+  // §13.4 / §7.1.3 — x++/x-- on a Symbol throws TypeError before the update step.
+  if (emitSymbolUpdateThrow(ctx, fctx, expr.operand)) {
+    return { kind: "f64" };
+  }
   const isIncrement = expr.operator === ts.SyntaxKind.PlusPlusToken;
   const arithOp = isIncrement ? "f64.add" : "f64.sub";
   const arithOpI32 = isIncrement ? "i32.add" : "i32.sub";

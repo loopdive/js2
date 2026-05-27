@@ -17,7 +17,7 @@ import { join, extname } from "node:path";
 
 const PORT = parseInt(process.argv[2] ?? "8080", 10);
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
-const PUBLIC_ROOT = join(ROOT, "public");
+const PUBLIC_ROOT = join(ROOT, "website", "public");
 const TEST262_ROOT = join(ROOT, "test262", "test");
 
 const MIME: Record<string, string> = {

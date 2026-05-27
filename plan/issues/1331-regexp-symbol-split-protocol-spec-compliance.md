@@ -1,9 +1,10 @@
 ---
 id: 1331
 title: "RegExp host-mode: Symbol.split protocol spec compliance (123 fails)"
-status: ready
+status: done
 created: 2026-05-08
-updated: 2026-05-08
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -103,3 +104,46 @@ Note for the dev: there is no `RegExpExec` helper in this codebase — V8 *is* t
 ### Test files to verify
 - `tests/equivalence/regexp-methods.test.ts` — add cases: `"a,b,c".split(/,/)` returns `["a","b","c"]`; `"abcde".split(/x/iy)` species-ctor receiver; split with limit.
 - Re-run test262 buckets `built-ins/RegExp/prototype/Symbol.split/*` and `built-ins/String/prototype/split/*`.
+
+## Test Results (2026-05-27)
+
+Much of the originally-specced infrastructure had already landed via #1443
+(`collectStringMethodImports` union/non-string-like detection), #1433/#1467
+(`__box_symbol` plumbing) and #1439 (`__regex_symbol_call` host dispatch).
+A probe of the live compiler showed these already pass:
+
+- `"a,b,c".split(",")` → `"a|b|c"`
+- `"a1b2c".split(/\d/)` → `"a|b|c"` (literal regex separator)
+- `const re=/\d/; "a1b2c".split(re)` → `"a|b|c"` (var regex separator)
+- `"a1b2c3d".split(/\d/, 2)` → `"a|b"` (limit)
+- `RegExp.prototype[Symbol.split].call(re, str)` → works
+
+### Remaining gap fixed here
+`(re as any)[Symbol.split](str)` returned `undefined`. The element-access
+protocol dispatch in `compileCallExpression` (calls.ts) gated
+`__regex_symbol_call` on the receiver being a *statically-known* RegExp
+(`recvSym === "RegExp"`). When the receiver type is `any`/`unknown`
+(cast, parameter slot, or a base that loses its type) the dispatch fell
+through and produced `undefined`.
+
+**Fix**: broaden the gate to also fire for `any`/`unknown` receiver types,
+while still excluding user-defined wasm classes (which use
+`ClassName_method` dispatch) and the `@@iterator`/`@@asyncIterator` cases
+(handled earlier). The host helper `__regex_symbol_call` performs a fully
+dynamic `recv[Symbol.X](args)` lookup, so routing here is correct for any
+object implementing the well-known symbol method — not just RegExp.
+Also wrapped the `@@split` limit arg (arg1) in the runtime so a wasmGC
+struct limit reaches the host's ToUint32 ToPrimitive (matches the
+`@@replace` arg handling).
+
+### Files changed
+- `src/codegen/expressions/calls.ts` — broaden `isRegExpRecv` → also `any`/`unknown`, exclude user classes.
+- `src/runtime.ts` — wrap `@@split` arg1 (limit) via `wrapCallable` for struct ToPrimitive.
+- `tests/equivalence/regexp-methods.test.ts` — 6 new dispatch cases (all pass).
+
+### Verification
+- `regexp-methods.test.ts`: 22/22 pass.
+- `string-methods.test.ts` + `ir-slice10-extern-regexp.test.ts`: 47/47 pass.
+- iterator/spread/for-of suites: no regressions.
+- 3 `symbol-basic.test.ts` failures confirmed **pre-existing on main**
+  (reproduced with clean main sources; unrelated to this change).

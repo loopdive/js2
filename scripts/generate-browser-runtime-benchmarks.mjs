@@ -8,11 +8,19 @@ import { execFileSync } from "node:child_process";
 import os from "node:os";
 
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
-const PUBLIC_DIR = resolve(ROOT, "public");
+const PUBLIC_DIR = resolve(ROOT, "website", "public");
 const PLAYGROUND_RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "playground-benchmark-sidebar.json");
-const PLAYGROUND_PUBLIC_PATH = resolve(ROOT, "public", "benchmarks", "results", "playground-benchmark-sidebar.json");
+const PLAYGROUND_PUBLIC_PATH = resolve(
+  ROOT,
+  "website",
+  "public",
+  "benchmarks",
+  "results",
+  "playground-benchmark-sidebar.json",
+);
 const PLAYGROUND_PLAYGROUND_PUBLIC_PATH = resolve(
   ROOT,
+  "website",
   "playground",
   "public",
   "benchmarks",
@@ -20,7 +28,14 @@ const PLAYGROUND_PLAYGROUND_PUBLIC_PATH = resolve(
   "playground-benchmark-sidebar.json",
 );
 const BROWSER_RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "browser-runtime-benchmarks.json");
-const BROWSER_PUBLIC_PATH = resolve(ROOT, "public", "benchmarks", "results", "browser-runtime-benchmarks.json");
+const BROWSER_PUBLIC_PATH = resolve(
+  ROOT,
+  "website",
+  "public",
+  "benchmarks",
+  "results",
+  "browser-runtime-benchmarks.json",
+);
 
 const HOST = "127.0.0.1";
 const PORT = 4174;

@@ -44,7 +44,7 @@ const TEST262_ROOT = findTest262Root(ROOT);
 const BASELINE_CACHE_JSONL = join(ROOT, ".test262-cache", "test262-current.jsonl");
 const CURRENT_RESULTS_JSONL = join(ROOT, "benchmarks", "results", "test262-current.jsonl");
 const RESULTS_JSONL = join(ROOT, "benchmarks", "results", "test262-results.jsonl");
-const OUTPUT_PATH = join(ROOT, "public", "benchmarks", "results", "test262-editions.json");
+const OUTPUT_PATH = join(ROOT, "website", "public", "benchmarks", "results", "test262-editions.json");
 const CURRENT_DRAFT_EDITION = 2026;
 
 // ---------------------------------------------------------------------------

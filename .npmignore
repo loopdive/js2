@@ -8,9 +8,7 @@ tests/
 test262/
 benchmarks/
 scripts/
-playground/
-components/
-dashboard/
+website/
 docs/
 blog/
 packages/js2wasm/
@@ -42,9 +40,6 @@ CONTRIBUTING.md
 CLA.md
 AGENTS.md
 CLAUDE.md
-CNAME
-index.html
-playground.png
 jsr.json
 
 # Node

@@ -21,6 +21,7 @@ import {
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { cacheStringLiterals, hasAbstractModifier, hasStaticModifier, resolveWasmType } from "./index.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -33,6 +34,43 @@ import {
   resolveComputedKeyExpression,
   valTypesMatch,
 } from "./shared.js";
+
+/**
+ * (#846h) Returns true if `body` lexically contains a `super(...)` call that
+ * shares the constructor's `this` binding. Descends through ordinary statements
+ * and arrow-function bodies (which inherit `this`), but NOT into nested
+ * function/method/class declarations or function expressions, where a `super()`
+ * would bind a different constructor. Used to detect a derived constructor that
+ * never initialises `this` — per ES §10.2.2 / §13.3.7.1 such a constructor must
+ * throw a ReferenceError when constructed.
+ */
+function constructorBodyHasSuperCall(node: ts.Node): boolean {
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    // A `super(...)` CallExpression initialises `this`.
+    if (ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.SuperKeyword) {
+      found = true;
+      return;
+    }
+    // Do not descend into constructs that introduce a new `this`/`super` binding.
+    if (
+      ts.isFunctionDeclaration(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isMethodDeclaration(n) ||
+      ts.isConstructorDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n) ||
+      ts.isClassDeclaration(n) ||
+      ts.isClassExpression(n)
+    ) {
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(node, visit);
+  return found;
+}
 
 /**
  * (#1455) Emit the call sequence that adjusts an externref-backed subclass
@@ -1176,7 +1214,24 @@ function compileClassBodiesInner(
       }
     }
 
-    if (ctor?.body) {
+    // (#846h) A derived class with an explicit constructor that never calls
+    // `super(...)` never initialises `this`. Per ES §10.2.2 [[Construct]] and
+    // §13.3.7.1 SuperCall, accessing `this` or returning from such a
+    // constructor must throw a ReferenceError. We detect the statically-provable
+    // case (no lexical `super()` anywhere in the constructor body) and emit an
+    // unconditional throw at the constructor entry, skipping the (now dead)
+    // body compilation.
+    const isDerivedClass = ctx.classParentMap.has(className) || ctx.classBuiltinParentMap.has(className);
+    const ctorMissingSuper = isDerivedClass && ctor?.body !== undefined && !constructorBodyHasSuperCall(ctor.body);
+
+    if (ctorMissingSuper) {
+      const message =
+        "ReferenceError: Must call super constructor in derived class before accessing 'this' or returning from derived constructor";
+      addStringConstantGlobal(ctx, message);
+      const tagIdx = ensureExnTag(ctx);
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, message));
+      fctx.body.push({ op: "throw", tagIdx });
+    } else if (ctor?.body) {
       for (const stmt of ctor.body.statements) {
         // Handle super(args) calls: inline parent constructor field initialization
         if (
@@ -1456,7 +1511,8 @@ function compileClassBodiesInner(
       if (member.body && bodyUsesArguments(member.body)) {
         const methodParamTypes = params.slice(isStatic ? 0 : 1).map((p) => p.type);
         const paramOffset = isStatic ? 0 : 1; // skip 'this' param for instance methods
-        emitArgumentsObject(ctx, fctx, methodParamTypes, paramOffset);
+        // Class bodies are always strict code → unmapped arguments (#779e).
+        emitArgumentsObject(ctx, fctx, methodParamTypes, paramOffset, true);
       }
 
       if (isGeneratorMethod && member.body) {

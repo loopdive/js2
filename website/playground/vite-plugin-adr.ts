@@ -59,7 +59,7 @@ export function adrPlugin(): Plugin {
   // and we don't want their side effects (the build IIFE) to run on import.
   let renderAdrPage: ((filename: string, source: string) => string) | null = null;
   let renderUnavailableReason: string | null = null;
-  const projectRoot = resolve(import.meta.dirname, "..");
+  const projectRoot = resolve(import.meta.dirname, "../..");
   const adrDir = join(projectRoot, "docs", "adr");
 
   return {
@@ -75,8 +75,8 @@ export function adrPlugin(): Plugin {
       // trade.
       try {
         ({ renderAdrPage } = await import(
-          // Relative path from playground/ → scripts/.
-          new URL("../scripts/build-adr-html.mjs", import.meta.url).href
+          // Relative path from website/playground/ → scripts/.
+          new URL("../../scripts/build-adr-html.mjs", import.meta.url).href
         ));
       } catch (err) {
         renderUnavailableReason = (err as Error).message ?? String(err);

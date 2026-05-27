@@ -1,9 +1,10 @@
 ---
 id: 1321
 title: "Number.prototype formatting methods (toString/toFixed/toPrecision/toExponential) rely on JS host unnecessarily"
-status: ready
+status: done
 created: 2026-05-07
-updated: 2026-05-08
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -95,6 +96,25 @@ While scoping the pure-Wasm impl, discovered a **separate, more impactful bug**:
 - Standalone (`--target wasi`) mode for `toFixed` / `toPrecision` / `toExponential`
 
 The issue's original AC #1–#4 are met when running in JS-host mode (the dominant test mode). AC #5 (no test262 regressions) is met. The standalone-mode delivery is the deferred half.
+
+## Resolution: standalone half delivered (2026-05-27)
+
+The deferred standalone-mode delivery for `toFixed` / `toPrecision` /
+`toExponential` is now done. New module
+`src/codegen/number-format-native.ts` emits pure-Wasm `number_toFixed` /
+`number_toExponential` / `number_toPrecision` functions under
+`ctx.wasi || ctx.standalone` (wired in `src/codegen/declarations.ts`, mirroring
+`emitNativeParseNumber` #1663), so `--target wasi` / `--target standalone`
+programs format numbers without any JS host import. Also fixed a latent
+standalone bug: the four `Number#to*` call-site RangeError throws in
+`expressions/calls.ts` emitted `global.get -1` in nativeStrings mode — switched
+to the dual-mode `stringConstantExternrefInstrs` helper.
+
+Algorithm uses scaled-f64 digit extraction (no Ryu); exact for the common
+range and documented as f64-precision-limited at extreme digit counts. Full
+Ryu/bignum and integer `toString(radix)` standalone remain tracked under #1335.
+Tests: `tests/issue-1321-standalone.test.ts` (19 cases). JS-host mode unchanged
+(`tests/issue-1321.test.ts`, `tests/issue-49-*.test.ts` still green).
 
 ## Tests
 

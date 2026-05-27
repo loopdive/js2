@@ -8,7 +8,7 @@
 set -euo pipefail
 
 CURRENT_YEAR=$(date +%Y)
-OUTPUT="${1:-/workspace/dashboard/data/sprint-stats.json}"
+OUTPUT="${1:-/workspace/website/dashboard/data/sprint-stats.json}"
 
 tags=$(git tag -l "sprint/*" --sort=version:refname)
 prev_epoch=""

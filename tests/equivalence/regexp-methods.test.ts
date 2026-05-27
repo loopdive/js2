@@ -203,4 +203,71 @@ describe("RegExp methods equivalence", () => {
   // Note: String.split() is tested in string-methods.test.ts.
   // The host import returns externref arrays which currently trigger
   // ref.cast issues when accessing .length, so we skip split here.
+
+  // --- RegExp.prototype[Symbol.split] protocol dispatch (#1331) ---
+
+  it("re[Symbol.split](str) dispatches through the @@split protocol", async () => {
+    expect(
+      await run(`
+      export function main(): string {
+        const re = /\\d/;
+        return (re as any)[Symbol.split]("a1b2c").join("|");
+      }
+    `),
+    ).toBe("a|b|c");
+  });
+
+  it("re[Symbol.split] on an any-typed receiver still dispatches", async () => {
+    expect(
+      await run(`
+      export function main(): string {
+        const re: any = /\\d/;
+        return re[Symbol.split]("x9y8z").join("|");
+      }
+    `),
+    ).toBe("x|y|z");
+  });
+
+  it("RegExp.prototype[Symbol.split].call(re, str) dispatches", async () => {
+    expect(
+      await run(`
+      export function main(): string {
+        const re = /\\d/;
+        return (RegExp.prototype as any)[Symbol.split].call(re, "a1b2c").join("|");
+      }
+    `),
+    ).toBe("a|b|c");
+  });
+
+  it("re[Symbol.match] on an any-typed receiver dispatches", async () => {
+    expect(
+      await run(`
+      export function main(): string {
+        const re: any = /\\d+/;
+        const m = re[Symbol.match]("a123b");
+        return m ? m[0] : "none";
+      }
+    `),
+    ).toBe("123");
+  });
+
+  it("String.prototype.split with a literal regex separator", async () => {
+    expect(
+      await run(`
+      export function main(): string {
+        return "a1b2c".split(/\\d/).join("|");
+      }
+    `),
+    ).toBe("a|b|c");
+  });
+
+  it("String.prototype.split with a regex separator and limit", async () => {
+    expect(
+      await run(`
+      export function main(): string {
+        return "a1b2c3d".split(/\\d/, 2).join("|");
+      }
+    `),
+    ).toBe("a|b");
+  });
 });

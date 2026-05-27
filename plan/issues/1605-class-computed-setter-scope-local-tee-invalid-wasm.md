@@ -3,7 +3,7 @@ id: 1605
 title: "codegen: class computed-property-name / setter param-scope emits invalid wasm (local.tee externref mismatch)"
 status: in-review
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
 priority: medium
 feasibility: medium
 task_type: bugfix
@@ -57,6 +57,48 @@ setter parameter scope copy-out.
 - The three example tests compile to valid Wasm.
 - All 6 tests move off `compile_error`.
 
+<<<<<<< HEAD
+## Root cause
+
+`compilePropertyAssignment` / `compileElementAssignment` routed
+`C.prototype.<setter> = v` and `C.<static setter> = v` through the regular
+setter-call path, which compiles the receiver with the setter's struct `this`
+type hint. But the receiver of a prototype/class-object write is an **externref**
+(the lazy prototype/class-object singleton), not a struct instance. Coercing
+that externref to the struct `this` param produced an invalid `local.tee`
+(externref temp fed a struct `ref.null`).
+
+## Fix
+
+In `src/codegen/expressions/assignment.ts` (`compilePropertyAssignment` setter
+branch): when the assignment target's receiver is `<X>.prototype` or a bare
+class identifier, route through `emitSetterCallWithDummy` — the same dummy-struct
+path already used for `C.prototype[key] = v` element-access setters. The setter
+gets a throwaway struct receiver and the value flows through unchanged.
+
+## Test Results
+
+- `scope-setter-paramsbody-var-close` → **valid wasm** (fixed)
+- `scope-setter-paramsbody-var-open` → **valid wasm** (fixed)
+- `scope-static-setter-paramsbody-var-close` → **valid wasm** (fixed)
+- `scope-static-setter-paramsbody-var-open` → **valid wasm** (fixed)
+- `cpn-class-decl-accessors-...-from-null` → still INVALID (see below)
+- `cpn-class-expr-accessors-...-from-null` → still INVALID (see below)
+
+New unit test: `tests/issue-1605.test.ts` (3 cases, all pass).
+
+## Remaining (deferred — separate bug)
+
+The two `cpn-...-from-null` cases (`c[null] = null` element-write where the class
+has BOTH a computed `get [null]` and `set [null]`) hit a **distinct** defect: the
+top-level wrapper's `let c = new C()` is allocated TWICE — once by the let/const
+TDZ hoist pass and once by `compileVariableStatement` (the hoisted slot is not
+reused; `fctx.localMap` no longer resolves the name at statement time when
+computed-name accessors are present). The resulting dead duplicate local shifts
+binaryen's local typing so the (internally-correct) `ref.null.extern` tee is
+misvalidated against the struct local. This is a variable-hoisting / slot-reuse
+bug, not a setter-coercion bug, and warrants its own issue.
+=======
 ## Sub-cluster CPN — FIXED (2026-05-27)
 
 Root cause was **not** in class/accessor codegen — the setter call was lowered
@@ -89,3 +131,4 @@ All three are off `compile_error`. The two `scope-*-var-close` runtime
 semantics failures are a distinct sub-cluster left to the broader #1605 work.
 A 100-file slice of `language/statements/class` shows identical status counts
 to clean main (82 pass / 13 fail / 5 ce) — no regression from the fixup change.
+>>>>>>> origin/main

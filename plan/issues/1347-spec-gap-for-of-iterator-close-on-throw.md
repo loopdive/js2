@@ -1,9 +1,10 @@
 ---
 id: 1347
 title: "spec gap: for-of doesn't IteratorClose on body throw (portion of 389 fails)"
-status: ready
+status: done
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: high
 feasibility: medium
 reasoning_effort: medium

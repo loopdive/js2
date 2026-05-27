@@ -42,12 +42,12 @@ jobs:
           # not in LFS on the main repo, to avoid LFS bandwidth exhaustion.
           git clone --depth=1 https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines 2>/dev/null || true
           if [ -f /tmp/js2wasm-baselines/test262-current.json ]; then
-            mkdir -p public/benchmarks/results benchmarks/results/runs
-            cp /tmp/js2wasm-baselines/test262-current.json   public/benchmarks/results/test262-report.json
+            mkdir -p website/public/benchmarks/results benchmarks/results/runs
+            cp /tmp/js2wasm-baselines/test262-current.json   website/public/benchmarks/results/test262-report.json
             cp /tmp/js2wasm-baselines/test262-current.json   benchmarks/results/test262-current.json
             cp /tmp/js2wasm-baselines/test262-current.json   benchmarks/results/test262-report.json
             [ -f /tmp/js2wasm-baselines/test262-current.jsonl ] && \
-              cp /tmp/js2wasm-baselines/test262-current.jsonl public/benchmarks/results/test262-results.jsonl
+              cp /tmp/js2wasm-baselines/test262-current.jsonl website/public/benchmarks/results/test262-results.jsonl
             [ -f /tmp/js2wasm-baselines/runs/index.json ] && \
               cp /tmp/js2wasm-baselines/runs/index.json benchmarks/results/runs/index.json
             echo "Fetched baseline data from js2wasm-baselines."

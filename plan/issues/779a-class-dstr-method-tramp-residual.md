@@ -1,9 +1,10 @@
 ---
 id: 779a
 title: "class/dstr method-tramp residual (gen / async-gen / private / static) (~727 fails)"
-status: in-progress
+status: done
 created: 2026-05-21
 updated: 2026-05-27
+completed: 2026-05-27
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -165,6 +166,16 @@ why the `meth-dflt-*` / `gen-meth-dflt-*` / `*-dflt-*` buckets dominate the
 default value is externref, materialise/convert it to a native array (vec
 struct) so `Array.isArray` and `.length`/index access behave. This is
 independent of (and larger than) the nested-class global-drift fix in this PR.
+**Split out to #1678** (externref-typed default-value array/rest
+materialisation) — the dominant share of the residual ~727.
+
+## Resolution (2026-05-27)
+
+The invalid-Wasm sub-bug (nested-class global-index drift) is **fixed and merged
+via PR #678**. The behavioural residual (~727 `*-dflt-*` `assert_fail`) is
+re-scoped to **#1678** — externref-typed default values of array/rest binding
+params are not materialised to native arrays, so `Array.isArray` rejects them.
+This issue is closed as `done`; #1678 carries the remaining work.
 
 ## Notes
 

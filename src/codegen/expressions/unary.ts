@@ -21,6 +21,21 @@ import { emitThrowTypeError } from "./helpers.js";
 import { tryStaticToNumber } from "./misc.js";
 import { compileMemberIncDec, compilePostfixUnary, compilePrefixUpdate } from "./unary-updates.js";
 
+/**
+ * §7.1.4 ToNumber / §7.1.3 ToNumeric step 3 — a Symbol operand in any numeric
+ * coercion context MUST throw a TypeError ("Cannot convert a Symbol value to a
+ * number"). Symbols are lowered to i32 ids, so without this guard a numeric
+ * unary/binary operator would silently turn the id into a number. Returns true
+ * (and emits the operand-drop + throw) when the operand's TS type is Symbol.
+ */
+function emitSymbolToNumberThrow(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
+  if (!isSymbolType(ctx.checker.getTypeAtLocation(operand))) return false;
+  const t = compileExpression(ctx, fctx, operand);
+  if (t !== null) fctx.body.push({ op: "drop" });
+  emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+  return true;
+}
+
 function compilePrefixUnary(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -29,13 +44,8 @@ function compilePrefixUnary(
   switch (expr.operator) {
     case ts.SyntaxKind.PlusToken: {
       // Unary + is ToNumber coercion
-      // ToNumber(Symbol) must throw TypeError (§7.1.4). Symbols are lowered
-      // to i32 ids, so a numeric coercion would silently turn the id into a
-      // number; detect the symbol TS type and throw instead.
-      if (isSymbolType(ctx.checker.getTypeAtLocation(expr.operand))) {
-        const t = compileExpression(ctx, fctx, expr.operand);
-        if (t !== null) fctx.body.push({ op: "drop" });
-        emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+      // ToNumber(Symbol) must throw TypeError (§7.1.4).
+      if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
         return { kind: "f64" };
       }
       // Try static resolution first (handles objects with valueOf, {}, NaN, etc.)
@@ -76,6 +86,10 @@ function compilePrefixUnary(
       return operandType;
     }
     case ts.SyntaxKind.MinusToken: {
+      // Unary - applies ToNumber (§7.1.4); Symbol operand must throw TypeError.
+      if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
+        return { kind: "f64" };
+      }
       // Try static resolution first (handles strings, null, undefined, booleans, etc.)
       const staticVal = tryStaticToNumber(ctx, expr.operand);
       if (staticVal !== undefined) {
@@ -125,6 +139,10 @@ function compilePrefixUnary(
       return { kind: "i32" };
     }
     case ts.SyntaxKind.TildeToken: {
+      // Bitwise ~ applies ToNumber (§7.1.4) → ToInt32; Symbol must throw TypeError.
+      if (emitSymbolToNumberThrow(ctx, fctx, expr.operand)) {
+        return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+      }
       const operandType = compileExpression(ctx, fctx, expr.operand);
       if (operandType?.kind === "i64") {
         // ~bigint => bigint ^ -1n

@@ -12,9 +12,9 @@ import {
 import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import * as ts from "typescript";
 import "./ts-lib-files.js";
-import { compile, compileMulti } from "../src/index.js";
-import { optimizeBinaryAsync } from "../src/optimize.js";
-import { buildImports, buildStringConstants, instantiateWasm } from "../src/runtime.js";
+import { compile, compileMulti } from "../../src/index.js";
+import { optimizeBinaryAsync } from "../../src/optimize.js";
+import { buildImports, buildStringConstants, instantiateWasm } from "../../src/runtime.js";
 import { WasmTreemap, parseWasm, parseWasmSpans, SECTION_COLORS } from "./wasm-treemap.js";
 import type { WasmData, WasmSection, WasmFunctionBody, ByteSpan } from "./wasm-treemap.js";
 import { LayoutManager, clearSavedLayout, getDefaultLayout, getMobileDefaultLayout } from "./layout.js";
@@ -26,7 +26,7 @@ const rawExampleModules = import.meta.glob("./examples/**/*.ts", {
   import: "default",
 });
 const rawEquivTestModules = import.meta.glob(
-  ["../tests/equivalence/**/*.test.ts", "../tests/ts-wasm-equivalence.test.ts"],
+  ["../../tests/equivalence/**/*.test.ts", "../../tests/ts-wasm-equivalence.test.ts"],
   {
     query: "?raw",
     import: "default",

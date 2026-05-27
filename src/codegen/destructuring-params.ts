@@ -64,6 +64,28 @@ function isPatternEmptyOnly(pattern: ts.ArrayBindingPattern): boolean {
 }
 
 /**
+ * Number of iterator steps an array binding/assignment pattern consumes
+ * (§8.5.3 IteratorBindingInitialization). Each element — INCLUDING elision
+ * holes (`OmittedExpression`) — costs exactly one IteratorStep. A rest element
+ * drains the remainder of the iterator → unbounded → -1.
+ *
+ * Binding patterns mark rest via `BindingElement.dotDotDotToken`; assignment
+ * patterns use `SpreadElement`. The returned count feeds `__array_from_iter_n`
+ * so a no-rest pattern materializes EXACTLY `elements.length` steps instead of
+ * draining a lazy generator to completion (#1592). `-1` routes through the
+ * unbounded (legacy `__array_from_iter`) path, preserving all IteratorClose
+ * tuning (#1219).
+ */
+export function patternIteratorStepCount(elements: readonly (ts.ArrayBindingElement | ts.Expression)[]): number {
+  for (const el of elements) {
+    if (el && (ts.isSpreadElement(el) || (ts.isBindingElement(el) && !!el.dotDotDotToken))) {
+      return -1;
+    }
+  }
+  return elements.length;
+}
+
+/**
  * Destructuring mode for the param-destructure helpers (#1553a).
  *
  * - `"param"` (default): function-parameter destructuring; emits no TDZ flags.
@@ -655,9 +677,27 @@ export function destructureParamObject(
   // Always treat as nullable — callers may pass mismatched values that
   // compile to ref.null even when the declared type is non-nullable ref (#852).
   const isNullable = paramType.kind === "ref_null" || paramType.kind === "ref";
+  // Pre-warm the null-guard message before populating the detached
+  // `destructInstrs` buffer (#1529 — same rationale as the vec/tuple paths,
+  // #1553d). `buildDestructureNullThrow` calls `addStringConstantGlobal`, which
+  // inserts an import global and shifts every existing global.get/global.set
+  // index. By the time it fires (in the null-guard close below) `fctx.body` has
+  // already been restored to `savedBody`, and `destructInstrs` lives only in
+  // the not-yet-pushed `if.else`, so a default like `{ c = ++n }` that reads a
+  // module global kept a stale index pointing at the new string-constant import
+  // (externref) instead of the intended f64 global. Warming the constant up
+  // front makes the close a no-op for global indices.
+  if (isNullable && pattern.elements.length > 0) {
+    addStringConstantGlobal(ctx, "Cannot destructure 'null' or 'undefined'");
+  }
   const savedBody = fctx.body;
   const destructInstrs: Instr[] = [];
   if (isNullable) {
+    // Keep `destructInstrs` reachable to global/late-import index fixups while
+    // it is the active emission buffer (#1553d) — a function-call default
+    // (`{ c = f() }`, where `f` adds a late import) would otherwise corrupt
+    // indices in this buffer.
+    fctx.savedBodies.push(destructInstrs);
     fctx.body = destructInstrs;
   }
 
@@ -710,7 +750,9 @@ export function destructureParamObject(
     // When the struct field holds the "undefined" sentinel (NaN for f64,
     // ref.null for refs), evaluate the initializer instead. (#823)
     if (element.initializer) {
-      emitDefaultValueCheck(ctx, fctx, fieldType, localIdx, element.initializer);
+      // Object-property semantics (§13.3.3.7): JS `null` here must NOT fire the
+      // default — only `undefined` does. (#1550)
+      emitDefaultValueCheck(ctx, fctx, fieldType, localIdx, element.initializer, undefined, true);
       if (isDecl) emitLocalTdzInit(fctx, localName);
     } else {
       // Coerce struct field type to local's declared type if they differ (#658)
@@ -727,6 +769,11 @@ export function destructureParamObject(
   // Skip for empty `{}` patterns (#225): the guard should only fire when there are
   // actual property accesses that would trap.
   if (isNullable && pattern.elements.length > 0) {
+    // `buildDestructureNullThrow` may still add a late import (its TypeError
+    // construction), so keep `destructInstrs` on `fctx.savedBodies` until after
+    // the `if.else` is assembled — then pop it, since it is reachable via the
+    // restored `savedBody` and an extra stack entry would be walked twice by a
+    // later shift (#1529).
     fctx.body = savedBody;
     fctx.body.push({ op: "local.get", index: paramIdx });
     fctx.body.push({ op: "ref.is_null" } as Instr);
@@ -736,9 +783,11 @@ export function destructureParamObject(
       then: buildDestructureNullThrow(ctx, fctx),
       else: destructInstrs,
     });
+    fctx.savedBodies.pop();
   } else if (isNullable) {
     fctx.body = savedBody;
     fctx.body.push(...destructInstrs);
+    fctx.savedBodies.pop();
   }
 }
 
@@ -917,10 +966,20 @@ export function destructureParamArray(
         [{ kind: "externref" }],
       );
       flushLateImportShifts(ctx, fctx);
-      // __array_from_iter materializes iterables (generators, sets, custom @@iterator)
-      // via Array.from so __extern_length / __extern_get_idx operate on a real array.
-      // Throws from iterator .next() propagate (spec-compliant for throwing iterators, #1150).
-      const fbIterFn = ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }]);
+      // __array_from_iter_n materializes iterables (generators, sets, custom
+      // @@iterator) so __extern_length / __extern_get_idx operate on a real
+      // array. Throws from iterator .next() propagate (spec-compliant for
+      // throwing iterators, #1150). The f64 step-count bounds consumption:
+      // no-rest patterns consume EXACTLY elements.length steps; rest patterns
+      // pass -1 → unbounded drain, byte-identical to legacy __array_from_iter
+      // and preserving its IteratorClose tuning (#1219, #1592).
+      const fbIterStepCount = patternIteratorStepCount(pattern.elements);
+      const fbIterFn = ensureLateImport(
+        ctx,
+        "__array_from_iter_n",
+        [{ kind: "externref" }, { kind: "f64" }],
+        [{ kind: "externref" }],
+      );
       flushLateImportShifts(ctx, fctx);
 
       // Else: try each other known vec type and convert element-by-element
@@ -1017,8 +1076,10 @@ export function destructureParamArray(
         const fbIdxTmp = allocLocal(fctx, `__dparam_fb_idx_${fctx.locals.length}`, { kind: "i32" });
 
         const fallbackInstrs: Instr[] = [
-          // materialized = __array_from_iter(param) — throws from iterator .next() propagate
+          // materialized = __array_from_iter_n(param, stepCount) — throws from
+          // iterator .next() propagate; stepCount bounds the drain (#1592).
           { op: "local.get", index: paramIdx } as Instr,
+          { op: "f64.const", value: fbIterStepCount } as Instr,
           { op: "call", funcIdx: fbIterFn } as Instr,
           { op: "local.set", index: fbMatTmp } as Instr,
           // len = i32(__extern_length(materialized))

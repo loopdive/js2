@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, statSy
 import { basename, dirname, join, resolve } from "path";
 import { execFileSync } from "node:child_process";
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = resolve(import.meta.dirname, "../..");
 const OUT = join(import.meta.dirname, "data");
 const SPRINT_ROOT = join(ROOT, "plan/issues/sprints");
 const LEGACY_SPRINT_ROOT = join(ROOT, "plan/sprints");
@@ -700,7 +700,7 @@ function resolveBaselineJsonl() {
   const candidates = [
     join(ROOT, ".test262-cache/test262-current.jsonl"),
     join(ROOT, "benchmarks/results/test262-current.jsonl"),
-    join(ROOT, "public/benchmarks/results/test262-results.jsonl"),
+    join(ROOT, "website/public/benchmarks/results/test262-results.jsonl"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -709,6 +709,6 @@ function resolveBaselineJsonl() {
   // somewhere informative.
   return candidates[1];
 }
-buildFeatureStats(resolveBaselineJsonl(), join(ROOT, "public/feature-examples.json"));
+buildFeatureStats(resolveBaselineJsonl(), join(ROOT, "website/public/feature-examples.json"));
 
 console.log("Done. Open dashboard/index.html in a browser.");

@@ -19,7 +19,7 @@ import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "./shared.js";
-import { compileNativeStringLiteral } from "./string-ops.js";
+import { compileNativeStringLiteral, compileStringLiteral } from "./string-ops.js";
 import { getVecInfo } from "./type-coercion.js";
 
 // ── Compile-time ToBoolean coercion of descriptor flag initializers ──
@@ -2683,18 +2683,11 @@ export function compileObjectKeysOrValues(
         // Object.keys returns externref strings, convert from native
         fctx.body.push({ op: "extern.convert_any" });
       } else {
-        const globalIdx = ctx.stringGlobalMap.get(entry.field.name);
-        if (globalIdx !== undefined) {
-          fctx.body.push({ op: "global.get", index: globalIdx });
-        } else {
-          const importName = ctx.stringLiteralMap.get(entry.field.name);
-          if (importName) {
-            const funcIdx = ctx.funcMap.get(importName);
-            if (funcIdx !== undefined) {
-              fctx.body.push({ op: "call", funcIdx });
-            }
-          }
-        }
+        // compileStringLiteral handles late registration when the field name
+        // was not collected in the first pass (e.g. dynamically-added own
+        // properties). Without it, an unregistered name pushed nothing and
+        // array.new_fixed below underflowed the stack (#786).
+        compileStringLiteral(ctx, fctx, entry.field.name, expr);
       }
     }
 
@@ -2781,18 +2774,9 @@ export function compileObjectKeysOrValues(
           fctx.body.push({ op: "extern.convert_any" });
         }
       } else {
-        const globalIdx = ctx.stringGlobalMap.get(entry.field.name);
-        if (globalIdx !== undefined) {
-          fctx.body.push({ op: "global.get", index: globalIdx });
-        } else {
-          const importName = ctx.stringLiteralMap.get(entry.field.name);
-          if (importName) {
-            const funcIdx = ctx.funcMap.get(importName);
-            if (funcIdx !== undefined) {
-              fctx.body.push({ op: "call", funcIdx });
-            }
-          }
-        }
+        // Late-register unregistered field names so nothing underflows the
+        // tuple/array construction below (#786).
+        compileStringLiteral(ctx, fctx, entry.field.name, expr);
       }
 
       // Push value (field 1 of tuple)

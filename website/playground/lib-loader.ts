@@ -5,14 +5,15 @@
  * TypeScript lib files at build time. Call loadLibFiles() before
  * using the compiler to pre-populate the lib file cache.
  */
-import { preloadLibFiles } from "../src/index.js";
+import { preloadLibFiles } from "../../src/index.js";
 
 // Vite resolves this at build time — each matching file is imported as
 // a raw string. The eager option inlines them directly (no lazy loading).
-const libModules = import.meta.glob(
-  "../node_modules/typescript/lib/lib.*.d.ts",
-  { eager: true, query: "?raw", import: "default" },
-) as Record<string, string>;
+const libModules = import.meta.glob("../../node_modules/typescript/lib/lib.*.d.ts", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
 
 /**
  * Pre-populate the compiler's lib file cache with bundled TypeScript

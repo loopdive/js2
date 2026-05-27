@@ -12,7 +12,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const OUT = join(ROOT, "dashboard", "data", "sprint-stats.json");
+const OUT = join(ROOT, "website", "dashboard", "data", "sprint-stats.json");
 
 interface SprintStat {
   sprint: number;
@@ -114,6 +114,6 @@ const output = {
   sprints: stats,
 };
 
-mkdirSync(join(ROOT, "dashboard", "data"), { recursive: true });
+mkdirSync(join(ROOT, "website", "dashboard", "data"), { recursive: true });
 writeFileSync(OUT, JSON.stringify(output, null, 2) + "\n");
 console.log(`Wrote ${stats.length} sprints to ${OUT}`);

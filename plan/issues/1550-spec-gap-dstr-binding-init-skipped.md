@@ -1,9 +1,10 @@
 ---
 id: 1550
 title: "spec gap: dstr-binding default initializer evaluated when value is non-undefined (`init-skipped` pattern)"
-status: ready
+status: done
 created: 2026-05-20
-updated: 2026-05-21
+updated: 2026-05-27
+completed: 2026-05-27
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -215,6 +216,49 @@ runCases('issue-1550 dstr init-skipped', [
 - `src/codegen/expressions/assignment.ts` — assignment pattern form.
 - `src/codegen/class-bodies.ts` — method param + trampoline padding.
 - `src/runtime.ts` — `__extern_is_undefined`, `__get_undefined`.
+
+## Test Results (2026-05-27)
+
+Three lowering points used `ref.is_null` to decide whether a destructuring
+default fires, which wrongly fired for JS `null` (encoded as `ref.null extern`
+in the WebAssembly JS API). Fixed to gate strictly on `undefined`:
+
+1. `src/codegen/expressions/assignment.ts` — object assignment-pattern struct
+   fast path (`{ a = 1 } = obj`): switched `ref.is_null` → `__extern_is_undefined`.
+2. `src/codegen/expressions/assignment.ts` — array/tuple assignment-pattern
+   externref-element path (`[a = 1] = arr`): switched `ref.is_null` →
+   `__extern_is_undefined` for externref elements (plain wasm ref/ref_null
+   elements keep `ref.is_null`, where a wasm-null slot legitimately means
+   "missing").
+3. `src/codegen/statements/destructuring.ts` `emitDefaultValueCheck` — added an
+   `objectPropertySemantics` flag. The object-property binding paths
+   (`destructureParamObject`, which also backs the statement-form `let {a=1}=…`
+   via #1553b) now pass it; for `ref`/`ref_null` fields it converts to externref
+   and uses `__extern_is_undefined` so JS `null` does not fire the default. The
+   array/iterator binding callers (loops.ts) leave it false — a wasm-null
+   element there can mean "iterator exhausted", which still fires.
+
+Verified via `tests/equivalence/issue-1550-dstr-init-skipped.test.ts` (10 cases,
+all green) using `assertEquivalent` (Wasm output compared against real JS
+evaluation): array/object binding declarations, function array/object params,
+array/object assignment patterns — all keep `null` (default skipped), fire for
+`undefined`, and skip eager initializer side effects for `[null,0,false,'']`.
+
+No new regressions: the full destructuring/default equivalence suite
+(`array-rest-destructuring`, `basic-destructuring`, `binding-null-guard`,
+`default-parameters`, `destructuring-extended`, `destructuring-initializer`,
+`destructuring-member-targets`, `destructuring-type-coercion`,
+`externref-array-destructuring`, `for-of-*`, `null-destructuring`,
+`rest-params-call`, `test262-dstr-patterns`) shows the same 5 failures on this
+branch as on `origin/main` (pre-existing: nested-destructuring-with-defaults,
+destructured-function-parameters-with-defaults, and 3 plain default-parameter
+cases — all unrelated f64-sentinel / nested-default issues, not touched here).
+
+Known residual (out of scope, representational): a struct field whose TS type
+is exactly `null` (degenerate literal type with no annotation/union) cannot
+distinguish JS `null` from `undefined` at the wasm level. Real test262 cases use
+`any`/union-typed fields (externref or ref_null), which are all handled.
+test262 conformance delta validated by CI.
 
 ## Out of scope
 

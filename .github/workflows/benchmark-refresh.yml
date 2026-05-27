@@ -67,10 +67,10 @@ jobs:
           mkdir -p benchmark-baseline
           if [ -f benchmarks/results/playground-benchmark-sidebar.json ]; then
             cp benchmarks/results/playground-benchmark-sidebar.json benchmark-baseline/playground-benchmark-sidebar.json
-          elif [ -f public/benchmarks/results/playground-benchmark-sidebar.json ]; then
-            cp public/benchmarks/results/playground-benchmark-sidebar.json benchmark-baseline/playground-benchmark-sidebar.json
-          elif [ -f playground/public/benchmarks/results/playground-benchmark-sidebar.json ]; then
-            cp playground/public/benchmarks/results/playground-benchmark-sidebar.json benchmark-baseline/playground-benchmark-sidebar.json
+          elif [ -f website/public/benchmarks/results/playground-benchmark-sidebar.json ]; then
+            cp website/public/benchmarks/results/playground-benchmark-sidebar.json benchmark-baseline/playground-benchmark-sidebar.json
+          elif [ -f website/playground/public/benchmarks/results/playground-benchmark-sidebar.json ]; then
+            cp website/playground/public/benchmarks/results/playground-benchmark-sidebar.json benchmark-baseline/playground-benchmark-sidebar.json
           else
             echo "Missing committed playground benchmark baseline."
             exit 2
@@ -86,7 +86,7 @@ jobs:
           set +e
           node scripts/diff-playground-benchmarks.mjs \
             --baseline benchmark-baseline/playground-benchmark-sidebar.json \
-            --candidate public/benchmarks/results/playground-benchmark-sidebar.json \
+            --candidate website/public/benchmarks/results/playground-benchmark-sidebar.json \
             --max-relative-regression 0.50 \
             --max-wasm-slowdown 0.40 \
             > benchmark-reports/performance-regressions.txt
@@ -156,13 +156,13 @@ jobs:
             benchmarks/results/playground-benchmark-sidebar.json
             benchmarks/results/playground-benchmark-sidebar-no-jit.json
             benchmarks/results/size-benchmarks.json
-            public/benchmarks/results/latest.json
-            public/benchmarks/results/history.json
-            public/benchmarks/results/playground-benchmark-sidebar.json
-            public/benchmarks/results/playground-benchmark-sidebar-no-jit.json
-            public/benchmarks/results/size-benchmarks.json
-            playground/public/benchmarks/results/playground-benchmark-sidebar.json
-            playground/public/benchmarks/results/playground-benchmark-sidebar-no-jit.json
+            website/public/benchmarks/results/latest.json
+            website/public/benchmarks/results/history.json
+            website/public/benchmarks/results/playground-benchmark-sidebar.json
+            website/public/benchmarks/results/playground-benchmark-sidebar-no-jit.json
+            website/public/benchmarks/results/size-benchmarks.json
+            website/playground/public/benchmarks/results/playground-benchmark-sidebar.json
+            website/playground/public/benchmarks/results/playground-benchmark-sidebar-no-jit.json
           if-no-files-found: warn
 
       # #1216: auto-commit a freshly-generated playground benchmark baseline

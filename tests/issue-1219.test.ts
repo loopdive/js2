@@ -62,10 +62,14 @@ describe("#1219 — ArrayBindingPattern iter-close: hang fix + IteratorClose", (
     expect(elapsed).toBeLessThan(10_000);
   }, 15_000);
 
-  it("finite iterator destructure: stops at done:true and does NOT call return()", async () => {
-    // Per spec §7.4.6: when the iterator naturally terminates (`done:true`),
-    // IteratorClose is NOT invoked. This guards against over-eager return()
-    // calls from the fix.
+  it("no-rest pattern reads exactly N steps, then closes the non-done iterator (§8.5.3)", async () => {
+    // [a, b] consumes EXACTLY two IteratorStep calls (no third probe for
+    // done:true). After the last element, iteratorRecord.[[Done]] is still
+    // false, so §8.5.3 requires IteratorClose → return() IS called once.
+    // Verified against native V8 (next×2, return×1). This used to assert
+    // doneCallCount === 0 under the old eager-drain that over-read a third
+    // value to observe done; bounded materialization (#1592) makes it
+    // spec-correct, matching test262 `*-ary-init-iter-close.js`.
     const exports = await compileToWasm(`
       var doneCallCount: number = 0;
       var nextCallCount: number = 0;
@@ -91,8 +95,10 @@ describe("#1219 — ArrayBindingPattern iter-close: hang fix + IteratorClose", (
         var sum: number = takeTwo(iter);
         // 10 + 20 = 30
         if (sum !== 30) return -1;
-        // Iterator naturally terminated — return() must NOT have been called.
-        if (doneCallCount !== 0) return -2;
+        // Exactly two next() calls — no third probe for done.
+        if (nextCallCount !== 2) return -3;
+        // Iterator not done after the pattern → IteratorClose called once.
+        if (doneCallCount !== 1) return -2;
         return 1;
       }
     `);

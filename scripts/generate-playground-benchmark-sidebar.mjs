@@ -6,17 +6,18 @@ import * as ts from "typescript";
 import { buildImports, compileMulti, instantiateWasm, optimizeBinaryAsync } from "./compiler-bundle.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const HELPERS_PATH = resolve(ROOT, "playground", "examples", "benchmarks", "helpers.ts");
+const HELPERS_PATH = resolve(ROOT, "website", "playground", "examples", "benchmarks", "helpers.ts");
 const RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "playground-benchmark-sidebar.json");
 const PLAYGROUND_PUBLIC_PATH = resolve(
   ROOT,
+  "website",
   "playground",
   "public",
   "benchmarks",
   "results",
   "playground-benchmark-sidebar.json",
 );
-const PUBLIC_PATH = resolve(ROOT, "public", "benchmarks", "results", "playground-benchmark-sidebar.json");
+const PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", "playground-benchmark-sidebar.json");
 
 const HELPERS_SOURCE = readFileSync(HELPERS_PATH, "utf8");
 
@@ -97,7 +98,7 @@ async function optimizeBenchmarkWasm(binary, entryPath) {
 }
 
 async function measureBenchmark(entryPath, exportName) {
-  const absEntryPath = resolve(ROOT, "playground", entryPath);
+  const absEntryPath = resolve(ROOT, "website", "playground", entryPath);
   const source = readFileSync(absEntryPath, "utf8");
 
   const result = compileMulti(

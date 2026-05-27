@@ -145,21 +145,14 @@ const HUE_PALETTE: [number, number, number][] = (() => {
       g = 0;
       b = x;
     }
-    colors.push([
-      Math.round((r + m) * 255),
-      Math.round((g + m) * 255),
-      Math.round((b + m) * 255),
-    ]);
+    colors.push([Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)]);
   }
   return colors;
 })();
 
 // ─── LEB128 decoders ────────────────────────────────────────────────────
 
-function readU32Leb(
-  bytes: Uint8Array,
-  offset: number,
-): { value: number; next: number } {
+function readU32Leb(bytes: Uint8Array, offset: number): { value: number; next: number } {
   let result = 0,
     shift = 0,
     pos = offset;
@@ -172,10 +165,7 @@ function readU32Leb(
   return { value: result >>> 0, next: pos };
 }
 
-function readS32Leb(
-  bytes: Uint8Array,
-  offset: number,
-): { value: number; next: number } {
+function readS32Leb(bytes: Uint8Array, offset: number): { value: number; next: number } {
   let result = 0,
     shift = 0,
     pos = offset;
@@ -189,10 +179,7 @@ function readS32Leb(
   return { value: result, next: pos };
 }
 
-function readS64Leb(
-  bytes: Uint8Array,
-  offset: number,
-): { value: bigint; next: number } {
+function readS64Leb(bytes: Uint8Array, offset: number): { value: bigint; next: number } {
   let result = 0n,
     shift = 0n,
     pos = offset;
@@ -206,10 +193,7 @@ function readS64Leb(
   return { value: result, next: pos };
 }
 
-function readName(
-  bytes: Uint8Array,
-  offset: number,
-): { value: string; next: number } {
+function readName(bytes: Uint8Array, offset: number): { value: string; next: number } {
   const { value: len, next: p } = readU32Leb(bytes, offset);
   const nameBytes = bytes.slice(p, p + len);
   return { value: new TextDecoder().decode(nameBytes), next: p + len };
@@ -221,15 +205,10 @@ export function parseWasm(buffer: ArrayBuffer): WasmData {
   const bytes = new Uint8Array(buffer);
   if (bytes.length < 8) throw new Error("File too small to be a valid .wasm");
 
-  const magic =
-    bytes[0] === 0x00 &&
-    bytes[1] === 0x61 &&
-    bytes[2] === 0x73 &&
-    bytes[3] === 0x6d;
+  const magic = bytes[0] === 0x00 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d;
   if (!magic) throw new Error("Invalid WASM magic bytes");
 
-  const version =
-    bytes[4] | (bytes[5] << 8) | (bytes[6] << 16) | (bytes[7] << 24);
+  const version = bytes[4] | (bytes[5] << 8) | (bytes[6] << 16) | (bytes[7] << 24);
 
   const result: WasmData = {
     fileSize: bytes.length,
@@ -437,117 +416,223 @@ export interface ByteSpan {
 }
 
 const VALTYPE_NAMES: Record<number, string> = {
-  0x7f: "i32", 0x7e: "i64", 0x7d: "f32", 0x7c: "f64",
-  0x70: "funcref", 0x6f: "externref",
+  0x7f: "i32",
+  0x7e: "i64",
+  0x7d: "f32",
+  0x7c: "f64",
+  0x70: "funcref",
+  0x6f: "externref",
 };
 
 // Immediate kinds
-const N = "none";   // no immediate
-const L = "leb";    // unsigned LEB128
-const SL = "sleb";  // signed LEB128 (i32)
+const N = "none"; // no immediate
+const L = "leb"; // unsigned LEB128
+const SL = "sleb"; // signed LEB128 (i32)
 const SL64 = "sleb64"; // signed LEB128 (i64)
 const F32 = "f32";
 const F64 = "f64";
-const MEM = "mem";   // memarg: align + offset
+const MEM = "mem"; // memarg: align + offset
 const BLK = "block"; // block type
 const BRT = "br_table";
 const CI = "call_indirect";
-const B = "byte";    // single byte (memory index)
+const B = "byte"; // single byte (memory index)
 
-type ImmKind = typeof N | typeof L | typeof SL | typeof SL64 |
-  typeof F32 | typeof F64 | typeof MEM | typeof BLK |
-  typeof BRT | typeof CI | typeof B;
+type ImmKind =
+  | typeof N
+  | typeof L
+  | typeof SL
+  | typeof SL64
+  | typeof F32
+  | typeof F64
+  | typeof MEM
+  | typeof BLK
+  | typeof BRT
+  | typeof CI
+  | typeof B;
 
 const OPCODES: [number, string, ImmKind][] = [
-  [0x00, "unreachable", N], [0x01, "nop", N],
-  [0x02, "block", BLK], [0x03, "loop", BLK], [0x04, "if", BLK],
-  [0x05, "else", N], [0x0b, "end", N],
-  [0x0c, "br", L], [0x0d, "br_if", L], [0x0e, "br_table", BRT],
+  [0x00, "unreachable", N],
+  [0x01, "nop", N],
+  [0x02, "block", BLK],
+  [0x03, "loop", BLK],
+  [0x04, "if", BLK],
+  [0x05, "else", N],
+  [0x0b, "end", N],
+  [0x0c, "br", L],
+  [0x0d, "br_if", L],
+  [0x0e, "br_table", BRT],
   [0x0f, "return", N],
-  [0x10, "call", L], [0x11, "call_indirect", CI],
-  [0x1a, "drop", N], [0x1b, "select", N],
-  [0x20, "local.get", L], [0x21, "local.set", L], [0x22, "local.tee", L],
-  [0x23, "global.get", L], [0x24, "global.set", L],
-  [0x25, "table.get", L], [0x26, "table.set", L],
-  [0x28, "i32.load", MEM], [0x29, "i64.load", MEM],
-  [0x2a, "f32.load", MEM], [0x2b, "f64.load", MEM],
-  [0x2c, "i32.load8_s", MEM], [0x2d, "i32.load8_u", MEM],
-  [0x2e, "i32.load16_s", MEM], [0x2f, "i32.load16_u", MEM],
-  [0x30, "i64.load8_s", MEM], [0x31, "i64.load8_u", MEM],
-  [0x32, "i64.load16_s", MEM], [0x33, "i64.load16_u", MEM],
-  [0x34, "i64.load32_s", MEM], [0x35, "i64.load32_u", MEM],
-  [0x36, "i32.store", MEM], [0x37, "i64.store", MEM],
-  [0x38, "f32.store", MEM], [0x39, "f64.store", MEM],
-  [0x3a, "i32.store8", MEM], [0x3b, "i32.store16", MEM],
-  [0x3c, "i64.store8", MEM], [0x3d, "i64.store16", MEM],
+  [0x10, "call", L],
+  [0x11, "call_indirect", CI],
+  [0x1a, "drop", N],
+  [0x1b, "select", N],
+  [0x20, "local.get", L],
+  [0x21, "local.set", L],
+  [0x22, "local.tee", L],
+  [0x23, "global.get", L],
+  [0x24, "global.set", L],
+  [0x25, "table.get", L],
+  [0x26, "table.set", L],
+  [0x28, "i32.load", MEM],
+  [0x29, "i64.load", MEM],
+  [0x2a, "f32.load", MEM],
+  [0x2b, "f64.load", MEM],
+  [0x2c, "i32.load8_s", MEM],
+  [0x2d, "i32.load8_u", MEM],
+  [0x2e, "i32.load16_s", MEM],
+  [0x2f, "i32.load16_u", MEM],
+  [0x30, "i64.load8_s", MEM],
+  [0x31, "i64.load8_u", MEM],
+  [0x32, "i64.load16_s", MEM],
+  [0x33, "i64.load16_u", MEM],
+  [0x34, "i64.load32_s", MEM],
+  [0x35, "i64.load32_u", MEM],
+  [0x36, "i32.store", MEM],
+  [0x37, "i64.store", MEM],
+  [0x38, "f32.store", MEM],
+  [0x39, "f64.store", MEM],
+  [0x3a, "i32.store8", MEM],
+  [0x3b, "i32.store16", MEM],
+  [0x3c, "i64.store8", MEM],
+  [0x3d, "i64.store16", MEM],
   [0x3e, "i64.store32", MEM],
-  [0x3f, "memory.size", B], [0x40, "memory.grow", B],
-  [0x41, "i32.const", SL], [0x42, "i64.const", SL64],
-  [0x43, "f32.const", F32], [0x44, "f64.const", F64],
-  [0x45, "i32.eqz", N], [0x46, "i32.eq", N], [0x47, "i32.ne", N],
-  [0x48, "i32.lt_s", N], [0x49, "i32.lt_u", N],
-  [0x4a, "i32.gt_s", N], [0x4b, "i32.gt_u", N],
-  [0x4c, "i32.le_s", N], [0x4d, "i32.le_u", N],
-  [0x4e, "i32.ge_s", N], [0x4f, "i32.ge_u", N],
-  [0x50, "i64.eqz", N], [0x51, "i64.eq", N], [0x52, "i64.ne", N],
-  [0x53, "i64.lt_s", N], [0x54, "i64.lt_u", N],
-  [0x55, "i64.gt_s", N], [0x56, "i64.gt_u", N],
-  [0x57, "i64.le_s", N], [0x58, "i64.le_u", N],
-  [0x59, "i64.ge_s", N], [0x5a, "i64.ge_u", N],
-  [0x5b, "f32.eq", N], [0x5c, "f32.ne", N],
-  [0x5d, "f32.lt", N], [0x5e, "f32.gt", N],
-  [0x5f, "f32.le", N], [0x60, "f32.ge", N],
-  [0x61, "f64.eq", N], [0x62, "f64.ne", N],
-  [0x63, "f64.lt", N], [0x64, "f64.gt", N],
-  [0x65, "f64.le", N], [0x66, "f64.ge", N],
-  [0x67, "i32.clz", N], [0x68, "i32.ctz", N], [0x69, "i32.popcnt", N],
-  [0x6a, "i32.add", N], [0x6b, "i32.sub", N],
-  [0x6c, "i32.mul", N], [0x6d, "i32.div_s", N], [0x6e, "i32.div_u", N],
-  [0x6f, "i32.rem_s", N], [0x70, "i32.rem_u", N],
-  [0x71, "i32.and", N], [0x72, "i32.or", N], [0x73, "i32.xor", N],
-  [0x74, "i32.shl", N], [0x75, "i32.shr_s", N], [0x76, "i32.shr_u", N],
-  [0x77, "i32.rotl", N], [0x78, "i32.rotr", N],
-  [0x79, "i64.clz", N], [0x7a, "i64.ctz", N], [0x7b, "i64.popcnt", N],
-  [0x7c, "i64.add", N], [0x7d, "i64.sub", N],
-  [0x7e, "i64.mul", N], [0x7f, "i64.div_s", N], [0x80, "i64.div_u", N],
-  [0x81, "i64.rem_s", N], [0x82, "i64.rem_u", N],
-  [0x83, "i64.and", N], [0x84, "i64.or", N], [0x85, "i64.xor", N],
-  [0x86, "i64.shl", N], [0x87, "i64.shr_s", N], [0x88, "i64.shr_u", N],
-  [0x89, "i64.rotl", N], [0x8a, "i64.rotr", N],
-  [0x8b, "f32.abs", N], [0x8c, "f32.neg", N],
-  [0x8d, "f32.ceil", N], [0x8e, "f32.floor", N],
-  [0x8f, "f32.trunc", N], [0x90, "f32.nearest", N],
+  [0x3f, "memory.size", B],
+  [0x40, "memory.grow", B],
+  [0x41, "i32.const", SL],
+  [0x42, "i64.const", SL64],
+  [0x43, "f32.const", F32],
+  [0x44, "f64.const", F64],
+  [0x45, "i32.eqz", N],
+  [0x46, "i32.eq", N],
+  [0x47, "i32.ne", N],
+  [0x48, "i32.lt_s", N],
+  [0x49, "i32.lt_u", N],
+  [0x4a, "i32.gt_s", N],
+  [0x4b, "i32.gt_u", N],
+  [0x4c, "i32.le_s", N],
+  [0x4d, "i32.le_u", N],
+  [0x4e, "i32.ge_s", N],
+  [0x4f, "i32.ge_u", N],
+  [0x50, "i64.eqz", N],
+  [0x51, "i64.eq", N],
+  [0x52, "i64.ne", N],
+  [0x53, "i64.lt_s", N],
+  [0x54, "i64.lt_u", N],
+  [0x55, "i64.gt_s", N],
+  [0x56, "i64.gt_u", N],
+  [0x57, "i64.le_s", N],
+  [0x58, "i64.le_u", N],
+  [0x59, "i64.ge_s", N],
+  [0x5a, "i64.ge_u", N],
+  [0x5b, "f32.eq", N],
+  [0x5c, "f32.ne", N],
+  [0x5d, "f32.lt", N],
+  [0x5e, "f32.gt", N],
+  [0x5f, "f32.le", N],
+  [0x60, "f32.ge", N],
+  [0x61, "f64.eq", N],
+  [0x62, "f64.ne", N],
+  [0x63, "f64.lt", N],
+  [0x64, "f64.gt", N],
+  [0x65, "f64.le", N],
+  [0x66, "f64.ge", N],
+  [0x67, "i32.clz", N],
+  [0x68, "i32.ctz", N],
+  [0x69, "i32.popcnt", N],
+  [0x6a, "i32.add", N],
+  [0x6b, "i32.sub", N],
+  [0x6c, "i32.mul", N],
+  [0x6d, "i32.div_s", N],
+  [0x6e, "i32.div_u", N],
+  [0x6f, "i32.rem_s", N],
+  [0x70, "i32.rem_u", N],
+  [0x71, "i32.and", N],
+  [0x72, "i32.or", N],
+  [0x73, "i32.xor", N],
+  [0x74, "i32.shl", N],
+  [0x75, "i32.shr_s", N],
+  [0x76, "i32.shr_u", N],
+  [0x77, "i32.rotl", N],
+  [0x78, "i32.rotr", N],
+  [0x79, "i64.clz", N],
+  [0x7a, "i64.ctz", N],
+  [0x7b, "i64.popcnt", N],
+  [0x7c, "i64.add", N],
+  [0x7d, "i64.sub", N],
+  [0x7e, "i64.mul", N],
+  [0x7f, "i64.div_s", N],
+  [0x80, "i64.div_u", N],
+  [0x81, "i64.rem_s", N],
+  [0x82, "i64.rem_u", N],
+  [0x83, "i64.and", N],
+  [0x84, "i64.or", N],
+  [0x85, "i64.xor", N],
+  [0x86, "i64.shl", N],
+  [0x87, "i64.shr_s", N],
+  [0x88, "i64.shr_u", N],
+  [0x89, "i64.rotl", N],
+  [0x8a, "i64.rotr", N],
+  [0x8b, "f32.abs", N],
+  [0x8c, "f32.neg", N],
+  [0x8d, "f32.ceil", N],
+  [0x8e, "f32.floor", N],
+  [0x8f, "f32.trunc", N],
+  [0x90, "f32.nearest", N],
   [0x91, "f32.sqrt", N],
-  [0x92, "f32.add", N], [0x93, "f32.sub", N],
-  [0x94, "f32.mul", N], [0x95, "f32.div", N],
-  [0x96, "f32.min", N], [0x97, "f32.max", N],
+  [0x92, "f32.add", N],
+  [0x93, "f32.sub", N],
+  [0x94, "f32.mul", N],
+  [0x95, "f32.div", N],
+  [0x96, "f32.min", N],
+  [0x97, "f32.max", N],
   [0x98, "f32.copysign", N],
-  [0x99, "f64.abs", N], [0x9a, "f64.neg", N],
-  [0x9b, "f64.ceil", N], [0x9c, "f64.floor", N],
-  [0x9d, "f64.trunc", N], [0x9e, "f64.nearest", N],
+  [0x99, "f64.abs", N],
+  [0x9a, "f64.neg", N],
+  [0x9b, "f64.ceil", N],
+  [0x9c, "f64.floor", N],
+  [0x9d, "f64.trunc", N],
+  [0x9e, "f64.nearest", N],
   [0x9f, "f64.sqrt", N],
-  [0xa0, "f64.add", N], [0xa1, "f64.sub", N],
-  [0xa2, "f64.mul", N], [0xa3, "f64.div", N],
-  [0xa4, "f64.min", N], [0xa5, "f64.max", N],
+  [0xa0, "f64.add", N],
+  [0xa1, "f64.sub", N],
+  [0xa2, "f64.mul", N],
+  [0xa3, "f64.div", N],
+  [0xa4, "f64.min", N],
+  [0xa5, "f64.max", N],
   [0xa6, "f64.copysign", N],
   [0xa7, "i32.wrap_i64", N],
-  [0xa8, "i32.trunc_f32_s", N], [0xa9, "i32.trunc_f32_u", N],
-  [0xaa, "i32.trunc_f64_s", N], [0xab, "i32.trunc_f64_u", N],
-  [0xac, "i64.extend_i32_s", N], [0xad, "i64.extend_i32_u", N],
-  [0xae, "i64.trunc_f32_s", N], [0xaf, "i64.trunc_f32_u", N],
-  [0xb0, "i64.trunc_f64_s", N], [0xb1, "i64.trunc_f64_u", N],
-  [0xb2, "f32.convert_i32_s", N], [0xb3, "f32.convert_i32_u", N],
-  [0xb4, "f32.convert_i64_s", N], [0xb5, "f32.convert_i64_u", N],
+  [0xa8, "i32.trunc_f32_s", N],
+  [0xa9, "i32.trunc_f32_u", N],
+  [0xaa, "i32.trunc_f64_s", N],
+  [0xab, "i32.trunc_f64_u", N],
+  [0xac, "i64.extend_i32_s", N],
+  [0xad, "i64.extend_i32_u", N],
+  [0xae, "i64.trunc_f32_s", N],
+  [0xaf, "i64.trunc_f32_u", N],
+  [0xb0, "i64.trunc_f64_s", N],
+  [0xb1, "i64.trunc_f64_u", N],
+  [0xb2, "f32.convert_i32_s", N],
+  [0xb3, "f32.convert_i32_u", N],
+  [0xb4, "f32.convert_i64_s", N],
+  [0xb5, "f32.convert_i64_u", N],
   [0xb6, "f32.demote_f64", N],
-  [0xb7, "f64.convert_i32_s", N], [0xb8, "f64.convert_i32_u", N],
-  [0xb9, "f64.convert_i64_s", N], [0xba, "f64.convert_i64_u", N],
+  [0xb7, "f64.convert_i32_s", N],
+  [0xb8, "f64.convert_i32_u", N],
+  [0xb9, "f64.convert_i64_s", N],
+  [0xba, "f64.convert_i64_u", N],
   [0xbb, "f64.promote_f32", N],
-  [0xbc, "i32.reinterpret_f32", N], [0xbd, "i64.reinterpret_f64", N],
-  [0xbe, "f32.reinterpret_i32", N], [0xbf, "f64.reinterpret_i64", N],
-  [0xc0, "i32.extend8_s", N], [0xc1, "i32.extend16_s", N],
-  [0xc2, "i64.extend8_s", N], [0xc3, "i64.extend16_s", N],
+  [0xbc, "i32.reinterpret_f32", N],
+  [0xbd, "i64.reinterpret_f64", N],
+  [0xbe, "f32.reinterpret_i32", N],
+  [0xbf, "f64.reinterpret_i64", N],
+  [0xc0, "i32.extend8_s", N],
+  [0xc1, "i32.extend16_s", N],
+  [0xc2, "i64.extend8_s", N],
+  [0xc3, "i64.extend16_s", N],
   [0xc4, "i64.extend32_s", N],
-  [0xd0, "ref.null", B], [0xd1, "ref.is_null", N], [0xd2, "ref.func", L],
+  [0xd0, "ref.null", B],
+  [0xd1, "ref.is_null", N],
+  [0xd2, "ref.func", L],
 ];
 
 const OPCODE_MAP = new Map<number, { name: string; imm: ImmKind }>();
@@ -555,14 +640,24 @@ for (const [code, name, imm] of OPCODES) OPCODE_MAP.set(code, { name, imm });
 
 // FC-prefixed (extended) opcodes — all take LEB128 immediates
 const FC_OPCODES: Record<number, string> = {
-  0: "i32.trunc_sat_f32_s", 1: "i32.trunc_sat_f32_u",
-  2: "i32.trunc_sat_f64_s", 3: "i32.trunc_sat_f64_u",
-  4: "i64.trunc_sat_f32_s", 5: "i64.trunc_sat_f32_u",
-  6: "i64.trunc_sat_f64_s", 7: "i64.trunc_sat_f64_u",
-  8: "memory.init", 9: "data.drop",
-  10: "memory.copy", 11: "memory.fill",
-  12: "table.init", 13: "elem.drop",
-  14: "table.copy", 15: "table.grow", 16: "table.size", 17: "table.fill",
+  0: "i32.trunc_sat_f32_s",
+  1: "i32.trunc_sat_f32_u",
+  2: "i32.trunc_sat_f64_s",
+  3: "i32.trunc_sat_f64_u",
+  4: "i64.trunc_sat_f32_s",
+  5: "i64.trunc_sat_f32_u",
+  6: "i64.trunc_sat_f64_s",
+  7: "i64.trunc_sat_f64_u",
+  8: "memory.init",
+  9: "data.drop",
+  10: "memory.copy",
+  11: "memory.fill",
+  12: "table.init",
+  13: "elem.drop",
+  14: "table.copy",
+  15: "table.grow",
+  16: "table.size",
+  17: "table.fill",
 };
 
 export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
@@ -573,7 +668,9 @@ export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
     spans.push({ offset, length, label, value });
   }
 
-  function valtype(b: number): string { return VALTYPE_NAMES[b] ?? `0x${b.toString(16)}`; }
+  function valtype(b: number): string {
+    return VALTYPE_NAMES[b] ?? `0x${b.toString(16)}`;
+  }
 
   function spanLeb(offset: number, label: string): number {
     const { value, next } = readU32Leb(bytes, offset);
@@ -604,39 +701,58 @@ export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
   function parseInitExpr(p: number): number {
     while (p < bytes.length) {
       const op = bytes[p];
-      if (op === 0x0b) { span(p, 1, "end"); return p + 1; }
-      if (op === 0x41) { // i32.const
-        span(p, 1, "i32.const"); p++;
+      if (op === 0x0b) {
+        span(p, 1, "end");
+        return p + 1;
+      }
+      if (op === 0x41) {
+        // i32.const
+        span(p, 1, "i32.const");
+        p++;
         const { value, next } = readS32Leb(bytes, p);
         span(p, next - p, "value", String(value));
         p = next;
-      } else if (op === 0x42) { // i64.const
-        span(p, 1, "i64.const"); p++;
+      } else if (op === 0x42) {
+        // i64.const
+        span(p, 1, "i64.const");
+        p++;
         const { value, next } = readS64Leb(bytes, p);
         span(p, next - p, "value", String(value));
         p = next;
-      } else if (op === 0x43) { // f32.const
-        span(p, 1, "f32.const"); p++;
+      } else if (op === 0x43) {
+        // f32.const
+        span(p, 1, "f32.const");
+        p++;
         const view = new DataView(bytes.buffer, bytes.byteOffset + p, 4);
         span(p, 4, "value", String(view.getFloat32(0, true)));
         p += 4;
-      } else if (op === 0x44) { // f64.const
-        span(p, 1, "f64.const"); p++;
+      } else if (op === 0x44) {
+        // f64.const
+        span(p, 1, "f64.const");
+        p++;
         const view = new DataView(bytes.buffer, bytes.byteOffset + p, 8);
         span(p, 8, "value", String(view.getFloat64(0, true)));
         p += 8;
-      } else if (op === 0x23) { // global.get
-        span(p, 1, "global.get"); p++;
+      } else if (op === 0x23) {
+        // global.get
+        span(p, 1, "global.get");
+        p++;
         p = spanLeb(p, "global index");
-      } else if (op === 0xd2) { // ref.func
-        span(p, 1, "ref.func"); p++;
+      } else if (op === 0xd2) {
+        // ref.func
+        span(p, 1, "ref.func");
+        p++;
         p = spanLeb(p, "func index");
-      } else if (op === 0xd0) { // ref.null
-        span(p, 1, "ref.null"); p++;
-        span(p, 1, "reftype", valtype(bytes[p])); p++;
+      } else if (op === 0xd0) {
+        // ref.null
+        span(p, 1, "ref.null");
+        p++;
+        span(p, 1, "reftype", valtype(bytes[p]));
+        p++;
       } else {
         // Unknown init opcode, skip to end
-        span(p, 1, `opcode 0x${op.toString(16)}`); p++;
+        span(p, 1, `opcode 0x${op.toString(16)}`);
+        p++;
       }
     }
     return p;
@@ -672,40 +788,50 @@ export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
         span(p, p2 - p, "type count", String(count));
         p = p2;
         for (let i = 0; i < count && p < sectionEnd; i++) {
-          span(p, 1, "func type marker", "0x60"); p++;
+          span(p, 1, "func type marker", "0x60");
+          p++;
           const { value: paramCount, next: p3 } = readU32Leb(bytes, p);
-          span(p, p3 - p, "param count", String(paramCount)); p = p3;
+          span(p, p3 - p, "param count", String(paramCount));
+          p = p3;
           for (let j = 0; j < paramCount; j++) p = spanValtype(p, `param[${j}]`);
           const { value: resultCount, next: p4 } = readU32Leb(bytes, p);
-          span(p, p4 - p, "result count", String(resultCount)); p = p4;
+          span(p, p4 - p, "result count", String(resultCount));
+          p = p4;
           for (let j = 0; j < resultCount; j++) p = spanValtype(p, `result[${j}]`);
         }
       } else if (sectionId === 2) {
         // Import section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "import count", String(count)); p = p2;
+        span(p, p2 - p, "import count", String(count));
+        p = p2;
         const IMPORT_KIND: Record<number, string> = { 0: "func", 1: "table", 2: "memory", 3: "global", 4: "tag" };
         for (let i = 0; i < count && p < sectionEnd; i++) {
-          const { next: p3 } = spanName(p, "module name"); p = p3;
-          const { next: p4 } = spanName(p, "field name"); p = p4;
+          const { next: p3 } = spanName(p, "module name");
+          p = p3;
+          const { next: p4 } = spanName(p, "field name");
+          p = p4;
           const kind = bytes[p];
-          span(p, 1, "import kind", IMPORT_KIND[kind] ?? String(kind)); p++;
+          span(p, 1, "import kind", IMPORT_KIND[kind] ?? String(kind));
+          p++;
           if (kind === 0) {
             p = spanLeb(p, "type index");
           } else if (kind === 1) {
             p = spanValtype(p, "reftype");
             const { value: flags, next: pf } = readU32Leb(bytes, p);
-            span(p, pf - p, "limits flags", String(flags)); p = pf;
+            span(p, pf - p, "limits flags", String(flags));
+            p = pf;
             p = spanLeb(p, "min");
             if (flags & 1) p = spanLeb(p, "max");
           } else if (kind === 2) {
             const { value: flags, next: pf } = readU32Leb(bytes, p);
-            span(p, pf - p, "limits flags", String(flags)); p = pf;
+            span(p, pf - p, "limits flags", String(flags));
+            p = pf;
             p = spanLeb(p, "min pages");
             if (flags & 1) p = spanLeb(p, "max pages");
           } else if (kind === 3) {
             p = spanValtype(p, "global type");
-            span(p, 1, "mutability", bytes[p] ? "var" : "const"); p++;
+            span(p, 1, "mutability", bytes[p] ? "var" : "const");
+            p++;
           } else if (kind === 4) {
             p = spanLeb(p, "tag type index");
           }
@@ -713,48 +839,58 @@ export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
       } else if (sectionId === 3) {
         // Function section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "function count", String(count)); p = p2;
+        span(p, p2 - p, "function count", String(count));
+        p = p2;
         for (let i = 0; i < count && p < sectionEnd; i++) {
           p = spanLeb(p, `func[${i}] type index`);
         }
       } else if (sectionId === 4) {
         // Table section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "table count", String(count)); p = p2;
+        span(p, p2 - p, "table count", String(count));
+        p = p2;
         for (let i = 0; i < count && p < sectionEnd; i++) {
           p = spanValtype(p, "reftype");
           const { value: flags, next: pf } = readU32Leb(bytes, p);
-          span(p, pf - p, "limits flags", String(flags)); p = pf;
+          span(p, pf - p, "limits flags", String(flags));
+          p = pf;
           p = spanLeb(p, "min");
           if (flags & 1) p = spanLeb(p, "max");
         }
       } else if (sectionId === 5) {
         // Memory section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "memory count", String(count)); p = p2;
+        span(p, p2 - p, "memory count", String(count));
+        p = p2;
         for (let i = 0; i < count && p < sectionEnd; i++) {
           const { value: flags, next: pf } = readU32Leb(bytes, p);
-          span(p, pf - p, "limits flags", String(flags)); p = pf;
+          span(p, pf - p, "limits flags", String(flags));
+          p = pf;
           p = spanLeb(p, "min pages");
           if (flags & 1) p = spanLeb(p, "max pages");
         }
       } else if (sectionId === 6) {
         // Global section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "global count", String(count)); p = p2;
+        span(p, p2 - p, "global count", String(count));
+        p = p2;
         for (let i = 0; i < count && p < sectionEnd; i++) {
           p = spanValtype(p, "global type");
-          span(p, 1, "mutability", bytes[p] ? "var" : "const"); p++;
+          span(p, 1, "mutability", bytes[p] ? "var" : "const");
+          p++;
           p = parseInitExpr(p);
         }
       } else if (sectionId === 7) {
         // Export section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "export count", String(count)); p = p2;
+        span(p, p2 - p, "export count", String(count));
+        p = p2;
         const EXPORT_KIND: Record<number, string> = { 0: "func", 1: "table", 2: "memory", 3: "global" };
         for (let i = 0; i < count && p < sectionEnd; i++) {
-          const { next: p3 } = spanName(p, "export name"); p = p3;
-          span(p, 1, "export kind", EXPORT_KIND[bytes[p]] ?? String(bytes[p])); p++;
+          const { next: p3 } = spanName(p, "export name");
+          p = p3;
+          span(p, 1, "export kind", EXPORT_KIND[bytes[p]] ?? String(bytes[p]));
+          p++;
           p = spanLeb(p, "export index");
         }
       } else if (sectionId === 8) {
@@ -763,14 +899,17 @@ export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
       } else if (sectionId === 9) {
         // Element section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "element count", String(count)); p = p2;
+        span(p, p2 - p, "element count", String(count));
+        p = p2;
         for (let i = 0; i < count && p < sectionEnd; i++) {
           const { value: flags, next: pf } = readU32Leb(bytes, p);
-          span(p, pf - p, "elem flags", String(flags)); p = pf;
+          span(p, pf - p, "elem flags", String(flags));
+          p = pf;
           if (flags === 0) {
             p = parseInitExpr(p); // offset expr
             const { value: ec, next: pe } = readU32Leb(bytes, p);
-            span(p, pe - p, "elem count", String(ec)); p = pe;
+            span(p, pe - p, "elem count", String(ec));
+            p = pe;
             for (let j = 0; j < ec; j++) p = spanLeb(p, "func index");
           } else {
             // Other element flag variants — skip remaining
@@ -781,19 +920,23 @@ export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
       } else if (sectionId === 10) {
         // Code section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "function count", String(count)); p = p2;
+        span(p, p2 - p, "function count", String(count));
+        p = p2;
         for (let i = 0; i < count && p < sectionEnd; i++) {
           const bodyStart = p;
           const { value: bodySize, next: codeStart } = readU32Leb(bytes, p);
-          span(p, codeStart - p, "body size", String(bodySize)); p = codeStart;
+          span(p, codeStart - p, "body size", String(bodySize));
+          p = codeStart;
           const bodyEnd = codeStart + bodySize;
 
           // Local declarations
           const { value: localGroupCount, next: pl } = readU32Leb(bytes, p);
-          span(p, pl - p, "local group count", String(localGroupCount)); p = pl;
+          span(p, pl - p, "local group count", String(localGroupCount));
+          p = pl;
           for (let j = 0; j < localGroupCount && p < bodyEnd; j++) {
             const { value: lc, next: plc } = readU32Leb(bytes, p);
-            span(p, plc - p, "local count", String(lc)); p = plc;
+            span(p, plc - p, "local count", String(lc));
+            p = plc;
             p = spanValtype(p, "local type");
           }
 
@@ -905,10 +1048,12 @@ export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
       } else if (sectionId === 11) {
         // Data section
         const { value: count, next: p2 } = readU32Leb(bytes, p);
-        span(p, p2 - p, "data segment count", String(count)); p = p2;
+        span(p, p2 - p, "data segment count", String(count));
+        p = p2;
         for (let i = 0; i < count && p < sectionEnd; i++) {
           const { value: flags, next: pf } = readU32Leb(bytes, p);
-          span(p, pf - p, "segment flags", String(flags)); p = pf;
+          span(p, pf - p, "segment flags", String(flags));
+          p = pf;
           if (flags === 0) {
             p = parseInitExpr(p);
           } else if (flags === 2) {
@@ -917,7 +1062,8 @@ export function parseWasmSpans(buffer: ArrayBuffer): ByteSpan[] {
           }
           // passive (1) has no expr
           const { value: dataLen, next: pd } = readU32Leb(bytes, p);
-          span(p, pd - p, "data length", String(dataLen)); p = pd;
+          span(p, pd - p, "data length", String(dataLen));
+          p = pd;
           if (dataLen > 0) {
             span(p, dataLen, "data bytes");
             p += dataLen;
@@ -1053,22 +1199,13 @@ export class WasmTreemap {
         this.viewMode = (btn as HTMLElement).dataset.mode as ViewMode;
         this.controlsBar
           .querySelectorAll(".tm-toggle")
-          .forEach((b) =>
-            b.classList.toggle(
-              "active",
-              (b as HTMLElement).dataset.mode === this.viewMode,
-            ),
-          );
+          .forEach((b) => b.classList.toggle("active", (b as HTMLElement).dataset.mode === this.viewMode));
         if (this.wasmData) this.rebuild();
       });
     });
 
-    const slider = this.controlsBar.querySelector(
-      'input[type="range"]',
-    ) as HTMLInputElement;
-    const sliderVal = this.controlsBar.querySelector(
-      ".tm-threshold span",
-    ) as HTMLSpanElement;
+    const slider = this.controlsBar.querySelector('input[type="range"]') as HTMLInputElement;
+    const sliderVal = this.controlsBar.querySelector(".tm-threshold span") as HTMLSpanElement;
     slider.addEventListener("input", () => {
       this.thresholdPct = parseFloat(slider.value);
       sliderVal.textContent = this.thresholdPct + "%";
@@ -1113,10 +1250,7 @@ export class WasmTreemap {
   private rebuild() {
     const data = this.wasmData!;
     this.totalFileSize = data.fileSize;
-    this.treeRoot =
-      this.viewMode === "functions"
-        ? this.buildFunctionsTree(data)
-        : this.buildSectionsTree(data);
+    this.treeRoot = this.viewMode === "functions" ? this.buildFunctionsTree(data) : this.buildSectionsTree(data);
 
     // Info bar
     const codeSection = data.sections.find((s) => s.id === 10);
@@ -1163,8 +1297,7 @@ export class WasmTreemap {
     const globalIdx = data.importFuncCount + bodyIndex;
     const debugName = data.functionNames.get(globalIdx);
     const exportName = data.exportNames.get(globalIdx);
-    if (debugName && exportName && debugName !== exportName)
-      return `${exportName} (${debugName})`;
+    if (debugName && exportName && debugName !== exportName) return `${exportName} (${debugName})`;
     return exportName || debugName || `func[${globalIdx}]`;
   }
 
@@ -1420,10 +1553,7 @@ export class WasmTreemap {
       for (const ri of rowItems) {
         const itemCross = (ri.size / rowSize) * crossLen;
         if (rowDim > 0 && itemCross > 0) {
-          worst = Math.max(
-            worst,
-            Math.max(rowDim / itemCross, itemCross / rowDim),
-          );
+          worst = Math.max(worst, Math.max(rowDim / itemCross, itemCross / rowDim));
         } else worst = Infinity;
       }
       if (worst <= bestWorst) {
@@ -1438,17 +1568,14 @@ export class WasmTreemap {
     let offset = 0;
     for (const item of row) {
       const itemCross = (item.size / rSize) * crossLen;
-      if (vertical)
-        result.push({ ...item, x: x + offset, y, w: itemCross, h: rowDim });
+      if (vertical) result.push({ ...item, x: x + offset, y, w: itemCross, h: rowDim });
       else result.push({ ...item, x, y: y + offset, w: rowDim, h: itemCross });
       offset += itemCross;
     }
     if (rest.length > 0) {
       const restTotal = total - rSize;
-      if (vertical)
-        this.layoutRows(rest, x, y + rowDim, w, h - rowDim, restTotal, result);
-      else
-        this.layoutRows(rest, x + rowDim, y, w - rowDim, h, restTotal, result);
+      if (vertical) this.layoutRows(rest, x, y + rowDim, w, h - rowDim, restTotal, result);
+      else this.layoutRows(rest, x + rowDim, y, w - rowDim, h, restTotal, result);
     }
   }
 
@@ -1464,31 +1591,13 @@ export class WasmTreemap {
       .split("/")[0]
       .split(":")[0]
       .replace(/^custom$/, "custom");
-    return (
-      SECTION_COLORS[base] ||
-      this.colorMap.get(node.name) ||
-      this.colorMap.get(base) || [80, 80, 100]
-    );
+    return SECTION_COLORS[base] || this.colorMap.get(node.name) || this.colorMap.get(base) || [80, 80, 100];
   }
 
-  private renderTreemap(
-    rootNode: TreeNode,
-    container: HTMLElement,
-    initialRgb: [number, number, number] | null,
-  ) {
+  private renderTreemap(rootNode: TreeNode, container: HTMLElement, initialRgb: [number, number, number] | null) {
     container.innerHTML = "";
     const rect = container.getBoundingClientRect();
-    this.renderNode(
-      rootNode,
-      container,
-      0,
-      0,
-      rect.width,
-      rect.height,
-      0,
-      initialRgb,
-      rootNode.size,
-    );
+    this.renderNode(rootNode, container, 0, 0, rect.width, rect.height, 0, initialRgb, rootNode.size);
   }
 
   private renderNode(
@@ -1510,7 +1619,10 @@ export class WasmTreemap {
     // Shrink top-level sections to create black gap between them;
     // leaf nodes use inner inset instead
     if (!isLeaf && depth === 1) {
-      x += 1; y += 1; w -= 2; h -= 2;
+      x += 1;
+      y += 1;
+      w -= 2;
+      h -= 2;
     }
 
     if (!crateRgb) crateRgb = this.getNodeColor(node);
@@ -1518,10 +1630,7 @@ export class WasmTreemap {
     const baseRgb = crateRgb || [80, 80, 100];
 
     const el = document.createElement("div");
-    el.className =
-      "tm-node" +
-      (isLeaf ? " tm-leaf" : " tm-branch") +
-      (node.isRemainder ? " tm-remainder" : "");
+    el.className = "tm-node" + (isLeaf ? " tm-leaf" : " tm-branch") + (node.isRemainder ? " tm-remainder" : "");
     el.style.left = x + "px";
     el.style.top = y + "px";
     el.style.width = w + "px";
@@ -1619,19 +1728,8 @@ export class WasmTreemap {
           const cy = Math.round(item.y);
           const cw = Math.round(item.x + item.w) - cx;
           const ch = Math.round(item.y + item.h) - cy;
-          const childRgb =
-            depth === 0 ? this.getNodeColor(item.node) : crateRgb;
-          this.renderNode(
-            item.node,
-            el,
-            cx,
-            iy + cy,
-            cw,
-            ch,
-            depth + 1,
-            childRgb,
-            node.size,
-          );
+          const childRgb = depth === 0 ? this.getNodeColor(item.node) : crateRgb;
+          this.renderNode(item.node, el, cx, iy + cy, cw, ch, depth + 1, childRgb, node.size);
         }
       }
     }
@@ -1645,37 +1743,29 @@ export class WasmTreemap {
     const node = (el as any)._tmNode as TreeNode;
     const parentSize = (el as any)._tmParentSize as number;
 
-    this.tooltip.querySelector(".tm-tt-path")!.textContent =
-      node.fullPath || node.name;
+    this.tooltip.querySelector(".tm-tt-path")!.textContent = node.fullPath || node.name;
     const vals = this.tooltip.querySelectorAll(".tm-tt-value");
     vals[0].textContent = formatSize(node.size);
-    vals[1].textContent =
-      ((node.size / this.totalFileSize) * 100).toFixed(2) + "%";
+    vals[1].textContent = ((node.size / this.totalFileSize) * 100).toFixed(2) + "%";
 
-    const parentRow = this.tooltip.querySelector(
-      ".tm-tt-parent",
-    ) as HTMLElement;
+    const parentRow = this.tooltip.querySelector(".tm-tt-parent") as HTMLElement;
     if (parentSize && parentSize > 0) {
       vals[2].textContent = ((node.size / parentSize) * 100).toFixed(1) + "%";
       parentRow.style.display = "flex";
     } else parentRow.style.display = "none";
 
-    const childrenRow = this.tooltip.querySelector(
-      ".tm-tt-children",
-    ) as HTMLElement;
+    const childrenRow = this.tooltip.querySelector(".tm-tt-children") as HTMLElement;
     const hint = this.tooltip.querySelector(".tm-tt-hint") as HTMLElement;
     const children = Object.values(node.children || {});
     if (children.length > 0 && !node.isLeaf) {
       childrenRow.style.display = "flex";
-      childrenRow.querySelector(".tm-tt-value")!.textContent =
-        children.length + " items";
+      childrenRow.querySelector(".tm-tt-value")!.textContent = children.length + " items";
       hint.textContent = "Click to zoom in";
     } else {
       childrenRow.style.display = "none";
       hint.textContent = "";
     }
-    if (node.isRemainder)
-      hint.textContent = "Grouped items below remainder threshold";
+    if (node.isRemainder) hint.textContent = "Grouped items below remainder threshold";
 
     this.tooltip.style.display = "block";
     this.positionTooltip(e);
@@ -1728,9 +1818,10 @@ export class WasmTreemap {
     if (origId < 0) return;
 
     // Find the full path from current view root to clicked node
-    const currentRoot = this.zoomStack.length === 0
-      ? this.treeRoot!
-      : this.nodeById.get(this.zoomStack[this.zoomStack.length - 1].nodeId)!;
+    const currentRoot =
+      this.zoomStack.length === 0
+        ? this.treeRoot!
+        : this.nodeById.get(this.zoomStack[this.zoomStack.length - 1].nodeId)!;
     const path = this.findPathTo(currentRoot, origId);
     // path[0] is current root (already in stack), push all descendants
     for (let i = 1; i < path.length; i++) {

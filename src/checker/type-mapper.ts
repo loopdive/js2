@@ -187,6 +187,33 @@ export function isVoidType(type: ts.Type): boolean {
   return (type.flags & ts.TypeFlags.Void) !== 0 || (type.flags & ts.TypeFlags.Undefined) !== 0;
 }
 
+/**
+ * Resolve the Wasm type of a destructuring binding element's local (#821).
+ *
+ * For `{ s: t = counter() }` where `counter()` returns `void`, TS infers `t`'s
+ * type as `void` (or `void | undefined`) — its only evidence is the default
+ * initializer. `resolveWasmType` then maps that to `i32`, so the *actual*
+ * property value (`null`/`0`/`false`/`''`, an externref) gets coerced into an
+ * i32 local and is destroyed — the spec requires the present, non-`undefined`
+ * value to be preserved and the default skipped (§13.3.3.6/§13.3.3.7).
+ *
+ * When an element has a default initializer AND the resolved type is the
+ * void/undefined sentinel, the local must be `externref` so it can faithfully
+ * hold whatever real value flows in. `resolve` is the caller's
+ * `resolveWasmType(ctx, tsType)` (passed in to avoid a circular import).
+ */
+export function resolveBindingElementType(
+  element: ts.BindingElement,
+  tsType: ts.Type,
+  resolve: (t: ts.Type) => ValType,
+): ValType {
+  const resolved = resolve(tsType);
+  if (element.initializer && isVoidType(tsType)) {
+    return { kind: "externref" };
+  }
+  return resolved;
+}
+
 /** Check if a ts.Type represents bigint */
 export function isBigIntType(type: ts.Type): boolean {
   return (type.flags & ts.TypeFlags.BigInt) !== 0 || (type.flags & ts.TypeFlags.BigIntLiteral) !== 0;

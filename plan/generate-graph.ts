@@ -62,7 +62,7 @@ interface GraphData {
 const ROOT = path.resolve(import.meta.dirname!, "..");
 const ISSUES_DIR = path.join(ROOT, "plan", "issues");
 const GOALS_DIR = path.join(ROOT, "plan", "goals");
-const OUTPUT = path.join(ROOT, "public", "graph-data.json");
+const OUTPUT = path.join(ROOT, "website", "public", "graph-data.json");
 
 const STATUS_PRIORITY: Record<string, number> = {
   done: 0,

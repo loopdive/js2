@@ -66,12 +66,12 @@ import { dirname, resolve } from "node:path";
 import { compile } from "./compiler-bundle.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const PROGRAMS_DIR = resolve(ROOT, "public", "benchmarks", "competitive", "programs");
+const PROGRAMS_DIR = resolve(ROOT, "website", "public", "benchmarks", "competitive", "programs");
 const ARTIFACT_DIR = resolve(ROOT, ".tmp", "wasmtime-hot-runtime");
 const CHILD_JS_PATH = resolve(import.meta.dirname, "wasmtime-bench-child-js.mjs");
 
 const RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "wasm-host-wasmtime-hot-runtime.json");
-const PUBLIC_PATH = resolve(ROOT, "public", "benchmarks", "results", "wasm-host-wasmtime-hot-runtime.json");
+const PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", "wasm-host-wasmtime-hot-runtime.json");
 
 // `object-ops` excluded: js2wasm emits the modern exception-handling
 // proposal for object literal lookups, which Cranelift in wasmtime 35

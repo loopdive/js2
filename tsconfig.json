@@ -14,5 +14,5 @@
     "lib": ["ES2022", "ESNext.Disposable", "DOM"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "playground", "tests"]
+  "exclude": ["node_modules", "dist", "website", "tests"]
 }

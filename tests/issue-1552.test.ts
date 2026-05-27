@@ -54,13 +54,7 @@ describe("issue #1552 — catch parameter destructuring", () => {
     expect(r).toBe("5-0");
   });
 
-  // (#1552 follow-up) — `throw { y: undefined }` stores `y` as ref.null.extern in
-  // the WasmGC struct. The helper's `__extern_is_undefined` check reads the
-  // field via `__sget_y(struct)` which currently returns ref.null.extern, but
-  // `__extern_is_undefined` returns 0 for ref.null.extern (only `=== undefined`
-  // in JS triggers it). Documented gap — tracked for the broader
-  // null-vs-undefined struct-field representation work.
-  it.todo("default IS evaluated when value is undefined", async () => {
+  it("default IS evaluated when value is undefined", async () => {
     const r = await runReturning(`
       let n = 0;
       try { throw { y: undefined } } catch ({ y = ++n }) { return y + '-' + n }
@@ -76,13 +70,11 @@ describe("issue #1552 — catch parameter destructuring", () => {
     expect(r).toBe("1-1");
   });
 
-  // (#1552 follow-up) — `throw null` results in ref.null.extern as the caught
-  // value. The helper's null guard combines `ref.is_null` OR
-  // `__extern_is_undefined(value)` and SHOULD detect ref.null.extern via
-  // ref.is_null. However the empty-pattern object case `catch ({})` doesn't
-  // re-enter the destructuring loop, so we route through the shared helper
-  // which emits the null guard — pending follow-up.
-  it.todo("destructuring `null` throws TypeError", async () => {
+  // Empty patterns still RequireObjectCoercible per ECMA-262 §8.5.2 /
+  // §8.5.3 (the catch path emits the null/undefined guard for `catch ({})`
+  // and `catch ([])` even though the decl path short-circuits empty
+  // patterns to keep `let {} = null` non-throwing, see #1553c).
+  it("destructuring `null` with an empty object pattern throws TypeError", async () => {
     const r = await runReturning(`
       let kind = 'none';
       try {
@@ -93,6 +85,61 @@ describe("issue #1552 — catch parameter destructuring", () => {
       return kind;
     `);
     expect(r).toBe("TypeError");
+  });
+
+  it("destructuring `undefined` with an empty object pattern throws TypeError", async () => {
+    const r = await runReturning(`
+      let kind = 'none';
+      try {
+        try { throw undefined } catch ({}) { /* unreachable */ }
+      } catch (e) {
+        kind = (e && e.name) || String(e);
+      }
+      return kind;
+    `);
+    expect(r).toBe("TypeError");
+  });
+
+  it("destructuring `null` with an empty array pattern throws TypeError", async () => {
+    const r = await runReturning(`
+      let kind = 'none';
+      try {
+        try { throw null } catch ([]) { /* unreachable */ }
+      } catch (e) {
+        kind = (e && e.name) || String(e);
+      }
+      return kind;
+    `);
+    expect(r).toBe("TypeError");
+  });
+
+  it("empty patterns over a coercible value do NOT throw", async () => {
+    expect(
+      await runReturning(`
+      let t = 9; try { try { throw { a: 1 } } catch ({}) { t = 1 } } catch (e) { t = 2 } return t;
+    `),
+    ).toBe(1);
+    expect(
+      await runReturning(`
+      let t = 9; try { try { throw [1, 2] } catch ([]) { t = 1 } } catch (e) { t = 2 } return t;
+    `),
+    ).toBe(1);
+  });
+
+  it("object-rest skips non-enumerable own properties (CopyDataProperties)", async () => {
+    const r = await runReturning(`
+      let o = { a: 1 };
+      Object.defineProperty(o, 'x', { value: 9, enumerable: false });
+      try { throw o } catch ({ ...rest }) { return JSON.stringify(rest) }
+    `);
+    expect(r).toBe(JSON.stringify({ a: 1 }));
+  });
+
+  it("infers fn.name on an anonymous default initializer (#1450)", async () => {
+    const r = await runReturning(`
+      try { throw [] } catch ([fn = function () {}]) { return fn.name }
+    `);
+    expect(r).toBe("fn");
   });
 
   it("rest pattern collects remaining own properties", async () => {

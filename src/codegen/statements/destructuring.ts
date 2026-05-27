@@ -17,6 +17,7 @@ import {
   nativeStringType,
   resolveWasmType,
 } from "../index.js";
+import { resolveBindingElementType } from "../../checker/type-mapper.js";
 import {
   type BindingKind,
   buildDestructureNullThrow,
@@ -50,7 +51,7 @@ export function ensureBindingLocals(ctx: CodegenContext, fctx: FunctionContext, 
       // Without a local, nested binding pattern destructuring silently skips the
       // assignment because fctx.localMap.get(name) returns undefined (#794).
       const elemType = ctx.checker.getTypeAtLocation(element);
-      const wasmType = resolveWasmType(ctx, elemType);
+      const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
       allocLocal(fctx, name, wasmType);
     } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
       ensureBindingLocals(ctx, fctx, element.name);
@@ -308,6 +309,16 @@ export function emitNestedBindingDefault(
  * @param localIdx  - destination local for the bound variable
  * @param initializer - the TS default-value expression
  * @param targetType  - optional override for the type hint passed to compileExpression
+ * @param objectPropertySemantics - when true, the value originates from an
+ *   object property read (KeyedBindingInitialization §13.3.3.7), where every
+ *   declared field exists and a `null` value is a genuine JS `null` — NOT a
+ *   "missing" hole. Per spec the default fires only on `undefined`, so JS
+ *   `null` (encoded as wasm-null / ref.null.extern) must NOT trigger it. For
+ *   `ref`/`ref_null` fields we therefore convert to externref and use the
+ *   strict `__extern_is_undefined` predicate instead of `ref.is_null` (which
+ *   would wrongly fire for `null`). Array/iterator binding (§13.3.3.6) leaves
+ *   this false: a wasm-null element there can mean "iterator exhausted /
+ *   missing", which DOES fire the default.
  */
 export function emitDefaultValueCheck(
   ctx: CodegenContext,
@@ -316,8 +327,45 @@ export function emitDefaultValueCheck(
   localIdx: number,
   initializer: ts.Expression,
   targetType?: ValType,
+  objectPropertySemantics?: boolean,
 ): void {
   const hintType = targetType ?? fieldType;
+
+  // Object-property semantics: a `ref`/`ref_null` field holding wasm-null is a
+  // genuine JS `null` (the struct always has the declared field), so the
+  // default must NOT fire. Route through externref + __extern_is_undefined so
+  // only `undefined` triggers the initializer. (#1550)
+  if (objectPropertySemantics && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
+    const extTmp = allocLocal(fctx, `__dflt_ext_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+    fctx.body.push({ op: "local.tee", index: extTmp });
+    emitExternrefDefaultCheck(ctx, fctx, extTmp);
+    const thenInstrs = collectInstrs(fctx, () => {
+      compileExpression(ctx, fctx, initializer, hintType);
+      fctx.body.push({ op: "local.set", index: localIdx } as Instr);
+    });
+    const elseInstrs = collectInstrs(fctx, () => {
+      // Convert the externref back to the field's any-ref type for the local.
+      fctx.body.push({ op: "local.get", index: extTmp } as Instr);
+      fctx.body.push({ op: "any.convert_extern" } as Instr);
+      if (fieldType.kind === "ref") {
+        fctx.body.push({ op: "ref.cast", typeIdx: (fieldType as { typeIdx: number }).typeIdx } as Instr);
+      } else if ((fieldType as { typeIdx?: number }).typeIdx !== undefined) {
+        fctx.body.push({ op: "ref.cast_null", typeIdx: (fieldType as { typeIdx: number }).typeIdx } as Instr);
+      }
+      if (targetType && !valTypesMatch(fieldType, targetType)) {
+        coerceType(ctx, fctx, fieldType, targetType);
+      }
+      fctx.body.push({ op: "local.set", index: localIdx } as Instr);
+    });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: thenInstrs,
+      else: elseInstrs,
+    });
+    return;
+  }
 
   // Build the else branch (value is NOT undefined — use it as-is, with coercion)
   const buildElseBranch = (tmpField: number): Instr[] => {

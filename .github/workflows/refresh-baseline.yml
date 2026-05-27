@@ -199,7 +199,7 @@ jobs:
 
       - name: Promote to baseline (unconditional)
         run: |
-          mkdir -p benchmarks/results public/benchmarks/results
+          mkdir -p benchmarks/results website/public/benchmarks/results
           rm -f benchmarks/results/test262-current.jsonl \
             benchmarks/results/test262-current.json \
             benchmarks/results/test262-report.json \
@@ -208,8 +208,8 @@ jobs:
           cp merged-reports/test262-report-merged.json benchmarks/results/test262-current.json
           cp merged-reports/test262-report-merged.json benchmarks/results/test262-report.json
           cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-results.jsonl
-          cp merged-reports/test262-report-merged.json public/benchmarks/results/test262-report.json
-          cp merged-reports/test262-results-merged.jsonl public/benchmarks/results/test262-results.jsonl
+          cp merged-reports/test262-report-merged.json website/public/benchmarks/results/test262-report.json
+          cp merged-reports/test262-results-merged.jsonl website/public/benchmarks/results/test262-results.jsonl
 
       - name: Regenerate edition buckets
         run: node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl

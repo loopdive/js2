@@ -21,7 +21,7 @@ import { resolve } from "node:path";
 const SHIM_ID = "\0compiler-bundle-shim";
 
 // Imports from src/ that should be redirected to the pre-built bundle.
-const REDIRECTED_SOURCES = new Set(["../src/index.js", "../src/optimize.js", "../src/runtime.js"]);
+const REDIRECTED_SOURCES = new Set(["../../src/index.js", "../../src/optimize.js", "../../src/runtime.js"]);
 
 export function compilerBundlePlugin(): Plugin {
   let bundleCache: string | null = null;
@@ -76,11 +76,11 @@ export const instantiateWasmStreaming = __mod.instantiateWasmStreaming;
         if (pathname !== "/@compiler-bundle.mjs") return next();
 
         if (!bundleCache) {
-          const bundlePath = resolve(import.meta.dirname, "../scripts/compiler-bundle.mjs");
+          const bundlePath = resolve(import.meta.dirname, "../../scripts/compiler-bundle.mjs");
 
           // Build the bundle on demand if it doesn't exist (gitignored artifact)
           if (!existsSync(bundlePath)) {
-            const root = resolve(import.meta.dirname, "..");
+            const root = resolve(import.meta.dirname, "../..");
             console.log("[compiler-bundle] Building compiler bundle...");
             execSync("pnpm run build:compiler-bundle", {
               cwd: root,

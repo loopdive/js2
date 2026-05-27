@@ -7,5 +7,5 @@
 # and storing them as LFS pointers in `public/` previously caused the deploy
 # to ship pointer text instead of wasm bytes (CompileError: expected magic
 # word 00 61 73 6d, found 76 65 72 73). Track them as plain binary blobs.
-public/benchmarks/results/loadtime/*.wasm -filter -diff -merge binary
+website/public/benchmarks/results/loadtime/*.wasm -filter -diff -merge binary
 benchmarks/results/loadtime/*.wasm        -filter -diff -merge binary

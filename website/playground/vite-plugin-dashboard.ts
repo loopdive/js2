@@ -4,7 +4,8 @@ import { join, resolve } from "path";
 import { execSync } from "node:child_process";
 import type { ServerResponse } from "node:http";
 
-const projectRoot = resolve(import.meta.dirname, "..");
+const projectRoot = resolve(import.meta.dirname, "../..");
+const websiteRoot = resolve(import.meta.dirname, "..");
 
 // ── Frontmatter parser ───────────────────────────────────────
 function parseFrontmatter(text: string): Record<string, any> {
@@ -359,7 +360,7 @@ export function dashboardPlugin(): Plugin {
   // Regenerate dashboard/data/*.json from plan/ markdown files
   function regenDashboardData() {
     try {
-      execSync(`node ${join(projectRoot, "dashboard/build-data.js")}`, {
+      execSync(`node ${join(websiteRoot, "dashboard/build-data.js")}`, {
         cwd: projectRoot,
         stdio: "ignore",
       });
@@ -405,7 +406,7 @@ export function dashboardPlugin(): Plugin {
       in_progress: "inprogress",
     };
     const bucket = bucketMap[status] ?? "ready";
-    const issuesPath = join(projectRoot, "dashboard/data/issues.json");
+    const issuesPath = join(websiteRoot, "dashboard/data/issues.json");
     let data: Record<string, any[]>;
     try {
       data = JSON.parse(readFileSync(issuesPath, "utf-8"));
@@ -473,7 +474,7 @@ export function dashboardPlugin(): Plugin {
       const watchDirs = [
         join(projectRoot, "plan"),
         join(projectRoot, "benchmarks/results"),
-        join(projectRoot, "dashboard/data"),
+        join(websiteRoot, "dashboard/data"),
       ];
 
       for (const dir of watchDirs) {
@@ -507,7 +508,7 @@ export function dashboardPlugin(): Plugin {
 
         // Serve dashboard HTML
         if (url.pathname === "/dashboard" || url.pathname === "/dashboard/") {
-          const dashHtml = readFileSync(join(projectRoot, "dashboard/index.html"), "utf-8");
+          const dashHtml = readFileSync(join(websiteRoot, "dashboard/index.html"), "utf-8");
           // Inject live-reload SSE client and API-based data loading
           const injectedHtml = dashHtml
             .replace(

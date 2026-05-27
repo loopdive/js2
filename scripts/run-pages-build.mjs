@@ -15,7 +15,7 @@ function run(command, args) {
 
 const hasPlanningArtifacts =
   existsSync(resolve(ROOT, "plan")) &&
-  existsSync(resolve(ROOT, "dashboard")) &&
+  existsSync(resolve(ROOT, "website", "dashboard")) &&
   existsSync(resolve(ROOT, "scripts", "sprint-stats.ts")) &&
   existsSync(resolve(ROOT, "scripts", "build-planning-artifacts.mjs"));
 

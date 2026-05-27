@@ -1,9 +1,10 @@
 ---
 id: 1610
 title: "codegen: for-of over non-array iterables rejected ('for-of requires an array expression')"
-status: ready
+status: done
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 task_type: feature
@@ -48,3 +49,38 @@ for-of across the corpus.
 - for-of over a non-array iterable compiles and iterates via the iterator
   protocol.
 - >=10 of the 13 tests move off `compile_error`.
+
+## Root cause (confirmed)
+
+`compileForOfStatement` (`src/codegen/statements/loops.ts`) branched on the TS
+type symbol name being `Array` and committed unconditionally to
+`compileForOfArray`, which throws "for-of requires an array expression" when the
+iterand does not lower to a vec struct. An Array-typed iterand is necessary but
+not sufficient: a `Symbol.iterator` whose declared return widens to `Array`, an
+array-subclass instance, or a union can carry the `Array` symbol yet not lower
+to a vec struct, so the loop hard-errored instead of using the (already-present)
+iterator-protocol fallback `compileForOfIterator`.
+
+## Fix
+
+Route both branches through the existing `compileForOfArrayTentative` gate: it
+tentatively compiles the expression and only takes the fast vec-struct array
+path when the result is genuinely a vec struct; otherwise it falls through to
+`compileForOfIterator`. The `isArray` symbol-name shortcut is removed. The array
+path is unchanged for real arrays (it already re-compiled the expression).
+
+## Test Results
+
+`tests/equivalence/issue-1610.test.ts` (4 tests) + existing for-of/iterator
+equivalence suites — all green:
+- array fast path (vec struct) — PASS
+- for-of over Set — PASS
+- for-of over custom `[Symbol.iterator]` object — PASS
+- for-of over generator result — PASS
+- for-of-basic, for-of-generator, for-of-array-destructuring,
+  iterator-protocol-custom, symbol-iterator-class,
+  for-of-assign-destructuring-primitive — all PASS (37 tests total)
+
+Out of scope: `for (const [k,v] of map)` returns only the last entry — a
+pre-existing Map `@@iterator` semantics gap tracked under #1103, not regressed
+by this change (the loop now runs without a compile error).

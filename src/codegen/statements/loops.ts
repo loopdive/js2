@@ -2297,18 +2297,15 @@ export function compileForOfStatement(ctx: CodegenContext, fctx: FunctionContext
     return;
   }
 
-  const sym = (exprTsType as ts.TypeReference).symbol ?? (exprTsType as ts.Type).symbol;
-  const isArray = sym?.name === "Array";
-
-  if (isArray) {
-    compileForOfArray(ctx, fctx, stmt);
-  } else {
-    // Type checker didn't resolve as Array — tentatively compile the expression
-    // to check if it produces a vec struct (e.g. tuple types, union types, etc.).
-    // If so, use the efficient array path; otherwise fall back to host iterator.
-    if (!compileForOfArrayTentative(ctx, fctx, stmt)) {
-      compileForOfIterator(ctx, fctx, stmt);
-    }
+  // The TS type resolving to `Array` is necessary but NOT sufficient to use the
+  // fast vec-struct array path: an Array-typed iterable can still lower to a
+  // non-vec value (a Symbol.iterator whose declared return widens to Array, an
+  // array-subclass instance, a union). Tentatively compile the expression and
+  // only take the array path when it genuinely produces a vec struct; otherwise
+  // fall back to the iterator protocol instead of hard-erroring with
+  // "for-of requires an array expression" (#1610).
+  if (!compileForOfArrayTentative(ctx, fctx, stmt)) {
+    compileForOfIterator(ctx, fctx, stmt);
   }
 }
 

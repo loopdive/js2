@@ -2,7 +2,8 @@
 id: 1672
 title: "async / async-gen object+class method trampolines must return the real result, not null (completes #1671)"
 sprint: 55
-status: in-review
+status: done
+completed: 2026-05-27
 feasibility: hard
 reasoning_effort: max
 depends_on: [1671]

@@ -6,10 +6,11 @@ import { compilerBundlePlugin } from "./vite-plugin-compiler-bundle.js";
 import { adrPlugin } from "./vite-plugin-adr.js";
 import { dashboardPlugin } from "./vite-plugin-dashboard.js";
 
-const projectRoot = resolve(import.meta.dirname, "..");
+const projectRoot = resolve(import.meta.dirname, "../..");
+const websiteRoot = resolve(import.meta.dirname, "..");
 const dashboardPluginPath = resolve(import.meta.dirname, "vite-plugin-dashboard.ts");
 const hasDashboardData =
-  existsSync(resolve(projectRoot, "dashboard", "index.html")) && existsSync(resolve(projectRoot, "plan", "issues"));
+  existsSync(resolve(websiteRoot, "dashboard", "index.html")) && existsSync(resolve(projectRoot, "plan", "issues"));
 
 function frameNavSyncPlugin(): Plugin {
   let outDir = resolve(projectRoot, "dist/playground");
@@ -20,7 +21,7 @@ function frameNavSyncPlugin(): Plugin {
       outDir = resolve(projectRoot, config.build.outDir);
     },
     closeBundle() {
-      copyFileSync(resolve(projectRoot, "frame-nav-sync.js"), resolve(outDir, "frame-nav-sync.js"));
+      copyFileSync(resolve(websiteRoot, "frame-nav-sync.js"), resolve(outDir, "frame-nav-sync.js"));
     },
   };
 }
@@ -32,10 +33,10 @@ export default defineConfig(async () => {
   }
 
   return {
-    root: projectRoot,
+    root: websiteRoot,
     appType: "mpa",
     base: "./",
-    publicDir: "public",
+    publicDir: resolve(websiteRoot, "public"),
     plugins,
     optimizeDeps: {
       // Pre-bundle heavy deps so Vite doesn't transform them on each page load.
@@ -57,7 +58,9 @@ export default defineConfig(async () => {
     },
     server: {
       fs: {
-        allow: ["."],
+        // root is website/; allow serving repo-root dirs (src/, tests/,
+        // test262/, benchmarks/, node_modules/) that live one level up.
+        allow: [".."],
       },
       watch: {
         // Exclude agent worktrees, test262, node_modules, and build artifacts.
@@ -76,7 +79,9 @@ export default defineConfig(async () => {
       },
     },
     build: {
-      outDir: "dist/playground",
+      // Absolute so the artifact lands at <repo-root>/dist/playground even
+      // though `root` is website/ (dist/ stays at the repo root).
+      outDir: resolve(projectRoot, "dist/playground"),
       emptyOutDir: true,
       target: "esnext",
       rollupOptions: {

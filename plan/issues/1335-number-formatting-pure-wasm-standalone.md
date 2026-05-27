@@ -82,3 +82,24 @@ Phase 1 is tractable for a single dev (all integer arithmetic, no algorithm rese
 - ECMA-262 §21.1.3.5 — toPrecision
 - ECMA-262 §21.1.3.2 — toExponential
 - Ulf Adams, "Ryu: Fast Float-to-String Conversion" (PLDI 2018)
+
+## Progress — toFixed / toPrecision / toExponential standalone (PR for #1321 task)
+
+`Number.prototype.{toFixed,toPrecision,toExponential}` now have a pure-Wasm
+standalone path. New module `src/codegen/number-format-native.ts` emits
+WasmGC-native `number_toFixed` / `number_toExponential` / `number_toPrecision`
+functions (registered under the same `ctx.funcMap` names) when
+`ctx.wasi || ctx.standalone`, instead of the `env` host imports. Wired in
+`src/codegen/declarations.ts` (mirrors `emitNativeParseNumber` #1663). Also
+fixed a latent standalone bug: the four `Number#to*` call-site RangeError
+throws in `expressions/calls.ts` used `global.get <strIdx>` (externref-global
+semantics) which emits `global.get -1` in nativeStrings mode — switched to
+`stringConstantExternrefInstrs` (dual-mode helper).
+
+Algorithm uses scaled f64 digit extraction (no Ryu). Exact for the common
+range (fractionDigits / precision ≲ 15 significant digits); for extreme
+requests (e.g. `(7.7).toFixed(20)`) it returns the f64-rounded value rather
+than V8's exact-binary bignum expansion. Tests: `tests/issue-1321-standalone.test.ts`.
+
+**Still open for #1335**: integer `toString(radix)` standalone (Phase 1) and
+full Ryu/bignum float→shortest-string + exact-low-digit formatting (Phase 2).

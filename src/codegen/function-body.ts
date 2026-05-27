@@ -38,6 +38,7 @@ import {
 } from "./shared.js";
 import { emitArgumentsVecBody } from "./statements/nested-declarations.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { detectStringBuilders } from "./string-builder.js";
 import { collectI32SpecializedArrays } from "./array-element-typing.js";
 import { detectArrayReduceFusion, applyArrayReduceFusion } from "./array-reduce-fusion.js";
@@ -814,10 +815,15 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
 
     // Check if all params are simple identifiers (not destructuring patterns).
     // Mapped arguments only applies to simple parameter lists in non-strict mode.
+    // In strict mode the arguments object is *unmapped* (§10.4.4): writes to
+    // `arguments[i]` must not flow back into the named parameter, so skip
+    // mappedArgsInfo entirely and leave the built vec as an independent copy
+    // (#779e).
     const allSimpleParams = decl.parameters.every((p) => ts.isIdentifier(p.name) && !p.dotDotDotToken);
+    const mappedAllowed = allSimpleParams && !isStrictFunction(decl);
 
     // Set up mapped arguments info for param ↔ arguments sync (#849)
-    if (allSimpleParams && params.length > 0) {
+    if (mappedAllowed && params.length > 0) {
       fctx.mappedArgsInfo = {
         argsLocalIdx: argsLocal,
         arrTypeIdx,

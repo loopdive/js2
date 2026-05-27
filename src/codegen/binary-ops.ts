@@ -10,6 +10,7 @@ import {
   isBooleanType,
   isNumberType,
   isStringType,
+  isSymbolType,
   isWrapperObjectType,
 } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -34,6 +35,33 @@ import { compileStringBinaryOp } from "./string-ops.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 
 // ── Binary operations ─────────────────────────────────────────────────
+
+/**
+ * Binary operators whose evaluation applies ToNumeric / ToPrimitive→(number or
+ * string) to their operands. A Symbol operand of any of these throws TypeError
+ * per §7.1.3 (ToNumeric step 3) and §7.1.4 (ToNumber). `+` is included because
+ * ToPrimitive on a Symbol returns the Symbol and both string/number branches
+ * throw. Equality operators (`==`, `===`, `!=`, `!==`) are intentionally absent —
+ * they compare Symbols by identity without coercion.
+ */
+const SYMBOL_TONUMERIC_OPS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+]);
 
 /**
  * Operators eligible for chain flattening — arithmetic and bitwise ops that
@@ -207,6 +235,27 @@ export function compileBinaryExpression(
   // Nullish coalescing: a ?? b
   if (op === ts.SyntaxKind.QuestionQuestionToken) {
     return compileNullishCoalescing(ctx, fctx, expr);
+  }
+
+  // §7.1.3 ToNumeric / §13.x operator evaluation — a Symbol operand of an
+  // arithmetic, bitwise, shift, or relational operator (or `+`) must throw a
+  // TypeError ("Cannot convert a Symbol value to a number"). For `+`, ToPrimitive
+  // on a Symbol yields the Symbol itself, and both the string and number branches
+  // throw. Equality (`==`, `===`, `!=`, `!==`) is deliberately excluded — those
+  // compare Symbols by identity and never coerce. Symbols are lowered to i32 ids,
+  // so without this guard the operator would silently treat the id as a number.
+  if (SYMBOL_TONUMERIC_OPS.has(op)) {
+    const leftSym = isSymbolType(ctx.checker.getTypeAtLocation(expr.left));
+    const rightSym = isSymbolType(ctx.checker.getTypeAtLocation(expr.right));
+    if (leftSym || rightSym) {
+      // Evaluate operands left-to-right for side effects, then throw.
+      const lt = compileExpression(ctx, fctx, expr.left);
+      if (lt !== null) fctx.body.push({ op: "drop" });
+      const rt = compileExpression(ctx, fctx, expr.right);
+      if (rt !== null) fctx.body.push({ op: "drop" });
+      emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+      return { kind: "f64" };
+    }
   }
 
   // ── Fast path: `expr | 0` → pure ToInt32 coercion ──

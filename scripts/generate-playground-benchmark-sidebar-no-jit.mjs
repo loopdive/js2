@@ -23,17 +23,25 @@ import * as ts from "typescript";
 import { buildImports, compileMulti, instantiateWasm, optimizeBinaryAsync } from "./compiler-bundle.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const HELPERS_PATH = resolve(ROOT, "playground", "examples", "benchmarks", "helpers.ts");
+const HELPERS_PATH = resolve(ROOT, "website", "playground", "examples", "benchmarks", "helpers.ts");
 const RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "playground-benchmark-sidebar-no-jit.json");
 const PLAYGROUND_PUBLIC_PATH = resolve(
   ROOT,
+  "website",
   "playground",
   "public",
   "benchmarks",
   "results",
   "playground-benchmark-sidebar-no-jit.json",
 );
-const PUBLIC_PATH = resolve(ROOT, "public", "benchmarks", "results", "playground-benchmark-sidebar-no-jit.json");
+const PUBLIC_PATH = resolve(
+  ROOT,
+  "website",
+  "public",
+  "benchmarks",
+  "results",
+  "playground-benchmark-sidebar-no-jit.json",
+);
 const ARTIFACT_DIR = resolve(ROOT, ".tmp", "no-jit-bench");
 const CHILD_SCRIPT = resolve(import.meta.dirname, "no-jit-bench-child.mjs");
 const COMPILER_BUNDLE_PATH = resolve(import.meta.dirname, "compiler-bundle.mjs");
@@ -139,7 +147,7 @@ function smokeTestInProcess(fn) {
 }
 
 async function prepareArtifacts(entry) {
-  const absEntryPath = resolve(ROOT, "playground", entry.path);
+  const absEntryPath = resolve(ROOT, "website", "playground", entry.path);
   const source = readFileSync(absEntryPath, "utf8");
 
   const result = compileMulti(

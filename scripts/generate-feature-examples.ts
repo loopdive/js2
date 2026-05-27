@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 import { createHighlighter } from "shiki";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const OUT_FILE = join(ROOT, "public", "feature-examples.json");
+const OUT_FILE = join(ROOT, "website", "public", "feature-examples.json");
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -1166,7 +1166,7 @@ async function main() {
     features: results,
   };
 
-  mkdirSync(join(ROOT, "public"), { recursive: true });
+  mkdirSync(join(ROOT, "website", "public"), { recursive: true });
   writeFileSync(OUT_FILE, JSON.stringify(output, null, 2) + "\n");
   console.log(`\nWrote ${OUT_FILE}`);
 }

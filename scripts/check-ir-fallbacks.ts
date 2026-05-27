@@ -61,7 +61,7 @@ import { planIrCompilation, type IrFallbackReason } from "../src/ir/select.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
 const BASELINE_PATH = join(REPO_ROOT, "scripts/ir-fallback-baseline.json");
-const CORPUS_ROOTS = [join(REPO_ROOT, "playground/examples")];
+const CORPUS_ROOTS = [join(REPO_ROOT, "website/playground/examples")];
 
 /** Reasons that must NOT increase vs. baseline. */
 const UNINTENDED: ReadonlySet<IrFallbackReason> = new Set([
