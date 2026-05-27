@@ -1,9 +1,10 @@
 ---
 id: 1614
 title: "codegen: Set set-method intrinsics missing ('Cannot find method size/...' on parent class Set)"
-status: ready
+status: done
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: low
 feasibility: medium
 task_type: feature
@@ -51,3 +52,31 @@ intrinsic Set shape. Register the Set `size` accessor and the
 
 - The Set-composition methods resolve `size`/`has`/`keys` on receivers.
 - >=5 of the 7 tests move off `compile_error`.
+
+## Root cause (confirmed)
+
+The 7 tests are not really about the *implementation* of `union`/etc. — they
+define a `class MySet extends Set` whose method bodies call
+`super.size(...rest)` / `super.has(...rest)` / `super.keys(...rest)`. Method
+resolution in `src/codegen/expressions/new-super.ts` walks the compiled-class
+inheritance chain (`funcMap` lookup of `Parent_method`). `Set` is a builtin
+**extern class** (host-backed, see `ctx.externClasses` in
+`src/codegen/index.ts`), so it has no `Set_size`/`Set_has`/`Set_keys` entries
+and the lookup falls through to `reportError("Cannot find method '…' on parent
+class 'Set'")`, failing the whole module at compile time.
+
+## Fix
+
+In `new-super.ts`, before raising the error, fall back to a dynamic dispatch
+when the parent (or an ancestor) is a registered extern class: emit
+`__extern_method_call(this, methodName, argsArray)` and return externref. Added
+`emitSuperExternMethodCall` and wired it into both `compileSuperMethodCall`
+(`super.m()`) and `compileSuperElementMethodCall` (`super['m']()`). Spread
+arguments (`...rest`) are handled by pushing the spread source into the JS args
+array.
+
+## Test Results
+
+All 7 `subclass-receiver-methods.js` tests now `pass` (were `compile_error`):
+union, isDisjointFrom, isSupersetOf, symmetricDifference, intersection,
+difference, isSubsetOf. Unit test: `tests/issue-1614.test.ts`.
