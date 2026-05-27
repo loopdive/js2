@@ -62,10 +62,15 @@ describe("#1219 — ArrayBindingPattern iter-close: hang fix + IteratorClose", (
     expect(elapsed).toBeLessThan(10_000);
   }, 15_000);
 
-  it("finite iterator destructure: stops at done:true and does NOT call return()", async () => {
-    // Per spec §7.4.6: when the iterator naturally terminates (`done:true`),
-    // IteratorClose is NOT invoked. This guards against over-eager return()
-    // calls from the fix.
+  it("rest-less [a,b] over a still-yielding iterator: binds 2, calls IteratorClose once (#1592)", async () => {
+    // §13.3.3.6: a rest-less ArrayBindingPattern that consumes exactly N
+    // elements performs IteratorClose when iteratorRecord.[[Done]] is false
+    // after the last binding. Here `[a, b]` steps the iterator twice (both
+    // `done:false`) so [[Done]] is false → return() is called exactly once,
+    // with only 2 next() calls (no over-consumption). Verified against V8:
+    // `doneCallCount === 1`, `nextCallCount === 2`. The pre-#1592 runtime
+    // drained until done:true (a 3rd next() call) — itself the over-consumption
+    // bug #1592 fixes — so the old assertion `doneCallCount === 0` was stale.
     const exports = await compileToWasm(`
       var doneCallCount: number = 0;
       var nextCallCount: number = 0;
@@ -91,8 +96,10 @@ describe("#1219 — ArrayBindingPattern iter-close: hang fix + IteratorClose", (
         var sum: number = takeTwo(iter);
         // 10 + 20 = 30
         if (sum !== 30) return -1;
-        // Iterator naturally terminated — return() must NOT have been called.
-        if (doneCallCount !== 0) return -2;
+        // Bound reached with [[Done]] false → IteratorClose called once.
+        if (doneCallCount !== 1) return -2;
+        // Bounded: exactly 2 next() calls, no probe for done:true.
+        if (nextCallCount !== 2) return -3;
         return 1;
       }
     `);

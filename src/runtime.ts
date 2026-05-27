@@ -3825,19 +3825,23 @@ assert._isSameValue = isSameValue;
           }
           return Object.entries(obj);
         };
-      if (name === "__array_from_iter") {
+      if (name === "__array_from_iter" || name === "__array_from_iter_n") {
         // Cache the original Array.prototype[Symbol.iterator] so we can
         // detect when user code (e.g. test262 iter-get-err-array-prototype)
         // has overridden it. When overridden, we must invoke the protocol
         // rather than fast-pathing the array — otherwise a throwing custom
         // @@iterator on Array.prototype is silently swallowed (#1454).
         const _origArrayIter: any = (Array.prototype as any)[Symbol.iterator];
-        return (obj: any): any => {
-          // Materialize an iterable/array-like to a real JS array so downstream
-          // destructuring can walk it via .length + indexed access. For proper
-          // iterators (e.g. generators) this invokes the iterator protocol and
-          // propagates any throws from .next() — needed for spec-compliant
-          // destructuring of throwing iterators (#1150).
+        // Materialize an iterable/array-like to a real JS array, consuming at
+        // most `limit` iterator steps (`Infinity` = full drain — the legacy
+        // `__array_from_iter` behavior). The bounded form (`__array_from_iter_n`,
+        // #1592) lets a rest-less array pattern step the iterator exactly
+        // `pattern.length` times per §8.5.3, instead of draining a lazy
+        // generator to completion.
+        const _arrayFromIter = (obj: any, limit: number): any => {
+          // For proper iterators (e.g. generators) this invokes the iterator
+          // protocol and propagates any throws from .next() — needed for
+          // spec-compliant destructuring of throwing iterators (#1150).
           if (obj == null) return [];
           if (Array.isArray(obj)) {
             // #1454: Real arrays normally take a fast path, but if the user has
@@ -3850,9 +3854,11 @@ assert._isSameValue = isSameValue;
             if (ownIter !== _origArrayIter) {
               // Non-default iterator: fall through to the protocol path below
               // by treating the array as a generic iterable.
-              return Array.from(obj);
+              return _drainIterable(obj, limit);
             }
-            return obj;
+            // Default array iterator with no observable side effects: a slice
+            // to `limit` is equivalent to stepping the iterator `limit` times.
+            return limit < obj.length ? obj.slice(0, limit) : obj;
           }
           // Compiled sources that do `iter[Symbol.iterator] = fn` often land the
           // function under a stringified "Symbol(Symbol.iterator)" key rather
@@ -3930,6 +3936,21 @@ assert._isSameValue = isSameValue;
                       return undefined;
                     };
                     while (true) {
+                      // #1592: bounded materialization — a rest-less array
+                      // pattern consumes exactly `limit` iterator steps
+                      // (§8.5.3). If the iterator is still NOT done after the
+                      // last element is bound, §13.3.3.6 BindingRestElement-less
+                      // ArrayBindingPattern performs IteratorClose. So a finite
+                      // bound that stops a still-yielding iterator is an ABRUPT
+                      // (consumer-abandons) completion → set `cappedOut` so the
+                      // close fires below. `limit === Infinity` (rest pattern)
+                      // never hits this break; its close stays governed by the
+                      // natural `done` / MAX_ITER paths, byte-identical to the
+                      // legacy unbounded behavior.
+                      if (out.length >= limit) {
+                        cappedOut = true;
+                        break;
+                      }
                       if (iterCount++ >= MAX_ITER) {
                         cappedOut = true;
                         break;
@@ -3984,12 +4005,48 @@ assert._isSameValue = isSameValue;
               }
               const out: any[] = [];
               const len = typeof (obj as any).length === "number" ? (obj as any).length >>> 0 : 0;
-              for (let i = 0; i < len; i++) out.push((obj as any)[i]);
+              const bound = len < limit ? len : limit;
+              for (let i = 0; i < bound; i++) out.push((obj as any)[i]);
               return out;
             }
           }
-          return Array.from(obj);
+          return _drainIterable(obj, limit);
         };
+        // Generic iterable drain bounded to `limit` steps. Replaces the
+        // unbounded `Array.from(obj)` so a lazy generator is stepped only as
+        // many times as the pattern requires (#1592). Preserves throw
+        // propagation from a throwing `@@iterator`/`.next()`/`.value` getter
+        // (#1150/#1454) by walking the protocol manually.
+        const _drainIterable = (obj: any, limit: number): any[] => {
+          if (!(limit < Infinity)) return Array.from(obj);
+          const it = (obj as any)[Symbol.iterator]();
+          const out: any[] = [];
+          let done = false;
+          while (out.length < limit) {
+            const result = it.next();
+            if (result == null || result.done) {
+              done = true;
+              break;
+            }
+            out.push(result.value);
+          }
+          // §13.3.3.6: a rest-less pattern that stopped at the bound while the
+          // iterator is still yielding performs IteratorClose.
+          if (!done && typeof it.return === "function") {
+            try {
+              it.return();
+            } catch {
+              /* IteratorClose swallows the inner completion's return() throw here. */
+            }
+          }
+          return out;
+        };
+        if (name === "__array_from_iter_n")
+          // #1592: n < 0 (sentinel -1) → unbounded, byte-identical to
+          // __array_from_iter (rest patterns want the full remainder). n >= 0 →
+          // step the iterator at most n times (rest-less pattern, §8.5.3).
+          return (obj: any, n: number) => _arrayFromIter(obj, n < 0 ? Infinity : n >>> 0);
+        return (obj: any) => _arrayFromIter(obj, Infinity);
       }
       if (name === "__extern_slice")
         return (arr: any, start: number) => {

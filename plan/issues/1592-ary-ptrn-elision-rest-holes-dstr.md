@@ -1,11 +1,11 @@
 ---
 id: 1592
 title: "Array pattern elision holes and rest-array in destructuring consume wrong iterator step (~305 fails)"
-status: blocked
+status: done
 created: 2026-05-24
 updated: 2026-05-27
-blocked_on: 1555
-duplicate_of: 1555
+completed: 2026-05-27
+related: 1555
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -332,3 +332,45 @@ test/language/expressions/assignment/dstr/array-elision-*.js
   `language/statements/function`; `language/expressions/async-generator`;
   full `tests/equivalence.test.ts`; any `issue-1158`/`issue-1159`/`iter-close`
   equivalence tests to confirm no IteratorClose regression.
+
+## Implementation + Test Results (2026-05-27, dev)
+
+Implemented the bounded-helper plan above.
+
+**Runtime (`src/runtime.ts`)**: refactored `__array_from_iter` into a shared
+`_arrayFromIter(obj, limit)` + a generic `_drainIterable(obj, limit)`; added
+the `__array_from_iter_n` import. `n < 0` (-1 sentinel) → `limit = Infinity`,
+byte-identical to the legacy drain (rest patterns). `n >= 0` → consume at most
+`n` steps. Refinement vs. the original spec: per ECMA-262 §13.3.3.6 a rest-less
+ArrayBindingPattern performs IteratorClose when `[[Done]]` is false after the
+last element — so stopping at a finite bound while the iterator is still
+yielding now sets `cappedOut` and calls `iterator.return()` (matches V8). The
+`Infinity`/rest path is unchanged (close still governed by natural `done` /
+`MAX_ITER`).
+
+**Codegen**: added `patternIteratorStepCount(elements)` in
+`destructuring-params.ts` (elisions count as one step; a rest/spread → -1).
+Wired the two materialization sites — `destructureParamArray` param/decl
+fallback and `assignment.ts` array-assignment — to call `__array_from_iter_n`
+with the per-pattern step count. `__array_from_iter_n` matches the existing
+`__array_` allowlist prefix, so no allowlist-budget change.
+
+**Validated**:
+- `tests/issue-1592.test.ts` — 7/7 (param `[a,,b]` from generator; param
+  `[...[,]]=g()` full drain; decl/for-of elision value-correctness; rest full
+  remainder; assignment `[a,,b]=g()`; plain-array fast path).
+- `tests/issue-1219.test.ts` — IteratorClose suite green; updated the stale
+  "finite iterator does NOT close" assertion to the spec/V8 behavior
+  (rest-less `[a,b]` over a still-yielding iterator closes once, 2 `next()`
+  calls — the old expectation depended on the over-consumption bug #1592 fixes).
+- No regressions across issue-1158/1432/1450, array-rest/basic/for-of/class/
+  fn-param destructuring, generator-method-destructuring, iterators, 862, 1372,
+  1128, allowlist-budget. (Three sibling files fail to *load* on an unrelated
+  pre-existing `./helpers.js` import path — identical on origin/main.)
+- `tsc --noEmit` clean.
+
+**Residual (→ #1555)**: `const`-declaration over a lazy generator still
+materializes eagerly for the side-effect-step-count sub-case (value binding is
+correct; observable step count over-consumes). That is the lazy-default
+interleaving the plan explicitly left to the #1555 streaming rewrite. Kept
+`related: 1555`.

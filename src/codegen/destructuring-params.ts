@@ -64,6 +64,24 @@ function isPatternEmptyOnly(pattern: ts.ArrayBindingPattern): boolean {
 }
 
 /**
+ * Iterator steps an array binding/assignment pattern consumes (§8.5.3).
+ * Each element — INCLUDING elision holes (OmittedExpression) — costs one
+ * IteratorStep. A rest element drains the remainder → unbounded → -1.
+ * Binding patterns mark rest via `BindingElement.dotDotDotToken`; assignment
+ * patterns use `SpreadElement`. Used to bound `__array_from_iter_n` so a
+ * rest-less pattern steps a lazy generator exactly `elements.length` times
+ * instead of draining it (#1592).
+ */
+export function patternIteratorStepCount(elements: ReadonlyArray<ts.ArrayBindingElement | ts.Expression>): number {
+  for (const el of elements) {
+    if (el && (ts.isSpreadElement(el) || (ts.isBindingElement(el) && !!el.dotDotDotToken))) {
+      return -1;
+    }
+  }
+  return elements.length;
+}
+
+/**
  * Destructuring mode for the param-destructure helpers (#1553a).
  *
  * - `"param"` (default): function-parameter destructuring; emits no TDZ flags.
@@ -904,11 +922,19 @@ export function destructureParamArray(
         [{ kind: "externref" }],
       );
       flushLateImportShifts(ctx, fctx);
-      // __array_from_iter materializes iterables (generators, sets, custom @@iterator)
-      // via Array.from so __extern_length / __extern_get_idx operate on a real array.
+      // __array_from_iter_n materializes iterables (generators, sets, custom @@iterator)
+      // so __extern_length / __extern_get_idx operate on a real array. Bounded to the
+      // pattern's iterator-step count (#1592): a rest-less pattern steps a lazy generator
+      // exactly N times instead of draining it; a rest pattern passes -1 (unbounded).
       // Throws from iterator .next() propagate (spec-compliant for throwing iterators, #1150).
-      const fbIterFn = ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }]);
+      const fbIterFn = ensureLateImport(
+        ctx,
+        "__array_from_iter_n",
+        [{ kind: "externref" }, { kind: "f64" }],
+        [{ kind: "externref" }],
+      );
       flushLateImportShifts(ctx, fctx);
+      const fbIterStepCount = patternIteratorStepCount(pattern.elements);
 
       // Else: try each other known vec type and convert element-by-element
       const convertInstrs: Instr[] = [];
@@ -1004,8 +1030,9 @@ export function destructureParamArray(
         const fbIdxTmp = allocLocal(fctx, `__dparam_fb_idx_${fctx.locals.length}`, { kind: "i32" });
 
         const fallbackInstrs: Instr[] = [
-          // materialized = __array_from_iter(param) — throws from iterator .next() propagate
+          // materialized = __array_from_iter_n(param, stepCount) — throws from .next() propagate
           { op: "local.get", index: paramIdx } as Instr,
+          { op: "f64.const", value: fbIterStepCount } as Instr,
           { op: "call", funcIdx: fbIterFn } as Instr,
           { op: "local.set", index: fbMatTmp } as Instr,
           // len = i32(__extern_length(materialized))

@@ -24,7 +24,7 @@ import {
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
-import { buildDestructureNullThrow } from "../destructuring-params.js";
+import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { emitNullGuardedStructGet, isProvablyNonNull, isSafeBoundsEliminated } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
@@ -1339,10 +1339,19 @@ function compileExternrefArrayDestructuringAssignment(
   // first — it invokes @@iterator + .next() and propagates throws.
   // Plain arrays with the default @@iterator take the fast path.
   if (resultType.kind === "externref" && target.elements.length > 0) {
-    const matIterIdx = ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }]);
+    // #1592: bound materialization to the pattern's iterator-step count so a
+    // rest-less assignment pattern (`[a,,b] = gen()`) steps a lazy generator
+    // exactly N times instead of draining it; a rest pattern passes -1 (unbounded).
+    const matIterIdx = ensureLateImport(
+      ctx,
+      "__array_from_iter_n",
+      [{ kind: "externref" }, { kind: "f64" }],
+      [{ kind: "externref" }],
+    );
     flushLateImportShifts(ctx, fctx);
     if (matIterIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: tmpLocal });
+      fctx.body.push({ op: "f64.const", value: patternIteratorStepCount(target.elements) });
       fctx.body.push({ op: "call", funcIdx: matIterIdx });
       fctx.body.push({ op: "local.set", index: tmpLocal });
     }
