@@ -118,9 +118,11 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
       if (asyncIter) return asyncIter.call(obj);
       return obj[Symbol.iterator]();
     },
-    __iterator_next: (iter: any) => iter.next(),
-    __iterator_done: (result: any) => (result.done ? 1 : 0),
-    __iterator_value: (result: any) => result.value,
+    // #1620: __iterator_next returns a multi-value [i32 done, externref value].
+    __iterator_next: (iter: any): [number, any] => {
+      const r = iter.next();
+      return [r.done ? 1 : 0, r.value];
+    },
     __iterator_return: (iter: any) => {
       if (iter && typeof iter.return === "function") iter.return();
     },

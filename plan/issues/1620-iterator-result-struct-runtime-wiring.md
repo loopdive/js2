@@ -1,9 +1,10 @@
 ---
 id: 1620
 title: "$IteratorResult struct: eliminate __iterator_done/__iterator_value host imports (runtime wiring gap)"
-status: ready
+status: done
 created: 2026-05-24
 updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: medium

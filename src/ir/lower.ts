@@ -1389,24 +1389,18 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         out.push({ op: "call", funcIdx });
         return;
       }
-      case "iter.next": {
-        const funcIdx = resolver.resolveFunc({ kind: "func", name: "__iterator_next" });
-        emitValue(instr.iter, out);
-        out.push({ op: "call", funcIdx });
-        return;
-      }
-      case "iter.done": {
-        const funcIdx = resolver.resolveFunc({ kind: "func", name: "__iterator_done" });
-        emitValue(instr.resultObj, out);
-        out.push({ op: "call", funcIdx });
-        return;
-      }
-      case "iter.value": {
-        const funcIdx = resolver.resolveFunc({ kind: "func", name: "__iterator_value" });
-        emitValue(instr.resultObj, out);
-        out.push({ op: "call", funcIdx });
-        return;
-      }
+      case "iter.next":
+      case "iter.done":
+      case "iter.value":
+        // #1620: __iterator_next now returns a multi-value (i32 done, externref
+        // value), so the standalone single-result iter.next/iter.done/iter.value
+        // instruction model no longer maps to a host import. The front-end emits
+        // only forof.iter (handled below), which consumes the multi-value result
+        // inline; these standalone forms are unused. If a future producer needs
+        // them, lower the pair together (as forof.iter does), not separately.
+        throw new Error(
+          `ir/lower: '${instr.kind}' is not supported — __iterator_next returns a multi-value result; use forof.iter (#1620)`,
+        );
       case "iter.return": {
         const funcIdx = resolver.resolveFunc({ kind: "func", name: "__iterator_return" });
         emitValue(instr.iter, out);
@@ -1419,8 +1413,6 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
         // `IrInstrForOfIter` in `nodes.ts`.
         const iteratorIdx = resolver.resolveFunc({ kind: "func", name: "__iterator" });
         const iteratorNextIdx = resolver.resolveFunc({ kind: "func", name: "__iterator_next" });
-        const iteratorDoneIdx = resolver.resolveFunc({ kind: "func", name: "__iterator_done" });
-        const iteratorValueIdx = resolver.resolveFunc({ kind: "func", name: "__iterator_value" });
         const iteratorReturnIdx = resolver.resolveFunc({ kind: "func", name: "__iterator_return" });
 
         // iter = __iterator(iterable)
@@ -1430,17 +1422,14 @@ export function lowerIrFunctionToWasm(func: IrFunction, resolver: IrLowerResolve
 
         // Build loop body Wasm ops.
         const loopBody: Instr[] = [];
-        // result = iter.next(iter)
+        // (done, value) = __iterator_next(iter) — multi-value result (#1620).
+        // Stack after the call: done(i32) below, value(externref) on top. Pop
+        // value into the element slot, leaving done(i32) on top for br_if.
         loopBody.push({ op: "local.get", index: slotWasmIdx(instr.iterSlot) });
         loopBody.push({ op: "call", funcIdx: iteratorNextIdx });
-        loopBody.push({ op: "local.tee", index: slotWasmIdx(instr.resultSlot) });
-        // if (iter.done(result)) br 1 (exit)
-        loopBody.push({ op: "call", funcIdx: iteratorDoneIdx });
-        loopBody.push({ op: "br_if", depth: 1 });
-        // element = iter.value(result)
-        loopBody.push({ op: "local.get", index: slotWasmIdx(instr.resultSlot) });
-        loopBody.push({ op: "call", funcIdx: iteratorValueIdx });
         loopBody.push({ op: "local.set", index: slotWasmIdx(instr.elementSlot) });
+        // if (done) br 1 (exit)
+        loopBody.push({ op: "br_if", depth: 1 });
 
         // Body instrs (same materialisation pattern as forof.vec).
         for (const bodyInstr of instr.body) {
