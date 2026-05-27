@@ -1,5 +1,5 @@
 ---
-id: 1680
+id: 1687
 title: "spec gap: eager generator model can't thread .next(arg) / .throw() / .return() into yield (44/63 yield fails)"
 status: ready
 created: 2026-05-27

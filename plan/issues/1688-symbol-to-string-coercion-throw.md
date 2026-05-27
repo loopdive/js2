@@ -1,5 +1,5 @@
 ---
-id: 1658
+id: 1688
 title: "Symbol→string implicit coercion must throw TypeError (value-representation gap, split from #1637)"
 status: wont-fix
 created: 2026-05-27

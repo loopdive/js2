@@ -1,5 +1,5 @@
 ---
-id: 1659
+id: 1686
 title: "built-ins/Set residual fails — 63 non-passing after set-like fix (split from #1646)"
 status: done
 created: 2026-05-27

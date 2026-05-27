@@ -1,9 +1,10 @@
 ---
 id: 1312
 title: "Async recursive function (next() compose pattern) — Unhandled rejection"
-status: ready
+status: done
+completed: 2026-05-27
 created: 2026-05-07
-updated: 2026-05-07
+updated: 2026-05-27
 priority: medium
 feasibility: hard
 reasoning_effort: max
@@ -127,3 +128,32 @@ Possible causes:
 This bug is in the closure-capture / async-recursion interaction.
 The architect's `isAsyncCallExpression` fix doesn't touch closure
 struct creation or ref-cell handling. Separate root cause.
+
+## Resolution (2026-05-27, investigate task #123)
+
+**Already fixed** by commit `f4600d904` ("fix(#1312): pre-register nested fn
+so self-reference resolves to its own closure"), on `origin/main`.
+
+Root cause was NOT a missing async-model rewrite — it was nested function
+declarations being registered in `funcMap` *after* their body finished
+compiling. A self-reference inside the nested fn's own body (e.g. `next`
+inside `next()`, or `next` passed to middleware that re-invokes it) missed
+the `funcMap` lookup and fell through to the `ref.null.extern` fallback, so
+the compiled wasm did `call(ref.null extern)` and null-derefed. The reported
+"Unhandled rejection" was the async wrapper surfacing that null-deref. The
+fix pre-registers the `funcMap` + `nestedFuncCaptures` entries before
+compiling the body, and sources self-reference captures from the lifted fn's
+own leading params (`src/codegen/statements/nested-declarations.ts` +
+`src/codegen/closures.ts`).
+
+Confirmed on current main (no source change needed in this task):
+
+- All four staged repros from the investigation steps PASS — simple async
+  recursion (`f(3) → 6`), async recursion via parameter (`→ 6`), inner async
+  self-recursion with mutable ref-cell capture (`→ "[0][1]end"`), and the
+  **headline compose reproducer** returns `"[A][B]end"` (verified in both
+  default and `fastMode`).
+- `tests/issue-1312.test.ts` (already on main, 5 tests) covers every
+  acceptance-criteria case and is **green** (5/5).
+
+All acceptance criteria are satisfied. No further code change required.
