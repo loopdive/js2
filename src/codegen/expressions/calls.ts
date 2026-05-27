@@ -6804,25 +6804,58 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       return argType;
     }
 
-    // BigInt(x) — ToBigInt coercion. (#1644 Slice A) The result is brand-bigint
-    // so it boxes as a JS bigint at the externref frontier. Full string-parse /
-    // RangeError semantics are Slice B; here we keep the existing numeric
-    // truncation but tag the result type.
+    // BigInt(x) — §21.2.1.1 constructor. (#1644 Slice A+B) The result is
+    // brand-bigint so it boxes as a JS bigint at the externref frontier.
+    //
+    // - i32 / native-i64: already an integer Number representation, no
+    //   RangeError possible — extend/identity directly (avoids a host call).
+    // - f64: may be a non-safe-integer / NaN / ±Infinity → must throw
+    //   RangeError (NumberToBigInt). Box to externref, then __bigint_ctor.
+    // - string / object / boolean (externref): StringToBigInt (SyntaxError on
+    //   malformed syntax), ToPrimitive on objects, boolean → 0n/1n →
+    //   __bigint_ctor.
     if (funcName === "BigInt" && expr.arguments.length >= 1) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
-      if (argType?.kind === "f64") {
-        fctx.body.push({ op: "i64.trunc_sat_f64_s" });
+      // Compile-time numeric literal: fold to an i64.const when it is a safe
+      // integer (NumberToBigInt with no RangeError), avoiding a host call.
+      // A negative literal parses as a unary-minus on a NumericLiteral.
+      const litArg = expr.arguments[0]!;
+      let litNum: number | undefined;
+      if (ts.isNumericLiteral(litArg)) {
+        litNum = Number(litArg.text);
+      } else if (
+        ts.isPrefixUnaryExpression(litArg) &&
+        litArg.operator === ts.SyntaxKind.MinusToken &&
+        ts.isNumericLiteral(litArg.operand)
+      ) {
+        litNum = -Number(litArg.operand.text);
+      }
+      if (litNum !== undefined && Number.isSafeInteger(litNum)) {
+        fctx.body.push({ op: "i64.const", value: BigInt(litNum) } as Instr);
         return { kind: "i64", bigint: true };
       }
+
+      const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
       if (argType?.kind === "i32") {
         fctx.body.push({ op: "i64.extend_i32_s" });
         return { kind: "i64", bigint: true };
       }
-      // Already i64 — tag as bigint-branded.
+      // Already i64 — tag as bigint-branded (native integer, no RangeError).
       if (argType?.kind === "i64") {
         return { kind: "i64", bigint: true };
       }
-      return argType;
+      addUnionImports(ctx);
+      // Coerce the argument to externref so the §21.2.1.1 host helper can run
+      // ToPrimitive + NumberToBigInt / StringToBigInt with the correct
+      // RangeError / SyntaxError / TypeError semantics.
+      if (argType && argType.kind !== "externref") {
+        coerceType(ctx, fctx, argType, { kind: "externref" }, "default");
+      }
+      const ctorIdx = ctx.funcMap.get("__bigint_ctor");
+      if (ctorIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: ctorIdx });
+        return { kind: "i64", bigint: true };
+      }
+      return { kind: "i64", bigint: true };
     }
 
     // Number() with 0 args → 0

@@ -72,6 +72,19 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
       if (typeof v === "symbol") throw new TypeError("Cannot convert a Symbol value to a BigInt");
       return BigInt(v);
     },
+    // (#1644 Slice B) __bigint_ctor: §21.2.1.1 BigInt(value). Number →
+    // NumberToBigInt (RangeError unless safe integer); string → StringToBigInt
+    // (SyntaxError on malformed); Symbol → TypeError; bigint/boolean identity.
+    __bigint_ctor: (v: any): bigint => {
+      if (typeof v === "number") {
+        if (!Number.isInteger(v)) {
+          throw new RangeError(`The number ${v} cannot be converted to a BigInt because it is not an integer`);
+        }
+        return BigInt(v);
+      }
+      if (typeof v === "symbol") throw new TypeError("Cannot convert a Symbol value to a BigInt");
+      return BigInt(v);
+    },
     __make_callback: () => null,
     __extern_get: (obj: any, key: any) => (obj == null ? undefined : obj[key]),
     __extern_set: (obj: any, key: any, val: any) => {

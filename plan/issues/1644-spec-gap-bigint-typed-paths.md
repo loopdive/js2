@@ -151,6 +151,57 @@ No code landed — a type-guard-only patch cannot satisfy the ≥75% acceptance
 bar and risks regressing native `type i64` code without the brand decision.
 Baseline recorded: 28/77 pass on b290fe96d.
 
+## Slice B implementation (2026-05-27, senior-developer)
+
+Implemented the spec `BigInt(value)` constructor (§21.2.1.1) on top of Slice A's
+brand plumbing (branched off `issue-1644-slice-a`). Before: a string arg fell
+through and returned the raw string; an f64 arg silently truncated instead of
+throwing. After: full ToPrimitive(number) → NumberToBigInt (RangeError) /
+ToBigInt → StringToBigInt (SyntaxError) semantics.
+
+**New host helper `__bigint_ctor(externref) → i64`** — distinct from Slice A's
+`__to_bigint` (§7.1.13 ToBigInt, which throws **TypeError** on a Number). The
+constructor must throw **RangeError** on a non-safe-integer Number, so it needs
+its own helper:
+- Number → `Number.isInteger` gate then `BigInt(n)`; NaN/±Infinity/non-integer
+  all fail the gate → RangeError (NumberToBigInt).
+- Symbol → TypeError. bigint/boolean → identity/0n/1n. string → `BigInt(s)`
+  (StringToBigInt parses hex/octal/binary/decimal; SyntaxError on malformed).
+- WasmGC-struct / proxy args run through `_toPrimitive`/`_hostToPrimitive`
+  ("number" hint) first (ToPrimitive step).
+
+Files (5):
+- `src/codegen/index.ts` — declare `__bigint_ctor` import + add to the
+  index-shift skip set.
+- `src/compiler/import-manifest.ts` — map `__bigint_ctor` to a `builtin` intent.
+- `src/runtime.ts` — `__bigint_ctor` body in the `builtin` dispatch.
+- `src/codegen/expressions/calls.ts` — `BigInt(x)` routes f64/string/object
+  through `__bigint_ctor`; **compile-time numeric-literal fold** to `i64.const`
+  for safe integers (incl. negative `-NumericLiteral`) avoids a host call;
+  i32/native-i64 still extend/identity directly (no RangeError possible).
+- `tests/equivalence/helpers.ts` — `__bigint_ctor` for the unit-test host.
+
+**Result:** `built-ins/BigInt` constructor tests **3/22 → 15/22** through the
+real runner. Slice B tests `tests/issue-1644-sliceb.test.ts` (6) + Slice A
+`tests/issue-1644.test.ts` (5) all pass; tsc clean.
+
+### Residual (still failing, out of Slice-B scope)
+- `is-a-constructor`, `proto`, `wrapper-object-ordinary-toprimitive` — need the
+  `BigInt` **extern wrapper class** dependency (shared with #1568, host-class
+  gap), not constructor semantics.
+- `constructor-coercion` — `Symbol.toPrimitive` on a WasmGC struct returning a
+  string: the struct's `Symbol.toPrimitive` is a Wasm closure the host can't
+  invoke (#1090 ToPrimitive-with-closure gap).
+- `constructor-from-decimal-string` / `constructor-integer` /
+  `constructor-trailing-leading-spaces` — fail only at the **negative** assert
+  (`BigInt("-10")`, `BigInt(-MAX_SAFE_INTEGER)`) **under the test262 harness**.
+  Verified the same comparison passes in isolation and in the equivalence
+  helper (`BigInt("-10") === -10n` → true in-Wasm), so this is the harness
+  `wrapTest`/scope-wrapping artifact tracked in #1318/#786, not a constructor
+  bug.
+
+Slices C (`asIntN`/`asUintN`) and D (`toString(radix)`) remain open.
+
 ## Architect Decision — i64-bigint-brand ValType representation (RATIFIED 2026-05-27)
 
 This section answers the open representation question the developer flagged
