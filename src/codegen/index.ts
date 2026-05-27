@@ -824,6 +824,12 @@ export function generateModule(
     // scan adding `eval` / `parseInt`) do not shift defined-func entries.
     emitDeferredWasiHelpers(ctx);
 
+    // (#1620) Emit the __make_iterator_result helper + export after all imports
+    // are registered, so the captured funcIdx and the recorded export index stay
+    // correct — late addImport calls do not shift exports for arbitrary defined
+    // functions. No-op unless a for-of iterator path registered the struct type.
+    emitIteratorResultHelper(ctx);
+
     // Emit wrapper valueOf functions (after all imports registered, before user funcs)
     emitWrapperValueOfFunctions(ctx);
 
@@ -1089,6 +1095,11 @@ export function generateModule(
     // These allow JS host imports to read WasmGC struct fields that are
     // otherwise opaque to JS (V8 returns undefined for direct property access).
     emitStructFieldGetters(ctx);
+
+    // #1620 — emit the __make_iterator_result helper + export LATE, after all
+    // imports are registered, so its captured funcIdx + export index are final
+    // (no-op unless a for-of iterator path registered the struct type).
+    emitIteratorResultHelper(ctx);
 
     // Emit __vec_get / __vec_len exports for runtime iterator fallback on WasmGC arrays
     emitVecAccessExports(ctx);
@@ -3238,6 +3249,9 @@ export function generateMultiModule(
     // generateModule path — #1308 surfaced that multi-source projects
     // were missing these export emits).
     emitStructFieldGetters(ctx);
+
+    // #1620 — emit __make_iterator_result late (see generateModule path).
+    emitIteratorResultHelper(ctx);
 
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
@@ -6737,30 +6751,48 @@ function collectIteratorImports(ctx: CodegenContext, sourceFile: ts.SourceFile):
   }
 }
 
-/** Register the iterator protocol host imports if not already registered */
+/** Register the iterator protocol host imports if not already registered.
+ *
+ * #1620 — `__iterator_next` still returns an externref, but it now wraps a
+ * Wasm-native `$__IteratorResult` struct constructed by the exported helper
+ * `__make_iterator_result(i32 done, externref value)`. Per-step done/value
+ * extraction is pure-Wasm `struct.get`, eliminating the `__iterator_done` /
+ * `__iterator_value` host imports (net 3 host calls per step → 1).
+ */
 export function addIteratorImports(ctx: CodegenContext): void {
   // Guard: only register once
   if (ctx.funcMap.has("__iterator")) return;
+
+  // Register the canonical $__IteratorResult struct type and remember its idx
+  // on ctx so loops.ts and other call sites can resolve it.
+  let iterResultTypeIdx = ctx.iteratorResultTypeIdx;
+  if (iterResultTypeIdx === undefined) {
+    iterResultTypeIdx = ctx.mod.types.length;
+    ctx.mod.types.push({
+      kind: "struct",
+      name: "__IteratorResult",
+      fields: [
+        { name: "done", type: { kind: "i32" }, mutable: false },
+        { name: "value", type: { kind: "externref" }, mutable: false },
+      ],
+    } as StructTypeDef);
+    ctx.iteratorResultTypeIdx = iterResultTypeIdx;
+    ctx.structMap.set("__IteratorResult", iterResultTypeIdx);
+    ctx.structFields.set("__IteratorResult", [
+      { name: "done", type: { kind: "i32" }, mutable: false },
+      { name: "value", type: { kind: "externref" }, mutable: false },
+    ]);
+  }
 
   // __iterator: (externref) → externref — calls obj[Symbol.iterator]()
   const extToExt = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
   addImport(ctx, "env", "__iterator", { kind: "func", typeIdx: extToExt });
 
-  // __iterator_next: (externref) → externref — calls iter.next()
+  // __iterator_next: (externref) → externref — calls iter.next(). The result
+  // wraps a $__IteratorResult struct (constructed by the JS bridge via the
+  // exported `__make_iterator_result`); call sites recover the struct via
+  // any.convert_extern + ref.cast and read .done/.value via struct.get.
   addImport(ctx, "env", "__iterator_next", {
-    kind: "func",
-    typeIdx: extToExt,
-  });
-
-  // __iterator_done: (externref) → i32 — returns result.done ? 1 : 0
-  const extToI32 = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);
-  addImport(ctx, "env", "__iterator_done", {
-    kind: "func",
-    typeIdx: extToI32,
-  });
-
-  // __iterator_value: (externref) → externref — returns result.value
-  addImport(ctx, "env", "__iterator_value", {
     kind: "func",
     typeIdx: extToExt,
   });
@@ -6777,6 +6809,60 @@ export function addIteratorImports(ctx: CodegenContext): void {
   addImport(ctx, "env", "__iterator_rest", {
     kind: "func",
     typeIdx: extToExt,
+  });
+
+  // NOTE: the `__make_iterator_result` Wasm helper + its export are emitted
+  // LATE via `emitIteratorResultHelper` (after ALL imports are registered).
+  // Emitting the defined function here captures a funcIdx that later
+  // `addImport` calls (e.g. __register_prototype, __get_undefined) shift
+  // WITHOUT updating the export's recorded index — only `addUnionImports`
+  // fixes exports, so other import paths leave a stale export pointing at the
+  // wrong function, and the JS bridge's `__make_iterator_result` returns the
+  // wrong value (#1620).
+}
+
+/**
+ * Emit the `__make_iterator_result(i32 done, externref value)` Wasm helper and
+ * its export. MUST run after all imports are registered (mirrors
+ * `emitToUint32Helper` / `emitDeferredWasiHelpers`) so the captured funcIdx and
+ * the export index stay correct — late `addImport` calls do not shift exports
+ * for arbitrary defined functions (#1620). No-op unless iterator imports were
+ * registered. Referenced only by the JS host (by export name), never by a Wasm
+ * `call`, so late emission is safe.
+ *
+ * The helper builds the `$__IteratorResult` struct and externalizes it via
+ * `extern.convert_any` so it survives the round-trip through the JS
+ * `__iterator_next` bridge (which is typed `externref → externref`). The for-of
+ * read recovers the struct with `any.convert_extern` + `ref.cast`.
+ */
+export function emitIteratorResultHelper(ctx: CodegenContext): void {
+  const iterResultTypeIdx = ctx.iteratorResultTypeIdx;
+  if (iterResultTypeIdx === undefined) return; // no for-of iterator path in this module
+  if (ctx.funcMap.has("__make_iterator_result")) return; // already emitted
+
+  const makeTypeIdx = addFuncType(
+    ctx,
+    [{ kind: "i32" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    "$__make_iterator_result_type",
+  );
+  const makeFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.mod.functions.push({
+    name: "__make_iterator_result",
+    typeIdx: makeTypeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 } as Instr,
+      { op: "local.get", index: 1 } as Instr,
+      { op: "struct.new", typeIdx: iterResultTypeIdx } as Instr,
+      { op: "extern.convert_any" } as Instr,
+    ],
+    exported: true,
+  } as WasmFunction);
+  ctx.funcMap.set("__make_iterator_result", makeFuncIdx);
+  ctx.mod.exports.push({
+    name: "__make_iterator_result",
+    desc: { kind: "func", index: makeFuncIdx },
   });
 }
 

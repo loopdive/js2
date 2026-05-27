@@ -568,6 +568,9 @@ export interface CodegenContext {
   templateVecTypeIdx: number;
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
+  /** Type index for the WasmGC `$__IteratorResult` struct (#1620). Set by
+   *  addIteratorImports; consumed by for-of struct reads in loops.ts. */
+  iteratorResultTypeIdx?: number;
   /** Extra properties for empty object variables */
   widenedTypeProperties: Map<string, { name: string; type: ValType }[]>;
   /** Map from widened variable name to its registered struct name */

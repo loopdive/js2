@@ -11,6 +11,12 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  // #1620 — wire the wasm exports back into the runtime so __iterator_next can
+  // reach the exported __make_iterator_result helper and build $__IteratorResult
+  // structs. Without this the for-of struct read traps (host forgot setExports).
+  if (typeof (imports as { setExports?: (e: WebAssembly.Exports) => void }).setExports === "function") {
+    (imports as { setExports: (e: WebAssembly.Exports) => void }).setExports(instance.exports);
+  }
   return (instance.exports as any)[fn](...args);
 }
 
@@ -87,8 +93,12 @@ describe("iterators", () => {
       expect(result.success).toBe(true);
       expect(result.wat).toContain("__iterator");
       expect(result.wat).toContain("__iterator_next");
-      expect(result.wat).toContain("__iterator_done");
-      expect(result.wat).toContain("__iterator_value");
+      // #1620 — done/value are now read from the $__IteratorResult struct via
+      // struct.get; the __iterator_done / __iterator_value host imports are gone.
+      expect(result.wat).toContain("__make_iterator_result");
+      expect(result.wat).toContain("__IteratorResult");
+      expect(result.wat).not.toContain("__iterator_done");
+      expect(result.wat).not.toContain("__iterator_value");
     });
 
     it("does NOT generate iterator imports for array for...of", () => {
