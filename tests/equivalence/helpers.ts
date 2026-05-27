@@ -63,6 +63,15 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     __unbox_boolean: (v: unknown) => (v ? 1 : 0),
     __box_number: (v: number) => v,
     __box_boolean: (v: number) => Boolean(v),
+    // (#1644) bigint boxing: JS-BigInt-integration delivers the i64 as a JS
+    // bigint already, so box is identity; __to_bigint is §7.1.13 ToBigInt.
+    __box_bigint: (v: bigint) => v,
+    __to_bigint: (v: any): bigint => {
+      if (typeof v === "bigint") return v;
+      if (typeof v === "number") throw new TypeError("Cannot convert a Number to a BigInt");
+      if (typeof v === "symbol") throw new TypeError("Cannot convert a Symbol value to a BigInt");
+      return BigInt(v);
+    },
     __make_callback: () => null,
     __extern_get: (obj: any, key: any) => (obj == null ? undefined : obj[key]),
     __extern_set: (obj: any, key: any, val: any) => {

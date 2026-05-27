@@ -708,7 +708,7 @@ function compileExpressionInner(ctx: CodegenContext, fctx: FunctionContext, expr
     const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
     const value = BigInt(text);
     fctx.body.push({ op: "i64.const", value });
-    return { kind: "i64" };
+    return { kind: "i64", bigint: true };
   }
 
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {

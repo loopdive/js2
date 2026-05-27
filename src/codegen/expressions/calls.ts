@@ -6804,18 +6804,24 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       return argType;
     }
 
-    // BigInt(x) — ToBigInt coercion
+    // BigInt(x) — ToBigInt coercion. (#1644 Slice A) The result is brand-bigint
+    // so it boxes as a JS bigint at the externref frontier. Full string-parse /
+    // RangeError semantics are Slice B; here we keep the existing numeric
+    // truncation but tag the result type.
     if (funcName === "BigInt" && expr.arguments.length >= 1) {
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
       if (argType?.kind === "f64") {
         fctx.body.push({ op: "i64.trunc_sat_f64_s" });
-        return { kind: "i64" };
+        return { kind: "i64", bigint: true };
       }
       if (argType?.kind === "i32") {
         fctx.body.push({ op: "i64.extend_i32_s" });
-        return { kind: "i64" };
+        return { kind: "i64", bigint: true };
       }
-      // Already i64 — no-op
+      // Already i64 — tag as bigint-branded.
+      if (argType?.kind === "i64") {
+        return { kind: "i64", bigint: true };
+      }
       return argType;
     }
 
