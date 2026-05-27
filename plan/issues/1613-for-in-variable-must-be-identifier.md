@@ -1,9 +1,10 @@
 ---
 id: 1613
 title: "codegen: for-in head with binding pattern / non-identifier rejected ('for-in variable must be an identifier')"
-status: ready
+status: done
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: low
 feasibility: medium
 task_type: bugfix
@@ -48,3 +49,33 @@ Extend the head handling to cover these LHS forms.
 
 - for-in over the declaration/pattern head forms compiles.
 - >=7 of the 10 tests move off `compile_error`.
+
+## Implementation (2026-05-27)
+
+`compileForInStatement` (`src/codegen/statements/loops.ts`) previously accepted
+only a bare identifier or single-identifier var/let declaration and called
+`reportError` on every other head form. Extended to handle the full
+ForBinding/LeftHandSideExpression grammar:
+
+1. **Member-expression target** (`for (x.y in obj)` / `for (x[k] in obj)`):
+   the enumerated key is materialised in a temp externref local, then written
+   to the reference each iteration via a new `emitForInMemberTargetWrite`
+   helper (`__extern_set(receiver, key, value)`, mirroring the for-of
+   member-target path at loops.ts ~1985).
+2. **Binding-pattern head** (`for (var/let [a] in obj)` /
+   `for (var {a} in obj)`): the key (a string) is destructured each iteration
+   by reusing `compileExternrefArrayDestructuringDecl` /
+   `compileExternrefObjectDestructuringDecl`. Array patterns iterate the
+   string's code units (so `for (var [x, x] in {ab:null})` ends with `x === "b"`).
+
+Early-error parity (`src/compiler/validation.ts`): lexical for-in heads with
+duplicate bound names (`for (let [x, x] in {})` / `for (const [x, x] in {})`)
+now raise a parse-phase SyntaxError, mirroring the existing for-of check.
+
+## Test Results
+
+- `tests/issue-1613.test.ts` — 7/7 pass (member target value, string-key
+  array-destructure last-wins, lexical pattern iteration, both dup-bound-names
+  SyntaxError cases, plain-identifier no-regression).
+- The 2 failures in `tests/equivalence/new-non-constructor.test.ts` are
+  pre-existing on main (#432 stack-underflow), unrelated to this change.

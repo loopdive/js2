@@ -1,9 +1,10 @@
 ---
 id: 1328
 title: "RegExp host-mode: Symbol.match / matchAll protocol spec compliance (101 fails)"
-status: ready
+status: done
 created: 2026-05-08
-updated: 2026-05-08
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -69,7 +70,42 @@ Trace the codegen path for `obj[Symbol.match](s)` via `obj` being a host RegExp.
 - 80+ of the 101 fails flip to pass
 - Remaining ones documented with their specific spec gap
 
+## Resolution (2026-05-27)
+
+The documented headline repro (`/./y` with string `lastIndex='1.9'` →
+`r[Symbol.match]('abc')`) already **passes on main** via the host-mode helper —
+the basic Symbol.match dispatch + ToLength coercion work. The remaining failures
+were a different mechanism.
+
+**Root cause fixed**: `Array.isArray(result)` on a RegExp match result wrongly
+returned `false`. The match result arrives in Wasm as an `externref`, and
+`Array.isArray` was resolved purely from the *compile-time* TypeScript type
+(`resolveWasmType` → `externref`, which is not a `ref` to a vec struct), so it
+emitted a constant `false`. This broke the `assert(Array.isArray(result))` line
+in the whole `builtin-success-return-val*` / `exec-return-type-valid` cluster
+(§22.2.7.2 result-array shape).
+
+**Fix**:
+- `src/codegen/expressions/calls.ts` — `Array.isArray(x)`: when the argument's
+  wasm type is `externref` (undecidable statically), route through a new
+  `__extern_is_array` host import instead of emitting `false`. Falls back to
+  `false` if the import is unavailable (standalone).
+- `src/runtime.ts` — register `__extern_is_array` → `(v) => Array.isArray(v) ? 1 : 0`.
+- `tests/issue-1328.test.ts` — unit coverage (match-result is array, real wasm
+  array still true, non-array externref false, matchAll user-dispatch).
+
+This is a general `Array.isArray` correctness fix for any host-returned
+externref array, so it also helps RegExp `exec`/`split` result shapes and any
+test asserting `Array.isArray` on a host value.
+
+**Remaining (not in this PR)** — distinct mechanisms, lower-volume, can be
+follow-ups: custom-matcher dispatch on plain objects (`cstm-matcher-*`,
+"is not a function"), `@@matchAll` SpeciesConstructor protocol
+(`species-constructor*`), and `name` property *descriptor attributes*
+(value already correct). CI conformance will show the net flip.
+
 ## Related
 
 - Parent #1002 (closed-as-scoped)
 - Sibling: #1329 (Symbol.replace), #1330 (Symbol.search), #1331 (Symbol.split)
+- Shares the externref-result-shape theme with #1352 (exec result equality)

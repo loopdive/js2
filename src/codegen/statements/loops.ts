@@ -1,14 +1,16 @@
+import { isStringType } from "../../checker/type-mapper.js";
+import type { Instr, ValType } from "../../ir/types.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Loop statement lowering: while, for, do-while, for-of, for-in.
  */
-import { ts, forEachChild } from "../../ts-api.js";
-import { isStringType } from "../../checker/type-mapper.js";
-import type { Instr, ValType } from "../../ir/types.js";
+import { forEachChild, ts } from "../../ts-api.js";
+import { collectReferencedIdentifiers } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError, reportErrorNoNode } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { emitExternrefDestructureGuard } from "../destructuring-params.js";
 import {
   findUnresolvableInArrayPattern,
   findUnresolvableInObjectPattern,
@@ -16,7 +18,6 @@ import {
 } from "../expressions/assignment.js";
 import { emitCoercedLocalSet } from "../expressions/helpers.js";
 import { shiftLateImportIndices } from "../expressions/late-imports.js";
-import { emitExternrefDestructureGuard } from "../destructuring-params.js";
 import {
   addIteratorImports,
   ensureI32Condition,
@@ -25,7 +26,6 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
-import { collectReferencedIdentifiers } from "../closures.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType } from "../registry/types.js";
 import {
@@ -589,7 +589,11 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   // earlier iterations keep their original cell. This implements the spec
   // semantics while letting non-capturing loops keep the fast single-local
   // path unchanged.
-  const perIterCells: { name: string; refCellTypeIdx: number; boxedLocal: number }[] = [];
+  const perIterCells: {
+    name: string;
+    refCellTypeIdx: number;
+    boxedLocal: number;
+  }[] = [];
   if (
     stmt.initializer &&
     ts.isVariableDeclarationList(stmt.initializer) &&
@@ -610,7 +614,9 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
       const oldType =
         oldLocalIdx < fctx.params.length
           ? fctx.params[oldLocalIdx]!.type
-          : (fctx.locals[oldLocalIdx - fctx.params.length]?.type ?? { kind: "f64" });
+          : (fctx.locals[oldLocalIdx - fctx.params.length]?.type ?? {
+              kind: "f64",
+            });
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, oldType);
       const boxedLocal = allocLocal(fctx, `__pi_box_${name}`, {
         kind: "ref_null",
@@ -677,7 +683,9 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
       const oldLocalIdx = fctx.localMap.get(name);
       if (oldLocalIdx === undefined) continue; // not a local — globals/imports
       if (oldLocalIdx < fctx.params.length) continue; // params get boxed by closure construction itself
-      const oldType = fctx.locals[oldLocalIdx - fctx.params.length]?.type ?? { kind: "f64" as const };
+      const oldType = fctx.locals[oldLocalIdx - fctx.params.length]?.type ?? {
+        kind: "f64" as const,
+      };
       // Only box value-typed locals (i32, f64, externref, ref_null) — ref-cell
       // boxing of arbitrary struct/array refs is handled by the closure-side
       // path which knows the underlying type.
@@ -710,7 +718,13 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
       fctx.localMap.set(name, boxedLocal);
       if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
       fctx.boxedCaptures.set(name, { refCellTypeIdx, valType: oldType });
-      preBoxedNames.push({ name, refCellTypeIdx, boxedLocal, valType: oldType, originalLocalIdx: oldLocalIdx });
+      preBoxedNames.push({
+        name,
+        refCellTypeIdx,
+        boxedLocal,
+        valType: oldType,
+        originalLocalIdx: oldLocalIdx,
+      });
     }
   }
 
@@ -851,7 +865,11 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   const freshCellInstrs: Instr[] = [];
   for (const cell of perIterCells) {
     freshCellInstrs.push({ op: "local.get", index: cell.boxedLocal });
-    freshCellInstrs.push({ op: "struct.get", typeIdx: cell.refCellTypeIdx, fieldIdx: 0 });
+    freshCellInstrs.push({
+      op: "struct.get",
+      typeIdx: cell.refCellTypeIdx,
+      fieldIdx: 0,
+    });
     freshCellInstrs.push({ op: "struct.new", typeIdx: cell.refCellTypeIdx });
     freshCellInstrs.push({ op: "local.set", index: cell.boxedLocal });
   }
@@ -898,7 +916,11 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
         else: [
           { op: "local.get", index: pb.boxedLocal } as Instr,
           { op: "ref.as_non_null" } as Instr,
-          { op: "struct.get", typeIdx: pb.refCellTypeIdx, fieldIdx: 0 } as Instr,
+          {
+            op: "struct.get",
+            typeIdx: pb.refCellTypeIdx,
+            fieldIdx: 0,
+          } as Instr,
           { op: "local.set", index: pb.originalLocalIdx } as Instr,
         ],
       } as Instr);
@@ -1112,7 +1134,10 @@ function compileForOfDestructuring(
                 [{ kind: "externref" }, { kind: "externref" }],
                 [{ kind: "externref" }],
               );
-              addImport(ctx, "env", "__extern_rest_object", { kind: "func", typeIdx: restObjType });
+              addImport(ctx, "env", "__extern_rest_object", {
+                kind: "func",
+                typeIdx: restObjType,
+              });
               shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
               restObjIdx = ctx.funcMap.get("__extern_rest_object");
             }
@@ -1273,7 +1298,10 @@ function compileForOfDestructuring(
             if (sliceIdx === undefined) {
               const importsBefore = ctx.numImportFuncs;
               const sliceType = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
-              addImport(ctx, "env", "__extern_slice", { kind: "func", typeIdx: sliceType });
+              addImport(ctx, "env", "__extern_slice", {
+                kind: "func",
+                typeIdx: sliceType,
+              });
               shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
               sliceIdx = ctx.funcMap.get("__extern_slice");
             }
@@ -1294,7 +1322,11 @@ function compileForOfDestructuring(
           ) {
             const nestedLocal = allocLocal(fctx, `__forof_nested_${fctx.locals.length}`, fieldType);
             fctx.body.push({ op: "local.get", index: elemLocal });
-            fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i });
+            fctx.body.push({
+              op: "struct.get",
+              typeIdx: structTypeIdx,
+              fieldIdx: i,
+            });
             fctx.body.push({ op: "local.set", index: nestedLocal });
             compileForOfDestructuring(ctx, fctx, element.name, nestedLocal, fieldType, stmt);
             continue;
@@ -1307,7 +1339,11 @@ function compileForOfDestructuring(
           const localIdx = allocLocal(fctx, localName, bindingWasmType);
 
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: structTypeIdx,
+            fieldIdx: i,
+          });
 
           if (!valTypesMatch(fieldType, bindingWasmType)) {
             coerceType(ctx, fctx, fieldType, bindingWasmType);
@@ -1348,7 +1384,11 @@ function compileForOfDestructuring(
         ) {
           const nestedLocal = allocLocal(fctx, `__forof_nested_${fctx.locals.length}`, innerElemType);
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 1 });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: structTypeIdx,
+            fieldIdx: 1,
+          });
           fctx.body.push({ op: "i32.const", value: i });
           emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType);
           fctx.body.push({ op: "local.set", index: nestedLocal });
@@ -1363,7 +1403,11 @@ function compileForOfDestructuring(
           // Compute rest length: max(0, original.length - i)
           const restLenLocal = allocLocal(fctx, `__rest_len_${fctx.locals.length}`, { kind: "i32" });
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 0 }); // length
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: structTypeIdx,
+            fieldIdx: 0,
+          }); // length
           fctx.body.push({ op: "i32.const", value: i });
           fctx.body.push({ op: "i32.sub" } as Instr);
           fctx.body.push({ op: "local.set", index: restLenLocal });
@@ -1382,17 +1426,28 @@ function compileForOfDestructuring(
             typeIdx: innerArrTypeIdx,
           });
           fctx.body.push({ op: "local.get", index: restLenLocal });
-          fctx.body.push({ op: "array.new_default", typeIdx: innerArrTypeIdx } as Instr);
+          fctx.body.push({
+            op: "array.new_default",
+            typeIdx: innerArrTypeIdx,
+          } as Instr);
           fctx.body.push({ op: "local.set", index: restArrLocal });
 
           // array.copy(restArr, 0, srcData, i, restLen)
           fctx.body.push({ op: "local.get", index: restArrLocal });
           fctx.body.push({ op: "i32.const", value: 0 });
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 1 }); // src data
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: structTypeIdx,
+            fieldIdx: 1,
+          }); // src data
           fctx.body.push({ op: "i32.const", value: i });
           fctx.body.push({ op: "local.get", index: restLenLocal });
-          fctx.body.push({ op: "array.copy", dstTypeIdx: innerArrTypeIdx, srcTypeIdx: innerArrTypeIdx } as Instr);
+          fctx.body.push({
+            op: "array.copy",
+            dstTypeIdx: innerArrTypeIdx,
+            srcTypeIdx: innerArrTypeIdx,
+          } as Instr);
 
           // Create new vec struct: struct.new(restLen, restArr)
           const restVecType: ValType = { kind: "ref", typeIdx: structTypeIdx };
@@ -1421,7 +1476,11 @@ function compileForOfDestructuring(
         const localIdx = allocLocal(fctx, localName, bindingWasmType);
 
         fctx.body.push({ op: "local.get", index: elemLocal });
-        fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: 1 });
+        fctx.body.push({
+          op: "struct.get",
+          typeIdx: structTypeIdx,
+          fieldIdx: 1,
+        });
         fctx.body.push({ op: "i32.const", value: i });
         // (#1396) Pass `useUndefinedSentinel: true` when this element has a
         // default initializer AND the source-array element type is externref.
@@ -1616,7 +1675,9 @@ function compileForOfAssignDestructuring(
             const globalIdx = ctx.moduleGlobals.get(oobTarget.text);
             if (globalIdx !== undefined) {
               const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-              const globalType = globalDef?.type ?? { kind: "externref" as const };
+              const globalType = globalDef?.type ?? {
+                kind: "externref" as const,
+              };
               oobLocal = allocLocal(fctx, oobTarget.text, globalType);
               oobSyncGlobalIdx = globalIdx;
             }
@@ -1661,7 +1722,9 @@ function compileForOfAssignDestructuring(
               const globalIdx = ctx.moduleGlobals.get(oobTarget.text);
               if (globalIdx !== undefined) {
                 const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-                const globalType = globalDef?.type ?? { kind: "externref" as const };
+                const globalType = globalDef?.type ?? {
+                  kind: "externref" as const,
+                };
                 oobLocal = allocLocal(fctx, oobTarget.text, globalType);
                 oobSyncGlobalIdx = globalIdx;
               }
@@ -1688,7 +1751,11 @@ function compileForOfAssignDestructuring(
         if (ts.isObjectLiteralExpression(el) || ts.isArrayLiteralExpression(el)) {
           const nestedLocal = allocLocal(fctx, `__forof_nested_${fctx.locals.length}`, fieldType);
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: i });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: innerVecTypeIdx,
+            fieldIdx: i,
+          });
           fctx.body.push({ op: "local.set", index: nestedLocal });
           compileForOfAssignDestructuring(ctx, fctx, el, nestedLocal, fieldType, vecTypeIdx, arrTypeIdx, stmt);
           continue;
@@ -1717,7 +1784,11 @@ function compileForOfAssignDestructuring(
 
         const targetType = getLocalType(fctx, targetLocal);
         fctx.body.push({ op: "local.get", index: elemLocal });
-        fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: i });
+        fctx.body.push({
+          op: "struct.get",
+          typeIdx: innerVecTypeIdx,
+          fieldIdx: i,
+        });
 
         if (defaultInit) {
           // Check for undefined and apply default — BEFORE type coercion
@@ -1749,7 +1820,11 @@ function compileForOfAssignDestructuring(
         if (ts.isObjectLiteralExpression(el) || ts.isArrayLiteralExpression(el)) {
           const nestedLocal = allocLocal(fctx, `__forof_nested_${fctx.locals.length}`, innerElemType);
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: innerVecTypeIdx,
+            fieldIdx: 1,
+          });
           fctx.body.push({ op: "i32.const", value: i });
           emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType);
           fctx.body.push({ op: "local.set", index: nestedLocal });
@@ -1794,7 +1869,11 @@ function compileForOfAssignDestructuring(
           // returns NaN sentinel; for ref/externref it returns null.
           fctx.body.push({ op: "local.get", index: targetLocal });
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: innerVecTypeIdx,
+            fieldIdx: 1,
+          });
           fctx.body.push({ op: "i32.const", value: i });
           emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType);
           // Now stack: [box-ref, value:innerElemType]. Apply default-on-undefined
@@ -1861,7 +1940,11 @@ function compileForOfAssignDestructuring(
             typeIdx: innerArrTypeIdx,
           });
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: innerVecTypeIdx,
+            fieldIdx: 1,
+          });
           fctx.body.push({ op: "local.tee", index: arrDataLocal });
           fctx.body.push({ op: "array.len" });
           fctx.body.push({ op: "i32.const", value: i });
@@ -1872,7 +1955,10 @@ function compileForOfAssignDestructuring(
           const thenInstrs = collectInstrs(fctx, () => {
             fctx.body.push({ op: "local.get", index: arrDataLocal } as Instr);
             fctx.body.push({ op: "i32.const", value: i } as Instr);
-            fctx.body.push({ op: "array.get", typeIdx: innerArrTypeIdx } as Instr);
+            fctx.body.push({
+              op: "array.get",
+              typeIdx: innerArrTypeIdx,
+            } as Instr);
             emitDefaultValueCheck(ctx, fctx, innerElemType, targetLocal!, defaultInit!, targetType ?? undefined);
           });
           // Else branch: OOB — apply default directly
@@ -1888,7 +1974,11 @@ function compileForOfAssignDestructuring(
           } as Instr);
         } else {
           fctx.body.push({ op: "local.get", index: elemLocal });
-          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: innerVecTypeIdx,
+            fieldIdx: 1,
+          });
           fctx.body.push({ op: "i32.const", value: i });
           emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType);
 
@@ -1985,7 +2075,9 @@ function compileForOfAssignDestructuringExternref(
       const setFnIdx = ensureExternSet();
       if (setFnIdx === undefined) continue;
       // Push receiver (already-existing variable, evaluated each iteration)
-      const recvType = compileExpression(ctx, fctx, targetEl.expression, { kind: "externref" });
+      const recvType = compileExpression(ctx, fctx, targetEl.expression, {
+        kind: "externref",
+      });
       if (recvType && recvType.kind !== "externref") {
         coerceType(ctx, fctx, recvType, { kind: "externref" });
       }
@@ -2205,18 +2297,15 @@ export function compileForOfStatement(ctx: CodegenContext, fctx: FunctionContext
     return;
   }
 
-  const sym = (exprTsType as ts.TypeReference).symbol ?? (exprTsType as ts.Type).symbol;
-  const isArray = sym?.name === "Array";
-
-  if (isArray) {
-    compileForOfArray(ctx, fctx, stmt);
-  } else {
-    // Type checker didn't resolve as Array — tentatively compile the expression
-    // to check if it produces a vec struct (e.g. tuple types, union types, etc.).
-    // If so, use the efficient array path; otherwise fall back to host iterator.
-    if (!compileForOfArrayTentative(ctx, fctx, stmt)) {
-      compileForOfIterator(ctx, fctx, stmt);
-    }
+  // The TS type resolving to `Array` is necessary but NOT sufficient to use the
+  // fast vec-struct array path: an Array-typed iterable can still lower to a
+  // non-vec value (a Symbol.iterator whose declared return widens to Array, an
+  // array-subclass instance, a union). Tentatively compile the expression and
+  // only take the array path when it genuinely produces a vec struct; otherwise
+  // fall back to the iterator protocol instead of hard-erroring with
+  // "for-of requires an array expression" (#1610).
+  if (!compileForOfArrayTentative(ctx, fctx, stmt)) {
+    compileForOfIterator(ctx, fctx, stmt);
   }
 }
 
@@ -2272,13 +2361,17 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   const strNullGuardStart = fctx.body.length;
 
   // Extract length from string (field 0 of AnyString struct)
-  const lenLocal = allocLocal(fctx, `__forof_len_${fctx.locals.length}`, { kind: "i32" });
+  const lenLocal = allocLocal(fctx, `__forof_len_${fctx.locals.length}`, {
+    kind: "i32",
+  });
   fctx.body.push({ op: "local.get", index: strLocal });
   fctx.body.push({ op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenLocal });
 
   // Allocate counter local (i32)
-  const iLocal = allocLocal(fctx, `__forof_i_${fctx.locals.length}`, { kind: "i32" });
+  const iLocal = allocLocal(fctx, `__forof_i_${fctx.locals.length}`, {
+    kind: "i32",
+  });
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: iLocal });
 
@@ -2742,7 +2835,10 @@ function compileForOfIteratorAssignDestructuring(
       if (setIdxIter === undefined) {
         const importsBefore = ctx.numImportFuncs;
         const setType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
-        addImport(ctx, "env", "__extern_set", { kind: "func", typeIdx: setType });
+        addImport(ctx, "env", "__extern_set", {
+          kind: "func",
+          typeIdx: setType,
+        });
         shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
         setIdxIter = ctx.funcMap.get("__extern_set");
         // Refresh boxIdx/getIdx since they may have shifted.
@@ -2769,7 +2865,9 @@ function compileForOfIteratorAssignDestructuring(
       if (ts.isPropertyAccessExpression(targetElIter) || ts.isElementAccessExpression(targetElIter)) {
         const setFnIdx = ensureExternSetIter();
         if (setFnIdx === undefined || boxIdx === undefined || getIdx === undefined) continue;
-        const recvType = compileExpression(ctx, fctx, targetElIter.expression, { kind: "externref" });
+        const recvType = compileExpression(ctx, fctx, targetElIter.expression, {
+          kind: "externref",
+        });
         if (recvType && recvType.kind !== "externref") {
           coerceType(ctx, fctx, recvType, { kind: "externref" });
         }
@@ -3106,7 +3204,11 @@ function compileForOfDirectIterator(
   if (nextResultType.kind === "ref_null") {
     fctx.body.push({ op: "ref.as_non_null" } as Instr);
   }
-  fctx.body.push({ op: "struct.get", typeIdx: resultStructTypeIdx, fieldIdx: doneFieldIdx });
+  fctx.body.push({
+    op: "struct.get",
+    typeIdx: resultStructTypeIdx,
+    fieldIdx: doneFieldIdx,
+  });
   // done field might be i32 (boolean) or f64; convert to i32 for br_if
   if (doneFieldType.kind === "f64") {
     fctx.body.push({ op: "i32.trunc_f64_s" } as Instr);
@@ -3128,7 +3230,11 @@ function compileForOfDirectIterator(
   if (nextResultType.kind === "ref_null") {
     fctx.body.push({ op: "ref.as_non_null" } as Instr);
   }
-  fctx.body.push({ op: "struct.get", typeIdx: resultStructTypeIdx, fieldIdx: valueFieldIdx });
+  fctx.body.push({
+    op: "struct.get",
+    typeIdx: resultStructTypeIdx,
+    fieldIdx: valueFieldIdx,
+  });
 
   // Coerce value to element type if needed
   const targetElemType = getLocalType(fctx, elemLocal) ?? elemType;
@@ -3281,7 +3387,9 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   {
     const backupLocal: number | undefined = (fctx as any).__lastGuardedCastBackup;
     const tagIdx = ensureExnTag(ctx);
-    const iterTmp = allocLocal(fctx, `__forit_null_${fctx.locals.length}`, { kind: "externref" });
+    const iterTmp = allocLocal(fctx, `__forit_null_${fctx.locals.length}`, {
+      kind: "externref",
+    });
     fctx.body.push({ op: "local.tee", index: iterTmp });
     fctx.body.push({ op: "ref.is_null" });
     if (backupLocal !== undefined) {
@@ -3335,11 +3443,15 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
     reportError(ctx, stmt, "for-of on non-array type requires iterator imports");
     return;
   }
-  const iterLocal = allocLocal(fctx, `__forof_iter_${fctx.locals.length}`, { kind: "externref" });
+  const iterLocal = allocLocal(fctx, `__forof_iter_${fctx.locals.length}`, {
+    kind: "externref",
+  });
   fctx.body.push({ op: "local.set", index: iterLocal });
 
   // Allocate locals for iterator result and loop element
-  const resultLocal = allocLocal(fctx, `__forof_result_${fctx.locals.length}`, { kind: "externref" });
+  const resultLocal = allocLocal(fctx, `__forof_result_${fctx.locals.length}`, {
+    kind: "externref",
+  });
 
   // Declare the loop variable (element type is externref for iterator protocol)
   const elemType: ValType = { kind: "externref" };
@@ -3390,7 +3502,9 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
 
   // Done flag: tracks whether iterator completed normally (done=true).
   // Used after the loop to decide whether to call iterator.return() (#851).
-  const doneFlag = allocLocal(fctx, `__forof_done_${fctx.locals.length}`, { kind: "i32" });
+  const doneFlag = allocLocal(fctx, `__forof_done_${fctx.locals.length}`, {
+    kind: "i32",
+  });
 
   // Iterator close finallyStack entry (#851): inline before return/outer-break/outer-continue.
   // Push BEFORE the for-of break/continue entries so that:
@@ -3570,22 +3684,89 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   }
 }
 
+/**
+ * Write the current for-in key (held in `keyLocal` as an externref) to a
+ * member-expression target (`for (x.y in obj)` / `for (x[k] in obj)`), per
+ * ECMA-262 §14.7.5.6 ForIn/OfBodyEvaluation (lhsKind = assignment). Emits
+ * `__extern_set(receiver, key, value)` (#1613).
+ */
+function emitForInMemberTargetWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  keyLocal: number,
+): void {
+  let setIdx = ctx.funcMap.get("__extern_set");
+  if (setIdx === undefined) {
+    const importsBefore = ctx.numImportFuncs;
+    const setType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
+    addImport(ctx, "env", "__extern_set", { kind: "func", typeIdx: setType });
+    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
+    setIdx = ctx.funcMap.get("__extern_set");
+  }
+  if (setIdx === undefined) return;
+
+  // Receiver
+  const recvType = compileExpression(ctx, fctx, target.expression, {
+    kind: "externref",
+  });
+  if (recvType && recvType.kind !== "externref") {
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
+  } else if (recvType === null) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+  }
+
+  // Key
+  if (ts.isPropertyAccessExpression(target)) {
+    const propName = target.name.text;
+    addStringConstantGlobal(ctx, propName);
+    const keyGlobalIdx = ctx.stringGlobalMap.get(propName);
+    if (keyGlobalIdx === undefined) return;
+    fctx.body.push({ op: "global.get", index: keyGlobalIdx } as Instr);
+  } else {
+    const keyType = compileExpression(ctx, fctx, target.argumentExpression, {
+      kind: "externref",
+    });
+    if (keyType && keyType.kind !== "externref") {
+      coerceType(ctx, fctx, keyType, { kind: "externref" });
+    } else if (keyType === null) {
+      fctx.body.push({ op: "ref.null.extern" } as Instr);
+    }
+  }
+
+  // Value = the enumerated key string
+  fctx.body.push({ op: "local.get", index: keyLocal });
+  fctx.body.push({ op: "call", funcIdx: setIdx });
+}
+
 export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForInStatement): void {
   // Get the loop variable name
   const init = stmt.initializer;
   let varName: string;
   let keyLocal: number;
+  // For non-identifier heads (binding pattern / member-expression target) the
+  // enumerated key is materialised in a temp externref local, then written to
+  // the real target each iteration (#1613). These describe that write.
+  let bindingPattern: ts.ObjectBindingPattern | ts.ArrayBindingPattern | null = null;
+  let memberTarget: ts.PropertyAccessExpression | ts.ElementAccessExpression | null = null;
   if (ts.isVariableDeclarationList(init)) {
     const decl = init.declarations[0]!;
     if (!ts.isIdentifier(decl.name)) {
-      // Destructuring patterns in for-in (e.g. `for (var [a] in obj)`)
-      // are exotic — the key is a string, destructuring it gives characters.
-      // For now, skip gracefully rather than crash.
-      reportError(ctx, decl, "for-in variable must be an identifier");
-      return;
+      // Destructuring binding head: `for (var/let [a] in obj)`. The key is a
+      // string; per spec the binding pattern destructures that string value.
+      bindingPattern = decl.name;
+      varName = `__forin_key_${fctx.locals.length}`;
+      keyLocal = allocLocal(fctx, varName, { kind: "externref" });
+    } else {
+      varName = decl.name.text;
+      // Allocate a local for the loop variable (string / externref)
+      keyLocal = allocLocal(fctx, varName, { kind: "externref" });
     }
-    varName = decl.name.text;
-    // Allocate a local for the loop variable (string / externref)
+  } else if (ts.isPropertyAccessExpression(init) || ts.isElementAccessExpression(init)) {
+    // Member-expression target: `for (x.y in obj)` / `for (x[k] in obj)`.
+    // Per spec the enumerated key is assigned to the reference each iteration.
+    memberTarget = init;
+    varName = `__forin_key_${fctx.locals.length}`;
     keyLocal = allocLocal(fctx, varName, { kind: "externref" });
   } else if (ts.isIdentifier(init)) {
     // Bare identifier: `for (x in obj)` — look up existing local
@@ -3646,17 +3827,23 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   fctx.body.push({ op: "call", funcIdx: keysIdx }); // __for_in_keys(obj) -> keys array
 
   // Store keys array in a local
-  const keysLocal = allocLocal(fctx, `__forin_keys_${fctx.locals.length}`, { kind: "externref" });
+  const keysLocal = allocLocal(fctx, `__forin_keys_${fctx.locals.length}`, {
+    kind: "externref",
+  });
   fctx.body.push({ op: "local.set", index: keysLocal });
 
   // Get length
-  const lenLocal = allocLocal(fctx, `__forin_len_${fctx.locals.length}`, { kind: "i32" });
+  const lenLocal = allocLocal(fctx, `__forin_len_${fctx.locals.length}`, {
+    kind: "i32",
+  });
   fctx.body.push({ op: "local.get", index: keysLocal });
   fctx.body.push({ op: "call", funcIdx: lenIdx }); // __for_in_len(keys) -> i32
   fctx.body.push({ op: "local.set", index: lenLocal });
 
   // Counter
-  const iLocal = allocLocal(fctx, `__forin_i_${fctx.locals.length}`, { kind: "i32" });
+  const iLocal = allocLocal(fctx, `__forin_i_${fctx.locals.length}`, {
+    kind: "i32",
+  });
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: iLocal });
 
@@ -3674,6 +3861,27 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
 
   fctx.breakStack.push(2); // break = depth 2 (exit $break block)
   fctx.continueStack.push(0); // continue = depth 0 (exit $continue block -> falls to incr)
+
+  // Non-identifier head (#1613): write the per-iteration key into its real
+  // target before the user body runs. keyLocal holds keys[i] at this point.
+  if (memberTarget) {
+    emitForInMemberTargetWrite(ctx, fctx, memberTarget, keyLocal);
+  } else if (bindingPattern) {
+    // Spec: the binding pattern destructures the (string) key value. Reuse the
+    // externref destructuring helpers — array patterns iterate the string's
+    // code units, object patterns read named properties.
+    if (ts.isArrayBindingPattern(bindingPattern)) {
+      fctx.body.push({ op: "local.get", index: keyLocal });
+      compileExternrefArrayDestructuringDecl(ctx, fctx, bindingPattern, {
+        kind: "externref",
+      });
+    } else {
+      fctx.body.push({ op: "local.get", index: keyLocal });
+      compileExternrefObjectDestructuringDecl(ctx, fctx, bindingPattern, {
+        kind: "externref",
+      });
+    }
+  }
 
   // Compile the user's loop body — save/restore block-scoped shadows for let/const (#817).
   if (ts.isBlock(stmt.statement)) {

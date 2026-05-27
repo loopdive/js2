@@ -75,6 +75,8 @@ let _GeneratorPrototypeCache: any = null;
 let _GeneratorFunctionPrototypeCache: any = null;
 let _AsyncGeneratorPrototypeCache: any = null;
 let _AsyncGeneratorFunctionPrototypeCache: any = null;
+let _IteratorPrototypeCache: any = null;
+let _AsyncIteratorPrototypeCache: any = null;
 
 /**
  * Install a built-in method on a prototype with spec-mandated descriptor
@@ -113,15 +115,71 @@ function _installBuiltinMethod(
   });
 }
 
+/**
+ * Build `%IteratorPrototype%` (spec §27.1.2). Its sole own property is
+ * `[Symbol.iterator]()` which returns `this`. `%GeneratorPrototype%` inherits
+ * from it so generators are iterable. (#1639) We build it explicitly rather
+ * than borrowing `globalThis.Iterator.prototype`, which may be absent and in
+ * any case is not the object test262 walks to via the generator's proto chain.
+ */
+function _getIteratorPrototype(): any {
+  if (_IteratorPrototypeCache) return _IteratorPrototypeCache;
+  const proto = Object.create(Object.prototype);
+  _IteratorPrototypeCache = proto;
+  const fn = function (this: any) {
+    return this;
+  };
+  Object.defineProperty(fn, "length", { value: 0, writable: false, enumerable: false, configurable: true });
+  Object.defineProperty(fn, "name", {
+    value: "[Symbol.iterator]",
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+  Object.defineProperty(proto, Symbol.iterator, {
+    value: fn,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  return proto;
+}
+
+/**
+ * Build `%AsyncIteratorPrototype%` (spec §27.1.3). Its sole own property is
+ * `[Symbol.asyncIterator]()` which returns `this`. `%AsyncGeneratorPrototype%`
+ * inherits from it. (#1639)
+ */
+function _getAsyncIteratorPrototype(): any {
+  if (_AsyncIteratorPrototypeCache) return _AsyncIteratorPrototypeCache;
+  const proto = Object.create(Object.prototype);
+  _AsyncIteratorPrototypeCache = proto;
+  const fn = function (this: any) {
+    return this;
+  };
+  Object.defineProperty(fn, "length", { value: 0, writable: false, enumerable: false, configurable: true });
+  Object.defineProperty(fn, "name", {
+    value: "[Symbol.asyncIterator]",
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+  Object.defineProperty(proto, Symbol.asyncIterator, {
+    value: fn,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  return proto;
+}
+
 /** Build `%GeneratorPrototype%` (spec §27.5.1). Idempotent. */
 function _getGeneratorPrototype(): any {
   if (_GeneratorPrototypeCache) return _GeneratorPrototypeCache;
-  // GeneratorPrototype inherits from IteratorPrototype so .map/.filter/etc.
-  // (#1367) resolve via the prototype chain.
-  const iterProto = (
-    typeof (globalThis as any).Iterator === "function" ? ((globalThis as any).Iterator as any).prototype : null
-  ) as any;
-  const proto = iterProto ? Object.create(iterProto) : Object.create(Object.prototype);
+  // GeneratorPrototype inherits from %IteratorPrototype% so .map/.filter/etc.
+  // (#1367) resolve via the prototype chain, and test262 reaches
+  // %IteratorPrototype% via getPrototypeOf(getPrototypeOf(g.prototype)). (#1639)
+  const proto = Object.create(_getIteratorPrototype());
   _GeneratorPrototypeCache = proto;
 
   _installBuiltinMethod(proto, "next", 1, function (this: any, _value?: any) {
@@ -224,12 +282,9 @@ function _getGeneratorFunctionPrototype(): any {
 /** Build `%AsyncGeneratorPrototype%` (spec §27.6.1). */
 function _getAsyncGeneratorPrototype(): any {
   if (_AsyncGeneratorPrototypeCache) return _AsyncGeneratorPrototypeCache;
-  const asyncIterProto = (
-    typeof (globalThis as any).AsyncIterator === "function"
-      ? ((globalThis as any).AsyncIterator as any).prototype
-      : null
-  ) as any;
-  const proto = asyncIterProto ? Object.create(asyncIterProto) : Object.create(Object.prototype);
+  // Inherits from %AsyncIteratorPrototype% (#1639) — test262 reaches it via
+  // getPrototypeOf(getPrototypeOf(asyncGen.prototype)).
+  const proto = Object.create(_getAsyncIteratorPrototype());
   _AsyncGeneratorPrototypeCache = proto;
 
   function mkResult(value: any, done: boolean) {
@@ -2670,6 +2725,100 @@ const _builtinJsxTypeof: symbol | number = typeof Symbol === "function" ? Symbol
 const _builtinFragmentSym: symbol | object =
   typeof Symbol === "function" ? Symbol.for("react.fragment") : { __jsx_fragment: true };
 
+// (#1638) Date.prototype string-formatter mode selectors. Kept in sync with
+// DATE_FORMAT_MODE in src/codegen/expressions/builtins.ts.
+const _DATE_FMT_ISO = 0;
+const _DATE_FMT_UTC = 1;
+const _DATE_FMT_STRING = 2;
+const _DATE_FMT_DATE = 3;
+const _DATE_FMT_TIME = 4;
+const _DATE_FMT_JSON = 5;
+const _DATE_FMT_LOCALE_STRING = 6;
+const _DATE_FMT_LOCALE_DATE = 7;
+const _DATE_FMT_LOCALE_TIME = 8;
+
+const _DATE_DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const _DATE_MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const _DATE_INVALID_SENTINEL = -9223372036854775808n;
+
+/** Zero-pad a non-negative integer to `width` digits. */
+function _datePad(n: number, width: number): string {
+  return String(Math.abs(n)).padStart(width, "0");
+}
+
+/**
+ * (#1638) Build the spec-correct string for a Date method from the i64
+ * timestamp (ms since epoch) and a mode selector. All fields are computed in
+ * UTC, matching the compiler's UTC-only Date model (getTimezoneOffset() === 0).
+ *
+ * Per ECMA-262 §21.4.4: an Invalid Date (sentinel timestamp) yields
+ * "Invalid Date" for the string formatters, throws RangeError for
+ * toISOString, and (via toJSON) returns null at the call site — toJSON is
+ * handled in codegen, this helper only fields the string-producing modes.
+ */
+function _formatDate(ts: bigint, mode: number): string {
+  const invalid = ts === _DATE_INVALID_SENTINEL;
+
+  if (mode === _DATE_FMT_ISO) {
+    if (invalid) throw new RangeError("Invalid time value");
+    const d = new Date(Number(ts));
+    return d.toISOString();
+  }
+
+  if (invalid) {
+    // toString / toDateString / toTimeString / toUTCString / toLocale*
+    // all return "Invalid Date" for an Invalid Date receiver (§21.4.4.41.4).
+    return "Invalid Date";
+  }
+
+  const ms = Number(ts);
+  const d = new Date(ms);
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth();
+  const date = d.getUTCDate();
+  const day = d.getUTCDay();
+  const hours = d.getUTCHours();
+  const minutes = d.getUTCMinutes();
+  const seconds = d.getUTCSeconds();
+
+  const wday = _DATE_DAY_NAMES[day];
+  const mon = _DATE_MONTH_NAMES[month];
+  // Years < 0 keep the sign and pad to 4 digits of magnitude (e.g. "-000001").
+  const yearStr = year < 0 ? "-" + _datePad(year, 6) : _datePad(year, 4);
+  const dd = _datePad(date, 2);
+  const hh = _datePad(hours, 2);
+  const mm = _datePad(minutes, 2);
+  const ssStr = _datePad(seconds, 2);
+  const timePart = `${hh}:${mm}:${ssStr}`;
+
+  // §21.4.4.41.1 DateString: "Www Mmm DD YYYY"
+  const dateStr = `${wday} ${mon} ${dd} ${yearStr}`;
+  // §21.4.4.41.2 TimeString + TimeZoneString: "HH:mm:ss GMT+0000 (Coordinated Universal Time)"
+  const timeStr = `${timePart} GMT+0000 (Coordinated Universal Time)`;
+
+  switch (mode) {
+    case _DATE_FMT_STRING:
+    case _DATE_FMT_LOCALE_STRING:
+      // toString: DateString + " " + TimeString
+      return `${dateStr} ${timeStr}`;
+    case _DATE_FMT_DATE:
+    case _DATE_FMT_LOCALE_DATE:
+      return dateStr;
+    case _DATE_FMT_TIME:
+    case _DATE_FMT_LOCALE_TIME:
+      return timeStr;
+    case _DATE_FMT_UTC:
+      // §21.4.4.43 UTCString: "Www, DD Mmm YYYY HH:mm:ss GMT"
+      return `${wday}, ${dd} ${mon} ${yearStr} ${timePart} GMT`;
+    case _DATE_FMT_JSON:
+      // toJSON for a valid Date is toISOString; invalid handled above/at call site.
+      return d.toISOString();
+    default:
+      return `${dateStr} ${timeStr}`;
+  }
+}
+
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -2776,14 +2925,6 @@ function resolveImport(
           options == null ? self.addEventListener(type, listener) : self.addEventListener(type, listener, options);
       }
       if (intent.action === "new") {
-        // (#1568) `__new_BigInt(v)` / `__new_Symbol(v)` — Object(bigint) /
-        // Object(symbol) auto-boxing (§7.1.18 ToObject). BigInt and Symbol are
-        // NOT constructors, so `new BigInt(v)` throws; box via the spec's
-        // literal `Object(v)`, yielding an object (typeof "object") whose
-        // valueOf() returns the underlying primitive.
-        if (intent.className === "BigInt" || intent.className === "Symbol") {
-          return (v: any): any => Object(v);
-        }
         // Test262Error is a simple Error subclass used by the test262 harness
         class Test262Error extends Error {
           constructor(msg?: string) {
@@ -2834,9 +2975,6 @@ function resolveImport(
           Test262Error,
           // (#1455) SharedArrayBuffer for `class Sub extends SharedArrayBuffer {}`
           ...(typeof SharedArrayBuffer !== "undefined" ? { SharedArrayBuffer } : {}),
-          // (#1600) FinalizationRegistry — host-delegate `new FinalizationRegistry(cb)`
-          // and register/unregister to the real engine registry.
-          ...(typeof FinalizationRegistry !== "undefined" ? { FinalizationRegistry } : {}),
           // TC39 Explicit Resource Management (stage 3 / Node.js 22+)
           ...(typeof DisposableStack !== "undefined" ? { DisposableStack } : {}),
           ...(typeof AsyncDisposableStack !== "undefined" ? { AsyncDisposableStack } : {}),
@@ -2906,14 +3044,6 @@ function resolveImport(
             // converted entries. For Map/WeakMap each entry must itself be
             // an iterable (tuple → [k, v] array).
             args[0] = _convertIterableForHost(args[0], exports);
-          } else if (intent.className === "FinalizationRegistry") {
-            // (#1600) The cleanup callback is a wasm closure externref, not a
-            // real callable JS function, so the engine's
-            // `new FinalizationRegistry(cb)` would throw "cleanup must be
-            // callable". The spec never guarantees cleanup callbacks run, so
-            // substitute a no-op function — register/unregister still work and
-            // the (never-fired) callback is spec-permissibly inert.
-            if (typeof args[0] !== "function") args[0] = () => {};
           } else if (isBufferConsumer && args.length > 0 && _isWasmStruct(args[0])) {
             const exports = callbackState?.getExports();
             const dvLen = exports?.__dv_byte_len as ((v: any) => number) | undefined;
@@ -3526,6 +3656,13 @@ assert._isSameValue = isSameValue;
             return "[object Object]";
           }
         };
+      // (#1638) Date.prototype string formatters. The Wasm side holds the
+      // timestamp as an i64 and passes it here with a mode selector; we build
+      // the spec-correct string from a UTC Date. The invalid-Date sentinel
+      // (i64 min) maps to the spec's "Invalid Date" handling per mode.
+      if (name === "__date_format") {
+        return (ts: bigint, mode: number): string => _formatDate(ts, mode);
+      }
       if (name === "__extern_toLocaleString")
         return (v: any) => {
           if (v == null) return String(v);
@@ -3540,6 +3677,10 @@ assert._isSameValue = isSameValue;
           return v.toLocaleString();
         };
       if (name === "__extern_is_undefined") return (v: any) => (v === undefined ? 1 : 0);
+      // (#1328) Array.isArray on an externref value (e.g. a RegExp match
+      // result returned from the host). The compile-time type can't decide
+      // this for `externref`, so defer to the real spec predicate.
+      if (name === "__extern_is_array") return (v: any) => (Array.isArray(v) ? 1 : 0);
       if (name === "__get_undefined") return () => undefined;
       // (#1343) ToBoolean for externref values per ECMA-262 §7.1.2.
       // The pre-existing externref path for `Boolean(x)` only checked
@@ -4070,14 +4211,40 @@ assert._isSameValue = isSameValue;
             throw new TypeError("Object.defineProperty called on non-object");
           }
           const key = prop != null ? String(prop) : "";
-          // For plain JS objects and descriptors, use native Object.defineProperty which
-          // follows the prototype chain for descriptor flags per ToPropertyDescriptor.
-          if (!_isWasmStruct(obj)) {
+          // Field reader that round-trips both plain JS objects (native `o[f]`,
+          // which fires accessors / walks the prototype chain per
+          // ToPropertyDescriptor) and WasmGC structs (sidecar + the compiled
+          // module's `__sget_<field>` exports for typed struct fields that
+          // never reach the sidecar). Mirrors the reader in __defineProperties.
+          const getField = (o: any, f: string): any => {
+            if (!_isWasmStruct(o)) return o[f];
+            // _safeGet fires struct accessor getters (__get_<f>) and the
+            // sidecar; fall back to the compiled module's __sget_<field>
+            // export for typed struct fields that never reach the sidecar.
+            let v = _safeGet(o, f);
+            if (v === undefined) {
+              const g = callbackState?.getExports()?.[`__sget_${f}`];
+              if (typeof g === "function") v = g(o);
+            }
+            return v;
+          };
+          // For a plain JS object whose descriptor is also a plain JS object,
+          // native Object.defineProperty follows the descriptor's prototype
+          // chain and accessor getters correctly — use it directly.
+          if (!_isWasmStruct(obj) && !_isWasmStruct(desc)) {
             Object.defineProperty(obj, key, desc);
             return obj;
           }
+          // The descriptor is a WasmGC struct (e.g. an object-literal-valued
+          // descriptor in `Object.create(p, { k: descStruct })`). Native
+          // Object.defineProperty sees it as null-proto/no-keys and drops every
+          // attribute. Materialize a plain descriptor via getField first.
+          if (!_isWasmStruct(obj)) {
+            const d2 = _toPropertyDescriptorValidate(desc, getField);
+            Object.defineProperty(obj, key, d2);
+            return obj;
+          }
           // WasmGC struct obj: apply via sidecar
-          const getField = (o: any, f: string): any => (!_isWasmStruct(o) ? o[f] : _sidecarGet(o, f));
           const d = _toPropertyDescriptorValidate(desc, getField);
           const sDescs = _getSidecarDescs(obj);
           const nKey = _normalizeDescKey(key);
@@ -4466,6 +4633,16 @@ assert._isSameValue = isSameValue;
       // through this dedicated import instead of the generic `__getPrototypeOf`.
       if (name === "__get_generator_function_prototype") return () => _getGeneratorFunctionPrototype();
       if (name === "__get_async_generator_function_prototype") return () => _getAsyncGeneratorFunctionPrototype();
+      // (#1639) `g.prototype` (member access on a generator-function object).
+      // Spec §27.3.3 / §27.4.3: a (async) generator function's `.prototype` is a
+      // *fresh per-function object* whose [[Prototype]] is %(Async)GeneratorPrototype%
+      // — NOT the shared prototype itself. So tests walk:
+      //   getPrototypeOf(g.prototype)              → %(Async)GeneratorPrototype%
+      //   getPrototypeOf(getPrototypeOf(g.prototype)) → %(Async)IteratorPrototype%
+      // The compiled closure is opaque to the host, so codegen routes the
+      // member access `g.prototype` (where `g ∈ ctx.generatorFunctions`) here.
+      if (name === "__get_generator_prototype") return () => Object.create(_getGeneratorPrototype());
+      if (name === "__get_async_generator_prototype") return () => Object.create(_getAsyncGeneratorPrototype());
       // __create_descriptor(value, flags) → {value, writable, enumerable, configurable}
       // flags: bit 0 = writable, bit 1 = enumerable, bit 2 = configurable
       if (name === "__create_descriptor")
@@ -4540,6 +4717,26 @@ assert._isSameValue = isSameValue;
             const slot = _PROTO_CB_SLOTS[method];
             if (slot && wrappedArgs.length > slot.argIdx) {
               wrappedArgs[slot.argIdx] = _maybeWrapCallable(wrappedArgs[slot.argIdx], slot.arity, callbackState);
+            }
+          }
+          // #1637 — `Boolean.prototype.toString.call(prim)` / `.valueOf.call(prim)`
+          // route here as obj=Boolean.prototype.method, method="call"/"apply".
+          // Boolean primitives travel i32→externref via __box_number so the
+          // receiver arrives as a number; §20.3.3.{2,3} thisBooleanValue accepts
+          // a Boolean primitive or wrapper, so coerce a numeric/bigint receiver
+          // back to a boolean primitive before the native method runs (V8 would
+          // otherwise throw "requires that 'this' be a Boolean"). Mirrors the
+          // __proto_method_call coercion (#1342) for the .call/.apply path.
+          if (
+            (method === "call" || method === "apply") &&
+            (wrappedObj === Boolean.prototype.toString || wrappedObj === Boolean.prototype.valueOf)
+          ) {
+            const coerceRecv = (r: any) => (typeof r === "number" || typeof r === "bigint" ? Boolean(r) : r);
+            if (method === "call") {
+              if (wrappedArgs.length > 0) wrappedArgs[0] = coerceRecv(wrappedArgs[0]);
+            } else if (method === "apply") {
+              // apply(thisArg, argsArray): the receiver is arg 0.
+              if (wrappedArgs.length > 0) wrappedArgs[0] = coerceRecv(wrappedArgs[0]);
             }
           }
           const fn = wrappedObj[method];

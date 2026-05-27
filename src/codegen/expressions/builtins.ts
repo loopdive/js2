@@ -8,7 +8,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { flushLateImportShifts } from "../expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { addFuncType, ensureWasiWriteAnyStringHelper } from "../index.js";
 import { ensureNativeStringExternBridge } from "../native-strings.js";
 import type { InnerResult } from "../shared.js";
@@ -666,7 +666,10 @@ function compileDateMethodCall(
     setHours: "h",
     setUTCHours: "h",
   };
-  if (methodName in TIME_OF_DAY_SETTERS) {
+  // Use hasOwn, not the `in` operator: `in` walks the prototype chain, so
+  // method names that happen to be Object.prototype members (toString,
+  // toLocaleString) would falsely match and be mis-compiled as setters (#1638).
+  if (Object.prototype.hasOwnProperty.call(TIME_OF_DAY_SETTERS, methodName)) {
     const startUnit = TIME_OF_DAY_SETTERS[methodName]!;
     const args = callExpr.arguments;
     // Stack: [dateRef]
@@ -900,7 +903,8 @@ function compileDateMethodCall(
     setUTCFullYear: "y",
     setYear: "y", // legacy: §B.2.3.5 — year < 100 maps to 1900+year
   };
-  if (methodName in CALENDAR_SETTERS) {
+  // hasOwn, not `in` — see TIME_OF_DAY_SETTERS above (#1638).
+  if (Object.prototype.hasOwnProperty.call(CALENDAR_SETTERS, methodName)) {
     const startUnit = CALENDAR_SETTERS[methodName]!;
     const args = callExpr.arguments;
     const isSetFullYear = methodName === "setFullYear" || methodName === "setUTCFullYear" || methodName === "setYear";
@@ -1418,30 +1422,58 @@ function compileDateMethodCall(
     });
   }
 
-  // toISOString / toJSON: emit a formatted string
-  if (methodName === "toISOString" || methodName === "toJSON") {
-    // (#1344) Timestamp is in tsLocalShared, not on the stack anymore —
-    // no `drop` needed. Stub implementation; full formatting deferred.
-    releaseTempLocal(fctx, tsLocalShared);
-    return compileStringLiteral(ctx, fctx, "1970-01-01T00:00:00.000Z");
-  }
+  // (#1638) String formatters. The timestamp lives in `tsLocalShared` (i64).
+  // We delegate to the `__date_format(ts, mode)` host import which builds the
+  // spec-correct string (ECMA-262 §21.4.4) from a UTC Date and returns it as
+  // an externref. This matches the externref representation of string literals
+  // in the default (non-nativeStrings) string backend.
+  //
+  // In nativeStrings mode (WASI / --nativeStrings) strings are WasmGC i16
+  // arrays, not externref, so the host-string bridge does not apply; we keep
+  // the placeholder there (Date string formatting in fully-standalone Wasm is
+  // tracked separately — the host fast path covers the test262 / JS-host case).
+  if (DATE_FORMAT_MODE.has(methodName)) {
+    const mode = DATE_FORMAT_MODE.get(methodName)!;
 
-  // toString / toDateString / toTimeString / toLocale* / toUTCString / toGMTString:
-  // Stub implementations — return a placeholder string representation.
-  // Full formatting would require complex string building; for now return a fixed string.
-  const STRING_DATE_METHODS = new Set([
-    "toString",
-    "toDateString",
-    "toTimeString",
-    "toLocaleDateString",
-    "toLocaleTimeString",
-    "toLocaleString",
-    "toUTCString",
-    "toGMTString",
-  ]);
-  if (STRING_DATE_METHODS.has(methodName)) {
+    if (ctx.nativeStrings) {
+      releaseTempLocal(fctx, tsLocalShared);
+      if (methodName === "toISOString" || methodName === "toJSON") {
+        return compileStringLiteral(ctx, fctx, "1970-01-01T00:00:00.000Z");
+      }
+      return compileStringLiteral(ctx, fctx, "Thu Jan 01 1970 00:00:00 GMT+0000");
+    }
+
+    const fmtIdx = ensureLateImport(ctx, "__date_format", [{ kind: "i64" }, { kind: "i32" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+
+    // toJSON returns `null` (not "Invalid Date", not a throw) for an Invalid
+    // Date receiver (§21.4.4.45 → toISOString is skipped when ToNumber is not
+    // finite). Branch on the sentinel and return ref.null externref.
+    if (methodName === "toJSON") {
+      fctx.body.push({ op: "local.get", index: tsLocalShared } as Instr);
+      fctx.body.push({ op: "i64.const", value: -9223372036854775808n } as Instr);
+      fctx.body.push({ op: "i64.eq" } as Instr);
+      const thenInstrs: Instr[] = [{ op: "ref.null.extern" } as Instr];
+      const elseInstrs: Instr[] = [
+        { op: "local.get", index: tsLocalShared } as Instr,
+        { op: "i32.const", value: mode } as Instr,
+        { op: "call", funcIdx: fmtIdx } as Instr,
+      ];
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: thenInstrs,
+        else: elseInstrs,
+      } as unknown as Instr);
+      releaseTempLocal(fctx, tsLocalShared);
+      return { kind: "externref" };
+    }
+
+    fctx.body.push({ op: "local.get", index: tsLocalShared } as Instr);
+    fctx.body.push({ op: "i32.const", value: mode } as Instr);
+    fctx.body.push({ op: "call", funcIdx: fmtIdx } as Instr);
     releaseTempLocal(fctx, tsLocalShared);
-    return compileStringLiteral(ctx, fctx, "Thu Jan 01 1970 00:00:00 GMT+0000");
+    return { kind: "externref" };
   }
 
   // Shouldn't reach here. Timestamp was saved to a local; nothing to drop.
@@ -1449,6 +1481,23 @@ function compileDateMethodCall(
   fctx.body.push({ op: "f64.const", value: 0 } as Instr);
   return { kind: "f64" };
 }
+
+/**
+ * (#1638) Mode selectors for `__date_format`. Kept in sync with the
+ * `_DATE_FMT_*` constants in src/runtime.ts.
+ */
+const DATE_FORMAT_MODE = new Map<string, number>([
+  ["toISOString", 0],
+  ["toUTCString", 1],
+  ["toGMTString", 1],
+  ["toString", 2],
+  ["toDateString", 3],
+  ["toTimeString", 4],
+  ["toJSON", 5],
+  ["toLocaleString", 6],
+  ["toLocaleDateString", 7],
+  ["toLocaleTimeString", 8],
+]);
 
 /**
  * WASI mode: compile console.log/warn/error by writing UTF-8 via fd_write.

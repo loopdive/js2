@@ -1,6 +1,6 @@
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts, forEachChild } from "../ts-api.js";
 import type { CompileError, CompileOptions } from "../index.js";
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { forEachChild, ts } from "../ts-api.js";
 
 // Default blocked members on extern classes in safe mode
 const DEFAULT_BLOCKED_MEMBERS = new Set([
@@ -14,7 +14,10 @@ const DEFAULT_BLOCKED_MEMBERS = new Set([
   "insertAdjacentHTML",
 ]);
 
-function getApproxSourceLocation(sourceFile: ts.SourceFile): { line: number; column: number } {
+function getApproxSourceLocation(sourceFile: ts.SourceFile): {
+  line: number;
+  column: number;
+} {
   const anchor = sourceFile.statements[0] ?? sourceFile;
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(anchor.getStart(sourceFile));
   return { line: line + 1, column: character + 1 };
@@ -725,6 +728,19 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
           // for-in/for-of with multiple lexical bindings is always a SyntaxError
           if (isLexical && init.declarations.length > 1) {
             addError(node, "Only a single declaration is allowed in a for-in statement");
+          }
+          // ES spec: It is a Syntax Error if BoundNames of ForDeclaration
+          // contains any duplicate entries (lexical only) — e.g.
+          // `for (let [x, x] in {}) {}` / `for (const [x, x] in {}) {}`.
+          if (isLexical) {
+            const seen = new Set<string>();
+            const dupes = new Set<string>();
+            for (const decl of init.declarations) {
+              collectBindingNamesWithDuplicateCheck(decl.name, seen, dupes);
+            }
+            for (const name of dupes) {
+              addError(node, `Duplicate binding '${name}' in for-in declaration`);
+            }
           }
         }
       }
@@ -2460,7 +2476,10 @@ function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
 
         const existing = privateNames.get(name);
         if (!existing) {
-          privateNames.set(name, { kinds: new Set([kind]), isStatic: memberIsStatic });
+          privateNames.set(name, {
+            kinds: new Set([kind]),
+            isStatic: memberIsStatic,
+          });
         } else {
           // get+set pair is allowed ONLY if both have the same staticness
           const combined = new Set([...existing.kinds, kind]);
@@ -3344,7 +3363,12 @@ function hasExportModifier(node: ts.Node): boolean {
 function validateHardenedMode(
   sourceFile: ts.SourceFile,
 ): Array<{ message: string; line: number; column: number; severity: "error" }> {
-  const errors: Array<{ message: string; line: number; column: number; severity: "error" }> = [];
+  const errors: Array<{
+    message: string;
+    line: number;
+    column: number;
+    severity: "error";
+  }> = [];
 
   function visit(node: ts.Node): void {
     // Reject eval() calls

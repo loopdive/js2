@@ -103,7 +103,7 @@ import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
-import { ensureNativeStringExternBridge } from "../native-strings.js";
+import { ensureNativeStringExternBridge, stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitDataViewAccessor, isDataViewAccessor } from "../dataview-native.js";
 
 /**
@@ -2732,6 +2732,28 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       // Check the TypeScript type of the argument at compile time
       const argTsType = ctx.checker.getTypeAtLocation(expr.arguments[0]!);
       const argWasmType = resolveWasmType(ctx, argTsType);
+      // externref args carry host JS values whose array-ness can't be decided
+      // statically (e.g. a RegExp match result). Defer to the host predicate
+      // (#1328) rather than emitting a wrong compile-time `false`.
+      if (argWasmType.kind === "externref") {
+        const argSideType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+        if (argSideType && argSideType.kind !== "externref") {
+          // Non-externref value reaching here is never a host array.
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: 0 });
+          return { kind: "i32" };
+        }
+        const isArrIdx = ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }]);
+        if (isArrIdx === undefined) {
+          // Host predicate unavailable (e.g. standalone) — drop and fall back.
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: 0 });
+          return { kind: "i32" };
+        }
+        flushLateImportShifts(ctx, fctx);
+        fctx.body.push({ op: "call", funcIdx: isArrIdx });
+        return { kind: "i32" };
+      }
       // If the wasm type is a ref to a vec struct (array), return true; otherwise false
       const isArr = argWasmType.kind === "ref" || argWasmType.kind === "ref_null";
       // Still compile the argument for side effects, then drop it
@@ -5631,12 +5653,11 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         {
           const rangeErrMsg = "RangeError: toString() radix must be between 2 and 36";
           addStringConstantGlobal(ctx, rangeErrMsg);
-          const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
           const tagIdx = ensureExnTag(ctx);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
             else: [],
           });
         }
@@ -5687,12 +5708,11 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         {
           const rangeErrMsg = "RangeError: toFixed() digits argument must be between 0 and 100";
           addStringConstantGlobal(ctx, rangeErrMsg);
-          const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
           const tagIdx = ensureExnTag(ctx);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
             else: [],
           });
         }
@@ -5749,7 +5769,6 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         fctx.body.push({ op: "local.get", index: isFiniteLocal });
         const rangeErrMsg = "RangeError: toPrecision() argument must be between 1 and 100";
         addStringConstantGlobal(ctx, rangeErrMsg);
-        const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
         const tagIdx = ensureExnTag(ctx);
         const rangeCheckBody: Instr[] = [];
         // Build: if (p < 1 || p > 100 || p != p) throw RangeError
@@ -5767,7 +5786,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         rangeCheckBody.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
           else: [],
         });
         fctx.body.push({
@@ -5823,7 +5842,6 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         // Range check gate: only when v is finite.
         const rangeErrMsg = "RangeError: toExponential() argument must be between 0 and 100";
         addStringConstantGlobal(ctx, rangeErrMsg);
-        const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
         const tagIdx = ensureExnTag(ctx);
         const rangeCheckBody: Instr[] = [];
         rangeCheckBody.push({ op: "local.get", index: digitsLocal });
@@ -5836,7 +5854,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         rangeCheckBody.push({
           op: "if",
           blockType: { kind: "empty" },
-          then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+          then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
           else: [],
         });
         fctx.body.push({ op: "local.get", index: isFiniteLocal });

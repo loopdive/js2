@@ -1,9 +1,10 @@
 ---
 id: 1631
 title: "spec gap: Object.create(proto, descriptors) ignores descriptor map (162 test262 fails)"
-status: ready
+status: done
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-05-27
+completed: 2026-05-27
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -117,3 +118,40 @@ buckets, the broader prototype-chain + descriptor-model work tracked under #1364
 #1630. Recommend re-scoping: either split out "struct property read for descriptor
 objects" as a prerequisite, or fold the remaining buckets into the #1630 descriptor
 model. No code shipped.
+
+## Resolution (2026-05-27, dev-1607)
+
+The earlier investigation tested the wrong path. The bug is **path-specific**:
+`Object.create(proto, { key: descObj })` — an **object-literal Properties** with
+identifier-valued descriptors — lowers per-property to the `__defineProperty_desc`
+host import (`calls.ts:3443`). That helper handed a WasmGC-struct descriptor
+straight to native `Object.defineProperty`, which sees a null-proto/no-keys object
+and dropped every attribute (value/flags). The sibling `__defineProperties` path
+(non-literal Properties, `calls.ts:3491`) already had a struct-aware `getField` and
+worked — so the same descriptor object passed two ways gave different results
+(confirmed by isolated probe: `var Props` PASS, `{...}` literal Props FAIL).
+
+**Fix** (`src/runtime.ts`, `__defineProperty_desc`): give the helper the same
+struct-aware `getField` (`_safeGet` for accessor getters + sidecar, with an
+`__sget_<field>` export fallback for typed struct fields), and when the descriptor
+is a WasmGC struct but the target object is a plain JS object, materialize a plain
+descriptor via `_toPropertyDescriptorValidate(desc, getField)` before calling
+native `Object.defineProperty`.
+
+**Measured (true per-test isolation, `runTest262File`):**
+
+| Category | baseline | patched |
+|----------|---------:|--------:|
+| `built-ins/Object/create` | 166 | **173 (+7)** |
+| `built-ins/Object/defineProperties` | 201 | 201 (no regression) |
+| `built-ins/Object/getOwnPropertyDescriptor` | 261 | 261 (no regression) |
+| `built-ins/Object/freeze` | 43 | 43 |
+| `built-ins/Object/assign` | 15 | 15 |
+
+Unit tests: `tests/issue-1631.test.ts` (4 cases, all pass).
+
+**Still failing (out of scope — separate models):** the getter-on-descriptor-flag
+family (`15.2.3.5-4-105`), inherited-flag-via-prototype (`15.2.3.5-4-102`), and
+`instanceof Object` on the created object (`15.2.3.5-2-2`). These are the
+struct-accessor-storage / prototype-chain gaps tracked under #1364b / #1239 / #1630,
+not the descriptor-map wiring this issue covers.

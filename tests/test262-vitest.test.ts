@@ -483,20 +483,33 @@ function findNthAssert(source: string, retVal: number): string {
   const assertStarts: { line: number; text: string }[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (/\b(assert|verify\w+)\b/.test(lines[i])) {
-      const text = lines
-        .slice(i, Math.min(i + 3, lines.length))
-        .join(" ")
-        .trim();
-      assertStarts.push({ line: i + 1, text: text.substring(0, 120) });
+      // Capture the full assert statement: start line plus up to 3 follow-on
+      // lines, but stop before the next assert so a short assert doesn't
+      // borrow a later assert's (longer) message. Collapse internal
+      // whitespace and cap at 500 chars (#1318) — long sameValue/throws
+      // assertions were being cut at 120, dropping the diagnostic message.
+      const chunk: string[] = [lines[i]];
+      for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+        if (/\b(assert|verify\w+)\b/.test(lines[j])) break;
+        if (/;\s*$/.test(chunk[chunk.length - 1])) break;
+        chunk.push(lines[j]);
+      }
+      const text = chunk.join(" ").replace(/\s+/g, " ").trim().substring(0, 500);
+      assertStarts.push({ line: i + 1, text });
     }
   }
 
   const target = idx - 1;
   if (target >= 0 && target < assertStarts.length) {
     const a = assertStarts[target];
-    return `assert #${idx} at L${a.line}: ${a.text}`;
+    // Surface the assertion's message-string argument explicitly when present
+    // — it's the human-readable "what was being checked", and the most
+    // actionable single field for triage of the ~8.9k vague failures (#1318).
+    const msgArg = a.text.match(/,\s*(["'`])((?:\\.|(?!\1).)*)\1\s*\)?\s*;?\s*$/);
+    const msgSuffix = msgArg && msgArg[2] ? ` — msg: ${msgArg[2]}` : "";
+    return `assert #${idx} at L${a.line}: ${a.text}${msgSuffix}`;
   }
-  return `assert #${idx} (found ${assertStarts.length} asserts in source)`;
+  return `assert #${idx} (found ${assertStarts.length} asserts in source; return code out of assert range — likely a non-assert throw or proc_exit)`;
 }
 
 // ── Test generation ──────────────────────────────────────────────

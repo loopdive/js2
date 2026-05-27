@@ -2213,6 +2213,35 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
   // checks apply (e.g. assignments to arguments/eval, duplicate params).
   const strictDirective = resolvedMeta.flags?.includes("onlyStrict") ? '"use strict";\n' : "";
 
+  // #1612 — top-level-await tests put `await` at module top level, where it is
+  // a keyword. Wrapping the body in a *synchronous* `test()` turns `await`
+  // back into an identifier, so `await [x]` misparses as element access
+  // ("An element access expression should take an argument."). These are
+  // syntax-only tests (no assertions), so emit the body at module top level —
+  // where `await` parses correctly — and leave `test()` as a trivial probe of
+  // `__fail`. The `export function test` already marks the file as a module,
+  // so module-goal top-level await is valid.
+  if (resolvedMeta.features?.includes("top-level-await")) {
+    const tlaPreBody = `${strictDirective}
+${preamble}
+${hoistedDecls}
+${implicitDecls.trim()}
+`;
+    const tlaPostBody = `
+export function test(): number {
+  if (__fail) { return __fail; }
+  return 1;
+}
+`;
+    const tlaBodyLineOffset = tlaPreBody.split("\n").length - 1;
+    const metaBlockTla = source.match(/\/\*---[\s\S]*?---\*\//);
+    const metaLinesTla = metaBlockTla ? metaBlockTla[0].split("\n").length - 1 : 0;
+    return {
+      source: tlaPreBody + bodyForFunc.trim() + "\n" + tlaPostBody,
+      bodyLineOffset: tlaBodyLineOffset - metaLinesTla,
+    };
+  }
+
   const preBody = `${strictDirective}
 ${preamble}
 ${hoistedDecls}
