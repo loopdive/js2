@@ -105,6 +105,7 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (name === "__box_boolean") return { type: "box", targetType: "boolean" };
   if (name === "__box_bigint") return { type: "box", targetType: "bigint" };
   if (name === "__to_bigint") return { type: "unbox", targetType: "bigint" };
+  if (name === "__bigint_ctor") return { type: "builtin", name: "__bigint_ctor" };
   if (name === "__is_truthy") return { type: "truthy_check" };
   if (name === "__typeof") return { type: "builtin", name: "__typeof" };
 
