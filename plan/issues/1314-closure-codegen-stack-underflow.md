@@ -1,9 +1,10 @@
 ---
 id: 1314
 title: "Wasm codegen: __closure_N stack underflow — call emits wrong argument count"
-status: ready
+status: done
+completed: 2026-05-27
 created: 2026-05-07
-updated: 2026-05-07
+updated: 2026-05-27
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -361,3 +362,20 @@ Total: **~100 LoC**. Down from the original "~250-350 LoC" estimate because the 
 - Project-wide audit of the 145 other manual `fctx.body =` swap sites (follow-up issue).
 - Lint check to prevent new manual swaps (follow-up issue).
 - Refactoring the destructure-params dispatcher to be less complex (orthogonal cleanup).
+
+## Resolution (2026-05-27)
+
+Already fixed on `main`. The two manual `fctx.body` swap sites in
+`src/codegen/destructuring-params.ts` were converted to `pushBody`/`popBody`
+in commit `b83818e25` ("fix(#1314): use pushBody/popBody in destructure-param
+swaps (87 CE failures)", 2026-05-07), which is an ancestor of current `main`.
+The `#1314` markers are visible at `destructuring-params.ts:9` (import),
+`:837-857`, and `:888-1118`.
+
+Verified on current `main`:
+- `tests/issue-1314.test.ts` exists and passes (7/7).
+- Fresh repros (`const f = ([x = g()]) => x`, the trifecta variant, and the
+  deep-nested `[[a = g()] = g()]` case) compile, validate, and run with **no**
+  "not enough arguments on the stack for call" error — acceptance criterion met.
+
+This commit only flips the stale `status: ready` → `done`; no code change.
