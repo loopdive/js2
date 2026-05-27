@@ -77,3 +77,60 @@ pre-merge tip — so it's the feature, not the merge.
 
 PR #347's clean conflict resolution is preserved at local commit `4b9f14e30` if a
 future dev wants the index.ts reconciliation as a starting point.
+
+## Investigation 2026-05-27 (dev-1606) — ESCALATING: needs architect spec
+
+Confirmed current main is the **clean host-import version** (NOT the broken #1323
+code — that never merged; PR #347 closed). `__make_iterator_result` / `$IteratorResult`
+do not exist anywhere in `src/`. So this is a fresh feature, and the closed branch
+`4b9f14e30` is too stale to reuse: it predates #1618/#1651/#1653 WASI work and
+*reverts* those changes — diffing against it is noise, not a starting point.
+
+**A single-externref design is mathematically impossible (rules out the easy path):**
+`__iterator_step(iter) -> externref` cannot encode both `done` and an arbitrary
+`value`. Using `null` as the done sentinel breaks `for (const x of [undefined])` /
+`[null]` — a real `undefined`/`null` element is indistinguishable from done. So a
+`$IteratorResult` **struct (or two host calls) is genuinely required**. The struct is
+the only host-independent option — and it inherently needs a Wasm-side constructor the
+JS runtime can call, which is exactly the gap that sank PR #347.
+
+**Real root cause of the #347 regression (verified):**
+- `buildImports` always creates `callbackState = { getExports: () => wasmExports }`,
+  but `wasmExports` is only populated when a caller invokes `setExports(instance.exports)`
+  **after** instantiation (`runtime.ts:7361`).
+- `compileAndRun`/`instantiateAndRun` *do* call `setExports` (`runtime.ts:7576`). **But
+  the unit-test harness and raw embedders call `WebAssembly.instantiate(binary, imports)`
+  directly and never call `setExports`** (`tests/iterators.test.ts:13`). In that path
+  `getExports()` is `undefined`, so any runtime building the struct via
+  `callbackState.getExports().__make_iterator_result` is unreachable → codegen
+  `ref.cast` to `$IteratorResult` hits a raw JS object → runtime `illegal cast`.
+
+**Scope is wider than the issue's "Files" list:** the two imports are consumed in
+**two** codegen paths, both of which must switch consistently:
+- legacy: `src/codegen/statements/loops.ts:3331-3332, 3447-3464`
+- IR: `src/ir/lower.ts:1399-1423` (+ lowering docs `src/ir/nodes.ts:1250-1303`)
+
+**Design decisions an architect must pick (the crux #347 got wrong):**
+1. How is `$IteratorResult` constructed so it is reachable in the **default raw-instantiate
+   path** (no `setExports`)? Options:
+   a. Make `__iterator_next` a **Wasm-native helper** that reads `.done`/`.value` via
+      thin host shims and packs the struct *in Wasm* (struct construction always
+      reachable; still needs host reads — doesn't fully remove host deps in JS mode).
+   b. Force every instantiation path (incl. the test harness + embedder docs) to call
+      `setExports`, then build the struct in JS via `__make_iterator_result`. Fragile —
+      re-arms the same trap for the next raw embedder unless enforced by a wrapper.
+   c. Keep host imports as fallback, use the struct path only when the constructor export
+      is reachable (issue option 1b) — then the imports are NOT eliminated, conflicting
+      with acceptance criterion 1.
+2. Whether full elimination is compatible with JS-host mode at all, or whether it is only
+   achievable in `--standalone`/WASI mode (where there is no JS iterator object to read
+   and the iterator is already a Wasm struct). Cross-reference #1665 native generators —
+   #93 flags a "shared $Iterator design gap"; this is the same gap and should be specced
+   together.
+
+Recommendation: route to architect for a spec choosing (a)/(b)/(c) and defining the
+construction + reachability contract across legacy + IR + both instantiation paths
+before any code lands. Implementing blind risks repeating the #347 regression.
+
+Worktree `issue-1620-iterator-result-struct` created during investigation; **no source
+changes made** — safe to remove or reuse by the spec implementer.
