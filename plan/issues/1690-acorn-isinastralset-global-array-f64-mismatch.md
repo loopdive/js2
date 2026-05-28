@@ -133,3 +133,67 @@ codegen (also a finding — see Notes).
 - Builds on #1679: that issue's `new this(...)` blocker is resolved on
   `e622751f7`, exposing this validation failure as the next gate to a clean
   acorn compile.
+
+## Investigation 2026-05-28 (sendev-1542)
+
+**Repro confirmed on current main** (after PR #845 merge): `WebAssembly.compile(acorn.mjs binary)` fails with `function #58:"isInAstralSet" failed: f64.lt[0] expected type f64, found global.get of type (ref null 57) @+185628`. The function index and global index moved (`#58` vs the issue's `#56`, `2472` vs `56`) but the symptom shape is identical.
+
+### WAT-level findings (`.tmp/acorn/acorn.wat`)
+
+`isInAstralSet` body (L2840-2939):
+
+```wat
+(func $isInAstralSet (param f64 (ref null 3)) (result i32)
+  (local $pos f64)
+  (local $__tmp_1 (ref null 3))
+  ...
+  f64.const 65536
+  local.set 2                  ;; pos = 0x10000  (local.set $pos — correct)
+  f64.const 0
+  global.set 2474              ;; i = 0  — but `i` is a function-local `var i`, NOT a module-level decl
+  (block
+    (loop
+      global.get 2472          ;; STALE INDEX — should be 2474; this is `$__mod_unicodeScriptValues`, type (ref null 57)
+      local.get 1
+      struct.get 3 0           ;; set.length
+      f64.convert_i32_s
+      f64.lt                   ;; FAILS: operand is (ref null 57), not f64
+      ...
+      global.get 2474          ;; i += 2 path reads 2474 correctly
+      f64.const 2
+      f64.add
+      global.set 2474          ;; — correctly writes 2474
+      ...
+```
+
+Global indices nearby:
+- `#2472`  `(global $__mod_unicodeScriptValues (mut (ref null 57)) (ref.null 57))` ← the validator's "ref null 57"
+- `#2474`  `(global $__mod_i (mut f64) (f64.const 0))` ← where `i` actually lives
+
+### Two compounding defects
+
+**1. `var i` inside `isInAstralSet` is wrongly hoisted to a module global** (`$__mod_i`). `walkModuleStmtForVars` in `src/codegen/declarations.ts:2873` deliberately does NOT recurse into FunctionDeclarations / methods / arrows — yet `var i` from a nested function ended up at `$__mod_i`. Likely cause: the `var i` at module scope in acorn.mjs:1063 *does* get hoisted (correctly), and the **inner** `var i` then erroneously **resolves to the same module global** (rather than allocating a fresh function-local). Need to find where the name-resolution for `var i` declarations inside functions consults `moduleGlobals` and short-circuits.
+
+**2. The for-loop CONDITION read of `i` doesn't get shifted along with the writes.** The init (`i = 0` → `global.set 2474`) and the increment (`i += 2` → `global.get/set 2474`) are at the correct index 2474; only the condition read at L2851 is at 2472 — an off-by-2. Since `fixupModuleGlobalIndices` walks `loop.body` and `block.body` (the recursion at `src/codegen/registry/imports.ts:150-167` covers `body/then/else/catches/catchAll`), and the writes DID get shifted, the only way the condition read is stale is if it's stored in a **separate Instr[] array** that fixup doesn't reach. Candidates: a `pendingHoistedConditionInstrs`-style buffer, or the savedBody-swap pattern (#1384) missed a body during the for-loop's condition compilation.
+
+### Why both defects compound to the validator failure
+
+Without defect #1 the inner `var i` would be a local and never trigger global-index shifts → no shift bug to expose. Without defect #2 the global-index shift would correctly update the condition read → no validation failure. The combo: `var i` aliases to module-global → for-loop condition reads that global → defect #2 leaves the condition read at stale index 2472 → `global.get 2472` returns `(ref null 57)` → `f64.lt` rejects → invalid Wasm.
+
+### Suggested next steps
+
+1. **Localize defect #1 first** (smaller surface). Audit identifier resolution in `compileIdentifier` /
+   `compileVariableStatement` for the path that promotes an inner-function `var <name>` to
+   `moduleGlobals.get(name)` instead of allocating a function-local. Likely in
+   `src/codegen/expressions/identifiers.ts` or `src/codegen/statements.ts`. Add a guard: a `var <name>`
+   binding-declaration inside a FunctionDeclaration/FunctionExpression/ArrowFunction/MethodDeclaration
+   must allocate a fresh local even if the outer module also has `__mod_<name>`.
+2. **Then validate defect #2 independently.** Build a focused repro that:
+   - declares a module-level `var x` (triggers `__mod_x` global allocation)
+   - in a separate function uses `for (var i = 0; i < arr.length; i++) ...` — i.e. the same shape, but without name collision — see whether the loop-condition shift also lags.
+   If yes, the shift walker is missing an Instr[] array (savedBodies during for-condition compilation is the prime suspect).
+3. **Bisect the file size** — the issue file suggests this, but with defect #1 in mind: the size threshold likely correlates with how many module-level `var` declarations have been registered before `isInAstralSet` compiles (each adds a `__mod_*` global; once enough are added that the global-table needs shifting via `addStringConstantGlobal`, defect #2 fires).
+
+### Out of scope here
+
+Compiler also reports 471 diagnostics (TS strict-mode noise from acorn's untyped JS). These are non-fatal under `allowJs: true` and unrelated to the validator failure. Probe at `.tmp/acorn/probe.mts`.
