@@ -7035,7 +7035,25 @@ assert._isSameValue = isSameValue;
       if (name === "__call_2_f64") return (fn: Function, a: number, b: number) => fn(a, b);
       if (name === "__call_1_i32") return (fn: Function, a: number) => fn(a);
       if (name === "__call_2_i32") return (fn: Function, a: number, b: number) => fn(a, b);
-      if (name === "__typeof") return (v: any) => typeof v;
+      if (name === "__typeof")
+        return (v: any) => {
+          // (#1594A Slice A) Wasm closure structs are externref-typed in JS
+          // and have no `[[Call]]`, so the bare `typeof v` returns "object".
+          // Per spec they should report "function". `__is_closure` (emitted
+          // alongside any closure type) is the authoritative discriminator,
+          // identical to the one used by `_maybeWrapCallableUnknownArity`.
+          if (v != null && typeof v === "object") {
+            const isClosureFn = callbackState?.getExports()?.__is_closure as ((x: any) => number) | undefined;
+            if (typeof isClosureFn === "function") {
+              try {
+                if (isClosureFn(v) === 1) return "function";
+              } catch {
+                /* not a closure-struct shape — fall through */
+              }
+            }
+          }
+          return typeof v;
+        };
       if (name === "__instanceof")
         return (v: any, ctorName: string) => {
           try {
