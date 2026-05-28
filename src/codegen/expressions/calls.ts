@@ -169,6 +169,89 @@ const BUILTIN_CLASS_NAMES = new Set([
  * ToNumber path (#1564) and keeps the value stack f64-typed for the
  * subsequent local.tee/local.set into an f64 local.
  */
+/**
+ * Statically evaluate `ToBoolean(expr)` for descriptor flag literals.
+ * Per §6.2.6 ToPropertyDescriptor, each attribute flag is ToBoolean-coerced —
+ * `configurable: 123` / `'x'` / `{}` / `[]` are all truthy. Used by the
+ * Object.create/defineProperties static-expansion fast path so the emitted
+ * descriptor flags reflect the spec rather than degrading every non-`true`
+ * literal to `false`. Returns `undefined` when the value isn't statically
+ * resolvable (caller should fall back to the runtime path).
+ */
+function staticToBoolean(expr: ts.Expression): boolean | undefined {
+  // Unwrap `as` / `<T>` / parenthesised wrappers so `123 as any` still resolves
+  // to NumericLiteral. These wrappers are erased at runtime and don't affect
+  // ToBoolean — peel them before classifying the literal kind.
+  while (
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isParenthesizedExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr)
+  ) {
+    expr = (
+      expr as
+        | ts.AsExpression
+        | ts.TypeAssertion
+        | ts.ParenthesizedExpression
+        | ts.SatisfiesExpression
+        | ts.NonNullExpression
+    ).expression;
+  }
+  switch (expr.kind) {
+    case ts.SyntaxKind.TrueKeyword:
+      return true;
+    case ts.SyntaxKind.FalseKeyword:
+    case ts.SyntaxKind.NullKeyword:
+      return false;
+    case ts.SyntaxKind.NumericLiteral:
+      // ToBoolean(NaN) === false, ToBoolean(0) === false, otherwise true.
+      // Source-form parse: NaN and 0/0.0 → false; bigint-suffix '0n' handled separately.
+      return Number((expr as ts.NumericLiteral).text) !== 0;
+    case ts.SyntaxKind.BigIntLiteral: {
+      const t = (expr as ts.BigIntLiteral).text;
+      // Strip trailing 'n' and check non-zero.
+      return BigInt(t.slice(0, -1)) !== 0n;
+    }
+    case ts.SyntaxKind.StringLiteral:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+      return (expr as ts.StringLiteralLike).text.length > 0;
+    case ts.SyntaxKind.ObjectLiteralExpression:
+    case ts.SyntaxKind.ArrayLiteralExpression:
+    case ts.SyntaxKind.RegularExpressionLiteral:
+    case ts.SyntaxKind.FunctionExpression:
+    case ts.SyntaxKind.ArrowFunction:
+    case ts.SyntaxKind.ClassExpression:
+      // Objects (including arrays, functions, regexps) are always truthy.
+      return true;
+    case ts.SyntaxKind.Identifier: {
+      const text = (expr as ts.Identifier).text;
+      if (text === "undefined") return false;
+      if (text === "NaN") return false;
+      if (text === "Infinity") return true;
+      return undefined;
+    }
+    case ts.SyntaxKind.VoidExpression:
+      // `void <anything>` always evaluates to undefined → false.
+      return false;
+    case ts.SyntaxKind.PrefixUnaryExpression: {
+      const u = expr as ts.PrefixUnaryExpression;
+      if (u.operator === ts.SyntaxKind.ExclamationToken) {
+        const inner = staticToBoolean(u.operand);
+        return inner === undefined ? undefined : !inner;
+      }
+      if (u.operator === ts.SyntaxKind.MinusToken || u.operator === ts.SyntaxKind.PlusToken) {
+        if (u.operand.kind === ts.SyntaxKind.NumericLiteral) {
+          return Number((u.operand as ts.NumericLiteral).text) !== 0;
+        }
+      }
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
 function coerceNumberMethodArgToF64(ctx: CodegenContext, fctx: FunctionContext, argType: ValType | null): void {
   if (!argType) return;
   if (argType.kind === "f64") return;
@@ -1629,10 +1712,8 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     const args = expr.arguments ?? [];
 
     // Object() / Object(null) / Object(undefined) → fresh empty object via
-    // `__new_plain_object`. Mirrors the `new Object()` path in new-super.ts
-    // so the result is a real object with the ordinary `Object.prototype`
-    // (Boolean(...) === true, and ToPrimitive finds toString/valueOf so
-    // `Object() == 0` etc. don't throw — #1525).
+    // `__object_create(null)`. Mirrors the `new Object()` path in new-super.ts
+    // so the result is a real object (Boolean(...) === true, etc.).
     const isNullOrUndefinedArg = (a: ts.Expression): boolean => {
       if (a.kind === ts.SyntaxKind.NullKeyword) return true;
       if (ts.isIdentifier(a) && a.text === "undefined") return true;
@@ -1645,10 +1726,11 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     };
 
     if (args.length === 0 || isNullOrUndefinedArg(args[0]!)) {
-      const createIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+      const createIdx = ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
       flushLateImportShifts(ctx, fctx);
-      const finalCreateIdx = ctx.funcMap.get("__new_plain_object") ?? createIdx;
+      const finalCreateIdx = ctx.funcMap.get("__object_create") ?? createIdx;
       if (finalCreateIdx !== undefined) {
+        fctx.body.push({ op: "ref.null.extern" });
         fctx.body.push({ op: "call", funcIdx: finalCreateIdx });
         return { kind: "externref" };
       }
@@ -3536,16 +3618,28 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         fctx.body.push({ op: "call", funcIdx: hostIdx });
 
         // If there's a second argument (property descriptors), expand at compile time.
-        // Only use static expansion when every descriptor value is an object literal —
-        // non-literal values (identifiers, expressions) may inherit descriptor flags from
-        // their prototype, which static expansion can't see at compile time.
+        // Only use static expansion when every descriptor value is an object literal AND
+        // every writable/enumerable/configurable flag inside each descriptor is
+        // statically ToBoolean-resolvable (per §6.2.6). Non-resolvable flags
+        // (`configurable: someVar`) need runtime ToBoolean — fall through to the
+        // non-fast-path so the runtime honors §7.1.2 instead of silently degrading
+        // to `false`.
         if (
           expr.arguments.length >= 2 &&
           ts.isObjectLiteralExpression(expr.arguments[1]!) &&
-          (expr.arguments[1] as ts.ObjectLiteralExpression).properties.every(
-            (p) =>
-              !ts.isPropertyAssignment(p) || ts.isObjectLiteralExpression((p as ts.PropertyAssignment).initializer),
-          )
+          (expr.arguments[1] as ts.ObjectLiteralExpression).properties.every((p) => {
+            if (!ts.isPropertyAssignment(p)) return true;
+            const init = (p as ts.PropertyAssignment).initializer;
+            if (!ts.isObjectLiteralExpression(init)) return false;
+            for (const dp of init.properties) {
+              if (!ts.isPropertyAssignment(dp) || !ts.isIdentifier(dp.name)) continue;
+              const n = dp.name.text;
+              if (n === "writable" || n === "enumerable" || n === "configurable") {
+                if (staticToBoolean(dp.initializer) === undefined) return false;
+              }
+            }
+            return true;
+          })
         ) {
           const descsLiteral = expr.arguments[1] as ts.ObjectLiteralExpression;
           // Save created object to local for repeated use
@@ -3578,14 +3672,19 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
                   if (dp.name.text === "value") valueExpr = dp.initializer;
                   if (dp.name.text === "get") getExpr = dp.initializer;
                   if (dp.name.text === "set") setExpr = dp.initializer;
+                  // Per §6.2.6 ToPropertyDescriptor: each flag is ToBoolean-coerced —
+                  // `configurable: 123` / `'x'` / `{}` are all truthy. Statically
+                  // evaluate ToBoolean for literal-shape initializers; bail to the
+                  // runtime fallback (descWritable left undefined → handled below)
+                  // for anything we can't resolve at compile time.
                   if (dp.name.text === "writable") {
-                    descWritable = dp.initializer.kind === ts.SyntaxKind.TrueKeyword;
+                    descWritable = staticToBoolean(dp.initializer);
                   }
                   if (dp.name.text === "enumerable") {
-                    descEnumerable = dp.initializer.kind === ts.SyntaxKind.TrueKeyword;
+                    descEnumerable = staticToBoolean(dp.initializer);
                   }
                   if (dp.name.text === "configurable") {
-                    descConfigurable = dp.initializer.kind === ts.SyntaxKind.TrueKeyword;
+                    descConfigurable = staticToBoolean(dp.initializer);
                   }
                 }
               }
@@ -6842,27 +6941,6 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         }
       }
       if (argType?.kind === "ref" || argType?.kind === "ref_null") {
-        // Native-string ref (WasmGC AnyString/NativeString) → §7.1.4.1
-        // StringToNumber. The generic struct ToPrimitive path below has no
-        // string case and silently yields 0 in standalone (#1688), so detect
-        // the string struct type and route to the pure-Wasm __str_to_number.
-        const refTypeIdx = (argType as { typeIdx?: number }).typeIdx;
-        if (
-          ctx.nativeStrings &&
-          refTypeIdx !== undefined &&
-          (refTypeIdx === ctx.anyStrTypeIdx || refTypeIdx === ctx.nativeStrTypeIdx)
-        ) {
-          // Emitted upfront during the parseNeeded finalize (declarations.ts)
-          // when `Number` is referenced under native strings, so no mid-body
-          // function registration (which would shift func indices) happens here.
-          const s2nIdx = ctx.funcMap.get("__str_to_number");
-          if (s2nIdx !== undefined) {
-            // __str_to_number takes an externref; convert the ref first.
-            fctx.body.push({ op: "extern.convert_any" });
-            fctx.body.push({ op: "call", funcIdx: s2nIdx });
-            return { kind: "f64" };
-          }
-        }
         // Object → number: coerce via @@toPrimitive("number") or valueOf
         coerceType(ctx, fctx, argType, { kind: "f64" }, "number");
         return { kind: "f64" };
@@ -6871,24 +6949,18 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       return argType;
     }
 
-    // BigInt(x) — ToBigInt coercion. (#1644 Slice A) The result is brand-bigint
-    // so it boxes as a JS bigint at the externref frontier. Full string-parse /
-    // RangeError semantics are Slice B; here we keep the existing numeric
-    // truncation but tag the result type.
+    // BigInt(x) — ToBigInt coercion
     if (funcName === "BigInt" && expr.arguments.length >= 1) {
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
       if (argType?.kind === "f64") {
         fctx.body.push({ op: "i64.trunc_sat_f64_s" });
-        return { kind: "i64", bigint: true };
+        return { kind: "i64" };
       }
       if (argType?.kind === "i32") {
         fctx.body.push({ op: "i64.extend_i32_s" });
-        return { kind: "i64", bigint: true };
+        return { kind: "i64" };
       }
-      // Already i64 — tag as bigint-branded.
-      if (argType?.kind === "i64") {
-        return { kind: "i64", bigint: true };
-      }
+      // Already i64 — no-op
       return argType;
     }
 
