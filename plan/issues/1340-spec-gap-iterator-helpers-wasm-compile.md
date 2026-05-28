@@ -1,10 +1,9 @@
 ---
 id: 1340
 title: "spec gap: Iterator.prototype helpers wasm_compile errors (89 of 245 fails)"
-status: done
+status: needs-spec
 created: 2026-05-08
 updated: 2026-05-28
-completed: 2026-05-28
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -177,3 +176,89 @@ These three plus #1340 share a common need: a typed bridge between
 compiler-declared "iterator-shaped" values and host iterator
 prototypes. A combined spec is more efficient than four sequential
 ones.
+
+## 2026-05-28 implementation attempt — escalated (PR #867, net -23)
+
+The architect spec was implemented in PR #867 (`issue-1340-func-closure-singleton`,
+commits `6ce7884b3` + `237a653cd` + `d5f924b59`):
+
+- `src/codegen/context/types.ts` — `funcClosureGlobals: Map<string, number>`
+- `src/codegen/context/create-context.ts` — initialisation
+- `src/codegen/registry/imports.ts` — index-shift sync
+- `src/codegen/closures.ts` — `emitCachedFuncClosureAccess` mirror of `emitCachedMethodClosureAccess`,
+  with `noThisParam: true` plumbing on `pendingMethodTrampolines` + `finalizeMethodTrampolines`
+- `src/codegen/expressions/identifiers.ts` — try cached path before legacy `emitFuncRefAsClosure`
+- Fast-path follow-up at the call site (`d5f924b59`): on cached read, `any.convert_extern + ref.cast`
+  back to the struct ref so array-method callbacks take the `call_ref` fast path while preserving
+  externref-based cross-site identity (otherwise `[1,2].filter(fn)` regressed via `__call_2_f64`).
+
+**Local scoped tests pass** (7/7 on `tests/issue-1340.test.ts` + the regression-prone
+`tests/equivalence/array-filter-obj-length.test.ts`; 6/6 on `tests/issue-820m.test.ts`;
+3/3 on `tests/issue-1394.test.ts`, `tests/issue-1693.test.ts`, `tests/issue-1690.test.ts`).
+
+**But the full test262 sweep (CI shard merge, baseline 2026-05-28 main) is net-negative**:
+
+| Status | Baseline | New | Delta |
+| --- | --- | --- | --- |
+| pass | 31,694 | 31,656 | **−38** |
+| fail | 15,094 | 15,133 | **+39** |
+| compile_error | 1,180 | 1,180 | 0 |
+| compile_timeout | 6 | 5 | −1 |
+| Net per test | | | **~−23** (15 improvements are sibling-PR merges, not from #1340) |
+
+**Two distinct regression patterns** (53 total, all with wasm-hash change):
+
+1. **`Array.prototype.{every,some,forEach,reduce}.call(receiver, fn)` returned 3** — 27 cases
+   in `test/built-ins/Array/prototype/every/15.4.4.16-*` and siblings. The `.call()` dispatch
+   path doesn't recognise the new struct-ref-returning cached closure; the host bridge
+   (`__call_2_f64` / `__call_2_i32` via `setupArrayCallback`, `array-methods.ts:5077`)
+   coerces and produces wrong arity (callbackfn receives wrong args, `Array.every` returns
+   `3` ≠ the expected boolean).
+2. **`Maximum call stack size exceeded`** — 25 cases in `annexB/language/function-code/
+   if-decl-else-decl-*-func-existing-fn-no-init.js` and `Array/prototype/filter/15.4.4.20-9-c-ii-9.js`.
+   The cached trampoline `__fn_tramp_${name}_cached` collides with `funcMap` lookup or
+   `nestedFuncCaptures` resolution in hoisted-function/AnnexB legacy-fn-init scenarios,
+   producing infinite mutual recursion.
+
+### Why the fast-path fix is necessary but not sufficient
+
+The cached closure returns externref (so `foo === foo` and sidecar writes round-trip).
+For *direct* `[arr].method(fn)` dispatch, the call-site coerces externref → struct ref
+via `any.convert_extern + ref.cast` and takes the `call_ref` fast path.
+
+But for `Array.prototype.method.call(receiver, fn)` the dispatch goes through a
+different code path (the host bridge, NOT `setupArrayCallback`'s call_ref path).
+The host bridge consumes an *externref* representation that assumes the value is
+a real JS function — not the new struct-ref shape. So when the cached closure is
+fed to `.method.call(...)`, the bridge mishandles it.
+
+### Recommendation: respec required
+
+The architect spec assumed the cached closure could fully substitute for the per-site
+struct.new at every use site. That holds for the direct array-method call_ref path
+but **fails for the `Function.prototype.call` host bridge**. Either:
+
+(a) The cached closure only fires when *all* downstream consumers can take struct-ref —
+    i.e. only `[arr].method(fn)` direct dispatch, NOT `.method.call`. The compiler
+    would need to detect this at use-site, which is invasive.
+
+(b) The host bridge is extended to consume the new shape (cached-externref-of-struct).
+    This means `__call_N_*` host imports detect when the externref wraps a Wasm
+    struct closure and unwrap it appropriately.
+
+(c) The whole cached approach is dropped in favour of a different identity scheme
+    (e.g. emit `foo` as a module-global externref initialised at module start, with
+    no struct wrapper involved at use sites).
+
+Plus the trampoline-name-vs-funcMap collision in (2) needs targeted analysis —
+the `__fn_tramp_${name}_cached` naming may be colliding with something else when
+the function decl is hoisted across a block boundary.
+
+### Decision
+
+PR #867 stays open as a reference implementation but should **not merge**. Issue
+flipped back to `status: needs-spec`. Architect needs to choose (a)/(b)/(c) and
+write the joint spec. Tests `tests/issue-1340.test.ts` are correct and reusable.
+
+Worktree `/workspace/.claude/worktrees/issue-1340-func-closure-singleton` at
+`d5f924b59` is retained for diff inspection.
