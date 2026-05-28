@@ -1,11 +1,11 @@
 ---
 id: 1350
-title: "spec gap: ArrayBuffer resizable + TypedArray detached-buffer guards (100 + 39 test262 fails)"
-status: ready
+title: "spec gap: ArrayBuffer resizable + TypedArray detached-buffer guards (100 + 39 test262 fails) — DUPLICATE of #1645"
+status: blocked
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-05-28
 priority: medium
-feasibility: medium
+feasibility: hard
 reasoning_effort: medium
 task_type: bugfix
 area: runtime
@@ -13,7 +13,43 @@ language_feature: typedarray
 goal: spec-completeness
 sprint: 50
 parent: 1328
+duplicate_of: 1645
 ---
+# #1350 — DUPLICATE of #1645 (ArrayBuffer.resize / detached-buffer guards)
+
+> **Reconciliation 2026-05-28 (dev):** This issue and **#1645** (renumbered from
+> #1351) carry **identical content** — same title, same problem statement, same
+> acceptance criteria, same impl plan. #1645 received the architect-blocker
+> investigation in PR #666 (commit 767abf435, merged 2026-05-27) and is the
+> canonical tracking issue. All future work on resizable ArrayBuffer + detached
+> guards goes through #1645.
+>
+> ### Why blocked (summary from #1645's investigation)
+> - ArrayBuffer/DataView compile to a **fixed-length `i32_byte` WasmGC vec**
+>   (`src/codegen/dataview-native.ts:22`). WasmGC arrays are fixed-length once
+>   allocated, so `resize(newLen)` to a larger size is **structurally impossible**
+>   without a representation change.
+> - Architect must pick between **(a)** over-allocate to `maxByteLength` and
+>   track logical length separately, or **(b)** an indirection struct
+>   (`{ data: (mut ref vec), len: (mut i32), maxLen, detached }`) so resize swaps
+>   in a freshly allocated, copied backing.
+> - The issue's stated impl file `src/codegen/registry/typedarray.ts` **does not
+>   exist** — the file reference in the legacy plan is stale.
+>
+> ### Separable follow-up (developer-scoped, not blocked)
+> Adding an `IsDetachedBuffer` prologue to TypedArray prototype methods (mirroring
+> the DataView guard at `src/runtime.ts:4609`) doesn't require the representation
+> spec — the `_detachedBuffers` WeakSet + `__is_detached_buffer` infrastructure
+> already exists. #1645's investigation notes this as a candidate sub-issue, but
+> it has not been carved out yet. If it is carved, it should be a child of #1645,
+> not #1350.
+>
+> See #1645 for the live tracking, sibling #1595 (transfer methods, also blocked
+> on this representation choice), and #1515 (DataView detached / ToIndex —
+> already shipped).
+
+## Original content (preserved for history)
+
 # #1350 — ArrayBuffer.resize / detached-buffer guards on TypedArray methods
 
 ## Problem

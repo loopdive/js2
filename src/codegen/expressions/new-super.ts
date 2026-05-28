@@ -2027,12 +2027,22 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // calls (getDay, getHours, getTime, …) can return NaN per spec
       // (`new Date(NaN).getTime() → NaN`). Without this, `i64.trunc_sat_f64_s`
       // saturates NaN to 0 and the Date silently behaves like the epoch.
+      //
+      // (#1343) TimeClip per §21.4.1.31: if !isFinite(ms) or abs(ms) > 8.64e15,
+      // return NaN. Both NaN and out-of-range get the sentinel. ±Infinity is
+      // out-of-range (abs > 8.64e15), so the single magnitude check covers it.
       compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
       const msLocal = allocTempLocal(fctx, { kind: "f64" });
       fctx.body.push({ op: "local.tee", index: msLocal } as Instr);
-      // ms != ms is true iff ms is NaN
+      // isInvalid = (ms != ms) || (abs(ms) > 8.64e15)
+      // ms != ms is true iff ms is NaN (covers NaN)
       fctx.body.push({ op: "local.get", index: msLocal } as Instr);
       fctx.body.push({ op: "f64.ne" } as Instr);
+      fctx.body.push({ op: "local.get", index: msLocal } as Instr);
+      fctx.body.push({ op: "f64.abs" } as Instr);
+      fctx.body.push({ op: "f64.const", value: 8.64e15 } as Instr);
+      fctx.body.push({ op: "f64.gt" } as Instr);
+      fctx.body.push({ op: "i32.or" } as Instr);
       fctx.body.push({
         op: "if",
         blockType: { kind: "val", type: { kind: "i64" } },
@@ -2049,69 +2059,74 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     {
       const daysFromCivilIdx = ensureDateDaysFromCivilHelper(ctx);
 
+      // (#1343) Track whether any arg is NaN or non-finite. If so, the resulting
+      // Date is Invalid (§21.4.2.1 MakeDate / TimeClip step on non-finite).
+      // We OR-accumulate an i32 flag and stash the f64 value before trunc.
+      const nonFiniteLocal = allocTempLocal(fctx, { kind: "i32" });
+      fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+      fctx.body.push({ op: "local.set", index: nonFiniteLocal } as Instr);
+
+      const checkNonFinite = (f64Local: number) => {
+        // flag = flag | (v != v) | (abs(v) == +Inf)
+        // We treat ±Inf as "non-finite enough" too — abs(v) > 8.64e15 is sufficient.
+        fctx.body.push({ op: "local.get", index: nonFiniteLocal } as Instr);
+        fctx.body.push({ op: "local.get", index: f64Local } as Instr);
+        fctx.body.push({ op: "local.get", index: f64Local } as Instr);
+        fctx.body.push({ op: "f64.ne" } as Instr); // NaN check
+        fctx.body.push({ op: "i32.or" } as Instr);
+        fctx.body.push({ op: "local.get", index: f64Local } as Instr);
+        fctx.body.push({ op: "f64.abs" } as Instr);
+        fctx.body.push({ op: "f64.const", value: 8.64e15 } as Instr);
+        fctx.body.push({ op: "f64.gt" } as Instr);
+        fctx.body.push({ op: "i32.or" } as Instr);
+        fctx.body.push({ op: "local.set", index: nonFiniteLocal } as Instr);
+      };
+
       // Compile year
       compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
+      const yearF64Local = allocTempLocal(fctx, { kind: "f64" });
+      fctx.body.push({ op: "local.tee", index: yearF64Local } as Instr);
+      checkNonFinite(yearF64Local);
       fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
       const yearLocal = allocTempLocal(fctx, { kind: "i64" });
       fctx.body.push({ op: "local.set", index: yearLocal } as Instr);
+      releaseTempLocal(fctx, yearF64Local);
 
       // Compile month (0-indexed) + 1 for civil algorithm
       compileExpression(ctx, fctx, args[1]!, { kind: "f64" });
+      const monthF64Local = allocTempLocal(fctx, { kind: "f64" });
+      fctx.body.push({ op: "local.tee", index: monthF64Local } as Instr);
+      checkNonFinite(monthF64Local);
+      releaseTempLocal(fctx, monthF64Local);
       fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
       fctx.body.push({ op: "i64.const", value: 1n } as Instr);
       fctx.body.push({ op: "i64.add" } as Instr);
       const monthLocal = allocTempLocal(fctx, { kind: "i64" });
       fctx.body.push({ op: "local.set", index: monthLocal } as Instr);
 
-      // Compile day (default 1)
-      if (args.length >= 3) {
-        compileExpression(ctx, fctx, args[2]!, { kind: "f64" });
-        fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-      } else {
-        fctx.body.push({ op: "i64.const", value: 1n } as Instr);
-      }
-      const dayLocal = allocTempLocal(fctx, { kind: "i64" });
-      fctx.body.push({ op: "local.set", index: dayLocal } as Instr);
+      // (#1343) For the remaining optional args, also accumulate the non-finite
+      // flag when the arg is present.
+      const compileTimePart = (argIdx: number, defaultI64: bigint, localKind: ValType) => {
+        if (args.length > argIdx) {
+          compileExpression(ctx, fctx, args[argIdx]!, { kind: "f64" });
+          const f64L = allocTempLocal(fctx, { kind: "f64" });
+          fctx.body.push({ op: "local.tee", index: f64L } as Instr);
+          checkNonFinite(f64L);
+          releaseTempLocal(fctx, f64L);
+          fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
+        } else {
+          fctx.body.push({ op: "i64.const", value: defaultI64 } as Instr);
+        }
+        const local = allocTempLocal(fctx, localKind);
+        fctx.body.push({ op: "local.set", index: local } as Instr);
+        return local;
+      };
 
-      // Compile hours (default 0)
-      if (args.length >= 4) {
-        compileExpression(ctx, fctx, args[3]!, { kind: "f64" });
-        fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-      } else {
-        fctx.body.push({ op: "i64.const", value: 0n } as Instr);
-      }
-      const hoursLocal = allocTempLocal(fctx, { kind: "i64" });
-      fctx.body.push({ op: "local.set", index: hoursLocal } as Instr);
-
-      // Compile minutes (default 0)
-      if (args.length >= 5) {
-        compileExpression(ctx, fctx, args[4]!, { kind: "f64" });
-        fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-      } else {
-        fctx.body.push({ op: "i64.const", value: 0n } as Instr);
-      }
-      const minutesLocal = allocTempLocal(fctx, { kind: "i64" });
-      fctx.body.push({ op: "local.set", index: minutesLocal } as Instr);
-
-      // Compile seconds (default 0)
-      if (args.length >= 6) {
-        compileExpression(ctx, fctx, args[5]!, { kind: "f64" });
-        fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-      } else {
-        fctx.body.push({ op: "i64.const", value: 0n } as Instr);
-      }
-      const secondsLocal = allocTempLocal(fctx, { kind: "i64" });
-      fctx.body.push({ op: "local.set", index: secondsLocal } as Instr);
-
-      // Compile ms (default 0)
-      if (args.length >= 7) {
-        compileExpression(ctx, fctx, args[6]!, { kind: "f64" });
-        fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-      } else {
-        fctx.body.push({ op: "i64.const", value: 0n } as Instr);
-      }
-      const msLocal = allocTempLocal(fctx, { kind: "i64" });
-      fctx.body.push({ op: "local.set", index: msLocal } as Instr);
+      const dayLocal = compileTimePart(2, 1n, { kind: "i64" });
+      const hoursLocal = compileTimePart(3, 0n, { kind: "i64" });
+      const minutesLocal = compileTimePart(4, 0n, { kind: "i64" });
+      const secondsLocal = compileTimePart(5, 0n, { kind: "i64" });
+      const msLocal = compileTimePart(6, 0n, { kind: "i64" });
 
       // Handle year 0-99 mapping to 1900-1999 (JS Date quirk)
       // if (0 <= year <= 99) year += 1900
@@ -2162,6 +2177,31 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         { op: "local.get", index: msLocal } as Instr,
         { op: "i64.add" } as Instr,
       );
+
+      // (#1343) TimeClip §21.4.1.31: if any arg was NaN/non-finite, or
+      // abs(ts) > 8.64e15, the time is invalid. The nonFiniteLocal flag covers
+      // the f64 NaN/Inf cases (i64.trunc_sat_f64_s would otherwise saturate them
+      // silently); the magnitude check covers in-range f64 values that still
+      // produce an out-of-range timestamp.
+      const tsResultLocal = allocTempLocal(fctx, { kind: "i64" });
+      fctx.body.push({ op: "local.set", index: tsResultLocal } as Instr);
+      fctx.body.push(
+        { op: "local.get", index: nonFiniteLocal } as Instr,
+        { op: "local.get", index: tsResultLocal } as Instr,
+        { op: "f64.convert_i64_s" } as Instr,
+        { op: "f64.abs" } as Instr,
+        { op: "f64.const", value: 8.64e15 } as Instr,
+        { op: "f64.gt" } as Instr,
+        { op: "i32.or" } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i64" } },
+          then: [{ op: "i64.const", value: -9223372036854775808n } as Instr],
+          else: [{ op: "local.get", index: tsResultLocal } as Instr],
+        } as unknown as Instr,
+      );
+      releaseTempLocal(fctx, tsResultLocal);
+      releaseTempLocal(fctx, nonFiniteLocal);
 
       fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx } as Instr);
 

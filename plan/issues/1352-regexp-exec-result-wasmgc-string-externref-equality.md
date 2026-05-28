@@ -1,9 +1,10 @@
 ---
 id: 1352
 title: "RegExp exec result: wasmGC string struct ≠ externref string in strict equality (S15.10.2 cluster)"
-status: backlog
+status: done
+completed: 2026-05-28
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -14,6 +15,68 @@ goal: spec-completeness
 sprint: ~
 parent: 1333
 ---
+
+## Resolution (2026-05-28, developer reconciliation)
+
+**ALREADY FIXED ON MAIN — close as `done`, no implementation work needed.**
+
+The S15.10.2 cluster cited as the primary failure surface is already
+fully passing in the current baseline:
+
+```
+$ grep '"S15.10.2' .test262-cache/test262-current.jsonl | jq -r .status | sort | uniq -c
+    290 pass
+      1 compile_error
+```
+
+No strict-equality failures remain. The fix landed earlier under a
+different issue:
+
+- **`4b7c1411` — fix(#1383): typeof-gated strict-equality fallback for
+  cross-type comparisons** — replaced the unsound
+  `host_eq(a,b) || unbox(a)===unbox(b)` shape in the strict-equality
+  codegen with a typeof-gated fallback, which routes the wasmGC-struct
+  / externref-string mixed-operand case through real JS `===` semantics
+  via the host bridge.
+- Followed by **`c3f55339` — fix(#786): Array indexOf/lastIndexOf/
+  includes use spec equality for externref elements** for the
+  SameValueZero side.
+
+Reproducer used to confirm (current main, `.mts`, default mode):
+
+```ts
+function test(): number {
+  const m = /(\d+)/.exec("abc42xyz");
+  if (m === null) return 99;
+  if (m[0] === "42") return 1;
+  return 0;
+}
+// test() = 1 → PASS
+```
+
+Multi-element `String.prototype.match` + element-by-element strict
+comparison also returns `1`.
+
+### Out of scope (carved to follow-up if surfaced)
+
+- `--nativeStrings` / `--target wasi` mode: the i16-array string struct
+  has no `Symbol.toPrimitive` and would need a dedicated
+  `__str_extern` reader at the host bridge. The architect spec below
+  flagged this; no S15.10.2 nativeStrings failures observed in the
+  baseline, so no follow-up filed.
+
+### Notes on prior attempt
+
+An orphaned branch `origin/issue-1352-host-eq` carries commit
+`383fb8fd2` ("fix(#1352): normalize wasmGC string structs in host
+equality bridges") that implemented the architect spec's Option 1
+(_normalizeForHostEq helper on host_eq / host_loose_eq /
+same_value_zero). It was never opened as a PR; the codegen-level fix in
+#1383 superseded it before it landed. The branch is now severely out of
+sync (5 ahead / 2583 behind) and can be deleted.
+
+---
+
 # #1352 — RegExp exec result: wasmGC string struct ≠ externref V8 string in strict equality
 
 ## Problem

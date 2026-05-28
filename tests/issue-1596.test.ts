@@ -107,4 +107,34 @@ describe("#1596 Function.prototype.apply/.call on function expressions", () => {
     `);
     expect(e.test()).toBe(21);
   });
+
+  // Module-level outer-paren CallExpression shape — `(function(){...}.apply(...))`.
+  // The outer parens wrap the whole call expression (not the function literal).
+  // This is the exact AST shape test262 emits in the spread-sngl-literal.js /
+  // spread-mult-literal.js family. Before the fix the module-init collector
+  // only matched ExpressionStatements whose direct child was
+  // `isCallExpression`/`isNewExpression` — never a `ParenthesizedExpression`
+  // around them — so the entire `.apply(...)` call was silently dropped from
+  // `__module_init`.
+  it("module-level outer-paren CallExpression — was silently dropped from __module_init", async () => {
+    const e = await compileAndRun(`
+      var callCount = 0;
+      function bump(): void { callCount += 1; }
+      (bump());
+      export function test(): number { return callCount; }
+    `);
+    expect(e.test()).toBe(1);
+  });
+
+  it("module-level outer-paren MemberCall — was silently dropped from __module_init", async () => {
+    // (obj.method()) — parens around a property-access call. Same dropped-statement
+    // bug as above for the test262 (function(){}.apply(...)) shape.
+    const e = await compileAndRun(`
+      var callCount = 0;
+      const obj = { bump(): void { callCount += 1; } };
+      (obj.bump());
+      export function test(): number { return callCount; }
+    `);
+    expect(e.test()).toBe(1);
+  });
 });

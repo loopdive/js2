@@ -1,11 +1,12 @@
 ---
 id: 1640
-title: "spec gap: Reflect.* invariant checks mirror internal-method bugs (83 test262 fails)"
+title: "spec gap: Reflect.* invariant checks mirror internal-method bugs (47 test262 fails)"
 status: blocked
 created: 2026-05-08
-updated: 2026-05-27
-blocked_on: [1630, 1631]
+updated: 2026-05-28
+blocked_on: [1629, 1596]
 investigation_done: 2026-05-27
+reverified: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -16,7 +17,7 @@ goal: spec-completeness
 sprint: 50
 renumbered_from: 1346
 parent: 1328
-related: 1334
+related: [1334, 1629, 1596, 1630, 1631, 1130]
 ---
 # #1346 — Reflect: invariant checks mirror internal-method bugs
 
@@ -153,3 +154,89 @@ suite (test262 submodule not initialized in this worktree; the recorded
 implementation work exists here; it resolves for free when Cluster A lands.
 Task #67 closed as *verified — no action* (not implemented, because there is
 nothing at the Reflect layer to fix).
+
+## Re-verification (2026-05-28, dev-1607, task #178)
+
+#1630 (Object.assign, PR #781) and #1631 (Object.create descriptor map)
+both merged. Re-ran the full `built-ins/Reflect` suite against current main
+(`b706991e0`) via `runTest262File`: **106 / 153 pass (69.3 %), 47 fail, 0
+skip — UNCHANGED from the 2026-05-27 baseline.** The prediction "Reflect
+inherits the Cluster A fix for free" turned out to be wrong: the merged PRs
+solved narrower scenarios than the umbrella the investigation imagined.
+`Object.defineProperty(o, 'p', { get() { return 42 } })` then `Reflect.get(o,
+'p')` still observes `undefined`, not `42` (probe of `Reflect/get/return-value.js`).
+
+### Failure breakdown (47 fails, by Reflect method bucket)
+
+| bucket | fails | failure shape |
+|---|---|---|
+| `set` | 9 | `Object.defineProperty(o, p, {set: …})` not wired into struct; non-writable invariants; receiver-not-object TypeError |
+| `ownKeys` | 7 | empty-object case, ordering with `defineProperty`, non-enumerable keys, Symbol keys |
+| `defineProperty` | 5 | descriptor coalescing, Symbol-keyed defines, return-boolean semantics |
+| `getOwnPropertyDescriptor` | 4 | accessor descriptors, data descriptors, Symbol property |
+| `apply` | 3 | compiled-wasm fn → host-callable bridge |
+| `construct` | 3 | compiled-wasm ctor → host-constructible bridge; `newTarget` plumbing |
+| `deleteProperty` | 3 | configurable/own-prop semantics |
+| `get` | 3 | accessor descriptor lookup, receiver semantics |
+| `preventExtensions` | 3 | extensibility flag on struct objects |
+| `has` | 2 | proto-chain walk via accessor |
+| `getPrototypeOf` / `isExtensible` / `setPrototypeOf` / object-prototype / prop-desc | 1 each | `assert.throws` for non-object first arg |
+
+All 47 share a single observable: the test sets up state with
+`Object.defineProperty` (often accessor `{get/set: …}`) or `Object.create`
+with a descriptor map, then exercises the corresponding `Reflect.X`. The
+Reflect bridge faithfully forwards to host `Reflect.X` over a wrapped
+struct; the wrapped struct does not expose the accessor wiring → host
+read/write sees the wrong (or no) value.
+
+### Root cause map (still no Reflect-layer fix)
+
+- **~32 fails — accessor-descriptor model on struct objects.** Now blocked
+  on **#1629** (Object.defineProperty descriptor attribute fidelity /
+  typed-struct attribute table) — the actual descriptor storage gap.
+  #1630 and #1631 fixed their narrow surfaces (Object.assign iteration,
+  Object.create descriptor map respectively) but did NOT install
+  per-property `writable/enumerable/configurable/get/set` storage on
+  struct-backed objects. #1629 is currently ESCALATED-NEEDS-ARCHITECT in
+  its own file (multi-PR; splits into #1629a/b/c per its 2026-05-27
+  investigation). #1130 (Array index/length getter-observing) overlaps the
+  Array-exotic subset.
+- **~6 fails — `Reflect.apply` / `Reflect.construct` over compiled wasm
+  functions.** Tracked by **#1596** (`Function.prototype.apply/.call not
+  accessible on compiled Wasm functions`), task #175 in flight. Lands with
+  that PR.
+- **~9 fails — `Reflect.set` invariants on accessor / non-writable props.**
+  Subset of Cluster A; lands with #1629.
+
+### Bridge-layer audit (no localized fixes found)
+
+All 13 `__reflect_*` host bridges in `src/runtime.ts:5484-5647` are
+spec-correct:
+- `__reflect_get/set/has/deleteProperty/defineProperty/getOwnPropertyDescriptor/getPrototypeOf/setPrototypeOf/ownKeys/isExtensible/preventExtensions/apply/construct`
+  each wrap wasm-struct args via `_wrapForHost` and delegate to the host's
+  `Reflect.X`. Receiver and value coercion follow §28.1 verbatim.
+- `_isWasmStruct(target) ? _wrapForHost(target, exports) : target` is the
+  uniform entry pattern; no method is missing a wrap or returning the wrong
+  shape.
+- No failing test exhibits a "wrong boolean return", "missing wrap", or
+  "skipped invariant" symptom that a bridge-layer patch could address.
+- The two candidates raised in the verification request (`Reflect.ownKeys`
+  ordering and `Reflect.getOwnPropertyDescriptor` return-undefined) both
+  depend on struct-object descriptor-attribute storage — verified by
+  inspecting `ownKeys/return-empty-array.js`,
+  `ownKeys/return-array-with-own-keys-only.js`,
+  `getOwnPropertyDescriptor/return-from-data-descriptor.js`,
+  `getOwnPropertyDescriptor/symbol-property.js`: each chains through
+  `Object.defineProperty` or accessor-only setup, none reduces to a Reflect
+  bridge bug.
+
+### Final verdict
+
+**Stay `status: blocked` — now on [1629, 1596].** Reflect will recover to
+~80-90 % (≈138-145 / 153) once those two land. Re-run the suite after #1629
+ships and close if ≥80%; any residual after that will be a small
+Symbol-key / proto-chain bucket worth its own carve.
+
+Task #178 (this re-verification) closed: *re-verified, still blocked, no
+action — pass rate unchanged at 106/153 / 69.3 %, all 47 fails attributable
+to #1629 and #1596*. No PR opened.

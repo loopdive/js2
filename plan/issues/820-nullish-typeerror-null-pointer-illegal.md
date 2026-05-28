@@ -191,6 +191,31 @@ Three new tractable sub-issues filed in `plan/issues/sprints/53/`:
 
 Total addressable via these three: ~217 fails (~16% of the umbrella).
 
+## 2026-05-28 Triage update (dev-1655-2)
+
+Re-bucketed against `.test262-cache/test262-current.jsonl` (2026-05-25
+baseline, 3 days post sprint-53 close). Umbrella now **868 fails total**
+(was 1318 on 2026-05-21 — **−450 reduction** over sprint-53 #820a/b/d/h/j/k +
+#1542/#1543/#1544/#1568/#779e/#1129/#1525/#1607/#1638 etc).
+
+Two new untracked sub-buckets carved:
+
+| Sub-issue | Title | Est fails | Feasibility |
+|-----------|-------|-----------|-------------|
+| **#820l** | `arguments` object: extra positional args beyond declared formals not retained | ~61 | medium |
+| **#820m** | NamedEvaluation: `fn-name-class` + `__proto__-fn-name` (object literal + assignment) | ~12 | easy-medium |
+
+Plus a meta status doc:
+
+| Doc | Title |
+|-----|-------|
+| **#820n** | Umbrella status 2026-05-28: recommendation to close umbrella post-#820l/#820m |
+
+#820n documents the residual ~793-fail decomposition (overlaps with active
+in-flight work: #1610, #1633, #1347b, #1620-v2, #1640, #779d, #1605) and
+out-of-scope features (`new Function(...)`, dynamic-import `_FIXTURE.js`,
+Iterator-helpers proposal).
+
 **#820b** has been implemented on branch `sendev-820-investigation`
 (`src/codegen/literals.ts` — adds `resolveAccessorPropName` helper to handle
 `ts.ComputedPropertyName` wrapping a string/numeric/no-substitution-template

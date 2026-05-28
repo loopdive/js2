@@ -241,3 +241,87 @@ only the args side becomes runtime). Then Sub-fix 2 (dynamic receiver value),
 then Sub-fix 3 (explicit `Function.prototype.*` reshape, which is a thin
 adapter over 1+2). Each sub-fix is independently shippable with its own test
 case, so the PR can land incrementally if any one proves hard.
+
+## Sub-fix 2 investigation (2026-05-28, dev) — NO LOCALIZED FIX FOUND
+
+With Sub-fix 3 merged (PR #778) and Sub-fix 1 (PR #784, paren-wrapped
+ExpressionStatement) open in the merge queue, ran 15 sampled failures from
+`built-ins/Function/prototype/{apply,call}/` against current main
+(8476ab23a) to find remaining localized cases.
+
+### Status of the cluster
+
+Baseline (pre-#778 snapshot, .test262-cache):
+```
+built-ins/Function/prototype/{apply,call}/  →  28 pass / 69 fail
+```
+
+Sampled 15 of the 69 failures live on main; **all 15 still fail**.
+
+### Categorisation of all 69 failures
+
+| Pattern | Count | Status |
+|---|---|---|
+| Uses `Function(body_string)` ctor (e.g. `Function("this.f=1").apply(null)`) | **49** | Blocked — runtime eval/AOT incompatible |
+| Plain function declaration + `.apply`/`.call` (no Function ctor) | **20** | See sub-buckets below |
+
+The 49 Function-ctor cases (test prefixes `S15.3.4.3_A3_T1..T5`, `A6_*`,
+`S15.3.4.4_A5_T8`, `A6_*`, `A7_T5`/`A7_T6`, all `A8_*` etc.) all build a
+function via `new Function("body")` and immediately call `.apply()` / `.call()`
+on it. The Function-constructor takes a string and synthesises a new function
+at runtime — incompatible with AOT compilation and the "compile away, don't
+emulate" project principle. These cannot be addressed in this issue.
+
+### Sub-buckets among the 20 non-Function-ctor failures
+
+Walked each failure individually:
+
+1. **`FACTORY.prototype = Function.prototype; new FACTORY; typeof obj.apply`**
+   (`apply/S15.3.4.3_A1_T2.js`, `call/S15.3.4.4_A1_T2.js`).
+   Tests check that `.apply`/`.call` are inherited through a custom-proto-chain
+   that terminates at `Function.prototype`. **Maps to #1364b** (prototype-chain
+   on plain-object instances) — a separate cross-cutting issue.
+
+2. **IIFE-with-this-leak under `noStrict`** — `(function(){this.feat="x"}).apply(null)`
+   followed by `assert.sameValue(this["feat"], "x")` (`apply/S15.3.4.3_A3_T6.js`,
+   `A3_T8.js`, `A5_T3..T6.js`, mirror `call/A3_T6`/`A3_T8`/`A5_T3..T6`, ~12 tests).
+   The IIFE expects `apply(null)` in sloppy mode to set `this = globalThis` so
+   the assignment leaks to global. We compile `this` inside the IIFE to the
+   inner function's frame, not globalThis. **Maps to existing sloppy-mode
+   gap** (filed area: strict-mode wiring; see #1594 family for parallel
+   sloppy-mode semantics).
+
+3. **`assert.throws` with `Function.prototype.apply` error-shape**
+   (`apply/argarray-not-object.js`, `apply/this-not-callable-realm.js`,
+   `apply/resizable-buffer.js`, `call/S15.3.4.4_A11.js`, `call/argument-realm.js`,
+   `call/this-not-callable-realm.js`, ~5 tests).
+   The localised `(fn as any).apply(null, true)` correctly throws TypeError in
+   isolation (verified: 3/3 cases pass), but inside `assert.throws(TypeError, () => ...)`
+   the test reports "returned 2". The harness assert.throws checks
+   `thrown.constructor !== expectedErrorConstructor` — our cross-boundary
+   TypeError propagation may set `.constructor` to a different real-host
+   object than the test's `TypeError` reference under realm/sandbox shifts.
+   This is the **harness-realm-identity** bucket: the tests that have
+   `-realm.js` in the name explicitly fail under sandboxed realms (#1523
+   territory).
+
+### Conclusion
+
+After #778 (Sub-fix 3) and pending #784 (Sub-fix 1) land, the residual
+`built-ins/Function/prototype/{apply,call}` failures are **not localized**
+to a Function.prototype.apply/.call code path. They decompose into:
+
+- 49 tests: blocked on Function-constructor (unsupported language feature).
+- ~2 tests: prototype-chain inheritance — **maps to #1364b**.
+- ~12 tests: IIFE sloppy-mode global-this leak — **separate sloppy-mode gap**.
+- ~5 tests: realm-cross-boundary constructor identity — **maps to #1523**.
+- ~1 test: TypedArray detach (`resizable-buffer.js`) — **maps to #1645**.
+
+No Sub-fix 2 localized patch fits the data. Recommend closing out #1596
+once #784 lands (the original `~46 fails` figure referenced
+`language/expressions/array/spread-*.js` which #784 targets, not the
+`built-ins/Function/prototype/*` cluster which has different root causes).
+
+Probes and scratch harnesses live in
+`/home/node/.claude/jobs/8d9a5e7c/sample-1596*.mts`,
+`probe-fn-ctor.mts`, `probe-argarray.mts`, `probe-ctor.mts`.

@@ -1,9 +1,9 @@
 ---
 id: 1343
 title: "spec gap: Date.prototype string formatters and parsers (174 of 485 test262 fails)"
-status: ready
+status: in-progress
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -181,3 +181,70 @@ Started investigation in worktree
 focused multi-hour effort and shouldn't be rushed during CI-wait. Worktree
 is clean — only this issue file is modified. Ready for re-claim by next dev
 or for me to resume after #264 self-merges.
+
+## Update (2026-05-28, developer)
+
+Baseline on current `main` (bbd14bf92): **403 / 485 pass (83.1 %)**, 82
+fails in `built-ins/Date/prototype` — Slices 1 (NaN), 2 (time-of-day
+setters), 3 (calendar setters) landed via PR #662 / PR #358
+(`fix(#1638)` + `fix(#1440)` / `fix(#1344)`). Remaining buckets:
+
+| Bucket | Fails | Source |
+|---|---:|---|
+| `toTemporalInstant` | 6 | Temporal proposal — already in skip filters |
+| `toISOString` | 8 | RangeError on out-of-range / Invalid Date |
+| `toJSON` | 7 | requires ToPrimitive on receiver — non-Date-receiver case |
+| `Symbol.toPrimitive` | 6 | method not exposed on Date.prototype |
+| `toUTCString` | 5 | format edge cases (invalid-date branch + day-name table) |
+| `toString` / `toDateString` / `toTimeString` | 9 | format edge cases |
+| setters | ~30 | residuals on Slice 2/3 |
+| misc | 5 | valueOf, no-date-value, S15.9.5_A01_T1 etc. |
+
+### Landing: TimeClip on Date construction (Slice 4 partial)
+
+`src/codegen/expressions/new-super.ts` previously sentineled only on the
+1-arg `new Date(NaN)` case. Out-of-range timestamps (`new Date(8.64e15 + 1)`,
+`new Date(Infinity)`) and multi-arg non-finite components
+(`new Date(Infinity, 1, 70, 0, 0, 0)`) silently saturated through
+`i64.trunc_sat_f64_s` and produced a bogus formatted string instead of the
+spec-mandated RangeError from `toISOString`.
+
+Fix folds TimeClip §21.4.1.31 into both construction paths:
+
+1. **1-arg `new Date(ms)`** — the NaN test is OR'd with
+   `abs(ms) > 8.64e15`. Both branches go to the existing `i64.MIN`
+   sentinel, so the runtime's `_formatDate(mode === ISO && invalid)` path
+   throws RangeError naturally.
+2. **Multi-arg `new Date(y,m,d,h,m,s,ms)`** — each f64 arg now also
+   updates a `nonFiniteLocal` i32 flag (`NaN || abs > 8.64e15`); the
+   final timestamp computation OR's that flag with the post-arithmetic
+   magnitude check; the result becomes the sentinel on overflow.
+
+The default JS-host path is untouched (the wasmGC Date struct lives only
+in standalone-capable codegen; #618 hazard does not apply — no
+addImport/funcIdx shift here).
+
+Tests: `tests/issue-1343-timeclip.test.ts` — 8/8 pass
+(out-of-range positive/negative ms, Infinity ms, multi-arg Infinity year,
+multi-arg NaN year, valid Date round-trip, 1-arg `new Date(0)`, boundary
+8.64e15 still valid).
+
+### Out of scope this PR — follow-up needed
+
+- **`toJSON` non-Date receiver** (7 fails). Per §21.4.4.45 `toJSON` calls
+  ToPrimitive(this, "number"); the receiver may be any object. Currently
+  toJSON is wired through the same dispatch as the formatters and
+  assumes a `__Date` struct receiver — fixing it needs a Symbol.toPrimitive
+  / ToPrimitive(this,"number") plumbing pass that overlaps `__Date` brand
+  handling.
+- **`Symbol.toPrimitive` on Date.prototype** (6 fails). The well-known
+  symbol is not yet registered as a method on the Date prototype; adding
+  it requires the classAccessorSet wiring documented in the senior-dev
+  plan (Slice 4 second item).
+- **Format polish on edge years** (~16 fails across `to{,UTC,Date,Time}String`).
+  The runtime's `_datePad` for negative years already does 6-digit padding;
+  the failing tests typically check exact-character matches that depend
+  on specific day-of-week / month-name table entries for years far outside
+  1970-9999. Worth a focused audit but not blocking.
+- **Setter residuals** (~30 fails across `set{,UTC}{Date,Hours,…,FullYear}`)
+  — out of scope; Slices 2/3 mostly landed but edge cases remain.

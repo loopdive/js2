@@ -1,18 +1,19 @@
 ---
 id: 1513
 title: "spec gap: Reflect — TypeError on non-object/Symbol target + abrupt-completion propagation"
-status: review
+status: in-review
 created: 2026-05-20
-updated: 2026-05-20
-priority: high
-feasibility: easy
-reasoning_effort: medium
+updated: 2026-05-28
+priority: medium
+feasibility: hard
+reasoning_effort: high
 task_type: bugfix
 area: codegen
 language_feature: reflect
 goal: spec-completeness
-sprint: 52
-related: [1460, 1466]
+sprint: Backlog
+related: [1460, 1466, 1629, 1130, 1528a, 1596, 820]
+note: "Re-investigated 2026-05-28: original 81 fails → 46 fails on main (cluster 1 already resolved by host-delegated __reflect_* per #1466). Remaining 46 decompose into cross-cutting issues, not Reflect-localizable. See investigation section below."
 ---
 # #1513 — Reflect: type checks + abrupt completions
 
@@ -106,3 +107,86 @@ cases the test262 suite is testing the other side of.
 - `built-ins/Reflect/defineProperty/return-boolean.js`
 - `built-ins/Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js`
 - `built-ins/Reflect/ownKeys/return-on-corresponding-order.js`
+
+## Investigation 2026-05-28 (dev) — NOT a localized fix, decomposes into existing buckets
+
+Baseline against current main (.test262-cache/test262-current.jsonl):
+**107 pass / 46 fail** in `built-ins/Reflect/`. Down from the original 81 fails
+at issue creation — half of the original scope was resolved by the
+host-delegated `__reflect_*` rewrite landed under #1466 (PR replaced
+compile-time Reflect→Object rewrites with host-import wrappers that delegate
+to native `Reflect.X`, so `Type(target) is not Object` TypeErrors come from
+the host JS engine for free).
+
+**Cluster (1) — TypeError on non-object target — ALREADY PASSING.** All 11
+`target-is-not-object-throws.js` tests across `get/set/has/deleteProperty/
+defineProperty/getOwnPropertyDescriptor/getPrototypeOf/setPrototypeOf/
+ownKeys/preventExtensions/isExtensible` pass on main. The original 81-fail
+count almost certainly counted these.
+
+### Remaining 46 fails decompose into cross-cutting issues
+
+Sampling all 46 entries, none are Reflect-layer fixes. They are dispatch
+proxies to other open buckets:
+
+| # | Bucket | Tests | Real owner |
+|---|--------|-------|------------|
+| A | **Proxy trap abrupt completion not caught** (try/catch around `Reflect.X(proxyWithThrowingTrap)` returns undefined) | ~10 (`return-abrupt-from-result.js` × 8, `return-abrupt-from-attributes.js`) | Wasm/JS exception propagation — same gap as #820 family; host throws but Wasm doesn't unwind into a catchable tag |
+| B | **defineProperty / getOwnPropertyDescriptor descriptor fidelity** | ~10 (`return-boolean.js`, `define-properties.js`, `return-from-{data,accessor}-descriptor.js`, `symbol-property.js`, `return-abrupt-from-attributes.js`, `set-value-on-accessor-*.js`, `different-property-descriptors.js`) | **#1629** (Object.defineProperty descriptor attributes — architect spec already in #1629) |
+| C | **set/get on accessor descriptor / receiver mechanics** | ~6 (`set/receiver-is-not-object.js`, `call-prototype-property-set.js`, `return-false-if-{receiver,target}-is-not-writable.js`, `get/return-value*.js`) | **#1629** + #1640 (Reflect.* invariants on accessors — also already escalated as needing #1629/#1630/#1631) |
+| D | **ownKeys ordering on arrays + integer-key prefix** | ~5 (`return-on-corresponding-order{,-large-index}.js`, `return-array-with-own-keys-only.js`, `return-empty-array.js`, `return-non-enumerable-keys.js`, `order-after-define-property.js`) | Array.isArray + integer-coercion sort — overlaps **#1130** (Array methods observe accessor getters) and arrays-as-wasmGC-structs property model |
+| E | **apply / construct on Wasm-emitted callables** | ~6 (`apply/{call-target,return-target-call-result,arguments-list-is-not-array-like-but-still-valid}.js`, `construct/{return-with-newtarget-argument,return-without-newtarget-argument,use-arguments-list}.js`) | **#1596** (apply/call on compiled Wasm functions) + **#1528a** (Reflect.construct dynamic new) |
+| F | **deleteProperty boolean returns + hasOwnProperty observation** | ~3 (`delete-properties.js`, `return-boolean.js`, `return-abrupt-from-result.js`) | object-property model (typed-struct sidecar can't delete fields) — overlaps #1629 |
+| G | **preventExtensions + setPrototypeOf cross-effects** | ~3 (`preventExtensions/{prevent-extensions,return-boolean-from-proxy-object,return-abrupt-from-result}.js`, `setPrototypeOf/return-abrupt-from-result.js`) | Object.preventExtensions semantics — separate from Reflect dispatch (the host Reflect.preventExtensions IS called; the assertion fails because subsequent Object.setPrototypeOf doesn't throw the way the spec requires) |
+| H | **Reflect() call gate** | 1 (`prop-desc.js` — `assert.throws(TypeError, () => Reflect())`) | Trivial test of "namespace object is not callable", but the test bundles a `verifyProperty(this, "Reflect", ...)` that would still fail under #1629; flipping this one assertion does not flip the test |
+
+### Why this is NOT a localized fix
+
+Every remaining bucket has an existing, deeper issue that owns it:
+
+- **Bucket A** (Proxy trap → user catch) is the same Wasm-tag-vs-JS-throw
+  bridge gap that #820 has been working on. A localized Reflect handler
+  cannot fix it; the Wasm function calling `__reflect_get` needs to be
+  inside a `try`/`catch` Wasm scope that catches host-thrown exceptions
+  and re-throws as a Wasm tag the surrounding TS try/catch can observe.
+  Verified by probe (`.tmp/probe-reflect-abrupt.mts`): the host TypeError
+  thrown by `Reflect.ownKeys(null)` is NOT caught by the surrounding TS
+  `try`/`catch` — yet `target-is-not-object-throws.js` passes because the
+  test262 runner's outer harness re-throws it as a TypeError that the
+  `assert.throws(TypeError, …)` outer catches. The user-level
+  `try { Reflect.X(...) } catch (e) {...}` pattern is the broken one.
+- **Buckets B, C, F** all reduce to the **#1629 descriptor-fidelity** model.
+  Architect spec already exists there; #1640 was previously escalated as
+  blocked on #1629/#1630/#1631 for exactly this reason.
+- **Bucket D** needs the ownKeys integer-prefix sort + array length
+  enumeration — overlaps #1130's accessor-getter Array work.
+- **Bucket E** needs #1596 / #1528a, both already open.
+- **Bucket G** is Object.preventExtensions semantics, not Reflect.
+- **Bucket H** is one assertion in a multi-assert test; net flip = 0.
+
+### Recommendation
+
+**Close as "decomposes into existing issues" — no localized PR.** This
+mirrors the disposition of #1640 (same Reflect-layer escalation, same
+conclusion). The 46 remaining fails will retire as their owning issues
+land:
+
+- Bucket A (~10) → resolves with #820 exception-propagation work
+- Buckets B, C, F (~19) → resolves with #1629 descriptor fidelity
+- Bucket D (~5) → resolves with #1130 + array ownKeys ordering
+- Bucket E (~6) → resolves with #1596 + #1528a
+- Buckets G, H (~4) → small one-offs, can be picked up opportunistically
+
+No Reflect-layer code change is justified. The original issue's clusters
+(1) TypeError-on-non-object and (3) defineProperty-returns-boolean are
+already correct on main via host delegation; remaining failures are tests
+that USE Reflect but assert about behavior owned elsewhere in the engine.
+
+### Probe artifacts
+
+- `.tmp/probe-reflect-abrupt.mts` (job dir): confirms host-thrown
+  TypeError on `Reflect.ownKeys(null)` is not caught by the calling
+  TS try/catch — points at the Wasm/JS exception bridge.
+- `.tmp/probe2.mts`: same shape for `Reflect.X(primitive)` — silently
+  returns `undefined` from the outer function instead of going through
+  the catch block.

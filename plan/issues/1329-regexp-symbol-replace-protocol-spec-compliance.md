@@ -1,9 +1,9 @@
 ---
 id: 1329
 title: "RegExp host-mode: Symbol.replace / replaceAll protocol spec compliance (110 fails)"
-status: ready
+status: in-review
 created: 2026-05-08
-updated: 2026-05-08
+updated: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -110,3 +110,44 @@ runs are reliable. Use CI shards for full counts.
 - Sibling: #1328 (Symbol.match), #1330 (Symbol.search), #1331 (Symbol.split)
 - Overlaps: #983 / #1128 / #1529 (host object-coercion closure dispatch),
   #1342 / #1637 (boolean externref representation)
+
+## #1329-b3 — partial fix (2026-05-28, developer)
+
+Surgical fix for Bucket 3's *result-coercion* half. `__regex_symbol_call`'s
+`wrapCallable` returned a JS function whose return value flowed straight back
+to V8's @@replace. When the user replacer returned a wasmGC struct (typical
+shape: `{ toString(){ … } }`), V8 ran step 14.k.vi `replacement =
+ToString(replValue)` on an opaque WebAssembly object and threw "Cannot convert
+object to primitive value".
+
+The wrapper now post-processes the closure's return value: when it comes back
+as a WasmGC struct, it's routed through `_wrapForHost(ret, exports)` so V8's
+downstream `ToString` reaches the struct's `toString`/`valueOf` closure fields
+via the host proxy — mirroring the treatment we already apply to wasm-struct
+*args* (`wrappedArg0`).
+
+Touches: `src/runtime.ts` (~14 LOC inside the closure-arg wrapper) +
+`tests/issue-1329-b3.test.ts` (3 cases: object-with-toString, number→string,
+plain-string passthrough).
+
+Verification:
+
+| probe / test | before | after |
+|---|---|---|
+| `fn-coerce-replacement.js` (object-with-toString) | throws "Cannot convert object to primitive value" | "[toString value]" (PASS) |
+| `tests/issue-1329-b3.test.ts` | n/a | 3/3 PASS |
+| `tests/issue-1439.test.ts` (10 cases) | 10/10 | 10/10 (no regression) |
+| `tests/issue-1443.test.ts` (5 cases) | 5/5 | 5/5 (no regression) |
+
+### Still failing (out of scope for this PR)
+
+- **`fn-invoke-args.js`** — replacer is called with fewer args than the spec
+  requires. V8 hands @@replace a variadic `(matched, ...captures, position,
+  string)` arg vector; our `wrapCallable` truncates to whatever
+  `__call_fn_N` is the highest emitted dispatcher (capped at N=4 by the
+  codegen), losing the trailing `string`. Genuine codegen change — requires
+  emitting `__call_fn_5+` *and* full `arguments`-object reification inside
+  compiled closures. Not localizable to runtime.ts. Defer to a sibling
+  carve.
+- **String-replacement substitution patterns** (`$&`, `$\``, `$'`, `$n`,
+  `$<name>`) and the wider GetSubstitution edge cases — pre-existing.

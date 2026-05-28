@@ -3000,7 +3000,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // Module-level expression statements with side effects:
     // new expressions, call expressions, ++/--, assignments to module globals
     if (ts.isExpressionStatement(stmt)) {
-      const expr = stmt.expression;
+      // #1596 — the test262 IIFE-with-trailing-call pattern
+      // `(function(){...}.apply(null, [...]))` parses with a
+      // ParenthesizedExpression at the top of the ExpressionStatement. Unwrap
+      // here so the inner CallExpression is recognised and the statement
+      // reaches `__module_init`.
+      let expr: ts.Expression = stmt.expression;
+      while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
       if (ts.isNewExpression(expr) || ts.isCallExpression(expr)) {
         ctx.moduleInitStatements.push(stmt);
         continue;

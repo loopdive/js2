@@ -1676,11 +1676,20 @@ export function compilePropertyAccess(
 
   // Handle Function.length — return the number of formal parameters
   if (propName === "length") {
+    // (#1632a) `.length` on the result of `.bind(...)` must NOT be statically
+    // resolved to the target's param count — per spec it's
+    // `max(0, target.length - boundArgs.length)`. Fall through to the
+    // externref / __extern_get path so the host-bound function's actual
+    // `.length` is read.
+    const isBindResult =
+      ts.isCallExpression(expr.expression) &&
+      ts.isPropertyAccessExpression(expr.expression.expression) &&
+      expr.expression.expression.name.text === "bind";
     const callSigs = objType.getCallSignatures?.();
     const constructSigs2 = objType.getConstructSignatures?.();
     const lengthSigs =
       callSigs && callSigs.length > 0 ? callSigs : constructSigs2 && constructSigs2.length > 0 ? constructSigs2 : null;
-    if (lengthSigs && lengthSigs.length > 0) {
+    if (!isBindResult && lengthSigs && lengthSigs.length > 0) {
       // For library/ambient functions, TS's param count can disagree with the
       // runtime Function.length — the ES spec pins .length for methods like
       // Array.prototype.toSorted to 1 even though the lib d.ts declares
@@ -1769,93 +1778,106 @@ export function compilePropertyAccess(
 
   // Handle Function.name — return the function name as a string
   if (propName === "name") {
-    const callSigs = objType.getCallSignatures?.();
-    const constructSigs = objType.getConstructSignatures?.();
-    const hasFuncSig = (callSigs && callSigs.length > 0) || (constructSigs && constructSigs.length > 0);
-    // (#1450) Even when the static type lacks call/construct signatures
-    // (catch parameter `any`, destructuring assignment target widened to
-    // contextual type, etc.), spec NamedEvaluation still applies if the
-    // identifier's binding declaration has an anonymous-fn / named-fn /
-    // class initializer. Pre-resolve here so destructuring patterns like
-    //   try {} catch ([fn = function(){}]) { fn.name }
-    // fold to the binding identifier text instead of the externref miss.
-    if (!hasFuncSig && ts.isIdentifier(expr.expression)) {
-      const sym = ctx.checker.getSymbolAtLocation(expr.expression);
-      const decl = sym?.valueDeclaration;
-      if (decl && (ts.isBindingElement(decl) || ts.isVariableDeclaration(decl)) && decl.initializer) {
-        let initExpr: ts.Expression = decl.initializer;
-        while (ts.isParenthesizedExpression(initExpr)) initExpr = initExpr.expression;
-        let resolvedName: string | undefined;
-        if (isAnonymousFunctionDefinition(decl.initializer)) {
-          // SingleNameBinding NamedEvaluation: anonymous fn/class inherits
-          // the binding identifier's text as its .name.
-          resolvedName = expr.expression.text;
-        } else if (ts.isFunctionExpression(initExpr) && initExpr.name) {
-          // Named function expression keeps its own name (the binding
-          // identifier is ignored per spec).
-          resolvedName = initExpr.name.text;
-        } else if (ts.isClassExpression(initExpr) && initExpr.name) {
-          resolvedName = initExpr.name.text;
-        }
-        if (resolvedName !== undefined) {
-          addStringConstantGlobal(ctx, resolvedName);
-          return compileStringLiteral(ctx, fctx, resolvedName);
+    // (#1632a) `.name` on the result of `.bind(...)` must NOT be statically
+    // resolved to the target's symbol name — per spec it's `"bound " +
+    // target.name`. Fall through to the runtime __extern_get path so the
+    // host-bound function's actual `.name` property is read.
+    if (
+      ts.isCallExpression(expr.expression) &&
+      ts.isPropertyAccessExpression(expr.expression.expression) &&
+      expr.expression.expression.name.text === "bind"
+    ) {
+      // Skip the static peephole entirely; fall through to the externref
+      // property-access path below.
+    } else {
+      const callSigs = objType.getCallSignatures?.();
+      const constructSigs = objType.getConstructSignatures?.();
+      const hasFuncSig = (callSigs && callSigs.length > 0) || (constructSigs && constructSigs.length > 0);
+      // (#1450) Even when the static type lacks call/construct signatures
+      // (catch parameter `any`, destructuring assignment target widened to
+      // contextual type, etc.), spec NamedEvaluation still applies if the
+      // identifier's binding declaration has an anonymous-fn / named-fn /
+      // class initializer. Pre-resolve here so destructuring patterns like
+      //   try {} catch ([fn = function(){}]) { fn.name }
+      // fold to the binding identifier text instead of the externref miss.
+      if (!hasFuncSig && ts.isIdentifier(expr.expression)) {
+        const sym = ctx.checker.getSymbolAtLocation(expr.expression);
+        const decl = sym?.valueDeclaration;
+        if (decl && (ts.isBindingElement(decl) || ts.isVariableDeclaration(decl)) && decl.initializer) {
+          let initExpr: ts.Expression = decl.initializer;
+          while (ts.isParenthesizedExpression(initExpr)) initExpr = initExpr.expression;
+          let resolvedName: string | undefined;
+          if (isAnonymousFunctionDefinition(decl.initializer)) {
+            // SingleNameBinding NamedEvaluation: anonymous fn/class inherits
+            // the binding identifier's text as its .name.
+            resolvedName = expr.expression.text;
+          } else if (ts.isFunctionExpression(initExpr) && initExpr.name) {
+            // Named function expression keeps its own name (the binding
+            // identifier is ignored per spec).
+            resolvedName = initExpr.name.text;
+          } else if (ts.isClassExpression(initExpr) && initExpr.name) {
+            resolvedName = initExpr.name.text;
+          }
+          if (resolvedName !== undefined) {
+            addStringConstantGlobal(ctx, resolvedName);
+            return compileStringLiteral(ctx, fctx, resolvedName);
+          }
         }
       }
-    }
-    if (hasFuncSig) {
-      // Resolve the function name from the type symbol or the expression
-      let funcName = objType.getSymbol()?.name ?? "";
-      // __type, __function, __class, __object are anonymous type names from TS checker
-      if (funcName === "__type" || funcName === "__function" || funcName === "__class" || funcName === "__object")
-        funcName = "";
-      // Built-in globals declared as `declare var X: XConstructor` expose the
-      // interface name ("ArrayConstructor") as the type symbol, but the JS
-      // runtime `.name` is the declared identifier ("Array"). Strip the
-      // "Constructor" suffix when it matches the identifier text.
-      if (
-        funcName.endsWith("Constructor") &&
-        ts.isIdentifier(expr.expression) &&
-        expr.expression.text + "Constructor" === funcName
-      ) {
-        funcName = expr.expression.text;
-      }
-      // If the symbol name is empty (anonymous function), infer from context:
-      if (funcName === "") {
-        if (ts.isIdentifier(expr.expression)) {
-          // Direct variable access: f.name => infer "f"
-          // BUT: per ES spec (NamedEvaluation / IsAnonymousFunctionDefinition),
-          // if the binding initializer is a "covered" form like `(0, function(){})`
-          // (comma expression, call, etc.), the function's .name is NOT set to
-          // the binding name. Only direct FunctionExpression/ArrowFunction/
-          // ClassExpression (optionally parenthesized) qualifies. (#1049)
-          const sym = ctx.checker.getSymbolAtLocation(expr.expression);
-          const decl = sym?.valueDeclaration;
-          let initExpr: ts.Expression | undefined;
-          if (decl && (ts.isBindingElement(decl) || ts.isVariableDeclaration(decl)) && decl.initializer) {
-            initExpr = decl.initializer;
-          }
-          if (initExpr !== undefined && !isAnonymousFunctionDefinition(initExpr)) {
-            // Covered form — .name is "" (or whatever the inner fn already has)
-            addStringConstantGlobal(ctx, "");
-            return compileStringLiteral(ctx, fctx, "");
-          }
-          funcName = expr.expression.text;
-        } else if (ts.isPropertyAccessExpression(expr.expression)) {
-          // Property access: obj.method.name => infer "method"
-          funcName = expr.expression.name.text;
-        } else if (
-          ts.isElementAccessExpression(expr.expression) &&
-          ts.isStringLiteral(expr.expression.argumentExpression)
+      if (hasFuncSig) {
+        // Resolve the function name from the type symbol or the expression
+        let funcName = objType.getSymbol()?.name ?? "";
+        // __type, __function, __class, __object are anonymous type names from TS checker
+        if (funcName === "__type" || funcName === "__function" || funcName === "__class" || funcName === "__object")
+          funcName = "";
+        // Built-in globals declared as `declare var X: XConstructor` expose the
+        // interface name ("ArrayConstructor") as the type symbol, but the JS
+        // runtime `.name` is the declared identifier ("Array"). Strip the
+        // "Constructor" suffix when it matches the identifier text.
+        if (
+          funcName.endsWith("Constructor") &&
+          ts.isIdentifier(expr.expression) &&
+          expr.expression.text + "Constructor" === funcName
         ) {
-          // Element access: obj["method"].name => infer "method"
-          funcName = expr.expression.argumentExpression.text;
+          funcName = expr.expression.text;
         }
+        // If the symbol name is empty (anonymous function), infer from context:
+        if (funcName === "") {
+          if (ts.isIdentifier(expr.expression)) {
+            // Direct variable access: f.name => infer "f"
+            // BUT: per ES spec (NamedEvaluation / IsAnonymousFunctionDefinition),
+            // if the binding initializer is a "covered" form like `(0, function(){})`
+            // (comma expression, call, etc.), the function's .name is NOT set to
+            // the binding name. Only direct FunctionExpression/ArrowFunction/
+            // ClassExpression (optionally parenthesized) qualifies. (#1049)
+            const sym = ctx.checker.getSymbolAtLocation(expr.expression);
+            const decl = sym?.valueDeclaration;
+            let initExpr: ts.Expression | undefined;
+            if (decl && (ts.isBindingElement(decl) || ts.isVariableDeclaration(decl)) && decl.initializer) {
+              initExpr = decl.initializer;
+            }
+            if (initExpr !== undefined && !isAnonymousFunctionDefinition(initExpr)) {
+              // Covered form — .name is "" (or whatever the inner fn already has)
+              addStringConstantGlobal(ctx, "");
+              return compileStringLiteral(ctx, fctx, "");
+            }
+            funcName = expr.expression.text;
+          } else if (ts.isPropertyAccessExpression(expr.expression)) {
+            // Property access: obj.method.name => infer "method"
+            funcName = expr.expression.name.text;
+          } else if (
+            ts.isElementAccessExpression(expr.expression) &&
+            ts.isStringLiteral(expr.expression.argumentExpression)
+          ) {
+            // Element access: obj["method"].name => infer "method"
+            funcName = expr.expression.argumentExpression.text;
+          }
+        }
+        // Ensure the string constant is registered before compiling
+        addStringConstantGlobal(ctx, funcName);
+        return compileStringLiteral(ctx, fctx, funcName);
       }
-      // Ensure the string constant is registered before compiling
-      addStringConstantGlobal(ctx, funcName);
-      return compileStringLiteral(ctx, fctx, funcName);
-    }
+    } // close `else` branch of the #1632a bind-result guard
   }
 
   // Handle array.length (vec struct: field 0 is the logical length)
@@ -2514,9 +2536,15 @@ export function compilePropertyAccess(
         );
         flushLateImportShifts(ctx, fctx);
         if (getIdx !== undefined) {
-          compileExpression(ctx, fctx, expr.expression);
-          // Coerce struct ref to externref
-          fctx.body.push({ op: "extern.convert_any" } as Instr);
+          // #1623: receiver may already be externref (e.g. `this` in a static
+          // method = the class object global, typed externref). Blindly emitting
+          // extern.convert_any on an externref source produces invalid Wasm
+          // (`expected anyref, found ... of type externref`). Coerce only when
+          // necessary.
+          const recvType = compileExpression(ctx, fctx, expr.expression);
+          if (recvType && recvType.kind !== "externref") {
+            coerceType(ctx, fctx, recvType, { kind: "externref" });
+          }
           addStringConstantGlobal(ctx, propName);
           const strIdx = ctx.stringGlobalMap.get(propName);
           if (strIdx !== undefined) {

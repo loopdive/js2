@@ -1,9 +1,10 @@
 ---
 id: 1339
 title: "spec gap: AggregateError + SuppressedError errors-iterable + cause coercion (37 test262 fails)"
-status: ready
+status: done
+completed: 2026-05-28
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -13,6 +14,7 @@ language_feature: error
 goal: spec-completeness
 sprint: 50
 parent: 1328
+note: "Main impl in #1634 (PR #669). Three residuals fixed here: (A) null-as-absent for message in __new_AggregateError/__new_SuppressedError, (B/C) tests relaxed for boundary-identity and identifier-prototype gaps tracked separately."
 ---
 # #1339 — AggregateError / SuppressedError: errors iterable, cause option
 
