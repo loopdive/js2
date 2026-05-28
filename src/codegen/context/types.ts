@@ -295,6 +295,18 @@ export interface FunctionContext {
       materializedLocalIdx: number; // ref_null $AnyString — reserved for future cache
     }
   >;
+  /**
+   * #1594A Slice B — §B.3.3.1 AnnexB legacy var-binding writes for
+   * block-hoisted function declarations. Maps the function name to an
+   * outer-fctx externref local index allocated during hoisting. When the
+   * statement is later visited in textual order, the FunctionDeclaration
+   * compile path emits a runtime `localSet(idx, closureExternref)` so that
+   * outer reads of the name (after the block has executed) see the bound
+   * value rather than the funcMap funcref wrapper. Sloppy-mode only;
+   * strict-mode declarations and would-be-early-error cases are NOT
+   * registered here (see `hoistFunctionDeclarations` Phase A gates).
+   */
+  annexBLegacyLocals?: Map<string, number>;
 }
 
 /** Context shared across all codegen. */

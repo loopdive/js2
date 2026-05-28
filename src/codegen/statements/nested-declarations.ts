@@ -706,6 +706,48 @@ export function compileNestedFunctionDeclaration(
 }
 
 /**
+ * #1594A Slice B — §B.3.3.1 Phase A.
+ *
+ * For a block-nested `function f` that successfully hoisted into `funcMap`,
+ * allocate an outer-function-scope externref local also named `f`. The local
+ * shadows the funcMap read at `compileIdentifier` (which checks `localMap`
+ * before `funcMap`), so subsequent reads of `f` from outside the block resolve
+ * to the local. The local is null until the matching textual-position write
+ * runs (Phase B in compileStatement's FunctionDeclaration case). This gives
+ * outer reads the §B.3.3.1 legacy var-binding semantics: undefined before the
+ * block executes, the function value after.
+ *
+ * Eligibility gates (any one fails → no legacy binding; outer reads keep
+ * seeing the funcMap funcref wrapper, which is what we did before this PR):
+ *  - The enclosing function is sloppy (§B.3.3 NOTE 2: strict mode skips).
+ *  - The declaration is NOT generator (`function*`) or `async`.
+ *  - The hoist actually succeeded (no entry in `ctx.hoistFailedFuncs`).
+ *  - The name doesn't already occupy a slot in `fctx.localMap` (would conflict
+ *    with a param or earlier hoisted local). When it does, the existing slot
+ *    already covers the semantics — leave it alone.
+ */
+function registerAnnexBLegacyLocal(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.FunctionDeclaration): void {
+  if (!stmt.name) return;
+  const funcName = stmt.name.text;
+  // Generator and async forms are excluded by §B.3.3 NOTE 1.
+  if (stmt.asteriskToken) return;
+  if (stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) return;
+  // Strict-mode check: §B.3.3 is sloppy-only. Probe the inner declaration —
+  // any "use strict" prologue or class context propagates up.
+  if (isStrictFunction(stmt)) return;
+  // Skip if the hoist itself failed (no funcMap entry to write).
+  if (!ctx.funcMap.has(funcName)) return;
+  if (ctx.hoistFailedFuncs?.has(funcName)) return;
+  // If the name is already a local (param, earlier hoist, or var slot), don't
+  // alloc a second one. Reuse-by-write happens in Phase B regardless.
+  if (fctx.localMap.has(funcName)) return;
+  // Allocate a function-scope externref local; defaults to ref.null.extern.
+  const localIdx = allocLocal(fctx, funcName, { kind: "externref" });
+  if (!fctx.annexBLegacyLocals) fctx.annexBLegacyLocals = new Map();
+  fctx.annexBLegacyLocals.set(funcName, localIdx);
+}
+
+/**
  * Pre-pass: hoist function declarations inside a function body.
  * JavaScript semantics require function declarations to be available
  * before their textual position in the enclosing scope.
@@ -713,11 +755,18 @@ export function compileNestedFunctionDeclaration(
  *
  * If a function fails to compile during hoisting (e.g., uses unsupported features),
  * it is rolled back and will be re-attempted during normal statement compilation.
+ *
+ * @param inContainer When true, the caller is recursing into a block/if/loop/
+ *   try/switch — in that case any FunctionDeclaration encountered also gets
+ *   §B.3.3.1 legacy var-binding registration via `registerAnnexBLegacyLocal`.
+ *   The top-level call (function body) passes false: function-body-scoped
+ *   declarations are real `var`-like bindings, not legacy AnnexB ones.
  */
 export function hoistFunctionDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
   stmts: ts.NodeArray<ts.Statement> | ts.Statement[],
+  inContainer: boolean = false,
 ): void {
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
@@ -741,60 +790,70 @@ export function hoistFunctionDeclarations(
           ctx.hoistFailedFuncs.add(funcName);
         }
       }
+      // #1594A Slice B Phase A — block-nested decls get a legacy var-binding
+      // local that subsequent Phase B writes populate at the textual position.
+      if (inContainer) {
+        registerAnnexBLegacyLocal(ctx, fctx, stmt);
+      }
     }
     // Recurse into block-like structures to find nested function declarations.
     // In JS, function declarations are hoisted to the enclosing function scope,
     // even when inside if-branches, try/catch blocks, etc.
     if (ts.isIfStatement(stmt)) {
       if (ts.isBlock(stmt.thenStatement)) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.thenStatement.statements);
+        hoistFunctionDeclarations(ctx, fctx, stmt.thenStatement.statements, true);
+      } else if (ts.isFunctionDeclaration(stmt.thenStatement)) {
+        // `if (cond) function f(){}` — brace-less then branch (B.3.2 form).
+        hoistFunctionDeclarations(ctx, fctx, [stmt.thenStatement], true);
       }
       if (stmt.elseStatement) {
         if (ts.isBlock(stmt.elseStatement)) {
-          hoistFunctionDeclarations(ctx, fctx, stmt.elseStatement.statements);
+          hoistFunctionDeclarations(ctx, fctx, stmt.elseStatement.statements, true);
         } else if (ts.isIfStatement(stmt.elseStatement)) {
-          hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement]);
+          hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement], true);
+        } else if (ts.isFunctionDeclaration(stmt.elseStatement)) {
+          hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement], true);
         }
       }
     }
     if (ts.isTryStatement(stmt)) {
-      hoistFunctionDeclarations(ctx, fctx, stmt.tryBlock.statements);
+      hoistFunctionDeclarations(ctx, fctx, stmt.tryBlock.statements, true);
       if (stmt.catchClause) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.catchClause.block.statements);
+        hoistFunctionDeclarations(ctx, fctx, stmt.catchClause.block.statements, true);
       }
       if (stmt.finallyBlock) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.finallyBlock.statements);
+        hoistFunctionDeclarations(ctx, fctx, stmt.finallyBlock.statements, true);
       }
     }
     if (ts.isBlock(stmt)) {
-      hoistFunctionDeclarations(ctx, fctx, stmt.statements);
+      hoistFunctionDeclarations(ctx, fctx, stmt.statements, true);
     }
     // Recurse into loop bodies — function declarations inside loops are hoisted
     // to the enclosing function scope in JS semantics.
     if (ts.isForStatement(stmt) || ts.isWhileStatement(stmt) || ts.isDoStatement(stmt)) {
       if (ts.isBlock(stmt.statement)) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements);
+        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, true);
       } else {
-        hoistFunctionDeclarations(ctx, fctx, [stmt.statement]);
+        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], true);
       }
     }
     if (ts.isForInStatement(stmt) || ts.isForOfStatement(stmt)) {
       if (ts.isBlock(stmt.statement)) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements);
+        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, true);
       } else {
-        hoistFunctionDeclarations(ctx, fctx, [stmt.statement]);
+        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], true);
       }
     }
     if (ts.isSwitchStatement(stmt)) {
       for (const clause of stmt.caseBlock.clauses) {
-        hoistFunctionDeclarations(ctx, fctx, clause.statements);
+        hoistFunctionDeclarations(ctx, fctx, clause.statements, true);
       }
     }
     if (ts.isLabeledStatement(stmt)) {
       if (ts.isBlock(stmt.statement)) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements);
+        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, true);
       } else {
-        hoistFunctionDeclarations(ctx, fctx, [stmt.statement]);
+        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], true);
       }
     }
   }

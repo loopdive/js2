@@ -15,6 +15,8 @@
  *   - statements/shared.ts         — utilities shared across all sub-modules
  */
 import { ts } from "../ts-api.js";
+import type { Instr } from "../ir/types.js";
+import { emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -211,7 +213,29 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
 
   if (ts.isFunctionDeclaration(stmt)) {
     // Skip if already hoisted (pre-compiled in function hoisting pass)
-    if (stmt.name && ctx.funcMap.has(stmt.name.text)) return;
+    if (stmt.name && ctx.funcMap.has(stmt.name.text)) {
+      // #1594A Slice B Phase B — §B.3.3.1 legacy var-binding write.
+      // For a block-nested decl that Phase A registered, emit a runtime
+      // `local.set` of the function-scope externref local at this textual
+      // position. Outer reads after the block see the bound closure value;
+      // before the block executes the local stays `ref.null.extern`.
+      // Re-executing the same FunctionDeclaration on a loop iteration repeats
+      // the write each pass, mirroring §B.3.3.1 step 2.c.
+      const legacyLocalIdx = fctx.annexBLegacyLocals?.get(stmt.name.text);
+      if (legacyLocalIdx !== undefined) {
+        const funcIdx = ctx.funcMap.get(stmt.name.text)!;
+        const closureType = emitFuncRefAsClosure(ctx, fctx, stmt.name.text, funcIdx);
+        if (closureType) {
+          // emitFuncRefAsClosure leaves (ref $closure_struct) on the stack.
+          // Coerce ref → externref so it fits the externref local slot.
+          fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+          fctx.body.push({ op: "local.set", index: legacyLocalIdx } as Instr);
+        }
+        // closureType === null happens when the function failed earlier;
+        // the local stays null, identifier reads still see the funcMap path.
+      }
+      return;
+    }
     // Re-attempt compilation even if hoisting failed — the failure may have been
     // due to const/let captures not yet in scope during the hoisting pre-pass.
     // Now that we're in statement order, those locals should be available.
