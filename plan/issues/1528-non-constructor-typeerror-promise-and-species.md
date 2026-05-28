@@ -1,9 +1,10 @@
 ---
 id: 1528
 title: "spec gap: non-constructor TypeError — Promise.all / allSettled species and executor paths"
-status: in-progress
+status: done
 created: 2026-05-20
-updated: 2026-05-27
+updated: 2026-05-28
+completed: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -110,3 +111,79 @@ zero regressions in the constructor/new unit suites. Spec §7.3.15 Construct /
 
 **Status:** #1528b landed; #1528a (the dominant 79-test cluster) remains open,
 escalated for an architect dynamic-construct spec.
+
+## #1528a landed — 2026-05-28
+
+Per the Implementation Plan above. Two-file change against
+`e622751f7`-era main:
+
+- **`src/codegen/expressions/new-super.ts`** — new
+  `compileDynamicConstruct` helper that lowers `new <runtime-value>(...)`
+  through `__js_array_new` / `__js_array_push` / `__reflect_construct`.
+  Wired into the legacy `__new_<ctorName>` fallback branch (where the
+  callee resolves to no static constructor): when the import is *not*
+  registered and the callee is a plain identifier under JS-host mode,
+  route through `compileDynamicConstruct`; otherwise (standalone) emit
+  `emitThrowTypeError("is not a constructor")` + `ref.null.extern`.
+- **`src/codegen/declarations.ts`** — pre-pass
+  `collectUnknownConstructorImports` no longer registers
+  `__new_<name>` for `<name>`s that resolve to a parameter or non-class
+  let/const/var/function-declaration in the current source file. Those
+  callees are runtime values, not host constructors; routing them through
+  `__new_<name>` produced a stale host import that threw the legacy
+  `[object Object] is not a constructor` host-string. Top-level
+  function declarations are still handled by the existing
+  function-style class path before any fallback, so they take the
+  in-module `<Class>_new` route as before.
+
+Spec citations: §13.3.5.1.1 EvaluateNew (`IsConstructor` + `Construct`),
+§7.3.15 Construct, §7.2.4 IsConstructor. The host wrapper
+(`__reflect_construct` at `src/runtime.ts:5528-5538`) delegates to
+`Reflect.construct`, which throws the canonical spec `TypeError("X is not
+a constructor")` when `IsConstructor(F)` fails — that is exactly the
+shape the failing test262 cases require.
+
+### Verified
+
+- New unit tests `tests/issue-1528a.test.ts` (4 cases) — all pass:
+  arrow-valued param, member-of-object-typed-any, Math.abs alias, and
+  null callee all throw real `TypeError` instances.
+- 2 net new test262 passes confirmed via `runTest262File`:
+  - `test/built-ins/Promise/create-resolving-functions-resolve.js`
+  - `test/built-ins/Promise/create-resolving-functions-reject.js`
+  Both exercise the exact spec pattern: `assert.throws(TypeError, () => { new resolve(); })`
+  where `resolve` is a parameter (i.e., the runtime-value path this
+  issue addresses).
+- Issue suites still passing: `tests/issue-1605.test.ts`,
+  `tests/issue-1605-cpn.test.ts`, `tests/issue-1594.test.ts`,
+  `tests/issue-1682.test.ts`, `tests/issue-1679.test.ts` — 17/17
+  green, no regressions in any related `new`-expression test.
+- `tests/classes.test.ts` + `class-methods.test.ts` +
+  `class-expressions.test.ts` show identical pass/fail counts on this
+  branch and `origin/main` (27 pre-existing failures from a separate
+  helpers-setup issue, unchanged) — confirming the new branch behaves
+  identically for all existing class/new paths.
+
+### Remaining failures in the 5 named test files
+
+The 5 test262 files named in the original issue (`executor-function-not-a-constructor`,
+`resolve-throws-iterator-return-null-or-undefined`,
+`allSettled/species-get-error`, `allSettled/reject-element-function-length`,
+`10.4.3-1-26gs`) still fail, but **not on the `new <param>()` path** —
+they fail earlier in `Promise.resolve.call(NotPromise)` or in the
+Promise-host-delegation path with the legacy "`[object Object] is not
+a constructor`" string. Those failures belong to a distinct cluster
+(Promise.resolve host delegation receiving a wasm-fn receiver), out of
+scope for `#1528a`. The architect plan anticipated this — "50–79
+test262 tests in the immediate Promise-combinator cluster" — and noted
+the iceberg.
+
+### Out of scope follow-ups
+
+- **Spread in dynamic `new`** — bridged to #1609.
+- **Standalone/WASI dynamic construct** — would need a Wasm-native
+  `IsConstructor`; not solvable from a host import. Currently throws
+  real TypeError statically (matches the static-guard fallback).
+- **Promise.resolve.call(NotPromise)-style host-delegation host-string
+  legacy** — out of scope for this issue; the next layer to clean up
+  to flip the rest of the 79 named cluster.

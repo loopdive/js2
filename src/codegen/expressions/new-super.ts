@@ -1432,6 +1432,83 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   return { kind: "externref" };
 }
 
+/**
+ * (#1528a) Compile `new <callee>(...args)` via __reflect_construct when the
+ * callee is an externref-valued runtime expression we cannot resolve to a
+ * known class / function-style constructor at compile time. The host wrapper
+ * performs IsConstructor and throws spec TypeError on failure.
+ *
+ * Returns externref ValType; pushes the constructed instance (or a host
+ * TypeError trap) on the stack.
+ */
+function compileDynamicConstruct(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType {
+  const externRef: ValType = { kind: "externref" };
+
+  // 1. Compile callee as externref. coerceType handles f64/i32/ref → externref
+  //    via __box_number / extern.convert_any.
+  const calleeTy = compileExpression(ctx, fctx, expr.expression, externRef);
+  if (!calleeTy) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (calleeTy.kind !== "externref") {
+    coerceType(ctx, fctx, calleeTy, externRef);
+  }
+
+  // 2. Build argList JS Array via __js_array_new / __js_array_push.
+  //    The shared late-import cache returns the existing index when these
+  //    were already registered (e.g. by Reflect.apply or another callsite).
+  ensureLateImport(ctx, "__js_array_new", [], [externRef]);
+  ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
+  flushLateImportShifts(ctx, fctx);
+
+  // Late-import re-lookup pattern: arg compilation may trigger
+  // addUnionImports which shifts indices, so we re-resolve via funcMap each
+  // time we emit a `call` (mirrors the pattern at new-super.ts:2687).
+  const arrNewIdx = ctx.funcMap.get("__js_array_new")!;
+  fctx.body.push({ op: "call", funcIdx: arrNewIdx });
+
+  // Stash array in a local so arg evaluation can push values without
+  // disturbing the callee or relying on a deep stack.
+  const argsLocal = allocLocal(fctx, `__dynctor_args_${fctx.locals.length}`, externRef);
+  fctx.body.push({ op: "local.set", index: argsLocal });
+
+  const args = expr.arguments ?? [];
+  for (const arg of args) {
+    if (ts.isSpreadElement(arg)) {
+      // Spread in dynamic new — bridged to #1609. Reject cleanly here so the
+      // diagnostic points to the right follow-up.
+      reportError(
+        ctx,
+        expr,
+        "Codegen error: spread arguments in dynamic new-expression not yet supported (#1528a / #1609).",
+      );
+      fctx.body.push({ op: "ref.null.extern" });
+      return externRef;
+    }
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    const argTy = compileExpression(ctx, fctx, arg, externRef);
+    if (argTy === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (argTy.kind !== "externref") {
+      coerceType(ctx, fctx, argTy, externRef);
+    }
+    flushLateImportShifts(ctx, fctx);
+    const pushIdx = ctx.funcMap.get("__js_array_push")!;
+    fctx.body.push({ op: "call", funcIdx: pushIdx });
+  }
+
+  // 3. Push args + null newTarget (host wrapper defaults to ctor — runtime.ts:5533).
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "ref.null.extern" });
+
+  // 4. Call __reflect_construct. Re-resolve through funcMap to absorb any
+  //    index shifts from late imports introduced during arg compilation.
+  ensureLateImport(ctx, "__reflect_construct", [externRef, externRef, externRef], [externRef]);
+  flushLateImportShifts(ctx, fctx);
+  const reflectIdx = ctx.funcMap.get("__reflect_construct")!;
+  fctx.body.push({ op: "call", funcIdx: reflectIdx });
+  return externRef;
+}
+
 function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
   // Handle `new function() { ... }(args)` — constructor with function expression
   if (ts.isFunctionExpression(expr.expression)) {
@@ -2612,7 +2689,18 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const finalNewIdx = ctx.funcMap.get(importName) ?? funcIdx;
       fctx.body.push({ op: "call", funcIdx: finalNewIdx });
     } else {
-      // Fallback: no import registered (shouldn't happen), produce null
+      // (#1528a) No `__new_<ctorName>` host import is registered — the callee
+      // is a runtime function value (parameter / local let-const / function
+      // expression result) whose constructability cannot be resolved at
+      // compile time. Route through `__reflect_construct`, which performs
+      // IsConstructor + Construct host-side and throws spec TypeError on
+      // failure. In standalone (no JS host) we throw a real TypeError
+      // statically — there is no host Reflect.construct available.
+      if (!noJsHost(ctx) && ts.isIdentifier(expr.expression)) {
+        return compileDynamicConstruct(ctx, fctx, expr);
+      }
+      // Standalone fallback: throw real TypeError (matches static guards).
+      emitThrowTypeError(ctx, fctx, "is not a constructor");
       fctx.body.push({ op: "ref.null.extern" });
     }
     return { kind: "externref" };
@@ -3174,8 +3262,28 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
-  reportError(ctx, expr, `Unsupported new expression for class: ${className}`);
-  return null;
+  // (#1528a) Dynamic constructor path. We exhausted the typed/static fast
+  // paths; the callee is a runtime externref-valued expression whose
+  // constructability is genuinely unknown at compile time (parameter or
+  // local function value, property access we can't resolve, IIFE result,
+  // `any`/`Function`/`unknown`-typed identifier). Defer IsConstructor +
+  // Construct to the host via __reflect_construct, which throws spec
+  // TypeError ("X is not a constructor") when IsConstructor fails.
+  //
+  // Static non-constructors (arrow fns, prototype methods, builtin
+  // namespaces, call-sig-only types) have ALREADY thrown a real TypeError
+  // via the guards near the top of this function.
+  //
+  // Standalone (`--target wasi`) has no host Reflect.construct; mirror the
+  // static-guard fallback by throwing a real TypeError and pushing
+  // ref.null.extern for stack discipline. A Wasm-native dynamic-construct
+  // is tracked as a follow-up.
+  if (noJsHost(ctx)) {
+    emitThrowTypeError(ctx, fctx, "is not a constructor");
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  return compileDynamicConstruct(ctx, fctx, expr);
 }
 
 /**

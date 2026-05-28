@@ -764,7 +764,27 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         return false;
       });
       const isExtern = ctx.externClasses.has(name);
-      if (!isLocalClass && !isExtern) {
+      // (#1528a) When the identifier is a runtime local binding — a parameter
+      // or a non-class let/const/var — we cannot resolve it to a host
+      // constructor. Registering `__new_<name>` for these names produces a
+      // dead host import and routes `new x()` through a legacy path that
+      // ignores the runtime value and throws a host-string error. Skip the
+      // import so `compileNewExpression` falls through to the dynamic
+      // `__reflect_construct` path, which performs IsConstructor + throws
+      // spec TypeError correctly (or constructs when the value is callable).
+      const isRuntimeLocalBinding = decls.some((d) => {
+        if (ts.isParameter(d)) return true;
+        if (ts.isVariableDeclaration(d)) {
+          // Class-initialized vars are handled by isLocalClass above.
+          if (d.initializer && ts.isClassExpression(d.initializer)) return false;
+          return d.getSourceFile() === state.sourceFile;
+        }
+        if (ts.isFunctionDeclaration(d) || ts.isFunctionExpression(d)) {
+          return d.getSourceFile() === state.sourceFile;
+        }
+        return false;
+      });
+      if (!isLocalClass && !isExtern && !isRuntimeLocalBinding) {
         const argCount = node.arguments?.length ?? 0;
         const prev = state.unknownCtorNeeded.get(name) ?? 0;
         state.unknownCtorNeeded.set(name, Math.max(prev, argCount));
