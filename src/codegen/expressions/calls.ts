@@ -7783,6 +7783,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
           // wins). The lifted callee may read `arguments` and needs the full
           // call-site arg list.
           const cpExtrasLocals: number[] = [];
+          // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
           {
             for (let i = 0; i < Math.min(expr.arguments.length, cpParamCnt); i++) {
               compileExpression(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
@@ -9539,6 +9540,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
 
         // Push call arguments (only up to declared param count)
         const crParamCnt = matchedClosureInfo.paramTypes.length;
+        // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
         {
           for (let i = 0; i < Math.min(expr.arguments.length, crParamCnt); i++) {
             compileExpression(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
@@ -10220,6 +10222,7 @@ function compileExpressionCallee(
 
       // Push call arguments (only up to declared param count)
       const ecParamCnt = matchedClosureInfo.paramTypes.length;
+      // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
       {
         for (let i = 0; i < Math.min(expr.arguments.length, ecParamCnt); i++) {
           compileExpression(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);

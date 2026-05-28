@@ -3580,11 +3580,7 @@ function resolveImport(
             if (isSyntaxError) {
               // If the host-eval fallback can compile it, prefer that result;
               // js2wasm is more strict than V8/SpiderMonkey on some forms.
-              try {
-                return _legacyHostEval(src);
-              } catch (e2) {
-                throw e2;
-              }
+              return _legacyHostEval(src);
             }
             return _legacyHostEval(src);
           }
@@ -3633,6 +3629,8 @@ function resolveImport(
           // `as any`) — the eval'd code runs as plain JS and rejects TS syntax.
           const jsSrc = src.replace(/\bas\s+number\b/g, "").replace(/\bas\s+any\b/g, "");
           const needsShim = harnessIds.some((id) => jsSrc.includes(id));
+          // biome-ignore lint/style/noCommaOperator: (0, eval) forces indirect eval (global scope) per §19.2.1.1
+          // biome-ignore lint/security/noGlobalEval: intentional test262 runtime eval for harness compatibility
           if (!needsShim) return (0, eval)(jsSrc);
 
           // Build a JS-side harness that mirrors the wasm-compiled preamble.
@@ -3738,6 +3736,8 @@ assert._isSameValue = isSameValue;
 `;
           const wrapped =
             shim + jsSrc + `;\nif (__fail) throw new Test262Error('eval harness assertion ' + __fail + ' failed');`;
+          // biome-ignore lint/style/noCommaOperator: (0, eval) forces indirect eval (global scope) per §19.2.1.1
+          // biome-ignore lint/security/noGlobalEval: intentional test262 runtime eval for harness compatibility
           return (0, eval)(wrapped);
         }
       }
@@ -7426,7 +7426,7 @@ assert._isSameValue = isSameValue;
     case "host_loose_eq":
       // #1134 — loose equality for two externref operands (§7.2.15).
       // Handles null == undefined → true and other JS coercion rules.
-      // eslint-disable-next-line eqeqeq
+      // biome-ignore lint/suspicious/noDoubleEquals: §7.2.15 IsLooselyEqual requires == semantics (null == undefined, type coercion)
       return (a: any, b: any) => (a == b ? 1 : 0);
     case "same_value_zero":
       // #1360 — SameValueZero comparison (§7.2.11).
@@ -7435,7 +7435,7 @@ assert._isSameValue = isSameValue;
       // Used by Array.prototype.includes for array-like receivers.
       return (a: any, b: any) => {
         if (a === b) return 1;
-        // eslint-disable-next-line no-self-compare
+        // biome-ignore lint/suspicious/noSelfCompare: NaN detection — x !== x is the canonical NaN test (NaN is the only value not equal to itself per IEEE 754)
         if (typeof a === "number" && typeof b === "number" && a !== a && b !== b) return 1;
         return 0;
       };
