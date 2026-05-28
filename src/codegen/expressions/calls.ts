@@ -7622,16 +7622,7 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     // emit cap-prepend logic are already correct, even if a coincidental
     // local with the same name exists in the current scope.
     let isLocallyShadowed = false;
-    if (
-      fctx.localMap.has(funcName) &&
-      (ctx.nestedFuncCaptures.has(funcName) || fctx.annexBLegacyLocals?.has(funcName))
-    ) {
-      // #1594A Slice B: §B.3.3.1 legacy var-binding locals also need the
-      // shadow path — the funcMap direct-call path would bypass the local
-      // and read a never-set funcref wrapper, defeating "undefined before
-      // the block executes" semantics. Reads must go through the externref
-      // local, where the callable-fallback path below recovers the closure
-      // via any.convert_extern + emitGuardedRefCast (null-safe).
+    if (fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
       const localCalleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
       const localCallSigs = localCalleeTsType?.getCallSignatures?.();
       if (localCallSigs && localCallSigs.length > 0) {
