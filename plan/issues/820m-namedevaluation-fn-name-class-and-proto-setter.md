@@ -1,12 +1,12 @@
 ---
 id: 820m
 title: "NamedEvaluation: anonymous class/function value not named from binding key (~12 fails, fn-name-class + __proto__-fn-name)"
-status: ready
+status: blocked
 created: 2026-05-28
 updated: 2026-05-28
 priority: medium
-feasibility: easy-medium
-reasoning_effort: medium
+feasibility: hard
+reasoning_effort: high
 task_type: bugfix
 area: codegen
 language_feature: classes, function-name-inference, object-literal
@@ -120,3 +120,99 @@ test/language/statements/for-of/dstr/let-ary-ptrn-elem-id-init-fn-name-class.js
   issue or re-routing to #1542/#1543/#1544 dstr-default residuals after
   this lands.
 - #820b (computed-property accessor names) — already done.
+
+## Investigation 2026-05-28 (developer) — ESCALATED, needs architect spec
+
+### What the issue calls "NamedEvaluation gap" is actually a class-as-value codegen gap
+
+The two named tests in the issue (`object/__proto__-fn-name.js`,
+`object/fn-name-class.js`) both fail with **`TypeError: Cannot access property
+on null or undefined`** in the test262 baseline — NOT a `.name !== "expected"`
+mismatch. Reproduced via minimal probe in `.tmp/`:
+
+```ts
+// .tmp/probe-820m-gap-b.ts
+export function test(): any {
+  const obj: any = { id: class {} };
+  return obj.id;
+}
+// → RESULT=null (compiles, runs, returns null)
+```
+
+The anonymous class value inside the object literal compiles to `ref.null.extern`.
+Spec-wise the `name` is wrong, but observationally the *class is missing entirely*.
+
+Reduces further: even
+
+```ts
+export function test(): any {
+  const c: any = class {};
+  return c;
+}
+// → RESULT=null
+```
+
+returns null when nested inside a function body — only top-level
+`const C = class {...}` survives because the var-decl branch at
+`declarations.ts:2185` calls `collectClassDeclaration(ctx, decl.initializer,
+decl.name.text)` BUT a) does this only for top-level statements, b) the
+function-body recursion at `collectClassesFromStatements` line 2197 only
+handles `FunctionDeclaration` (not arrow/expression bodies, not non-decl
+contexts inside FunctionDeclaration).
+
+Even when collection runs (verified via instrumented `compileClassExpression`
+fallback path: never hit on the `{ id: class {} }` probe), the failure is
+elsewhere — the `compileObjectLiteralForStruct` path doesn't call
+`compileClassExpression` for property values, so an anonymous class in
+property position is silently dropped and the field is left default-initialised.
+
+### Why this is NOT a "SetFunctionName runtime hook" patch
+
+The original issue framing ("add NamedEvaluation to fn-name-class sites")
+assumes the class value exists and just needs its `.name` set. It doesn't —
+the value is null. Adding a `__setFunctionName(value, key)` host call would
+get called on `null` and either no-op or throw. Fixing this requires:
+
+1. **Anonymous class collection in nested expression contexts** —
+   `collectAnonymousClassesInNewExpr` only walks `NewExpression` and direct
+   `ClassExpression` nodes, missing:
+   - `{ prop: class {} }` (PropertyAssignment.initializer)
+   - `({ x = class {} } = ...)` (BindingElement.initializer)
+   - `var x = function(name) { return class {} }(...)` (any nested context)
+   Need a full recursive `forEachChild` walk of every expression position,
+   gated on whether the class would actually escape (e.g. assigned/returned).
+2. **Class-as-value emission in struct-typed object literal path** —
+   `compileObjectLiteralForStruct` (literals.ts:1032) currently emits field
+   values via the generic struct-field type, which for a class-typed field
+   resolves to `ref null Struct$X` not `externref`. The class expression
+   resolves through `compileExpression` → `compileClassExpression` returning
+   an externref, which then needs coercion + writeback into the struct field.
+   The actual current behavior is "silently drop" because the type inference
+   doesn't pick up that the field holds a class value.
+3. **Then, after the value is preserved**, layer the NamedEvaluation
+   bookkeeping: a compile-time pass that propagates the binding-key string
+   to a `class.name` field initialiser, OR a runtime `__set_class_name`
+   host hook called before the class struct escapes.
+
+### Why this is hard (feasibility: hard)
+
+Each of the three pieces above is a non-trivial codegen change touching
+shared paths (class collection, object-literal compilation, function-name
+inference). The blast radius hits every test that uses anonymous
+classes/functions inside complex contexts — which is a lot. The "easy-medium"
+rating in the original issue was based on the assumption that the .name was
+just being overwritten; the actual failure (null class value) is deeper.
+
+### Recommendation
+
+**Status: blocked / needs-architect-spec.** The three-piece scope above
+should be specced by an architect against a clean baseline. Two of the
+three pieces (anonymous class collection in nested contexts, class-value
+escape from object-literal struct path) overlap meaningfully with the
+class-expression issues tracked under #1605, #1681, and the dstr-default
+work in #1542/#1543/#1544 — there may be a unified design that handles
+all of them.
+
+No code change landed under this task; needs architect spec before
+implementation. The probe files (`.tmp/probe-820m-*.ts`,
+`.tmp/run-*.mts`) are gitignored and used only for the investigation.

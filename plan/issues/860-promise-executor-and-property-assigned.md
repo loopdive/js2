@@ -1,15 +1,15 @@
 ---
 id: 860
 title: "Promise executor and property-assigned functions not compiled as host callbacks"
-status: ready
+status: in-review
 created: 2026-03-28
-updated: 2026-04-28
+updated: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: high
 goal: async-model
 sprint: Backlog
-branch: issue-825-null-deref
+branch: issue-860-callable-property-value
 test262_fail: 1
 ---
 # #860 -- Promise executor and property-assigned functions not compiled as host callbacks
@@ -131,3 +131,54 @@ This fixes `new Promise(function(resolve, reject) { ... })` — the executor fun
 
 ### Not addressed
 - Property assignment pattern (`p1.then = function(a, b) { ... }`) — requires broader detection of externref property assignments. Filed as separate concern.
+
+## Resolution (2026-05-28, dev) — property-value path
+
+The property-assignment pattern is now fixed at the runtime side.
+`__extern_set` (`p1.then = fn`) and `__defineProperty_value` (with a
+data descriptor) both wrap the incoming value via a new
+`_maybeWrapCallableUnknownArity(val, callbackState)` helper before
+storing it on the host object.
+
+The helper uses `__is_closure(val) === 1` as the authoritative
+discriminator (so plain objects, vec wrappers, and named structs pass
+through unchanged) and wraps the closure with the highest available
+`__call_fn_<arity>` bridge (4 → 3 → ... → 0). The dispatcher already
+drops extra args for lower-arity closures, so a single arity-agnostic
+wrap is correct.
+
+The fix is symmetric with the existing accessor path at
+`__defineProperty_accessor`, which already used `_maybeWrapCallable`
+on getter/setter values.
+
+### Scope (broader than #860 originally framed)
+
+This fix covers, in addition to `Object.defineProperty(o, k, { value: fn })`:
+
+- `obj.foo = function() { ... }` (any extern object — Promise, real
+  Array, plain JS object) — via `__extern_set` (`_safeSet`).
+- `{ foo: function() { ... } }` object literals — `literals.ts`
+  compiles each value property via `__extern_set`, which now wraps.
+- Dynamic property writes on extern receivers — same path.
+
+### Verified
+
+- `tests/issue-860.test.ts` — 2 tests pass:
+  - `Promise.race` invokes user-installed `.then` (counts call once).
+  - `typeof arr.myFn === "function"` after `arr.myFn = function(){}`.
+- `test262/built-ins/Promise/race/invoke-then.js` no longer fails at
+  the "object is not a function" gate. New failure point is
+  `assert.sameValue(this, currentThis)` (assertion #6) — the
+  closure-bridge intentionally does not propagate `this` from the
+  JS-side caller. Tracked as a separate phase (the issue's
+  "Additional issues" section already noted this as out-of-scope).
+- `tests/define-property-patterns.test.ts` — unchanged, all 9 pass.
+
+### Out of scope for this PR
+
+- `this` propagation through the closure-bridge wrapper (needed to
+  fully pass `invoke-then.js`).
+- `arguments` / `arguments.length` inside a closure invoked via the
+  bridge — bridge currently only forwards positional args.
+- Bridge identity: each wrap produces a fresh JS function. Protocols
+  that observe `===` identity across host roundtrips would notice.

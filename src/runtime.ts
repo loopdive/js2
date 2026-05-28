@@ -994,6 +994,48 @@ function _maybeWrapCallable(
 }
 
 /**
+ * (#860) Wrap a Wasm closure stored as a property value so JS callers can
+ * invoke it. Unlike `_maybeWrapCallable`, the arity is not known from
+ * context — a value-typed property doesn't say how the host will eventually
+ * call it. We use `__is_closure` as the authoritative closure discriminator
+ * (avoids wrapping vec wrappers, named structs, plain objects) and the
+ * highest available `__call_fn_<arity>` export as the dispatcher.
+ *
+ * The `__call_fn_N` dispatcher (emitClosureCallExportN in codegen) iterates
+ * closures of arity ≤ N; lower-arity closures see their extra args dropped
+ * at the wasm-side dispatch arm. So wrapping with the max arity is safe and
+ * forwards a reasonable arg count for any caller.
+ *
+ * Returns the value unchanged when it is not a closure, when callbackState
+ * is unavailable, or when no `__call_fn_*` export was emitted.
+ */
+function _maybeWrapCallableUnknownArity(
+  val: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): any {
+  if (val == null) return val;
+  if (typeof val === "function") return val;
+  if (typeof val !== "object") return val;
+  if (!callbackState) return val;
+  const exports = callbackState.getExports();
+  if (!exports) return val;
+  const isClosureFn = exports.__is_closure as ((v: any) => number) | undefined;
+  if (typeof isClosureFn !== "function") return val;
+  try {
+    if (isClosureFn(val) !== 1) return val;
+  } catch {
+    return val;
+  }
+  for (let arity = 4; arity >= 0; arity--) {
+    if (typeof exports[`__call_fn_${arity}`] === "function") {
+      const wrapped = _wrapWasmClosure(val, arity, callbackState);
+      if (wrapped) return wrapped;
+    }
+  }
+  return val;
+}
+
+/**
  * (#1382) Per-method callback-slot table — maps a method name to the index
  * of its callback argument and the arity at which the engine will invoke
  * it. Consulted by `__proto_method_call` and `__extern_method_call` so a
@@ -1030,6 +1072,12 @@ const _PROTO_CB_SLOTS: Record<string, { argIdx: number; arity: number }> = {
   // proposal — see `__extern_method_call` polyfill) — callback at
   // args[1], invoked as `callback(key)`.
   getOrInsertComputed: { argIdx: 1, arity: 1 },
+  // Promise.prototype — onFulfilled/onRejected/onFinally at args[0]
+  // (then's second arg is also a callback but covered by 1-arg patterns;
+  // dynamic-import `import(spec)['then'](x => x)` is the motivating case).
+  then: { argIdx: 0, arity: 1 },
+  catch: { argIdx: 0, arity: 1 },
+  finally: { argIdx: 0, arity: 0 },
 };
 
 /**
@@ -3753,7 +3801,16 @@ assert._isSameValue = isSameValue;
           }
           return undefined;
         };
-      if (name === "__extern_set") return _safeSet;
+      if (name === "__extern_set")
+        return (obj: any, key: any, val: any) => {
+          // (#860) When a Wasm closure struct is stored as a property value
+          // on an extern host object, the host has no [[Call]] for the
+          // struct — `p1.then = fn; Promise.race([p1])` traps with
+          // "object is not a function". Wrap it via __call_fn_<arity> so
+          // host-driven invocation reaches the closure body.
+          const wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+          _safeSet(obj, key, wrappedVal);
+        };
       if (name === "__extern_length")
         return (obj: any) => {
           if (obj == null) return 0;
@@ -4623,7 +4680,7 @@ assert._isSameValue = isSameValue;
             throw new TypeError("Object.defineProperty called on non-object");
           }
           const desc: PropertyDescriptor = {};
-          if (flags & (1 << 7)) desc.value = value;
+          if (flags & (1 << 7)) desc.value = _maybeWrapCallableUnknownArity(value, callbackState);
           if (flags & (1 << 3)) desc.writable = !!(flags & 1);
           if (flags & (1 << 4)) desc.enumerable = !!(flags & (1 << 1));
           if (flags & (1 << 5)) desc.configurable = !!(flags & (1 << 2));
@@ -7418,7 +7475,12 @@ assert._isSameValue = isSameValue;
         return undefined;
       };
     case "extern_set":
-      return _safeSet;
+      return (obj: any, key: any, val: any) => {
+        // (#860) Wrap closure-as-value before storing — see __extern_set
+        // binding above. Mirrors the by-name path.
+        const wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+        _safeSet(obj, key, wrappedVal);
+      };
     case "host_eq":
       // #1065 — strict equality for two externref operands that the GC path
       // could not compare via ref.eq (e.g. host functions like `Array === Array`).

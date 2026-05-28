@@ -4135,10 +4135,19 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
           const entry = userFields.find((e) => e.field.name === propLiteral);
 
           if (entry) {
-            // Look up flags from shapePropFlags
+            // #1629b: Object.defineProperty updates `definedPropertyFlags`
+            // (keyed `varName:propName`) but `shapePropFlags` is built AFTER
+            // body compilation finishes, so per-variable updates made during
+            // codegen are lost when the table is initialized with defaults.
+            // Read the per-variable map first, then fall back to the shape table.
             const flagsArr = ctx.shapePropFlags.get(structTypeIdx);
             const userFieldIdx = userFields.indexOf(entry);
-            const flags = flagsArr && userFieldIdx >= 0 ? flagsArr[userFieldIdx]! : 0x07; // default WEC
+            let flags = flagsArr && userFieldIdx >= 0 ? flagsArr[userFieldIdx]! : 0x07; // default WEC
+            if (ts.isIdentifier(arg0)) {
+              const dpfKey = `${arg0.text}:${propLiteral}`;
+              const dpfFlags = ctx.definedPropertyFlags.get(dpfKey);
+              if (dpfFlags !== undefined) flags = dpfFlags & 0x0f;
+            }
 
             // Compile the object expression
             const objType = compileExpression(ctx, fctx, arg0);

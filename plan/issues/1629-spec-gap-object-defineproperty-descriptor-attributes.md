@@ -158,3 +158,23 @@ Recommend splitting into sub-issues:
   fails) — likely overlaps #1130.
 
 No code change landed under this task; needs architect spec before implementation.
+
+## Partial fix #1629b (2026-05-28)
+
+Sub-cluster fixed: `Object.getOwnPropertyDescriptor` attribute readback
+for plain-object struct fields that were redefined via
+`Object.defineProperty`. Root cause: the GOPD fast path in
+`src/codegen/expressions/calls.ts` reads `ctx.shapePropFlags`, but that
+table is built via `buildShapePropFlagsTable` *after* body compilation
+finishes — so per-variable updates recorded during codegen
+(`definedPropertyFlags`, keyed `varName:propName`) are overwritten with
+defaults. The defineProperty path's attempt to update `shapePropFlags`
+inline (object-ops.ts:1133-1137) is a no-op when the table has not yet
+been created.
+
+Fix: GOPD fast path now consults `ctx.definedPropertyFlags` first when
+arg0 is an identifier, falling back to the shape table. Tests:
+`tests/issue-1629b.test.ts` (4 cases: writable/enumerable/configurable
+overrides + default preservation, all green). Does not address
+sub-clusters #1629a (dynamic descriptor) or #1629c (Array/Function
+exotic) — those remain open.
