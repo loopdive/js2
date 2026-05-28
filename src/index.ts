@@ -56,6 +56,9 @@ export interface ImportDescriptor {
   intent: ImportIntent;
 }
 
+export type { ExportSignature, TypedArrayKind } from "./ir/types.js";
+import type { ExportSignature } from "./ir/types.js";
+
 export interface CompileResult {
   /** Wasm binary with GC proposal */
   binary: Uint8Array;
@@ -83,6 +86,18 @@ export interface CompileResult {
   hasMain: boolean;
   /** Whether the source has top-level executable statements (module init code) */
   hasTopLevelStatements: boolean;
+  /**
+   * Per-export TypedArray classifications (#1700). Surfaced so
+   * {@link wrapExports} can marshal `Uint8Array` (and other TypedArray)
+   * params/results across the JS↔Wasm boundary — the Wasm signature is
+   * ambiguous (`Uint8Array` and `number[]` share the same `(ref null $Vec[f64])`
+   * lowering), so we expose the TS-level distinction as metadata.
+   *
+   * Only present (and even then, possibly an empty object) when at least
+   * one exported function has a TypedArray param or return. Forward the
+   * value to `wrapExports(exports, { signatures: result.exportSignatures })`.
+   */
+  exportSignatures?: Record<string, ExportSignature>;
   /**
    * Ready-to-pass JS-host import object for default/JS-host mode (#1667).
    *

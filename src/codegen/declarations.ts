@@ -32,6 +32,7 @@ import {
   addStringImports,
   addUnionImports,
   collectEnumDeclarations,
+  classifyTypedArrayType,
   ensureStructForType,
   extractConstantDefault,
   FUNCTIONAL_ARRAY_METHODS,
@@ -124,6 +125,40 @@ interface UnifiedCollectorState {
 }
 
 const CONSOLE_METHODS_SET = new Set(["log", "warn", "error", "info", "debug"]);
+
+/**
+ * (#1700) Record TypedArray classifications for a user-exported function so
+ * the JS-host `wrapExports` can marshal `Uint8Array` params/returns across
+ * the JS↔Wasm boundary. The Wasm signature alone is ambiguous —
+ * `(input: Uint8Array)` and `(input: number[])` lower to the same
+ * `(ref null $Vec[f64])` — so we surface the TS-level distinction here.
+ *
+ * No-op when every slot classifies as `"other"` so non-TypedArray modules
+ * accumulate no metadata.
+ */
+function recordExportSignature(
+  ctx: CodegenContext,
+  exportName: string,
+  stmt: ts.FunctionDeclaration,
+  isAsync: boolean,
+): void {
+  const sig = ctx.checker.getSignatureFromDeclaration(stmt);
+  if (!sig) return;
+  const params: import("../ir/types.js").TypedArrayKind[] = [];
+  let anyHit = false;
+  for (const p of stmt.parameters) {
+    const pt = ctx.checker.getTypeAtLocation(p);
+    const kind = classifyTypedArrayType(pt, ctx.checker);
+    if (kind !== "other") anyHit = true;
+    params.push(kind);
+  }
+  const retType = ctx.checker.getReturnTypeOfSignature(sig);
+  const unwrappedRet = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
+  const result = classifyTypedArrayType(unwrappedRet, ctx.checker);
+  if (result !== "other") anyHit = true;
+  if (!anyHit) return;
+  ctx.exportSignatures.set(exportName, { params, result });
+}
 
 export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedCollectorState {
   return {
@@ -2544,6 +2579,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           name,
           desc: { kind: "func", index: funcIdx },
         });
+        recordExportSignature(ctx, name, stmt, isAsync);
         // `export default function foo() {}` — also export as "default" (#1074)
         // Skip if name is already "default" (anonymous export default function)
         const mods = ts.canHaveModifiers(stmt) ? ts.getModifiers(stmt) : undefined;
@@ -2553,6 +2589,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             name: "default",
             desc: { kind: "func", index: funcIdx },
           });
+          recordExportSignature(ctx, "default", stmt, isAsync);
         }
       }
     }

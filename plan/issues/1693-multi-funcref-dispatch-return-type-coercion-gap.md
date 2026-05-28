@@ -1,9 +1,10 @@
 ---
 id: 1693
 title: "multi-funcref-dispatch (#1131) missing return-type coercion — emits invalid Wasm on full-module axios/utils.js (mis-presented as `&&` fallthru bug)"
-status: ready
+status: done
 created: 2026-05-28
 updated: 2026-05-28
+completed: 2026-05-28
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -14,7 +15,7 @@ goal: npm-library-support
 sprint: Backlog
 parent: 1571
 related: [191, 1131, 1571, 1690, 1558]
-note: "Carved out of task #191 (the `&&` fallthru widening proposal) after dev-1655 investigation showed the minimal `&&` snippet validates and only the full-module compile fails. The `&&` lowering at logical-ops.ts:55-92 is correct; the bug is in the closure-dispatch trampoline."
+note: "Carved out of task #191 (the `&&` fallthru widening proposal) after dev-1655 investigation showed the minimal `&&` snippet validates and only the full-module compile fails. The `&&` lowering at logical-ops.ts:55-92 is correct; the bug is in the closure-dispatch trampoline. RESOLVED on main: a72cb9002 added the missing 4th-case coercion at calls.ts:7945-7969 (multi-funcref dispatch ladder); 75bc8bbfd narrowed it to numeric-primitive pairs only ({i32,f64,i64}) after the catch-all broke 8 equivalence tests on ref/ref_null/externref combinations. tests/issue-1693.test.ts covers 3 scenarios (single-candidate, multi-candidate diverging kinds, full axios/lib/utils.js) and passes."
 ---
 # #1693 — multi-funcref-dispatch trampoline misses return-type coercion (full-module axios/utils.js)
 

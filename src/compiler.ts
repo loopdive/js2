@@ -540,6 +540,7 @@ export function compileSource(
     wit: witOutput,
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
     hasTopLevelStatements: mod.hasTopLevelStatements === true,
+    exportSignatures: mod.exportSignatures,
   };
 }
 
@@ -813,6 +814,7 @@ export function compileMultiSource(
     imports: buildImportManifest(mod),
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
     hasTopLevelStatements: mod.hasTopLevelStatements === true,
+    exportSignatures: mod.exportSignatures,
   };
 }
 
@@ -1052,5 +1054,6 @@ export function compileFilesSource(entryPath: string, options: CompileOptions = 
     imports: buildImportManifest(mod),
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
     hasTopLevelStatements: mod.hasTopLevelStatements === true,
+    exportSignatures: mod.exportSignatures,
   };
 }

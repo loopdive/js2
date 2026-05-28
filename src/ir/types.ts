@@ -43,6 +43,22 @@ export interface WasmModule {
   hasTopLevelStatements?: boolean;
   /** Wasm start function index — runs automatically on instantiation (#907) */
   startFuncIdx?: number;
+  /**
+   * Per-export TS-level type annotations (#1700). Surfaced so the JS-host
+   * `wrapExports` can faithfully marshal `Uint8Array` (and other TypedArray)
+   * params/results that share the same Wasm signature as `number[]`. Keyed
+   * by export name. Only populated for exports whose params/result reference
+   * TypedArray types.
+   */
+  exportSignatures?: Record<string, ExportSignature>;
+}
+
+/** TS-level kind hint for a single export parameter or result (#1700). */
+export type TypedArrayKind = "uint8array" | "typed-array" | "other";
+
+export interface ExportSignature {
+  params: TypedArrayKind[];
+  result: TypedArrayKind;
 }
 
 export type TypeDef = FuncTypeDef | StructTypeDef | ArrayTypeDef | RecGroupDef | SubTypeDef;

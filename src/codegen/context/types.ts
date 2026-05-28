@@ -383,6 +383,12 @@ export interface CodegenContext {
   arrayTypeMap: Map<string, number>;
   /** Map from element kind (e.g. "f64") → registered vec struct type index */
   vecTypeMap: Map<string, number>;
+  /**
+   * Per-export TypedArray classification populated during user-function
+   * declaration emission (#1700). Read by the runtime `wrapExports` to
+   * marshal `Uint8Array` params/results across the JS↔Wasm boundary.
+   */
+  exportSignatures: Map<string, import("../../ir/types.js").ExportSignature>;
   /** Map from className → parent className (for inheritance chain walk) */
   externClassParent: Map<string, string>;
   /** Map from global name (e.g. "document") → import info */

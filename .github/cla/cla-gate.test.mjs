@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   isBot,
   commentMatchesPhrase,
+  prBodyMatchesCheckbox,
   staticExemptReason,
   hasSigned,
   makeSignature,
@@ -33,7 +34,7 @@ test("isBot detects [bot] suffix", () => {
   assert.equal(isBot(undefined), false);
 });
 
-test("commentMatchesPhrase is exact (trim + case-insensitive)", () => {
+test("commentMatchesPhrase exact phrase (trim + case-insensitive)", () => {
   assert.equal(commentMatchesPhrase(AGREEMENT_PHRASE), true);
   assert.equal(commentMatchesPhrase("  I have read and agree to the CLA  "), true);
   assert.equal(commentMatchesPhrase("i have read and agree to the cla"), true);
@@ -41,6 +42,34 @@ test("commentMatchesPhrase is exact (trim + case-insensitive)", () => {
   assert.equal(commentMatchesPhrase("I have read and agree to the CLA, thanks!"), false);
   assert.equal(commentMatchesPhrase("LGTM"), false);
   assert.equal(commentMatchesPhrase(undefined), false);
+});
+
+test("commentMatchesPhrase checkbox format", () => {
+  assert.equal(commentMatchesPhrase("[x] I have read and agree to the CLA"), true);
+  assert.equal(commentMatchesPhrase("- [x] I have read and agree to the CLA"), true);
+  assert.equal(commentMatchesPhrase("* [x] I have read and agree to the CLA"), true);
+  assert.equal(commentMatchesPhrase("[X] I have read and agree to the CLA"), true);
+  assert.equal(commentMatchesPhrase("- [X] I HAVE READ AND AGREE TO THE CLA"), true);
+  assert.equal(commentMatchesPhrase("[ ] I have read and agree to the CLA"), false, "unchecked box");
+  assert.equal(commentMatchesPhrase("[x] I agree to the CLA"), false, "wrong phrase");
+  assert.equal(commentMatchesPhrase("[x] I have read and agree to the CLA extra"), false, "extra text");
+});
+
+test("prBodyMatchesCheckbox detects checked PR template box", () => {
+  const body = `## Description\n\nFixes stuff.\n\n## CLA\n\n- [x] I have read and agree to the CLA.\n`;
+  // Note: the template shows "...CLA." with a period, but our phrase is without period
+  // Test with the exact phrase (no period)
+  const body2 = `## CLA\n\n- [x] I have read and agree to the CLA\n`;
+  assert.equal(prBodyMatchesCheckbox(body2), true);
+  assert.equal(prBodyMatchesCheckbox("- [ ] I have read and agree to the CLA\n"), false, "unchecked");
+  assert.equal(prBodyMatchesCheckbox("No checkbox here"), false);
+  assert.equal(prBodyMatchesCheckbox(undefined), false);
+  assert.equal(
+    prBodyMatchesCheckbox("- [x] I have read and agree to the CLA\n- [x] other line"),
+    true,
+    "first match wins",
+  );
+  assert.equal(prBodyMatchesCheckbox("- [X] I HAVE READ AND AGREE TO THE CLA"), true, "case insensitive");
 });
 
 test("staticExemptReason: bots are exempt", () => {

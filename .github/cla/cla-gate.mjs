@@ -52,10 +52,42 @@ export function isBot(login) {
   return typeof login === "string" && /\[bot\]$/i.test(login);
 }
 
-/** Normalize a comment body for phrase matching. */
+/** Normalize a comment body for phrase matching.
+ *
+ * Accepts two formats (case-insensitive, trimmed):
+ *   1. Exact phrase: "I have read and agree to the CLA"
+ *   2. Checkbox:     "[x] I have read and agree to the CLA"
+ *                    "- [x] I have read and agree to the CLA"
+ *                    "* [x] I have read and agree to the CLA"
+ *
+ * The checkbox format lets contributors click a GitHub task-list checkbox
+ * (if the workflow triggers on issue_comment edited) or copy-paste the
+ * pre-filled checkbox from the instruction comment.
+ */
 export function commentMatchesPhrase(body) {
   if (typeof body !== "string") return false;
-  return body.trim().toLowerCase() === AGREEMENT_PHRASE.toLowerCase();
+  const trimmed = body.trim().toLowerCase();
+  const phrase = AGREEMENT_PHRASE.toLowerCase();
+  if (trimmed === phrase) return true;
+  // Checkbox format: optional "- " or "* " prefix, then "[x] " + phrase
+  const m = /^(?:[-*]\s+)?\[x\]\s+(.+)$/.exec(trimmed);
+  if (m && m[1].trim() === phrase) return true;
+  return false;
+}
+
+/** Check whether a PR body contains the CLA checkbox in checked state.
+ *
+ * Matches the PR template checkbox:  - [x] I have read and agree to the CLA
+ * Case-insensitive. The checkbox must be checked ([x] or [X]).
+ */
+export function prBodyMatchesCheckbox(body) {
+  if (typeof body !== "string") return false;
+  const phrase = AGREEMENT_PHRASE.toLowerCase();
+  for (const line of body.split("\n")) {
+    const m = /^(?:[-*]\s+)?\[x\]\s+(.+)$/i.exec(line.trim());
+    if (m && m[1].trim().toLowerCase() === phrase) return true;
+  }
+  return false;
 }
 
 /**
@@ -177,6 +209,7 @@ export default {
   currentClaVersion,
   isBot,
   commentMatchesPhrase,
+  prBodyMatchesCheckbox,
   staticExemptReason,
   hasSigned,
   makeSignature,

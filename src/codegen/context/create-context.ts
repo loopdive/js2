@@ -59,6 +59,7 @@ export function createCodegenContext(
     enumStringValues: new Map(),
     arrayTypeMap: new Map(),
     vecTypeMap: new Map(),
+    exportSignatures: new Map(),
     externClassParent: new Map(),
     declaredGlobals: new Map(),
     callbackCounter: 0,

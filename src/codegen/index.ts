@@ -117,6 +117,59 @@ export {
  * Returns the constant default info if the initializer is a numeric/boolean literal,
  * undefined/null, or a unary minus on a numeric literal. Returns undefined otherwise.
  */
+/**
+ * TypedArray constructor names that lower to a `(ref null $Vec[f64])` Wasm
+ * type (#1700). Shared between `resolveWasmType` and `classifyTypedArrayType`
+ * so the export-signature side table and the codegen lowering stay in sync.
+ */
+export const TYPED_ARRAY_NAMES: ReadonlySet<string> = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+]);
+
+/**
+ * (#1700) Classify a TS type at an export boundary for the runtime
+ * `wrapExports` marshalling step. The Wasm signature for `Uint8Array` and
+ * `number[]` is identical (`(ref null $Vec[f64])`), so we surface the
+ * TS-level distinction as metadata.
+ *
+ * - "uint8array"  → caller may pass JS Uint8Array; result-side wraps as Uint8Array
+ * - "typed-array" → any other TypedArray (Int8Array / Float32Array / ...) — v1
+ *                   treats these like number[] on the return path; tracked for
+ *                   element-fidelity follow-up
+ * - "other"       → not a typed array; wrapper is a no-op for this slot
+ */
+export function classifyTypedArrayType(
+  tsType: ts.Type,
+  checker: ts.TypeChecker,
+): import("../ir/types.js").TypedArrayKind {
+  // Strip null/undefined/void/Promise wrappers so `Uint8Array | undefined`,
+  // `Promise<Uint8Array>` etc. still classify. Match `resolveWasmType`'s
+  // own unwrapping rules.
+  let t = tsType;
+  if (t.isUnion()) {
+    const non = t.types.filter(
+      (x) => !(x.flags & ts.TypeFlags.Null) && !(x.flags & ts.TypeFlags.Undefined) && !(x.flags & ts.TypeFlags.Void),
+    );
+    if (non.length === 1) t = non[0]!;
+  }
+  const sym = t.aliasSymbol ?? t.getSymbol();
+  if (sym?.name === "Promise") {
+    const args = checker.getTypeArguments(t as ts.TypeReference);
+    if (args.length > 0) return classifyTypedArrayType(args[0]!, checker);
+  }
+  const name = sym?.name;
+  if (!name || !TYPED_ARRAY_NAMES.has(name)) return "other";
+  return name === "Uint8Array" ? "uint8array" : "typed-array";
+}
+
 function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
   let found = false;
   function walk(node: ts.Node): void {
@@ -1101,6 +1154,13 @@ export function generateModule(
     }
     mod.stringLiteralValues = ctx.stringLiteralValues;
     mod.asyncFunctions = ctx.asyncFunctions;
+    // (#1700) Surface per-export TypedArray classifications so the JS-host
+    // wrapExports can marshal Uint8Array params/results across the boundary.
+    if (ctx.exportSignatures.size > 0) {
+      const obj: Record<string, import("../ir/types.js").ExportSignature> = {};
+      for (const [k, v] of ctx.exportSignatures) obj[k] = v;
+      mod.exportSignatures = obj;
+    }
 
     // Emit exported struct field getter helpers for the runtime.
     // These allow JS host imports to read WasmGC struct fields that are
@@ -1117,6 +1177,11 @@ export function generateModule(
 
     // (#1503) __vec_set_byte for crypto.getRandomValues to write into Uint8Array vecs.
     emitVecSetByteExport(ctx);
+
+    // (#1700) __new_vec_f64 — JS-callable allocator for f64-element vecs so
+    // wrapExports can copy Uint8Array (and other TypedArray) inputs across
+    // the JS↔Wasm boundary. Gated on an exported user fn accepting a vec.
+    emitNewVecF64Export(ctx);
 
     // Emit __test_str_from_externref / __test_str_to_externref exports for
     // dual-run testing in nativeStrings mode (#1187). No-op unless
@@ -2986,7 +3051,12 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
  * a dead export and bloat every module.
  */
 function emitVecSetByteExport(ctx: CodegenContext): void {
-  if (!ctx.funcMap.has("__crypto_get_random_values")) return;
+  // (#1503) Originally gated on `__crypto_get_random_values` so the export
+  // only appeared when crypto.getRandomValues was reachable.
+  // (#1700) Now also needed by the JS-host `wrapExports` to populate freshly
+  // allocated f64 vecs with Uint8Array bytes. Emit when either consumer is
+  // present.
+  if (!ctx.funcMap.has("__crypto_get_random_values") && !hasExportedVecParam(ctx)) return;
   try {
     _emitVecSetByteExportInner(ctx);
   } catch {
@@ -3066,6 +3136,103 @@ function _emitVecSetByteExportInner(ctx: CodegenContext): void {
     exported: true,
   } as any);
   mod.exports.push({ name: "__vec_set_byte", desc: { kind: "func", index: funcIdx } });
+}
+
+/**
+ * (#1700) Emit `__new_vec_f64(i32 len) -> externref` so the JS-host
+ * `wrapExports` can allocate a fresh f64-element vec struct and populate it
+ * with bytes from a JS `Uint8Array` argument. Without this export, callers
+ * have no JS entry point to construct a `(ref null $Vec[f64])` and hit
+ * "type incompatibility when transforming from/to JS" at the call boundary.
+ *
+ * The signature returns `externref` (not the typed vec ref) so the result
+ * is opaque on the JS side — callers pass it straight back to a compiled
+ * function param, which casts it to the right vec type internally.
+ *
+ * Gated: only emitted when (a) an `f64`-element vec is registered, AND
+ * (b) at least one exported user function accepts a vec-shaped ref param.
+ * Modules without TypedArray exports pay zero bytes.
+ */
+function emitNewVecF64Export(ctx: CodegenContext): void {
+  if (!ctx.vecTypeMap.has("f64")) return;
+  if (!hasExportedVecParam(ctx)) return;
+  try {
+    _emitNewVecF64ExportInner(ctx);
+  } catch {
+    // Non-fatal — if dispatch emission fails the JS-side wrapper falls
+    // back to passing the raw arg (which raises the original TypeError),
+    // which is no worse than the pre-#1700 baseline.
+  }
+}
+
+function hasExportedVecParam(ctx: CodegenContext): boolean {
+  const mod = ctx.mod;
+  const vecTypeIdxs = new Set<number>(ctx.vecTypeMap.values());
+  for (const exp of mod.exports) {
+    if (exp.desc.kind !== "func") continue;
+    const idx = exp.desc.index - ctx.numImportFuncs;
+    if (idx < 0 || idx >= mod.functions.length) continue;
+    const fn = mod.functions[idx]!;
+    const typeDef = mod.types[fn.typeIdx];
+    if (!typeDef) continue;
+    // Resolve sub-type wrappers (some FuncTypeDefs are nested under SubTypeDef).
+    const ft = typeDef.kind === "sub" ? typeDef.type : typeDef;
+    if (ft.kind !== "func") continue;
+    for (const p of ft.params) {
+      if ((p.kind === "ref" || p.kind === "ref_null") && vecTypeIdxs.has(p.typeIdx)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function _emitNewVecF64ExportInner(ctx: CodegenContext): void {
+  const mod = ctx.mod;
+  const vecTypeIdx = ctx.vecTypeMap.get("f64")!;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return;
+  // Skip if the export is already emitted (defensive — multi-source paths
+  // may invoke the emit pass more than once; emitVecSetByteExport doesn't
+  // guard either but is gated by funcMap which prevents a second emit).
+  if (mod.exports.some((e) => e.name === "__new_vec_f64")) return;
+
+  // Return the typed vec ref directly (NOT externref). V8 and SpiderMonkey
+  // both reject the JS↔Wasm round-trip if we return externref and try to
+  // pass it back to a `(ref null $Vec)` param — the boundary will not
+  // narrow externref → concrete WasmGC ref. By returning the real type,
+  // JS sees an opaque WasmGC handle and the engine accepts it on the way
+  // back in (same type identity).
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "i32" }],
+    [{ kind: "ref_null", typeIdx: vecTypeIdx }],
+    "$__new_vec_f64_type",
+  );
+  const funcIdx = ctx.numImportFuncs + mod.functions.length;
+
+  // local 0 = len (i32 param)
+  // local 1 = $arr (ref null $arr_f64) — the zero-initialised data array
+  const arrRefType: ValType = { kind: "ref_null", typeIdx: arrTypeIdx };
+  const body: Instr[] = [
+    // arr = array.new_default $arr_f64 (len)
+    { op: "local.get", index: 0 } as Instr,
+    { op: "array.new_default", typeIdx: arrTypeIdx } as Instr,
+    { op: "local.set", index: 1 } as Instr,
+    // struct.new $Vec[f64] { length: len, data: arr }
+    { op: "local.get", index: 0 } as Instr,
+    { op: "local.get", index: 1 } as Instr,
+    { op: "struct.new", typeIdx: vecTypeIdx } as Instr,
+  ];
+
+  mod.functions.push({
+    name: "__new_vec_f64",
+    typeIdx,
+    locals: [{ name: "__arr", type: arrRefType }],
+    body,
+    exported: true,
+  } as any);
+  mod.exports.push({ name: "__new_vec_f64", desc: { kind: "func", index: funcIdx } });
 }
 
 /**
@@ -3492,6 +3659,13 @@ export function generateMultiModule(
     }
     mod.stringLiteralValues = ctx.stringLiteralValues;
     mod.asyncFunctions = ctx.asyncFunctions;
+    // (#1700) Surface per-export TypedArray classifications so the JS-host
+    // wrapExports can marshal Uint8Array params/results across the boundary.
+    if (ctx.exportSignatures.size > 0) {
+      const obj: Record<string, import("../ir/types.js").ExportSignature> = {};
+      for (const [k, v] of ctx.exportSignatures) obj[k] = v;
+      mod.exportSignatures = obj;
+    }
 
     // Emit exported struct field getter helpers for the runtime (mirrors
     // generateModule path — #1308 surfaced that multi-source projects
@@ -7498,17 +7672,6 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // TypedArray types → vec struct with f64 elements (same representation as number[])
     // Covers: Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array,
     //         Int32Array, Uint32Array, Float32Array, Float64Array
-    const TYPED_ARRAY_NAMES = new Set([
-      "Int8Array",
-      "Uint8Array",
-      "Uint8ClampedArray",
-      "Int16Array",
-      "Uint16Array",
-      "Int32Array",
-      "Uint32Array",
-      "Float32Array",
-      "Float64Array",
-    ]);
     if (sym?.name && TYPED_ARRAY_NAMES.has(sym.name)) {
       const elemWasm: ValType = { kind: "f64" };
       const vecIdx = getOrRegisterVecType(ctx, "f64", elemWasm);

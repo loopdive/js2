@@ -1,9 +1,10 @@
 ---
 id: 1697
 title: "static method `this.X = v` write not routed to staticProps global — public + private (asymmetric with read path)"
-status: in-progress
+status: done
 created: 2026-05-28
 updated: 2026-05-28
+completed: 2026-05-28
 priority: medium
 feasibility: easy
 reasoning_effort: low

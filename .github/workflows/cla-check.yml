@@ -33,9 +33,9 @@ name: CLA Check
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   issue_comment:
-    types: [created]
+    types: [created, edited]
   # #1668 — must report on merge_group so the required `cla-check` context is
   # satisfied in the merge queue. There is no PR author to gate here (the
   # PR-level pull_request_target run already enforced acceptance); the job
@@ -149,33 +149,44 @@ jobs:
               return;
             }
 
-            // ---- 2) issue_comment: record a signature if the phrase matches ---
+            // Helper: record a new signature and commit it.
+            async function recordSignature() {
+              const store = gate.readStore();
+              const sig = gate.makeSignature({
+                login: author, name: authorName, pr: prNumber,
+                commitSha: headSha, claVersion,
+              });
+              const { store: next, added } = gate.appendSignature(store, sig);
+              if (added) {
+                gate.writeStore(next);
+                execFileSync("git", ["config", "user.name", "github-actions[bot]"]);
+                execFileSync("git", ["config", "user.email",
+                  "41898282+github-actions[bot]@users.noreply.github.com"]);
+                execFileSync("git", ["add", ".github/cla/signatures.json"]);
+                execFileSync("git", ["commit", "-m",
+                  `chore(cla): record CLA acceptance for @${author} (PR #${prNumber})`]);
+                execFileSync("git", ["push", "origin",
+                  `HEAD:${context.payload.repository.default_branch}`]);
+                core.info(`Recorded CLA signature for @${author}.`);
+              }
+              await setStatus("success", "CLA accepted and recorded.");
+            }
+
+            // ---- 2a) PR body checkbox (PR template) — checked on open or edit -
+            if (context.eventName === "pull_request_target" &&
+                gate.prBodyMatchesCheckbox(pr.body)) {
+              await recordSignature();
+              return;
+            }
+
+            // ---- 2b) issue_comment: record a signature if the phrase matches ---
             if (context.eventName === "issue_comment") {
               const commenter = context.payload.comment.user.login;
               const body = context.payload.comment.body;
               const commenterIsAuthor =
                 commenter.toLowerCase() === author.toLowerCase();
               if (commenterIsAuthor && gate.commentMatchesPhrase(body)) {
-                const store = gate.readStore();
-                const sig = gate.makeSignature({
-                  login: author, name: authorName, pr: prNumber,
-                  commitSha: headSha, claVersion,
-                });
-                const { store: next, added } = gate.appendSignature(store, sig);
-                if (added) {
-                  gate.writeStore(next);
-                  // Commit the appended signature to the base repo.
-                  execFileSync("git", ["config", "user.name", "github-actions[bot]"]);
-                  execFileSync("git", ["config", "user.email",
-                    "41898282+github-actions[bot]@users.noreply.github.com"]);
-                  execFileSync("git", ["add", ".github/cla/signatures.json"]);
-                  execFileSync("git", ["commit", "-m",
-                    `chore(cla): record CLA acceptance for @${author} (PR #${prNumber})`]);
-                  execFileSync("git", ["push", "origin",
-                    `HEAD:${context.payload.repository.default_branch}`]);
-                  core.info(`Recorded CLA signature for @${author}.`);
-                }
-                await setStatus("success", "CLA accepted and recorded.");
+                await recordSignature();
                 return;
               }
               // A non-matching comment on an unsigned PR: re-evaluate below.
@@ -204,14 +215,16 @@ jobs:
                   `Thanks for your contribution, @${author}! Before this PR can be ` +
                   `merged we need a recorded acceptance of our ` +
                   `[Contributor License Agreement](../blob/${context.payload.repository.default_branch}/CLA.md).\n\n` +
-                  `Please post a comment on this PR with **exactly** this phrase:\n\n` +
-                  `> ${gate.AGREEMENT_PHRASE}\n\n` +
+                  `If you have already opened the PR, edit the PR description and check the box:\n\n` +
+                  `- [x] ${gate.AGREEMENT_PHRASE}\n\n` +
+                  `If the box is not in your PR description (old PR), post a new comment:\n\n` +
+                  `\`\`\`\n- [x] ${gate.AGREEMENT_PHRASE}\n\`\`\`\n\n` +
                   `Your acceptance will be recorded in ` +
                   `\`.github/cla/signatures.json\` and the \`cla-check\` will turn green.`,
               });
             }
             await setStatus(
               "failure",
-              `Awaiting CLA acceptance — comment "${gate.AGREEMENT_PHRASE}".`,
+              `Awaiting CLA acceptance — check [x] box or post the phrase in a new comment.`,
             );
             core.setFailed(`@${author} has not accepted the CLA (version ${claVersion}).`);

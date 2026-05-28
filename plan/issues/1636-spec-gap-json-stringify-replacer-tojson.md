@@ -1,10 +1,9 @@
 ---
 id: 1636
 title: "spec gap: JSON.stringify replacer/toJSON/property-list (49 of 66 test262 fails)"
-status: blocked
+status: in-progress
 created: 2026-05-08
-updated: 2026-05-27
-escalation: needs-architect-spec
+updated: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -151,6 +150,34 @@ architect spec.
 - `test262/test/built-ins/JSON/stringify/replacer-function-arguments.js` — null-deref / holder-`this` lost
 - `test262/test/built-ins/JSON/stringify/value-tojson-object.js` — `toJSON` never called
 - `test262/test/built-ins/JSON/stringify/value-string-escape-ascii.js` — string-marshaling count mismatch
+
+## Slice A landed (2026-05-28)
+
+Implementation: `src/runtime.ts` — new helpers
+`_normaliseJsonReplacer`, `_serializeJSONProperty`, `_serializeJSONObject`,
+`_serializeJSONArray`, `_liveGet`, `_isJsonCallable`, `_invokeJsonCallable`,
+`_liveIsArray`, `_liveGetEnumerableKeys`, `_quoteJSON`. The
+`JSON_stringify` host import now branches on the normalised replacer:
+`kind: "none"` → existing fast path (`_wasmToPlain` + host JSON.stringify);
+`kind: "fn" | "list"` → live walk per §25.5.2.4 SerializeJSONProperty so
+the replacer is invoked with the *original* WasmGC holder identity and
+cycles raise TypeError instead of infinite-looping inside `_wasmToPlain`.
+
+Tests: `tests/issue-1636-json-stringify.test.ts` — 7 active cases
+covering cycle-self / cycle-via-replacer / numeric transform / drop /
+no-replacer regression / pretty-print / array-skip-→-null. 3 cases
+intentionally skipped and tagged `[Slice B]` (toJSON-on-plain-object,
+needs `__sget_<method>` shim), `[Slice C]` (replacer `this`-identity,
+needs #1308/#1382 explicit-`this` dispatch), `[boundary]` (the typed
+host-import boundary coerces an `undefined` JSON output back to
+"undefined" stringification).
+
+Existing #1342 replacer suite stays green; the pre-existing
+`issue-json-stringify-structs` failure on `serializes an array of
+structs` reproduces on the unmodified branch and is unrelated to this
+slice.
+
+Slices B / C / D remain as specified above.
 - `test262/test/built-ins/JSON/stringify/replacer-array-normal.js`
 
 ## Architect spec (2026-05-28, sendev-1542)
