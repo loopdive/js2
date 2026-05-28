@@ -473,6 +473,233 @@ function emitIterableArg(ctx: CodegenContext, fctx: FunctionContext, argExpr: ts
 }
 
 /**
+ * (#1632a) Static-resolve the name of a function-like expression for the
+ * `__bind_function` nameHint argument. Returns "" when no static name is
+ * available (anonymous function, complex expression). The host falls back to
+ * the wrapped callable's own `.name` when the hint is empty.
+ *
+ * Per spec §15.2.5 / NamedEvaluation: a named function expression
+ * `function namedFn(){}` keeps its inner name even when bound to a different
+ * identifier (`const fn = function namedFn(){}`); the inner name wins.
+ */
+function resolveStaticFunctionName(ctx: CodegenContext, expr: ts.Expression): string {
+  let cursor: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(cursor) ||
+    ts.isAsExpression(cursor) ||
+    ts.isTypeAssertionExpression(cursor) ||
+    ts.isSatisfiesExpression(cursor) ||
+    ts.isNonNullExpression(cursor)
+  ) {
+    cursor = (cursor as ts.AsExpression | ts.ParenthesizedExpression).expression;
+  }
+  if (ts.isIdentifier(cursor)) {
+    // Look through `const fn = function namedFn(){}` to prefer the inner name
+    // (named function expression) over the binding identifier.
+    const sym = ctx.checker.getSymbolAtLocation(cursor);
+    const decl = sym?.valueDeclaration;
+    if (decl && (ts.isVariableDeclaration(decl) || ts.isBindingElement(decl)) && decl.initializer) {
+      let init: ts.Expression = decl.initializer;
+      while (ts.isParenthesizedExpression(init)) init = init.expression;
+      if (ts.isFunctionExpression(init) && init.name) return init.name.text;
+    }
+    return cursor.text;
+  }
+  if (ts.isPropertyAccessExpression(cursor)) return cursor.name.text;
+  // Named function expression: `(function namedFn(){}).bind(...)`
+  if (ts.isFunctionExpression(cursor) && cursor.name) return cursor.name.text;
+  return "";
+}
+
+/**
+ * (#1632a) Static-resolve the declared parameter count of a function-like
+ * expression for the `__bind_function` lengthHint. Returns -1 when no static
+ * arity is available; the host falls back to the wrapped callable's `.length`.
+ *
+ * Spec §20.2.4.2: `Function.prototype.length` is the count of formal parameters
+ * before the first default-valued, rest, or destructured parameter.
+ */
+function resolveStaticFunctionLength(ctx: CodegenContext, expr: ts.Expression): number {
+  let cursor: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(cursor) ||
+    ts.isAsExpression(cursor) ||
+    ts.isTypeAssertionExpression(cursor) ||
+    ts.isSatisfiesExpression(cursor) ||
+    ts.isNonNullExpression(cursor)
+  ) {
+    cursor = (cursor as ts.AsExpression | ts.ParenthesizedExpression).expression;
+  }
+  // Inline function expression / arrow — read parameters directly.
+  if (ts.isFunctionExpression(cursor) || ts.isArrowFunction(cursor)) {
+    return countSpecLength(cursor.parameters);
+  }
+  // Try the TS checker's call signatures.
+  const tsType = ctx.checker.getTypeAtLocation(cursor);
+  const sigs = tsType?.getCallSignatures?.() ?? [];
+  if (sigs.length > 0) {
+    const sig = sigs[0]!;
+    const decl = sig.getDeclaration?.();
+    if (decl && decl.parameters) {
+      return countSpecLength(decl.parameters);
+    }
+    // Fallback: signature parameter count (less precise — counts optional/rest).
+    const minArity = (sig as unknown as { minArgumentCount?: number }).minArgumentCount;
+    if (typeof minArity === "number") return minArity;
+    return sig.parameters.length;
+  }
+  return -1;
+}
+
+function countSpecLength(params: ts.NodeArray<ts.ParameterDeclaration>): number {
+  let count = 0;
+  for (const p of params) {
+    // Skip the TypeScript `this` pseudo-parameter — it's not part of
+    // Function.prototype.length per spec.
+    if (ts.isIdentifier(p.name) && p.name.text === "this") continue;
+    // Stop at first default, rest, or optional — per spec.
+    if (p.questionToken !== undefined) break;
+    if (p.dotDotDotToken !== undefined) break;
+    if (p.initializer !== undefined) break;
+    count++;
+  }
+  return count;
+}
+
+/**
+ * (#1632a) Compile `target.bind(thisArg, ...partialArgs)` to a
+ * `__bind_function(target, thisArg, argsArray, nameHint, lengthHint)` host
+ * import call. The host delegates to `Function.prototype.bind.apply(wrapped,
+ * [thisArg, ...partial])` and returns a real JS bound-function exotic.
+ *
+ * Standalone mode falls back to identity-bind (drops partial args, returns
+ * the receiver). Returns `undefined` to signal "no codegen happened, caller
+ * should fall through" — this can only happen if `compileExpression` for the
+ * receiver returns null (e.g. unresolvable identifier); callers retain the
+ * old "throws on missing receiver" behaviour in that case.
+ */
+function compileFunctionBind(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): InnerResult | undefined {
+  const externRef: ValType = { kind: "externref" };
+  const i32Ty: ValType = { kind: "i32" };
+
+  // Standalone (--target wasi / noJsHost): no JS host → identity-bind degraded.
+  // Drop partial args, push the receiver as externref, return it unchanged.
+  if (ctx.standalone || noJsHost(ctx)) {
+    for (const arg of expr.arguments) {
+      const t = compileExpression(ctx, fctx, arg);
+      if (t !== null) fctx.body.push({ op: "drop" });
+    }
+    const recvType = compileExpression(ctx, fctx, propAccess.expression, externRef);
+    if (recvType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (recvType.kind !== "externref") {
+      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+    }
+    return externRef;
+  }
+
+  // Static hints from the receiver expression (host falls back when -1 / "").
+  const targetName = resolveStaticFunctionName(ctx, propAccess.expression);
+  const targetLength = resolveStaticFunctionLength(ctx, propAccess.expression);
+
+  // 1. Push target externref.
+  const recvType = compileExpression(ctx, fctx, propAccess.expression, externRef);
+  if (recvType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (recvType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+  }
+
+  // 2. Push thisArg externref (or ref.null.extern when omitted).
+  const args = expr.arguments;
+  if (args.length >= 1) {
+    const t = compileExpression(ctx, fctx, args[0]!, externRef);
+    if (t === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (t.kind !== "externref") {
+      fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+    }
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  // 3. Build argsArray as a JS Array of partial args (args[1..]).
+  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [externRef]);
+  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
+  flushLateImportShifts(ctx, fctx);
+  const arrNewResolvedIdx = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
+  const arrPushResolvedIdx = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
+  if (arrNewResolvedIdx === undefined || arrPushResolvedIdx === undefined) {
+    // Late-import setup failed (very unusual). Bail to identity-bind for safety.
+    fctx.body.push({ op: "drop" } as Instr); // drop thisArg
+    return externRef;
+  }
+  fctx.body.push({ op: "call", funcIdx: arrNewResolvedIdx });
+  const argsArrayLocal = allocLocal(fctx, `__bind_args_${fctx.locals.length}`, externRef);
+  fctx.body.push({ op: "local.set", index: argsArrayLocal });
+  for (let i = 1; i < args.length; i++) {
+    fctx.body.push({ op: "local.get", index: argsArrayLocal });
+    const argExpr = args[i]!;
+    if (ts.isSpreadElement(argExpr)) {
+      // Spread in bind partials is rare — coerce the spread argument to
+      // externref and let the host accept it as a single value. Real spread
+      // handling would need iterable expansion at compile time.
+      const t = compileExpression(ctx, fctx, argExpr.expression, externRef);
+      if (t === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (t.kind !== "externref") {
+        fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+      }
+    } else {
+      const t = compileExpression(ctx, fctx, argExpr, externRef);
+      if (t === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (t.kind !== "externref") {
+        fctx.body.push({ op: "extern.convert_any" } as unknown as Instr);
+      }
+    }
+    fctx.body.push({ op: "call", funcIdx: arrPushResolvedIdx });
+  }
+  fctx.body.push({ op: "local.get", index: argsArrayLocal });
+
+  // 4. Push nameHint (string externref or ref.null.extern).
+  if (targetName) {
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, targetName));
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  // 5. Push lengthHint i32 (-1 = unknown).
+  fctx.body.push({ op: "i32.const", value: targetLength });
+
+  // 6. Call __bind_function. Result is externref.
+  const bindIdx = ensureLateImport(
+    ctx,
+    "__bind_function",
+    [externRef, externRef, externRef, externRef, i32Ty],
+    [externRef],
+  );
+  flushLateImportShifts(ctx, fctx);
+  const bindResolvedIdx = ctx.funcMap.get("__bind_function") ?? bindIdx;
+  if (bindResolvedIdx === undefined) {
+    // Should not happen in host mode — drop the staged args and degrade.
+    fctx.body.push({ op: "drop" } as Instr); // length hint
+    fctx.body.push({ op: "drop" } as Instr); // name hint
+    fctx.body.push({ op: "drop" } as Instr); // args array
+    fctx.body.push({ op: "drop" } as Instr); // thisArg
+    // Leave receiver on the stack as identity-bind fallback.
+    return externRef;
+  }
+  fctx.body.push({ op: "call", funcIdx: bindResolvedIdx });
+  return externRef;
+}
+
+/**
  * (#1116b) Resolve a Promise-combinator `thisArg`/receiver that names a
  * Wasm-compiled `class X extends Promise`.
  *
@@ -2139,13 +2366,18 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       if (callResult !== undefined) return callResult;
     }
 
-    // Handle fn.bind(thisArg, ...partialArgs) — identity bind.
-    // Drops all bind arguments for side effects and returns the receiver as externref.
-    // This is an intentional simplification: we don't synthesize a new bound closure.
-    // It covers the common test262 pattern where bind's result is treated as a function
-    // value (property access, direct call without relying on bound `this`). Tests that
-    // rely on bound-this semantics or partial-arg prepending are not fully satisfied,
-    // but they no longer error out with "bind is not a function".
+    // Handle fn.bind(thisArg, ...partialArgs).
+    //
+    // (#1632a) JS-host mode: lower to `__bind_function(target, thisArg, argsArray,
+    // nameHint, lengthHint)` which delegates to `Function.prototype.bind` on the host.
+    // The host owns [[BoundTargetFunction]] / [[BoundThis]] / [[BoundArguments]] /
+    // .name (`"bound " + target.name`) / .length (max(0, target.length - bound.length)) /
+    // [[Call]] / [[Construct]] — see runtime.ts:__bind_function. Wasm closure structs
+    // are wrapped via `_wrapWasmClosure` so the host receives a real JS callable.
+    //
+    // Standalone (--target wasi / noJsHost): fall back to identity-bind (drop partial
+    // args, return target unchanged). Documented gap: standalone needs a native
+    // bound-function struct, tracked as a follow-up to #1632a.
     //
     // Narrowing: only fires when the receiver's TS type has call signatures. This
     // preserves the legacy "throws on non-function receiver" behavior that a
@@ -2158,19 +2390,8 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
       const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
       const recvHasCallSig = (recvTsType?.getCallSignatures?.()?.length ?? 0) > 0;
       if (recvHasCallSig) {
-        for (const arg of expr.arguments) {
-          const t = compileExpression(ctx, fctx, arg);
-          // Only drop values that actually pushed onto the stack.
-          // null = failed-to-compile or normalized-void (nothing pushed).
-          if (t !== null) fctx.body.push({ op: "drop" });
-        }
-        const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
-        if (recvType === null) {
-          fctx.body.push({ op: "ref.null.extern" });
-        } else if (recvType.kind !== "externref") {
-          fctx.body.push({ op: "extern.convert_any" });
-        }
-        return { kind: "externref" };
+        const bindResult = compileFunctionBind(ctx, fctx, expr, propAccess);
+        if (bindResult !== undefined) return bindResult;
       }
     }
 

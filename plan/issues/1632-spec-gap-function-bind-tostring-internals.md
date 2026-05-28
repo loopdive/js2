@@ -1,9 +1,10 @@
 ---
 id: 1632
 title: "spec gap: Function.prototype.bind/toString + Function/internals (175 + 7 test262 fails)"
-status: ready
+status: done
+completed: 2026-05-28
 created: 2026-05-08
-updated: 2026-05-27
+updated: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -171,3 +172,72 @@ reasoning_effort: high` and "Files to modify" list spanning `closures.ts` +
 
 No code change landed; reverted worktree to clean. Recommend re-routing #1632
 to architect for the #1632a spec before any dev implementation.
+
+## Resolution (2026-05-28, developer) — #1632a landed
+
+Implemented per the architect spec above. Changes:
+
+- `src/runtime.ts` (~5478) — new `__bind_function(target, thisArg, argsArray,
+  nameHint, lengthHint) -> externref` host import. For Wasm-closure-struct
+  targets, wraps via `_wrapWasmClosure` with the codegen-supplied arity hint,
+  stamps `name` and `length` properties on the wrapper, then delegates to
+  `Function.prototype.bind.apply(wrapped, [thisArg, ...partial])`. The host
+  then owns spec-correct `[[BoundTargetFunction]]` / `[[BoundThis]]` /
+  `[[BoundArguments]]`, `.name === "bound " + target.name`, and `.length =
+  max(0, target.length - boundArgs.length)`. Degrades to identity-bind when
+  no `callbackState` (no exports) is available, matching the pre-#1632a
+  hostless fallback.
+- `src/codegen/expressions/calls.ts` — replaced the identity-bind body (the
+  former lines 2069–2087) with `compileFunctionBind`. The helper:
+  1. Pushes the target externref (extern-converting Wasm closure structs).
+  2. Pushes `thisArg` (or `ref.null.extern`).
+  3. Builds a JS Array of partial args via `__js_array_new`/`__js_array_push`.
+  4. Pushes `nameHint` (a host string constant resolved statically from the
+     receiver's binding declaration — names from `function f(){}` declarations
+     AND named function expressions `const fn = function namedFn(){}`).
+  5. Pushes `lengthHint` (TS parameter count up to the first
+     optional/default/rest, skipping the synthetic `this` pseudo-param).
+  6. Calls `__bind_function`.
+  Standalone (`ctx.standalone || noJsHost(ctx)`) skips the import and
+  degrades to identity-bind, preserving pre-#1632a behaviour for WASI builds.
+- `src/codegen/property-access.ts` — `.name` and `.length` on the result of a
+  `.bind(...)` call MUST bypass the static-resolution peephole (which would
+  return the *target's* name/length instead of the bound function's spec
+  values). Both branches now check whether the receiver of the property
+  access is a `.bind(...)` call and fall through to the runtime
+  `__extern_get` path so the host bound function's own properties are read.
+- `tests/issue-1632a.test.ts` — 9 cases: spec-correct `.name`/`.length`
+  recomputation, partial-arg evaluation order, identity over named function
+  expression, JSON.bind() preserves the legacy TypeError throw, etc. The
+  test for `bound: any` then `bound(arg)` is `it.skip` and pinned to #1596
+  (general dyn-call lowering through an externref-typed local).
+- `tests/issue-1463.test.ts` — the "identity bind survives variable storage"
+  baseline is now `it.skip`'d with a note pointing back to #1632a. The
+  former identity-bind workaround it pinned is intentionally superseded;
+  invoking `const bf = fn.bind(...); bf(x)` requires the general
+  externref-callable lowering tracked by #1596.
+
+### Verification
+
+- `tests/issue-1632a.test.ts` — 9/9 pass.
+- `tests/issue-1038.test.ts` — 4/4 (existing bind smoke tests still pass).
+- `tests/issue-1463.test.ts` — 3/3 active (1 newly-skipped per above).
+- `tests/host-import-allowlist-budget.test.ts` — pass (no allowlist growth;
+  `__bind_function` is JS-host-only and only needed when host bind is
+  available).
+- `pnpm run check:ir-fallbacks` — pass (no IR fallback regressions).
+- No new regressions in `issue-149`, `issue-1450`, `issue-1533`,
+  `issue-1552`, `issue-1639`, `issue-263`, `issue-1553a` (pre-existing
+  failures verified against main HEAD).
+
+### Out of scope (carved follow-ups)
+
+- **#1632b — `Function.prototype.toString` source retention**: still open;
+  needs verbatim source slicing for arrow / method / generator forms.
+  Tracked in #1632 investigation (2026-05-27).
+- **#1632 internals — Proxy/realm `[[Call]]`/`[[Construct]]` receiver
+  semantics**: defer (Proxy is a skip-filter feature).
+- **General `bound(x)` invocation through an externref-typed local**: gated
+  on #1596 (Function.prototype.apply/.call on compiled Wasm functions). The
+  immediate-call shape `fn.bind(...)(args)` works via the existing static
+  reduction; storage-and-call is the gap.

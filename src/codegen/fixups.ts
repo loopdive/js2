@@ -622,6 +622,23 @@ export function fixupStructNewResultCoercion(ctx: CodegenContext): void {
     return null;
   }
 
+  // See fixupExternConvertAny for the rationale — imported globals occupy the
+  // lower part of the combined index space and aren't present in mod.globals.
+  const numImportedGlobals = ctx.mod.imports.filter((imp: any) => imp.desc?.kind === "global").length;
+  function getGlobalType(gIdx: number): ValType | null {
+    if (gIdx < numImportedGlobals) {
+      let seen = 0;
+      for (const imp of ctx.mod.imports) {
+        if ((imp as any).desc?.kind !== "global") continue;
+        if (seen === gIdx) return (imp as any).desc.type as ValType;
+        seen++;
+      }
+      return null;
+    }
+    const def = ctx.mod.globals[gIdx - numImportedGlobals];
+    return def ? def.type : null;
+  }
+
   function fixupInstrs(func: WasmFunction, instrs: Instr[]): void {
     for (let i = 0; i < instrs.length; i++) {
       const instr = instrs[i]!;
@@ -656,9 +673,8 @@ export function fixupStructNewResultCoercion(ctx: CodegenContext): void {
             const lt = getLocalType(func, (prev as { index: number }).index);
             if (lt && lt.kind === "externref") isExternref = true;
           } else if (prev.op === "global.get") {
-            const gIdx = (prev as { index: number }).index;
-            const gDef = ctx.mod.globals[gIdx];
-            if (gDef && gDef.type.kind === "externref") isExternref = true;
+            const gType = getGlobalType((prev as { index: number }).index);
+            if (gType && gType.kind === "externref") isExternref = true;
           }
           if (isExternref) {
             const unboxIdx = ctx.funcMap.get("__unbox_number");
@@ -694,10 +710,8 @@ export function fixupStructNewResultCoercion(ctx: CodegenContext): void {
           i++; // skip the inserted instruction
         }
       } else if (next.op === "global.set") {
-        // Check global type
-        const globalIdx = (next as { index: number }).index;
-        const globalDef = ctx.mod.globals[globalIdx];
-        if (globalDef && globalDef.type.kind === "externref") {
+        const gType = getGlobalType((next as { index: number }).index);
+        if (gType && gType.kind === "externref") {
           instrs.splice(i + 1, 0, { op: "extern.convert_any" } as Instr);
           i++;
         }
@@ -723,10 +737,9 @@ export function fixupStructNewResultCoercion(ctx: CodegenContext): void {
           if (lt && lt.kind === "externref") isAlreadyExternref = true;
           if (lt && lt.kind === "funcref") isFuncref = true;
         } else if (prev.op === "global.get") {
-          const gIdx = (prev as { index: number }).index;
-          const gDef = ctx.mod.globals[gIdx];
-          if (gDef && gDef.type.kind === "externref") isAlreadyExternref = true;
-          if (gDef && gDef.type.kind === "funcref") isFuncref = true;
+          const gType = getGlobalType((prev as { index: number }).index);
+          if (gType && (gType.kind === "externref" || gType.kind === "ref_extern")) isAlreadyExternref = true;
+          if (gType && gType.kind === "funcref") isFuncref = true;
         } else if (prev.op === "struct.get") {
           // struct.get can produce funcref fields — check the struct type
           const sTypeIdx = (prev as any).typeIdx;
@@ -777,6 +790,28 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
     return null;
   }
 
+  // Resolve a Wasm `global.get` operand to its ValType. The combined index
+  // space starts with imported globals (in import-section order), followed by
+  // module-defined globals (`ctx.mod.globals`). Looking up `mod.globals[gIdx]`
+  // directly is wrong for any module that imports globals, since the module
+  // globals array only stores the definition side — for the `static [computed]`
+  // class-field path this caused the fixup to miss redundant
+  // `extern.convert_any` ops over externref globals (#1623).
+  const numImportedGlobals = ctx.mod.imports.filter((imp: any) => imp.desc?.kind === "global").length;
+  function getGlobalType(gIdx: number): ValType | null {
+    if (gIdx < numImportedGlobals) {
+      let seen = 0;
+      for (const imp of ctx.mod.imports) {
+        if ((imp as any).desc?.kind !== "global") continue;
+        if (seen === gIdx) return (imp as any).desc.type as ValType;
+        seen++;
+      }
+      return null;
+    }
+    const def = ctx.mod.globals[gIdx - numImportedGlobals];
+    return def ? def.type : null;
+  }
+
   function fixupInstrs(func: WasmFunction, instrs: Instr[]): void {
     // Recurse into nested blocks first
     for (const instr of instrs) {
@@ -822,12 +857,9 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
           if (refDef && refDef.kind === "func") isFuncref = true;
         }
       } else if (prev.op === "global.get") {
-        const gIdx = (prev as { index: number }).index;
-        const gDef = ctx.mod.globals[gIdx];
-        if (gDef && gDef.type.kind === "externref") isAlreadyExternref = true;
-        if (gDef && gDef.type.kind === "funcref") isFuncref = true;
-        // Also check globals with externref type
-        if (gDef && (gDef.type.kind === "externref" || gDef.type.kind === "ref_extern")) isAlreadyExternref = true;
+        const gType = getGlobalType((prev as { index: number }).index);
+        if (gType && (gType.kind === "externref" || gType.kind === "ref_extern")) isAlreadyExternref = true;
+        if (gType && gType.kind === "funcref") isFuncref = true;
       } else if (prev.op === "struct.get") {
         const sTypeIdx = (prev as any).typeIdx;
         const sFieldIdx = (prev as any).fieldIdx;

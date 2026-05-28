@@ -2042,8 +2042,17 @@ function _safeGet(obj: any, key: any): any {
   return undefined;
 }
 
-/** Safe property set: works on both JS objects and WasmGC structs. */
-function _safeSet(obj: any, key: any, val: any): void {
+/**
+ * Safe property set: works on both JS objects and WasmGC structs.
+ *
+ * When `exports` is provided AND `obj` is a WasmGC struct AND `key` is a
+ * string, the optional `__sset_<key>` export is invoked so the write lands
+ * in the real struct field (not only the sidecar). This is the writeback
+ * symmetric to `__sget_<key>` and unblocks struct-target `Object.assign`,
+ * `Reflect.set`, and `Object.defineProperty` data writes (#1630). Callers
+ * that don't pass `exports` get the prior sidecar-only behaviour.
+ */
+function _safeSet(obj: any, key: any, val: any, exports?: Record<string, Function>): void {
   if (obj == null) return;
   // Coerce WasmGC struct keys to primitives via ToPrimitive (#1090)
   if (key != null && typeof key === "object" && _isWasmStruct(key)) {
@@ -2100,6 +2109,21 @@ function _safeSet(obj: any, key: any, val: any): void {
       const hasInDescs = descs?.has(propKey);
       if (!hasInSidecar && !hasInDescs) {
         return; // silent fail: non-extensible, new property not added
+      }
+    }
+    // Symmetric writeback through the compiled `__sset_<key>` export so the
+    // real WasmGC struct field gets updated, not just the sidecar (#1630).
+    // Falls back silently when the export is missing or doesn't match the
+    // struct's runtime type — sidecar still carries the value so host-side
+    // reads (Object.keys, JSON.stringify, dynamic-key reads) keep working.
+    if (typeof key === "string" && exports) {
+      const setter = exports[`__sset_${key}`];
+      if (typeof setter === "function") {
+        try {
+          setter(obj, val);
+        } catch {
+          /* not a field of this struct's runtime type */
+        }
       }
     }
     try {
@@ -2458,7 +2482,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       return val;
     },
     set(_t, key, val) {
-      _safeSet(obj, key, val);
+      _safeSet(obj, key, val, exports);
       return true;
     },
     has(_t, key) {
@@ -5525,6 +5549,68 @@ assert._isSameValue = isSameValue;
           const wrappedArgs = _isWasmStruct(argList) ? _wrapForHost(argList, exports) : argList;
           return Reflect.apply(wrappedFn, wrappedThis, wrappedArgs ?? []);
         };
+      // (#1632a) Function.prototype.bind — produce a spec-compliant bound
+      // function exotic. The host owns [[BoundTargetFunction]] /
+      // [[BoundThis]] / [[BoundArguments]] / .name (`"bound " + target.name`) /
+      // .length (max(0, target.length - bound.length)) / [[Call]] /
+      // [[Construct]] via the native `Function.prototype.bind`.
+      //
+      // Wasm closure structs are wrapped via `_wrapWasmClosure` so the host
+      // receives a real JS callable. `nameHint`/`lengthHint` are baked at
+      // codegen time from the target's static declaration; the host stamps
+      // them onto the wrapper so the bound function inherits them per spec.
+      // When the hints are unavailable (`""` / `-1`), the wrapper keeps
+      // whatever the host's `_wrapWasmClosure` chose (typically anonymous /
+      // arity 0), which still gives bound `.name === "bound "` and
+      // `.length === 0` — observably wrong but better than the identity-bind
+      // fallback.
+      if (name === "__bind_function")
+        return (target: any, thisArg: any, argsArray: any, nameHint: any, lengthHint: number): any => {
+          let callable: any = target;
+          if (_isWasmStruct(target)) {
+            const arity = typeof lengthHint === "number" && lengthHint >= 0 ? lengthHint : 0;
+            const wrapped = _wrapWasmClosure(target, arity, callbackState);
+            if (wrapped) {
+              callable = wrapped;
+              // Stamp hints onto the wrapper so the bound function inherits
+              // them via the host's own `Function.prototype.bind` (which
+              // computes `name = "bound " + target.name` and copies
+              // `length = max(0, target.length - boundArgs.length)`).
+              try {
+                if (typeof nameHint === "string" && nameHint.length > 0) {
+                  Object.defineProperty(callable, "name", {
+                    value: nameHint,
+                    configurable: true,
+                  });
+                }
+                if (typeof lengthHint === "number" && lengthHint >= 0) {
+                  Object.defineProperty(callable, "length", {
+                    value: lengthHint,
+                    configurable: true,
+                  });
+                }
+              } catch {
+                /* readonly host envs — ignore, bound fn just inherits wrapper defaults */
+              }
+            } else {
+              // No callbackState/exports available (e.g. caller used raw
+              // `buildImports` without setExports). Degrade gracefully to
+              // identity-bind: return the original target so callers that
+              // only need a non-null function value continue to work.
+              // Pre-#1632a behaviour for this hostless path.
+              return target;
+            }
+          }
+          if (typeof callable !== "function") {
+            // Non-callable receiver (typed-struct that isn't a closure, or
+            // anything else passing the `recvHasCallSig` codegen guard but
+            // not actually callable at runtime). Spec §20.2.3.2 step 1
+            // requires `IsCallable(F)` is false → throw TypeError.
+            throw new TypeError("Function.prototype.bind called on non-callable");
+          }
+          const partial: any[] = Array.isArray(argsArray) ? argsArray : [];
+          return Function.prototype.bind.apply(callable, [thisArg, ...partial]);
+        };
       if (name === "__reflect_construct")
         return (ctor: any, args: any, newTarget: any): any => {
           const exports = callbackState?.getExports();
@@ -5660,8 +5746,14 @@ assert._isSameValue = isSameValue;
           // Construct without message/options first; the engine's native
           // InstallErrorCause cannot read an opaque WasmGC `options` struct, so
           // we install `cause` ourselves below (#1634).
+          //
+          // (#1339-residuals) Codegen passes `ref.null.extern` for absent
+          // optional args, which arrives here as JS `null`. Treat null as
+          // absent so we don't install an own `message="null"` for the
+          // common `new AggregateError([])` shape (test262
+          // `properties-of-error-objects.js`).
           const inst = new AggregateError([]);
-          if (message !== undefined) {
+          if (message !== undefined && message !== null) {
             const msgStr = typeof message === "string" ? message : String(message);
             Object.defineProperty(inst, "message", {
               value: msgStr,
@@ -5720,7 +5812,10 @@ assert._isSameValue = isSameValue;
           });
           // Spec step 5: if message is not undefined, msg = ToString(message);
           // CreateNonEnumerableDataPropertyOrThrow(O, "message", msg).
-          if (message !== undefined) {
+          //
+          // (#1339-residuals) Codegen passes `ref.null.extern` for absent
+          // optional args (JS `null` here); treat null as absent.
+          if (message !== undefined && message !== null) {
             const msgStr = typeof message === "string" ? message : String(message);
             Object.defineProperty(inst, "message", {
               value: msgStr,
