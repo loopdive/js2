@@ -1,9 +1,10 @@
 ---
 id: 1523
 title: "test262 harness: provide `$262` host-object API (createRealm / detachArrayBuffer / agent / global)"
-status: backlog
+status: done
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-05-28
+completed: 2026-05-28
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -73,3 +74,23 @@ the realm/detach/global subset is independently useful.
 Up to **341 test262 fails** unblocked, with realistic ~150 immediate
 passes after realm/detach/global are wired (Atomics-dependent tests
 still need #665).
+
+## Resolution
+
+Added a `needs262` flag to `buildPreamble` in `tests/test262-runner.ts`
+that injects a `let $262: any = { ... }` object when the test body
+references `$262`. The stub exposes `global`, `gc`, `evalScript`,
+`detachArrayBuffer`, `createRealm`, `agent.*`, `IsHTMLDDA`,
+`AbstractModuleSource`. `detachArrayBuffer` sets the `__detached__`
+sidecar (same mechanism as `$DETACHBUFFER`); `createRealm` returns a
+self-referential bare realm; `agent.*` are no-op stubs.
+
+### Validation
+Local probe (50 randomly-sampled `$262`-using tests):
+- Before: 50/50 `compile_error` (`$262 is not defined`).
+- After:  0  `compile_error`, 11 `pass`, 39 `fail` (downstream
+  semantics — `eval is not a function`, `safeBroadcast`, etc., which
+  are out of scope here).
+
+Non-`$262` regression sample (30 Math built-ins): unchanged (28 pass,
+2 fail).

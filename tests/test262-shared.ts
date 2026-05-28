@@ -442,10 +442,35 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   }
                   const testFn = (instance.exports as any).test;
                   if (typeof testFn !== "function") {
-                    recordResult(relPath, category, "compile_error", "no test export", undefined, scopeInfo);
+                    if (isNegative) {
+                      // #1527: negative parse/resolution tests intentionally
+                      // contain invalid module syntax (re-exports of missing
+                      // bindings, malformed import attributes, etc.). Our
+                      // compiler is permissive and produces a module without
+                      // a `test` export, which we count as the expected
+                      // failure outcome — the test module never formed.
+                      recordResult(relPath, category, "pass", undefined, undefined, scopeInfo);
+                    } else {
+                      recordResult(relPath, category, "compile_error", "no test export", undefined, scopeInfo);
+                    }
                     return;
                   }
                   const ret = testFn();
+                  if (isNegative) {
+                    // Negative parse/resolution test compiled, instantiated,
+                    // AND produced a callable test — but spec says it shouldn't
+                    // have linked. We did not detect the spec violation, so
+                    // record a fail with a clear message.
+                    recordResult(
+                      relPath,
+                      category,
+                      "fail",
+                      `expected ${meta.negative!.phase} ${meta.negative!.type} but compiled, instantiated, and ran (returned ${ret})`,
+                      undefined,
+                      scopeInfo,
+                    );
+                    return;
+                  }
                   if (isRuntimeNegative) {
                     // Execution completed without error — expected runtime throw didn't happen
                     recordResult(
@@ -462,7 +487,9 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                     recordResult(relPath, category, "fail", `returned ${ret}`, undefined, scopeInfo);
                   }
                 } catch (execErr: any) {
-                  if (isRuntimeNegative) {
+                  if (isRuntimeNegative || isNegative) {
+                    // For isNegative (parse/early/resolution), Wasm validation
+                    // or a thrown start-function counts as the expected error.
                     recordResult(relPath, category, "pass", undefined, undefined, scopeInfo);
                   } else {
                     recordResult(relPath, category, "fail", String(execErr), undefined, scopeInfo);

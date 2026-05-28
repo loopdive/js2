@@ -1,9 +1,10 @@
 ---
 id: 1527
 title: "module-code: ambiguous-export & re-export tests fail with 'no test export'"
-status: backlog
+status: done
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-05-28
+completed: 2026-05-28
 priority: medium
 feasibility: medium
 reasoning_effort: medium

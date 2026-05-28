@@ -43,6 +43,7 @@ import {
   ensureExnTag,
   ensureI32Condition,
   ensureWasiWriteAnyStringHelper,
+  ensureWasiWriteArrayBufferHelper,
   ensureWasiWriteUint8ArrayHelper,
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
@@ -1619,9 +1620,19 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
         return VOID_RESULT;
       }
 
-      // Uint8Array (or other typed array) → raw bytes. Uint8Array compiles to a
-      // "vec" struct wrapping an f64 GC array (new-super.ts `new Uint8Array`).
-      const vecTypeIdx = getOrRegisterVecType(ctx, "f64", { kind: "f64" });
+      // #1655: distinguish ArrayBuffer (vec of i32_byte) from Uint8Array /
+      // typed-array views (vec of f64) at compile time. Under
+      // --target wasi/standalone, `new ArrayBuffer(n)` lowers to a vec struct
+      // with i32 byte elements (one byte per element, see dataview-native.ts);
+      // `new Uint8Array(...)` / `.subarray(...)` lowers to a vec with f64
+      // elements. The two helpers differ only in the per-element read
+      // conversion, so we pick the helper at compile time from the static
+      // type of the argument.
+      const argSymName = argTsType.getSymbol?.()?.name;
+      const isArrayBufferArg = argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer";
+      const elemKey: "i32_byte" | "f64" = isArrayBufferArg ? "i32_byte" : "f64";
+      const elemType: ValType = isArrayBufferArg ? { kind: "i32" } : { kind: "f64" };
+      const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
       const argType = compileExpression(ctx, fctx, argExpr);
       flushLateImportShifts(ctx, fctx);
       // The helper takes a non-null ref; cast a mismatched ref / assert non-null.
@@ -1636,7 +1647,9 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
           fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx } as Instr);
         }
       }
-      const helperIdx = ensureWasiWriteUint8ArrayHelper(ctx, vecTypeIdx, useStderr);
+      const helperIdx = isArrayBufferArg
+        ? ensureWasiWriteArrayBufferHelper(ctx, vecTypeIdx, useStderr)
+        : ensureWasiWriteUint8ArrayHelper(ctx, vecTypeIdx, useStderr);
       if (helperIdx >= 0) {
         fctx.body.push({ op: "call", funcIdx: helperIdx } as Instr);
         return VOID_RESULT;
@@ -2167,6 +2180,36 @@ function compileCallExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (propAccess.name.text === "call" || propAccess.name.text === "apply") {
       const isCall = propAccess.name.text === "call";
       const innerExpr = propAccess.expression;
+
+      // Sub-fix 3 (#1596): Function.prototype.{apply,call}.call(fn, ...) reshape.
+      // Rewrite `Function.prototype.apply.call(fn, thisArg, argsArr)` to
+      // `fn.apply(thisArg, argsArr)` (and analogous for .call.call) so the
+      // existing Case 0 / Case 1 handlers fire. Only the outer `.call` form is
+      // matched — `Function.prototype.apply.apply(fn, [thisArg, argsArr])` is
+      // rare and would need a packed-args reshape.
+      if (
+        isCall &&
+        ts.isPropertyAccessExpression(innerExpr) &&
+        (innerExpr.name.text === "apply" || innerExpr.name.text === "call") &&
+        ts.isPropertyAccessExpression(innerExpr.expression) &&
+        innerExpr.expression.name.text === "prototype" &&
+        ts.isIdentifier(innerExpr.expression.expression) &&
+        innerExpr.expression.expression.text === "Function" &&
+        expr.arguments.length >= 1
+      ) {
+        const innerMethod = innerExpr.name.text; // "apply" or "call"
+        const fnExpr = expr.arguments[0]!;
+        const reshapedArgs = expr.arguments.slice(1);
+        const reshapedProp = ts.factory.createPropertyAccessExpression(
+          fnExpr as ts.LeftHandSideExpression,
+          innerMethod,
+        );
+        ts.setTextRange(reshapedProp, propAccess);
+        const reshapedCall = ts.factory.createCallExpression(reshapedProp, undefined, reshapedArgs);
+        ts.setTextRange(reshapedCall, expr);
+        (reshapedCall as any).parent = expr.parent;
+        return compileCallExpression(ctx, fctx, reshapedCall as ts.CallExpression);
+      }
 
       // Case 0: (function(){}).call/apply(...) and (() => {}).call/apply(...).
       // A compiled function is a WasmGC funcref/struct, not a JS Function, so a

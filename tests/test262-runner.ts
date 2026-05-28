@@ -1411,6 +1411,7 @@ function buildPreamble(
   needsTypedArrayBinding: boolean,
   needsIteratorBinding: boolean,
   needsDetachBuffer: boolean,
+  needs262: boolean,
 ): string {
   let p = `let __fail: number = 0;
 let __assert_count: number = 1;
@@ -1687,6 +1688,50 @@ const TypedArray: any = Object.getPrototypeOf(Int8Array.prototype).constructor;`
 
 function Iterator(this: any): void {}
 (Iterator as any).prototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));`;
+  }
+
+  if (needs262) {
+    // #1523: test262 host-object stub. Tests rely on `$262` as a precondition
+    // for realm creation, ArrayBuffer detach, agent messaging, and global
+    // access. We expose a minimal surface — realm/global/eval/detach get
+    // useful semantics; agent.* throws "agent unsupported"; gc and evalScript
+    // are no-ops; AbstractModuleSource / IsHTMLDDA / etc. surface as
+    // undefined so `typeof $262.X === 'function'` checks fail gracefully
+    // rather than triggering a ReferenceError at compile time.
+    p += `
+
+let $262: any = {
+  global: globalThis,
+  gc: function (): void {},
+  evalScript: function (src: any): void {},
+  detachArrayBuffer: function (buf: any): void {
+    if (buf == null) { return; }
+    (buf as any).__detached__ = true;
+  },
+  createRealm: function (): any {
+    const realm: any = {};
+    realm.global = realm;
+    realm.eval = function (src: any): any { return undefined; };
+    realm.detachArrayBuffer = function (buf: any): void {
+      if (buf == null) { return; }
+      (buf as any).__detached__ = true;
+    };
+    realm.gc = function (): void {};
+    return realm;
+  },
+  agent: {
+    start: function (src: any): void {},
+    broadcast: function (val: any): void {},
+    receiveBroadcast: function (cb: any): void {},
+    report: function (msg: any): void {},
+    getReport: function (): any { return null; },
+    sleep: function (ms: any): void {},
+    monotonicNow: function (): number { return 0; },
+    leaving: function (): void {},
+  },
+  IsHTMLDDA: undefined,
+  AbstractModuleSource: undefined,
+};`;
   }
 
   return p;
@@ -1986,6 +2031,13 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
   // sets a sidecar `__detached__` marker the runtime DataView dispatch checks.
   const needsDetachBuffer = /\$DETACHBUFFER\b/.test(body);
 
+  // #1523: test262 host-object `$262`. Tests use it as a precondition for
+  // realm creation, ArrayBuffer detach, agent messaging, and global access.
+  // We expose a minimal stub: createRealm returns a fresh global with eval,
+  // detachArrayBuffer sets the `__detached__` sidecar, gc/evalScript are
+  // no-ops, agent.* is a stub that throws "agent unsupported".
+  const needs262 = /\$262\b/.test(body);
+
   // Build cache key as a bitmask string
   const cacheKey = [
     needsAssertThrows,
@@ -2009,6 +2061,7 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
     needsTypedArrayBinding,
     needsIteratorBinding,
     needsDetachBuffer,
+    needs262,
   ]
     .map((b) => (b ? "1" : "0"))
     .join("");
@@ -2037,6 +2090,7 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
       needsTypedArrayBinding,
       needsIteratorBinding,
       needsDetachBuffer,
+      needs262,
     );
     preambleCache.set(cacheKey, preamble);
   }

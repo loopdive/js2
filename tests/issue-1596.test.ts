@@ -74,4 +74,37 @@ describe("#1596 Function.prototype.apply/.call on function expressions", () => {
     `);
     expect(e.test()).toBe(42);
   });
+
+  it("Function.prototype.apply.call(fn, thisArg, argsArr) forwards arguments", async () => {
+    const e = await compileAndRun(`
+      export function test(): number {
+        function g(a: number, b: number): number { return a + b; }
+        return Function.prototype.apply.call(g, null, [1, 2]);
+      }
+    `);
+    expect(e.test()).toBe(3);
+  });
+
+  it("Function.prototype.call.call(fn, thisArg, ...args) forwards positional args", async () => {
+    const e = await compileAndRun(`
+      export function test(): number {
+        function g(a: number, b: number, c: number): number { return a + b + c; }
+        return Function.prototype.call.call(g, null, 1, 2, 4);
+      }
+    `);
+    expect(e.test()).toBe(7);
+  });
+
+  it("Function.prototype.apply.call on a function literal", async () => {
+    const e = await compileAndRun(`
+      export function test(): number {
+        return Function.prototype.apply.call(
+          function(a: number, b: number): number { return a * b; },
+          null,
+          [3, 7],
+        );
+      }
+    `);
+    expect(e.test()).toBe(21);
+  });
 });

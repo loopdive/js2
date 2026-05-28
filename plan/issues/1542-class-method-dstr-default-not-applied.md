@@ -1,16 +1,106 @@
 ---
 id: 1542
 title: "Class method destructured-pattern param default not applied; throws \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"Cannot destructure null\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\" instead"
-status: ready
+status: needs-architect-spec
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-05-28
 priority: high
 feasibility: hard
 goal: test262-conformance
-sprint: 52
+sprint: Backlog
 parent: 820
 test262_fail: 134
 ---
+
+## 2026-05-28 — Second attempt parked: prior fix landed and reverted with -1219 regression
+
+The architect spec proposed Fix #1 (externref→vec coercion in `coerceType`),
+but `src/codegen/type-coercion.ts:1347` ALREADY handles externref→ref/ref_null
+where `to` is a vec/tuple struct (via `buildVecFromExternref` /
+`buildTupleFromExternref`). The vec path is not the bug.
+
+PR #440 (commit `cc732f511`) correctly identified the actual root cause:
+`compileClassesFromStatements` in `src/codegen/declarations.ts` does NOT
+propagate `insideFunction` through recursive descents into `block`/`if`/
+`try`/loop/switch/labeled. Classes nested in any control-flow construct
+inside a function are therefore treated as module-level: their bodies are
+**eagerly compiled at module-pass time**, BEFORE `hoistFunctionDeclarations`
+registers sibling function declarations (the nested `function* g()` referenced
+by the method's param default) into `funcMap`. The lookup misses, the call
+falls back to `ref.null.extern`, and the destructure guard throws.
+
+**PR #440 was merged then reverted (commit `46b026aaa`) due to a confirmed
+-1219 test262 regression** (28817 → 27598). Breakdown from the revert PR
+#516:
+
+- **wasm_compile: 691** (cascade — classes nested in blocks no longer
+  eagerly compiled, shape registration missing at use site)
+- runtime_error: 279
+- assertion_fail: 275
+- type_error: 42
+
+The broad propagation `compileClassesFromStatements(stmts, insideFunction)`
+through every recursive descent fixed the -134 dstr-default cases but broke
+~1085 OTHER cases where module-level code (or anonymous class expressions
+reached via `compileAnonymousClassBodiesInNode`'s `forEachChild` recursion)
+depended on the eager class-body compilation that the broad defer disabled.
+Collection (`collectClassesFromStatements`) DOES register shapes recursively,
+so the shape itself wasn't missing — what broke was downstream code that
+needed method bodies to be compiled at module-init time, not deferred to
+function-body-compile time.
+
+### What a correct fix must do
+
+Eager compile vs deferred compile is not a binary choice driven by syntactic
+nesting alone. The deferred path (`compileNestedClassDeclaration` reached via
+`compileStatement` while compiling the enclosing function body) only fires
+for classes reached through the function body's statement traversal. Module-
+level code that constructs the nested class directly (or references its
+methods through closure capture) needs the body emitted at module-init.
+
+A correct fix needs an architect spec to disambiguate:
+
+1. Which class nesting positions are reachable only from inside the
+   enclosing function's body (safe to defer).
+2. Which positions can be referenced from outside the function (require
+   eager compile, but then the missing-funcMap-entry case for default
+   initializers has to be handled differently — e.g. by hoisting nested
+   function decls into a pre-pass before eager class-body compile, OR by
+   making the call-expression compiler emit an order-independent
+   `call_indirect` against a wrapper struct that gets filled in later).
+3. Whether the `compileAnonymousClassBodiesInNode` `forEachChild` recursion
+   needs to be conditioned on `insideFunction` too, and what the cascade
+   effects are on its callers.
+
+Files of interest for the architect:
+- `src/codegen/declarations.ts:3171-3253` — `compileClassesFromStatements`
+- `src/codegen/declarations.ts:2168-2289` — `collectClassesFromStatements`
+  (recursive shape collection — already handles nested classes)
+- `src/codegen/statements/nested-declarations.ts:75-148` —
+  `compileNestedClassDeclaration` (deferred-compile path)
+- `src/codegen/statements/nested-declarations.ts:717+` —
+  `hoistFunctionDeclarations` (registers `funcMap` entries during function
+  body compile — runs AFTER module-pass class-body compile, hence the bug)
+
+### Why senior-dev declined to retry the same fix
+
+Re-applying PR #440's broad `insideFunction` propagation will reproduce the
+-1219 regression. A narrower variant (e.g. only deferring when the class
+has method param defaults referencing unresolved identifiers) is feasible
+but the heuristic is fragile and risks half-fixing — the +134 here is not
+worth the risk of another -N regression when N other code paths share the
+same eager-class-body assumption.
+
+The proper sequence is:
+1. **Architect** writes a respec that defines the eager/deferred contract
+   for nested classes precisely (not just "if in a function, defer").
+2. **Senior-dev** implements per the spec.
+3. Pre-merge CI is the gate — but the architect work has to come first so
+   the implementation isn't another guess-and-revert.
+
+Marked `status: needs-architect-spec` and reprioritized off sprint 52.
+
+## Suspended Work
 ## Suspended Work
 
 **Suspended**: 2026-05-20 by dev-equiv-tests after smoke-testing.

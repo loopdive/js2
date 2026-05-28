@@ -4224,6 +4224,127 @@ export function ensureWasiWriteUint8ArrayHelper(
 }
 
 /**
+ * #1655: Ensure __wasi_write_arraybuffer(buf: ref __vec_i32_byte) -> void
+ * exists and return its function index (lazy).
+ *
+ * Companion to `ensureWasiWriteUint8ArrayHelper` for the ArrayBuffer-backing
+ * representation. Under `--target wasi` / `--target standalone`, an
+ * `ArrayBuffer` is lowered to a vec struct of i32 bytes (one byte per
+ * element, values 0..255 — see dataview-native.ts comment block) rather than
+ * the Uint8Array f64-element shape. The element conversion is therefore a
+ * direct i32 read (no `i32.trunc_sat_f64_s`).
+ */
+export function ensureWasiWriteArrayBufferHelper(
+  ctx: CodegenContext,
+  vecTypeIdx: number,
+  useStderr: boolean = false,
+): number {
+  const helperName = useStderr ? "__wasi_write_arraybuffer_stderr" : "__wasi_write_arraybuffer";
+  const existing = ctx.funcMap.get(helperName);
+  if (existing !== undefined) return existing;
+
+  if (!ctx.wasi || ctx.wasiFdWriteIdx === undefined) return -1;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return -1;
+
+  const fd = useStderr ? 2 : 1;
+
+  // param: buf(0); locals: len(1), data(2), i(3)
+  const BUF = 0;
+  const LEN = 1;
+  const DATA = 2;
+  const I = 3;
+
+  const funcTypeIdx = addFuncType(ctx, [{ kind: "ref", typeIdx: vecTypeIdx }], []);
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.funcMap.set(helperName, funcIdx);
+
+  const body: Instr[] = [
+    // len = buf.length (field 0)
+    { op: "local.get", index: BUF } as Instr,
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr,
+    { op: "local.set", index: LEN } as Instr,
+
+    // data = buf.data (field 1)
+    { op: "local.get", index: BUF } as Instr,
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 } as Instr,
+    { op: "local.set", index: DATA } as Instr,
+
+    // i = 0
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "local.set", index: I } as Instr,
+
+    // while (i < len) mem[SCRATCH+i] = (u8) data[i]; i++
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: I } as Instr,
+            { op: "local.get", index: LEN } as Instr,
+            { op: "i32.ge_s" } as Instr,
+            { op: "br_if", depth: 1 } as Instr,
+
+            // address = SCRATCH_START + i
+            { op: "i32.const", value: WASI_WRITE_SCRATCH_START } as Instr,
+            { op: "local.get", index: I } as Instr,
+            { op: "i32.add" } as Instr,
+
+            // value = data[i] (i32; low byte kept by i32.store8)
+            { op: "local.get", index: DATA } as Instr,
+            { op: "local.get", index: I } as Instr,
+            { op: "array.get", typeIdx: arrTypeIdx } as Instr,
+
+            { op: "i32.store8", align: 0, offset: 0 },
+
+            // i++
+            { op: "local.get", index: I } as Instr,
+            { op: "i32.const", value: 1 } as Instr,
+            { op: "i32.add" } as Instr,
+            { op: "local.set", index: I } as Instr,
+
+            { op: "br", depth: 0 } as Instr,
+          ],
+        },
+      ],
+    },
+
+    // iovec.buf = SCRATCH_START at memory[0]
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "i32.const", value: WASI_WRITE_SCRATCH_START } as Instr,
+    { op: "i32.store", align: 2, offset: 0 } as Instr,
+    // iovec.buf_len = len at memory[4]
+    { op: "i32.const", value: 4 } as Instr,
+    { op: "local.get", index: LEN } as Instr,
+    { op: "i32.store", align: 2, offset: 0 } as Instr,
+    // fd_write(fd, iovs=0, iovs_len=1, nwritten=8)
+    { op: "i32.const", value: fd } as Instr,
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "i32.const", value: 1 } as Instr,
+    { op: "i32.const", value: 8 } as Instr,
+    { op: "call", funcIdx: ctx.wasiFdWriteIdx } as Instr,
+    { op: "drop" } as Instr,
+  ];
+
+  ctx.mod.functions.push({
+    name: helperName,
+    typeIdx: funcTypeIdx,
+    locals: [
+      { name: "len", type: { kind: "i32" } },
+      { name: "data", type: { kind: "ref", typeIdx: arrTypeIdx } },
+      { name: "i", type: { kind: "i32" } },
+    ],
+    body,
+    exported: false,
+  });
+
+  return funcIdx;
+}
+
+/**
  * Emit __wasi_write_file_sync(pathPtr: i32, pathLen: i32, dataPtr: i32, dataLen: i32) helper.
  * Opens a file via path_open, writes data via fd_write, then closes via fd_close.
  *
