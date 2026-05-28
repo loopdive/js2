@@ -6262,6 +6262,13 @@ export function addUnionImports(ctx: CodegenContext): void {
   const toBigType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i64" }]);
   addImport(ctx, "env", "__to_bigint", { kind: "func", typeIdx: toBigType });
 
+  // __bigint_ctor: (externref) → i64  (#1644 Slice B — §21.2.1.1 BigInt(value):
+  // ToPrimitive(number) then NumberToBigInt (RangeError) for Number, else
+  // ToBigInt (SyntaxError on bad string syntax). Distinct from __to_bigint,
+  // which throws TypeError on a Number per §7.1.13.)
+  const ctorBigType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i64" }]);
+  addImport(ctx, "env", "__bigint_ctor", { kind: "func", typeIdx: ctorBigType });
+
   // __typeof: (externref) → externref (returns type string)
   const typeofStrType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
   addImport(ctx, "env", "__typeof", {
@@ -6291,6 +6298,7 @@ export function addUnionImports(ctx: CodegenContext): void {
       "__box_boolean",
       "__box_bigint",
       "__to_bigint",
+      "__bigint_ctor",
       "__typeof",
     ]);
     // Update funcMap entries for defined functions (not imports)

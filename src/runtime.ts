@@ -3367,6 +3367,40 @@ function resolveImport(
     }
     case "builtin": {
       const name = intent.name;
+      // (#1644 Slice B) __bigint_ctor: §21.2.1.1 BigInt(value).
+      //   1. ToPrimitive(value, number)
+      //   2. If prim is a Number → NumberToBigInt: RangeError unless it is a
+      //      safe integer (NaN / ±Infinity / non-integer all throw RangeError).
+      //   3. Otherwise → ToBigInt(prim): bigint identity; boolean → 0n/1n;
+      //      string → StringToBigInt (SyntaxError on malformed numeric string);
+      //      Symbol → TypeError.
+      // Returns the bigint as a wasm i64 (JS-BigInt-integration).
+      if (name === "__bigint_ctor") {
+        return (v: any): bigint => {
+          // ToPrimitive(value, number). WasmGC structs / proxies need our
+          // host ToPrimitive; plain host primitives/objects use the native one.
+          let prim = v;
+          if (v != null && typeof v === "object") {
+            const p = _toPrimitive(v, "number", callbackState);
+            prim = p !== undefined ? p : _hostToPrimitive(v, "number", callbackState);
+          }
+          if (typeof prim === "number") {
+            // NumberToBigInt: RangeError unless a safe integer.
+            if (!Number.isInteger(prim)) {
+              throw new RangeError(
+                "The number " + prim + " cannot be converted to a BigInt because it is not an integer",
+              );
+            }
+            return BigInt(prim);
+          }
+          if (typeof prim === "symbol") {
+            throw new TypeError("Cannot convert a Symbol value to a BigInt");
+          }
+          // bigint → identity; boolean → 0n/1n; string → StringToBigInt
+          // (BigInt() throws SyntaxError on a malformed numeric string).
+          return BigInt(prim);
+        };
+      }
       // Batched string concat: __concat_3, __concat_4, ... (#958)
       if (name.startsWith("__concat_")) {
         return (...args: any[]) => {
