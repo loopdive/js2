@@ -808,6 +808,30 @@ export function destructureParamArray(
   if (shouldEnsureLetConstFlags(opts)) {
     ensureLetConstBindingPatternTdzFlags(ctx, fctx, pattern);
   }
+  // #1719 — if the program may have overridden Array.prototype's @@iterator,
+  // a vec/tuple struct param must NOT be walked via the WasmGC backing store
+  // (which ignores the override). Convert the struct ref to externref and
+  // re-enter the externref arm below, which materializes via
+  // __array_from_iter_n → spec GetIterator (§7.4.2 / §8.5.2). Strings keep
+  // their own handling — Array.prototype changes can't affect a string RHS.
+  if (
+    ctx.arrayIteratorMaybeOverridden &&
+    (paramType.kind === "ref" || paramType.kind === "ref_null")
+  ) {
+    const pIdx = (paramType as { typeIdx: number }).typeIdx;
+    const isStr =
+      ctx.nativeStrings &&
+      ctx.anyStrTypeIdx >= 0 &&
+      (pIdx === ctx.anyStrTypeIdx || pIdx === ctx.nativeStrTypeIdx || pIdx === ctx.consStrTypeIdx);
+    if (!isStr) {
+      const extTmp = allocLocal(fctx, `__dpa_ext_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.get", index: paramIdx });
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+      fctx.body.push({ op: "local.set", index: extTmp });
+      destructureParamArray(ctx, fctx, extTmp, pattern, { kind: "externref" }, opts);
+      return;
+    }
+  }
   if (paramType.kind !== "ref" && paramType.kind !== "ref_null") {
     // externref parameters: convert to vec struct before destructuring (#647)
     // The externref may wrap any vec type at runtime (e.g. __vec_f64 from [1,2,3]

@@ -184,6 +184,86 @@ function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
   return found;
 }
 
+/**
+ * #1719 — detect whether the program ever writes to `Array.prototype`'s
+ * @@iterator (`Array.prototype[Symbol.iterator]`) or its alias
+ * `Array.prototype.values`, by assignment or `Object.defineProperty`/
+ * `defineProperties`. Conservative whole-tree scan (matches `sourceContainsClass`):
+ * any such write anywhere in the module — even nested in a function or branch —
+ * trips the flag, since the override is a per-realm mutation of a shared
+ * prototype and can be installed before the destructuring site executes.
+ */
+function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean {
+  let found = false;
+  // Strip `as`/`!`/type-assertion/paren wrappers so `(Array.prototype as any)[…]`
+  // and `(Array.prototype)[…]` match the same as the bare form.
+  function unwrap(e: ts.Expression): ts.Expression {
+    let cur = e;
+    while (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = ts.isParenthesizedExpression(cur)
+        ? cur.expression
+        : ts.isAsExpression(cur)
+          ? cur.expression
+          : ts.isNonNullExpression(cur)
+            ? cur.expression
+            : (cur as ts.TypeAssertion).expression;
+    }
+    return cur;
+  }
+  // `e` is the object being assigned INTO: match `Array.prototype[...]`
+  // (element access) or `Array.prototype.values` (property access).
+  function isArrayProtoLHS(e: ts.Expression): boolean {
+    if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
+      const obj = unwrap(e.expression);
+      return (
+        ts.isPropertyAccessExpression(obj) &&
+        obj.name.text === "prototype" &&
+        ts.isIdentifier(obj.expression) &&
+        obj.expression.text === "Array"
+      );
+    }
+    return false;
+  }
+  function walk(node: ts.Node): void {
+    if (found) return;
+    // (i) assignment: Array.prototype[Symbol.iterator] = … / Array.prototype.values = …
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      isArrayProtoLHS(node.left)
+    ) {
+      found = true;
+      return;
+    }
+    // (ii) Object.defineProperty(Array.prototype, …) / Object.defineProperties(Array.prototype, …)
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const callee = node.expression;
+      const arg0 = node.arguments[0];
+      if (
+        ts.isIdentifier(callee.expression) &&
+        callee.expression.text === "Object" &&
+        (callee.name.text === "defineProperty" || callee.name.text === "defineProperties") &&
+        arg0 !== undefined &&
+        ts.isPropertyAccessExpression(arg0) &&
+        arg0.name.text === "prototype" &&
+        ts.isIdentifier(arg0.expression) &&
+        arg0.expression.text === "Array"
+      ) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+  return found;
+}
+
 export function extractConstantDefault(
   initializer: ts.Expression,
   paramType: ValType,
@@ -905,6 +985,12 @@ export function generateModule(
 
     // Second pass: collect all function declarations and interfaces
     collectDeclarations(ctx, ast.sourceFile);
+
+    // #1719 — flag whole-program Array.prototype @@iterator/values override so
+    // array-destructuring fast paths route through the spec GetIterator lane.
+    if (sourceOverridesArrayIterator(ast.sourceFile)) {
+      ctx.arrayIteratorMaybeOverridden = true;
+    }
 
     // Shape inference: detect array-like variables and override their types
     applyShapeInference(ctx, ast.checker, ast.sourceFile);
@@ -3981,6 +4067,11 @@ export function generateMultiModule(
     for (const sf of multiAst.sourceFiles) {
       const isEntry = sf === multiAst.entryFile;
       collectDeclarations(ctx, sf, isEntry);
+      // #1719 — whole-realm: OR across all source files so an override in any
+      // module trips the flag (never cleared by a later clean file).
+      if (sourceOverridesArrayIterator(sf)) {
+        ctx.arrayIteratorMaybeOverridden = true;
+      }
     }
 
     // Shape inference: detect array-like variables and override their types

@@ -392,6 +392,20 @@ export interface CodegenContext {
   numImportGlobals: number;
   /** Whether wasm:js-string imports have been registered */
   hasStringImports: boolean;
+  /**
+   * #1719 — set by the module pre-scan when the program ever writes to
+   * Array.prototype's @@iterator (`Array.prototype[Symbol.iterator]`) or its
+   * alias `Array.prototype.values`, by assignment or Object.defineProperty.
+   * When true, array-destructuring fast paths (vec / tuple / numeric-box)
+   * must NOT walk the WasmGC backing store directly; they coerce the RHS to
+   * externref and delegate to the spec GetIterator lane
+   * (compileExternrefArrayDestructuringDecl / the externref arm of
+   * destructureParamArray), which reads the live @@iterator off the prototype
+   * chain (§7.4.2 / §8.5.2). Conservative: any write to Array.prototype
+   * @@iterator/values sets it; we never try to prove the write is dead or
+   * reverted. Clear = today's behavior, zero perf change.
+   */
+  arrayIteratorMaybeOverridden: boolean;
   /** Map from "EnumName.Member" → numeric value */
   enumValues: Map<string, number>;
   /** Map from "EnumName.Member" → string value (for string enums) */

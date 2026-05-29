@@ -55,6 +55,7 @@ export function createCodegenContext(
     stringGlobalMap: new Map(),
     numImportGlobals: 0,
     hasStringImports: false,
+    arrayIteratorMaybeOverridden: false,
     enumValues: new Map(),
     enumStringValues: new Map(),
     arrayTypeMap: new Map(),

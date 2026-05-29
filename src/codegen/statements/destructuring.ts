@@ -815,6 +815,27 @@ export function compileArrayDestructuring(
     return;
   }
 
+  // #1719 — if the program may have overridden Array.prototype's @@iterator,
+  // the WasmGC backing-store fast path below would ignore the override
+  // (§7.4.2 GetIterator / §8.5.2 IteratorBindingInitialization). Coerce the
+  // value to externref and delegate to the spec GetIterator lane, which reads
+  // the live @@iterator off the prototype chain. Strings keep their own path —
+  // a string is not an Array, so Array.prototype changes can't affect it, and
+  // routing a string through the array lane would regress string dstr.
+  {
+    const rtIdx = (resultType as { typeIdx: number }).typeIdx;
+    const isStr =
+      ctx.nativeStrings &&
+      ctx.anyStrTypeIdx >= 0 &&
+      (rtIdx === ctx.anyStrTypeIdx || rtIdx === ctx.nativeStrTypeIdx || rtIdx === ctx.consStrTypeIdx);
+    if (ctx.arrayIteratorMaybeOverridden && !isStr) {
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+      compileExternrefArrayDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+      syncDestructuredLocalsToGlobals(ctx, fctx, pattern);
+      return;
+    }
+  }
+
   const typeIdx = (resultType as { typeIdx: number }).typeIdx;
   const typeDef = ctx.mod.types[typeIdx];
 
