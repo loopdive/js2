@@ -883,14 +883,32 @@ export function compileArrayDestructuring(
   // replaces today's behavior at this site: reflect the vec into a host Array
   // and drive the host GetIterator so the override's @@iterator runs.
   //
-  // S1 is intentionally a behavioral no-op — it establishes the placement +
-  // the string-guard predicate (`arrayDstrNeedsIdentity`) but does NOT wire the
-  // (invalid) externref→__array_from_iter lane dev-a's first attempt used. The
-  // predicate is always false when the brand is clear, so override-free modules
-  // stay byte-identical; when the brand is set, the dstr still falls through to
-  // the existing fast path until S2 supplies the routing target.
-  const _needsArrayObjIdentity = arrayDstrNeedsIdentity(ctx, isStringStruct);
-  void _needsArrayObjIdentity; // S2 fills the routing here; S1 no-ops.
+  // #1719 S2 — routing target wired. When the program's ITER_OVERRIDDEN brand is
+  // set and the RHS is a real array (vec/tuple, not a string), reflect the vec
+  // into a host Array and drive the host GetIterator so a monkeypatched
+  // `Array.prototype[@@iterator]` is honored (§7.4.2 / §8.5.2). The vec ref is on
+  // the stack here; `__array_dstr_drain` returns a host Array (externref) of the
+  // iterator's produced values, which the externref destructuring lane binds off.
+  // Gated by `arrayDstrNeedsIdentity` → always false when the brand is clear, so
+  // override-free modules never emit this and stay byte-identical (protects the
+  // #1016/#1021/#1320 fast-path guards). JS-host mode only (the host-Array
+  // reflection + closure bridge); standalone is S4.
+  if (arrayDstrNeedsIdentity(ctx, isStringStruct) && (isVecArray || isTupleStruct)) {
+    const drainIdx = ensureLateImport(
+      ctx,
+      "__array_dstr_drain",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (drainIdx !== undefined) {
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+      fctx.body.push({ op: "call", funcIdx: drainIdx });
+      compileExternrefArrayDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+      syncDestructuredLocalsToGlobals(ctx, fctx, pattern);
+      return;
+    }
+  }
 
   if (!isVecArray && !isTupleStruct && !isStringStruct) {
     // Unknown struct: convert to externref and use __extern_get fallback

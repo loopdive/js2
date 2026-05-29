@@ -456,6 +456,14 @@ const _wasmPropDescs = new WeakMap<object, Map<string | symbol, number>>();
  */
 const _wasmStructAccessors = new WeakMap<object, Map<string | symbol, { get?: Function; set?: Function }>>();
 
+// (#1719 S2) Re-entrancy guard for `__array_dstr_drain`. A monkeypatched
+// `Array.prototype[Symbol.iterator]` override is itself compiled code whose body
+// constructs/iterates arrays; driving it through the destructuring drain would
+// re-enter this path and recurse unboundedly. While a drain is in flight, nested
+// `__array_dstr_drain` calls return the plain reflected Array (default iteration),
+// so the override runs exactly once at the top level.
+let _arrayDstrDraining = false;
+
 /**
  * #1464 — ES2025 Iterator helper polyfills.
  *
@@ -5369,6 +5377,68 @@ assert._isSameValue = isSameValue;
         if (name === "__array_from_iter") return (obj: any): any => _arrayFromIter(obj, Infinity);
         return (obj: any, n: number): any => _arrayFromIter(obj, n < 0 ? Infinity : n >>> 0);
       }
+      // (#1719 S2) Array-destructuring drain that honors a monkeypatched
+      // `Array.prototype[Symbol.iterator]` / `.values`. The compiled RHS arrives
+      // as an opaque WasmGC vec; it is NOT a host Array, so the override on
+      // `Array.prototype` never fires against it. We:
+      //   1. reflect the vec into a real host JS Array (so it inherits the
+      //      (possibly overridden) `Array.prototype`), then
+      //   2. if the array's `@@iterator` is a Wasm-closure override (the common
+      //      `Array.prototype[Symbol.iterator] = function*…` shape — compiled to
+      //      a closure struct, NOT host-callable), drain it through the
+      //      `__call_fn_0` bridge (`_drainWasmClosureIterable`). A plain JS-fn
+      //      override or the default iterator drains natively below.
+      // Returns a host Array of the produced values; the destructuring lane then
+      // binds positions off that Array via the externref path. Gated at the call
+      // site behind `ctx.arrayIteratorMaybeOverridden`, so override-free modules
+      // never emit this call (byte-identical output — the no-regression guard).
+      if (name === "__array_dstr_drain")
+        return (vec: any): any => {
+          // (#1719 S2) The compiled array-destructuring RHS arrives as an opaque
+          // WasmGC vec, which is NOT a host Array — so a monkeypatched
+          // `Array.prototype[Symbol.iterator]` never fires against it. We reflect
+          // the vec into a **real host JS Array** (via `__vec_len`/`__vec_get`)
+          // and return it. The destructuring lane then runs its existing
+          // externref GetIterator (RequireObjectCoercible + @@iterator + .next()),
+          // which now reads the live (possibly overridden) `Array.prototype`
+          // @@iterator off the real Array — including the `function*` override
+          // shape that compiles to a Wasm closure (the GetIterator path already
+          // bridges those via `__call_fn_0`, #1016/#1320). We deliberately do NOT
+          // pre-drain here: the lane owns iteration, so draining twice would
+          // double-consume the override (and re-enter it). Already-Array inputs
+          // pass through unchanged; non-vec values are returned as-is for the
+          // lane's generic GetIterator.
+          if (Array.isArray(vec)) return vec;
+          if (vec == null || typeof vec !== "object" || !_isWasmStruct(vec)) return vec;
+          const exports = callbackState?.getExports();
+          const vecLen = exports?.__vec_len as ((v: any) => number) | undefined;
+          const vecGet = exports?.__vec_get as ((v: any, i: number) => any) | undefined;
+          if (typeof vecLen !== "function" || typeof vecGet !== "function") return vec;
+          const len = vecLen(vec);
+          if (typeof len !== "number" || len < 0) return vec;
+          const hostArr = new Array(len);
+          for (let i = 0; i < len; i++) hostArr[i] = vecGet(vec, i);
+          // Re-entrancy guard: if we're already inside an override-drive (the
+          // override generator's own array machinery re-entered), do NOT invoke
+          // the override again — return the plain reflected Array so the inner
+          // use takes the default iterator and terminates.
+          if (_arrayDstrDraining) return hostArr;
+          // Drive the (possibly overridden) `Array.prototype[@@iterator]` ONCE.
+          // For a Wasm-closure override (`function*…`), `_drainWasmClosureIterable`
+          // invokes it through `__call_fn_0` and collects the yielded values;
+          // nested array use inside the override hits the guard above. For the
+          // default iterator (no override on this Array's chain), it returns null
+          // and we hand back the plain reflected Array unchanged (byte-identical
+          // values to the fast path).
+          _arrayDstrDraining = true;
+          try {
+            const drained = _drainWasmClosureIterable(hostArr, callbackState);
+            if (drained != null) return drained;
+          } finally {
+            _arrayDstrDraining = false;
+          }
+          return hostArr;
+        };
       if (name === "__extern_slice")
         return (arr: any, start: number) => {
           if (Array.isArray(arr)) return arr.slice(start);
