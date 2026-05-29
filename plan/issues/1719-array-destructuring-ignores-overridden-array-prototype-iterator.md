@@ -549,3 +549,32 @@ lands the foundation with zero regression risk; S2 banks #1719's 71.
 
 Spec refs: §7.4.2 GetIterator, §8.5.2 IteratorBindingInitialization,
 §13.15.5.3 DestructuringAssignmentEvaluation.
+
+## S2 attempt + BLOCKER — systemic re-entrancy (dev-b, 2026-05-29)
+
+Implemented the de-risked S2 plan (reflect vec → host Array via new
+`__array_dstr_drain` host import, gated at `destructuring.ts:892` behind
+`ctx.arrayIteratorMaybeOverridden`, route through the externref GetIterator lane).
+Branch `issue-1719-s2-array-dstr-v2` @ `ab38ca9f0` (WIP). tsc clean; the
+override-free control is byte-identical (gate clears → import never emitted).
+
+**BLOCKER (escalated to senior-dev/architect):** on the realistic test262 shape
+`Array.prototype[Symbol.iterator] = function*…`, invoking the override
+infinitely recurses → `RangeError: Maximum call stack size exceeded`. Traced:
+the recursion is an **arity-4 `wasmClosureBridge` cascade** (the
+`_maybeWrapCallable` closure-wrap path), NOT the arity-0 `_drainWasmClosureIterable`
+drain. Once `Array.prototype[@@iterator]` is globally overridden, the override
+closure gets re-wrapped and re-invoked on **every internal array iteration** in
+the runtime; reflecting the vec to a host Array and driving GetIterator triggers
+that cascade, and a re-entrancy guard scoped to `__array_dstr_drain` cannot
+contain it (the cycle runs through the generator's own compiled execution +
+the global wrap path, not back through the drain). Confirmed `arr.length` with
+the override but no destructuring is fine — the recursion is specific to
+driving the override through the iteration machinery.
+
+This is the systemic re-entrancy the architect's **S1 `$ArrayObj` brand /
+intactness foundation** is designed to scope (so the override does not re-fire
+on every internal array touch) — the same wall dev-a's first localized attempt
+hit. **S2 cannot land standalone; it needs S1 (`$ArrayObj`) first.** Recommend:
+land S1 (senior-dev, per the architect's slice breakdown), then S2's gate+route
+(this WIP) drops in on top.
