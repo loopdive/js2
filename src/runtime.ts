@@ -705,6 +705,125 @@ function _installIteratorHelperPolyfills(): void {
       configurable: true,
     });
   }
+
+  // #1718 S1 — Iterator.prototype.flatMap (TC39 iterator-helpers, ES2025).
+  // §27.1.4.x: for each value v of the underlying iterator, call
+  // mapper(v, counter); GetIteratorFlattenable(result, reject-primitives);
+  // yield every value of that inner iterator before advancing the outer.
+  // Hosts that lack the native helper (older V8 / Node) fall through to here;
+  // installing it on %Iterator.prototype% makes every helper-iterator and
+  // synthesized iterator (which inherit from Iproto, #1367) gain flatMap.
+  if (typeof Iproto.flatMap !== "function") {
+    Object.defineProperty(Iproto, "flatMap", {
+      value: function flatMap(mapper: any) {
+        // 1. RequireObjectCoercible(this) + this has [[next]] (it's an Iterator).
+        if (this == null || typeof this.next !== "function") {
+          throw new TypeError("Iterator.prototype.flatMap called on non-iterator");
+        }
+        // 2. mapper must be callable.
+        if (typeof mapper !== "function") {
+          throw new TypeError("Iterator.prototype.flatMap: mapper is not a function");
+        }
+        const outer: any = this;
+        let counter = 0;
+        let inner: any = null; // currently-open inner iterator, or null
+        let done = false;
+
+        function closeInner(): void {
+          if (inner != null) {
+            const innerIt = inner;
+            inner = null;
+            try {
+              innerIt.return?.();
+            } catch {}
+          }
+        }
+
+        return _makeHelperIterator(
+          function next() {
+            if (done) return { value: undefined, done: true };
+            while (true) {
+              if (inner == null) {
+                // Advance the outer iterator.
+                let outerRes: any;
+                try {
+                  outerRes = outer.next();
+                } catch (e) {
+                  done = true;
+                  throw e;
+                }
+                if (outerRes && outerRes.done) {
+                  done = true;
+                  return { value: undefined, done: true };
+                }
+                // mapped = mapper(value, counter); IfAbruptCloseIterator(outer).
+                let mapped: any;
+                try {
+                  mapped = mapper(outerRes.value, counter);
+                } catch (e) {
+                  done = true;
+                  try {
+                    outer.return?.();
+                  } catch {}
+                  throw e;
+                }
+                counter++;
+                // GetIteratorFlattenable(mapped, reject-primitives): a primitive
+                // (incl. strings? — no, strings ARE iterable and accepted) — but
+                // a non-object non-string primitive rejects.
+                if (
+                  mapped == null ||
+                  (typeof mapped !== "object" && typeof mapped !== "string" && typeof mapped !== "function")
+                ) {
+                  done = true;
+                  try {
+                    outer.return?.();
+                  } catch {}
+                  throw new TypeError("Iterator.prototype.flatMap: mapper result is not an object");
+                }
+                try {
+                  inner = _getFlattenable(mapped);
+                } catch (e) {
+                  done = true;
+                  try {
+                    outer.return?.();
+                  } catch {}
+                  throw e;
+                }
+              }
+              // Pull from the inner iterator.
+              let innerRes: any;
+              try {
+                innerRes = inner.next();
+              } catch (e) {
+                done = true;
+                inner = null;
+                try {
+                  outer.return?.();
+                } catch {}
+                throw e;
+              }
+              if (innerRes && innerRes.done) {
+                inner = null;
+                continue; // inner exhausted — advance outer
+              }
+              return { value: innerRes.value, done: false };
+            }
+          },
+          function returnFn() {
+            done = true;
+            closeInner();
+            try {
+              outer.return?.();
+            } catch {}
+            return { value: undefined, done: true };
+          },
+        );
+      },
+      writable: true,
+      configurable: true,
+    });
+  }
 }
 
 /** Tracks WasmGC struct objects that have been frozen via Object.freeze. */

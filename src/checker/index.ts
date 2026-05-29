@@ -197,6 +197,10 @@ function getLibSource(name: string): string | undefined {
       "lib.esnext.collection.d.ts",
       // ESNext — DisposableStack / AsyncDisposableStack (#1036)
       "lib.esnext.disposable.d.ts",
+      // ESNext — Iterator helpers (map/filter/take/drop/flatMap, Iterator.concat/
+      // zip/zipKeyed). Without this, `it.flatMap(...)` etc. fail the type-checker
+      // with "Property does not exist on type 'ArrayIterator'" before codegen (#1718).
+      "lib.esnext.iterator.d.ts",
       // DOM (decorators loaded via /// <reference> in lib.es5.d.ts)
       "lib.dom.d.ts",
     ];
