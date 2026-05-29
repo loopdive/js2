@@ -183,4 +183,39 @@ export function main(): void {
     expect(new DataView(out.buffer, out.byteOffset).getUint32(0, true)).toBe(expectedBody.length);
     expect(new TextDecoder().decode(out.subarray(4))).toBe(expectedBody);
   });
+
+  // #389 — a 1 MiB framed body must round-trip byte-exact. guest271314
+  // reported that a 1 MiB message came back as an array of NULLs: the
+  // `process.stdout.write(Uint8Array)` fd_write staging buffer
+  // (ensureWasiWriteUint8ArrayHelper) lacked the memory.grow guard the string
+  // writer has (#1723), so any body past the default 3-page reserve overflowed
+  // — corrupting/trapping. The fix grows linear memory to fit the staging
+  // buffer before copying. This drives the SHIPPED host (Uint8Array body path)
+  // with a 1 MiB payload and asserts the echo is byte-identical with zero nulls.
+  it("round-trips a 1 MiB framed body byte-exactly (no NULL corruption) — #389", () => {
+    const src = readFileSync(hostPath, "utf-8");
+    const result = compile(src, { fileName: "host.ts", target: "wasi" });
+    expect(result.success).toBe(true);
+
+    const N = 1024 * 1024; // 1 MiB
+    const body = new Uint8Array(N).fill(0x61); // 'a' — guest's {"0":97} byte
+    const input = new Uint8Array(4 + N);
+    new DataView(input.buffer).setUint32(0, N, true);
+    input.set(body, 4);
+
+    const out = runWasiRaw(result.binary, input);
+    // 4-byte LE prefix declares the full 1 MiB length…
+    expect(new DataView(out.buffer, out.byteOffset).getUint32(0, true)).toBe(N);
+    // …and the echoed body is exactly N bytes, all 'a', with no NULLs/garbage.
+    const echoed = out.subarray(4);
+    expect(echoed.length).toBe(N);
+    let nulls = 0;
+    let nonA = 0;
+    for (let i = 0; i < echoed.length; i++) {
+      if (echoed[i] === 0) nulls++;
+      else if (echoed[i] !== 0x61) nonA++;
+    }
+    expect(nulls).toBe(0);
+    expect(nonA).toBe(0);
+  });
 });

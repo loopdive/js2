@@ -16,16 +16,30 @@
 //              header then exactly the declared body length.
 //   - stdout : process.stdout.write(bytes|str) writes raw bytes / a string to
 //              fd=1 with NO trailing newline (#1651) — used for the binary
-//              4-byte length prefix and the JSON body. console.log(str) also
-//              writes runtime strings correctly now (#1618).
+//              4-byte length prefix and the body. Large bodies (≥1 MiB, the
+//              #389 case) now write byte-exact: the fd_write staging buffer
+//              grows linear memory on demand rather than overflowing the
+//              default 3-page reserve and corrupting the stream into nulls.
 //   - stderr : console.error / console.warn write to fd=2 (#1493) — use these
 //              for debug output so they never corrupt the stdout protocol stream
 //
-// This is a drop-in Chrome host: it reads each framed JSON message off stdin,
-// builds a JSON response, and writes it back to stdout with the correct
-// 4-byte little-endian length prefix, looping until stdin reaches EOF. Run it
-// with the wrapper in run.sh under wasmtime/wasmer to exercise the
-// read -> process -> respond loop end to end.
+// This is a drop-in Chrome host built around the cross-language 3-symbol
+// pattern guest271314 uses for Native Messaging hosts:
+//
+//   getMessage()       — read the 4-byte LE header, then exactly N body bytes
+//                        off stdin; return the raw body bytes (Uint8Array).
+//   sendMessage(body)  — frame `body` with a 4-byte LE length prefix and write
+//                        the prefix + body to stdout, no trailing newline.
+//   main()             — the long-lived `while (true)` port loop:
+//                        getMessage -> sendMessage, until stdin EOF.
+//
+// The body flows as raw **bytes** (Uint8Array) end to end — never lossily
+// stringified — so it is binary-safe at any size and forward-compatible with
+// Chromium's in-progress Uint8Array-over-Native-Messaging support
+// (https://issues.chromium.org/issues/497341241). The loop is a strict
+// verbatim echo (#930): what the extension sends in comes back out byte-for-
+// byte. A real host would parse the body, dispatch on a command field, and
+// build a structured response inside `main` between getMessage and sendMessage.
 
 declare const process: {
   stdin: { read(buf: Uint8Array, offset?: number): number };
@@ -47,62 +61,56 @@ function readExact(buf: Uint8Array, n: number): boolean {
   return true;
 }
 
-// Decode the little-endian uint32 length that Chrome wrote as the first 4
-// bytes of the frame.
-function decodeLength(header: Uint8Array): number {
-  return header[0] + header[1] * 256 + header[2] * 65536 + header[3] * 16777216;
+// getMessage — read one framed Native Messaging message off stdin and return
+// its raw body bytes, or an empty Uint8Array on EOF / clean shutdown.
+//
+// The frame is a 4-byte little-endian uint32 length prefix followed by exactly
+// that many body bytes. The body is returned as a `Uint8Array` (raw bytes), not
+// a string, so binary payloads and large (≥1 MiB) bodies are preserved exactly.
+// EOF on the header read is a clean shutdown signal; a truncated body (EOF
+// mid-frame) returns empty too. The port loop distinguishes "message" from
+// "EOF" by the returned length.
+function getMessage(): Uint8Array {
+  const header = new Uint8Array(4);
+  if (!readExact(header, 4)) return new Uint8Array(0); // EOF at frame boundary
+  // Little-endian uint32 length Chrome wrote as the first 4 bytes.
+  const declaredLen = header[0] + header[1] * 256 + header[2] * 65536 + header[3] * 16777216;
+  const body = new Uint8Array(declaredLen);
+  if (declaredLen > 0 && !readExact(body, declaredLen)) return new Uint8Array(0); // truncated
+  return body;
 }
 
-// Build a string from the declared body bytes, one byte per code unit (the
-// Native Messaging JSON body is ASCII/UTF-8 framed by byte length).
-function bodyToString(body: Uint8Array, length: number): string {
-  let s = "";
-  let i = 0;
-  while (i < length) {
-    s = s + String.fromCharCode(body[i]);
-    i = i + 1;
-  }
-  return s;
-}
-
-// Write a framed Native Messaging response: the 4-byte little-endian length
-// prefix followed by the JSON body, both on stdout (fd=1), no newline.
-function writeMessage(body: string): void {
-  const len = body.length;
+// sendMessage — write a framed Native Messaging response: the 4-byte little-
+// endian length prefix followed by the body bytes, both on stdout (fd=1), no
+// newline. `message` is raw bytes; its byte length is the prefix, so the frame
+// is binary-exact regardless of content or size.
+function sendMessage(message: Uint8Array): void {
+  const len = message.length;
   // Binary 4-byte LE length prefix via raw-byte stdout (#1651).
   process.stdout.write(new Uint8Array([len & 0xff, (len >> 8) & 0xff, (len >> 16) & 0xff, (len >> 24) & 0xff]));
-  // JSON body — runtime string, written verbatim with no trailing newline.
-  process.stdout.write(body);
+  // Body — raw bytes, written verbatim with no trailing newline. The stdout
+  // helper grows linear memory for large bodies so ≥1 MiB writes are byte-exact
+  // (#389).
+  process.stdout.write(message);
 }
 
 export function main(): void {
   // Long-lived port loop: read framed messages off stdin until EOF. A short
-  // read inside readExact is retried; a zero-byte read means the peer closed
-  // stdin, so we break and exit.
-  const header = new Uint8Array(4);
+  // read inside readExact is retried; a header read returning EOF (empty body)
+  // means the peer closed stdin, so we break and exit.
   while (true) {
-    // 4-byte LE length prefix. EOF here = clean shutdown.
-    if (!readExact(header, 4)) break;
-    const declaredLen = decodeLength(header);
-
-    // Read exactly the declared body bytes. A truncated body (EOF mid-frame)
-    // also terminates the loop.
-    const body = new Uint8Array(declaredLen);
-    if (!readExact(body, declaredLen)) break;
-    const bodyStr = bodyToString(body, declaredLen);
+    const message = getMessage();
+    if (message.length === 0) break; // EOF / clean shutdown
 
     // Debug telemetry goes to stderr (fd=2) so it never pollutes the stdout
-    // protocol stream. Chrome ignores the host's stderr. The frame is the
-    // 4-byte LE prefix plus the declared body, so the total bytes consumed is
-    // 4 + declaredLen.
-    console.error(`[host] received ${4 + declaredLen} chars, declared body length ${declaredLen}`);
+    // protocol stream. Chrome ignores the host's stderr. The frame consumed is
+    // the 4-byte LE prefix plus the body, so total bytes = 4 + message.length.
+    console.error(`[host] received ${4 + message.length} bytes, body length ${message.length}`);
 
-    // Strict echo: write the received body back verbatim, byte-for-byte, with
-    // no wrapper and no added bytes. This makes the demo a true round-trip
-    // proof — what Chrome sends in is exactly what comes back out, so the
-    // stdin->stdout fidelity of the WASI build is directly observable.
-    // A real host would instead parse `bodyStr`, dispatch on a command field,
-    // and build a structured response here.
-    writeMessage(bodyStr);
+    // Strict verbatim echo (#930): send the received body back byte-for-byte,
+    // no wrapper and no added bytes — a true round-trip proof that the WASI
+    // build's stdin->stdout fidelity holds at any size (including the 1 MiB
+    // #389 case). A real host would build a structured response here instead.
+    sendMessage(message);
   }
 }

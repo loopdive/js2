@@ -76,6 +76,26 @@ runs on any standards-compliant WASI preview1 runtime.
 > The `-o` flag is an **output directory**, not a filename. js2wasm names the
 > output after the input basename (`host.wasm`).
 
+### What is `host.imports.js`?
+
+The build also emits `host.imports.js` (plus `host.d.ts` and `host.wat`). It is
+the **generated JS host-imports glue** for the module — a small ES module that
+re-exports `createImports()` / `instantiateBytes()` / `instantiateFromUrl()`
+helpers wired to the right import manifest and string pool for this `.wasm`.
+
+You do **not** need it to run the Native Messaging host: this build targets
+`--target wasi`, so `host.wasm` imports only `wasi_snapshot_preview1` and runs
+directly under wasmtime / wasmer / wazero (or Chrome's native-host launcher)
+with no JS at all — that is the whole point of the standalone WASI target.
+
+`host.imports.js` is for the **other** way to run the module — **embedding it in
+a JavaScript host** (a browser tab, a Node service, a Worker) instead of a WASI
+CLI runtime. There it supplies the `env` / `string_constants` imports the
+js2wasm runtime expects, so you can `import { instantiateFromUrl } from
+"./out/host.imports.js"` and drive the same compiled logic from JS. For the
+Chrome Native Messaging use case you can ignore it; ship just `host.wasm` and
+the launcher wrapper.
+
 ## Run it under a WASI runtime
 
 `nm_js2wasm.sh` wraps the runtime invocation. `wasmtime` is **not bundled** with this
