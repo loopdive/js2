@@ -171,3 +171,36 @@ No regressions in:
 
 Pre-existing failures in these files match the main baseline
 (verified via `git stash` comparison).
+
+## Recon 2026-05-29 (dev-b, Sprint 57 ES3 pass)
+
+Smoke-tested the three sub-clusters against current main (`29bc76539`):
+
+| Sub-cluster | State on main |
+|-------------|---------------|
+| Trailing-comma `arguments.length` (func-decl, class-meth, static-meth, object-meth, overflow args) | **PASS** — fully fixed by the merged first pass (PR #373). |
+| Mapped-slot `defineProperty` link-break / `delete` / default descriptor | **FAIL** — still broken. |
+| Legacy `S10.6_A*` reflection | deferred to #1387/#1518 (out of scope). |
+
+The remaining mapped-slot failures (`mapped/nonconfigurable-*`,
+`mapped/nonwritable-*`, `mapped/*-delete-*`, descriptor-fidelity) are NOT a
+localized dev fix. Today `arguments` is materialized as a raw WasmGC vec of
+externref (`src/codegen/function-body.ts:808-846`, mirror in
+`src/codegen/closures.ts`), with `mappedArgsInfo` providing a *value-level*
+param↔slot sync only. There is:
+
+- no exotic-object representation, so `Object.getOwnPropertyDescriptor(arguments, "i")`
+  hits `__getOwnPropertyDescriptor` (host-object path) and returns wrong/empty
+  descriptors for a vec;
+- no per-slot "linked" bit, so `defineProperty(arguments, "i", {writable:false})`
+  cannot break the param↔slot link (§10.4.4 step on
+  `[[DefineOwnProperty]]` → if linked, map.[[Delete]]);
+- no `delete arguments[i]` handling that removes the slot AND clears the link.
+
+Implementing §10.4.4 mapped-arguments exotic semantics requires modeling
+`arguments` as a host-bridged exotic object (or a WasmGC struct carrying a
+linked-bitset + a parameter-map closure), touching `function-body.ts`,
+`closures.ts`, `class-bodies.ts`, the `arguments[i]` read/write lowering, and
+`runtime.ts`. This is the change #1511 explicitly deferred to #1432 ("Out of
+scope for this PR"). **Recommend an architect spec (#1432) before any dev
+implements it** — it is a core-codegen model change, not a localized fix.
