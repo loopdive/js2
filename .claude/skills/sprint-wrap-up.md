@@ -17,15 +17,21 @@ For each unmerged task: either have the dev self-merge via /test-and-merge, or d
 
 ## Step 2: Clean up worktrees
 
+Prune fully-merged agent worktrees automatically — the script removes ONLY
+worktrees that are unlocked, clean, and whose every commit is already on
+`origin/main`; it KEEPS (never force-removes) anything locked, dirty, or with
+unmerged commits, printing the reason:
+
 ```bash
-ls /workspace/.claude/worktrees/
+node /workspace/scripts/prune-worktrees.mjs            # DRY-RUN — review the plan
+node /workspace/scripts/prune-worktrees.mjs --force    # apply
 ```
 
-For each worktree:
-- Check for uncommitted work: `git -C <wt> diff --stat`
-- Check for unmerged commits: `git -C <wt> log --oneline main..HEAD`
-- If all merged: `git worktree remove --force <wt>`
-- If unmerged: document in the issue file as Suspended Work
+For any worktree the script KEEPS as "has unmerged commits", inspect it
+(`git -C <wt> diff --stat`, `git -C <wt> log --oneline origin/main..HEAD`) and
+either land the work or document it in the issue file as Suspended Work, then
+remove manually. **Never `git worktree remove --force` a worktree you haven't
+checked** — the script's dry-run is the safe default.
 
 Then prune dead agent-status heartbeats and resync the shared checkout:
 
