@@ -2,9 +2,11 @@
 id: 1719
 title: "Array destructuring ignores overridden Array.prototype[Symbol.iterator] ('items[Symbol.iterator] must be a function', 71 fails)"
 status: blocked
-blocked_on: needs-architect-spec
+blocked_on: needs-architect (array↔host-prototype identity — NOT the codegen gate)
+wip_branch: issue-1719-impl @ 59d9ab9f9
 created: 2026-05-29
 updated: 2026-05-29
+related_object_representation: [1130, 1320, 1732, 1632, 1665]
 priority: high
 feasibility: hard
 task_type: bugfix
@@ -129,3 +131,55 @@ Repro (worktree `issue-1719-array-dstr-iterator`): override
 value (`42`), then `const [x,y,z] = [1,2,3]` — `z` resolves to the backing
 store, not the override. Direct compile confirms the typed-vec fast path is
 taken (the externref GetIterator lane is never reached for a typed array RHS).
+
+## Implementation attempt + BLOCKER — spec premise disproved (dev-a, 2026-05-29)
+
+**Status: blocked on architect.** The intactness-gate spec above was
+implemented IN FULL on branch **`issue-1719-impl` @ 59d9ab9f9** (ctx
+`arrayIteratorMaybeOverridden` flag, `sourceOverridesArrayIterator` module
+pre-scan with wrapper-stripping LHS match + assignment/`Object.define*`
+detection, and BOTH gate sites — `compileArrayDestructuring` and
+`destructureParamArray` — coercing a vec/tuple RHS to externref and routing to
+the GetIterator lane when the flag is set). **The gate code is sound and ready
+to build on.** Verified:
+
+- No-override fast path is **byte-identical** to before (`const [x,y,z]=[1,2,3]`
+  → `z===3` PASS — zero perf/behavior change when the flag is clear).
+- With the override present, the gate **fires** and routes to the externref
+  lane (the result changes `3` → `0`, proving the pre-scan + gate work).
+
+**But the spec's core premise is invalid.** Routing to the externref
+`__array_from_iter_n` GetIterator lane returns **empty**, NOT the override's
+yielded values. Root cause, found by an orthogonal test:
+
+- A plain `[...arr]` spread of an array with an overridden
+  `Array.prototype[Symbol.iterator]` also yields **empty**.
+- `for-of` over the same array throws **`[object Object] is not iterable`**.
+
+So the WasmGC vec coerced via `extern.convert_any` is **not a host JS Array** —
+the override lives on the **host's** `Array.prototype`, and the compiled array's
+runtime value is *not* on that prototype chain. No codegen gate can make the
+GetIterator lane observe a host-prototype override, because the value handed to
+the host isn't a host Array. The `__array_from_iter_n` GetIterator path
+(`src/runtime.ts:5157`) cannot reach the override.
+
+### Conclusion: object-representation gap, not a codegen gate
+
+This is the **same root cause** as the array/object accessor-observation and
+function-object-identity cluster — compiled WasmGC values are not host JS
+objects on the host prototype chains:
+
+- **#1130** — Array methods don't observe accessor getters (same: compiled
+  array ≠ host Array).
+- **#1320** — Array.from iterator bridge (same host-object identity gap).
+- **#1732** — String.prototype method function-object invariants (compiled
+  builtin method ≠ host function object).
+- **#1632** (bound functions) / **#1665** ($Iterator) — function-object
+  representation track.
+
+#1719 needs an **architect decision on array↔host-prototype identity**, NOT a
+re-spec of the gate. The decision interacts with the dual-mode/standalone axis
+(a host-Array representation only helps JS-host mode; standalone needs a
+Wasm-native @@iterator dispatch) — so it is a strategic call, surfaced to the
+project lead, not a localized fix. Hold #1719 until that lands; then the
+`issue-1719-impl` gate becomes the front-end half of the solution.
