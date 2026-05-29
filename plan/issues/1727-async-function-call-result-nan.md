@@ -76,3 +76,30 @@ or an architect micro-spec on "async call result ValType vs TS-type in coercion"
 
 dev-b root-cause recon 2026-05-29 (the equivalence-shard-4 main drift,
 independently hit on PRs #902/#913).
+
+
+## SHARPER ROOT CAUSE (dev-b, after deeper probing)
+
+The earlier "sink coercion" hypothesis is WRONG. Instrumented the return path:
+`exprType={kind:f64}`, `returnType={kind:f64}` — no coercion runs; the f64 is
+on the stack with the correct type the whole way up. Yet the result is NaN.
+
+Decisive isolation — the SAME async function, exported AND called internally:
+```ts
+export async function f(): Promise<number> { return 42; }
+export function main(): number { return f() as unknown as number; }
+```
+- `instance.exports.f()`            → **42**   (export-wrapper call path)
+- `instance.exports.main()`         → **NaN**  (internal `call` to the same f)
+
+`f.length === 0` (no hidden arity mismatch). So `f`'s body is correct; the
+**internal async-call lowering emits/returns the wrong value** while the export
+wrapper's call is correct. The divergence is in the internal async call
+convention, not in coercion or the sink. This sits in the #1042/#1373
+async-codegen model — pinning the exact bad instruction needs a wasm
+disassembler (none in this container) and the async-codegen owner.
+
+ESCALATING per tech-lead "fix if localized, else escalate with root cause": the
+root cause is pinned to the internal async-call path (export call OK, internal
+call NaN, same fn), but the fix lives in the async call convention, not a
+localized coercion. Recommend async-codegen owner / architect.
