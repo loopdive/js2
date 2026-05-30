@@ -1,7 +1,7 @@
 ---
 id: 1742
 title: "Closure `this`-receiver member reads trap 'illegal cast' when `this` is a compiled vec/struct (CPR prerequisite, shared with #1629)"
-status: in-progress
+status: done
 created: 2026-05-30
 updated: 2026-05-30
 priority: high
@@ -124,6 +124,40 @@ force-emit the closure) → read-drive at the branded dstr gate
 `__call_fn_method_N`, drain via `__iterator_next` → prove `[a,b,z]=arr` with
 overridden `@@iterator` yields `z=42` → CPR-2 (values alias + for-of + spread) →
 PR, #1719 status:done.
+
+## Implemented (senior-dev, 2026-05-30)
+
+The read-site guard landed in `src/codegen/property-access.ts`:
+
+- **`emitThisReceiverGuardConvert`** (new, exported) — the shared primitive.
+  Externref on stack → `any.convert_extern` + `ref.test $target` → in the
+  then-arm casts to `(ref $target)` and runs the vec/struct path; in the
+  else-arm keeps the externref and runs the host path. Both arms leave the
+  access `resultType`, so a genuine host externref passes through unchanged
+  (read-site-guard steer, NOT resolve-at-source). Generic over vec AND struct.
+- **`resolveThisReceiverGuardTarget`** (new) — gates the guard to `ThisKeyword`
+  receivers in a `readsCurrentThis` closure. Resolves the target typeIdx from
+  (1) the static `this` type when it names a compiled struct (`this: T[]` /
+  `this: Point`), else (2) for an element access, the **canonical externref
+  `$vec`** (the representation the CPR drive installs — untyped override `this`).
+- **Element access** (`compileElementAccess`): when the receiver is `this`,
+  externref, and the index is side-effect-free, route through the guard.
+- **`.length`** (`compilePropertyAccess`, top of the `length` block): same guard,
+  reads vec field 0 in the then-arm, `__extern_length` in the else-arm.
+
+Verified: WAT for `this[i]`/`this.length` in a lifted closure now emits
+`ref.test`-governed reads off `__current_this` (no bare `ref.cast` trap).
+Regression pinned in `tests/issue-1742-this-receiver-guard.test.ts`. Equivalence
+suite green (no byte-identical regression for non-`this`-receiver sites).
+
+**Runtime end-to-end note (for the #1719 CPR drive):** #1742 supplies the read
+primitive but has no independent runtime trigger — the only thing that dispatches
+a compiled vec/struct as `this` through `__call_fn_method_N` is the CPR drive
+(steps 3-4) or a #1629 accessor getter. The guard tests against the **canonical
+externref `$vec`**, so the CPR drive MUST normalise the array RHS to an
+externref-vec receiver before installing it as `this` (a raw `$vec_f64`/`$vec_i32`
+fails the `ref.test` and falls to the host path). This is the representation
+contract the CPR drive consumes.
 
 ## Source
 

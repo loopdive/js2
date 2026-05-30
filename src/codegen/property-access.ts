@@ -783,6 +783,109 @@ export function emitExternrefToStructGet(
   releaseTempLocal(fctx, resultLocal);
 }
 
+/**
+ * (#1742) Read-site guard-convert for a `this`-receiver that lowered to an
+ * externref but, at runtime, may carry a compiled WasmGC value (a `$vec`
+ * array or a named struct). When a closure body dispatched through
+ * `__call_fn_method_N` reads `this[i]` / `this.length` / `this.member`, the
+ * receiver is the `__current_this` externref. Statically-typed vec/struct
+ * fast paths would emit a bare `ref.cast externref → $vec`, which traps
+ * "illegal cast" for a genuine host externref — and the array-method receiver
+ * lane (`compileArrayPrototypeForEach`) is the only place that reads an
+ * externref receiver as a vec correctly. This generalizes that pattern.
+ *
+ * Stack on entry: `[externref]` (the receiver value).
+ * Emits `any.convert_extern` + `ref.test $target`; when the value IS the
+ * compiled target type, `thenEmit` runs with `[(ref target)]` on the stack;
+ * otherwise `elseEmit` runs with the original `[externref]` on the stack.
+ * Both arms must leave a single value of `resultType` (the access result),
+ * so a genuine host externref passes through to the host read path unchanged
+ * (read-site-guard steer, NOT resolve-at-source). Generic over vec
+ * (`this[i]`/`this.length` — #1719) AND struct (`this.member` — #1629).
+ */
+export function emitThisReceiverGuardConvert(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  targetTypeIdx: number,
+  resultType: ValType,
+  thenEmit: (concreteType: ValType) => void,
+  elseEmit: (externrefType: ValType) => void,
+): void {
+  const externrefTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: externrefTmp });
+  // Convert externref → anyref for the structural type test.
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  const anyTmp = allocTempLocal(fctx, { kind: "anyref" });
+  fctx.body.push({ op: "local.tee", index: anyTmp });
+  fctx.body.push({ op: "ref.test", typeIdx: targetTypeIdx } as Instr);
+
+  // then-arm: value IS the compiled target → cast and run the vec/struct path.
+  const savedBody = fctx.body;
+  const thenBody: Instr[] = [];
+  fctx.body = thenBody;
+  fctx.body.push({ op: "local.get", index: anyTmp } as Instr);
+  fctx.body.push({ op: "ref.cast", typeIdx: targetTypeIdx } as Instr);
+  thenEmit({ kind: "ref", typeIdx: targetTypeIdx });
+  // else-arm: genuine host externref → run the host read path unchanged.
+  const elseBody: Instr[] = [];
+  fctx.body = elseBody;
+  fctx.body.push({ op: "local.get", index: externrefTmp } as Instr);
+  elseEmit({ kind: "externref" });
+  fctx.body = savedBody;
+
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: resultType },
+    then: thenBody,
+    else: elseBody,
+  } as unknown as Instr);
+
+  releaseTempLocal(fctx, anyTmp);
+  releaseTempLocal(fctx, externrefTmp);
+}
+
+/**
+ * (#1742) Decide whether an element-/property-access on a `this` receiver that
+ * lowered to externref should be guard-converted to a compiled vec/struct.
+ * Fires only for `this` (`ThisKeyword`) in a closure body that reads the
+ * host-supplied `__current_this` global (`fctx.readsCurrentThis`). Returns the
+ * target WasmGC type index to guard-cast to, or `undefined` to leave the access
+ * on the existing host path (byte-identical for every non-`this`-receiver site).
+ *
+ * Resolution order:
+ *   1. The static TS type of the receiver, when it resolves to a known struct
+ *      (`resolveStructName`) — covers `this: T[]` / `this: Point` annotations.
+ *   2. For an element access whose key is numeric-shaped (`this[i]`), the
+ *      canonical externref `$vec` — covers the untyped `this` of an overridden
+ *      `Array.prototype[@@iterator]` body (#1719 CPR), which has no annotation.
+ */
+function resolveThisReceiverGuardTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  kind: "element" | "lengthOrProperty",
+): number | undefined {
+  if (receiver.kind !== ts.SyntaxKind.ThisKeyword) return undefined;
+  if (!fctx.readsCurrentThis || ctx.currentThisGlobalIdx < 0) return undefined;
+
+  // 1. Honour a static `this` type that names a compiled struct (vec or named).
+  const tsType = ctx.checker.getTypeAtLocation(receiver);
+  const structName = resolveStructName(ctx, tsType);
+  if (structName) {
+    const sIdx = ctx.structMap.get(structName);
+    if (sIdx !== undefined) return sIdx;
+  }
+
+  // 2. Untyped `this` reading numeric-indexed elements / `.length` → the
+  //    canonical externref vec (the representation the CPR drive installs as
+  //    the receiver). Only for the vec-shaped access kinds, never for an
+  //    arbitrary `this.member` on an untyped receiver (that stays host).
+  if (kind === "element") {
+    return getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  }
+  return undefined;
+}
+
 // ── Optional property access ─────────────────────────────────────────
 
 export function compileOptionalPropertyAccess(
@@ -1918,6 +2021,47 @@ export function compilePropertyAccess(
 
   // Handle array.length (vec struct: field 0 is the logical length)
   if (propName === "length") {
+    // (#1742) `this.length` where `this` is the host-supplied `__current_this`
+    // externref but may carry a compiled vec at runtime (a closure body
+    // dispatched via `__call_fn_method_N`). The static `this` type is `any`
+    // here, so the vec fast paths below never fire — without this guard the
+    // read falls through to `__extern_length`, which returns 0 for an
+    // externref-wrapped WasmGC vec. Guard-convert to the vec and read field 0,
+    // falling back to `__extern_length` for a genuine host receiver.
+    if (
+      expr.expression.kind === ts.SyntaxKind.ThisKeyword &&
+      fctx.readsCurrentThis &&
+      ctx.currentThisGlobalIdx >= 0 &&
+      resolveWasmType(ctx, objType).kind === "externref"
+    ) {
+      const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+      const lenType: ValType = ctx.fast ? { kind: "i32" } : { kind: "f64" };
+      compileExpression(ctx, fctx, expr.expression); // → externref `this`
+      emitThisReceiverGuardConvert(
+        ctx,
+        fctx,
+        vecTypeIdx,
+        lenType,
+        () => {
+          // [(ref $vec)] → length
+          fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr);
+          if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+        },
+        () => {
+          // [externref] → __extern_length (genuine host receiver / real JS array)
+          const lengthFuncIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+          flushLateImportShifts(ctx, fctx);
+          if (lengthFuncIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx: lengthFuncIdx } as Instr);
+            if (ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
+          } else {
+            fctx.body.push({ op: "drop" } as Instr);
+            fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: 0 } as Instr);
+          }
+        },
+      );
+      return lenType;
+    }
     // Shape-inferred array-like: obj.length → struct.get vec field 0
     if (ts.isIdentifier(expr.expression)) {
       const shapeInfo = ctx.shapeMap.get(expr.expression.text);
@@ -3172,9 +3316,65 @@ export function compileElementAccess(
     if (!isProvablyNonNull(expr.expression, ctx.checker)) {
       emitNullCheckThrow(ctx, fctx, objType, expr);
     }
+
+    // (#1742) `this[i]` where `this` is the host-supplied `__current_this`
+    // externref but may carry a compiled vec at runtime (a closure body
+    // dispatched via `__call_fn_method_N`). Guard-convert to the vec/struct
+    // before the access so `this[i]` reads the backing store instead of
+    // trapping a bare `ref.cast externref → $vec`. A genuine host externref
+    // receiver passes through to the host `__extern_get` path unchanged. The
+    // index expression must be side-effect-free since the guard branch
+    // recompiles it in both arms.
+    const guardTarget = isThisGuardIndexSafe(expr.argumentExpression)
+      ? resolveThisReceiverGuardTarget(ctx, fctx, expr.expression, "element")
+      : undefined;
+    if (guardTarget !== undefined) {
+      const resultType: ValType = { kind: "externref" };
+      emitThisReceiverGuardConvert(
+        ctx,
+        fctx,
+        guardTarget,
+        resultType,
+        (concreteType) => {
+          const elemResult = compileElementAccessBody(ctx, fctx, expr, concreteType);
+          // The vec fast path returns the backing element type (externref for
+          // the canonical $vec). Box to externref so both arms unify.
+          if (elemResult && elemResult.kind !== "externref") {
+            coerceType(ctx, fctx, elemResult, resultType);
+          } else if (!elemResult) {
+            fctx.body.push({ op: "ref.null.extern" } as Instr);
+          }
+        },
+        () => {
+          const hostResult = compileElementAccessBody(ctx, fctx, expr, { kind: "externref" });
+          if (hostResult && hostResult.kind !== "externref") {
+            coerceType(ctx, fctx, hostResult, resultType);
+          } else if (!hostResult) {
+            fctx.body.push({ op: "ref.null.extern" } as Instr);
+          }
+        },
+      );
+      return resultType;
+    }
   }
 
   return compileElementAccessBody(ctx, fctx, expr, objType);
+}
+
+/**
+ * (#1742) The `this`-receiver element-access guard recompiles the index
+ * expression in both branch arms, so it is only safe for side-effect-free
+ * index expressions. Covers the literal / identifier / simple member shapes
+ * that the overridden-iterator and `this[i]` cases use.
+ */
+function isThisGuardIndexSafe(arg: ts.Expression): boolean {
+  return (
+    ts.isNumericLiteral(arg) ||
+    ts.isStringLiteral(arg) ||
+    ts.isIdentifier(arg) ||
+    arg.kind === ts.SyntaxKind.ThisKeyword ||
+    (ts.isPropertyAccessExpression(arg) && isThisGuardIndexSafe(arg.expression))
+  );
 }
 
 /** Inner element access logic — assumes objType is on the stack and non-null */
