@@ -658,19 +658,25 @@ describe("#1584 slice (b) — Wasm-GC-native dispatch loop (quadruple equivalenc
   });
 
   // ── #1584 a3 control-flow: JNZ (the exact dual of JZ; br_if maps here) ──
-  // block/loop/br/br_if add NO opcode — the emitter resolves them to
-  // JZ/JNZ/JMP + backpatched absolute targets. JNZ=28 is the only VM addition.
-  // count(n) = a post-test (do-while) loop that runs `i++` while i < n. The
-  // do-while shape (test at the BOTTOM, JNZ loop-back) is the natural fit for a
-  // single backward JNZ; a pre-test `while` would use a JZ-exit + JMP-back pair.
-  // For n>=1 it returns n; the JS reference mirrors the same do-while so they
-  // agree (n=1 → exactly one iter). The point is the JNZ backward loop-back.
+  // JNZ=28 is the ONLY VM addition for a3 — block/loop/br/br_if add no opcode
+  // (the emitter resolves them to JZ/JNZ/JMP + backpatched absolute targets, so
+  // the VM only ever sees the jumps). This test exercises the JNZ DISPATCH ARM
+  // by driving a HAND-BUILT bytecode loop stream through both VMs — it does NOT
+  // (and cannot yet) lower a real loop FUNCTION through lower.ts end-to-end: the
+  // loop-body i32/struct ops still hit the requireInstrSink fence and belong to
+  // later families. So this proves the JNZ opcode + a backward loop-back through
+  // the compiled Wasm-GC-VM, not end-to-end loop compilation (which lands when
+  // the loop-body op families migrate). Same hand-built-stream style as the
+  // a1/a2 cases and emitter2's own a3 proof tests.
+  // count(n) = a post-test (do-while) bytecode loop running `i++` while i < n; a
+  // single backward JNZ is the natural fit (a pre-test `while` would use a
+  // JZ-exit + JMP-back pair). The JS reference mirrors the same do-while.
   //   CONST 0; STORE 1 (i=0)
   //   header:  LOAD 1; CONST 1; ADD; STORE 1   (i++)
   //            LOAD 1; LOAD 0; CMP_LT          (i < n ? 1 : 0)
   //            JNZ header                       (loop back while i<n)
   //   LOAD 1; RET                               (return i)
-  it("a3: JNZ loop — host-VM == WasmGC-VM == JS for count(n) (do i++ while i<n)", async () => {
+  it("a3: JNZ dispatch — host-VM == WasmGC-VM == JS for a hand-built do-while loop", async () => {
     const s = new BytecodeSink();
     emitNumberConst(0, s); // i = 0
     E.emitLocalSet(1, s); // STORE 1
