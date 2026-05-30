@@ -86,3 +86,49 @@ into a variable/global the compiler typed as f64 — reduce until the
 - Surfaced by the #1710 dogfood harness immediately after the #1734 fix; this
   is the next acceptance-class (codegen-acceptance / won't-validate) gate on
   the path to #1712.
+
+## Investigation notes (2026-05-30, recon while #1734 PR #966 in CI)
+
+A transient module-wide scan (DBG1745: every `global.set` whose preceding
+instr is an `if`) pinned the emit:
+
+```
+fn=__closure_37 globalsLen=109 global.set idx=2474 (unresolved)
+  after if-result={"kind":"ref_null","typeIdx":3}
+  then=[local.get, ref.cast_null]                    ;; → (ref null 3)
+  else=[local.get, call, …, array.new_default, …, struct.new]  ;; → a struct ref
+```
+
+Findings:
+- **Both `if` arms produce reference values** (then: a `ref.cast_null` to type
+  3; else: a freshly `struct.new`'d object). So the `if`/conditional result is
+  `(ref null 3)` — this is a `cond ? X : Y` (ternary) or `||`/`??` fallthrough
+  whose two branches are both refs.
+- The destination is a **module global** the codegen declared as **f64**, but
+  it receives this ref → ill-typed `global.set`.
+- The `idx=2474` printed by the scan is a **pre-finalization** global index
+  (only 109 globals exist post-finalize); late/early globals get renumbered at
+  emit. The *symbol* anchor is `__closure_37` + the
+  `global.set expected f64, found if of (ref null 3)` shape.
+
+**Root-cause hypothesis (to confirm during the fix):** a **closure-captured
+variable** whose backing module-global was typed `f64` (the capture-global type
+inference picked f64) but whose assigned value is a conditional that resolves to
+a reference. Either (a) the capture-global type inference must widen to the
+ref/externref type when the captured value can be a ref-producing conditional,
+or (b) the conditional result must be coerced to f64 (`__box_number` round-trip
+/ unbox) before the `global.set` when the global is genuinely f64. Determine
+which by inspecting the source variable acorn assigns here (the ternary whose
+arms are `ref.cast_null` vs `struct.new`).
+
+**Likely sites:** closure capture-global declaration/typing in
+`src/codegen/closures.ts` (`ctx.mod.globals.push` capture-cell paths ~L335/L356)
+and the assignment-coercion path that writes a captured global
+(`src/codegen/expressions/assignment.ts` / `identifiers.ts` global-set arm).
+Reduce `let x = cond ? refThingA : refThingB; const f = () => { x = ...; };`
+with the capture forcing `x` into a module global, until the `global.set
+expected f64, found if` error reproduces; pin as `tests/issue-1745.test.ts`.
+
+This is **not** the same family as #1734 (that was a struct.get-receiver guard
+in method-call dispatch); #1745 is a capture-global type / conditional-result
+coercion mismatch. Independent fix.
