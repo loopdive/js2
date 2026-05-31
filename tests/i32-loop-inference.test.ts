@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -151,7 +151,7 @@ describe("i32 loop inference (#595)", { timeout: 30000 }, () => {
     expect(await run(src, "test")).toBe(20);
   });
 
-  it("WAT output contains i32 local for loop counter", () => {
+  it("WAT output contains i32 local for loop counter", async () => {
     const src = `
       export function test(): number {
         let sum = 0;
@@ -161,7 +161,7 @@ describe("i32 loop inference (#595)", { timeout: 30000 }, () => {
         return sum;
       }
     `;
-    const result = compile(src, { emitWat: true });
+    const result = await compile(src, { emitWat: true });
     expect(result.success).toBe(true);
     // The WAT should contain an i32 local for the loop counter variable
     expect(result.wat).toContain("i32");

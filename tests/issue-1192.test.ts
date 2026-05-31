@@ -30,7 +30,7 @@ async function compileAndRun(source: string, fnName: string, args: ReadonlyArray
   // Compile as JS so empty `[]` initializers don't get inferred as `never[]`
   // by the strict TS checker — matches the canonical `array-sum.js` shape
   // the issue motivates.
-  const r = compile(source, { fileName: "t.js", allowJs: true });
+  const r = await compile(source, { fileName: "t.js", allowJs: true });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }

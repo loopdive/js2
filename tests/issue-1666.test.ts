@@ -26,7 +26,7 @@ describe("#1666 — number-format methods emit valid Wasm under --target wasi", 
 
   for (const [name, src] of cases) {
     it(`${name} produces an instantiable module (no unbound global)`, async () => {
-      const r = compile(src, { fileName: `${name}.ts`, target: "wasi" });
+      const r = await compile(src, { fileName: `${name}.ts`, target: "wasi" });
       expect(r.success, r.errors[0]?.message).toBe(true);
       // The bug surfaced as a CompileError: "Invalid global index: 4294967295".
       await expect(WebAssembly.compile(r.binary)).resolves.toBeInstanceOf(WebAssembly.Module);
@@ -34,7 +34,7 @@ describe("#1666 — number-format methods emit valid Wasm under --target wasi", 
   }
 
   it("the JS-host (default) path is unchanged and still validates", async () => {
-    const r = compile("export function test(): number { return (3.14).toFixed(1).length; }", {
+    const r = await compile("export function test(): number { return (3.14).toFixed(1).length; }", {
       fileName: "gc.ts",
     });
     expect(r.success).toBe(true);

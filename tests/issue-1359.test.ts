@@ -20,7 +20,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndCall<T>(src: string, fnName = "test"): Promise<T> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   const errs = r.errors.filter((e) => e.severity === "error");
   if (errs.length) {
     throw new Error(`compile failed: ${errs.map((e) => `L${e.line}:${e.column} ${e.message}`).join(" | ")}`);

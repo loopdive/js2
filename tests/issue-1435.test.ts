@@ -32,8 +32,8 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
-function compileFails(src: string): boolean {
-  const r = compile(src);
+async function compileFails(src: string): Promise<boolean> {
+  const r = await compile(src);
   if (!r.success) return true;
   // Any error-severity entry should bubble up to a failed compile too —
   // we treat error-severity output as "compile rejected" for negative tests.
@@ -42,24 +42,24 @@ function compileFails(src: string): boolean {
 
 describe("#1435 — reserved-word identifier in auto-strict context (TS1213/1214)", () => {
   describe("class definitions are strict mode (§10.2.1) — class name cannot be a strict reserved word", () => {
-    it("rejects `class let {}`", () => {
-      expect(compileFails(`class let {}`)).toBe(true);
+    it("rejects `class let {}`", async () => {
+      expect(await compileFails(`class let {}`)).toBe(true);
     });
 
-    it("rejects `class static {}`", () => {
-      expect(compileFails(`class static {}`)).toBe(true);
+    it("rejects `class static {}`", async () => {
+      expect(await compileFails(`class static {}`)).toBe(true);
     });
 
-    it("rejects `class yield {}`", () => {
-      expect(compileFails(`class yield {}`)).toBe(true);
+    it("rejects `class yield {}`", async () => {
+      expect(await compileFails(`class yield {}`)).toBe(true);
     });
 
-    it("rejects `class private {}`", () => {
-      expect(compileFails(`class private {}`)).toBe(true);
+    it("rejects `class private {}`", async () => {
+      expect(await compileFails(`class private {}`)).toBe(true);
     });
 
-    it("accepts non-reserved class names", () => {
-      const r = compile(`class Foo {}`);
+    it("accepts non-reserved class names", async () => {
+      const r = await compile(`class Foo {}`);
       // Either no errors or only non-fatal warnings — the key invariant
       // is that the compile path does NOT reject a valid class name.
       expect(r.errors.some((e) => e.severity === "error")).toBe(false);
@@ -70,15 +70,15 @@ describe("#1435 — reserved-word identifier in auto-strict context (TS1213/1214
     // Modules are auto-strict; an explicit `export` clause makes the source
     // a module per ECMA-262. Reserved-word identifiers as exported bindings
     // surface as TS1214.
-    it("compiles a valid module export (sanity)", () => {
-      const r = compile(`export const ok: number = 1;`);
+    it("compiles a valid module export (sanity)", async () => {
+      const r = await compile(`export const ok: number = 1;`);
       expect(r.errors.some((e) => e.severity === "error")).toBe(false);
     });
   });
 
   describe("regression guard: prior good code stays good", () => {
-    it("uses `let` as a binding inside a function (sloppy/strict both allow this)", () => {
-      const r = compile(`
+    it("uses `let` as a binding inside a function (sloppy/strict both allow this)", async () => {
+      const r = await compile(`
         export function test(): number {
           let x: number = 42;
           return x;
@@ -87,8 +87,8 @@ describe("#1435 — reserved-word identifier in auto-strict context (TS1213/1214
       expect(r.errors.some((e) => e.severity === "error")).toBe(false);
     });
 
-    it("class with a regular method that uses `let` internally", () => {
-      const r = compile(`
+    it("class with a regular method that uses `let` internally", async () => {
+      const r = await compile(`
         export class Counter {
           private value: number = 0;
           inc(): number {

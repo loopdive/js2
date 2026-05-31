@@ -40,7 +40,7 @@ interface InstantiateResult {
 }
 
 async function compileAndInstantiate(source: string, experimentalIR: boolean): Promise<InstantiateResult> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -52,8 +52,8 @@ async function compileAndInstantiate(source: string, experimentalIR: boolean): P
   return { instance, exports: instance.exports as Record<string, unknown> };
 }
 
-function compileToWat(source: string, experimentalIR: boolean): string {
-  const r = compile(source, { experimentalIR, emitWat: true });
+async function compileToWat(source: string, experimentalIR: boolean): Promise<string> {
+  const r = await compile(source, { experimentalIR, emitWat: true });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -228,13 +228,13 @@ describe("#1231 — codegen emits typed struct fields by default", () => {
    * The boxing helpers may still be imported (the legacy fallback paths
    * use them), so we strip the import section and check only the bodies.
    */
-  it("Case 1 — createPoint/distance: no box/unbox in default-mode WAT (acceptance 1)", () => {
+  it("Case 1 — createPoint/distance: no box/unbox in default-mode WAT (acceptance 1)", async () => {
     const source = `
       export function createPoint(x, y) { return { x: x, y: y }; }
       export function distance(p) { return p.x * p.x + p.y * p.y; }
       export function run() { return distance(createPoint(3, 4)); }
     `;
-    const wat = compileToWat(source, true);
+    const wat = await compileToWat(source, true);
 
     // 1. Anonymous struct must have f64 field types — proves the
     //    typed-shape lowering is being used.
@@ -288,13 +288,13 @@ describe("#1231 — codegen emits typed struct fields by default", () => {
     expect(irVal).toBe(legacyVal);
   });
 
-  it("Case 2 — WAT for createUser shows mixed f64 + string field types", () => {
+  it("Case 2 — WAT for createUser shows mixed f64 + string field types", async () => {
     const source = `
       export function createUser(name, age) { return { name: name, age: age }; }
       export function getAge(u) { return u.age; }
       export function run() { return getAge(createUser("Alice", 30)); }
     `;
-    const wat = compileToWat(source, true);
+    const wat = await compileToWat(source, true);
 
     // The lattice should produce {age: f64, name: string} (sorted by name).
     // The struct field for `age` must be `(mut f64)`. The struct field
@@ -349,13 +349,13 @@ describe("#1231 — codegen emits typed struct fields by default", () => {
     expect((legacy.exports.runY as () => number)()).toBe(6);
   });
 
-  it("Case 6 — chained vec2/add: WAT shows only typed structs in IR-claimed bodies", () => {
+  it("Case 6 — chained vec2/add: WAT shows only typed structs in IR-claimed bodies", async () => {
     const source = `
       export function vec2(x, y) { return { x: x, y: y }; }
       export function add(a, b) { return vec2(a.x + b.x, a.y + b.y); }
       export function runX() { return add(vec2(1, 2), vec2(3, 4)).x; }
     `;
-    const wat = compileToWat(source, true);
+    const wat = await compileToWat(source, true);
     const bodyRegion = stripImports(wat);
     // The IR-claimed bodies for vec2 / add must not call box/unbox.
     const vec2Body = extractFuncBody(bodyRegion, "vec2");

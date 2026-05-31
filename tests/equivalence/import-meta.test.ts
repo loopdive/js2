@@ -8,7 +8,7 @@ import { compileToWasm } from "./helpers.js";
 // via `deps.importMetaUrl`; tests that exercise the AST shape go through
 // the default helper (which leaves the value undefined).
 async function compileWithMetaUrl(source: string, importMetaUrl?: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,

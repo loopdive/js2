@@ -5,7 +5,7 @@ import { bodyUsesArguments } from "../src/codegen/helpers/body-uses-arguments.ts
 import ts from "typescript";
 
 async function compileAndRun(src: string): Promise<number> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`Compile error: ${r.errors[0]?.message}`);
   }

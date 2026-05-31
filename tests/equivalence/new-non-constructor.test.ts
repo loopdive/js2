@@ -16,8 +16,8 @@ function tryInstantiate(result: CompileResult): string | null {
 }
 
 describe("new on non-constructor builtins (#432)", () => {
-  it("new Math.ceil() in assert_throws does not cause stack underflow", () => {
-    const result = compile(
+  it("new Math.ceil() in assert_throws does not cause stack underflow", async () => {
+    const result = await compile(
       `
       function assert_throws(fn: () => void): void {
         try { fn(); } catch (e) { return; }
@@ -36,23 +36,23 @@ describe("new on non-constructor builtins (#432)", () => {
     expect(err).toBeNull();
   });
 
-  it("not-a-constructor test262 pattern compiles without stack underflow", () => {
+  it("not-a-constructor test262 pattern compiles without stack underflow", async () => {
     // This is the exact pattern from test/built-ins/Math/*/not-a-constructor.js
     // The bug was that the __module_init guard preamble shared instruction objects
     // between exported functions, causing double-remapping during dead import
     // elimination when there were many preamble functions.
     const source = readFileSync("/workspace/test262/test/built-ins/Math/ceil/not-a-constructor.js", "utf-8");
     const wrapped = wrapTest(source);
-    const result = compile(wrapped, { fileName: "test.ts" });
+    const result = await compile(wrapped, { fileName: "test.ts" });
     const err = tryInstantiate(result);
     expect(err).toBeNull();
   });
 
-  it("guard preamble with many exported functions does not double-remap", () => {
+  it("guard preamble with many exported functions does not double-remap", async () => {
     // Regression test: when there are enough preamble functions that dead
     // import elimination removes several union imports, the guard preamble's
     // call to __module_init must not be double-remapped.
-    const result = compile(
+    const result = await compile(
       `
 let __fail: number = 0;
 function f1(a: number, b: number): number { if (a === b) return 1; return 0; }

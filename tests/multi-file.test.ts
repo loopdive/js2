@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compileMulti } from "../src/index.js";
 
 async function compileAndRunMulti(files: Record<string, string>, entryFile: string) {
-  const result = compileMulti(files, entryFile);
+  const result = await compileMulti(files, entryFile);
   expect(
     result.success,
     `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -128,7 +128,7 @@ describe("multi-file compilation", () => {
         }
       `,
     };
-    const result = compileMulti(files, "./main.ts");
+    const result = await compileMulti(files, "./main.ts");
     expect(
       result.success,
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,

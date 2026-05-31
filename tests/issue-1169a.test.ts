@@ -57,7 +57,7 @@ async function runOnce(
   experimentalIR: boolean,
   nativeStrings: boolean,
 ): Promise<Outcome> {
-  const r = compile(source, { nativeStrings, experimentalIR });
+  const r = await compile(source, { nativeStrings, experimentalIR });
   if (!r.success) {
     return { kind: "compile_fail", firstMessage: r.errors[0]?.message ?? "" };
   }
@@ -348,16 +348,16 @@ const COVERAGE_SOURCES = [
 describe("#1169a — slice 1 functions reach the IR path without errors", () => {
   for (const src of COVERAGE_SOURCES) {
     const label = src.slice(0, 60);
-    it(`host: ${label}`, () => {
-      const r = compile(src, { experimentalIR: true, nativeStrings: false });
+    it(`host: ${label}`, async () => {
+      const r = await compile(src, { experimentalIR: true, nativeStrings: false });
       expect(r.success).toBe(true);
       const irErrors = r.errors.filter(
         (e) => e.message.startsWith("IR path failed") || e.message.startsWith("IR path: could not resolve"),
       );
       expect(irErrors).toEqual([]);
     });
-    it(`native: ${label}`, () => {
-      const r = compile(src, { experimentalIR: true, nativeStrings: true });
+    it(`native: ${label}`, async () => {
+      const r = await compile(src, { experimentalIR: true, nativeStrings: true });
       expect(r.success).toBe(true);
       const irErrors = r.errors.filter(
         (e) => e.message.startsWith("IR path failed") || e.message.startsWith("IR path: could not resolve"),

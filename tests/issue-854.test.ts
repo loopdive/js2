@@ -7,7 +7,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function compileAndRun(source: string): Promise<number> {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compilation failed: ${result.errors.map((e) => e.message).join("; ")}`);
   }
@@ -63,7 +63,7 @@ describe("Issue #854: Array iterator methods", () => {
     expect(result).toBe(1);
   });
 
-  it("arr.values() compiles without errors", () => {
+  it("arr.values() compiles without errors", async () => {
     const source = `
       export function test(): number {
         const arr = [1, 2, 3];
@@ -71,7 +71,7 @@ describe("Issue #854: Array iterator methods", () => {
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const iterErrors = result.errors.filter(
       (e) => e.message.includes("unsupported") || e.message.includes("not a function"),
@@ -79,7 +79,7 @@ describe("Issue #854: Array iterator methods", () => {
     expect(iterErrors).toHaveLength(0);
   });
 
-  it("arr.keys() compiles without errors", () => {
+  it("arr.keys() compiles without errors", async () => {
     const source = `
       export function test(): number {
         const arr = [1, 2, 3];
@@ -87,7 +87,7 @@ describe("Issue #854: Array iterator methods", () => {
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const iterErrors = result.errors.filter(
       (e) => e.message.includes("unsupported") || e.message.includes("not a function"),
@@ -95,7 +95,7 @@ describe("Issue #854: Array iterator methods", () => {
     expect(iterErrors).toHaveLength(0);
   });
 
-  it("arr.entries() compiles without errors", () => {
+  it("arr.entries() compiles without errors", async () => {
     const source = `
       export function test(): number {
         const arr = [1, 2, 3];
@@ -103,7 +103,7 @@ describe("Issue #854: Array iterator methods", () => {
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const iterErrors = result.errors.filter(
       (e) => e.message.includes("unsupported") || e.message.includes("not a function"),

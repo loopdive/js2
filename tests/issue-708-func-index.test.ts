@@ -64,7 +64,7 @@ export function test(): number {
   return 1;
 }
 `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
 
     // The key assertion: instantiation must not throw "function index out of bounds"

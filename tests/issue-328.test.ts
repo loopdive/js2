@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -14,8 +14,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   return (instance.exports as any)[fn](...args);
 }
 
-function compileOnly(source: string): void {
-  const result = compile(source);
+async function compileOnly(source: string): Promise<void> {
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -24,8 +24,8 @@ function compileOnly(source: string): void {
 }
 
 describe("issue-328: OmittedExpression (array holes/elision)", () => {
-  it("array literal with holes [1,,3] compiles", () => {
-    compileOnly(`
+  it("array literal with holes [1,,3] compiles", async () => {
+    await compileOnly(`
       export function test(): number {
         const arr: number[] = [1,,3];
         return arr[2];

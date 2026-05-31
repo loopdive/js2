@@ -47,8 +47,8 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 async function compileBothAndCompare(source: string): Promise<void> {
-  const ir = compile(source, { experimentalIR: true, skipSemanticDiagnostics: true });
-  const legacy = compile(source, { experimentalIR: false, skipSemanticDiagnostics: true });
+  const ir = await compile(source, { experimentalIR: true, skipSemanticDiagnostics: true });
+  const legacy = await compile(source, { experimentalIR: false, skipSemanticDiagnostics: true });
   expect(ir.success).toBe(true);
   expect(legacy.success).toBe(true);
   expect(WebAssembly.validate(ir.binary)).toBe(true);

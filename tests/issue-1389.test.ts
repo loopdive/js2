@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "./src/index.js";
 
 describe("#1389 — false CE: var + function-decl same name at top-level", () => {
-  it("var + function-decl at SourceFile scope compiles (script-level: var-scoped)", () => {
+  it("var + function-decl at SourceFile scope compiles (script-level: var-scoped)", async () => {
     const src = `
       var smoosh;
       function smoosh() {}
@@ -10,11 +10,11 @@ describe("#1389 — false CE: var + function-decl same name at top-level", () =>
         return typeof smoosh === "function" ? 1 : 0;
       }
     `;
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     expect(result.success).toBe(true);
   });
 
-  it("function-decl + var at SourceFile scope (other order) also compiles", () => {
+  it("function-decl + var at SourceFile scope (other order) also compiles", async () => {
     const src = `
       function smoosh() {}
       var smoosh;
@@ -22,31 +22,31 @@ describe("#1389 — false CE: var + function-decl same name at top-level", () =>
         return 1;
       }
     `;
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     expect(result.success).toBe(true);
   });
 
-  it("let + var at SourceFile scope STILL errors (let is genuinely lexical)", () => {
+  it("let + var at SourceFile scope STILL errors (let is genuinely lexical)", async () => {
     const src = `
       let smoosh;
       var smoosh;
       export function test(): number { return 1; }
     `;
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     expect(result.success).toBe(false);
   });
 
-  it("class + var at SourceFile scope STILL errors (class is lexical)", () => {
+  it("class + var at SourceFile scope STILL errors (class is lexical)", async () => {
     const src = `
       class Smoosh {}
       var Smoosh;
       export function test(): number { return 1; }
     `;
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     expect(result.success).toBe(false);
   });
 
-  it("function + var inside a Block STILL errors (block-scoped function is lexical)", () => {
+  it("function + var inside a Block STILL errors (block-scoped function is lexical)", async () => {
     // Block-scoped function declaration (ES §B.3.2) — lexically scoped.
     const src = `
       export function test(): number {
@@ -57,11 +57,11 @@ describe("#1389 — false CE: var + function-decl same name at top-level", () =>
         return 1;
       }
     `;
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     expect(result.success).toBe(false);
   });
 
-  it("let + var inside a Block STILL errors", () => {
+  it("let + var inside a Block STILL errors", async () => {
     const src = `
       export function test(): number {
         {
@@ -71,7 +71,7 @@ describe("#1389 — false CE: var + function-decl same name at top-level", () =>
         return 1;
       }
     `;
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     expect(result.success).toBe(false);
   });
 });

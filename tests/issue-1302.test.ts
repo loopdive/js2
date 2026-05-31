@@ -29,7 +29,7 @@ import { describe, expect, it } from "vitest";
 import { compile, compileProject } from "../src/index.js";
 
 describe("#1302 — fixupModuleGlobalIndices over-shift on shared nested arrays", () => {
-  it("compiles and validates a synthetic case with shared nested instr structure", () => {
+  it("compiles and validates a synthetic case with shared nested instr structure", async () => {
     // A program that exercises closures + string-constants + control flow
     // similar to lodash's _createFlow inner function. Many string literals
     // force repeated `addStringConstantGlobal` calls; the `if` branches
@@ -59,7 +59,7 @@ describe("#1302 — fixupModuleGlobalIndices over-shift on shared nested arrays"
         return 1;
       }
     `;
-    const r = compile(source, { fileName: "test.ts" });
+    const r = await compile(source, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });
@@ -67,8 +67,8 @@ describe("#1302 — fixupModuleGlobalIndices over-shift on shared nested arrays"
   const lodashEsInstalled = existsSync("node_modules/lodash-es/flow.js");
   const runIfInstalled = lodashEsInstalled ? it : it.skip;
 
-  runIfInstalled("real-world repro: lodash flow.js validates after fix", () => {
-    const r = compileProject("node_modules/lodash-es/flow.js", { allowJs: true });
+  runIfInstalled("real-world repro: lodash flow.js validates after fix", async () => {
+    const r = await compileProject("node_modules/lodash-es/flow.js", { allowJs: true });
     expect(r.success).toBe(true);
     expect(r.binary.length).toBeGreaterThan(0);
     // Pre-fix: threw "Invalid global index: 266 @+117088".

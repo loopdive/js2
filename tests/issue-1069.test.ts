@@ -7,8 +7,8 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 
-function noStructErrors(source: string, description: string, allowJs = false) {
-  const result = compile(source, { fileName: allowJs ? "test.js" : "test.ts", allowJs });
+async function noStructErrors(source: string, description: string, allowJs = false) {
+  const result = await compile(source, { fileName: allowJs ? "test.js" : "test.ts", allowJs });
   const structErrors = result.errors?.filter(
     (e) => e.message.includes("Object literal type not mapped") || e.message.includes("Cannot determine struct type"),
   );
@@ -16,8 +16,8 @@ function noStructErrors(source: string, description: string, allowJs = false) {
 }
 
 describe("Issue #1069: Object literal struct inference", () => {
-  it("compiles object literal passed to any-typed function", () => {
-    noStructErrors(
+  it("compiles object literal passed to any-typed function", async () => {
+    await noStructErrors(
       `
       function makeDoc(opts: any): any { return opts; }
       function test(): number {
@@ -29,8 +29,8 @@ describe("Issue #1069: Object literal struct inference", () => {
     );
   });
 
-  it("compiles object literal returned from untyped function", () => {
-    noStructErrors(
+  it("compiles object literal returned from untyped function", async () => {
+    await noStructErrors(
       `
       function createNode() {
         return { type: "concat", count: 42 };
@@ -44,8 +44,8 @@ describe("Issue #1069: Object literal struct inference", () => {
     );
   });
 
-  it("compiles object literal assigned to untyped variable", () => {
-    noStructErrors(
+  it("compiles object literal assigned to untyped variable", async () => {
+    await noStructErrors(
       `
       function test(): number {
         const opts = { indent: 2, tabWidth: 4, useTabs: false };
@@ -56,8 +56,8 @@ describe("Issue #1069: Object literal struct inference", () => {
     );
   });
 
-  it("compiles inline object in ternary expression", () => {
-    noStructErrors(
+  it("compiles inline object in ternary expression", async () => {
+    await noStructErrors(
       `
       function test(): number {
         const x = true ? { a: 1, b: 2 } : { a: 3, b: 4 };
@@ -68,8 +68,8 @@ describe("Issue #1069: Object literal struct inference", () => {
     );
   });
 
-  it("compiles typed object literal (regression check)", () => {
-    noStructErrors(
+  it("compiles typed object literal (regression check)", async () => {
+    await noStructErrors(
       `
       interface Point { x: number; y: number; }
       function test(): number {
@@ -83,8 +83,8 @@ describe("Issue #1069: Object literal struct inference", () => {
 });
 
 describe("Issue #1069: spread with null/undefined/any", () => {
-  it("compiles {...null}", () => {
-    noStructErrors(
+  it("compiles {...null}", async () => {
+    await noStructErrors(
       `
       function test(): number {
         const obj = {...null};
@@ -95,8 +95,8 @@ describe("Issue #1069: spread with null/undefined/any", () => {
     );
   });
 
-  it("compiles {...undefined}", () => {
-    noStructErrors(
+  it("compiles {...undefined}", async () => {
+    await noStructErrors(
       `
       function test(): number {
         const obj = {...undefined};
@@ -107,8 +107,8 @@ describe("Issue #1069: spread with null/undefined/any", () => {
     );
   });
 
-  it("compiles object with mixed spread and properties", () => {
-    noStructErrors(
+  it("compiles object with mixed spread and properties", async () => {
+    await noStructErrors(
       `
       function test(): number {
         const base = { x: 1 };
@@ -122,8 +122,8 @@ describe("Issue #1069: spread with null/undefined/any", () => {
 });
 
 describe("Issue #1069: allowJs mode object literals", () => {
-  it("compiles plain JS config object (allowJs)", () => {
-    noStructErrors(
+  it("compiles plain JS config object (allowJs)", async () => {
+    await noStructErrors(
       `
       function makeDoc(opts) { return opts; }
       function test() {
@@ -136,8 +136,8 @@ describe("Issue #1069: allowJs mode object literals", () => {
     );
   });
 
-  it("compiles JS object return (allowJs)", () => {
-    noStructErrors(
+  it("compiles JS object return (allowJs)", async () => {
+    await noStructErrors(
       `
       function createNode() {
         return { type: "concat", parts: ["a", "b"] };
@@ -152,8 +152,8 @@ describe("Issue #1069: allowJs mode object literals", () => {
     );
   });
 
-  it("compiles JS object assigned to variable (allowJs)", () => {
-    noStructErrors(
+  it("compiles JS object assigned to variable (allowJs)", async () => {
+    await noStructErrors(
       `
       function test() {
         var opts = { indent: 2, tabWidth: 4, useTabs: false };
@@ -165,8 +165,8 @@ describe("Issue #1069: allowJs mode object literals", () => {
     );
   });
 
-  it("compiles JS inline objects in ternary (allowJs)", () => {
-    noStructErrors(
+  it("compiles JS inline objects in ternary (allowJs)", async () => {
+    await noStructErrors(
       `
       function test() {
         var x = true ? { a: 1, b: 2 } : { a: 3, b: 4 };
@@ -178,8 +178,8 @@ describe("Issue #1069: allowJs mode object literals", () => {
     );
   });
 
-  it("compiles JS factory pattern with type field (allowJs)", () => {
-    noStructErrors(
+  it("compiles JS factory pattern with type field (allowJs)", async () => {
+    await noStructErrors(
       `
       function group(contents, opts) {
         return { type: "group", contents: contents, break: opts && opts.shouldBreak };

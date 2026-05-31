@@ -56,7 +56,7 @@ async function compileAndRun(
       : backend === "ir-gc"
         ? { experimentalIR: true, nativeStrings: true }
         : { target: "linear" as const };
-  const result = compile(source, options);
+  const result = await compile(source, options);
   if (!result.success) {
     throw new Error(`${backend} compile failed: ${result.errors.map((e) => e.message).join("; ")}`);
   }

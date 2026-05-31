@@ -36,7 +36,7 @@ import { buildImports } from "../src/runtime.js";
 //     runtime.ts ~5550), not part of this STORE-contract slice.
 
 async function runHost(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`compile error: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

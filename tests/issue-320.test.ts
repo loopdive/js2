@@ -3,8 +3,8 @@ import { compile } from "../src/index.js";
 import { buildStringConstants } from "../src/runtime.js";
 
 describe("Dead import and type elimination (#320)", () => {
-  it("removes unused wasm:js-string imports when only concat is used", () => {
-    const result = compile(`
+  it("removes unused wasm:js-string imports when only concat is used", async () => {
+    const result = await compile(`
       export function greet(name: string): string { return "Hello " + name; }
     `);
     expect(result.success).toBe(true);
@@ -17,8 +17,8 @@ describe("Dead import and type elimination (#320)", () => {
     expect(result.wat).not.toContain('"charCodeAt"');
   });
 
-  it("keeps wasm:js-string imports that are actually called", () => {
-    const result = compile(`
+  it("keeps wasm:js-string imports that are actually called", async () => {
+    const result = await compile(`
       export function test(a: string, b: string): number {
         const c = a + b;
         const len = c.length;
@@ -34,8 +34,8 @@ describe("Dead import and type elimination (#320)", () => {
     expect(result.wat).toContain('"equals"');
   });
 
-  it("eliminates unused func types alongside dead imports", () => {
-    const result = compile(`
+  it("eliminates unused func types alongside dead imports", async () => {
+    const result = await compile(`
       export function add(a: number, b: number): number { return a + b; }
       export function greet(name: string): string { return "Hi " + name; }
     `);
@@ -48,8 +48,8 @@ describe("Dead import and type elimination (#320)", () => {
     expect(typeLines.length).toBeLessThan(7);
   });
 
-  it("does not eliminate types referenced by struct fields", () => {
-    const result = compile(`
+  it("does not eliminate types referenced by struct fields", async () => {
+    const result = await compile(`
       interface Point { x: number; y: number; }
       export function makePoint(): Point { return { x: 1, y: 2 }; }
       export function getX(p: Point): number { return p.x; }
@@ -61,8 +61,8 @@ describe("Dead import and type elimination (#320)", () => {
     expect(mod).toBeDefined();
   });
 
-  it("produces valid wasm binary after elimination", () => {
-    const result = compile(`
+  it("produces valid wasm binary after elimination", async () => {
+    const result = await compile(`
       export function add(a: number, b: number): number { return a + b; }
       export function greet(name: string): string { return "Hello " + name; }
     `);
@@ -73,8 +73,8 @@ describe("Dead import and type elimination (#320)", () => {
     expect(mod).toBeDefined();
   });
 
-  it("handles programs with no dead imports (no-op)", () => {
-    const result = compile(`
+  it("handles programs with no dead imports (no-op)", async () => {
+    const result = await compile(`
       export function add(a: number, b: number): number { return a + b; }
     `);
     expect(result.success).toBe(true);
@@ -87,7 +87,7 @@ describe("Dead import and type elimination (#320)", () => {
   });
 
   it("correctly remaps function indices after import removal", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function greet(name: string): string { return "Hello " + name; }
     `);
     expect(result.success).toBe(true);
@@ -108,8 +108,8 @@ describe("Dead import and type elimination (#320)", () => {
     expect(greet("World")).toBe("Hello World");
   });
 
-  it("reduces binary size compared to baseline", () => {
-    const result = compile(`
+  it("reduces binary size compared to baseline", async () => {
+    const result = await compile(`
       export function greet(name: string): string { return "Hello " + name; }
     `);
     expect(result.success).toBe(true);

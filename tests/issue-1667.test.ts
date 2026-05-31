@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("#1667 compile() returns ready-to-pass importObject (JS-host mode)", () => {
   it("default mode: instantiate(binary, result.importObject) runs with no hand-wiring", async () => {
-    const r = compile(`
+    const r = await compile(`
       export function add(a: number, b: number): number {
         return a + b;
       }
@@ -15,7 +15,7 @@ describe("#1667 compile() returns ready-to-pass importObject (JS-host mode)", ()
   });
 
   it("default mode with string literals: importObject wires string_constants", async () => {
-    const r = compile(`
+    const r = await compile(`
       export function greet(): string {
         return "hello" + " " + "world";
       }
@@ -27,8 +27,8 @@ describe("#1667 compile() returns ready-to-pass importObject (JS-host mode)", ()
     expect(String(out)).toBe("hello world");
   });
 
-  it("importObject exposes the env / wasm:js-string / string_constants namespaces", () => {
-    const r = compile(`export function id(x: number): number { return x; }`);
+  it("importObject exposes the env / wasm:js-string / string_constants namespaces", async () => {
+    const r = await compile(`export function id(x: number): number { return x; }`);
     const io = r.importObject as Record<string, unknown>;
     expect(io).toBeDefined();
     expect(io.env).toBeTypeOf("object");
@@ -36,21 +36,21 @@ describe("#1667 compile() returns ready-to-pass importObject (JS-host mode)", ()
     expect(io.string_constants).toBeTypeOf("object");
   });
 
-  it("importObject is cached — repeated reads return the same object", () => {
-    const r = compile(`export function id(x: number): number { return x; }`);
+  it("importObject is cached — repeated reads return the same object", async () => {
+    const r = await compile(`export function id(x: number): number { return x; }`);
     expect(r.importObject).toBe(r.importObject);
   });
 
-  it("standalone mode: importObject is an empty object (zero-import path)", () => {
-    const r = compile(`export function add(a: number, b: number): number { return a + b; }`, {
+  it("standalone mode: importObject is an empty object (zero-import path)", async () => {
+    const r = await compile(`export function add(a: number, b: number): number { return a + b; }`, {
       target: "standalone",
     });
     expect(r.success).toBe(true);
     expect(r.importObject).toEqual({});
   });
 
-  it("failed compile: importObject is an empty object", () => {
-    const r = compile(`export function bad(: { syntax error`);
+  it("failed compile: importObject is an empty object", async () => {
+    const r = await compile(`export function bad(: { syntax error`);
     expect(r.success).toBe(false);
     expect(r.importObject).toEqual({});
   });

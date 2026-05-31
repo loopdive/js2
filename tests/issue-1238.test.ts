@@ -64,7 +64,7 @@ interface InstantiateResult {
 }
 
 async function compileAndInstantiate(source: string, experimentalIR: boolean): Promise<InstantiateResult> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -168,11 +168,11 @@ describe("#1238 — pseudo-ExternClassInfo registration", () => {
   // imports). The 152 wasm_compile regressions in CI all surfaced from
   // this single mis-registration.
 
-  it("PR#149 regression — `new Array(10)` does NOT register `array_new` host import", () => {
+  it("PR#149 regression — `new Array(10)` does NOT register `array_new` host import", async () => {
     const source = `
       export function f(): number[] { const a = new Array(10); return a; }
     `;
-    const r = compile(source);
+    const r = await compile(source);
     expect(r.success, `compile errors: ${r.errors.map((e) => e.message).join(", ")}`).toBe(true);
     // The legacy compileNewExpression special-cases `className === "Array"`
     // and emits inline vec creation. After my fix, no `array_new` import
@@ -189,11 +189,11 @@ describe("#1238 — pseudo-ExternClassInfo registration", () => {
     expect(arrayCtorIntents.length).toBe(0);
   });
 
-  it("PR#149 regression — `new String('x')` does NOT register `string_new` host import", () => {
+  it("PR#149 regression — `new String('x')` does NOT register `string_new` host import", async () => {
     const source = `
       export function f(): string { const s = new String("x"); return s as unknown as string; }
     `;
-    const r = compile(source);
+    const r = await compile(source);
     expect(r.success, `compile errors: ${r.errors.map((e) => e.message).join(", ")}`).toBe(true);
     // The legacy `new String(x)` path uses `__new_String`, not
     // `string_new`. No `string_new` host import should appear.

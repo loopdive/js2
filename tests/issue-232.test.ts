@@ -4,7 +4,7 @@ import { buildImports, compileToWasm } from "./equivalence/helpers.js";
 
 describe("Issue #232: Method calls on object literals", () => {
   it("method call on object literal - simple", async () => {
-    const result = compile(`
+    const result = await compile(`
       const obj = { foo() { return 42; } };
       export function test(): number {
         return obj.foo();
@@ -21,7 +21,7 @@ describe("Issue #232: Method calls on object literals", () => {
   });
 
   it("method call with arguments", async () => {
-    const result = compile(`
+    const result = await compile(`
       const obj = { add(a: number, b: number) { return a + b; } };
       export function test(): number {
         return obj.add(10, 32);
@@ -38,7 +38,7 @@ describe("Issue #232: Method calls on object literals", () => {
   });
 
   it("valueOf on object literal", async () => {
-    const result = compile(`
+    const result = await compile(`
       const obj = { valueOf() { return 99; } };
       export function test(): number {
         return obj.valueOf();
@@ -55,7 +55,7 @@ describe("Issue #232: Method calls on object literals", () => {
   });
 
   it("multiple methods on same object", async () => {
-    const result = compile(`
+    const result = await compile(`
       const obj = {
         a() { return 1; },
         b() { return 2; },
@@ -75,7 +75,7 @@ describe("Issue #232: Method calls on object literals", () => {
   });
 
   it("method on object literal returned from function", async () => {
-    const result = compile(`
+    const result = await compile(`
       function makeObj() {
         return { getValue() { return 77; } };
       }
@@ -95,7 +95,7 @@ describe("Issue #232: Method calls on object literals", () => {
   });
 
   it("method accessing this.property", async () => {
-    const result = compile(`
+    const result = await compile(`
       const obj = {
         x: 10,
         getX() { return this.x; }

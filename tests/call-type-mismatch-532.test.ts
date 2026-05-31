@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn = "test"): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -49,7 +49,7 @@ describe("call type mismatch fix (#532)", { timeout: 30000 }, () => {
         return 1;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     // Should not throw during Module construction (Wasm validation)
     const mod = new WebAssembly.Module(result.binary);
     expect(mod).toBeTruthy();
@@ -76,7 +76,7 @@ describe("call type mismatch fix (#532)", { timeout: 30000 }, () => {
         return 0;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     const mod = new WebAssembly.Module(result.binary);
     expect(mod).toBeTruthy();
   });

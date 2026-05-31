@@ -22,7 +22,7 @@ import { buildWasiPolyfill } from "../src/runtime.js";
 
 /** Run a WASI module's `main`, capturing fd=1 (stdout) and fd=2 (stderr) bytes. */
 async function runWasi(source: string): Promise<{ stdout: string; stderr: string }> {
-  const result = compile(source, { target: "wasi" });
+  const result = await compile(source, { target: "wasi" });
   expect(result.success).toBe(true);
   const stdoutBytes: number[] = [];
   const stderrBytes: number[] = [];

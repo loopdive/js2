@@ -28,7 +28,7 @@ import { buildImports, wrapExports } from "../src/runtime.js";
  */
 
 async function runSingle(src: string): Promise<{ exports: Record<string, any> }> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -101,7 +101,7 @@ describe("#1308 — wrapExports makes Wasm closure returns JS-callable", () => {
   });
 
   it("lodash negate(jsFn): typeof guard cleared (#1304) + JS-callable (#1308)", async () => {
-    const r = compileProject("node_modules/lodash-es/negate.js", { allowJs: true });
+    const r = await compileProject("node_modules/lodash-es/negate.js", { allowJs: true });
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports);
     const exp = wrapExports(instance.exports);

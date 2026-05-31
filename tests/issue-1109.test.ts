@@ -3,7 +3,7 @@ import { compileMulti } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function instantiateMulti(files: Record<string, string>, entry: string, opts: any = { allowJs: true }) {
-  const r = compileMulti(files, entry, opts);
+  const r = await compileMulti(files, entry, opts);
   expect(r.success, `Compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

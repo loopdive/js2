@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("null pointer guards in codegen (#552)", () => {
-  it("compiles object destructuring without crashing on field access", () => {
+  it("compiles object destructuring without crashing on field access", async () => {
     // Ensures fields[idx] access is guarded and doesn't crash
-    const result = compile(`
+    const result = await compile(`
       interface Point { x: number; y: number }
       function extract(p: Point): number {
         const { x, y } = p;
@@ -19,9 +19,9 @@ describe("null pointer guards in codegen (#552)", () => {
     expect(fieldErrors).toHaveLength(0);
   });
 
-  it("compiles without errors when coercion paths are exercised", () => {
+  it("compiles without errors when coercion paths are exercised", async () => {
     // Ensure coerceType paths for f64/i32 -> externref don't leave stack imbalanced
-    const result = compile(`
+    const result = await compile(`
       function identity(x: any): any { return x; }
       const val: any = identity(42);
       export function check(): number { return val as number; }
@@ -31,9 +31,9 @@ describe("null pointer guards in codegen (#552)", () => {
     expect(stackErrors).toHaveLength(0);
   });
 
-  it("compile succeeds for class valueOf coercion patterns", () => {
+  it("compile succeeds for class valueOf coercion patterns", async () => {
     // Tests the funcType lookup guard in coerceType for valueOf
-    const result = compile(`
+    const result = await compile(`
       class Wrapper {
         constructor(public value: number) {}
         valueOf(): number { return this.value; }

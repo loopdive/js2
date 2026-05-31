@@ -38,7 +38,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string): Promise<{ exports: Record<string, Function> }> {
-  const result = compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
+  const result = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
   if (!result.success) {
     throw new Error(`compile failed:\n${result.errors.map((e) => `  L${e.line}:${e.column} ${e.message}`).join("\n")}`);
   }

@@ -13,7 +13,7 @@ import { buildImports } from "../src/runtime.js";
  */
 
 async function compileAndRun(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     return { success: false, value: undefined, error: result.errors.map((e) => e.message).join("; ") };
   }

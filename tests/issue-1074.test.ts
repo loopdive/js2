@@ -3,7 +3,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function run(code: string, opts?: { allowJs?: boolean; fileName?: string }) {
-  const r = compile(code, { fileName: opts?.fileName ?? "test.ts", allowJs: opts?.allowJs });
+  const r = await compile(code, { fileName: opts?.fileName ?? "test.ts", allowJs: opts?.allowJs });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

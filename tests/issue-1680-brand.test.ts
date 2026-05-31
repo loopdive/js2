@@ -9,7 +9,7 @@ import { buildImports } from "../src/runtime.ts";
 // method members are registered in classAccessorSet / classMethodSet, so the
 // brand check was skipped and a wrong-brand receiver silently misbehaved.
 async function run(source: string): Promise<number> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
   const imports = buildImports(r.imports, undefined, (r as any).stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

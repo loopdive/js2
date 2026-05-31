@@ -19,7 +19,7 @@ import { compile } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 
 async function runReturnNumber(src: string): Promise<number> {
-  const r: any = compile(src, { fileName: "test.ts" });
+  const r: any = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     const msg = r.errors.map((e: any) => e.message).join("\n");
     throw new Error(`compile failed:\n${msg}`);

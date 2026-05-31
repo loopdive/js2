@@ -67,7 +67,7 @@ function jsOracle(n: number): number {
 }
 
 async function compileAndRun(src: string, fn: string, args: number[] = []): Promise<number> {
-  const r = compile(src, { fileName: "t.js" });
+  const r = await compile(src, { fileName: "t.js" });
   if (!r.success) {
     throw new Error(`Compile failed: ${r.errors.map((e) => e.message).join(", ")}`);
   }
@@ -76,8 +76,8 @@ async function compileAndRun(src: string, fn: string, args: number[] = []): Prom
   return (instance.exports[fn] as (...a: number[]) => number)(...args);
 }
 
-function compileWat(src: string): string {
-  const r = compile(src, { fileName: "t.js" });
+async function compileWat(src: string): Promise<string> {
+  const r = await compile(src, { fileName: "t.js" });
   if (!r.success) {
     throw new Error(`Compile failed: ${r.errors.map((e) => e.message).join(", ")}`);
   }
@@ -97,8 +97,8 @@ describe("#1179 — array-sum hot loop perf", () => {
     expect(await compileAndRun(ARRAY_SUM_SRC, "run", [10_000])).toBe(jsOracle(10_000));
   });
 
-  it("fill-loop bitwise body emits native i32 ops (no per-op ToInt32 round-trip)", () => {
-    const wat = compileWat(ARRAY_SUM_SRC);
+  it("fill-loop bitwise body emits native i32 ops (no per-op ToInt32 round-trip)", async () => {
+    const wat = await compileWat(ARRAY_SUM_SRC);
     // Find the contiguous i32-only block that compiles `((i*17) ^ (i>>>3)) & 1023`.
     // After #1179 it must include i32.mul, i32.shr_u, i32.xor, and i32.and immediately
     // around `i32.const 1023`, with no f64 ops in between. The pre-#1179 codegen
@@ -114,8 +114,8 @@ describe("#1179 — array-sum hot loop perf", () => {
     expect(fillBody![0]).not.toMatch(/f64\./);
   });
 
-  it("array.get / array.set use i32 indices directly (no f64 round-trip)", () => {
-    const wat = compileWat(ARRAY_SUM_SRC);
+  it("array.get / array.set use i32 indices directly (no f64 round-trip)", async () => {
+    const wat = await compileWat(ARRAY_SUM_SRC);
     // After #1179, the index pushed immediately before each `array.set` /
     // `array.get` must be a `local.get` (the i32 loop var), NOT a
     // `f64.convert_i32_s` + `i32.trunc_sat_f64_s` round-trip on it.
@@ -133,7 +133,7 @@ describe("#1179 — array-sum hot loop perf", () => {
   });
 
   it("1M-element array-sum runs under a generous perf budget", async () => {
-    const r = compile(ARRAY_SUM_SRC, { fileName: "t.js" });
+    const r = await compile(ARRAY_SUM_SRC, { fileName: "t.js" });
     if (!r.success) {
       throw new Error(`Compile failed: ${r.errors.map((e) => e.message).join(", ")}`);
     }

@@ -2,15 +2,15 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 
 function shouldError(code: string, description: string) {
-  it(`should detect SyntaxError: ${description}`, () => {
-    const result = compile(code, { fileName: "test.ts" });
+  it(`should detect SyntaxError: ${description}`, async () => {
+    const result = await compile(code, { fileName: "test.ts" });
     expect(result.success).toBe(false);
   });
 }
 
 function shouldCompile(code: string, description: string) {
-  it(`should compile: ${description}`, () => {
-    const result = compile(code, { fileName: "test.ts" });
+  it(`should compile: ${description}`, async () => {
+    const result = await compile(code, { fileName: "test.ts" });
     expect(result.success).toBe(true);
   });
 }

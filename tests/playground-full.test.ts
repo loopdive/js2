@@ -28,28 +28,28 @@ function extractDefaultSource(): string {
 describe("full playground DEFAULT_SOURCE", () => {
   const source = extractDefaultSource();
 
-  it("compiles without errors", () => {
-    const result = compile(source);
+  it("compiles without errors", async () => {
+    const result = await compile(source);
     if (!result.success) {
       console.log("Compilation errors:", result.errors);
     }
     expect(result.success).toBe(true);
   });
 
-  it("validates as a wasm binary", () => {
-    const result = compile(source);
+  it("validates as a wasm binary", async () => {
+    const result = await compile(source);
     expect(result.success).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });
 
-  it("bench_dom function is present in WAT", () => {
-    const result = compile(source);
+  it("bench_dom function is present in WAT", async () => {
+    const result = await compile(source);
     expect(result.success).toBe(true);
     expect(result.wat).toContain("bench_dom");
   });
 
   it("can instantiate and call bench_array", async () => {
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
 
     // Build env like the playground does
@@ -149,7 +149,7 @@ describe("full playground DEFAULT_SOURCE", () => {
   });
 
   it("can instantiate and call bench_dom without trapping", async () => {
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
 
     // Build more realistic DOM mocks

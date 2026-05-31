@@ -106,7 +106,7 @@ describe("BindingElement null guard (#821)", () => {
         return f.bar({ x: 10, y: 20 });
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     if (!result.success) return; // Skip if compile fails
     const imports = buildImports(result);
     try {

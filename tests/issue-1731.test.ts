@@ -29,7 +29,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function runExport(source: string, name: string): Promise<unknown> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }

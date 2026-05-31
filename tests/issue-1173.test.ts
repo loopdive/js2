@@ -49,18 +49,18 @@ export function run(n) {
 `;
 
 describe("#1173 — no exact-ref encodings in --target wasi output", () => {
-  it("compiles array-sum kernel with target: wasi", () => {
-    const result = compile(ARRAY_SUM_SOURCE, { fileName: "array-sum.js", allowJs: true, target: "wasi" });
+  it("compiles array-sum kernel with target: wasi", async () => {
+    const result = await compile(ARRAY_SUM_SOURCE, { fileName: "array-sum.js", allowJs: true, target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.binary.byteLength).toBeGreaterThan(0);
   });
 
-  it("does not declare any struct as `sub final` for --target wasi (#1173)", () => {
+  it("does not declare any struct as `sub final` for --target wasi (#1173)", async () => {
     // markLeafStructsFinal is now skipped for wasi, so no struct type should
     // be encoded with the sub_final opcode. Without this, `wasm-opt
     // --all-features` re-emits `(ref $T)` as `(ref exact $T)`, which wasmtime
     // 44 rejects with "custom descriptors required for exact reference types".
-    const result = compile(ARRAY_SUM_SOURCE, { fileName: "array-sum.js", allowJs: true, target: "wasi" });
+    const result = await compile(ARRAY_SUM_SOURCE, { fileName: "array-sum.js", allowJs: true, target: "wasi" });
     expect(result.success).toBe(true);
 
     // The WAT printer emits `(sub final $parent ...)` for any struct whose
@@ -70,7 +70,7 @@ describe("#1173 — no exact-ref encodings in --target wasi output", () => {
     expect(result.wat).not.toMatch(/\bsub final\b/);
   });
 
-  it("still emits `sub final` for the default GC (browser) target — V8 devirt preserved", () => {
+  it("still emits `sub final` for the default GC (browser) target — V8 devirt preserved", async () => {
     // The opt-in for V8 devirtualization (#594) is preserved for --target gc.
     // We use a minimal class hierarchy because the array-sum kernel doesn't
     // create any subtyped structs of its own; the leaf-final structs in the
@@ -80,7 +80,7 @@ describe("#1173 — no exact-ref encodings in --target wasi output", () => {
       class B extends A { y: number = 0; }
       export function make(): B { return new B(); }
     `;
-    const result = compile(src, { fileName: "leaf.ts", target: "gc" });
+    const result = await compile(src, { fileName: "leaf.ts", target: "gc" });
     expect(result.success).toBe(true);
     expect(result.wat).toMatch(/\bsub final\b/);
   });

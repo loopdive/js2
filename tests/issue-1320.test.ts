@@ -8,7 +8,7 @@ import { buildImports } from "../src/runtime.ts";
 // "items[Symbol.iterator] … must be a function"; the runtime bridge must drive
 // the closure-backed iterator protocol manually instead.
 async function run(src: string, fn = "test"): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true } as never);
+  const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true } as never);
   if (!r.success) throw new Error("CE: " + (r.errors?.[0]?.message ?? "unknown"));
   const imports = buildImports(r.imports, undefined, r.stringPool) as never as {
     env: Record<string, Function>;

@@ -3,8 +3,8 @@ import { compile } from "../src/index.ts";
 import { buildWasiPolyfill } from "../src/runtime.ts";
 
 describe("WASI fd_write polyfill (#865)", () => {
-  it("console.log hello world runs in JS via WASI polyfill", () => {
-    const result = compile(`console.log("hello world");`, {
+  it("console.log hello world runs in JS via WASI polyfill", async () => {
+    const result = await compile(`console.log("hello world");`, {
       fileName: "test.ts",
       target: "wasi",
     });
@@ -28,8 +28,8 @@ describe("WASI fd_write polyfill (#865)", () => {
     spy.mockRestore();
   });
 
-  it("console.error routes to stderr (fd=2)", () => {
-    const result = compile(`console.error("oops");`, {
+  it("console.error routes to stderr (fd=2)", async () => {
+    const result = await compile(`console.error("oops");`, {
       fileName: "test.ts",
       target: "wasi",
     });

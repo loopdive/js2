@@ -45,10 +45,10 @@ describe("Incremental Language Service Compiler", () => {
     expect(double(21)).toBe(42);
   });
 
-  it("produces same results as non-incremental compile", () => {
+  it("produces same results as non-incremental compile", async () => {
     const source = "export function add(a: number, b: number): number { return a + b; }";
     const incResult = compiler.compile(source);
-    const stdResult = compile(source);
+    const stdResult = await compile(source);
 
     expect(incResult.success).toBe(stdResult.success);
     expect(incResult.errors.filter((e) => e.severity === "error").length).toBe(

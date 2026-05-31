@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("linear-memory integration", { timeout: 30_000 }, () => {
   it("compiles a LEB128 decoder (linker-like code)", async () => {
-    const result = compile(
+    const result = await compile(
       `
       class ByteReader {
         data: number[];
@@ -60,7 +60,7 @@ describe("linear-memory integration", { timeout: 30_000 }, () => {
   });
 
   it("compiles a Map-based counter (linker-like pattern)", async () => {
-    const result = compile(
+    const result = await compile(
       `
       export function test(): number {
         const counts = new Map<number, number>();
@@ -84,7 +84,7 @@ describe("linear-memory integration", { timeout: 30_000 }, () => {
   });
 
   it("compiles class with field mutation and multiple methods", async () => {
-    const result = compile(
+    const result = await compile(
       `
       class Stack {
         items: number[];

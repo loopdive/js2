@@ -11,7 +11,7 @@ describe("#1623 extern.convert_any double-wrap on already-externref receiver", (
       C.getAccess;
       export function test(): number { return 1; }
     `;
-    const r = compile(src, { fileName: "t.ts", skipSemanticDiagnostics: true });
+    const r = await compile(src, { fileName: "t.ts", skipSemanticDiagnostics: true });
     expect(r.success).toBe(true);
     // Validate the module compiles — instantiation may need host imports
     // but byte-level Wasm validation must succeed.
@@ -26,7 +26,7 @@ describe("#1623 extern.convert_any double-wrap on already-externref receiver", (
       C.probe;
       export function test(): number { return 1; }
     `;
-    const r = compile(src, { fileName: "t.ts", skipSemanticDiagnostics: true });
+    const r = await compile(src, { fileName: "t.ts", skipSemanticDiagnostics: true });
     expect(r.success).toBe(true);
     await expect(WebAssembly.compile(r.binary)).resolves.toBeDefined();
   });

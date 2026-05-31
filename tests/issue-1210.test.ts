@@ -23,8 +23,8 @@ import { compile } from "../src/index.js";
  * `nativeStrings`) — that's the path the optimization gates on.
  */
 describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", () => {
-  function compileWasi(source: string) {
-    return compile(source, { fileName: "t.js", allowJs: true, target: "wasi", optimize: 0 });
+  async function compileWasi(source: string) {
+    return await compile(source, { fileName: "t.js", allowJs: true, target: "wasi", optimize: 0 });
   }
 
   it("char-by-char append over 20 000 iterations produces correct length and last char", async () => {
@@ -61,7 +61,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return s.charCodeAt(n - 1);
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -94,7 +94,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return hash | 0;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -130,7 +130,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return c0 * 1000000 + c100 * 1000 + c1023;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -150,7 +150,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return s.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -171,7 +171,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return s.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -187,7 +187,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return s.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -206,7 +206,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return s.length + s.charCodeAt(50);
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -228,7 +228,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return s.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -249,7 +249,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return s.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -268,7 +268,7 @@ describe("#1210 — string-builder rewrite for `let s = ''; for (...) s += c`", 
         return s.length;
       }
     `;
-    const r = compile(src, { fileName: "t.ts" });
+    const r = await compile(src, { fileName: "t.ts" });
     expect(r.success).toBe(true);
     await WebAssembly.compile(r.binary);
   });

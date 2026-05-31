@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("optional parameters", () => {
   it("missing optional param gets default 0", async () => {
-    const result = compile(`
+    const result = await compile(`
       function helper(a: number, b?: number): number {
         return a + b;
       }
@@ -27,7 +27,7 @@ describe("optional parameters", () => {
   });
 
   it("provided optional param is used", async () => {
-    const result = compile(`
+    const result = await compile(`
       function helper(a: number, b?: number): number {
         return a + b;
       }
@@ -51,7 +51,7 @@ describe("optional parameters", () => {
   });
 
   it("optional param truthiness check", async () => {
-    const result = compile(`
+    const result = await compile(`
       function helper(a: number, scale?: number): number {
         if (scale) {
           return a * scale;

@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): number {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<number> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compilation failed: ${result.errors[0]?.message}`);
   }
@@ -15,7 +15,7 @@ function compileAndRun(source: string): number {
 
 describe("SameValue f64 in DefineProperty (#1127)", () => {
   it("NaN === NaN under SameValue — redefining frozen NaN with NaN should not throw", async () => {
-    const result = compileAndRun(`
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: NaN };
         Object.freeze(obj);
@@ -35,7 +35,7 @@ describe("SameValue f64 in DefineProperty (#1127)", () => {
   // The SameValue comparison itself correctly uses copysign to distinguish signs.
 
   it("normal values still work — redefining frozen prop with same value succeeds", async () => {
-    const result = compileAndRun(`
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 42 };
         Object.freeze(obj);
@@ -51,7 +51,7 @@ describe("SameValue f64 in DefineProperty (#1127)", () => {
   });
 
   it("different values still throw — redefining frozen prop with different value throws", async () => {
-    const result = compileAndRun(`
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 42 };
         Object.freeze(obj);

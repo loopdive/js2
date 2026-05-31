@@ -42,8 +42,8 @@ export function run(n) {
 }
 `;
 
-function compileToWat(source: string): { wat: string; binary: Uint8Array } {
-  const result = compile(source, { fileName: "t.js", target: "wasi", nativeStrings: true });
+async function compileToWat(source: string): Promise<{ wat: string; binary: Uint8Array }> {
+  const result = await compile(source, { fileName: "t.js", target: "wasi", nativeStrings: true });
   expect(result.success, `Compile failed: ${result.errors?.map((e) => e.message).join("; ")}`).toBe(true);
   const mod = binaryen.readBinary(result.binary);
   const wat = mod.emitText();
@@ -52,8 +52,8 @@ function compileToWat(source: string): { wat: string; binary: Uint8Array } {
 }
 
 describe("#1744 — string-builder single-char append fast path", () => {
-  it("eliminates the per-charAt __str_charAt call in the build loop", () => {
-    const { wat } = compileToWat(STRING_HASH_SOURCE);
+  it("eliminates the per-charAt __str_charAt call in the build loop", async () => {
+    const { wat } = await compileToWat(STRING_HASH_SOURCE);
     // The build loop (`text += alphabet.charAt(x)`) must no longer call
     // __str_charAt — that helper allocates a 1-char $NativeString. The fast
     // path reads the code unit inline (`array.get_u`) and array.sets it.
@@ -63,12 +63,12 @@ describe("#1744 — string-builder single-char append fast path", () => {
   });
 
   it("compiles to a binary that WebAssembly.compile accepts", async () => {
-    const { binary } = compileToWat(STRING_HASH_SOURCE);
+    const { binary } = await compileToWat(STRING_HASH_SOURCE);
     await expect(WebAssembly.compile(binary)).resolves.toBeDefined();
   });
 
-  it('single-char-literal append (buf += ";") emits no __str_concat / __str_charAt', () => {
-    const { wat } = compileToWat(`
+  it('single-char-literal append (buf += ";") emits no __str_concat / __str_charAt', async () => {
+    const { wat } = await compileToWat(`
       export function run(n) {
         let s = "";
         for (let i = 0; i < n; i++) { s += ";"; }
@@ -98,7 +98,7 @@ describe("#1744 — string-builder single-char append fast path", () => {
         return h | 0;
       }
     `;
-    const result = compile(src, { fileName: "b.js", target: "wasi", nativeStrings: true });
+    const result = await compile(src, { fileName: "b.js", target: "wasi", nativeStrings: true });
     expect(result.success).toBe(true);
     const mod = await WebAssembly.compile(result.binary);
     const inst = await WebAssembly.instantiate(mod, {

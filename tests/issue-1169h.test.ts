@@ -51,7 +51,7 @@ interface InstantiateResult {
 }
 
 async function compileAndInstantiate(source: string, experimentalIR: boolean): Promise<InstantiateResult> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -309,7 +309,7 @@ describe("#1169h slice 9 — IR throw / try / catch / finally", () => {
       }
       export function test(): number { return a() + b(); }
     `;
-    const r = compile(source, { experimentalIR: true });
+    const r = await compile(source, { experimentalIR: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     const built = buildImports(r.imports, ENV_STUB, r.stringPool);

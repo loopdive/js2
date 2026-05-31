@@ -59,8 +59,8 @@ export function run(n) {
 `;
 
 describe("#1580 — string-hash benchmark validator + perf", () => {
-  it("compiles the WASI standalone string-hash artifact without errors", () => {
-    const result = compile(STRING_HASH_SOURCE, {
+  it("compiles the WASI standalone string-hash artifact without errors", async () => {
+    const result = await compile(STRING_HASH_SOURCE, {
       fileName: "string-hash.js",
       target: "wasi",
       nativeStrings: true,
@@ -74,7 +74,7 @@ describe("#1580 — string-hash benchmark validator + perf", () => {
   });
 
   it("emits a binary that WebAssembly.compile accepts (GC + function-references)", async () => {
-    const result = compile(STRING_HASH_SOURCE, {
+    const result = await compile(STRING_HASH_SOURCE, {
       fileName: "string-hash.js",
       target: "wasi",
       nativeStrings: true,
@@ -87,8 +87,8 @@ describe("#1580 — string-hash benchmark validator + perf", () => {
     await expect(WebAssembly.compile(result.binary)).resolves.toBeDefined();
   });
 
-  it("inner hash loop uses inline array.get_u (not a host call per character)", () => {
-    const result = compile(STRING_HASH_SOURCE, {
+  it("inner hash loop uses inline array.get_u (not a host call per character)", async () => {
+    const result = await compile(STRING_HASH_SOURCE, {
       fileName: "string-hash.js",
       target: "wasi",
       nativeStrings: true,
@@ -106,8 +106,8 @@ describe("#1580 — string-hash benchmark validator + perf", () => {
     expect(result.wat).toContain("__str_buf_next_cap");
   });
 
-  it("string-builder read caches the materialized $NativeString", () => {
-    const result = compile(STRING_HASH_SOURCE, {
+  it("string-builder read caches the materialized $NativeString", async () => {
+    const result = await compile(STRING_HASH_SOURCE, {
       fileName: "string-hash.js",
       target: "wasi",
       nativeStrings: true,
@@ -119,8 +119,8 @@ describe("#1580 — string-hash benchmark validator + perf", () => {
     expect(result.wat).toMatch(/\$text\$mat\b/);
   });
 
-  it("hash receiver code reuses the cached materialization across length and charCodeAt", () => {
-    const result = compile(STRING_HASH_SOURCE, {
+  it("hash receiver code reuses the cached materialization across length and charCodeAt", async () => {
+    const result = await compile(STRING_HASH_SOURCE, {
       fileName: "string-hash.js",
       target: "wasi",
       nativeStrings: true,

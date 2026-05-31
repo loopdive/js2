@@ -22,7 +22,7 @@ describe("#1015 — fixture tests execute in unified mode", () => {
       "./instn-iee-err-dflt-thru-star-int_FIXTURE.js": fixtureSrc,
     };
 
-    const result = compileMulti(vfiles, "./test.ts", { skipSemanticDiagnostics: true });
+    const result = await compileMulti(vfiles, "./test.ts", { skipSemanticDiagnostics: true });
     // Negative resolution-phase test: compile should fail (SyntaxError expected)
     // OR succeed (if ts2wasm doesn't detect the module error)
     // Either way: no crash, result is defined
@@ -49,7 +49,7 @@ describe("#1015 — fixture tests execute in unified mode", () => {
       "./helper_FIXTURE.js": helperSrc,
     };
 
-    const result = compileMulti(vfiles, "./test.ts", { skipSemanticDiagnostics: true });
+    const result = await compileMulti(vfiles, "./test.ts", { skipSemanticDiagnostics: true });
     expect(result.success).toBe(true);
     expect(result.binary.length).toBeGreaterThan(0);
 

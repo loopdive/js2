@@ -13,8 +13,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function run(source: string): { ok: boolean; result?: any; error?: string } {
-  const r = compile(source, { fileName: "test.ts" });
+async function run(source: string): Promise<{ ok: boolean; result?: any; error?: string }> {
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) return { ok: false, error: r.errors[0]?.message };
   try {
     const imports = buildImports(r.imports, undefined, r.stringPool);
@@ -28,8 +28,8 @@ function run(source: string): { ok: boolean; result?: any; error?: string } {
 }
 
 describe("Issue #1051: static private field round-trip", () => {
-  it("C.#field = x; return C.#field — returns x", () => {
-    const r = run(`
+  it("C.#field = x; return C.#field — returns x", async () => {
+    const r = await run(`
       class C {
         static #a: any;
         static put(value: any): any {
@@ -46,8 +46,8 @@ describe("Issue #1051: static private field round-trip", () => {
     expect(r.result).toBe(1);
   });
 
-  it("multiple distinct static private fields stay distinct", () => {
-    const r = run(`
+  it("multiple distinct static private fields stay distinct", async () => {
+    const r = await run(`
       class C {
         static #a: any;
         static #b: any;
@@ -68,8 +68,8 @@ describe("Issue #1051: static private field round-trip", () => {
     expect(r.result).toBe(1);
   });
 
-  it("overwriting a static private field reflects on next read", () => {
-    const r = run(`
+  it("overwriting a static private field reflects on next read", async () => {
+    const r = await run(`
       class C {
         static #x: any;
         static set(v: any): any { C.#x = v; return C.#x; }

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("ClassExpression in various positions (#330)", () => {
   it("class expression in variable initializer with new", async () => {
-    const result = compile(`
+    const result = await compile(`
       const C = class {
         x: number;
         constructor(x: number) {
@@ -33,7 +33,7 @@ describe("ClassExpression in various positions (#330)", () => {
   });
 
   it("named class expression", async () => {
-    const result = compile(`
+    const result = await compile(`
       const MyClass = class MyClassExpr {
         n: number;
         constructor(n: number) {
@@ -63,7 +63,7 @@ describe("ClassExpression in various positions (#330)", () => {
   });
 
   it("class expression with extends", async () => {
-    const result = compile(`
+    const result = await compile(`
       class Base {
         x: number;
         constructor(x: number) {
@@ -103,7 +103,7 @@ describe("ClassExpression in various positions (#330)", () => {
   });
 
   it("class expression inside a function body", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         const Inner = class {
           v: number;
@@ -133,7 +133,7 @@ describe("ClassExpression in various positions (#330)", () => {
   });
 
   it("class expression in new expression (inline)", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         const obj = new (class {
           value: number;
@@ -162,7 +162,7 @@ describe("ClassExpression in various positions (#330)", () => {
   });
 
   it("class expression with static-like pattern (multiple instances)", async () => {
-    const result = compile(`
+    const result = await compile(`
       const Pair = class {
         a: number;
         b: number;
@@ -195,7 +195,7 @@ describe("ClassExpression in various positions (#330)", () => {
   });
 
   it("class expression with no constructor", async () => {
-    const result = compile(`
+    const result = await compile(`
       const Simple = class {
         x: number = 5;
         getX(): number {
@@ -223,7 +223,7 @@ describe("ClassExpression in various positions (#330)", () => {
 
   it("class expression assigned via binary expression with known type", async () => {
     // Use a class expression assigned via = but with proper type inference
-    const result = compile(`
+    const result = await compile(`
       class Base {
         val: number;
         constructor(v: number) {

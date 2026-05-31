@@ -25,7 +25,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runFn(source: string, exportName: string): Promise<unknown> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message ?? "?"}`);
   const importResult = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, importResult as any);

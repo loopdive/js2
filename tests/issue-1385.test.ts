@@ -36,7 +36,7 @@ describe("issue #1385 — Temporal/Duration/from/argument-non-string.js does not
     const wrapped = wrapTest(src);
 
     const t0 = Date.now();
-    const r = compile(wrapped.source, { fileName: "test.ts" });
+    const r = await compile(wrapped.source, { fileName: "test.ts" });
     expect(
       r.success,
       `compile failed: ${r.errors

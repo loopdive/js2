@@ -46,7 +46,7 @@ describe("peephole: local.get/tee + drop elimination (#947)", () => {
     expect(exports["test"]!()).toBe(10);
   });
 
-  it("compiled binary validates as correct Wasm", () => {
+  it("compiled binary validates as correct Wasm", async () => {
     const src = `
       export function test(): number {
         let x = 10;
@@ -54,7 +54,7 @@ describe("peephole: local.get/tee + drop elimination (#947)", () => {
         return y;
       }
     `;
-    const result = compile(src, { fileName: "test.ts" });
+    const result = await compile(src, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });

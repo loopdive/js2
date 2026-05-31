@@ -3,7 +3,7 @@ import { compile } from "../src/index";
 import { buildImports } from "../src/runtime";
 
 async function run(src: string): Promise<number> {
-  const r = compile(src, { fileName: "t.ts" });
+  const r = await compile(src, { fileName: "t.ts" });
   if (!r.success) throw new Error("CE: " + r.errors?.[0]?.message);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

@@ -54,7 +54,7 @@ function buildImports(result: CompileResult): WebAssembly.Imports {
 }
 
 async function compileToWasm(source: string, allowJs = false) {
-  const result = compile(source, allowJs ? { allowJs: true, fileName: "input.js" } : undefined);
+  const result = await compile(source, allowJs ? { allowJs: true, fileName: "input.js" } : undefined);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -65,8 +65,8 @@ async function compileToWasm(source: string, allowJs = false) {
 }
 
 describe("Issue #379: Tuple/destructuring type errors", () => {
-  it("empty array destructuring var [] = [] compiles in TS mode", () => {
-    const result = compile(`
+  it("empty array destructuring var [] = [] compiles in TS mode", async () => {
+    const result = await compile(`
       export function test(): number {
         var [] = [];
         return 0;
@@ -75,8 +75,8 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(result.success).toBe(true);
   });
 
-  it("empty array destructuring var [] = [] compiles in JS mode", () => {
-    const result = compile(
+  it("empty array destructuring var [] = [] compiles in JS mode", async () => {
+    const result = await compile(
       `
       function test() {
         var [] = [];
@@ -88,9 +88,9 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(result.success).toBe(true);
   });
 
-  it("var [x] = [] -- destructure from empty array (test262 pattern)", () => {
+  it("var [x] = [] -- destructure from empty array (test262 pattern)", async () => {
     // This triggers TS diagnostic 2493 which should be downgraded
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         var [x] = [];
         return 0;
@@ -144,8 +144,8 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(exports.test()).toBe(3);
   });
 
-  it("object destructuring of boolean (test262: obj-empty-bool)", () => {
-    const result = compile(`
+  it("object destructuring of boolean (test262: obj-empty-bool)", async () => {
+    const result = await compile(`
       export function test(): number {
         var result;
         var vals = false;
@@ -156,8 +156,8 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(result.success).toBe(true);
   });
 
-  it("object destructuring of number (test262: obj-empty-num)", () => {
-    const result = compile(`
+  it("object destructuring of number (test262: obj-empty-num)", async () => {
+    const result = await compile(`
       export function test(): number {
         var result;
         var vals = 42;
@@ -168,8 +168,8 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(result.success).toBe(true);
   });
 
-  it("object rest on number (test262: obj-rest-number)", () => {
-    const result = compile(`
+  it("object rest on number (test262: obj-rest-number)", async () => {
+    const result = await compile(`
       export function test(): number {
         var rest;
         var result;
@@ -181,8 +181,8 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(result.success).toBe(true);
   });
 
-  it("statement-level object rest element has no field error", () => {
-    const result = compile(`
+  it("statement-level object rest element has no field error", async () => {
+    const result = await compile(`
       export function test(): number {
         var obj = { a: 10, b: 20, c: 30 };
         var { a, ...rest } = obj;
@@ -194,8 +194,8 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(result.success).toBe(true);
   });
 
-  it("destructuring with unknown source type in JS mode", () => {
-    const result = compile(
+  it("destructuring with unknown source type in JS mode", async () => {
+    const result = await compile(
       `
       function test(x) {
         var { a, b } = x;
@@ -207,8 +207,8 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(result.success).toBe(true);
   });
 
-  it("array destructuring on unknown type in JS mode", () => {
-    const result = compile(
+  it("array destructuring on unknown type in JS mode", async () => {
+    const result = await compile(
       `
       function test(x) {
         var [a, b] = x;
@@ -231,8 +231,8 @@ describe("Issue #379: Tuple/destructuring type errors", () => {
     expect(exports.test()).toBe(60);
   });
 
-  it("empty array pattern with non-empty RHS compiles", () => {
-    const result = compile(`
+  it("empty array pattern with non-empty RHS compiles", async () => {
+    const result = await compile(`
       export function test(): number {
         var [] = [1, 2, 3];
         return 42;

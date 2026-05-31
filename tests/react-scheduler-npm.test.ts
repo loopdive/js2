@@ -16,7 +16,7 @@ import { buildImports } from "../src/runtime.js";
 // Helper: compile + instantiate + call exported function
 // ---------------------------------------------------------------------------
 async function run(source: string, fn: string = "test", args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -285,13 +285,13 @@ function compare(a, b) {
 describe("React Scheduler NPM min-heap", () => {
   // === Section 1: TypeScript-annotated port compiles and runs ===
   describe("TypeScript-annotated port (from npm source)", () => {
-    it("compiles the TypeScript-annotated heap source", () => {
+    it("compiles the TypeScript-annotated heap source", async () => {
       const source =
         HEAP_TS_SOURCE +
         `
 export function test(): number { return 1; }
 `;
-      const result = compile(source);
+      const result = await compile(source);
       if (!result.success) {
         console.log("Compile errors:");
         for (const e of result.errors) {
@@ -502,7 +502,7 @@ export function test(): number {
 
   // === Section 2: Raw JS source from npm with allowJs ===
   describe("raw JS source from npm (allowJs)", () => {
-    it("attempts to compile the original JS min-heap functions", () => {
+    it("attempts to compile the original JS min-heap functions", async () => {
       // This tests whether the raw minified JS from the npm package
       // can be parsed and compiled by js2wasm with allowJs: true.
       // We expect this to fail because the original source uses patterns
@@ -517,7 +517,7 @@ export function test(): number {
         `
 export function test() { return 1; }
 `;
-      const result = compile(source, { allowJs: true });
+      const result = await compile(source, { allowJs: true });
 
       // Document what happened
       console.log("\n=== Raw JS compilation result ===");
@@ -582,7 +582,7 @@ export function test(): number {
   return r2.sortIndex;
 }
 `;
-      const result = compile(source);
+      const result = await compile(source);
       if (!result.success) {
         console.log("Ternary peek compile errors:");
         for (const e of result.errors) {
@@ -635,7 +635,7 @@ export function test(): number {
   return 0;
 }
 `;
-      const result = compile(source);
+      const result = await compile(source);
       if (!result.success) {
         console.log("Ternary compare compile errors:");
         for (const e of result.errors) {
@@ -650,7 +650,7 @@ export function test(): number {
       }
     });
 
-    it("compiles comma-operator assignment (original sift pattern)", () => {
+    it("compiles comma-operator assignment (original sift pattern)", async () => {
       // Original siftDown uses comma expressions:
       //   (heap[index] = right), (heap[rightIndex] = last), (index = rightIndex)
       // Test if comma expressions compile
@@ -664,11 +664,11 @@ export function test(): number {
   return a + b;
 }
 `;
-      const result = compile(source);
+      const result = await compile(source);
       expect(result.success).toBe(true);
     });
 
-    it("documents >>> (unsigned right shift) support", () => {
+    it("documents >>> (unsigned right shift) support", async () => {
       // Original uses (index - 1) >>> 1 for parent index calculation
       const source = `
 export function test(): number {
@@ -677,7 +677,7 @@ export function test(): number {
   return y;
 }
 `;
-      const result = compile(source);
+      const result = await compile(source);
       console.log(`\n>>> operator compiles: ${result.success}`);
       if (!result.success) {
         for (const e of result.errors) {

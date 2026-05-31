@@ -3,7 +3,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function runTS(src: string): Promise<any> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -11,7 +11,7 @@ async function runTS(src: string): Promise<any> {
 }
 
 async function runTSNoTrap(src: string): Promise<any> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) return { error: "CE", message: r.errors[0]?.message };
   try {
     const imports = buildImports(r.imports, undefined, r.stringPool);

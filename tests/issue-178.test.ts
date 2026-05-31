@@ -13,7 +13,7 @@ import { buildImports } from "../src/runtime.js";
 async function compileAndValidate(
   source: string,
 ): Promise<{ valid: boolean; instance?: WebAssembly.Instance; error?: string }> {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success || result.errors.some((e) => e.severity === "error")) {
     return {
       valid: false,

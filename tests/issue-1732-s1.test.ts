@@ -23,7 +23,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runExpectThrow(source: string): Promise<"TypeError" | "no-throw" | string> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) return `CE: ${r.errors[0]?.message ?? "?"}`;
   const io = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, io as any);
@@ -37,7 +37,7 @@ async function runExpectThrow(source: string): Promise<"TypeError" | "no-throw" 
 }
 
 async function runValue(source: string): Promise<unknown> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message ?? "?"}`);
   const io = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, io as any);

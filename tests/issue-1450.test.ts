@@ -6,7 +6,7 @@ import { parseMeta, wrapTest } from "./test262-runner.js";
 async function runWrapped(body: string): Promise<number> {
   const meta = parseMeta(body);
   const { source } = wrapTest(body, meta);
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports as any);

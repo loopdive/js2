@@ -61,7 +61,7 @@ describe("#1400 ESLint Tier 1 — Config_new duplicate extern.convert_any", () =
    * `fixupExternConvertAny` pass scrubs the duplicates and the binary
    * validates.
    */
-  it("emits valid Wasm for `this.r = c.a[x]` in a class constructor", () => {
+  it("emits valid Wasm for `this.r = c.a[x]` in a class constructor", async () => {
     const entry = writeEntry(
       "ctor-chained-elem-access.js",
       `class C {
@@ -73,7 +73,7 @@ describe("#1400 ESLint Tier 1 — Config_new duplicate extern.convert_any", () =
 module.exports = { C };
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -86,7 +86,7 @@ module.exports = { C };
    * `fixCallArgTypesInBody` walker through several `__extern_set` /
    * `__extern_get` call sites in sequence.
    */
-  it("emits valid Wasm for Config-shaped constructor with destructuring + chained accesses", () => {
+  it("emits valid Wasm for Config-shaped constructor with destructuring + chained accesses", async () => {
     const entry = writeEntry(
       "config-shaped-ctor.js",
       `function splitPluginIdentifier(id) {
@@ -111,7 +111,7 @@ class Config {
 module.exports = { Config };
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -125,7 +125,7 @@ module.exports = { Config };
    * consecutive `extern.convert_any` opcodes appear in any function body
    * (the GC opcodes `fb 1b fb 1b` are the binary signature of the bug).
    */
-  it("never emits consecutive extern.convert_any opcodes in the produced binary", () => {
+  it("never emits consecutive extern.convert_any opcodes in the produced binary", async () => {
     const entry = writeEntry(
       "no-consec-extern.js",
       `class C {
@@ -139,7 +139,7 @@ module.exports = { Config };
 module.exports = { C };
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     // Scan the binary for `fb 1b fb 1b` (two consecutive GC-prefix

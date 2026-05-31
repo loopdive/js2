@@ -6,8 +6,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-function compileAndRun(source: string): any {
-  const result = compile(source, "test.ts");
+async function compileAndRun(source: string): Promise<any> {
+  const result = await compile(source, "test.ts");
   if (!result.binary || result.binary.length === 0) {
     throw new Error("Compilation failed: " + (result.errors?.map((e: any) => e.message).join("; ") || "empty binary"));
   }
@@ -18,8 +18,8 @@ function compileAndRun(source: string): any {
 }
 
 describe("illegal cast guard (#648)", () => {
-  it("vec-to-tuple: array literal passed to destructuring function parameter", () => {
-    const exports = compileAndRun(`
+  it("vec-to-tuple: array literal passed to destructuring function parameter", async () => {
+    const exports = await compileAndRun(`
       function destructure([x, y, z]: number[]): number {
         return x + y + z;
       }
@@ -30,8 +30,8 @@ describe("illegal cast guard (#648)", () => {
     expect(exports.test()).toBe(60);
   });
 
-  it("vec-to-tuple: multiple elements with coercion", () => {
-    const exports = compileAndRun(`
+  it("vec-to-tuple: multiple elements with coercion", async () => {
+    const exports = await compileAndRun(`
       function first([a, b]: number[]): number {
         return a;
       }
@@ -42,8 +42,8 @@ describe("illegal cast guard (#648)", () => {
     expect(exports.test()).toBe(42);
   });
 
-  it("struct narrowing: larger struct cast to smaller subset", () => {
-    const exports = compileAndRun(`
+  it("struct narrowing: larger struct cast to smaller subset", async () => {
+    const exports = await compileAndRun(`
       function getEnum(obj: { enumerable: number }): number {
         return obj.enumerable;
       }
@@ -55,8 +55,8 @@ describe("illegal cast guard (#648)", () => {
     expect(exports.test()).toBe(1);
   });
 
-  it("closure via externref: function passed as externref callback", () => {
-    const exports = compileAndRun(`
+  it("closure via externref: function passed as externref callback", async () => {
+    const exports = await compileAndRun(`
       function callFn(fn: () => number): number {
         return fn();
       }
@@ -68,8 +68,8 @@ describe("illegal cast guard (#648)", () => {
     expect(exports.test()).toBe(42);
   });
 
-  it("nested destructuring with array", () => {
-    const exports = compileAndRun(`
+  it("nested destructuring with array", async () => {
+    const exports = await compileAndRun(`
       function sum([a, b, c]: number[]): number {
         return a + b + c;
       }

@@ -22,8 +22,8 @@ function buildImports(wasmModule: WebAssembly.Module): Record<string, Record<str
   return importObj;
 }
 
-function compileAndRun(code: string): number {
-  const result = compile(code);
+async function compileAndRun(code: string): Promise<number> {
+  const result = await compile(code);
   expect(result.success).toBe(true);
   const wasmModule = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(wasmModule, buildImports(wasmModule));
@@ -32,8 +32,8 @@ function compileAndRun(code: string): number {
 }
 
 describe("TDZ runtime enforcement (#723)", () => {
-  test("module-level: reading let before declaration throws ReferenceError", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("module-level: reading let before declaration throws ReferenceError", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       function readX(): number { return x; }
       let caught = false;
       try { readX(); } catch (e) { caught = true; }
@@ -43,8 +43,8 @@ describe("TDZ runtime enforcement (#723)", () => {
     expect(val).toBe(1);
   });
 
-  test("module-level: let without initializer still ends TDZ", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("module-level: let without initializer still ends TDZ", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       function readX(): number { return x; }
       let caught = false;
       try { readX(); } catch (e) { caught = true; }
@@ -54,8 +54,8 @@ describe("TDZ runtime enforcement (#723)", () => {
     expect(val).toBe(1);
   });
 
-  test("module-level: const before declaration throws ReferenceError", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("module-level: const before declaration throws ReferenceError", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       function readX(): number { return x; }
       let caught = false;
       try { readX(); } catch (e) { caught = true; }
@@ -65,8 +65,8 @@ describe("TDZ runtime enforcement (#723)", () => {
     expect(val).toBe(1);
   });
 
-  test("module-level: var has NO TDZ (hoisted)", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("module-level: var has NO TDZ (hoisted)", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       function readX(): number { return x; }
       let caught = false;
       try { readX(); } catch (e) { caught = true; }
@@ -77,8 +77,8 @@ describe("TDZ runtime enforcement (#723)", () => {
     expect(val).toBe(0);
   });
 
-  test("module-level: after declaration, variable is accessible", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("module-level: after declaration, variable is accessible", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       let x: number = 42;
       function readX(): number { return x; }
       export function getResult(): number { return readX(); }
@@ -86,8 +86,8 @@ describe("TDZ runtime enforcement (#723)", () => {
     expect(val).toBe(42);
   });
 
-  test("TDZ flag globals are present in WAT output", { timeout: 15000 }, () => {
-    const result = compile(`
+  test("TDZ flag globals are present in WAT output", { timeout: 15000 }, async () => {
+    const result = await compile(`
       export function f(): number { return x; }
       let x: number = 1;
     `);
@@ -95,8 +95,8 @@ describe("TDZ runtime enforcement (#723)", () => {
     expect(result.wat).toContain("__tdz_x");
   });
 
-  test("no TDZ flag for var declarations", { timeout: 15000 }, () => {
-    const result = compile(`
+  test("no TDZ flag for var declarations", { timeout: 15000 }, async () => {
+    const result = await compile(`
       export function f(): number { return x; }
       var x: number = 1;
     `);

@@ -36,7 +36,7 @@ const lodashEsInstalled = existsSync("node_modules/lodash-es/partial.js");
 const runIfInstalled = lodashEsInstalled ? it : it.skip;
 
 async function compileAndRun(source: string): Promise<unknown> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }
@@ -160,8 +160,8 @@ describe("#1305 — legacy global-shift over-count regression", () => {
    * compiled binary; pre-fix this threw with `f64.trunc[0] expected
    * type f64, found global.get of type externref @+36700`.
    */
-  runIfInstalled("compileProject('node_modules/lodash-es/partial.js') validates", () => {
-    const r = compileProject("node_modules/lodash-es/partial.js", { allowJs: true });
+  runIfInstalled("compileProject('node_modules/lodash-es/partial.js') validates", async () => {
+    const r = await compileProject("node_modules/lodash-es/partial.js", { allowJs: true });
     expect(r.success).toBe(true);
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });
@@ -170,8 +170,8 @@ describe("#1305 — legacy global-shift over-count regression", () => {
    * Sibling lodash entry point pulling the same `_mergeData.js` via
    * `_createWrap.js`. Same root cause; validates after the fix.
    */
-  runIfInstalled("compileProject('node_modules/lodash-es/_createWrap.js') validates", () => {
-    const r = compileProject("node_modules/lodash-es/_createWrap.js", { allowJs: true });
+  runIfInstalled("compileProject('node_modules/lodash-es/_createWrap.js') validates", async () => {
+    const r = await compileProject("node_modules/lodash-es/_createWrap.js", { allowJs: true });
     expect(r.success).toBe(true);
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });
@@ -188,7 +188,7 @@ describe("#1305 — legacy global-shift over-count regression", () => {
    * re-shift the inner `global.get` over and over each time
    * `addStringConstantGlobal` fired during the rest of compilation.
    */
-  it("logical-chain RHS with bitwise-of-globals does not over-shift global indices", () => {
+  it("logical-chain RHS with bitwise-of-globals does not over-shift global indices", async () => {
     const src = `
       // Many string literals to pump up late string-constant imports:
       var msg1 = "one";
@@ -211,7 +211,7 @@ describe("#1305 — legacy global-shift over-count regression", () => {
         return newBitmask;
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });
@@ -222,7 +222,7 @@ describe("#1305 — legacy global-shift over-count regression", () => {
    * any-typed locals. Exercises the legacy `compileBitwiseBinaryOp`
    * path's externref unbox without depending on lodash being present.
    */
-  it("Math.floor / Math.ceil on bitwise-of-any-typed values", () => {
+  it("Math.floor / Math.ceil on bitwise-of-any-typed values", async () => {
     const src = `
       export function f(x: any, y: any): number {
         return Math.floor((x | 0) + (y | 0));
@@ -231,7 +231,7 @@ describe("#1305 — legacy global-shift over-count regression", () => {
         return Math.ceil((x | 0) - (y | 0));
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });

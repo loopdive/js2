@@ -34,7 +34,7 @@ describe("#1292 lodash Tier 2 stress test — memoize, flow, partial, negate", (
   runIfInstalled(
     "Tier 2a memoize — compiles, validates, all imports satisfied; start function throws (#1295)",
     async () => {
-      const result = compileProject("node_modules/lodash-es/memoize.js", { allowJs: true });
+      const result = await compileProject("node_modules/lodash-es/memoize.js", { allowJs: true });
       expect(result.success).toBe(true);
 
       const mod = new WebAssembly.Module(result.binary);
@@ -73,7 +73,7 @@ describe("#1292 lodash Tier 2 stress test — memoize, flow, partial, negate", (
    * shifts per fixup call via a WeakSet of visited instructions.
    */
   runIfInstalled("Tier 2b flow — compiles + validates (#1302 fix)", async () => {
-    const result = compileProject("node_modules/lodash-es/flow.js", { allowJs: true });
+    const result = await compileProject("node_modules/lodash-es/flow.js", { allowJs: true });
     expect(result.success).toBe(true);
     expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
   });
@@ -93,7 +93,7 @@ describe("#1292 lodash Tier 2 stress test — memoize, flow, partial, negate", (
    * up validating against an externref operand at link time.
    */
   runIfInstalled("Tier 2c partial — compiles + validates after #1303/#1305 fix", async () => {
-    const result = compileProject("node_modules/lodash-es/partial.js", { allowJs: true });
+    const result = await compileProject("node_modules/lodash-es/partial.js", { allowJs: true });
     expect(result.success).toBe(true);
     expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
   });
@@ -113,7 +113,7 @@ describe("#1292 lodash Tier 2 stress test — memoize, flow, partial, negate", (
    * `typeof guard narrowing for any`). Skipped pending #1304.
    */
   runIfInstalled("Tier 2d negate — compiles, validates, instantiates, exports negate + default", async () => {
-    const result = compileProject("node_modules/lodash-es/negate.js", { allowJs: true });
+    const result = await compileProject("node_modules/lodash-es/negate.js", { allowJs: true });
     expect(result.success).toBe(true);
 
     const mod = new WebAssembly.Module(result.binary);
@@ -156,7 +156,7 @@ describe("#1292 lodash Tier 2 stress test — memoize, flow, partial, negate", (
    * plumbing from JS).
    */
   runIfInstalled("Tier 2d negate(jsFn) — wrapExports makes the returned closure callable (#1304 + #1308)", async () => {
-    const result = compileProject("node_modules/lodash-es/negate.js", { allowJs: true });
+    const result = await compileProject("node_modules/lodash-es/negate.js", { allowJs: true });
     const runtime = await import("../../src/runtime.ts");
     const imports = runtime.buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);

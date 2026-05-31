@@ -44,7 +44,7 @@ function envImportNames(r: { imports: { module: string; name: string }[] }): str
 
 describe("#1473 — no-JS-host error/exception ops (standalone mode)", () => {
   describe("import section", () => {
-    it("emits no banned error/exception host imports for throw + catch + instanceof", () => {
+    it("emits no banned error/exception host imports for throw + catch + instanceof", async () => {
       const src = `
         export function test(): number {
           try {
@@ -54,7 +54,7 @@ describe("#1473 — no-JS-host error/exception ops (standalone mode)", () => {
           }
         }
       `;
-      const r = compile(src, { fileName: "t.ts", target: "standalone" });
+      const r = await compile(src, { fileName: "t.ts", target: "standalone" });
       expect(r.success).toBe(true);
       const env = envImportNames(r);
       for (const banned of BANNED_STANDALONE_IMPORTS) {
@@ -62,7 +62,7 @@ describe("#1473 — no-JS-host error/exception ops (standalone mode)", () => {
       }
     });
 
-    it("emits no __throw_reference_error import for a TDZ access", () => {
+    it("emits no __throw_reference_error import for a TDZ access", async () => {
       const src = `
         export function test(): number {
           let n = 0;
@@ -75,18 +75,18 @@ describe("#1473 — no-JS-host error/exception ops (standalone mode)", () => {
           return n;
         }
       `;
-      const r = compile(src, { fileName: "t.ts", target: "standalone" });
+      const r = await compile(src, { fileName: "t.ts", target: "standalone" });
       expect(r.success).toBe(true);
       expect(envImportNames(r)).not.toContain("__throw_reference_error");
     });
 
-    it("the __new_<Name> error constructors are in-module functions, not imports", () => {
+    it("the __new_<Name> error constructors are in-module functions, not imports", async () => {
       const src = `
         export function test(): number {
           try { throw new RangeError("r"); } catch (e: any) { return 1; }
         }
       `;
-      const r = compile(src, { fileName: "t.ts", target: "standalone" });
+      const r = await compile(src, { fileName: "t.ts", target: "standalone" });
       expect(r.success).toBe(true);
       const env = envImportNames(r);
       expect(env).not.toContain("__new_RangeError");
@@ -108,7 +108,7 @@ describe("#1473 — no-JS-host error/exception ops (standalone mode)", () => {
     };
 
     async function run(src: string): Promise<unknown> {
-      const r = compile(src, { fileName: "t.ts", target: "standalone" });
+      const r = await compile(src, { fileName: "t.ts", target: "standalone" });
       expect(r.success).toBe(true);
       const { instance } = await WebAssembly.instantiate(r.binary, stubs);
       return (instance.exports.test as () => unknown)();

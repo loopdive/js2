@@ -22,17 +22,17 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { parseMeta, wrapTest } from "./test262-runner.js";
 
-function compilesWithoutInternalError(body: string): boolean {
+async function compilesWithoutInternalError(body: string): Promise<boolean> {
   const meta = parseMeta(body);
   const { source } = wrapTest(body, meta);
-  const r = compile(source, { fileName: "test.ts", sourceMap: true, skipSemanticDiagnostics: true });
+  const r = await compile(source, { fileName: "test.ts", sourceMap: true, skipSemanticDiagnostics: true });
   return !r.errors?.some((e) => /Internal error compiling|typeIdx/.test(e.message));
 }
 
 describe("#1608 sibling object literals sharing a method name must not crash codegen", () => {
   // Reduced from built-ins/Array/prototype/push/S15.4.4.7_A2_T3.js: repeated
   // assignment of object literals carrying same-named methods to a property.
-  it("repeated `obj.length = { valueOf() {...} }` compiles without internal crash", () => {
+  it("repeated `obj.length = { valueOf() {...} }` compiles without internal crash", async () => {
     const body = `
       var obj = {};
       obj.push = Array.prototype.push;
@@ -45,10 +45,10 @@ describe("#1608 sibling object literals sharing a method name must not crash cod
       obj.length = { valueOf() { return {}; }, toString() { return 1; } };
       var p4 = obj.push();
     `;
-    expect(compilesWithoutInternalError(body)).toBe(true);
+    expect(await compilesWithoutInternalError(body)).toBe(true);
   });
 
-  it("many distinct same-shaped literals with shared method name compile", () => {
+  it("many distinct same-shaped literals with shared method name compile", async () => {
     const body = `
       var o = {};
       o.a = { valueOf() { return 1; } };
@@ -57,6 +57,6 @@ describe("#1608 sibling object literals sharing a method name must not crash cod
       o.d = { valueOf() { return 4; } };
       assert.sameValue(typeof o.a, 'object');
     `;
-    expect(compilesWithoutInternalError(body)).toBe(true);
+    expect(await compilesWithoutInternalError(body)).toBe(true);
   });
 });

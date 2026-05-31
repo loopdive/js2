@@ -21,7 +21,7 @@ import { compile, createIncrementalCompiler } from "../src/index.ts";
 const opts = { fileName: "test.ts", emitWat: false, skipSemanticDiagnostics: true };
 
 describe("Issue #1119 — no cross-compilation leak in incremental compiler", () => {
-  it("100 sequential mixed compilations match standalone byte-for-byte", () => {
+  it("100 sequential mixed compilations match standalone byte-for-byte", async () => {
     // Patterns drawn from test262 flavors that have historically tripped
     // state-reuse bugs: Promise/async, Error subclasses, generators,
     // private fields, decorators, typed arrays, declaration merging,
@@ -63,7 +63,7 @@ describe("Issue #1119 — no cross-compilation leak in incremental compiler", ()
 
     for (let i = 0; i < sources.length; i++) {
       const src = sources[i]!;
-      const standalone = compile(src, opts);
+      const standalone = await compile(src, opts);
       const incremental = incr.compile(src);
 
       if (standalone.success !== incremental.success) {

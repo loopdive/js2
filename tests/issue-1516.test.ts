@@ -10,7 +10,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function run(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${JSON.stringify(r.errors)}`);
   }

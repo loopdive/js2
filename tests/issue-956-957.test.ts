@@ -7,7 +7,7 @@ import { compileToWasm } from "./equivalence/helpers.js";
  */
 
 describe("#956: emit i32.const directly in i32 context", () => {
-  it("loop with integer bound compiles to valid Wasm", () => {
+  it("loop with integer bound compiles to valid Wasm", async () => {
     const src = `
       export function test(): number {
         let sum = 0;
@@ -15,7 +15,7 @@ describe("#956: emit i32.const directly in i32 context", () => {
         return sum;
       }
     `;
-    const result = compile(src, { fileName: "test.ts" });
+    const result = await compile(src, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });
@@ -66,7 +66,7 @@ describe("#956: emit i32.const directly in i32 context", () => {
 });
 
 describe("#957: dead-store elimination for postfix increment as statement", () => {
-  it("i++ as statement in for loop compiles to valid Wasm", () => {
+  it("i++ as statement in for loop compiles to valid Wasm", async () => {
     const src = `
       export function test(): number {
         let sum = 0;
@@ -74,7 +74,7 @@ describe("#957: dead-store elimination for postfix increment as statement", () =
         return sum;
       }
     `;
-    const result = compile(src, { fileName: "test.ts" });
+    const result = await compile(src, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });

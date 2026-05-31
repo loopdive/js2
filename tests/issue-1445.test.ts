@@ -32,7 +32,7 @@ import { buildImports, compileToWasm } from "./equivalence/helpers.js";
  * the same mode — see `tests/test262-runner.ts`.
  */
 async function compileLoose(source: string) {
-  const result = compile(source, { skipSemanticDiagnostics: true });
+  const result = await compile(source, { skipSemanticDiagnostics: true });
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }

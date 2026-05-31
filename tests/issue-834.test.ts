@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("Issue #834: ES2025 Set methods", () => {
-  it("compiles Set.union without errors", () => {
-    const r = compile(
+  it("compiles Set.union without errors", async () => {
+    const r = await compile(
       `
       const a = new Set([1, 2, 3]);
       const b = new Set([3, 4, 5]);
@@ -18,8 +18,8 @@ describe("Issue #834: ES2025 Set methods", () => {
     expect(setImports.map((i) => i.name)).toContain("Set_union");
   });
 
-  it("compiles all 7 Set methods without errors", () => {
-    const r = compile(
+  it("compiles all 7 Set methods without errors", async () => {
+    const r = await compile(
       `
       const a = new Set([1, 2, 3]);
       const b = new Set([3, 4, 5]);
@@ -45,8 +45,8 @@ describe("Issue #834: ES2025 Set methods", () => {
     expect(setImports).toContain("Set_isDisjointFrom");
   });
 
-  it("compiles existing Set methods (has, add, delete)", () => {
-    const r = compile(
+  it("compiles existing Set methods (has, add, delete)", async () => {
+    const r = await compile(
       `
       const s = new Set([1, 2]);
       s.add(3);

@@ -65,25 +65,25 @@ function runWasiCaptureFd(binary: Uint8Array, fd: number, stdin?: Uint8Array): U
 }
 
 describe("#1618 console.log of a runtime string under --target wasi", () => {
-  it("emits the string content, not the [object] placeholder", () => {
+  it("emits the string content, not the [object] placeholder", async () => {
     const src = `export function main(): void {
       const a = "hello";
       const b = a + " world";
       console.log(b);
     }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = new TextDecoder().decode(runWasiCaptureFd(result.binary, 1));
     expect(out).toContain("hello world");
     expect(out).not.toContain("[object]");
   });
 
-  it("emits a template-literal runtime string (no extern-bridge host imports)", () => {
+  it("emits a template-literal runtime string (no extern-bridge host imports)", async () => {
     const src = `export function main(): void {
       const name = "ts2wasm";
       console.log(\`built with \${name}\`);
     }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     // The JS-host string-marshal imports must NOT leak under WASI.
     expect(result.wat).not.toContain("__str_from_mem");
@@ -94,34 +94,34 @@ describe("#1618 console.log of a runtime string under --target wasi", () => {
 });
 
 describe("#1651 process.stdout.write under --target wasi", () => {
-  it("writes a string to fd=1 with no trailing newline", () => {
+  it("writes a string to fd=1 with no trailing newline", async () => {
     const src = `declare const process: { stdout: { write(c: Uint8Array | string): void } };
       export function main(): void {
         process.stdout.write("AB");
         process.stdout.write("C");
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureFd(result.binary, 1);
     // Exactly the three bytes, contiguous, no "\n".
     expect(Array.from(out)).toEqual([0x41, 0x42, 0x43]);
   });
 
-  it("writes a Uint8Array literal (raw bytes incl. non-printable) verbatim", () => {
+  it("writes a Uint8Array literal (raw bytes incl. non-printable) verbatim", async () => {
     const src = `declare const process: { stdout: { write(c: Uint8Array | string): void } };
       export function main(): void {
         process.stdout.write(new Uint8Array([0, 1, 255, 10, 13]));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureFd(result.binary, 1);
     expect(Array.from(out)).toEqual([0, 1, 255, 10, 13]);
   });
 
-  it("does not register fd_write for process.stdout.write outside --target wasi", () => {
+  it("does not register fd_write for process.stdout.write outside --target wasi", async () => {
     const src = `declare const process: { stdout: { write(c: string): void } };
       export function main(): void { process.stdout.write("x"); }`;
-    const result = compile(src); // default (gc) target
+    const result = await compile(src); // default (gc) target
     if (result.success) {
       expect(result.wat).not.toContain("fd_write");
     }
@@ -137,10 +137,10 @@ describe("#1651 process.stdout.write under --target wasi", () => {
 // print helper delegates to the i32 helper, so template-literal number
 // interpolation inherited the same stray byte.
 describe("WASI integer print has no trailing stray byte", () => {
-  it("console.log(int) on stdout prints exactly the digits, no stray char", () => {
+  it("console.log(int) on stdout prints exactly the digits, no stray char", async () => {
     // 17 is the length the real-wasmtime repro produced ("17i").
     const src = `export function main(): void { const n = 17; console.log(n); }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = new TextDecoder().decode(runWasiCaptureFd(result.binary, 1));
     // console.log appends a newline; the integer itself must be exactly "17".
@@ -148,18 +148,18 @@ describe("WASI integer print has no trailing stray byte", () => {
     expect(out).not.toMatch(/17[^\n]/); // no character wedged between digits and newline
   });
 
-  it("console.error(`x=${n}`) on stderr prints the number with no stray char", () => {
+  it("console.error(`x=${n}`) on stderr prints the number with no stray char", async () => {
     // Drives the f64 print path via template-literal interpolation (the #1530
     // debug line shape: `declared body length ${n}`), routed to fd=2.
     const src = `export function main(): void { const n = 13; console.error(\`len=\${n}\`); }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = new TextDecoder().decode(runWasiCaptureFd(result.binary, 2));
     expect(out).toBe("len=13\n");
     expect(out).not.toContain("13i");
   });
 
-  it("prints a range of integer widths cleanly (boundary + multi-digit)", () => {
+  it("prints a range of integer widths cleanly (boundary + multi-digit)", async () => {
     for (const [value, digits] of [
       [0, "0"],
       [7, "7"],
@@ -169,7 +169,7 @@ describe("WASI integer print has no trailing stray byte", () => {
       [-17, "-17"],
     ] as Array<[number, string]>) {
       const src = `export function main(): void { const n = ${value}; console.log(n); }`;
-      const result = compile(src, { fileName: "x.ts", target: "wasi" });
+      const result = await compile(src, { fileName: "x.ts", target: "wasi" });
       expect(result.success).toBe(true);
       const out = new TextDecoder().decode(runWasiCaptureFd(result.binary, 1));
       expect(out).toBe(`${digits}\n`);

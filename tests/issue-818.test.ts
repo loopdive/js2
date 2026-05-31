@@ -11,7 +11,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(src: string): Promise<number> {
-  const result = compile(src, { fileName: "test.ts" });
+  const result = await compile(src, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compile error: ${result.errors.map((e) => e.message).join("; ")}`);
   }

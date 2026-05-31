@@ -2,8 +2,8 @@ import { test, expect, describe } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(src: string): any {
-  const r = compile(src, { fileName: "test.ts" });
+async function compileAndRun(src: string): Promise<any> {
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`Compile error: ${r.errors?.[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const instance = new WebAssembly.Instance(new WebAssembly.Module(r.binary), imports);
@@ -11,8 +11,8 @@ function compileAndRun(src: string): any {
 }
 
 describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
-  test("null == undefined returns true for any-typed values", () => {
-    const result = compileAndRun(`
+  test("null == undefined returns true for any-typed values", async () => {
+    const result = await compileAndRun(`
       let a: any = null;
       let b: any = undefined;
       export function test(): number {
@@ -22,8 +22,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(1);
   });
 
-  test("undefined == null returns true for any-typed values", () => {
-    const result = compileAndRun(`
+  test("undefined == null returns true for any-typed values", async () => {
+    const result = await compileAndRun(`
       let a: any = undefined;
       let b: any = null;
       export function test(): number {
@@ -33,8 +33,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(1);
   });
 
-  test("null !== undefined for strict equality", () => {
-    const result = compileAndRun(`
+  test("null !== undefined for strict equality", async () => {
+    const result = await compileAndRun(`
       let a: any = null;
       let b: any = undefined;
       export function test(): number {
@@ -44,8 +44,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(0);
   });
 
-  test("true == 1 returns true for any-typed values", () => {
-    const result = compileAndRun(`
+  test("true == 1 returns true for any-typed values", async () => {
+    const result = await compileAndRun(`
       let a: any = true;
       let b: any = 1;
       export function test(): number {
@@ -55,8 +55,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(1);
   });
 
-  test("false == 0 returns true for any-typed values", () => {
-    const result = compileAndRun(`
+  test("false == 0 returns true for any-typed values", async () => {
+    const result = await compileAndRun(`
       let a: any = false;
       let b: any = 0;
       export function test(): number {
@@ -66,8 +66,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(1);
   });
 
-  test("null != 0 returns true for any-typed (null is not numeric)", () => {
-    const result = compileAndRun(`
+  test("null != 0 returns true for any-typed (null is not numeric)", async () => {
+    const result = await compileAndRun(`
       let a: any = null;
       let b: any = 0;
       export function test(): number {
@@ -87,8 +87,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
   // canonical case is `0 == -0` (true). The fix pushes `-1` (sentinel)
   // for the loose case so the outer `if` routes through
   // `__host_loose_eq` (JS `==`); strict equality keeps the definitive `0`.
-  test("0 == -0 (i31ref vs HeapNumber) → true via host fallback", () => {
-    const result = compileAndRun(`
+  test("0 == -0 (i31ref vs HeapNumber) → true via host fallback", async () => {
+    const result = await compileAndRun(`
       let a: any = 0;
       let b: any = 0 * -1;
       export function test(): number {
@@ -98,8 +98,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(1);
   });
 
-  test("false == '' (bool vs string) → true via host fallback", () => {
-    const result = compileAndRun(`
+  test("false == '' (bool vs string) → true via host fallback", async () => {
+    const result = await compileAndRun(`
       let a: any = false;
       let b: any = "";
       export function test(): number {
@@ -109,8 +109,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(1);
   });
 
-  test("'1' == 1 (string vs number) → true via host fallback", () => {
-    const result = compileAndRun(`
+  test("'1' == 1 (string vs number) → true via host fallback", async () => {
+    const result = await compileAndRun(`
       let a: any = "1";
       let b: any = 1;
       export function test(): number {
@@ -120,8 +120,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(1);
   });
 
-  test("regression guard: object identity ref.eq still works for ===", () => {
-    const result = compileAndRun(`
+  test("regression guard: object identity ref.eq still works for ===", async () => {
+    const result = await compileAndRun(`
       let a: any = { x: 1 };
       let b: any = a;
       export function test(): number {
@@ -131,8 +131,8 @@ describe("#1134 — __any_eq cross-tag loose equality (§7.2.15)", () => {
     expect(result).toBe(1);
   });
 
-  test("regression guard: distinct objects compare unequal under ==", () => {
-    const result = compileAndRun(`
+  test("regression guard: distinct objects compare unequal under ==", async () => {
+    const result = await compileAndRun(`
       let a: any = { x: 1 };
       let b: any = { x: 1 };
       export function test(): number {

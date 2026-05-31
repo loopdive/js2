@@ -4,8 +4,8 @@ import type { ImportDescriptor } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 describe("ImportDescriptor manifest", () => {
-  it("includes string literals in stringPool", () => {
-    const result = compile(`
+  it("includes string literals in stringPool", async () => {
+    const result = await compile(`
       export function greet(): string { return "hello"; }
     `);
     expect(result.success).toBe(true);
@@ -13,8 +13,8 @@ describe("ImportDescriptor manifest", () => {
     expect(result.stringPool).toContain("hello");
   });
 
-  it("Math methods are inlined (no host imports for trig/transcendental)", () => {
-    const result = compile(`
+  it("Math methods are inlined (no host imports for trig/transcendental)", async () => {
+    const result = await compile(`
       export function f(x: number): number { return Math.exp(x); }
     `);
     expect(result.success).toBe(true);
@@ -23,8 +23,8 @@ describe("ImportDescriptor manifest", () => {
     expect(mathImport).toBeUndefined();
   });
 
-  it("includes console_log imports", () => {
-    const result = compile(`
+  it("includes console_log imports", async () => {
+    const result = await compile(`
       export function f(): void { console.log(42); }
     `);
     expect(result.success).toBe(true);
@@ -33,8 +33,8 @@ describe("ImportDescriptor manifest", () => {
     expect(logImport!.intent).toEqual({ type: "console_log", variant: "number" });
   });
 
-  it("includes extern class imports", () => {
-    const result = compile(`
+  it("includes extern class imports", async () => {
+    const result = await compile(`
       declare class Element {
         textContent: string;
         appendChild(child: Element): void;
@@ -54,8 +54,8 @@ describe("ImportDescriptor manifest", () => {
     });
   });
 
-  it("includes string method imports", () => {
-    const result = compile(`
+  it("includes string method imports", async () => {
+    const result = await compile(`
       export function f(s: string): string { return s.trim(); }
     `);
     expect(result.success).toBe(true);
@@ -64,8 +64,8 @@ describe("ImportDescriptor manifest", () => {
     expect(trimImport!.intent).toEqual({ type: "string_method", method: "trim" });
   });
 
-  it("includes builtin imports", () => {
-    const result = compile(`
+  it("includes builtin imports", async () => {
+    const result = await compile(`
       export function f(x: number): string { return x.toString(); }
     `);
     expect(result.success).toBe(true);
@@ -74,8 +74,8 @@ describe("ImportDescriptor manifest", () => {
     expect(imp!.intent).toEqual({ type: "builtin", name: "number_toString" });
   });
 
-  it("does not include wasm:js-string module imports in env manifest", () => {
-    const result = compile(`
+  it("does not include wasm:js-string module imports in env manifest", async () => {
+    const result = await compile(`
       export function f(): string { return "a" + "b"; }
     `);
     expect(result.success).toBe(true);
@@ -196,7 +196,7 @@ describe("security: closed import surface", () => {
   });
 
   it("full compile-to-instantiate round-trip with closed imports", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function f(x: number): number {
         return Math.exp(x);
       }

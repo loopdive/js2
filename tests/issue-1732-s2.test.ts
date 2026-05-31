@@ -34,7 +34,7 @@ import { buildImports } from "../src/runtime.js";
 // 0 if no throw; 2 if a non-TypeError was thrown.
 async function newThrowsTypeError(newExpr: string): Promise<unknown> {
   const src = `export function test(): number { try { var x = new ${newExpr}; return 0; } catch (e) { return (e instanceof TypeError) ? 1 : 2; } }`;
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message ?? "?"}`);
   const io = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, io as any);

@@ -30,15 +30,15 @@ describe("#1607 self-referential lexical initializer (TDZ) must not overflow the
   ];
 
   for (const src of cases) {
-    it(`compiles without stack overflow: ${JSON.stringify(src)}`, () => {
-      const r = compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
+    it(`compiles without stack overflow: ${JSON.stringify(src)}`, async () => {
+      const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
       expect(hasInternalError(r.errors)).toBe(false);
     });
   }
 
-  it("still constant-folds non-cyclic const arithmetic", () => {
+  it("still constant-folds non-cyclic const arithmetic", async () => {
     const src = "export function h(): number { const a = 2; const b = a + 3; return b * 2; }";
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(hasInternalError(r.errors)).toBe(false);
   });
@@ -57,8 +57,8 @@ describe("#1607 block-scoped lexical self-reference emits a TDZ throw", () => {
   ];
 
   for (const src of throwingCases) {
-    it(`emits a static TDZ throw: ${JSON.stringify(src)}`, () => {
-      const r = compile(src, { fileName: "test.ts", emitWat: true, skipSemanticDiagnostics: true });
+    it(`emits a static TDZ throw: ${JSON.stringify(src)}`, async () => {
+      const r = await compile(src, { fileName: "test.ts", emitWat: true, skipSemanticDiagnostics: true });
       expect(r.success).toBe(true);
       const wat = r.wat ?? "";
       const fnStart = wat.indexOf("(func $f");
@@ -67,8 +67,8 @@ describe("#1607 block-scoped lexical self-reference emits a TDZ throw", () => {
     });
   }
 
-  it("does NOT inject a TDZ throw for a valid block-scoped const", () => {
-    const r = compile("function f(): number { { const x = 5; return x; } }", {
+  it("does NOT inject a TDZ throw for a valid block-scoped const", async () => {
+    const r = await compile("function f(): number { { const x = 5; return x; } }", {
       fileName: "test.ts",
       emitWat: true,
       skipSemanticDiagnostics: true,

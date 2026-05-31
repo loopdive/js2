@@ -2,7 +2,7 @@ import { compile, createIncrementalCompiler } from "../src/index.ts";
 import { describe, it, expect } from "vitest";
 
 describe("issue-973: incremental compiler state leak", () => {
-  it("incremental compiler should produce same result as standalone", () => {
+  it("incremental compiler should produce same result as standalone", async () => {
     const contaminant = `
       class MyError extends Error {
         constructor(msg: string) { super(msg); this.name = "MyError"; }
@@ -15,7 +15,7 @@ describe("issue-973: incremental compiler state leak", () => {
       export function test(): number { const x = 42; return x; }
     `;
 
-    const standaloneResult = compile(victim, { fileName: "test.ts" });
+    const standaloneResult = await compile(victim, { fileName: "test.ts" });
     const compiler = createIncrementalCompiler({ fileName: "test.ts" });
     compiler.compile(contaminant);
     const incrementalResult = compiler.compile(victim);

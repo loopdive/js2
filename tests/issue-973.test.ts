@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { compile, createIncrementalCompiler } from "../src/index.ts";
 
 describe("Issue #973 — incremental compiler state isolation", () => {
-  it("simple test produces identical output standalone vs incremental", () => {
+  it("simple test produces identical output standalone vs incremental", async () => {
     const source = `
 export function add(a: number, b: number): number {
   return a + b;
@@ -19,7 +19,7 @@ export function test(): number {
 }
 `;
     const opts = { fileName: "test.ts", emitWat: false, skipSemanticDiagnostics: true };
-    const standalone = compile(source, opts);
+    const standalone = await compile(source, opts);
     const incr = createIncrementalCompiler(opts);
     const incremental = incr.compile(source);
     incr.dispose();
@@ -30,7 +30,7 @@ export function test(): number {
     expect(Buffer.from(incremental.binary)).toEqual(Buffer.from(standalone.binary));
   });
 
-  it("compilation after heavy-type source produces identical output", () => {
+  it("compilation after heavy-type source produces identical output", async () => {
     // First compile something with lots of lib types
     const heavySource = `
 const d = new Date();
@@ -58,7 +58,7 @@ export function test(): number {
     const opts = { fileName: "test.ts", emitWat: false, skipSemanticDiagnostics: true };
 
     // Standalone
-    const standaloneSimple = compile(simpleSource, opts);
+    const standaloneSimple = await compile(simpleSource, opts);
 
     // Incremental: heavy → simple
     const incr = createIncrementalCompiler(opts);
@@ -72,7 +72,7 @@ export function test(): number {
     expect(Buffer.from(incrSimple.binary)).toEqual(Buffer.from(standaloneSimple.binary));
   });
 
-  it("class-heavy source does not contaminate subsequent compilation", () => {
+  it("class-heavy source does not contaminate subsequent compilation", async () => {
     const classSource = `
 class Animal {
   name: string;
@@ -110,7 +110,7 @@ export function test(): number {
 
     const opts = { fileName: "test.ts", emitWat: false, skipSemanticDiagnostics: true };
 
-    const standaloneNum = compile(numSource, opts);
+    const standaloneNum = await compile(numSource, opts);
 
     const incr = createIncrementalCompiler(opts);
     incr.compile(classSource);
@@ -123,7 +123,7 @@ export function test(): number {
     expect(Buffer.from(incrNum.binary)).toEqual(Buffer.from(standaloneNum.binary));
   });
 
-  it("10 sequential compilations produce identical output", () => {
+  it("10 sequential compilations produce identical output", async () => {
     const sources = [
       `export function test(): number { return 1; }`,
       `export function test(): number { const x: string = "hello"; return x.length; }`,
@@ -141,7 +141,7 @@ export function test(): number {
     const incr = createIncrementalCompiler(opts);
 
     for (let i = 0; i < sources.length; i++) {
-      const standalone = compile(sources[i]!, opts);
+      const standalone = await compile(sources[i]!, opts);
       const incremental = incr.compile(sources[i]!);
 
       expect(standalone.success).toBe(incremental.success);

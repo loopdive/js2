@@ -31,7 +31,7 @@ import { instantiateWithRuntime } from "./equivalence/helpers.ts";
 // externref; tracked under #1632a.
 describe("#1337 Function.prototype.bind metadata", () => {
   it("deferred bound .name is 'bound ' + target.name", async () => {
-    const r = compile(
+    const r = await compile(
       `function target(a, b) { return a; }
        const bound = target.bind(undefined);
        export function test(): string { return bound.name; }`,
@@ -43,7 +43,7 @@ describe("#1337 Function.prototype.bind metadata", () => {
   });
 
   it("immediate bound .name is 'bound ' + target.name", async () => {
-    const r = compile(
+    const r = await compile(
       `function target(a, b) { return a; }
        export function test(): string { return target.bind(undefined).name; }`,
       { fileName: "test.ts" },
@@ -54,7 +54,7 @@ describe("#1337 Function.prototype.bind metadata", () => {
   });
 
   it("deferred bound .length is max(0, target.length - boundArgs.length)", async () => {
-    const r = compile(
+    const r = await compile(
       `function target(a, b, c) { return a; }
        const bound = target.bind(undefined, 1);
        export function test(): number { return bound.length; }`,
@@ -67,7 +67,7 @@ describe("#1337 Function.prototype.bind metadata", () => {
   });
 
   it("deferred bound .length clamps to 0 when boundArgs exceed arity", async () => {
-    const r = compile(
+    const r = await compile(
       `function target(a) { return a; }
        const bound = target.bind(undefined, 1, 2, 3);
        export function test(): number { return bound.length; }`,
@@ -80,7 +80,7 @@ describe("#1337 Function.prototype.bind metadata", () => {
   });
 
   it("deferred bound fn invocation applies partial args (#1337 Layer-2)", async () => {
-    const r = compile(
+    const r = await compile(
       `function add(a: number, b: number): number { return a + b; }
        export function test(): number {
          const add5 = add.bind(undefined, 5);
@@ -94,7 +94,7 @@ describe("#1337 Function.prototype.bind metadata", () => {
   });
 
   it("Function.prototype.bind.call deferred invocation (#1337 Layer-2)", async () => {
-    const r = compile(
+    const r = await compile(
       `function mul(a: number, b: number): number { return a * b; }
        export function test(): number {
          const triple = Function.prototype.bind.call(mul, undefined, 3);
@@ -108,7 +108,7 @@ describe("#1337 Function.prototype.bind metadata", () => {
   });
 
   it("bound .name property attributes: not enumerable, not writable, configurable", async () => {
-    const r = compile(
+    const r = await compile(
       `const target = Object.defineProperty(function() {}, 'name', { value: 'target' });
        export function test(): boolean {
          const b = target.bind();

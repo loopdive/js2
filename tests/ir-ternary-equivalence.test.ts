@@ -27,11 +27,11 @@ async function dualRun(
   fnName: string,
   args: ReadonlyArray<number | boolean>,
 ): Promise<{ legacy: unknown; ir: unknown }> {
-  const legacy = compile(source, { nativeStrings: true });
+  const legacy = await compile(source, { nativeStrings: true });
   if (!legacy.success) {
     throw new Error(`legacy compile failed:\n${legacy.errors.map((e) => e.message).join("\n")}`);
   }
-  const ir = compile(source, { nativeStrings: true, experimentalIR: true });
+  const ir = await compile(source, { nativeStrings: true, experimentalIR: true });
   if (!ir.success) {
     throw new Error(`ir compile failed:\n${ir.errors.map((e) => e.message).join("\n")}`);
   }

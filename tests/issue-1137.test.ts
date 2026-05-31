@@ -4,7 +4,7 @@ import { buildImports } from "../src/runtime.ts";
 
 async function run(code: string): Promise<number> {
   const wrapped = `export function test(): number { ${code} }`;
-  const r = compile(wrapped, { fileName: "test.ts" });
+  const r = await compile(wrapped, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

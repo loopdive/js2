@@ -11,7 +11,7 @@ import { compile } from "../src/index.js";
  */
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -21,8 +21,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   return (instance.exports as any)[fn](...args);
 }
 
-function getWat(source: string): string {
-  const result = compile(source);
+async function getWat(source: string): Promise<string> {
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -36,8 +36,8 @@ function getFuncSignature(wat: string, funcName: string): string | undefined {
 }
 
 describe("typed export signatures (#598)", () => {
-  it("number params and return use f64, not externref", () => {
-    const wat = getWat(`
+  it("number params and return use f64, not externref", async () => {
+    const wat = await getWat(`
       export function add(a: number, b: number): number {
         return a + b;
       }
@@ -49,8 +49,8 @@ describe("typed export signatures (#598)", () => {
     expect(sig).not.toContain("externref");
   });
 
-  it("boolean params and return use i32, not externref", () => {
-    const wat = getWat(`
+  it("boolean params and return use i32, not externref", async () => {
+    const wat = await getWat(`
       export function negate(a: boolean): boolean {
         return !a;
       }
@@ -62,8 +62,8 @@ describe("typed export signatures (#598)", () => {
     expect(sig).not.toContain("externref");
   });
 
-  it("void return emits no result type", () => {
-    const wat = getWat(`
+  it("void return emits no result type", async () => {
+    const wat = await getWat(`
       export function doNothing(x: number): void {
         const y = x + 1;
       }
@@ -130,8 +130,8 @@ describe("typed export signatures (#598)", () => {
     ).toBe(17);
   });
 
-  it("number function with optional param uses f64", () => {
-    const wat = getWat(`
+  it("number function with optional param uses f64", async () => {
+    const wat = await getWat(`
       export function add(a: number, b?: number): number {
         return a + (b || 0);
       }
@@ -143,8 +143,8 @@ describe("typed export signatures (#598)", () => {
     expect(sig).not.toContain("externref");
   });
 
-  it("any-typed params correctly use externref", () => {
-    const wat = getWat(`
+  it("any-typed params correctly use externref", async () => {
+    const wat = await getWat(`
       export function identity(a: any): any {
         return a;
       }
@@ -154,8 +154,8 @@ describe("typed export signatures (#598)", () => {
     expect(sig).toContain("externref");
   });
 
-  it("string params use externref (strings are host objects)", () => {
-    const wat = getWat(`
+  it("string params use externref (strings are host objects)", async () => {
+    const wat = await getWat(`
       export function getLen(s: string): number {
         return s.length;
       }

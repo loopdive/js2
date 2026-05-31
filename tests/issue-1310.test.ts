@@ -32,7 +32,7 @@ describe("#1310 — globalSandbox option threads through buildImports", () => {
         return Array;
       }
     `;
-    const r = compile(src, { fileName: "t.ts" });
+    const r = await compile(src, { fileName: "t.ts" });
     expect(r.success).toBe(true);
 
     const sandbox = createContext({}) as Record<string, any>;
@@ -50,7 +50,7 @@ describe("#1310 — globalSandbox option threads through buildImports", () => {
         return Array;
       }
     `;
-    const r = compile(src, { fileName: "t.ts" });
+    const r = await compile(src, { fileName: "t.ts" });
     expect(r.success).toBe(true);
 
     const imports = buildImports(r.imports, undefined, r.stringPool);
@@ -65,7 +65,7 @@ describe("#1310 — globalSandbox option threads through buildImports", () => {
         return globalThis;
       }
     `;
-    const r = compile(src, { fileName: "t.ts" });
+    const r = await compile(src, { fileName: "t.ts" });
     expect(r.success).toBe(true);
 
     const sandbox = createContext({ marker: 42 }) as Record<string, any>;

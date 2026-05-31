@@ -3,7 +3,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function runWasm(src: string): Promise<any> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("Compile: " + r.errors.map((e) => `L${e.line}: ${e.message}`).join("; "));
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -11,7 +11,7 @@ async function runWasm(src: string): Promise<any> {
 }
 
 async function compileAndRun(src: string): Promise<{ result: any; errors: string[] }> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   const errors = r.errors.map((e) => e.message);
   if (!r.success) return { result: undefined, errors };
   try {

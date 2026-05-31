@@ -6,8 +6,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): any {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<any> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compilation failed: ${result.errors.map((e) => e.message).join("; ")}`);
   }
@@ -15,7 +15,7 @@ function compileAndRun(source: string): any {
 }
 
 describe("Issue #836: Tagged templates with Identifier and CallExpression tags", () => {
-  it("should compile tagged template with identifier tag", () => {
+  it("should compile tagged template with identifier tag", async () => {
     const source = `
       function tag(strings: TemplateStringsArray, ...values: any[]): string {
         return strings[0] + (values[0] ?? "") + (strings[1] ?? "");
@@ -25,12 +25,12 @@ describe("Issue #836: Tagged templates with Identifier and CallExpression tags",
         return 1;
       }
     `;
-    const result = compileAndRun(source);
+    const result = await compileAndRun(source);
     expect(result.success).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
 
-  it("should compile tagged template with identifier tag and substitutions", () => {
+  it("should compile tagged template with identifier tag and substitutions", async () => {
     const source = `
       function tag(strings: TemplateStringsArray, ...values: any[]): string {
         return strings[0] + String(values[0]) + strings[1];
@@ -41,12 +41,12 @@ describe("Issue #836: Tagged templates with Identifier and CallExpression tags",
         return 1;
       }
     `;
-    const result = compileAndRun(source);
+    const result = await compileAndRun(source);
     expect(result.success).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
 
-  it("should compile tagged template with call expression tag", () => {
+  it("should compile tagged template with call expression tag", async () => {
     const source = `
       function getTag(): (strings: TemplateStringsArray) => string {
         return function(strings: TemplateStringsArray): string {
@@ -58,12 +58,12 @@ describe("Issue #836: Tagged templates with Identifier and CallExpression tags",
         return 1;
       }
     `;
-    const result = compileAndRun(source);
+    const result = await compileAndRun(source);
     expect(result.success).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
 
-  it("should compile tagged template with IIFE tag", () => {
+  it("should compile tagged template with IIFE tag", async () => {
     const source = `
       const result = (function(strings: TemplateStringsArray): string {
         return strings[0];
@@ -72,12 +72,12 @@ describe("Issue #836: Tagged templates with Identifier and CallExpression tags",
         return 1;
       }
     `;
-    const result = compileAndRun(source);
+    const result = await compileAndRun(source);
     expect(result.success).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
 
-  it("should not produce 'unsupported tag expression kind' errors", () => {
+  it("should not produce 'unsupported tag expression kind' errors", async () => {
     const source = `
       function myTag(strings: TemplateStringsArray): string {
         return strings[0];
@@ -88,7 +88,7 @@ describe("Issue #836: Tagged templates with Identifier and CallExpression tags",
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     const tagErrors = result.errors.filter((e) => e.message.includes("unsupported tag expression kind"));
     expect(tagErrors).toHaveLength(0);
   });

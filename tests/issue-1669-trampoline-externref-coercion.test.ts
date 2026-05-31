@@ -34,8 +34,8 @@ import { parseMeta, wrapTest } from "./test262-runner.js";
  * Each `expect(WebAssembly.validate(...)).toBe(true)` is the regression guard:
  * before the fix these modules failed validation inside `__obj_meth_tramp_*`.
  */
-function compileValid(source: string): void {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileValid(source: string): Promise<void> {
+  const result = await compile(source, { fileName: "test.ts" });
   expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
 }
@@ -62,14 +62,14 @@ function wrapped(body: string): string {
 }
 
 describe("#1669 object-method trampoline externref coercion (regressed by #1602)", () => {
-  it("sibling non-generator default-param methods read as values (name-length-dflt shape)", () => {
+  it("sibling non-generator default-param methods read as values (name-length-dflt shape)", async () => {
     // Sibling literals with default params in different positions structurally
     // dedupe; the per-call-site trampoline's wrapper param types ([externref,
     // f64]) drift from the method's final params ([f64, externref]). Before the
     // fix the rebuilt `call` failed validation:
     //   call[0] expected type externref, found ref.cast null of type (ref null N)
     // This self-contained case reproduces the regression without the submodule.
-    compileValid(
+    await compileValid(
       wrapped(`
         var f1 = { m(x = 42) {} }.m;
         assert_sameValue((f1 as any).length, 0);
@@ -96,9 +96,9 @@ describe("#1669 object-method trampoline externref coercion (regressed by #1602)
   ];
   for (const rel of regressedFiles) {
     const abs = join(TEST262, rel);
-    it.skipIf(!existsSync(abs))(`real test262 source compiles to valid wasm: ${rel}`, () => {
+    it.skipIf(!existsSync(abs))(`real test262 source compiles to valid wasm: ${rel}`, async () => {
       const src = readFileSync(abs, "utf-8");
-      compileValid(wrapTest(src, parseMeta(src)).source);
+      await compileValid(wrapTest(src, parseMeta(src)).source);
     });
   }
 });

@@ -23,8 +23,8 @@ import { compile } from "../src/index.js";
  * `text += <expr>` over at least 50,000 iterations and asserts no trap.
  */
 describe("#1178 — long `text += <expr>` chains do not trap", () => {
-  function compileWasi(source: string) {
-    return compile(source, { fileName: "t.js", allowJs: true, target: "wasi", optimize: 0 });
+  async function compileWasi(source: string) {
+    return await compile(source, { fileName: "t.js", allowJs: true, target: "wasi", optimize: 0 });
   }
 
   it("compiles, validates, and runs `text += literal` over 50,000 iterations", async () => {
@@ -45,7 +45,7 @@ describe("#1178 — long `text += <expr>` chains do not trap", () => {
         return text.length + (first === "x" ? 0 : 1000000);
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -72,7 +72,7 @@ describe("#1178 — long `text += <expr>` chains do not trap", () => {
         return text.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -101,7 +101,7 @@ describe("#1178 — long `text += <expr>` chains do not trap", () => {
         return text.charCodeAt(0);
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});

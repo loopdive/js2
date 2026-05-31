@@ -34,7 +34,7 @@ afterAll(() => {
 });
 
 async function compileAndInstantiate(source: string, opts: { allowFs?: boolean } = {}) {
-  const r = compile(source, { allowFs: opts.allowFs ?? false, fileName: "input.ts" });
+  const r = await compile(source, { allowFs: opts.allowFs ?? false, fileName: "input.ts" });
   return r;
 }
 

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
  * Compile multiple virtual files and run the entry file's exports.
  */
 async function compileAndRunMulti(files: Record<string, string>, entryFile: string) {
-  const result = compileMulti(files, entryFile);
+  const result = await compileMulti(files, entryFile);
   expect(
     result.success,
     `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -125,7 +125,7 @@ describe("compileFiles (disk-based)", () => {
         }`,
       );
 
-      const result = compileFiles(join(tmpDir, "main.ts"));
+      const result = await compileFiles(join(tmpDir, "main.ts"));
       expect(
         result.success,
         `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,

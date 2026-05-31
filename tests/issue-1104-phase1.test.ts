@@ -40,20 +40,20 @@ const ERROR_CONSTRUCTORS = [
 
 describe("#1104 Phase 1 — wasm-native Error construction (standalone mode)", () => {
   describe("WASI mode", () => {
-    it("compiles `new Error(msg)` without registering env.__new_Error host import", () => {
+    it("compiles `new Error(msg)` without registering env.__new_Error host import", async () => {
       const src = `
         export function test(): number {
           const e = new Error("oops");
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       const envImports = r.imports.filter((i) => i.module === "env").map((i) => i.name);
       expect(envImports).not.toContain("__new_Error");
     });
 
-    it("compiles `new TypeError(msg)` / `new RangeError(msg)` similarly without env imports", () => {
+    it("compiles `new TypeError(msg)` / `new RangeError(msg)` similarly without env imports", async () => {
       const src = `
         export function test(): number {
           const t = new TypeError("type bad");
@@ -61,7 +61,7 @@ describe("#1104 Phase 1 — wasm-native Error construction (standalone mode)", (
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       const envImports = r.imports.filter((i) => i.module === "env").map((i) => i.name);
       expect(envImports).not.toContain("__new_TypeError");
@@ -78,7 +78,7 @@ describe("#1104 Phase 1 — wasm-native Error construction (standalone mode)", (
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       // No env module — pure standalone instantiation.
       const { instance } = await WebAssembly.instantiate(r.binary, {});
@@ -97,27 +97,27 @@ describe("#1104 Phase 1 — wasm-native Error construction (standalone mode)", (
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       const { instance } = await WebAssembly.instantiate(r.binary, {});
       const test = instance.exports.test as () => number;
       expect(test()).toBe(42);
     });
 
-    it("registers a `$Error_struct` WasmGC type when any error constructor is used", () => {
+    it("registers a `$Error_struct` WasmGC type when any error constructor is used", async () => {
       const src = `
         export function test(): number {
           const e = new Error("oops");
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       // The struct type should be present in the WAT.
       expect(r.wat).toContain("$Error_struct");
     });
 
-    it("emits internal `__new_<Name>` Wasm functions instead of host imports", () => {
+    it("emits internal `__new_<Name>` Wasm functions instead of host imports", async () => {
       const src = `
         export function test(): number {
           const e = new Error("oops");
@@ -125,7 +125,7 @@ describe("#1104 Phase 1 — wasm-native Error construction (standalone mode)", (
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       // Internal funcs are declared with `(func $__new_Error ...)` — not
       // `(import "env" "__new_Error" ...)`.
@@ -142,14 +142,14 @@ describe("#1104 Phase 1 — wasm-native Error construction (standalone mode)", (
       // generic path covers Error/TypeError/RangeError/SyntaxError/URIError/
       // EvalError/ReferenceError.
       if (ctor === "AggregateError") continue;
-      it(`still emits env.__new_${ctor} host import`, () => {
+      it(`still emits env.__new_${ctor} host import`, async () => {
         const src = `
           export function test(): number {
             const e = new ${ctor}("oops");
             return 0;
           }
         `;
-        const r = compile(src);
+        const r = await compile(src);
         expect(r.success).toBe(true);
         const envImports = r.imports.filter((i) => i.module === "env").map((i) => i.name);
         expect(envImports).toContain(`__new_${ctor}`);

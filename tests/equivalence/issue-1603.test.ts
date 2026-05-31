@@ -39,7 +39,7 @@ describe("optional chaining on non-reference (undefined) receiver (#1603)", () =
     );
   });
 
-  it("optional property AND optional call on an undefined const both compile to valid wasm", () => {
+  it("optional property AND optional call on an undefined const both compile to valid wasm", async () => {
     // The optional-call lowering carried the same unguarded `ref.is_null`
     // (calls-optional.ts). Both forms must validate when the receiver lowers to
     // a non-reference value type.
@@ -51,7 +51,7 @@ describe("optional chaining on non-reference (undefined) receiver (#1603)", () =
         return a + b;
       }
     `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });

@@ -38,7 +38,7 @@ const ENV = {
 };
 
 async function run(source: string, exportName: string, utf8Storage: boolean): Promise<unknown> {
-  const result = compile(source, { experimentalIR: true, nativeStrings: true, utf8Storage });
+  const result = await compile(source, { experimentalIR: true, nativeStrings: true, utf8Storage });
   if (!result.success) {
     throw new Error(`compile failed (utf8Storage=${utf8Storage}): ${result.errors.map((e) => e.message).join("; ")}`);
   }

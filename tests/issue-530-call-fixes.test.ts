@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(code: string) {
-  const result = compile(code);
+  const result = await compile(code);
   for (const e of result.errors) {
     if (e.severity === "error") console.log(`  Error: ${e.message} (line ${e.line})`);
   }
@@ -45,8 +45,8 @@ describe("issue-530: unsupported call expression fixes", () => {
     ).toBe(84);
   });
 
-  test("abstract class method call no unsupported error", () => {
-    const result = compile(`
+  test("abstract class method call no unsupported error", async () => {
+    const result = await compile(`
       abstract class Base { abstract get(): number; }
       class Derived extends Base { get(): number { return 42; } }
       export function main(): number {
@@ -58,8 +58,8 @@ describe("issue-530: unsupported call expression fixes", () => {
     expect(unsupported).toHaveLength(0);
   });
 
-  test("interface method call no unsupported error", () => {
-    const result = compile(`
+  test("interface method call no unsupported error", async () => {
+    const result = await compile(`
       interface HasValue { getValue(): number; }
       class Impl implements HasValue { getValue(): number { return 42; } }
       function callIt(obj: HasValue): number { return obj.getValue(); }
@@ -71,8 +71,8 @@ describe("issue-530: unsupported call expression fixes", () => {
     expect(unsupported).toHaveLength(0);
   });
 
-  test("String.prototype.method.call no unsupported error", () => {
-    const result = compile(`
+  test("String.prototype.method.call no unsupported error", async () => {
+    const result = await compile(`
       export function main(): string {
         const a = "hello".slice(0, 2);
         return String.prototype.slice.call("world", 0, 3);
@@ -82,8 +82,8 @@ describe("issue-530: unsupported call expression fixes", () => {
     expect(unsupported).toHaveLength(0);
   });
 
-  test("Promise.then no unsupported error", () => {
-    const result = compile(`
+  test("Promise.then no unsupported error", async () => {
+    const result = await compile(`
       export function main(): void {
         Promise.resolve(1).then((v: number) => { });
       }

@@ -11,7 +11,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runFn(source: string, exportName: string): Promise<unknown> {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     const msgs = result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n");
     throw new Error(`compile failed:\n${msgs}`);

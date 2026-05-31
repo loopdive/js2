@@ -23,23 +23,23 @@ import { describe, expect, it, vi } from "vitest";
 import { compile } from "../src/index.ts";
 
 describe("#1288 ts-api shim (TS5 default mode)", () => {
-  it("compiles a basic export under default (TS5) mode", () => {
+  it("compiles a basic export under default (TS5) mode", async () => {
     const src = "export function add(a: number, b: number): number { return a + b; }";
-    const r = compile(src, { fileName: "add.ts" });
+    const r = await compile(src, { fileName: "add.ts" });
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.binary.byteLength).toBeGreaterThan(0);
     }
   });
 
-  it('silently skips import attributes (`with { type: "json" }`) — warns, does not throw', () => {
+  it('silently skips import attributes (`with { type: "json" }`) — warns, does not throw', async () => {
     // TS 5.3+ parses import attributes natively. js2wasm doesn't resolve JSON
     // imports; it should warn once and continue producing valid Wasm output.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const src = `import data from "./data.json" with { type: "json" };
 export function answer(): number { return 42; }`;
-      const r = compile(src, { fileName: "with-attrs.ts" });
+      const r = await compile(src, { fileName: "with-attrs.ts" });
       expect(r.success).toBe(true);
       // The compiler should have emitted at least one warn referencing #1288.
       const calls = warn.mock.calls.map((args) => String(args[0] ?? ""));

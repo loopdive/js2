@@ -22,14 +22,14 @@ import { compile } from "../src/index.js";
 
 describe("#1104 Phase 2 — native Error property access (standalone mode)", () => {
   describe("WASI mode", () => {
-    it("emits struct.get for `error.message` instead of __extern_get host import", () => {
+    it("emits struct.get for `error.message` instead of __extern_get host import", async () => {
       const src = `
         export function getMessage(): any {
           const e = new Error("oops");
           return e.message;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       // Ensure the WAT references the Error struct's message field.
       expect(r.wat).toContain("$Error_struct");
@@ -39,14 +39,14 @@ describe("#1104 Phase 2 — native Error property access (standalone mode)", () 
       expect(envImports).toEqual([]);
     });
 
-    it("emits struct.get for `error.name` similarly", () => {
+    it("emits struct.get for `error.name` similarly", async () => {
       const src = `
         export function getName(): any {
           const e = new TypeError("oops");
           return e.name;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       expect(r.wat).toContain("$Error_struct");
       const envImports = r.imports.filter((i) => i.module === "env").map((i) => i.name);
@@ -61,7 +61,7 @@ describe("#1104 Phase 2 — native Error property access (standalone mode)", () 
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       const { instance } = await WebAssembly.instantiate(r.binary, {});
       const test = instance.exports.test as () => number;
@@ -76,7 +76,7 @@ describe("#1104 Phase 2 — native Error property access (standalone mode)", () 
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       const { instance } = await WebAssembly.instantiate(r.binary, {});
       const test = instance.exports.test as () => number;
@@ -102,7 +102,7 @@ describe("#1104 Phase 2 — native Error property access (standalone mode)", () 
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       const { instance } = await WebAssembly.instantiate(r.binary, {});
       const test = instance.exports.test as () => number;
@@ -118,7 +118,7 @@ describe("#1104 Phase 2 — native Error property access (standalone mode)", () 
           return 0;
         }
       `;
-      const r = compile(src, { target: "wasi" });
+      const r = await compile(src, { target: "wasi" });
       expect(r.success).toBe(true);
       // We only care that compilation succeeds; the property access falls
       // through to the regular plain-object path. (If our Phase 2 guard
@@ -130,14 +130,14 @@ describe("#1104 Phase 2 — native Error property access (standalone mode)", () 
   });
 
   describe("JS-host mode (regression check — unchanged)", () => {
-    it("`error.message` still routes through the host path (no struct.get $Error_struct)", () => {
+    it("`error.message` still routes through the host path (no struct.get $Error_struct)", async () => {
       const src = `
         export function getMessage(): any {
           const e = new Error("oops");
           return e.message;
         }
       `;
-      const r = compile(src);
+      const r = await compile(src);
       expect(r.success).toBe(true);
       // In JS-host mode the Error struct type should NOT be registered.
       expect(r.wat).not.toContain("$Error_struct");

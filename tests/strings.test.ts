@@ -4,7 +4,7 @@ import { buildStringConstants } from "../src/runtime.js";
 
 describe("string support", () => {
   it("string parameter passes as externref", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function greet(name: string): string {
         return name;
       }
@@ -19,7 +19,7 @@ describe("string support", () => {
   });
 
   it("string literal compiles to global import from string_constants", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function hello(): string {
         return "world";
       }
@@ -41,7 +41,7 @@ describe("string support", () => {
   });
 
   it("string concatenation uses wasm:js-string concat", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function greet(name: string): string {
         return "Hello, " + name;
       }
@@ -55,8 +55,8 @@ describe("string support", () => {
     expect(result.stringPool).toContain("Hello, ");
   });
 
-  it("string equality uses wasm:js-string equals", () => {
-    const result = compile(`
+  it("string equality uses wasm:js-string equals", async () => {
+    const result = await compile(`
       export function isHello(s: string): boolean {
         return s === "hello";
       }
@@ -69,8 +69,8 @@ describe("string support", () => {
     expect(result.wat).toContain("equals");
   });
 
-  it("console.log with string uses console_log_string", () => {
-    const result = compile(`
+  it("console.log with string uses console_log_string", async () => {
+    const result = await compile(`
       export function test(): void {
         console.log("hello");
       }
@@ -84,7 +84,7 @@ describe("string support", () => {
   });
 
   it("string literal runs end-to-end with polyfill", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function hello(): string {
         return "world";
       }
@@ -115,7 +115,7 @@ describe("string support", () => {
   });
 
   it("string concat runs end-to-end with polyfill", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function greet(name: string): string {
         return "Hello, " + name;
       }

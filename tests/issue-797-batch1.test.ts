@@ -9,7 +9,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string): Promise<any> {
-  const result = compile(src, { fileName: "test.ts" });
+  const result = await compile(src, { fileName: "test.ts" });
   if (!result.success) throw new Error(result.errors[0]?.message ?? "compile error");
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);

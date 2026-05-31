@@ -24,7 +24,7 @@ const PARSE_IMPORT_RE = /^(parseInt|parseFloat)$/;
 
 async function runStandalone(expr: string, target: "wasi" | "standalone" = "wasi"): Promise<number> {
   const src = `export function test(): number { return ${expr}; }`;
-  const r = compile(src, { fileName: "test.ts", target });
+  const r = await compile(src, { fileName: "test.ts", target });
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
   const mod = await WebAssembly.compile(r.binary);
   const parseImports = WebAssembly.Module.imports(mod)
@@ -97,7 +97,7 @@ describe("#1663 standalone parseInt/parseFloat — no JS host imports", () => {
 describe("#1663 default (JS-host) gc path is unchanged", () => {
   it("still emits env.parseInt / env.parseFloat host imports under gc", async () => {
     const src = `export function test(): number { return parseInt("42") + parseFloat("3.14"); }`;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     const mod = await WebAssembly.compile(r.binary);
     const names = WebAssembly.Module.imports(mod)

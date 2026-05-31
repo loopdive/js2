@@ -53,7 +53,7 @@ describe("Global index shifting with string constants in try/catch (#429)", () =
     // Regression: this pattern caused "immutable global cannot be assigned"
     // because the outer catch's global.set index was not updated when
     // string constant imports were added during inner try compilation
-    const result = compile(`
+    const result = await compile(`
       let flag: number = 0;
 
       export function test(): number {

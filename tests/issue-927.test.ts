@@ -5,13 +5,13 @@ import { parseMeta, wrapTest } from "./test262-runner.ts";
 
 describe("Issue #927 — early error detection", () => {
   describe("valid code should still compile", () => {
-    it("basic function with return", () => {
-      const r = compile(`export function test(): number { return 1; }`);
+    it("basic function with return", async () => {
+      const r = await compile(`export function test(): number { return 1; }`);
       expect(r.success).toBe(true);
     });
 
-    it("class with fields", () => {
-      const r = compile(`
+    it("class with fields", async () => {
+      const r = await compile(`
         class C {
           x: number = 42;
           static y: string = "hello";
@@ -21,24 +21,24 @@ describe("Issue #927 — early error detection", () => {
       expect(r.success).toBe(true);
     });
 
-    it("async function with await", () => {
-      const r = compile(`
+    it("async function with await", async () => {
+      const r = await compile(`
         async function f(): Promise<number> { return await Promise.resolve(1); }
         export function test(): number { return 1; }
       `);
       expect(r.success).toBe(true);
     });
 
-    it("generator function with yield", () => {
-      const r = compile(`
+    it("generator function with yield", async () => {
+      const r = await compile(`
         function* g() { yield 1; yield 2; }
         export function test(): number { return 1; }
       `);
       expect(r.success).toBe(true);
     });
 
-    it("export declarations at top level", () => {
-      const r = compile(`
+    it("export declarations at top level", async () => {
+      const r = await compile(`
         export const x = 1;
         export function foo() { return 2; }
         export function test(): number { return x; }
@@ -46,16 +46,16 @@ describe("Issue #927 — early error detection", () => {
       expect(r.success).toBe(true);
     });
 
-    it("arguments in regular function", () => {
-      const r = compile(`
+    it("arguments in regular function", async () => {
+      const r = await compile(`
         function f() { return arguments.length; }
         export function test(): number { return 1; }
       `);
       expect(r.success).toBe(true);
     });
 
-    it("dynamic import call", () => {
-      const r = compile(`
+    it("dynamic import call", async () => {
+      const r = await compile(`
         async function f() { const m = await import("./foo"); }
         export function test(): number { return 1; }
       `);
@@ -71,14 +71,14 @@ describe("Issue #927 — early error detection", () => {
   });
 
   describe("negative tests should be rejected", () => {
-    it("return outside function", () => {
-      const r = compile(`return 1;`);
+    it("return outside function", async () => {
+      const r = await compile(`return 1;`);
       expect(r.success).toBe(false);
       expect(r.errors.some((e) => e.message.includes("return"))).toBe(true);
     });
 
-    it("arguments in class field initializer", () => {
-      const r = compile(`
+    it("arguments in class field initializer", async () => {
+      const r = await compile(`
         class C {
           x = arguments;
         }
@@ -88,8 +88,8 @@ describe("Issue #927 — early error detection", () => {
       expect(r.errors.some((e) => e.message.includes("arguments"))).toBe(true);
     });
 
-    it("duplicate export names", () => {
-      const r = compile(`
+    it("duplicate export names", async () => {
+      const r = await compile(`
         const a = 1;
         const b = 2;
         export { a as z };
@@ -110,12 +110,12 @@ describe("Issue #927 — early error detection", () => {
 
     for (const tp of negativeTests) {
       const name = tp.split("/").pop()!;
-      it(`should reject: ${name}`, () => {
+      it(`should reject: ${name}`, async () => {
         try {
           const src = readFileSync(tp, "utf-8");
           const meta = parseMeta(src);
           const { source: w } = wrapTest(src, meta);
-          const r = compile(w, { fileName: "test.ts" });
+          const r = await compile(w, { fileName: "test.ts" });
           // For negative tests, compilation should fail OR instantiation should fail
           // (the test harness wraps in try-catch for negative tests)
           // If compilation succeeds, the test function should return 1 (caught error)

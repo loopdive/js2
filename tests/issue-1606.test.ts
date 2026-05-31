@@ -18,8 +18,8 @@ import { compile } from "./src/index.js";
 // eval-inline path is out of scope; the contract is "no internal compiler
 // crash".
 
-function internalCrashErrors(src: string): string[] {
-  const result = compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
+async function internalCrashErrors(src: string): Promise<string[]> {
+  const result = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
   const msgs = (result.errors ?? []).map((e) => e.message);
   return msgs.filter(
     (m) =>
@@ -30,35 +30,35 @@ function internalCrashErrors(src: string): string[] {
 }
 
 describe("#1606 — no internal crash on eval-inlined object literals", () => {
-  it("get/set accessor pair in inlined eval does not crash the compiler", () => {
+  it("get/set accessor pair in inlined eval does not crash the compiler", async () => {
     const src = `
       var s1 = "g";
       var o: any;
       eval("o = {get foo(){ return s1;},set foo(arg){ s1 = arg; }};");
     `;
-    expect(internalCrashErrors(src)).toEqual([]);
+    expect(await internalCrashErrors(src)).toEqual([]);
   });
 
-  it("set-only accessor in inlined eval does not crash the compiler", () => {
+  it("set-only accessor in inlined eval does not crash the compiler", async () => {
     const src = `
       var o: any;
       eval("o = {set foo(arg){}};");
     `;
-    expect(internalCrashErrors(src)).toEqual([]);
+    expect(await internalCrashErrors(src)).toEqual([]);
   });
 
-  it("get-only accessor in inlined eval does not crash the compiler", () => {
+  it("get-only accessor in inlined eval does not crash the compiler", async () => {
     const src = `
       var o: any;
       eval("o = {get foo(){ return 1; }};");
     `;
-    expect(internalCrashErrors(src)).toEqual([]);
+    expect(await internalCrashErrors(src)).toEqual([]);
   });
 
-  it("duplicate data-property keys in inlined eval do not crash the compiler", () => {
+  it("duplicate data-property keys in inlined eval do not crash the compiler", async () => {
     const src = `
       var o: any = eval("({foo:0,foo:1});");
     `;
-    expect(internalCrashErrors(src)).toEqual([]);
+    expect(await internalCrashErrors(src)).toEqual([]);
   });
 });

@@ -30,7 +30,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileWithSandbox(source: string, sandboxProps: Record<string, unknown>) {
-  const r = compile(source, { fileName: "input.ts" });
+  const r = await compile(source, { fileName: "input.ts" });
   expect(r.errors.filter((e) => e.severity === "error")).toEqual([]);
   expect(r.success).toBe(true);
   const sandbox = createContext({ ...sandboxProps }) as Record<string, unknown>;

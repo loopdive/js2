@@ -18,7 +18,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function run(source: string): Promise<number> {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -28,8 +28,8 @@ async function run(source: string): Promise<number> {
 }
 
 function expectValid(name: string, source: string) {
-  it(name, () => {
-    const result = compile(source, { fileName: "test.ts" });
+  it(name, async () => {
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(() => new WebAssembly.Module(result.binary)).not.toThrow();

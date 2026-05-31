@@ -41,16 +41,16 @@ describe("Issue #990 — negative test pipeline", () => {
     }
   });
 
-  it("rejects html close comments in module goal", () => {
-    const result = compile("export {};\n;-->");
+  it("rejects html close comments in module goal", async () => {
+    const result = await compile("export {};\n;-->");
     expect(result.success).toBe(false);
     expect(
       result.errors.some((error) => error.message.includes("HTML close comments are not allowed in module code")),
     ).toBe(true);
   });
 
-  it("rejects using declarations at the top level of scripts", () => {
-    const result = compile("using x = null;");
+  it("rejects using declarations at the top level of scripts", async () => {
+    const result = await compile("using x = null;");
     expect(result.success).toBe(false);
     expect(
       result.errors.some((error) =>
@@ -59,8 +59,8 @@ describe("Issue #990 — negative test pipeline", () => {
     ).toBe(true);
   });
 
-  it("rejects using declarations directly in switch clauses", () => {
-    const result = compile("switch (0) { case 0: using x = null; break; }");
+  it("rejects using declarations directly in switch clauses", async () => {
+    const result = await compile("switch (0) { case 0: using x = null; break; }");
     expect(result.success).toBe(false);
     expect(
       result.errors.some((error) =>
@@ -69,8 +69,8 @@ describe("Issue #990 — negative test pipeline", () => {
     ).toBe(true);
   });
 
-  it("rejects optional chaining assignment targets", () => {
-    const result = compile("let obj = { value: 1 }; obj?.value = 2;");
+  it("rejects optional chaining assignment targets", async () => {
+    const result = await compile("let obj = { value: 1 }; obj?.value = 2;");
     expect(result.success).toBe(false);
     expect(
       result.errors.some((error) =>

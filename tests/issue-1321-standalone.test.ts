@@ -25,7 +25,7 @@ const FMT_IMPORT_RE = /^number_(toFixed|toPrecision|toExponential)$/;
 async function fmtStandalone(expr: string, target: "wasi" | "standalone" = "wasi"): Promise<string> {
   const src = `export function len(): number { return (${expr}).length; }
 export function at(i: number): number { return (${expr}).charCodeAt(i); }`;
-  const r = compile(src, { fileName: "test.ts", target });
+  const r = await compile(src, { fileName: "test.ts", target });
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
   const mod = await WebAssembly.compile(r.binary);
   const fmtImports = WebAssembly.Module.imports(mod)

@@ -6,8 +6,8 @@ import { compile } from "../src/index.js";
 // found in the TypeScript compiler source.
 
 describe("TypeScript Compiler Pattern Compatibility", () => {
-  it("large enum (SyntaxKind equivalent)", () => {
-    const r = compile(`
+  it("large enum (SyntaxKind equivalent)", async () => {
+    const r = await compile(`
       enum SyntaxKind {
         Unknown = 0,
         EndOfFileToken = 1,
@@ -26,8 +26,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     expect(r.success).toBe(true);
   });
 
-  it("interface with fields", () => {
-    const r = compile(`
+  it("interface with fields", async () => {
+    const r = await compile(`
       interface Node {
         kind: number;
         pos: number;
@@ -44,8 +44,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     expect(r.success).toBe(true);
   });
 
-  it("class methods (TextRange pattern)", () => {
-    const r = compile(`
+  it("class methods (TextRange pattern)", async () => {
+    const r = await compile(`
       class TextRange {
         _pos: number;
         _end: number;
@@ -65,8 +65,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     expect(r.success).toBe(true);
   });
 
-  it("string equality comparison", () => {
-    const r = compile(`
+  it("string equality comparison", async () => {
+    const r = await compile(`
       function isKeyword(s: string): number {
         if (s === "if") return 1;
         if (s === "else") return 2;
@@ -84,8 +84,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     expect(r.success).toBe(true);
   });
 
-  it("union type: number | string", () => {
-    const r = compile(`
+  it("union type: number | string", async () => {
+    const r = await compile(`
       function test(x: number | string): number {
         if (typeof x === "number") return 1;
         return 0;
@@ -101,8 +101,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Union type support:", r.success ? "YES" : "NO");
   });
 
-  it("optional parameters", () => {
-    const r = compile(`
+  it("optional parameters", async () => {
+    const r = await compile(`
       function foo(a: number, b?: number): number {
         if (b !== undefined) return a + 1;
         return a;
@@ -117,8 +117,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Optional params support:", r.success ? "YES" : "NO");
   });
 
-  it("array of class instances", () => {
-    const r = compile(`
+  it("array of class instances", async () => {
+    const r = await compile(`
       class Token {
         kind: number;
         start: number;
@@ -146,8 +146,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Array of class instances:", r.success ? "YES" : "NO");
   });
 
-  it("type assertion", () => {
-    const r = compile(`
+  it("type assertion", async () => {
+    const r = await compile(`
       function test(x: number): number {
         let y: number = x as number;
         return y;
@@ -162,8 +162,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Type assertion:", r.success ? "YES" : "NO");
   });
 
-  it("recursive/self-referencing class", () => {
-    const r = compile(`
+  it("recursive/self-referencing class", async () => {
+    const r = await compile(`
       class ListNode {
         value: number;
         next: ListNode;
@@ -182,8 +182,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Recursive/self-ref class:", r.success ? "YES" : "NO");
   });
 
-  it("null union types", () => {
-    const r = compile(`
+  it("null union types", async () => {
+    const r = await compile(`
       class Box {
         value: number;
         constructor(v: number) { this.value = v; }
@@ -205,8 +205,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Null union types:", r.success ? "YES" : "NO");
   });
 
-  it("for loop", () => {
-    const r = compile(`
+  it("for loop", async () => {
+    const r = await compile(`
       export function test(): number {
         let sum: number = 0;
         for (let i: number = 0; i < 10; i = i + 1) {
@@ -223,8 +223,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("For loop:", r.success ? "YES" : "NO");
   });
 
-  it("switch statement", () => {
-    const r = compile(`
+  it("switch statement", async () => {
+    const r = await compile(`
       function classify(kind: number): number {
         switch (kind) {
           case 1: return 10;
@@ -243,8 +243,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Switch statement:", r.success ? "YES" : "NO");
   });
 
-  it("try-catch", () => {
-    const r = compile(`
+  it("try-catch", async () => {
+    const r = await compile(`
       export function test(): number {
         try {
           return 42;
@@ -261,8 +261,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Try-catch:", r.success ? "YES" : "NO");
   });
 
-  it("spread operator", () => {
-    const r = compile(`
+  it("spread operator", async () => {
+    const r = await compile(`
       export function test(): number {
         let a: number[] = [1, 2, 3];
         let b: number[] = [...a, 4, 5];
@@ -277,8 +277,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Spread operator:", r.success ? "YES" : "NO");
   });
 
-  it("Map object", () => {
-    const r = compile(`
+  it("Map object", async () => {
+    const r = await compile(`
       export function test(): number {
         let m: Map<string, number> = new Map();
         m.set("a", 1);
@@ -293,8 +293,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Map:", r.success ? "YES" : "NO");
   });
 
-  it("closure capturing variable", () => {
-    const r = compile(`
+  it("closure capturing variable", async () => {
+    const r = await compile(`
       function makeAdder(x: number): (y: number) => number {
         return (y: number): number => x + y;
       }
@@ -311,8 +311,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Closure:", r.success ? "YES" : "NO");
   });
 
-  it("class inheritance", () => {
-    const r = compile(`
+  it("class inheritance", async () => {
+    const r = await compile(`
       class Base {
         x: number;
         constructor(x: number) { this.x = x; }
@@ -339,8 +339,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Class inheritance:", r.success ? "YES" : "NO");
   });
 
-  it("generic function", () => {
-    const r = compile(`
+  it("generic function", async () => {
+    const r = await compile(`
       function identity<T>(x: T): T { return x; }
       export function test(): number { return identity(42); }
     `);
@@ -352,8 +352,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Generics:", r.success ? "YES" : "NO");
   });
 
-  it("rest parameters", () => {
-    const r = compile(`
+  it("rest parameters", async () => {
+    const r = await compile(`
       function sum(...args: number[]): number {
         let total: number = 0;
         let i: number = 0;
@@ -373,8 +373,8 @@ describe("TypeScript Compiler Pattern Compatibility", () => {
     console.log("Rest parameters:", r.success ? "YES" : "NO");
   });
 
-  it("template literals", () => {
-    const r = compile(`
+  it("template literals", async () => {
+    const r = await compile(`
       export function test(): string {
         let x: number = 42;
         return \\\`value is \\\${x}\\\`;

@@ -43,7 +43,7 @@ type Outcome =
   | { kind: "invoke_fail"; reason?: string };
 
 async function runOnce(source: string, builderName: string, fnName: string, experimentalIR: boolean): Promise<Outcome> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     return { kind: "compile_fail", firstMessage: r.errors[0]?.message ?? "" };
   }
@@ -235,8 +235,8 @@ describe("#1181 — selector claims for-of-shaped functions", () => {
 
 describe("#1181 — IR compile produces no IR-fallback errors for for-of cases", () => {
   for (const tc of CASES) {
-    it(`compiles "${tc.name}" cleanly under experimentalIR`, () => {
-      const r = compile(tc.source, { experimentalIR: true });
+    it(`compiles "${tc.name}" cleanly under experimentalIR`, async () => {
+      const r = await compile(tc.source, { experimentalIR: true });
       expect(r.success).toBe(true);
       // Errors prefixed with "IR path failed" / "ir/from-ast" / "ir/lower"
       // mean the selector claimed the function but the lowerer threw.

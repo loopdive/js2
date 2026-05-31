@@ -9,15 +9,15 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function run(src: string): Promise<number> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
   return (instance.exports.test as () => number)();
 }
 
-function compileOnly(src: string) {
-  const r = compile(src, { fileName: "test.ts" });
+async function compileOnly(src: string) {
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message}`);
   return r;
 }
@@ -95,15 +95,15 @@ describe("Issue #899: TDZ elimination for closure captures", () => {
     expect(result).toBe(3);
   });
 
-  it("safe call-site TDZ check produces smaller binary (no TDZ check code)", () => {
-    const safe = compileOnly(`
+  it("safe call-site TDZ check produces smaller binary (no TDZ check code)", async () => {
+    const safe = await compileOnly(`
       export function test(): number {
         let x: number = 42;
         function inner(): number { return x; }
         return inner();
       }
     `);
-    const unsafe = compileOnly(`
+    const unsafe = await compileOnly(`
       export function test(): number {
         function inner(): number { return x; }
         const result = inner();

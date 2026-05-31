@@ -31,7 +31,7 @@ describe("Issue #273: anonymous class expression in new", () => {
     expect(exports.test()).toBe(99);
   });
 
-  it("should compile without errors", () => {
+  it("should compile without errors", async () => {
     const source = `
       export function test(): number {
         const obj = new (class {
@@ -41,7 +41,7 @@ describe("Issue #273: anonymous class expression in new", () => {
         return obj.x;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     expect(result.errors).toHaveLength(0);
   });

@@ -36,27 +36,27 @@ interface CompileWarning {
 }
 
 async function runTest(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts", experimentalIR: true });
+  const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
   return (instance.exports as Record<string, () => unknown>).test!();
 }
 
-function irFallbacks(src: string): string[] {
-  const r = compile(src, { fileName: "test.ts", experimentalIR: true });
+async function irFallbacks(src: string): Promise<string[]> {
+  const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
   return ((r.errors ?? []) as CompileWarning[])
     .filter((e) => e.message.includes("IR path failed"))
     .map((e) => e.message);
 }
 
 describe("issue #1374: IR inline-small handles callees with body-buffer instrs", () => {
-  it("caller of a string-for-of helper compiles via IR (no duplicate SSA def)", () => {
+  it("caller of a string-for-of helper compiles via IR (no duplicate SSA def)", async () => {
     const src = `
 function f(s: string): number { let n = 0; for (const c of s) n++; return n; }
 export function test(): number { return f("hi") === 2 ? 1 : 0; }
 `;
-    const fbs = irFallbacks(src);
+    const fbs = await irFallbacks(src);
     expect(fbs.filter((m) => m.includes("test"))).toEqual([]);
     expect(fbs.filter((m) => m.includes("duplicate SSA def"))).toEqual([]);
   });
@@ -70,21 +70,21 @@ export function test(): number { return countChars("hello") === 5 ? 1 : 0; }
     ).toBe(1);
   });
 
-  it("string-for-of helper with no comparison in caller compiles via IR", () => {
+  it("string-for-of helper with no comparison in caller compiles via IR", async () => {
     const src = `
 function f(s: string): number { let n = 0; for (const c of s) n++; return n; }
 export function test(): number { return f("hi"); }
 `;
-    expect(irFallbacks(src).filter((m) => m.includes("test"))).toEqual([]);
+    expect((await irFallbacks(src)).filter((m) => m.includes("test"))).toEqual([]);
   });
 
-  it("two-level call chain through a string-for-of helper compiles via IR", () => {
+  it("two-level call chain through a string-for-of helper compiles via IR", async () => {
     const src = `
 function f(s: string): number { let n = 0; for (const c of s) n++; return n; }
 function g(): number { return f("hi"); }
 export function test(): number { return g() === 2 ? 1 : 0; }
 `;
-    const fbs = irFallbacks(src);
+    const fbs = await irFallbacks(src);
     expect(fbs.filter((m) => m.includes("duplicate SSA def"))).toEqual([]);
     expect(fbs.filter((m) => m.includes("Maximum call stack"))).toEqual([]);
   });

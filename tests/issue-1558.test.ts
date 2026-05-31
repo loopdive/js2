@@ -30,8 +30,8 @@ import { buildImports } from "../src/runtime.js";
 const eslintInstalled = existsSync("node_modules/eslint/lib/linter/linter.js");
 const runIfEslintInstalled = eslintInstalled ? it : it.skip;
 
-function compileAndValidate(source: string): Uint8Array {
-  const r = compile(source, { fileName: "test.ts" });
+async function compileAndValidate(source: string): Promise<Uint8Array> {
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }
@@ -41,7 +41,7 @@ function compileAndValidate(source: string): Uint8Array {
 }
 
 async function compileAndRunNum(source: string, ...args: number[]): Promise<unknown> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }
@@ -64,8 +64,8 @@ describe("#1558 — strict-equality legacy path coerces both i32 operands to f64
    * the fix the emit is `i32; f64.convert_i32_s; i32; f64.convert_i32_s;
    * f64.eq`.
    */
-  it("string.length === (b as string).length validates", () => {
-    compileAndValidate(`
+  it("string.length === (b as string).length validates", async () => {
+    await compileAndValidate(`
       export function test(a: string, b: string): number {
         return a.length === (b as string).length ? 1 : 0;
       }
@@ -76,8 +76,8 @@ describe("#1558 — strict-equality legacy path coerces both i32 operands to f64
    * Same shape with a non-null assertion (`b!.length`) — also drops the
    * comparison off the IR fast-path and exercises the legacy branch.
    */
-  it("string.length === b!.length validates", () => {
-    compileAndValidate(`
+  it("string.length === b!.length validates", async () => {
+    await compileAndValidate(`
       export function test(a: string, b: string | undefined): number {
         return a.length === b!.length ? 1 : 0;
       }
@@ -109,8 +109,8 @@ describe("#1558 — strict-equality legacy path coerces both i32 operands to f64
    * previous-iteration value cast through `as string` to satisfy
    * `string | undefined`.
    */
-  it("ESLint verifyAndFix-shaped do-while validates", () => {
-    compileAndValidate(`
+  it("ESLint verifyAndFix-shaped do-while validates", async () => {
+    await compileAndValidate(`
       export function test(a: string): number {
         let curr = a;
         let prev: string | undefined;
@@ -132,8 +132,8 @@ describe("#1558 — strict-equality legacy path coerces both i32 operands to f64
    * contexts). Locks in that both sides get the f64 widen even when one
    * side is a literal.
    */
-  it("function-call strict equality against literal validates", () => {
-    compileAndValidate(`
+  it("function-call strict equality against literal validates", async () => {
+    await compileAndValidate(`
       function fn(s: string): number { return s.length; }
       export function test(s: string): number {
         return fn(s) === 1 ? 1 : 0;
@@ -145,8 +145,8 @@ describe("#1558 — strict-equality legacy path coerces both i32 operands to f64
    * Loose equality `==` between two string lengths via cast (sibling to
    * the `===` case — the same legacy branch dispatches both).
    */
-  it("string.length == (b as string).length validates", () => {
-    compileAndValidate(`
+  it("string.length == (b as string).length validates", async () => {
+    await compileAndValidate(`
       export function test(a: string, b: string): number {
         return a.length == (b as string).length ? 1 : 0;
       }
@@ -156,8 +156,8 @@ describe("#1558 — strict-equality legacy path coerces both i32 operands to f64
   /**
    * Inequality `!==` — same branch in `compileNumericBinaryOp`.
    */
-  it("string.length !== (b as string).length validates", () => {
-    compileAndValidate(`
+  it("string.length !== (b as string).length validates", async () => {
+    await compileAndValidate(`
       export function test(a: string, b: string): number {
         return a.length !== (b as string).length ? 1 : 0;
       }
@@ -223,8 +223,8 @@ describe("#1558 — ESLint linter.js smoke test", () => {
    * gone — failure-modes from other unrelated functions don't regress
    * this issue.
    */
-  runIfEslintInstalled("Linter_verifyAndFix no longer fails f64.eq validation", () => {
-    const r = compileProject("node_modules/eslint/lib/linter/linter.js", { allowJs: true });
+  runIfEslintInstalled("Linter_verifyAndFix no longer fails f64.eq validation", async () => {
+    const r = await compileProject("node_modules/eslint/lib/linter/linter.js", { allowJs: true });
     expect(r.success).toBe(true);
     // Reproduce the validator error (if any) and assert it's NOT the
     // f64.eq one. Capturing the message lets us pin the regression

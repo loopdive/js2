@@ -21,7 +21,7 @@ describe("compiler catch path error locations", () => {
     });
 
     const { compile } = await import("../src/index.js");
-    const result = compile(`
+    const result = await compile(`
 
 export function demo(): number {
   return 1;
@@ -46,7 +46,7 @@ export function demo(): number {
     });
 
     const { compile } = await import("../src/index.js");
-    const result = compile(`
+    const result = await compile(`
 
 export function demo(): number {
   return 1;

@@ -2,8 +2,8 @@ import { test, expect, describe } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(src: string): any {
-  const r = compile(src, { fileName: "test.ts" });
+async function compileAndRun(src: string): Promise<any> {
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`Compile error: ${r.errors?.[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const instance = new WebAssembly.Instance(new WebAssembly.Module(r.binary), imports);
@@ -11,8 +11,8 @@ function compileAndRun(src: string): any {
 }
 
 describe("#1128 — OrdinaryToPrimitive TypeError per §7.1.1.1", () => {
-  test("object with toString returning a string works via String()", () => {
-    const result = compileAndRun(`
+  test("object with toString returning a string works via String()", async () => {
+    const result = await compileAndRun(`
       export function test(): string {
         const obj = { toString() { return "hello"; } };
         return String(obj);
@@ -21,13 +21,13 @@ describe("#1128 — OrdinaryToPrimitive TypeError per §7.1.1.1", () => {
     expect(result).toBe("hello");
   });
 
-  test("_toPrimitiveSync falls back to [object Object] for WasmGC structs without sidecar", () => {
+  test("_toPrimitiveSync falls back to [object Object] for WasmGC structs without sidecar", async () => {
     // String concatenation uses _toPrimitiveSync in the concat host import.
     // _toPrimitiveSync doesn't have callbackState, so it can't dispatch through
     // Wasm exports. For WasmGC structs, it falls back to "[object Object]" which
     // is safe (no crash, no TypeError) even though the struct has a compiled toString.
     // This is a known limitation — full ToPrimitive requires callbackState.
-    const result = compileAndRun(`
+    const result = await compileAndRun(`
       export function test(): string {
         const obj = { toString() { return "world"; } };
         return "hello " + obj;
@@ -49,8 +49,8 @@ describe("#1128 — OrdinaryToPrimitive TypeError per §7.1.1.1", () => {
     expect(true).toBe(true); // placeholder — see runtime unit tests
   });
 
-  test("compile succeeds for object with custom valueOf and toString", () => {
-    const r = compile(
+  test("compile succeeds for object with custom valueOf and toString", async () => {
+    const r = await compile(
       `
       const obj = { valueOf() { return 42; }, toString() { return "forty-two"; } };
       export function test(): string { return String(obj); }
@@ -60,10 +60,10 @@ describe("#1128 — OrdinaryToPrimitive TypeError per §7.1.1.1", () => {
     expect(r.success).toBe(true);
   });
 
-  test("host ToPrimitive falls back correctly in proto method coercion", () => {
+  test("host ToPrimitive falls back correctly in proto method coercion", async () => {
     // The proto_method_call coercion path (line ~1145) now tries _hostToPrimitive
     // instead of falling back to "[object Object]" directly.
-    const result = compileAndRun(`
+    const result = await compileAndRun(`
       export function test(): string {
         const obj = { toString() { return "abc"; } };
         return obj.toString().toUpperCase();

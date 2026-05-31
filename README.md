@@ -146,7 +146,10 @@ Programmatic API:
 ```ts
 import { compile } from "js2wasm";
 
-const result = compile(
+// `compile()` is async (#1757): the optional Binaryen optimizer is loaded
+// lazily via `await import("binaryen")`, which lets a standalone
+// `bun build --compile` / `deno compile` binary embed it.
+const result = await compile(
   `
   export function add(a: number, b: number): number {
     return a + b;
@@ -177,7 +180,7 @@ The imports a module needs depend on the compile target:
   `WebAssembly.instantiate` with no hand-wiring:
 
   ```ts
-  const r = compile(`
+  const r = await compile(`
     export function add(a: number, b: number): number { return a + b; }
   `);
   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);

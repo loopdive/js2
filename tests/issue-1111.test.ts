@@ -19,7 +19,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string, entry = "test"): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error("compile failed: " + r.errors.map((e) => e.message).join("; "));
   }

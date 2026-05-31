@@ -14,7 +14,7 @@ describe("Gradual typing: boxed any (fast mode)", () => {
    * Compile TS source to Wasm in fast mode, instantiate it, and return exports.
    */
   async function compileFast(source: string) {
-    const result = compile(source, { fast: true });
+    const result = await compile(source, { fast: true });
     if (!result.success) {
       throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
     }

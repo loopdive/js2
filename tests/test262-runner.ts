@@ -2551,7 +2551,7 @@ export async function handleNegativeTest(
     let compileMs = 0;
     const compileStart = performance.now();
     try {
-      const result = compile(minimalWrapped, {
+      const result = await compile(minimalWrapped, {
         fileName: "test.ts",
         emitWat: false,
       });
@@ -2969,7 +2969,7 @@ export async function runTest262File(
   const compileStart = performance.now();
   let compileMs = 0;
   try {
-    result = compile(wrappedSource, {
+    result = await compile(wrappedSource, {
       fileName: "test.ts",
       sourceMap: true,
       emitWat: false,

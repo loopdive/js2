@@ -78,7 +78,7 @@ export async function instantiateWasmStreaming(
 
 /** Compile TypeScript source and instantiate the Wasm module. */
 export async function compileAndInstantiate(source: string, deps?: Record<string, any>): Promise<WebAssembly.Exports> {
-  const result = compileSource(source);
+  const result = await compileSource(source);
   if (!result.success) {
     throw new Error(result.errors.map((e) => e.message).join("\n"));
   }

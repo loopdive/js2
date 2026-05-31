@@ -10,7 +10,7 @@ import { compile, compileToWat } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function run(src: string): Promise<number> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors.map((e) => e.message).join(", "));
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -18,8 +18,8 @@ async function run(src: string): Promise<number> {
 }
 
 describe("#686 Closure capture type preservation", () => {
-  it("mutable f64 capture uses typed ref cell", () => {
-    const wat = compileToWat(`
+  it("mutable f64 capture uses typed ref cell", async () => {
+    const wat = await compileToWat(`
       export function test(): number {
         let count = 0;
         const inc = () => { count++; return count; };
@@ -32,8 +32,8 @@ describe("#686 Closure capture type preservation", () => {
     expect(wat).not.toMatch(/__ref_cell_externref/);
   });
 
-  it("mutable i32 (boolean) capture uses typed ref cell", () => {
-    const wat = compileToWat(`
+  it("mutable i32 (boolean) capture uses typed ref cell", async () => {
+    const wat = await compileToWat(`
       export function test(): number {
         let flag = false;
         const toggle = () => { flag = !flag; };
@@ -45,8 +45,8 @@ describe("#686 Closure capture type preservation", () => {
     expect(wat).not.toMatch(/__ref_cell_externref/);
   });
 
-  it("read-only capture does not use ref cell", () => {
-    const wat = compileToWat(`
+  it("read-only capture does not use ref cell", async () => {
+    const wat = await compileToWat(`
       export function test(): number {
         const x = 42;
         const fn = () => x + 1;

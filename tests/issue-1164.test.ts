@@ -16,7 +16,7 @@ import { buildImports } from "../src/runtime.js";
 import { createEvalShim } from "../src/runtime-eval.js";
 
 async function runTest(src: string): Promise<{ pass: boolean; ret?: unknown; error?: string }> {
-  const result = compile(src, { skipSemanticDiagnostics: true });
+  const result = await compile(src, { skipSemanticDiagnostics: true });
   if (!result.success) return { pass: false, error: result.errors[0]?.message };
   const importObj = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);

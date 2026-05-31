@@ -4,7 +4,7 @@ import { compile } from "../src/index.ts";
 import { compileAndInstantiate } from "../src/runtime.ts";
 
 async function runSource(src: string): Promise<number | undefined> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("Compile error: " + r.errors[0]?.message);
   const exports = await compileAndInstantiate(src);
   return (exports.test as any)?.();

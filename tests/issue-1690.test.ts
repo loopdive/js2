@@ -25,7 +25,7 @@ import { compile } from "../src/index.js";
  * walk `liveBodies` (parallel to the existing function-index shift walker).
  */
 describe("#1690 — for-loop global-index shift during body compilation", () => {
-  it("minimal repro: function-local for-loop after top-level for-loop", () => {
+  it("minimal repro: function-local for-loop after top-level for-loop", async () => {
     const src = [
       "for (var i = 0, list = [1, 2, 3]; i < list.length; i += 1) {",
       "  var x = list[i];",
@@ -43,7 +43,7 @@ describe("#1690 — for-loop global-index shift during body compilation", () => 
       "}",
     ].join("\n");
 
-    const r = compile(src, { fileName: "issue-1690.mjs" });
+    const r = await compile(src, { fileName: "issue-1690.mjs" });
     expect(r.success).toBe(true);
     expect(r.binary).toBeDefined();
     // The smoking-gun assertion — the bug manifested as an invalid Wasm
@@ -54,7 +54,7 @@ describe("#1690 — for-loop global-index shift during body compilation", () => 
     });
   });
 
-  it("incrementor expression with module-global aliasing", () => {
+  it("incrementor expression with module-global aliasing", async () => {
     // Variant covering the `incrInstrs` half of the fix: the incrementor
     // buffer is also detached during cond+body compilation.
     const src = [
@@ -71,14 +71,14 @@ describe("#1690 — for-loop global-index shift during body compilation", () => 
       "}",
     ].join("\n");
 
-    const r = compile(src, { fileName: "issue-1690b.mjs" });
+    const r = await compile(src, { fileName: "issue-1690b.mjs" });
     expect(r.success).toBe(true);
     return WebAssembly.compile(r.binary as BufferSource).then((mod) => {
       expect(mod).toBeDefined();
     });
   });
 
-  it("do-while condition buffer follows the same fix", () => {
+  it("do-while condition buffer follows the same fix", async () => {
     // The same detached-buffer pattern exists in compileDoWhileStatement
     // (the cond is compiled into a fresh array, then spliced after the
     // body). This variant exercises that path.
@@ -97,7 +97,7 @@ describe("#1690 — for-loop global-index shift during body compilation", () => 
       "}",
     ].join("\n");
 
-    const r = compile(src, { fileName: "issue-1690c.mjs" });
+    const r = await compile(src, { fileName: "issue-1690c.mjs" });
     expect(r.success).toBe(true);
     return WebAssembly.compile(r.binary as BufferSource).then((mod) => {
       expect(mod).toBeDefined();

@@ -19,7 +19,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runIr(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts", experimentalIR: true });
+  const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
   if (!r.success) {
     throw new Error(`compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -34,7 +34,7 @@ async function runIr(src: string): Promise<unknown> {
 async function watIr(src: string): Promise<string> {
   // Build the binary via the IR path, then disassemble through wasm-dis
   // (Binaryen) so the test can assert on the structured-Wasm pattern.
-  const r = compile(src, { fileName: "test.ts", experimentalIR: true });
+  const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
   if (!r.success) {
     throw new Error(`compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }

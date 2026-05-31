@@ -13,7 +13,7 @@ import { compile, buildImports } from "/workspace/.claude/worktrees/issue-1438/s
 import { describe, expect, it } from "vitest";
 
 async function run(src: string, exportName = "test"): Promise<any> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

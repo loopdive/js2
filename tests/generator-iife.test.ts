@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("Issue #657: Generator function expression IIFE should not be inlined", () => {
-  it("(function* () { yield; yield; })() compiles without errors", () => {
+  it("(function* () { yield; yield; })() compiles without errors", async () => {
     const src = `
 export function test(): number {
   const iter = (function* () {
@@ -14,12 +14,12 @@ export function test(): number {
   return 1;
 }
 `;
-    const result = compile(src, { fileName: "test.ts" });
+    const result = await compile(src, { fileName: "test.ts" });
     const errors = result.errors.filter((e) => e.severity === "error");
     expect(errors).toEqual([]);
   });
 
-  it("generator IIFE inside try-catch compiles without errors", () => {
+  it("generator IIFE inside try-catch compiles without errors", async () => {
     const src = `
 let __fail: number = 0;
 export function test(): number {
@@ -35,12 +35,12 @@ export function test(): number {
   return 1;
 }
 `;
-    const result = compile(src, { fileName: "test.ts" });
+    const result = await compile(src, { fileName: "test.ts" });
     const errors = result.errors.filter((e) => e.severity === "error");
     expect(errors).toEqual([]);
   });
 
-  it("nested generator IIFE with for-of compiles without errors", () => {
+  it("nested generator IIFE with for-of compiles without errors", async () => {
     const src = `
 export function test(): number {
   const iter = (function* () {
@@ -51,7 +51,7 @@ export function test(): number {
   return 1;
 }
 `;
-    const result = compile(src, { fileName: "test.ts" });
+    const result = await compile(src, { fileName: "test.ts" });
     const errors = result.errors.filter((e) => e.severity === "error");
     expect(errors).toEqual([]);
   });

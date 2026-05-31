@@ -14,7 +14,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string, fn: string, args: number[] = []): Promise<number> {
-  const r = compile(src, { fileName: "t.js" });
+  const r = await compile(src, { fileName: "t.js" });
   if (!r.success) {
     throw new Error(`Compile failed: ${r.errors.map((e) => e.message).join(", ")}`);
   }
@@ -23,8 +23,8 @@ async function run(src: string, fn: string, args: number[] = []): Promise<number
   return (instance.exports[fn] as (...a: number[]) => number)(...args);
 }
 
-function compileWat(src: string): string {
-  const r = compile(src, { fileName: "t.js" });
+async function compileWat(src: string): Promise<string> {
+  const r = await compile(src, { fileName: "t.js" });
   if (!r.success) {
     throw new Error(`Compile failed: ${r.errors.map((e) => e.message).join(", ")}`);
   }
@@ -90,7 +90,7 @@ describe("#1120 — int32 fast path for bitwise-coerced numeric loops", () => {
     expect(await run(src, "run", [50])).toBe(a | 0);
   });
 
-  it("hot loop emits native i32 arithmetic, no ToInt32 round-trip", () => {
+  it("hot loop emits native i32 arithmetic, no ToInt32 round-trip", async () => {
     const src = `
       export function run(n) {
         let a = 0;
@@ -103,7 +103,7 @@ describe("#1120 — int32 fast path for bitwise-coerced numeric loops", () => {
         return a | 0;
       }
     `;
-    const wat = compileWat(src);
+    const wat = await compileWat(src);
     // Locals must be i32, not f64.
     expect(wat).toMatch(/\(local \$a i32\)/);
     expect(wat).toMatch(/\(local \$b i32\)/);
@@ -142,7 +142,7 @@ describe("#1121 — numeric recursive fast path without JSDoc hints", () => {
     expect(await run(src, "run", [20])).toBe(6765);
   });
 
-  it("fib lowers to the lean numeric path (no externref boxing)", () => {
+  it("fib lowers to the lean numeric path (no externref boxing)", async () => {
     const src = `
       function fib(n) {
         if (n <= 1) return n;
@@ -152,7 +152,7 @@ describe("#1121 — numeric recursive fast path without JSDoc hints", () => {
         return fib(n);
       }
     `;
-    const wat = compileWat(src);
+    const wat = await compileWat(src);
     // The fib_type declaration must be (param f64) (result f64) — i.e. no
     // externref boxing on either side. The compiler emits this both as
     // `(func $fib_type (func (param f64) (result f64)))` (named type alias)
@@ -166,7 +166,7 @@ describe("#1121 — numeric recursive fast path without JSDoc hints", () => {
     expect(wat).toMatch(/\(func \$fib[\s\S]*?f64\.add/);
   });
 
-  it("run's signature is propagated to (f64) → f64 from body usage", () => {
+  it("run's signature is propagated to (f64) → f64 from body usage", async () => {
     const src = `
       function fib(n) {
         if (n <= 1) return n;
@@ -176,7 +176,7 @@ describe("#1121 — numeric recursive fast path without JSDoc hints", () => {
         return fib(n);
       }
     `;
-    const wat = compileWat(src);
+    const wat = await compileWat(src);
     // run shares fib's (f64) → f64 type. There must be no externref param
     // anywhere in the public exports — that would force boxing at the
     // boundary. Specifically, run must NOT have an externref param.

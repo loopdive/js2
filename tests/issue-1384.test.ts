@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function compileAndValidate(src: string) {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
   return WebAssembly.compile(r.binary);
 }

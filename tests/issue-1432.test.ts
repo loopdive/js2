@@ -26,7 +26,7 @@ import { buildImports } from "../src/runtime.js";
  * `.next()` errors propagate per spec.
  */
 async function run(src: string): Promise<{ exports: Record<string, any> }> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool) as any;
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -148,13 +148,13 @@ describe("#1432 — parameter destructuring iterator semantics", () => {
     expect((exports.test as () => number)()).toBe(42);
   });
 
-  it("[,] short-circuit is gone for iterables (regression guard for fix)", () => {
+  it("[,] short-circuit is gone for iterables (regression guard for fix)", async () => {
     // After the #1432 narrowing of isPatternEmptyOnly, an iterable parameter
     // with `[,]` MUST flow through the materialization path. We don't pin
     // exact instructions here, just that the externref / iter machinery is
     // wired in (i.e. the compiler hasn't reverted to the spec-violating
     // short-circuit).
-    const wat = compileToWat(`
+    const wat = await compileToWat(`
       function f([,]: any) {}
       export function test(iter: any): number { f(iter); return 0; }
     `);
@@ -165,10 +165,10 @@ describe("#1432 — parameter destructuring iterator semantics", () => {
     expect(hasIterMaterialization).toBe(true);
   });
 
-  it("truly-empty [] keeps the short-circuit (regression guard for #1158)", () => {
+  it("truly-empty [] keeps the short-circuit (regression guard for #1158)", async () => {
     // Empty `[]` still skips iteration entirely. We expect no call to
     // __array_from_iter for a top-level empty pattern with iterable param.
-    const wat = compileToWat(`
+    const wat = await compileToWat(`
       function f([]: any) {}
       export function test(iter: any): number { f(iter); return 0; }
     `);

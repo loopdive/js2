@@ -8,7 +8,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function compileAndRun(source: string): Promise<number> {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compilation failed: ${result.errors.map((e) => e.message).join("; ")}`);
   }

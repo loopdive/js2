@@ -6,7 +6,7 @@ import { buildImports } from "../src/runtime.js";
  * Helper: compile TS source, instantiate, and call the exported function.
  */
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -25,16 +25,16 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
 /**
  * Helper: compile and assert no codegen errors (severity "error").
  */
-function compileNoErrors(source: string, options?: { fileName?: string }): void {
-  const result = compile(source, options);
+async function compileNoErrors(source: string, options?: { fileName?: string }): Promise<void> {
+  const result = await compile(source, options);
   const codegenErrors = result.errors.filter((e) => e.severity === "error");
   expect(codegenErrors).toEqual([]);
 }
 
 describe("issue-263: dynamic property access", () => {
   describe("Function.name property", () => {
-    it("compiles function.name without codegen errors", () => {
-      compileNoErrors(`
+    it("compiles function.name without codegen errors", async () => {
+      await compileNoErrors(`
         function foo() {}
         export function test(): string { return foo.name; }
       `);
@@ -51,15 +51,15 @@ describe("issue-263: dynamic property access", () => {
       expect(result).toBe("myFunc");
     });
 
-    it("compiles arrow function .name without errors", () => {
-      compileNoErrors(`
+    it("compiles arrow function .name without errors", async () => {
+      await compileNoErrors(`
         const fn = () => {};
         export function test(): string { return fn.name; }
       `);
     });
 
-    it("compiles generator function .name without errors", () => {
-      compileNoErrors(`
+    it("compiles generator function .name without errors", async () => {
+      await compileNoErrors(`
         function* gen() { yield 1; }
         export function test(): string { return gen.name; }
       `);
@@ -67,8 +67,8 @@ describe("issue-263: dynamic property access", () => {
   });
 
   describe("Constructor.name property (typeof cls)", () => {
-    it("compiles class.name without codegen errors", () => {
-      compileNoErrors(`
+    it("compiles class.name without codegen errors", async () => {
+      await compileNoErrors(`
         class Foo {}
         export function test(): string { return Foo.name; }
       `);
@@ -104,8 +104,8 @@ describe("issue-263: dynamic property access", () => {
   });
 
   describe("Property on Object type", () => {
-    it("compiles Object.prop access without codegen errors", () => {
-      compileNoErrors(`
+    it("compiles Object.prop access without codegen errors", async () => {
+      await compileNoErrors(`
         export function test(): number {
           var obj = new Object();
           obj.prop = 1;
@@ -116,8 +116,8 @@ describe("issue-263: dynamic property access", () => {
   });
 
   describe("Property on empty object type {}", () => {
-    it("compiles {}.prop access without codegen errors", () => {
-      compileNoErrors(`
+    it("compiles {}.prop access without codegen errors", async () => {
+      await compileNoErrors(`
         export function test(): number {
           var o = {};
           o.x = 42;
@@ -128,16 +128,16 @@ describe("issue-263: dynamic property access", () => {
   });
 
   describe("Dynamic fallback for unresolvable properties", () => {
-    it("does not produce codegen errors for unknown properties", () => {
-      compileNoErrors(`
+    it("does not produce codegen errors for unknown properties", async () => {
+      await compileNoErrors(`
         function foo() {}
         foo.customProp = 42;
         export function test(): number { return foo.customProp; }
       `);
     });
 
-    it("does not produce codegen errors for .name on various function types", () => {
-      compileNoErrors(`
+    it("does not produce codegen errors for .name on various function types", async () => {
+      await compileNoErrors(`
         const f1 = function() {};
         const f2 = () => {};
         function f3() {}

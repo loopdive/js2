@@ -32,7 +32,7 @@ import {
 } from "../src/codegen/destructuring-params.js";
 
 async function runExportNum(src: string, fn = "test"): Promise<number> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

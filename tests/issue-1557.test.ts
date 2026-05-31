@@ -65,7 +65,7 @@ describe("#1557 — `__obj_meth_tramp_*` arity mismatch under compileProject", (
    * was 1-param. Without the fix, `WebAssembly.validate` returns false with
    * "not enough arguments on the stack for call (need 2, got 1)".
    */
-  it("emits valid Wasm for multiple object literals with same-shape methods of different arity", () => {
+  it("emits valid Wasm for multiple object literals with same-shape methods of different arity", async () => {
     writeFile(
       "schema.ts",
       `export type PropSchema = {
@@ -115,7 +115,7 @@ s3.validate(42);
 `,
     );
 
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -130,14 +130,14 @@ s3.validate(42);
    * package is not installed locally (e.g. clean CI checkout that doesn't
    * pull npm devDependencies).
    */
-  it("emits valid Wasm for compileProject(node_modules/eslint/lib/config/config.js)", () => {
+  it("emits valid Wasm for compileProject(node_modules/eslint/lib/config/config.js)", async () => {
     const eslintConfig = "/home/user/js2wasm/node_modules/eslint/lib/config/config.js";
     if (!existsSync(eslintConfig)) {
       // eslint not installed — skip rather than fail. The synthetic repro
       // above is the primary regression gate.
       return;
     }
-    const r = compileProject(eslintConfig, { allowJs: true });
+    const r = await compileProject(eslintConfig, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);

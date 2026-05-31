@@ -18,7 +18,7 @@ import { compile } from "../src/index.js";
 import { buildImports as buildRuntimeImports } from "../src/runtime.js";
 
 async function run(source: string, opts?: { fileName?: string }): Promise<Record<string, Function>> {
-  const result = compile(source, opts as never);
+  const result = await compile(source, opts as never);
   if (!result.success) {
     throw new Error("Compile failed: " + result.errors.map((e) => `L${e.line}: ${e.message}`).join("; "));
   }

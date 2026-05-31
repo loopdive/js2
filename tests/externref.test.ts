@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("externref host imports", () => {
   it("extern class constructor returns externref", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Widget {
           constructor(x: number);
@@ -37,7 +37,7 @@ describe("externref host imports", () => {
   });
 
   it("method call on externref object", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Counter {
           constructor();
@@ -74,7 +74,7 @@ describe("externref host imports", () => {
   });
 
   it("property set on externref", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Box {
           constructor();
@@ -115,7 +115,7 @@ describe("externref host imports", () => {
   });
 
   it("property get on externref", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Box {
           constructor();
@@ -149,7 +149,7 @@ describe("externref host imports", () => {
   });
 
   it("chained property access + method call", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Vec3 {
           constructor();

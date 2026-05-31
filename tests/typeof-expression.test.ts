@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string): Promise<Record<string, Function>> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success)
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -14,8 +14,8 @@ async function run(source: string): Promise<Record<string, Function>> {
 }
 
 describe("typeof expression", () => {
-  it("compiles typeof for number, string, boolean literals", () => {
-    const result = compile(`
+  it("compiles typeof for number, string, boolean literals", async () => {
+    const result = await compile(`
       export function testNum(): string { return typeof 42; }
       export function testStr(): string { return typeof "hello"; }
       export function testBool(): string { return typeof true; }

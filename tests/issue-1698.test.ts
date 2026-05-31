@@ -58,7 +58,7 @@ function fill(ab: ArrayBuffer): void {
 }`;
 
 describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
-  it("compiles to a valid module (no `illegal cast` trap)", () => {
+  it("compiles to a valid module (no `illegal cast` trap)", async () => {
     const src = `${PRELUDE}
       export function main(): void {
         const ab = new ArrayBuffer(4);
@@ -66,12 +66,12 @@ describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
         const sliced = ab.slice(1, 3);
         process.stdout.write(new Uint8Array(sliced));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
   });
 
-  it("basic slice(1, 3) returns bytes 0x42 0x43", () => {
+  it("basic slice(1, 3) returns bytes 0x42 0x43", async () => {
     const src = `${PRELUDE}
       export function main(): void {
         const ab = new ArrayBuffer(4);
@@ -79,12 +79,12 @@ describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
         const sliced = ab.slice(1, 3);
         process.stdout.write(new Uint8Array(sliced));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(Array.from(runWasiCaptureStdout(result.binary))).toEqual([0x42, 0x43]);
   });
 
-  it("omitted end defaults to byteLength (slice(1) → tail)", () => {
+  it("omitted end defaults to byteLength (slice(1) → tail)", async () => {
     const src = `${PRELUDE}
       export function main(): void {
         const ab = new ArrayBuffer(4);
@@ -92,12 +92,12 @@ describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
         const sliced = ab.slice(1);
         process.stdout.write(new Uint8Array(sliced));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(Array.from(runWasiCaptureStdout(result.binary))).toEqual([0x42, 0x43, 0x44]);
   });
 
-  it("negative begin resolves from end (slice(-2) → last 2 bytes)", () => {
+  it("negative begin resolves from end (slice(-2) → last 2 bytes)", async () => {
     const src = `${PRELUDE}
       export function main(): void {
         const ab = new ArrayBuffer(4);
@@ -105,12 +105,12 @@ describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
         const sliced = ab.slice(-2);
         process.stdout.write(new Uint8Array(sliced));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(Array.from(runWasiCaptureStdout(result.binary))).toEqual([0x43, 0x44]);
   });
 
-  it("negative end resolves from end (slice(1, -1))", () => {
+  it("negative end resolves from end (slice(1, -1))", async () => {
     const src = `${PRELUDE}
       export function main(): void {
         const ab = new ArrayBuffer(4);
@@ -118,12 +118,12 @@ describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
         const sliced = ab.slice(1, -1);
         process.stdout.write(new Uint8Array(sliced));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(Array.from(runWasiCaptureStdout(result.binary))).toEqual([0x42, 0x43]);
   });
 
-  it("out-of-bounds end is clamped to byteLength (slice(2, 100))", () => {
+  it("out-of-bounds end is clamped to byteLength (slice(2, 100))", async () => {
     const src = `${PRELUDE}
       export function main(): void {
         const ab = new ArrayBuffer(4);
@@ -131,12 +131,12 @@ describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
         const sliced = ab.slice(2, 100);
         process.stdout.write(new Uint8Array(sliced));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(Array.from(runWasiCaptureStdout(result.binary))).toEqual([0x43, 0x44]);
   });
 
-  it("begin >= end produces an empty buffer (slice(3, 1))", () => {
+  it("begin >= end produces an empty buffer (slice(3, 1))", async () => {
     const src = `${PRELUDE}
       export function main(): void {
         const ab = new ArrayBuffer(4);
@@ -144,12 +144,12 @@ describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
         const sliced = ab.slice(3, 1);
         process.stdout.write(new Uint8Array(sliced));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(Array.from(runWasiCaptureStdout(result.binary))).toEqual([]);
   });
 
-  it("the slice is independent — mutating the source after slice does not affect it", () => {
+  it("the slice is independent — mutating the source after slice does not affect it", async () => {
     const src = `${PRELUDE}
       export function main(): void {
         const ab = new ArrayBuffer(4);
@@ -160,7 +160,7 @@ describe("#1698 ArrayBuffer.prototype.slice under --target wasi", () => {
         dv.setUint8(1, 0xFF);
         process.stdout.write(new Uint8Array(sliced));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(Array.from(runWasiCaptureStdout(result.binary))).toEqual([0x41, 0x42]);
   });

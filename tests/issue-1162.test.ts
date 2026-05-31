@@ -26,8 +26,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-function expectCompiles(source: string): void {
-  const result = compile(source, { fileName: "test.ts", skipSemanticDiagnostics: true });
+async function expectCompiles(source: string): Promise<void> {
+  const result = await compile(source, { fileName: "test.ts", skipSemanticDiagnostics: true });
   if (!result.success || result.errors.some((e) => e.severity === "error")) {
     const msg = result.errors
       .filter((e) => e.severity === "error")
@@ -38,7 +38,7 @@ function expectCompiles(source: string): void {
 }
 
 async function runTest(source: string): Promise<any> {
-  const result = compile(source, { fileName: "test.ts", skipSemanticDiagnostics: true });
+  const result = await compile(source, { fileName: "test.ts", skipSemanticDiagnostics: true });
   if (!result.success || result.errors.some((e) => e.severity === "error")) {
     const msg = result.errors
       .filter((e) => e.severity === "error")
@@ -55,11 +55,11 @@ async function runTest(source: string): Promise<any> {
 }
 
 describe("#1162 — yield* async / private-method-from-static codegen crashes", () => {
-  it("compiles static async private generator methods without crashing", () => {
+  it("compiles static async private generator methods without crashing", async () => {
     // Original failure from yield-star-async tests: the parent test262 runner
     // renamed `yield` inside the private generator body because `#gen` wasn't
     // recognized as a method name. After the fix, this body compiles cleanly.
-    expectCompiles(`
+    await expectCompiles(`
       var C = class {
         static async *#gen() {
           yield 1;
@@ -71,10 +71,10 @@ describe("#1162 — yield* async / private-method-from-static codegen crashes", 
     `);
   });
 
-  it("compiles static getter returning a static private method", () => {
+  it("compiles static getter returning a static private method", async () => {
     // Static method reached via a getter — compileGetterCallable previously
     // assumed instance-method param layout and read arguments[-1].
-    expectCompiles(`
+    await expectCompiles(`
       class C {
         static #gen() { return 1; }
         static get gen() { return this.#gen; }
@@ -83,11 +83,11 @@ describe("#1162 — yield* async / private-method-from-static codegen crashes", 
     `);
   });
 
-  it("compiles private method called from static method (this.#f() in static)", () => {
+  it("compiles private method called from static method (this.#f() in static)", async () => {
     // this.#f() inside a static method — the Non-nullable receiver path
     // in compileCallExpression previously crashed when funcMap lookup
     // produced an unexpected zero-param paramTypes.
-    expectCompiles(`
+    await expectCompiles(`
       class C {
         #f() { return 42; }
         static g() {
@@ -97,14 +97,14 @@ describe("#1162 — yield* async / private-method-from-static codegen crashes", 
     `);
   });
 
-  it("compiles yield-star inside static async private generator method body", () => {
+  it("compiles yield-star inside static async private generator method body", async () => {
     // This is the exact pattern that procedurally-generated test262
     // yield-star-async cases emit (static async generator private method
     // with a yield* delegation). Before the fix, the yield keyword was
     // renamed to `_yield` inside the body, producing `_yield* obj;` which
     // parsed as multiplication and crashed the compiler when compiling
     // surrounding code.
-    expectCompiles(`
+    await expectCompiles(`
       var obj: any = { [Symbol.asyncIterator]: () => ({ next: () => ({ value: 1, done: true }) }) };
       var C = class {
         static async *#gen() {

@@ -16,7 +16,7 @@ import { buildImports, wrapExports } from "../src/runtime.js";
  */
 
 async function run(src: string): Promise<Record<string, any>> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -25,7 +25,7 @@ async function run(src: string): Promise<Record<string, any>> {
 }
 
 async function runRaw(src: string): Promise<Record<string, any>> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

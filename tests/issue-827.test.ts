@@ -10,7 +10,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function run(src: string): Promise<unknown> {
-  const result = compile(src, { fileName: "test.ts" });
+  const result = await compile(src, { fileName: "test.ts" });
   if (!result.success) throw new Error("CE: " + (result.errors[0]?.message ?? "unknown"));
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -127,7 +127,7 @@ describe("issue #827 — Array callback TypeError for non-callable args", () => 
         }
       }
     `;
-    const result = compile(src, { fileName: "test.ts" });
+    const result = await compile(src, { fileName: "test.ts" });
     if (!result.success) {
       // If there is a CE, it should NOT be the "fn is not a function" Wasm validation error
       expect(result.errors[0]?.message).not.toMatch(/fn is not a function/);

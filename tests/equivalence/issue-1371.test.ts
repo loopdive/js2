@@ -39,8 +39,8 @@ describe("#1371 — IR Math.* unary whitelist", () => {
     expect(exp.magnitude!(5, 12)).toBe(13);
   });
 
-  it("magnitude WAT contains f64.sqrt and no Math_sqrt host import", () => {
-    const r = compile(
+  it("magnitude WAT contains f64.sqrt and no Math_sqrt host import", async () => {
+    const r = await compile(
       `
       export function magnitude(x: number, y: number): number {
         return Math.sqrt(x*x + y*y);

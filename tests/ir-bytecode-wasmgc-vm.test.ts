@@ -169,7 +169,7 @@ export function run(${params}): number {
 
 // ── Compile + run a WasmGC export taking only number params ────────────────
 async function runWasm(src: string, fn: string, args: number[]): Promise<number> {
-  const r = compile(src, { fileName: "vm.ts" });
+  const r = await compile(src, { fileName: "vm.ts" });
   if (!r.success) throw new Error(`compile error: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

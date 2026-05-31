@@ -18,7 +18,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function compileAndRun(source: string): Promise<{ success: boolean; result?: any; error?: string }> {
-  const compiled = compile(source, { fileName: "test.ts" });
+  const compiled = await compile(source, { fileName: "test.ts" });
   if (!compiled.success) return { success: false, error: compiled.errors[0]?.message };
   try {
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);

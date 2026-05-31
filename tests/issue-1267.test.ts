@@ -40,7 +40,7 @@ interface InstantiateResult {
 }
 
 async function compileAndInstantiate(source: string): Promise<InstantiateResult> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => `L${e.line}:${e.column} ${e.message}`).join(" | ")}`);
   }
@@ -52,8 +52,8 @@ async function compileAndInstantiate(source: string): Promise<InstantiateResult>
   return { exports: instance.exports as Record<string, unknown> };
 }
 
-function compileToWat(source: string): string {
-  const r = compile(source, { fileName: "test.ts", emitWat: true });
+async function compileToWat(source: string): Promise<string> {
+  const r = await compile(source, { fileName: "test.ts", emitWat: true });
   if (!r.success) throw new Error(`compile: ${r.errors[0]?.message}`);
   return r.wat;
 }
@@ -133,7 +133,7 @@ describe("#1267 — side-effectful method calls preserved in statement position"
     expect((r.exports.run as () => number)()).toBe(22);
   });
 
-  it("WAT regression guard — three calls produce three call ops in the body", () => {
+  it("WAT regression guard — three calls produce three call ops in the body", async () => {
     // Direct WAT-level check that the lowerer emits one `call` per
     // method-call statement, with a `drop` between them. This guards
     // against a future refactor of `emitBlockBody` re-introducing the
@@ -150,7 +150,7 @@ describe("#1267 — side-effectful method calls preserved in statement position"
         return c.bump();
       }
     `;
-    const wat = compileToWat(source);
+    const wat = await compileToWat(source);
     // Expected: 1 call for `new C()` + 3 calls for bump() = 4 total
     expect(countCallsInRunBody(wat)).toBe(4);
     // And there should be at least 2 drops (the two unused bump() returns)

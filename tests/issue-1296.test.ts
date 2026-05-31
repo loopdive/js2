@@ -73,7 +73,7 @@ let exp: Record<string, () => number>;
 describe("#1296 Tier 1 — dashboard/analytics.ts compiles and aggregates correctly", () => {
   beforeAll(async () => {
     const src = readFileSync(ANALYTICS_PATH, "utf-8");
-    const r = compile(src, { fileName: "dashboard/analytics.ts" });
+    const r = await compile(src, { fileName: "dashboard/analytics.ts" });
     if (!r.success) {
       throw new Error(
         `dashboard/analytics.ts failed to compile: ${r.errors.map((e) => `L${e.line}: ${e.message}`).join("; ")}`,

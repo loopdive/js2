@@ -3,14 +3,14 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function assertValidWasm(source: string): Promise<void> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   expect(r.success).toBe(true);
   const imp = buildImports(r.imports!, undefined, r.stringPool);
   await expect(WebAssembly.instantiate(r.binary!, imp)).resolves.toBeDefined();
 }
 
 async function runTest(source: string): Promise<number> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   expect(r.success).toBe(true);
   const imp = buildImports(r.imports!, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary!, imp);
@@ -69,7 +69,7 @@ export function test(): number {
   });
 
   describe("Pattern 2: Promise.then arity mismatch", () => {
-    it("Promise_then registered as builtin (2-param) when Error triggers lib scan", () => {
+    it("Promise_then registered as builtin (2-param) when Error triggers lib scan", async () => {
       // When source uses 'Error', lib files are scanned for extern classes.
       // TypeScript's Promise interface declares then(onfulfilled?, onrejected?) → 3 Wasm params.
       // Previously this caused Promise_then to be pre-registered with 3 params, but the
@@ -85,7 +85,7 @@ export function test(): number {
   });
   return 1;
 }`;
-      const r = compile(src, { fileName: "test.ts" });
+      const r = await compile(src, { fileName: "test.ts" });
       expect(r.success).toBe(true);
       const promiseThen = r.imports!.find((i) => i.name === "Promise_then");
       // Must be builtin (2-param), not extern_class (3-param)

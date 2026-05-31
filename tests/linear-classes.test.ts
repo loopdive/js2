@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("linear-memory classes", { timeout: 30_000 }, () => {
   it("compiles class construction and field access", async () => {
-    const result = compile(
+    const result = await compile(
       `
       class Point {
         x: number;
@@ -32,7 +32,7 @@ describe("linear-memory classes", { timeout: 30_000 }, () => {
   });
 
   it("compiles class methods", async () => {
-    const result = compile(
+    const result = await compile(
       `
       class Counter {
         value: number;
@@ -61,7 +61,7 @@ describe("linear-memory classes", { timeout: 30_000 }, () => {
   });
 
   it("compiles string literals and equality", async () => {
-    const result = compile(
+    const result = await compile(
       `
       export function test(): number {
         const a = "hello";

@@ -9,7 +9,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "./equivalence/helpers.js";
 
 async function compileAndRun(source: string): Promise<{ success: boolean; result?: number; error?: string }> {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success || result.errors.some((e) => e.severity === "error")) {
     return {
       success: false,

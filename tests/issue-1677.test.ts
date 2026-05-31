@@ -21,7 +21,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function compilesValidWasm(source: string, target?: "wasi"): Promise<true> {
-  const result = compile(source, { fileName: "test.ts", target });
+  const result = await compile(source, { fileName: "test.ts", target });
   if (!result.success) {
     throw new Error(`compile failed: ${result.errors?.[0]?.message ?? "unknown error"}`);
   }

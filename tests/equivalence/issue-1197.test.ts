@@ -11,8 +11,8 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
 import { assertEquivalent } from "./helpers.js";
 
-function compileWat(source: string): string {
-  const result = compile(source);
+async function compileWat(source: string): Promise<string> {
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -152,8 +152,8 @@ describe("#1197 i32 element specialization for number[]", () => {
   });
 
   describe("structure: WAT contains __vec_i32 when promotion fires", () => {
-    it("canonical pattern emits __arr_i32 backing array", () => {
-      const wat = compileWat(
+    it("canonical pattern emits __arr_i32 backing array", async () => {
+      const wat = await compileWat(
         `export function test(): number {
           const values: number[] = [];
           for (let i = 0; i < 10; i++) {
@@ -167,8 +167,8 @@ describe("#1197 i32 element specialization for number[]", () => {
       expect(wat).toContain("__arr_i32");
     });
 
-    it("plain f64 arithmetic stays as __vec_f64", () => {
-      const wat = compileWat(
+    it("plain f64 arithmetic stays as __vec_f64", async () => {
+      const wat = await compileWat(
         `export function test(): number {
           const values: number[] = [];
           for (let i = 0; i < 10; i++) {
@@ -184,8 +184,8 @@ describe("#1197 i32 element specialization for number[]", () => {
       expect(wat).not.toContain("__arr_i32");
     });
 
-    it("captured-by-closure disqualifies promotion", () => {
-      const wat = compileWat(
+    it("captured-by-closure disqualifies promotion", async () => {
+      const wat = await compileWat(
         `export function test(): number {
           const values: number[] = [];
           for (let i = 0; i < 10; i++) {
@@ -199,8 +199,8 @@ describe("#1197 i32 element specialization for number[]", () => {
       expect(wat).not.toContain("__arr_i32");
     });
 
-    it("array passed to a function disqualifies promotion (escape)", () => {
-      const wat = compileWat(
+    it("array passed to a function disqualifies promotion (escape)", async () => {
+      const wat = await compileWat(
         `function consume(arr: number[]): number {
           let s = 0;
           for (let i = 0; i < arr.length; i++) s = s + arr[i];
@@ -217,8 +217,8 @@ describe("#1197 i32 element specialization for number[]", () => {
       expect(wat).not.toContain("__arr_i32");
     });
 
-    it("array used with .map disqualifies promotion", () => {
-      const wat = compileWat(
+    it("array used with .map disqualifies promotion", async () => {
+      const wat = await compileWat(
         `export function test(): number {
           const values: number[] = [];
           for (let i = 0; i < 10; i++) {
@@ -231,8 +231,8 @@ describe("#1197 i32 element specialization for number[]", () => {
       expect(wat).not.toContain("__arr_i32");
     });
 
-    it("non-i32-shaped write disqualifies promotion", () => {
-      const wat = compileWat(
+    it("non-i32-shaped write disqualifies promotion", async () => {
+      const wat = await compileWat(
         `export function test(): number {
           const values: number[] = [];
           for (let i = 0; i < 10; i++) {
@@ -246,8 +246,8 @@ describe("#1197 i32 element specialization for number[]", () => {
   });
 
   describe("peephole: redundant `| 0` after i32 read is folded", () => {
-    it("`x | 0` collapses to nothing on an i32-shaped value", () => {
-      const wat = compileWat(
+    it("`x | 0` collapses to nothing on an i32-shaped value", async () => {
+      const wat = await compileWat(
         `export function test(n: number): number {
           return ((n | 0) | 0) | 0;
         }`,

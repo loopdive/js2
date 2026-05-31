@@ -15,7 +15,7 @@ import { buildImports, instantiateWasm } from "../src/runtime.js";
  */
 
 async function runFast(source: string, exportName = "test"): Promise<any> {
-  const result = compile(source, { fast: true });
+  const result = await compile(source, { fast: true });
   if (!result.success) {
     throw new Error(result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n"));
   }
@@ -29,8 +29,8 @@ async function runFast(source: string, exportName = "test"): Promise<any> {
 
 describe("#1598 String.fromCharCode / fromCodePoint standalone (no JS host)", () => {
   // ── No host imports in standalone mode ───────────────────────────
-  it("fromCharCode emits no env.String_fromCharCode in standalone mode", () => {
-    const r = compile(`export function test(): string { return String.fromCharCode(65); }`, {
+  it("fromCharCode emits no env.String_fromCharCode in standalone mode", async () => {
+    const r = await compile(`export function test(): string { return String.fromCharCode(65); }`, {
       target: "standalone",
     });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
@@ -38,8 +38,8 @@ describe("#1598 String.fromCharCode / fromCodePoint standalone (no JS host)", ()
     expect(r.wat).not.toContain("wasm:js-string");
   });
 
-  it("fromCodePoint emits no env.String_fromCodePoint in standalone mode", () => {
-    const r = compile(`export function test(): string { return String.fromCodePoint(0x1f600); }`, {
+  it("fromCodePoint emits no env.String_fromCodePoint in standalone mode", async () => {
+    const r = await compile(`export function test(): string { return String.fromCodePoint(0x1f600); }`, {
       target: "standalone",
     });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
@@ -47,8 +47,8 @@ describe("#1598 String.fromCharCode / fromCodePoint standalone (no JS host)", ()
     expect(r.wat).not.toContain("wasm:js-string");
   });
 
-  it("fromCharCode emits no host imports at all in standalone mode", () => {
-    const r = compile(`export function test(): string { return String.fromCharCode(72, 105); }`, {
+  it("fromCharCode emits no host imports at all in standalone mode", async () => {
+    const r = await compile(`export function test(): string { return String.fromCharCode(72, 105); }`, {
       target: "standalone",
     });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);

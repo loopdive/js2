@@ -38,7 +38,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string): Promise<unknown> {
-  const r = compile(src);
+  const r = await compile(src);
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown> & {
     setExports?: (e: Record<string, Function>) => void;

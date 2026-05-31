@@ -25,7 +25,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runWasm(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts", allowJs: true });
+  const r = await compile(src, { fileName: "test.ts", allowJs: true });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }

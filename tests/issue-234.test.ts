@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error("Compile failed:\n" + result.errors.map((e) => "  L" + e.line + ": " + e.message).join("\n"));
   }
@@ -10,13 +10,13 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   return (instance.exports as any)[fn](...args);
 }
 
-function compiles(source: string): boolean {
-  const result = compile(source);
+async function compiles(source: string): Promise<boolean> {
+  const result = await compile(source);
   return result.success;
 }
 
-function compileErrors(source: string): string[] {
-  const result = compile(source);
+async function compileErrors(source: string): Promise<string[]> {
+  const result = await compile(source);
   return result.errors?.map((e) => e.message) ?? [];
 }
 
@@ -139,8 +139,8 @@ export function test(): number {
     ).toBe(42);
   });
 
-  it("class expression as standalone expression compiles without error", () => {
-    const errors = compileErrors(`
+  it("class expression as standalone expression compiles without error", async () => {
+    const errors = await compileErrors(`
 export function test(): number {
   const C = class MyClass {
     x: number;
@@ -154,9 +154,9 @@ export function test(): number {
     expect(classExprErrors).toEqual([]);
   });
 
-  it("class inside for loop body compiles", () => {
+  it("class inside for loop body compiles", async () => {
     expect(
-      compiles(`
+      await compiles(`
 export function test(): number {
   let sum = 0;
   for (let i = 0; i < 1; i++) {

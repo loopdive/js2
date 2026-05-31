@@ -20,7 +20,7 @@ import { buildImports } from "../src/runtime.js";
 // null-guard string constant.
 
 async function compileAndRun(source: string): Promise<Record<string, Function>> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }

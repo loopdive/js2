@@ -54,7 +54,7 @@ function buildImports(result: CompileResult): WebAssembly.Imports {
 }
 
 async function compileToWasm(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -114,7 +114,7 @@ const varEnvSource = `
 
 describe("TS Statement Parser - Part A: Variable Environment", () => {
   it("compiles variable environment without errors", async () => {
-    const result = compile(
+    const result = await compile(
       varEnvSource +
         `
       export function test(): number { return 1; }
@@ -352,7 +352,7 @@ const extScannerSource = `
 
 describe("TS Statement Parser - Part B: Extended Scanner", () => {
   it("compiles extended scanner without errors", async () => {
-    const result = compile(
+    const result = await compile(
       extScannerSource +
         `
       export function test(): number { return 1; }
@@ -704,7 +704,7 @@ const stmtInterpreterSource =
 
 describe("TS Statement Parser - Part C: Statement Interpreter", () => {
   it("compiles statement interpreter without errors", async () => {
-    const result = compile(
+    const result = await compile(
       stmtInterpreterSource +
         `
       export function test(): number { return 1; }

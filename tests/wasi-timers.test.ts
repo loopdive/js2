@@ -12,9 +12,9 @@ import { compile } from "../src/index.js";
 import { buildWasiPolyfill } from "../src/runtime.js";
 
 describe("WASI timers (#1484) — compile-time diagnostic", () => {
-  it("rejects setTimeout under --target wasi with a clear diagnostic", () => {
+  it("rejects setTimeout under --target wasi with a clear diagnostic", async () => {
     const src = `setTimeout(() => { console.log("late"); }, 100);`;
-    const result = compile(src, { target: "wasi" });
+    const result = await compile(src, { target: "wasi" });
     expect(result.success).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
     const msg = result.errors.map((e) => e.message).join("\n");
@@ -25,31 +25,31 @@ describe("WASI timers (#1484) — compile-time diagnostic", () => {
     expect(msg).toMatch(/Codegen error:/);
   });
 
-  it("rejects setInterval under --target wasi", () => {
+  it("rejects setInterval under --target wasi", async () => {
     const src = `setInterval(() => {}, 50);`;
-    const result = compile(src, { target: "wasi" });
+    const result = await compile(src, { target: "wasi" });
     expect(result.success).toBe(false);
     const msg = result.errors.map((e) => e.message).join("\n");
     expect(msg).toMatch(/setInterval/);
   });
 
-  it("rejects setImmediate under --target wasi", () => {
+  it("rejects setImmediate under --target wasi", async () => {
     const src = `setImmediate(() => {});`;
-    const result = compile(src, { target: "wasi" });
+    const result = await compile(src, { target: "wasi" });
     expect(result.success).toBe(false);
     const msg = result.errors.map((e) => e.message).join("\n");
     expect(msg).toMatch(/setImmediate/);
   });
 
-  it("rejects queueMicrotask under --target wasi", () => {
+  it("rejects queueMicrotask under --target wasi", async () => {
     const src = `queueMicrotask(() => {});`;
-    const result = compile(src, { target: "wasi" });
+    const result = await compile(src, { target: "wasi" });
     expect(result.success).toBe(false);
     const msg = result.errors.map((e) => e.message).join("\n");
     expect(msg).toMatch(/queueMicrotask/);
   });
 
-  it("does NOT reject when setTimeout appears as a member name (e.g. obj.setTimeout)", () => {
+  it("does NOT reject when setTimeout appears as a member name (e.g. obj.setTimeout)", async () => {
     // Member-name positions must not false-positive (the rejection is for
     // bare-identifier global lookups only).
     const src = `
@@ -57,7 +57,7 @@ describe("WASI timers (#1484) — compile-time diagnostic", () => {
       const s = new Scheduler();
       s.setTimeout(() => {}, 10);
     `;
-    const result = compile(src, { target: "wasi" });
+    const result = await compile(src, { target: "wasi" });
     if (!result.success) {
       // If compile fails for other reasons (e.g. class support), at least
       // ensure the failure is NOT the WASI timer diagnostic.
@@ -68,12 +68,12 @@ describe("WASI timers (#1484) — compile-time diagnostic", () => {
     }
   });
 
-  it("does NOT reject setTimeout outside --target wasi", () => {
+  it("does NOT reject setTimeout outside --target wasi", async () => {
     // In non-WASI mode, setTimeout falls through to the env-host import
     // path. We only assert the diagnostic does not fire — full lowering
     // behaviour is covered elsewhere.
     const src = `setTimeout(() => {}, 1);`;
-    const result = compile(src, {});
+    const result = await compile(src, {});
     if (!result.success) {
       const msg = result.errors.map((e) => e.message).join("\n");
       expect(msg).not.toMatch(/is not available under --target wasi/);

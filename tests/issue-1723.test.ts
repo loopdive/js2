@@ -29,7 +29,7 @@ const PROCESS_DECL = `declare const process: {
 
 /** Run a WASI module's `main`, capturing fd=1 (stdout) bytes. */
 async function runCaptureStdout(source: string): Promise<number[]> {
-  const result = compile(source, { target: "wasi" });
+  const result = await compile(source, { target: "wasi" });
   expect(result.success).toBe(true);
   const stdoutBytes: number[] = [];
   const ref: { mem?: WebAssembly.Memory } = {};

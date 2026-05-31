@@ -38,7 +38,7 @@ function buildImports(result: ReturnType<typeof compile>): WebAssembly.Imports {
 }
 
 async function compileAndRun(source: string): Promise<any> {
-  const result = compile(source, { filename: "test.ts" });
+  const result = await compile(source, { filename: "test.ts" });
   if (!result.success) {
     throw new Error("Compile error: " + result.errors.map((e) => e.message).join("; "));
   }

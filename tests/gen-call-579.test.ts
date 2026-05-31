@@ -3,8 +3,8 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 describe("Generator function call patterns (#579)", () => {
-  it("any-typed variable method call compiles without error", () => {
-    const result = compile(`
+  it("any-typed variable method call compiles without error", async () => {
+    const result = await compile(`
       var ref: any = {};
       ref.someMethod(1, 2);
       export const result = 42;
@@ -13,8 +13,8 @@ describe("Generator function call patterns (#579)", () => {
     expect(unsupported).toHaveLength(0);
   }, 30000);
 
-  it("generator function expression assigned to any var, then ref().next()", () => {
-    const result = compile(`
+  it("generator function expression assigned to any var, then ref().next()", async () => {
+    const result = await compile(`
       var ref: any;
       ref = function*(a: number, b: number) {
         yield a + b;
@@ -26,8 +26,8 @@ describe("Generator function call patterns (#579)", () => {
     expect(unsupported).toHaveLength(0);
   }, 30000);
 
-  it("generator with default params, ref(undefined).next() -- test262 pattern", () => {
-    const result = compile(`
+  it("generator with default params, ref(undefined).next() -- test262 pattern", async () => {
+    const result = await compile(`
       var callCount = 0;
       var ref: any;
       ref = function*(fromLiteral = 23, fromExpr = 45, fromHole = 99) {
@@ -40,8 +40,8 @@ describe("Generator function call patterns (#579)", () => {
     expect(unsupported).toHaveLength(0);
   }, 30000);
 
-  it("obj.method(args).next() pattern compiles", () => {
-    const result = compile(`
+  it("obj.method(args).next() pattern compiles", async () => {
+    const result = await compile(`
       var callCount = 0;
       var obj: any = {
         *method(x: any) {
@@ -55,8 +55,8 @@ describe("Generator function call patterns (#579)", () => {
     expect(unsupported).toHaveLength(0);
   }, 30000);
 
-  it("generator function expression with destructuring param -- test262 dstr pattern", () => {
-    const result = compile(`
+  it("generator function expression with destructuring param -- test262 dstr pattern", async () => {
+    const result = await compile(`
       var callCount = 0;
       var f: any;
       f = function*([x, y, z]: number[]) {
@@ -70,7 +70,7 @@ describe("Generator function call patterns (#579)", () => {
   }, 30000);
 
   it("direct generator call still works", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function* gen(a: number): Generator<number> {
         yield a * 2;
         yield a * 3;
@@ -84,9 +84,9 @@ describe("Generator function call patterns (#579)", () => {
     expect(gen.next().value).toBe(15);
   }, 30000);
 
-  it("assert.sameValue call on any compiles (test262 harness pattern)", () => {
+  it("assert.sameValue call on any compiles (test262 harness pattern)", async () => {
     // test262 uses assert.sameValue(actual, expected) everywhere
-    const result = compile(`
+    const result = await compile(`
       var assert: any = { sameValue: function(a: any, b: any) {} };
       assert.sameValue(1, 1);
       export const result = 42;

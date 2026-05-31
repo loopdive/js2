@@ -20,7 +20,7 @@ import { buildStringConstants } from "../src/runtime.js";
  * The compiler emits this import for String.fromCharCode() calls.
  */
 async function compileToWasm(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e: any) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,

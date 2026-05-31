@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function compileAndRun(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   expect(
     result.success,
     `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -117,7 +117,7 @@ describe("math operations", () => {
 
 describe("math host imports", () => {
   it("Math.sin and Math.cos via host import", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function sinCos(x: number): number {
         return Math.sin(x) + Math.cos(x);
       }
@@ -143,7 +143,7 @@ describe("math host imports", () => {
   });
 
   it("Math.pow via host import", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function power(base: number, exp: number): number {
         return Math.pow(base, exp);
       }
@@ -163,7 +163,7 @@ describe("math host imports", () => {
   });
 
   it("Math.exp and Math.log via host import", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function expLog(x: number): number {
         return Math.log(Math.exp(x));
       }
@@ -183,7 +183,7 @@ describe("math host imports", () => {
   });
 
   it("Math.round via native f64.nearest", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function roundVal(x: number): number {
         return Math.round(x);
       }

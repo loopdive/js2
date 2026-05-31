@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string): Promise<Record<string, Function>> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success)
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -15,8 +15,8 @@ async function run(source: string): Promise<Record<string, Function>> {
 
 describe("misc CE patterns (#539)", () => {
   describe("String.codePointAt", () => {
-    it("compiles codePointAt without errors", () => {
-      const result = compile(`
+    it("compiles codePointAt without errors", async () => {
+      const result = await compile(`
         export function test(): number {
           const s: string = "ABC";
           return s.codePointAt(0);
@@ -40,8 +40,8 @@ describe("misc CE patterns (#539)", () => {
   });
 
   describe("String.normalize", () => {
-    it("compiles normalize without errors", () => {
-      const result = compile(`
+    it("compiles normalize without errors", async () => {
+      const result = await compile(`
         export function test(): string {
           const s = "hello";
           return s.normalize();
@@ -53,8 +53,8 @@ describe("misc CE patterns (#539)", () => {
       ).toBe(true);
     });
 
-    it("compiles normalize with form argument", () => {
-      const result = compile(`
+    it("compiles normalize with form argument", async () => {
+      const result = await compile(`
         export function test(): string {
           const s = "hello";
           return s.normalize("NFC");
@@ -68,8 +68,8 @@ describe("misc CE patterns (#539)", () => {
   });
 
   describe("empty string in template expressions", () => {
-    it("compiles template with empty head", () => {
-      const result = compile(`
+    it("compiles template with empty head", async () => {
+      const result = await compile(`
         export function test(): string {
           const x = 42;
           return \`\${x} items\`;
@@ -91,8 +91,8 @@ describe("misc CE patterns (#539)", () => {
       expect(exports.test()).toBe("42 items");
     });
 
-    it("compiles template with empty tail", () => {
-      const result = compile(`
+    it("compiles template with empty tail", async () => {
+      const result = await compile(`
         export function test(): string {
           const x = "hello";
           return \`prefix \${x}\`;
@@ -106,8 +106,8 @@ describe("misc CE patterns (#539)", () => {
   });
 
   describe("destructuring with unknown type", () => {
-    it("compiles destructuring of anonymous object literal", () => {
-      const result = compile(`
+    it("compiles destructuring of anonymous object literal", async () => {
+      const result = await compile(`
         function getObj() {
           return { a: 1, b: 2 };
         }

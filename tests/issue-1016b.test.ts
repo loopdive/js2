@@ -19,7 +19,7 @@ import { compile } from "../src/index.ts";
 import { buildImports as buildRuntimeImports } from "../src/runtime.ts";
 
 async function runIt(source: string): Promise<unknown> {
-  const r = compile(source, { skipSemanticDiagnostics: true });
+  const r = await compile(source, { skipSemanticDiagnostics: true });
   if (!r.success) throw new Error(`CE: ${r.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")}`);
   const { env, setExports, string_constants } = buildRuntimeImports(r.imports || [], undefined, r.stringPool);
   const imports: WebAssembly.Imports = { env, ...(string_constants ? { string_constants } : {}) };

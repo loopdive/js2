@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -90,7 +90,7 @@ describe("void expression stack safety (#627)", () => {
 
   it("Array.isArray with void arg does not underflow", async () => {
     // Tests the Array.isArray compile-and-drop path
-    const result = compile(`
+    const result = await compile(`
       function voidFn(): void {}
       export function test(): number {
         const x = Array.isArray(voidFn());

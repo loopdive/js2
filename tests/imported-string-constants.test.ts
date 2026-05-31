@@ -7,7 +7,7 @@ import { buildStringConstants } from "../src/runtime.js";
  * Returns the Wasm instance exports.
  */
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -39,8 +39,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
 
 describe("importedStringConstants", () => {
   describe("WAT output structure", () => {
-    it("string literals become global imports from string_constants namespace", () => {
-      const result = compile(`
+    it("string literals become global imports from string_constants namespace", async () => {
+      const result = await compile(`
         export function hello(): string {
           return "world";
         }
@@ -56,8 +56,8 @@ describe("importedStringConstants", () => {
       expect(result.wat).toContain("global.get");
     });
 
-    it("multiple distinct string literals produce multiple global imports", () => {
-      const result = compile(`
+    it("multiple distinct string literals produce multiple global imports", async () => {
+      const result = await compile(`
         export function test(): string {
           const a = "foo";
           const b = "bar";
@@ -72,8 +72,8 @@ describe("importedStringConstants", () => {
       expect(result.stringPool.length).toBe(3);
     });
 
-    it("duplicate string literals share the same global import", () => {
-      const result = compile(`
+    it("duplicate string literals share the same global import", async () => {
+      const result = await compile(`
         export function test(): string {
           const a = "hello";
           const b = "hello";
@@ -85,8 +85,8 @@ describe("importedStringConstants", () => {
       expect(result.stringPool.filter((s: string) => s === "hello").length).toBe(1);
     });
 
-    it("no string_constants section when source has no string literals", () => {
-      const result = compile(`
+    it("no string_constants section when source has no string literals", async () => {
+      const result = await compile(`
         export function add(a: number, b: number): number {
           return a + b;
         }
@@ -99,8 +99,8 @@ describe("importedStringConstants", () => {
   });
 
   describe("string pool", () => {
-    it("stringPool contains all unique string literals", () => {
-      const result = compile(`
+    it("stringPool contains all unique string literals", async () => {
+      const result = await compile(`
         export function test(): string {
           const x = "alpha";
           const y = "beta";
@@ -111,8 +111,8 @@ describe("importedStringConstants", () => {
       expect(result.stringPool).toEqual(expect.arrayContaining(["alpha", "beta"]));
     });
 
-    it("stringPool contains template literal parts", () => {
-      const result = compile(`
+    it("stringPool contains template literal parts", async () => {
+      const result = await compile(`
         export function greet(name: string): string {
           return "Hello, " + name + "!";
         }
@@ -122,8 +122,8 @@ describe("importedStringConstants", () => {
       expect(result.stringPool).toContain("!");
     });
 
-    it("stringPool contains string enum values", () => {
-      const result = compile(`
+    it("stringPool contains string enum values", async () => {
+      const result = await compile(`
         enum Color { Red = "RED", Green = "GREEN", Blue = "BLUE" }
         export function test(): string {
           return Color.Red;
@@ -244,8 +244,8 @@ describe("importedStringConstants", () => {
       ).toBe("TUE");
     });
 
-    it("binary validates with WebAssembly.validate", () => {
-      const result = compile(`
+    it("binary validates with WebAssembly.validate", async () => {
+      const result = await compile(`
         export function test(): string {
           return "hello";
         }
@@ -255,7 +255,7 @@ describe("importedStringConstants", () => {
     });
 
     it("module with no strings needs no string_constants import", async () => {
-      const result = compile(`
+      const result = await compile(`
         export function add(a: number, b: number): number {
           return a + b;
         }
@@ -279,7 +279,7 @@ describe("importedStringConstants", () => {
           return "count";
         }
       `;
-      const result = compile(src);
+      const result = await compile(src);
       expect(result.success).toBe(true);
 
       const env: Record<string, Function> = {

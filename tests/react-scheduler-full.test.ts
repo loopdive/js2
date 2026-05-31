@@ -16,7 +16,7 @@ import { buildImports } from "../src/runtime.js";
 // Helper: compile + instantiate + call exported function
 // ---------------------------------------------------------------------------
 async function run(source: string, fn: string = "test", args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -355,13 +355,13 @@ function resetHeap(): void {
 describe("React scheduler full min-heap", () => {
   // === Section 1: Array-based heap (idiomatic TypeScript) ===
   describe("array-based heap (idiomatic)", () => {
-    it("compiles the array-based heap source", () => {
+    it("compiles the array-based heap source", async () => {
       const source =
         HEAP_SOURCE_ARRAY +
         `
 export function test(): number { return 1; }
 `;
-      const result = compile(source);
+      const result = await compile(source);
       if (!result.success) {
         console.log("Compile errors:");
         for (const e of result.errors) {

@@ -21,7 +21,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function compileAndRun(src: string): Promise<{ result: any; errors: string[]; compileOk: boolean }> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   const errors = r.errors.map((e) => `L${e.line}: ${e.message}`);
   if (!r.success) return { result: undefined, errors, compileOk: false };
   try {

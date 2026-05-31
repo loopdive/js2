@@ -37,19 +37,19 @@ function envImportNames(wat: string): string[] {
 
 describe("#1524 — strict --no-host-imports gate", () => {
   describe("default policy", () => {
-    it("WASI target auto-enables strict mode (no env imports for arithmetic)", () => {
+    it("WASI target auto-enables strict mode (no env imports for arithmetic)", async () => {
       const src = loadFixture("arithmetic.ts");
-      const result = compile(src, { target: "wasi" });
+      const result = await compile(src, { target: "wasi" });
       expect(result.success).toBe(true);
       expect(envImportNames(result.wat)).toEqual([]);
     });
 
-    it("non-WASI targets do NOT enable strict mode by default", () => {
+    it("non-WASI targets do NOT enable strict mode by default", async () => {
       // Regression guard: adding the gate must not change default
       // behaviour for the JS-host path. A program that uses JSON.stringify
       // compiles under the default gc target without any new errors.
       const src = `export function f(o: object): string { return JSON.stringify(o); }`;
-      const result = compile(src);
+      const result = await compile(src);
       expect(result.success).toBe(true);
       // The JS host target still requests JSON_stringify.
       expect(envImportNames(result.wat)).toContain("JSON_stringify");
@@ -57,7 +57,7 @@ describe("#1524 — strict --no-host-imports gate", () => {
   });
 
   describe("--allow-host-imports escape hatch", () => {
-    it("disables strict mode on a WASI build", () => {
+    it("disables strict mode on a WASI build", async () => {
       // Pick a program that uses a host import. Under strict WASI, the gate
       // would still tolerate JSON_stringify (it's on the allowlist), so to
       // prove the escape hatch we use a console.* import which is replaced
@@ -65,7 +65,7 @@ describe("#1524 — strict --no-host-imports gate", () => {
       // strictNoHostImports field is honored by also checking the codegen
       // flag is off.
       const src = loadFixture("arithmetic.ts");
-      const result = compile(src, { target: "wasi", strictNoHostImports: false });
+      const result = await compile(src, { target: "wasi", strictNoHostImports: false });
       expect(result.success).toBe(true);
       // The binary should still be valid.
       expect(result.binary.length).toBeGreaterThan(0);
@@ -73,9 +73,9 @@ describe("#1524 — strict --no-host-imports gate", () => {
   });
 
   describe("allowlist enforcement", () => {
-    it("allows JSON.stringify under strict mode (on allowlist as JSON_stringify)", () => {
+    it("allows JSON.stringify under strict mode (on allowlist as JSON_stringify)", async () => {
       const src = loadFixture("needs-host.ts");
-      const result = compile(src, { strictNoHostImports: true });
+      const result = await compile(src, { strictNoHostImports: true });
       // Under strict mode the import is on the allowlist, so the build is
       // success: true. Note this is NOT a WASI target, so JSON_stringify is
       // emitted as an `env` import — and that's tolerated by the allowlist.
@@ -205,7 +205,7 @@ describe("#1524 — strict --no-host-imports gate", () => {
     for (const c of cases) {
       it(`${c.name} compiles + instantiates with empty env under strict WASI`, async () => {
         const src = loadFixture(c.file);
-        const result = compile(src, { target: "wasi" });
+        const result = await compile(src, { target: "wasi" });
         if (!result.success) {
           throw new Error(
             `compile failed under strict WASI:\n${result.errors.map((e) => `  ${e.message}`).join("\n")}`,

@@ -37,8 +37,8 @@ const UNDEF_SRC = `
 `;
 
 describe("#1597 — standalone gate for __throw_reference_error", () => {
-  it("TDZ violation compiles standalone with no __throw_reference_error import", () => {
-    const r = compile(TDZ_SRC, { target: "standalone" });
+  it("TDZ violation compiles standalone with no __throw_reference_error import", async () => {
+    const r = await compile(TDZ_SRC, { target: "standalone" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(
       hasRefErrorImport(r.imports),
@@ -46,14 +46,14 @@ describe("#1597 — standalone gate for __throw_reference_error", () => {
     ).toBe(false);
   });
 
-  it("unresolved identifier compiles standalone with no __throw_reference_error import", () => {
-    const r = compile(UNDEF_SRC, { target: "standalone" });
+  it("unresolved identifier compiles standalone with no __throw_reference_error import", async () => {
+    const r = await compile(UNDEF_SRC, { target: "standalone" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(hasRefErrorImport(r.imports)).toBe(false);
   });
 
   it("standalone TDZ module instantiates with zero env imports (no panic at instantiation)", async () => {
-    const r = compile(TDZ_SRC, { target: "standalone" });
+    const r = await compile(TDZ_SRC, { target: "standalone" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     // {} imports — instantiation must not fail on a missing host import.
     const { instance } = await WebAssembly.instantiate(r.binary, {});
@@ -62,16 +62,16 @@ describe("#1597 — standalone gate for __throw_reference_error", () => {
     expect((instance.exports.test as () => number)()).toBe(1);
   });
 
-  it("wasi target also gates the reference-error import", () => {
-    const r = compile(UNDEF_SRC, { target: "wasi" });
+  it("wasi target also gates the reference-error import", async () => {
+    const r = await compile(UNDEF_SRC, { target: "wasi" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(hasRefErrorImport(r.imports)).toBe(false);
   });
 
-  it("default (gc / JS-host) mode preserves the __throw_reference_error import", () => {
+  it("default (gc / JS-host) mode preserves the __throw_reference_error import", async () => {
     // Regression guard: standalone gating is opt-in. The default browser
     // target keeps the host import so JS-hosted modules behave as before.
-    const r = compile(TDZ_SRC, {});
+    const r = await compile(TDZ_SRC, {});
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(hasRefErrorImport(r.imports)).toBe(true);
   });

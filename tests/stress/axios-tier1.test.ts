@@ -84,7 +84,7 @@ describe("#1032 axios Tier 1 — minimal axios.get() smoke test", () => {
    * What this rung asserts: compile-time success — the type checker
    * does not reject the import. Validation is the next rung.
    */
-  runIfAxios('Tier 1a — entry with `import axios from "axios"` compiles', () => {
+  runIfAxios('Tier 1a — entry with `import axios from "axios"` compiles', async () => {
     const entry = writeEntry(
       "tier1a-entry.ts",
       `
@@ -94,7 +94,7 @@ export function test(): number {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.binary.byteLength).toBeGreaterThan(0);
@@ -108,7 +108,7 @@ export function test(): number {
    * shim binary is small (~4 KB) because the type-only import does not
    * pull in axios source — the real-source rungs are 1c and 1e.
    */
-  runIfAxios("Tier 1b — Tier 1a binary is structurally valid Wasm", () => {
+  runIfAxios("Tier 1b — Tier 1a binary is structurally valid Wasm", async () => {
     const entry = writeEntry(
       "tier1b-entry.ts",
       `
@@ -118,7 +118,7 @@ export function test(): number {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -134,8 +134,8 @@ export function test(): number {
    * What this rung asserts: compile-time success against the real
    * production CJS bundle. Validation is the next rung (1d).
    */
-  runIfAxios("Tier 1c — `dist/node/axios.cjs` direct compile succeeds", () => {
-    const r = compileProject(`${AXIOS_ROOT}/dist/node/axios.cjs`, { allowJs: true });
+  runIfAxios("Tier 1c — `dist/node/axios.cjs` direct compile succeeds", async () => {
+    const r = await compileProject(`${AXIOS_ROOT}/dist/node/axios.cjs`, { allowJs: true });
     expect(r.success).toBe(true);
     if (r.success) {
       // Bundle is ~502 KB on axios@1.16.1; assert lower bound to allow drift.
@@ -154,8 +154,8 @@ export function test(): number {
    *
    * BLOCKED on #TBD-2.
    */
-  it.skip("Tier 1d — `dist/node/axios.cjs` binary validates (#TBD-2 AxiosHeaders_set extern boxing)", () => {
-    const r = compileProject(`${AXIOS_ROOT}/dist/node/axios.cjs`, { allowJs: true });
+  it.skip("Tier 1d — `dist/node/axios.cjs` binary validates (#TBD-2 AxiosHeaders_set extern boxing)", async () => {
+    const r = await compileProject(`${AXIOS_ROOT}/dist/node/axios.cjs`, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -177,8 +177,8 @@ export function test(): number {
    *
    * BLOCKED on #TBD-1.
    */
-  it.skip("Tier 1e — `lib/axios.js` direct compile succeeds (#TBD-1 compileProject hang on Axios.js graph)", () => {
-    const r = compileProject(`${AXIOS_ROOT}/lib/axios.js`, { allowJs: true });
+  it.skip("Tier 1e — `lib/axios.js` direct compile succeeds (#TBD-1 compileProject hang on Axios.js graph)", async () => {
+    const r = await compileProject(`${AXIOS_ROOT}/lib/axios.js`, { allowJs: true });
     expect(r.success).toBe(true);
   });
 
@@ -202,7 +202,7 @@ export async function test(): Promise<number> {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     // The actual instantiate + invoke path is gated on the dependency
     // chain in the doc comment above; we don't even attempt it here
@@ -225,8 +225,8 @@ export async function test(): Promise<number> {
    *
    * BLOCKED on #TBD-3.
    */
-  it.skip("Tier 1g — `lib/utils.js` validates (#TBD-3 isBuffer fallthru i32/f64)", () => {
-    const r = compileProject(`${AXIOS_ROOT}/lib/utils.js`, { allowJs: true });
+  it.skip("Tier 1g — `lib/utils.js` validates (#TBD-3 isBuffer fallthru i32/f64)", async () => {
+    const r = await compileProject(`${AXIOS_ROOT}/lib/utils.js`, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -240,8 +240,8 @@ export async function test(): Promise<number> {
    *
    * BLOCKED on #TBD-2.
    */
-  it.skip("Tier 1h — `lib/core/AxiosError.js` validates (#TBD-2 AxiosHeaders_set extern boxing)", () => {
-    const r = compileProject(`${AXIOS_ROOT}/lib/core/AxiosError.js`, { allowJs: true });
+  it.skip("Tier 1h — `lib/core/AxiosError.js` validates (#TBD-2 AxiosHeaders_set extern boxing)", async () => {
+    const r = await compileProject(`${AXIOS_ROOT}/lib/core/AxiosError.js`, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);

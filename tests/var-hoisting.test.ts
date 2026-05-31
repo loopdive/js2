@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(source: string) {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   // Don't check TS type errors — var hoisting triggers "used before being assigned"
   // which is a TS diagnostic, not a real codegen failure
   if (!result.binary || result.binary.length === 0) {

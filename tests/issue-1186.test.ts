@@ -38,7 +38,7 @@ async function runOnce(
   experimentalIR: boolean,
   nativeStrings: boolean,
 ): Promise<Outcome> {
-  const r = compile(source, { experimentalIR, nativeStrings });
+  const r = await compile(source, { experimentalIR, nativeStrings });
   if (!r.success) {
     return { kind: "compile_fail", first: r.errors[0]?.message ?? "" };
   }

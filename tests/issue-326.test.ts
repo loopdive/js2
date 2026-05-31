@@ -2,8 +2,8 @@ import { describe, test, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-function run(code: string): unknown {
-  const result = compile(code);
+async function run(code: string): Promise<unknown> {
+  const result = await compile(code);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const mod = new WebAssembly.Module(result.binary);
   const inst = new WebAssembly.Instance(mod, imports);
@@ -11,8 +11,8 @@ function run(code: string): unknown {
 }
 
 describe("Issue #326: Array element access out of bounds", () => {
-  test("destructuring array with exact length works", () => {
-    const result = run(`
+  test("destructuring array with exact length works", async () => {
+    const result = await run(`
       export function main(): number {
         const arr: number[] = [10, 20, 30];
         const [a, b, c] = arr;
@@ -22,8 +22,8 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(60);
   });
 
-  test("number array destructuring shorter than pattern defaults to NaN", () => {
-    const result = run(`
+  test("number array destructuring shorter than pattern defaults to NaN", async () => {
+    const result = await run(`
       export function main(): number {
         const arr: number[] = [5];
         const [a, b] = arr;
@@ -35,8 +35,8 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(5);
   });
 
-  test("number array destructuring empty array does not trap", () => {
-    const result = run(`
+  test("number array destructuring empty array does not trap", async () => {
+    const result = await run(`
       export function main(): number {
         const arr: number[] = [];
         const [a, b, c] = arr;
@@ -47,8 +47,8 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(42);
   });
 
-  test("number array element access out of bounds returns NaN", () => {
-    const result = run(`
+  test("number array element access out of bounds returns NaN", async () => {
+    const result = await run(`
       export function main(): number {
         const arr: number[] = [1, 2];
         const x = arr[5];
@@ -60,8 +60,8 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(3);
   });
 
-  test("number array element access negative index returns NaN", () => {
-    const result = run(`
+  test("number array element access negative index returns NaN", async () => {
+    const result = await run(`
       export function main(): number {
         const arr: number[] = [1, 2, 3];
         const x = arr[-1];
@@ -72,9 +72,9 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(1);
   });
 
-  test("for-of with array destructuring where inner array is short", () => {
+  test("for-of with array destructuring where inner array is short", async () => {
     // This tests the for-of destructuring path
-    const result = run(`
+    const result = await run(`
       export function main(): number {
         const data: number[][] = [[10, 20]];
         let sum = 0;
@@ -88,8 +88,8 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(30);
   });
 
-  test("destructuring assignment with short number array", () => {
-    const result = run(`
+  test("destructuring assignment with short number array", async () => {
+    const result = await run(`
       export function main(): number {
         const arr: number[] = [10];
         let a = 0;
@@ -102,8 +102,8 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(10);
   });
 
-  test("array access at exact boundary does not trap", () => {
-    const result = run(`
+  test("array access at exact boundary does not trap", async () => {
+    const result = await run(`
       export function main(): number {
         const arr: number[] = [42];
         // Index 0 is valid
@@ -116,8 +116,8 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(42);
   });
 
-  test("function parameter array destructuring with short array", () => {
-    const result = run(`
+  test("function parameter array destructuring with short array", async () => {
+    const result = await run(`
       function take([a, b, c]: number[]): number {
         // If arr has fewer than 3 elements, out-of-bounds should not trap
         return a;
@@ -129,8 +129,8 @@ describe("Issue #326: Array element access out of bounds", () => {
     expect(result).toBe(99);
   });
 
-  test("function parameter array destructuring with empty array", () => {
-    const result = run(`
+  test("function parameter array destructuring with empty array", async () => {
+    const result = await run(`
       function take([a, b]: number[]): number {
         // Both a and b are out-of-bounds for an empty array
         return 77;

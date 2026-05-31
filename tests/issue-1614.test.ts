@@ -6,7 +6,7 @@ import { compile } from "../src/index.js";
 // raising "Cannot find method 'X' on parent class 'Set'". Runtime behaviour of
 // the Set-composition methods is covered by the test262 subclass-receiver suite.
 describe("#1614 super-method calls on builtin extern-class parents", () => {
-  it("compiles super.size/has/keys overrides inside a class extending Set", () => {
+  it("compiles super.size/has/keys overrides inside a class extending Set", async () => {
     const src = `
       class MySet extends Set {
         size(...rest: any[]): any { return super.size(...rest); }
@@ -18,11 +18,11 @@ describe("#1614 super-method calls on builtin extern-class parents", () => {
         return s instanceof Set ? 1 : 0;
       }
     `;
-    const r = compile(src);
+    const r = await compile(src);
     expect(r.success, `Compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(true);
   });
 
-  it("compiles a plain Set subclass using union()", () => {
+  it("compiles a plain Set subclass using union()", async () => {
     const src = `
       class MySet extends Set {}
       export function test(): number {
@@ -32,7 +32,7 @@ describe("#1614 super-method calls on builtin extern-class parents", () => {
         return combined instanceof Set ? 1 : 0;
       }
     `;
-    const r = compile(src);
+    const r = await compile(src);
     expect(r.success).toBe(true);
   });
 });

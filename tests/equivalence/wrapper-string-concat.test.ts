@@ -11,7 +11,7 @@ describe("String wrapper type in + operator (#649)", () => {
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     // Verify it instantiates without validation error
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
@@ -27,7 +27,7 @@ describe("String wrapper type in + operator (#649)", () => {
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     expect((instance.exports as any).test()).toBe(1);
@@ -42,7 +42,7 @@ describe("String wrapper type in + operator (#649)", () => {
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     expect((instance.exports as any).test()).toBe(1);
@@ -55,7 +55,7 @@ describe("String wrapper type in + operator (#649)", () => {
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     expect((instance.exports as any).test()).toBe(1);
@@ -68,7 +68,7 @@ describe("String wrapper type in + operator (#649)", () => {
         return 1;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     expect((instance.exports as any).test()).toBe(1);

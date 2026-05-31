@@ -32,29 +32,29 @@ function buildImports(result: any): WebAssembly.Imports {
 }
 
 describe("String concat chain batching (#958)", () => {
-  it("3-operand chain uses __concat_3 import", () => {
+  it("3-operand chain uses __concat_3 import", async () => {
     const source = `export function test(): string {
       return "hello" + " " + "world";
     }`;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     expect(result.wat).toContain("__concat_3");
   });
 
-  it("6-operand chain uses __concat_6 import", () => {
+  it("6-operand chain uses __concat_6 import", async () => {
     const source = `export function test(): string {
       return "a" + "b" + "c" + "d" + "e" + "f";
     }`;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     expect(result.wat).toContain("__concat_6");
   });
 
-  it("2-operand chain does NOT use batching", () => {
+  it("2-operand chain does NOT use batching", async () => {
     const source = `export function test(): string {
       return "hello" + "world";
     }`;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     expect(result.wat).not.toContain("__concat_");
   });
@@ -63,7 +63,7 @@ describe("String concat chain batching (#958)", () => {
     const source = `export function test(): string {
       return "hello" + " " + "world";
     }`;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const imports = buildImports(result);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -74,7 +74,7 @@ describe("String concat chain batching (#958)", () => {
     const source = `export function test(): string {
       return "a" + "b" + "c" + "d" + "e" + "f";
     }`;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const imports = buildImports(result);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -87,7 +87,7 @@ describe("String concat chain batching (#958)", () => {
       const b: boolean = true;
       return "value: " + n + " ok: " + b;
     }`;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const imports = buildImports(result);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -101,7 +101,7 @@ describe("String concat chain batching (#958)", () => {
       const c: string = "world";
       return a + b + c;
     }`;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const imports = buildImports(result);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -115,7 +115,7 @@ describe("String concat chain batching (#958)", () => {
     export function test(): string {
       return getPrefix() + "middle" + getSuffix();
     }`;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const imports = buildImports(result);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);

@@ -5,7 +5,7 @@ import { buildImports } from "../src/runtime.js";
 describe("Promise.all / Promise.race", () => {
   it("Promise.all with resolved values", async () => {
     // Use Promise<any> return type so the unwrapped type is 'any' → externref
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Source {
           constructor();
@@ -37,7 +37,7 @@ describe("Promise.all / Promise.race", () => {
   });
 
   it("Promise.race with resolved values", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Source {
           constructor();
@@ -66,8 +66,8 @@ describe("Promise.all / Promise.race", () => {
     expect(out).toBe(10);
   });
 
-  it("Promise.all compiles correctly (compilation check)", () => {
-    const result = compile(`
+  it("Promise.all compiles correctly (compilation check)", async () => {
+    const result = await compile(`
       declare function getArr(): Promise<number>[];
       export async function allNums(): Promise<any> {
         const a = getArr();
@@ -81,8 +81,8 @@ describe("Promise.all / Promise.race", () => {
     expect(result.wat).toContain("Promise_all");
   });
 
-  it("Promise.race compiles correctly (compilation check)", () => {
-    const result = compile(`
+  it("Promise.race compiles correctly (compilation check)", async () => {
+    const result = await compile(`
       declare function getArr(): Promise<number>[];
       export async function raceNums(): Promise<any> {
         const a = getArr();

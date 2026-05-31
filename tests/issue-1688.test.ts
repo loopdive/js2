@@ -7,7 +7,7 @@ import { compile } from "../src/index.js";
 
 async function runWasi(body: string): Promise<number> {
   const src = `export function test(): number { ${body} }`;
-  const r = compile(src, { fileName: "t.ts", target: "wasi" });
+  const r = await compile(src, { fileName: "t.ts", target: "wasi" });
   if (!r.success) throw new Error("compile error: " + r.errors?.[0]?.message);
   const { instance } = await WebAssembly.instantiate(r.binary, {});
   return (instance.exports as { test: () => number }).test();

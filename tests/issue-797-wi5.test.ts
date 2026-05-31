@@ -18,7 +18,7 @@ export function test(): number {
   return 1;
 }
 `;
-  const r = compile(full, { fileName: "test.ts" });
+  const r = await compile(full, { fileName: "test.ts" });
   if (!r.success)
     throw new Error("CE: " + r.errors[0]?.message + "\n" + r.errors.map((e: any) => e.message).join("\n"));
   const imports = buildImports(r.imports, undefined, r.stringPool);

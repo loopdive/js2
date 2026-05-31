@@ -67,7 +67,7 @@ describe("#1282 ESLint Tier 1 — minimal Linter.verify()", () => {
    * What this rung asserts: compile-time success — the type checker
    * does not reject the import. Instantiation is a separate rung.
    */
-  it('Tier 1a — entry with `import { Linter } from "eslint"` compiles', () => {
+  it('Tier 1a — entry with `import { Linter } from "eslint"` compiles', async () => {
     const entry = writeEntry(
       "tier1a-entry.ts",
       `
@@ -79,7 +79,7 @@ export function test(): number {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.binary.byteLength).toBeGreaterThan(0);
@@ -96,7 +96,7 @@ export function test(): number {
    * references after dead-elim compaction. Fixed by skipping
    * `collectInterface` for `.d.ts` source files. (#1287)
    */
-  it("Tier 1b — Tier 1a binary is structurally valid Wasm", () => {
+  it("Tier 1b — Tier 1a binary is structurally valid Wasm", async () => {
     const entry = writeEntry(
       "tier1b-entry.ts",
       `
@@ -108,7 +108,7 @@ export function test(): number {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -123,8 +123,8 @@ export function test(): number {
    * What this rung asserts: compile-time success against a real
    * 32-file CJS module graph. Validation is the next rung.
    */
-  it("Tier 1c — `eslint/lib/linter/linter.js` direct compile succeeds", () => {
-    const r = compileProject("/workspace/node_modules/eslint/lib/linter/linter.js", { allowJs: true });
+  it("Tier 1c — `eslint/lib/linter/linter.js` direct compile succeeds", async () => {
+    const r = await compileProject("/workspace/node_modules/eslint/lib/linter/linter.js", { allowJs: true });
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.binary.byteLength).toBeGreaterThan(100_000);
@@ -141,7 +141,7 @@ export function test(): number {
    * BLOCKED on #1289.
    */
   it.skip("Tier 1d — `linter.js` binary instantiates without Wasm validation errors (#1289)", async () => {
-    const r = compileProject("/workspace/node_modules/eslint/lib/linter/linter.js", { allowJs: true });
+    const r = await compileProject("/workspace/node_modules/eslint/lib/linter/linter.js", { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     const imps = buildImports(r.imports as never, undefined, r.stringPool);
@@ -168,7 +168,7 @@ export function test(): number {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     const imps = buildImports(r.imports as never, undefined, r.stringPool);

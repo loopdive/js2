@@ -13,7 +13,7 @@ async function runTest262(file: string): Promise<string> {
   const meta = parseMeta(src);
   const { source: w } = wrapTest(src, meta);
   try {
-    const r = compile(w, { fileName: "test.ts" });
+    const r = await compile(w, { fileName: "test.ts" });
     if (!r.success) return `CE: ${r.errors[0]?.message}`;
     const importResult = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, importResult as any);

@@ -45,8 +45,8 @@ import { parseMeta, wrapTest } from "./test262-runner.js";
  * fix and return the correct value after.
  */
 
-function compileAndRun(source: string): number | undefined {
-  const result = compile(source, {
+async function compileAndRun(source: string): Promise<number | undefined> {
+  const result = await compile(source, {
     fileName: "test.ts",
     skipSemanticDiagnostics: true,
   });
@@ -65,7 +65,7 @@ function compileAndRun(source: string): number | undefined {
 }
 
 describe("#1671 object-method trampoline must forward the real receiver", () => {
-  it("direct call to an object method with an array-binding-pattern param reads `this` (would null-deref before fix)", () => {
+  it("direct call to an object method with an array-binding-pattern param reads `this` (would null-deref before fix)", async () => {
     // The array-binding-pattern param forces the method's param to externref in
     // the body compile. Before the fix the canonical funcMap entry was a stub,
     // so `obj.run(...)` returned undefined/null and `this.base` was never read.
@@ -81,10 +81,10 @@ describe("#1671 object-method trampoline must forward the real receiver", () => 
         return r === 130 ? 1 : r;
       }
     `;
-    expect(compileAndRun(source)).toBe(1);
+    expect(await compileAndRun(source)).toBe(1);
   });
 
-  it("object method with object-binding-pattern param dispatched directly returns the right value", () => {
+  it("object method with object-binding-pattern param dispatched directly returns the right value", async () => {
     const source = `
       const obj = {
         factor: 3,
@@ -97,10 +97,10 @@ describe("#1671 object-method trampoline must forward the real receiver", () => 
         return r === 15 ? 1 : r;
       }
     `;
-    expect(compileAndRun(source)).toBe(1);
+    expect(await compileAndRun(source)).toBe(1);
   });
 
-  it("generator method with a binding-pattern rest param iterates correctly via direct call", () => {
+  it("generator method with a binding-pattern rest param iterates correctly via direct call", async () => {
     // Mirrors the test262 async-gen-meth-dflt-ary-ptrn-rest-id-exhausted shape
     // (sync generator variant so the assertion is synchronous): the rest
     // binding pattern forces an externref param; the canonical func must hold
@@ -119,7 +119,7 @@ describe("#1671 object-method trampoline must forward the real receiver", () => 
         return first.value === 13 ? 1 : first.value;
       }
     `;
-    expect(compileAndRun(source)).toBe(1);
+    expect(await compileAndRun(source)).toBe(1);
   });
 
   // The exact test262 source that drove the investigation. It's an async
@@ -130,10 +130,10 @@ describe("#1671 object-method trampoline must forward the real receiver", () => 
   const TEST262 = join(__dirname, "..", "test262", "test");
   const rel = "language/expressions/object/dstr/async-gen-meth-dflt-ary-ptrn-rest-id-exhausted.js";
   const abs = join(TEST262, rel);
-  it.skipIf(!existsSync(abs))(`real test262 source runs without null-deref: ${rel}`, () => {
+  it.skipIf(!existsSync(abs))(`real test262 source runs without null-deref: ${rel}`, async () => {
     const raw = readFileSync(abs, "utf-8");
     const { source } = wrapTest(raw, parseMeta(raw));
-    const result = compile(source, {
+    const result = await compile(source, {
       fileName: "test.ts",
       skipSemanticDiagnostics: true,
     });

@@ -24,8 +24,8 @@ import { describe, expect, it } from "vitest";
 import { compileToWat } from "../src/index.js";
 
 describe("#1742 — this-receiver vec member read guard (runtime-tested)", () => {
-  it("`this[i]` / `this.length` in a lifted closure emit ref.test-guarded reads", () => {
-    const wat = compileToWat(`
+  it("`this[i]` / `this.length` in a lifted closure emit ref.test-guarded reads", async () => {
+    const wat = await compileToWat(`
       const g = function (): number {
         if (this.length > 2) { return this[2]; }
         return -1;
@@ -47,8 +47,8 @@ describe("#1742 — this-receiver vec member read guard (runtime-tested)", () =>
     expect(refTestCount).toBeGreaterThanOrEqual(2);
   });
 
-  it("compiles the canonical override-body shape without error", () => {
-    const wat = compileToWat(`
+  it("compiles the canonical override-body shape without error", async () => {
+    const wat = await compileToWat(`
       const g = function (): number { return this.length; };
       export function test(): number { const a = [1, 2]; return g.apply(a, []); }
     `);

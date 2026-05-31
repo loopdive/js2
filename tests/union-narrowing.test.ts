@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string, args: unknown[]): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success)
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -14,8 +14,8 @@ async function run(source: string, fn: string, args: unknown[]): Promise<unknown
 }
 
 describe("union types", () => {
-  it("number | string parameter compiles", () => {
-    const result = compile(`
+  it("number | string parameter compiles", async () => {
+    const result = await compile(`
       export function test(x: number | string): number {
         return 0;
       }
@@ -60,7 +60,7 @@ describe("union types", () => {
 
 describe("null narrowing", () => {
   it("T | null — non-null path returns value", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(x: number | null): number {
         if (x !== null) {
           return 1;

@@ -6,7 +6,7 @@ import * as fs from "fs";
 
 /** Compile and instantiate to catch Wasm validation errors */
 async function compileAndValidate(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     return {
       compileSuccess: false,

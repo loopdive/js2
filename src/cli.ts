@@ -188,7 +188,7 @@ const source = readFileSync(absInput, "utf-8");
 const name = basename(absInput, ".ts");
 const dir = outDir ? resolve(outDir) : dirname(absInput);
 
-const result = compile(source, {
+const result = await compile(source, {
   ...(optimize ? { optimize } : {}),
   ...(target ? { target } : {}),
   ...(emitWit ? { wit: true } : {}),

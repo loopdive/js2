@@ -24,8 +24,8 @@ function buildImports(wasmModule: WebAssembly.Module): Record<string, Record<str
   return importObj;
 }
 
-function compileAndRun(code: string): number {
-  const result = compile(code);
+async function compileAndRun(code: string): Promise<number> {
+  const result = await compile(code);
   expect(result.success).toBe(true);
   const wasmModule = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(wasmModule, buildImports(wasmModule));
@@ -34,8 +34,8 @@ function compileAndRun(code: string): number {
 }
 
 describe("class name in own extends expression is TDZ (#1594B)", () => {
-  test("class x extends x {} throws ReferenceError", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("class x extends x {} throws ReferenceError", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       export function getResult(): number {
         let caught = 0;
         try {
@@ -49,8 +49,8 @@ describe("class name in own extends expression is TDZ (#1594B)", () => {
     expect(val).toBe(1);
   });
 
-  test("grouped: class x extends (x) {} throws ReferenceError", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("grouped: class x extends (x) {} throws ReferenceError", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       export function getResult(): number {
         let caught = 0;
         try {
@@ -64,8 +64,8 @@ describe("class name in own extends expression is TDZ (#1594B)", () => {
     expect(val).toBe(1);
   });
 
-  test("class referencing its own name in a member-access extends throws", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("class referencing its own name in a member-access extends throws", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       export function getResult(): number {
         let caught = 0;
         try {
@@ -79,8 +79,8 @@ describe("class name in own extends expression is TDZ (#1594B)", () => {
     expect(val).toBe(1);
   });
 
-  test("class expression: (class x extends x {}) throws ReferenceError", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("class expression: (class x extends x {}) throws ReferenceError", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       export function getResult(): number {
         let caught = 0;
         try {
@@ -94,8 +94,8 @@ describe("class name in own extends expression is TDZ (#1594B)", () => {
     expect(val).toBe(1);
   });
 
-  test("extends an unrelated identifier still compiles (no false positive)", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("extends an unrelated identifier still compiles (no false positive)", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       class Base { getV(): number { return 7; } }
       export function getResult(): number {
         class Derived extends Base {}

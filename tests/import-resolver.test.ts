@@ -108,7 +108,7 @@ export function test(): number {
   });
 
   it("compiles with auto-generated declare from import", async () => {
-    const result = compile(`
+    const result = await compile(`
       import * as THREE from "three";
       export function update(camera: THREE.OrthographicCamera): void {
         camera.left = -10;
@@ -127,8 +127,8 @@ export function test(): number {
 });
 
 describe(".d.ts generation", () => {
-  it("generates export interface for simple functions", () => {
-    const result = compile(`
+  it("generates export interface for simple functions", async () => {
+    const result = await compile(`
       export function add(a: number, b: number): number {
         return a + b;
       }
@@ -141,8 +141,8 @@ describe(".d.ts generation", () => {
     expect(result.dts).toContain("export declare function isEven(n: number): boolean;");
   });
 
-  it("generates import interface", () => {
-    const result = compile(`
+  it("generates import interface", async () => {
+    const result = await compile(`
       export function main(): void {
         console.log(42);
         console.log(true);
@@ -152,8 +152,8 @@ describe(".d.ts generation", () => {
     expect(result.dts).toContain("export declare function main(): void;");
   });
 
-  it("maps non-primitive types to any in exports", () => {
-    const result = compile(`
+  it("maps non-primitive types to any in exports", async () => {
+    const result = await compile(`
       import * as THREE from "three";
       export function update(camera: THREE.OrthographicCamera): void {
         camera.left = -10;
@@ -163,8 +163,8 @@ describe(".d.ts generation", () => {
     expect(result.dts).toContain("camera: any");
   });
 
-  it("is empty on compilation failure", () => {
-    const result = compile(`this is not valid typescript {{{`);
+  it("is empty on compilation failure", async () => {
+    const result = await compile(`this is not valid typescript {{{`);
     expect(result.success).toBe(false);
     expect(result.dts).toBe("");
   });

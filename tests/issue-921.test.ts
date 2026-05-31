@@ -29,7 +29,7 @@ describe("Issue #921 — class dstr generator/private-method CE regression", () 
         const src = readFileSync(tp, "utf-8");
         const meta = parseMeta(src);
         const { source: w } = wrapTest(src, meta);
-        const r = compile(w, { fileName: "test.ts" });
+        const r = await compile(w, { fileName: "test.ts" });
         expect(r.success).toBe(true);
         if (r.success) {
           const imports = buildImports(r.imports, undefined, r.stringPool);
@@ -47,7 +47,7 @@ describe("Issue #921 — class dstr generator/private-method CE regression", () 
         const src = readFileSync(tp, "utf-8");
         const meta = parseMeta(src);
         const { source: w } = wrapTest(src, meta);
-        const r = compile(w, { fileName: "test.ts" });
+        const r = await compile(w, { fileName: "test.ts" });
         if (!r.success) {
           const msg = (r as any).errors[0]?.message || "";
           expect(msg).not.toContain("f64.add");

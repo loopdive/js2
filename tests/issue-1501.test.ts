@@ -11,8 +11,8 @@ import { describe, it, expect } from "vitest";
 import { compile, buildImports } from "../src/index.js";
 import { preprocessImports } from "../src/import-resolver.js";
 
-function compileAndInstantiate(src: string) {
-  const result = compile(src, { fileName: "test.ts" });
+async function compileAndInstantiate(src: string) {
+  const result = await compile(src, { fileName: "test.ts" });
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   const imports = buildImports(result.imports);
   const mod = new WebAssembly.Module(result.binary);
@@ -66,14 +66,14 @@ describe("browser timer host imports (#1501) — preprocessImports shim", () => 
 });
 
 describe("browser timer host imports (#1501) — import classification", () => {
-  it("classifies __timer_set_* and __timer_clear_* into timer_set / timer_clear intents", () => {
+  it("classifies __timer_set_* and __timer_clear_* into timer_set / timer_clear intents", async () => {
     const src = `
       const a = setTimeout(() => {}, 1);
       clearTimeout(a);
       const b = setInterval(() => {}, 2);
       clearInterval(b);
     `;
-    const { result } = compileAndInstantiate(src);
+    const { result } = await compileAndInstantiate(src);
     const timerImports = result.imports.filter((i) => i.name.startsWith("__timer_"));
     // We get a host import for each timer fn that the shim references.
     const intents = timerImports.map((i) => i.intent);
@@ -92,7 +92,7 @@ describe("browser timer host imports (#1501) — runtime callback dispatch", () 
       export function schedule(ms: number): any { return setTimeout(tick, ms); }
       export function getTicks(): number { return ticks; }
     `;
-    const { instance } = compileAndInstantiate(src);
+    const { instance } = await compileAndInstantiate(src);
     const schedule = instance.exports.schedule as (ms: number) => unknown;
     const getTicks = instance.exports.getTicks as () => number;
     schedule(10);
@@ -111,7 +111,7 @@ describe("browser timer host imports (#1501) — runtime callback dispatch", () 
       }
       export function getTicks(): number { return ticks; }
     `;
-    const { instance } = compileAndInstantiate(src);
+    const { instance } = await compileAndInstantiate(src);
     (instance.exports.scheduleAndCancel as (ms: number) => void)(10);
     await new Promise((r) => setTimeout(r, 50));
     expect((instance.exports.getTicks as () => number)()).toBe(0);
@@ -131,7 +131,7 @@ describe("browser timer host imports (#1501) — runtime callback dispatch", () 
       export function startTicking(ms: number): void { handle = setInterval(tick, ms); }
       export function getTicks(): number { return ticks; }
     `;
-    const { instance } = compileAndInstantiate(src);
+    const { instance } = await compileAndInstantiate(src);
     (instance.exports.startTicking as (ms: number) => void)(15);
     // Wait long enough for at least 3 ticks (15ms each) plus a buffer that
     // would have allowed a 4th if clearInterval weren't called.

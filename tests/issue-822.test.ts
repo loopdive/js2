@@ -3,7 +3,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function compileAndRun(src: string): Promise<{ result: any; errors: string[]; instantiateError?: string }> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   const errors = r.errors.map((e) => e.message);
   if (!r.success) return { result: undefined, errors };
   try {

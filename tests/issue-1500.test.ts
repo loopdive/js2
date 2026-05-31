@@ -25,7 +25,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndInstantiate(src: string) {
-  const result = compile(src, { fileName: "test.ts" });
+  const result = await compile(src, { fileName: "test.ts" });
   expect(result.success, `compile failed: ${result.errors[0]?.message ?? "unknown"}`).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);

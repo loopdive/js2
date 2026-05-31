@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -12,8 +12,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   return (instance.exports as any)[fn](...args);
 }
 
-function countUnsupported(source: string): number {
-  const result = compile(source);
+async function countUnsupported(source: string): Promise<number> {
+  const result = await compile(source);
   return result.errors.filter((e) => e.message === "Unsupported call expression").length;
 }
 
@@ -74,9 +74,9 @@ describe("callable property calls on class instances", () => {
     ).toBe(42);
   }, 15000);
 
-  it("callable property on object literal", () => {
+  it("callable property on object literal", async () => {
     expect(
-      countUnsupported(`
+      await countUnsupported(`
       function makeObj() {
         return { fn: (x: number) => x * 2 };
       }
@@ -88,9 +88,9 @@ describe("callable property calls on class instances", () => {
     ).toBe(0);
   }, 15000);
 
-  it("no unsupported errors for callable property patterns", () => {
+  it("no unsupported errors for callable property patterns", async () => {
     expect(
-      countUnsupported(`
+      await countUnsupported(`
       class Handler {
         callback: () => number;
         constructor(cb: () => number) { this.callback = cb; }

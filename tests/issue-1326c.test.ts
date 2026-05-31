@@ -28,8 +28,8 @@ import { buildImports } from "../src/runtime.js";
 import * as scheduler from "../src/codegen/async-scheduler.js";
 
 describe("#1326c Phase 1C-A — microtask queue + drain export", () => {
-  it("non-async WASI modules don't emit drain infrastructure", () => {
-    const r = compile(
+  it("non-async WASI modules don't emit drain infrastructure", async () => {
+    const r = await compile(
       `
         export function add(a: number, b: number): number {
           return a + b;
@@ -75,8 +75,8 @@ describe("#1326c Phase 1C-A — microtask queue + drain export", () => {
     const src = `
       export function noop(): void {}
     `;
-    const r1 = compile(src, { fileName: "a.ts", target: "wasi" });
-    const r2 = compile(src, { fileName: "b.ts", target: "wasi" });
+    const r1 = await compile(src, { fileName: "a.ts", target: "wasi" });
+    const r2 = await compile(src, { fileName: "b.ts", target: "wasi" });
     expect(r1.success).toBe(true);
     expect(r2.success).toBe(true);
   });
@@ -84,7 +84,7 @@ describe("#1326c Phase 1C-A — microtask queue + drain export", () => {
   it("standalone Promise.resolve+await still works (Phase 1B regression gate)", async () => {
     // Phase 1B established this — the Phase 1C-A queue plumbing must not
     // disturb the existing pass-through. Auto-drains via _start.
-    const r = compile(
+    const r = await compile(
       `
         async function f(): Promise<number> {
           return await Promise.resolve(42);

@@ -7,8 +7,8 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
-function compileWithoutKindCrash(source: string): void {
-  const result = compile(source, { allowJs: false });
+async function compileWithoutKindCrash(source: string): Promise<void> {
+  const result = await compile(source, { allowJs: false });
   const kindErrors = result.errors.filter((e) =>
     e.message.includes("Cannot read properties of undefined (reading 'kind')"),
   );
@@ -16,8 +16,8 @@ function compileWithoutKindCrash(source: string): void {
 }
 
 describe("Issue #646: residual undefined .kind crashes", { timeout: 30000 }, () => {
-  it("should not crash on arguments.length in function expression", () => {
-    compileWithoutKindCrash(`
+  it("should not crash on arguments.length in function expression", async () => {
+    await compileWithoutKindCrash(`
       export function test(): number {
         const fn = function() {
           return arguments.length;
@@ -27,8 +27,8 @@ describe("Issue #646: residual undefined .kind crashes", { timeout: 30000 }, () 
     `);
   });
 
-  it("should not crash on arguments[n] in function expression", () => {
-    compileWithoutKindCrash(`
+  it("should not crash on arguments[n] in function expression", async () => {
+    await compileWithoutKindCrash(`
       export function test(): number {
         const fn = function() {
           return arguments[0];
@@ -38,10 +38,10 @@ describe("Issue #646: residual undefined .kind crashes", { timeout: 30000 }, () 
     `);
   });
 
-  it("should not crash on property access of IArguments type", () => {
+  it("should not crash on property access of IArguments type", async () => {
     // IArguments has no struct type name, so typeName is undefined.
     // The accessWasm fallback must still produce a valid result.
-    compileWithoutKindCrash(`
+    await compileWithoutKindCrash(`
       export function test(): number {
         const fn = function() {
           const args = arguments;
@@ -52,10 +52,10 @@ describe("Issue #646: residual undefined .kind crashes", { timeout: 30000 }, () 
     `);
   });
 
-  it("should not crash on property access of unknown typed objects", () => {
+  it("should not crash on property access of unknown typed objects", async () => {
     // When the object type is not resolved to a known struct,
     // the accessWasm fallback should handle it gracefully.
-    compileWithoutKindCrash(`
+    await compileWithoutKindCrash(`
       declare const unknownObj: any;
       export function test(): number {
         return unknownObj.someProp;
@@ -63,8 +63,8 @@ describe("Issue #646: residual undefined .kind crashes", { timeout: 30000 }, () 
     `);
   });
 
-  it("should compile arguments.length in IIFE without kind crash", () => {
-    compileWithoutKindCrash(`
+  it("should compile arguments.length in IIFE without kind crash", async () => {
+    await compileWithoutKindCrash(`
       export function test(): number {
         return (function() {
           return arguments.length;
@@ -73,12 +73,12 @@ describe("Issue #646: residual undefined .kind crashes", { timeout: 30000 }, () 
     `);
   });
 
-  it("compileExpressionInner result guard catches undefined returns", () => {
+  it("compileExpressionInner result guard catches undefined returns", async () => {
     // This test verifies the safety guard in compileExpression that
     // catches non-null results without a .kind property (e.g., undefined).
     // The brace fix should prevent this from being needed for property access,
     // but the guard protects against any other sub-compiler returning undefined.
-    compileWithoutKindCrash(`
+    await compileWithoutKindCrash(`
       export function test(): number {
         const fn = function() {
           const len = arguments.length;

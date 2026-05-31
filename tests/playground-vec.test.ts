@@ -13,7 +13,7 @@ describe("playground vec patterns", () => {
       "  return total;",
       "}",
     ].join("\n");
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, {
       env: { console_log_number: () => {}, console_log_bool: () => {}, console_log_string: () => {} },
@@ -52,7 +52,7 @@ describe("playground vec patterns", () => {
       "  return total;",
       "}",
     ].join("\n");
-    const result = compile(src);
+    const result = await compile(src);
     if (!result.success) {
       console.log("Errors:", result.errors);
       console.log("WAT:", result.wat);
@@ -73,7 +73,7 @@ describe("playground vec patterns", () => {
       "  return t[3];",
       "}",
     ].join("\n");
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, {
       env: { console_log_number: () => {}, console_log_bool: () => {}, console_log_string: () => {} },
@@ -88,7 +88,7 @@ describe("playground vec patterns", () => {
       "  return days[1];",
       "}",
     ].join("\n");
-    const result = compile(src);
+    const result = await compile(src);
     if (!result.success) {
       console.log("Errors:", result.errors);
       console.log("WAT:", result.wat);

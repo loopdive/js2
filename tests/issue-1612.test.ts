@@ -58,11 +58,11 @@ describe("issue #1612 — top-level-await + array-literal operand parses", () =>
   });
 
   for (const f of files) {
-    it(`compiles ${f}`, () => {
+    it(`compiles ${f}`, async () => {
       const src = readFileSync(`${dir}/${f}`, "utf-8");
       const meta = parseMeta(src);
       const { source } = wrapTest(src, meta);
-      const r = compile(source, {
+      const r = await compile(source, {
         fileName: "test.ts",
         skipSemanticDiagnostics: true,
       });

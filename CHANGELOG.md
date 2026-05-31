@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### BREAKING: `compile()` is now async (#1757)
+
+- The public compile API now returns a `Promise`. `compile`, `compileMulti`,
+  `compileFiles`, `compileProject`, and `compileToWat` — plus the lower-level
+  `compileSource` / `compileMultiSource` / `compileFilesSource` — are `async`
+  and must be `await`ed. Every external consumer needs to add `await`:
+
+  ```ts
+  // before
+  const result = compile(src);
+  // after
+  const result = await compile(src);
+  ```
+
+  **Why:** the optional Binaryen optimizer is now loaded lazily via
+  `await import("binaryen")` instead of a synchronous require. This lets a
+  standalone `bun build --compile` / `deno compile` binary **embed** the
+  optimizer (closes the #986 / #1756 end-state), so `--optimize` works in a
+  single-file binary with no `wasm-opt` on `PATH`. Codegen itself stays
+  synchronous; only the optional optimize step awaits. The synchronous
+  `eval()` host shim uses an internal `compileSourceCore` and is unaffected.
+
 ### Repository rename
 
 - The repo has been renamed `loopdive/js2wasm` → `loopdive/js2`.

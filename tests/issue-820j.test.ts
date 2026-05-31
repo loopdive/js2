@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runI32(src: string): Promise<number | string> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) return "CE:" + (r.errors?.[0]?.message ?? "?");
   const imports = buildImports(r.imports, undefined, r.stringPool, {});
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

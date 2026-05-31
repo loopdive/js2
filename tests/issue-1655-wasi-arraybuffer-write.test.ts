@@ -48,7 +48,7 @@ function runWasiCaptureFd(binary: Uint8Array, fd: number): Uint8Array {
 }
 
 describe("#1655 process.stdout.write(ArrayBuffer) under --target wasi", () => {
-  it("writes a bare ArrayBuffer's bytes verbatim (no transform, no newline)", () => {
+  it("writes a bare ArrayBuffer's bytes verbatim (no transform, no newline)", async () => {
     // Build a 4-byte LE length prefix in an ArrayBuffer via DataView, then
     // hand the buffer itself to stdout.write. This is the AssemblyScript
     // Native Messaging frame shape.
@@ -65,13 +65,13 @@ describe("#1655 process.stdout.write(ArrayBuffer) under --target wasi", () => {
       dv.setUint8(4, 0x00);
       process.stdout.write(buf);
     }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureFd(result.binary, 1);
     expect(Array.from(out)).toEqual([0xde, 0xad, 0xbe, 0xef, 0x00]);
   });
 
-  it("writes a non-literal Uint8Array verbatim", () => {
+  it("writes a non-literal Uint8Array verbatim", async () => {
     const src = `declare const process: {
       stdout: { write(c: Uint8Array | string): void };
     };
@@ -82,13 +82,13 @@ describe("#1655 process.stdout.write(ArrayBuffer) under --target wasi", () => {
       u[2] = 9;
       process.stdout.write(u);
     }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureFd(result.binary, 1);
     expect(Array.from(out)).toEqual([7, 8, 9]);
   });
 
-  it("writes a Uint8Array.subarray view honouring [begin, end)", () => {
+  it("writes a Uint8Array.subarray view honouring [begin, end)", async () => {
     const src = `declare const process: {
       stdout: { write(c: Uint8Array | string): void };
     };
@@ -96,35 +96,35 @@ describe("#1655 process.stdout.write(ArrayBuffer) under --target wasi", () => {
       const u = new Uint8Array([10, 20, 30, 40, 50]);
       process.stdout.write(u.subarray(1, 4));
     }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureFd(result.binary, 1);
     expect(Array.from(out)).toEqual([20, 30, 40]);
   });
 
-  it("does not regress the existing string path", () => {
+  it("does not regress the existing string path", async () => {
     const src = `declare const process: { stdout: { write(c: string): void } };
       export function main(): void {
         process.stdout.write("ok");
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureFd(result.binary, 1);
     expect(Array.from(out)).toEqual([0x6f, 0x6b]);
   });
 
-  it("does not regress the existing Uint8Array-literal path (#1651)", () => {
+  it("does not regress the existing Uint8Array-literal path (#1651)", async () => {
     const src = `declare const process: { stdout: { write(c: Uint8Array | string): void } };
       export function main(): void {
         process.stdout.write(new Uint8Array([0, 1, 255, 10, 13]));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureFd(result.binary, 1);
     expect(Array.from(out)).toEqual([0, 1, 255, 10, 13]);
   });
 
-  it("routes ArrayBuffer through stderr when called on process.stderr", () => {
+  it("routes ArrayBuffer through stderr when called on process.stderr", async () => {
     const src = `declare const process: {
       stderr: { write(c: ArrayBuffer | string): void };
     };
@@ -136,7 +136,7 @@ describe("#1655 process.stdout.write(ArrayBuffer) under --target wasi", () => {
       dv.setUint8(2, 0x03);
       process.stderr.write(buf);
     }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureFd(result.binary, 2);
     expect(Array.from(out)).toEqual([1, 2, 3]);

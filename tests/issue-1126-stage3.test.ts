@@ -38,11 +38,11 @@ async function dualRun(
   fnName: string,
   args: ReadonlyArray<number | boolean>,
 ): Promise<{ legacy: unknown; ir: unknown }> {
-  const legacy = compile(source, { nativeStrings: true });
+  const legacy = await compile(source, { nativeStrings: true });
   if (!legacy.success) {
     throw new Error(`legacy compile failed:\n${legacy.errors.map((e) => e.message).join("\n")}`);
   }
-  const ir = compile(source, { nativeStrings: true, experimentalIR: true });
+  const ir = await compile(source, { nativeStrings: true, experimentalIR: true });
   if (!ir.success) {
     throw new Error(`ir compile failed:\n${ir.errors.map((e) => e.message).join("\n")}`);
   }
@@ -267,11 +267,11 @@ describe("#1126 Stage 3 — code-shape: fast path emits native i32.* and skips t
   // `f64.trunc` ... `i32.trunc_sat_f64_u` sequence that emitJsToInt32
   // emits. The single trailing `f64.convert_i32_s` is fine — it converts
   // the i32 result back to f64 for the IR contract.
-  it("(a < b) | (c < d) — body uses native i32.or, no f64.trunc", () => {
+  it("(a < b) | (c < d) — body uses native i32.or, no f64.trunc", async () => {
     const src = `export function f(a: number, b: number, c: number, d: number) {
       return (a < b) | (c < d);
     }`;
-    const ir = compile(src, { nativeStrings: true, experimentalIR: true });
+    const ir = await compile(src, { nativeStrings: true, experimentalIR: true });
     expect(ir.success).toBe(true);
     if (!ir.success) return;
     const body = extractFunc(ir.wat, "f");
@@ -280,11 +280,11 @@ describe("#1126 Stage 3 — code-shape: fast path emits native i32.* and skips t
     expect(body).not.toContain("i32.trunc_sat_f64_u");
   });
 
-  it("(a < b) & (c < d) — body uses native i32.and, no f64.trunc", () => {
+  it("(a < b) & (c < d) — body uses native i32.and, no f64.trunc", async () => {
     const src = `export function f(a: number, b: number, c: number, d: number) {
       return (a < b) & (c < d);
     }`;
-    const ir = compile(src, { nativeStrings: true, experimentalIR: true });
+    const ir = await compile(src, { nativeStrings: true, experimentalIR: true });
     expect(ir.success).toBe(true);
     if (!ir.success) return;
     const body = extractFunc(ir.wat, "f");
@@ -292,7 +292,7 @@ describe("#1126 Stage 3 — code-shape: fast path emits native i32.* and skips t
     expect(body).not.toContain("f64.trunc");
   });
 
-  it("(a < b) << (c < d) — i32.shl on two i32 operands, no scratch dance", () => {
+  it("(a < b) << (c < d) — i32.shl on two i32 operands, no scratch dance", async () => {
     // Both lhs and rhs are i32 (compare results). Stage 3's fast path
     // emits native `i32.shl` directly. Mixed i32/f64 operand cases (like
     // `(a < b) << someF64`) are Stage 4's boundary-conversion territory
@@ -301,7 +301,7 @@ describe("#1126 Stage 3 — code-shape: fast path emits native i32.* and skips t
       // @ts-expect-error - test that bool << bool emits native i32.shl
       return (a < b) << (c < d);
     }`;
-    const ir = compile(src, { nativeStrings: true, experimentalIR: true });
+    const ir = await compile(src, { nativeStrings: true, experimentalIR: true });
     expect(ir.success).toBe(true);
     if (!ir.success) return;
     const body = extractFunc(ir.wat, "f");
@@ -311,23 +311,23 @@ describe("#1126 Stage 3 — code-shape: fast path emits native i32.* and skips t
   });
 
   // Magnitude compare on two i32 operands → native i32.lt_s.
-  it("(a < b) < (c < d) — body uses i32.lt_s, no f64.lt at the outer", () => {
+  it("(a < b) < (c < d) — body uses i32.lt_s, no f64.lt at the outer", async () => {
     const src = `export function f(a: number, b: number, c: number, d: number): boolean {
       return ((a < b) ? 1 : 0) < ((c < d) ? 1 : 0);
     }`;
     // The conditional widens (a<b) to f64 for the ?: result, so this case
     // exercises the f64 path. We also test the direct form below.
-    const ir = compile(src, { nativeStrings: true, experimentalIR: true });
+    const ir = await compile(src, { nativeStrings: true, experimentalIR: true });
     expect(ir.success).toBe(true);
   });
 
-  it("direct (a < b) < (c < d) — body uses i32.lt_s, no f64.lt at the outer", () => {
+  it("direct (a < b) < (c < d) — body uses i32.lt_s, no f64.lt at the outer", async () => {
     // Suppress TS strict-mode boolean-as-number error with `// @ts-ignore`.
     const src = `export function f(a: number, b: number, c: number, d: number) {
       // @ts-expect-error - test that bool < bool emits native i32.lt_s
       return (a < b) < (c < d);
     }`;
-    const ir = compile(src, { nativeStrings: true, experimentalIR: true });
+    const ir = await compile(src, { nativeStrings: true, experimentalIR: true });
     expect(ir.success).toBe(true);
     if (!ir.success) return;
     const body = extractFunc(ir.wat, "f");

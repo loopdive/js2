@@ -26,7 +26,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" }) as ReturnType<typeof compile> & {
+  const r = (await compile(src, { fileName: "test.ts" })) as ReturnType<typeof compile> & {
     importObject: WebAssembly.Imports;
   };
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);

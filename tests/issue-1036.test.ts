@@ -15,8 +15,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): { success: boolean; result?: number; error?: string } {
-  const compiled = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<{ success: boolean; result?: number; error?: string }> {
+  const compiled = await compile(source, { fileName: "test.ts" });
   if (!compiled.success) return { success: false, error: compiled.errors[0]?.message };
   try {
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
@@ -30,8 +30,8 @@ function compileAndRun(source: string): { success: boolean; result?: number; err
 }
 
 describe("Issue #1036: DisposableStack property-chain access", () => {
-  it("typeof DisposableStack.prototype.defer === 'function'", () => {
-    const r = compileAndRun(`
+  it("typeof DisposableStack.prototype.defer === 'function'", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         return typeof DisposableStack.prototype.defer === "function" ? 1 : 0;
       }
@@ -40,8 +40,8 @@ describe("Issue #1036: DisposableStack property-chain access", () => {
     expect(r.result).toBe(1);
   });
 
-  it("DisposableStack.prototype.adopt.name === 'adopt'", () => {
-    const r = compileAndRun(`
+  it("DisposableStack.prototype.adopt.name === 'adopt'", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         return DisposableStack.prototype.adopt.name === "adopt" ? 1 : 0;
       }
@@ -50,8 +50,8 @@ describe("Issue #1036: DisposableStack property-chain access", () => {
     expect(r.result).toBe(1);
   });
 
-  it("DisposableStack.prototype.adopt.length === 2", () => {
-    const r = compileAndRun(`
+  it("DisposableStack.prototype.adopt.length === 2", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         return DisposableStack.prototype.adopt.length === 2 ? 1 : 0;
       }
@@ -60,8 +60,8 @@ describe("Issue #1036: DisposableStack property-chain access", () => {
     expect(r.result).toBe(1);
   });
 
-  it("AsyncDisposableStack.prototype.defer.name === 'defer'", () => {
-    const r = compileAndRun(`
+  it("AsyncDisposableStack.prototype.defer.name === 'defer'", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         return AsyncDisposableStack.prototype.defer.name === "defer" ? 1 : 0;
       }

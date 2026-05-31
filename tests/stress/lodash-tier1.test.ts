@@ -33,7 +33,7 @@ describe("#1031 lodash Tier 1 stress test", () => {
   runIfInstalled(
     "compileProject on CommonJS lodash/identity.js: emits identity + default exports (#1277)",
     async () => {
-      const result = compileProject("node_modules/lodash/identity.js", { allowJs: true });
+      const result = await compileProject("node_modules/lodash/identity.js", { allowJs: true });
       expect(result.success).toBe(true);
 
       // After the CJS-to-ESM bridge work, `module.exports = identity` surfaces both
@@ -53,7 +53,7 @@ describe("#1031 lodash Tier 1 stress test", () => {
   );
 
   runIfInstalled("compileProject on ESM lodash-es/identity.js: exports default + identity (#1074)", async () => {
-    const result = compileProject("node_modules/lodash-es/identity.js", { allowJs: true });
+    const result = await compileProject("node_modules/lodash-es/identity.js", { allowJs: true });
     expect(result.success).toBe(true);
 
     // After #1074, `export default identity` surfaces both "default" and "identity"
@@ -71,7 +71,7 @@ describe("#1031 lodash Tier 1 stress test", () => {
   runIfInstalled(
     "compileProject on ESM lodash-es/clamp.js: validates + all imports resolve; start function throws (#1291)",
     async () => {
-      const result = compileProject("node_modules/lodash-es/clamp.js", { allowJs: true });
+      const result = await compileProject("node_modules/lodash-es/clamp.js", { allowJs: true });
       expect(result.success).toBe(true);
 
       // Wasm validation passes. Module shape exposes `clamp` and `default`
@@ -113,7 +113,7 @@ describe("#1031 lodash Tier 1 stress test", () => {
   runIfInstalled(
     "compileProject on ESM lodash-es/add.js: validates + exports module shape; start function throws (#1276 + #1291)",
     async () => {
-      const result = compileProject("node_modules/lodash-es/add.js", { allowJs: true });
+      const result = await compileProject("node_modules/lodash-es/add.js", { allowJs: true });
       expect(result.success).toBe(true);
 
       // Wasm validation passes. Module shape — note `add` and `default` are

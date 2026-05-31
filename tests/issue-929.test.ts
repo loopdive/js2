@@ -3,7 +3,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function run(src: string): Promise<unknown> {
-  const result = compile(src, { fileName: "test.ts" });
+  const result = await compile(src, { fileName: "test.ts" });
   if (!result.success) throw new Error(result.errors[0]?.message ?? "compile error");
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -111,9 +111,12 @@ describe("issue-929: Object.defineProperty on wrapper constructors", () => {
   // Skipped: sloppy-mode global `this` binding requires Wasm-native globalThis support
   // (separate issue — not part of #929 Object.defineProperty on non-objects)
   it.skip("this in sloppy-mode global scope is globalThis", async () => {
-    const r = compile(`export function test(): number { return (this as any) === (globalThis as any) ? 1 : 0; }`, {
-      fileName: "test.ts",
-    });
+    const r = await compile(
+      `export function test(): number { return (this as any) === (globalThis as any) ? 1 : 0; }`,
+      {
+        fileName: "test.ts",
+      },
+    );
     expect(r.success).toBe(true);
     if (!r.success) return;
     const imports = buildImports(r.imports, undefined, r.stringPool);

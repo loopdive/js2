@@ -27,7 +27,7 @@ describe("DOM style assignment", () => {
       body,
     };
 
-    const result = compile(
+    const result = await compile(
       `
         const box = document.createElement("div");
         box.style.width = "300px";

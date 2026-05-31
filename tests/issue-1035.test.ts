@@ -4,13 +4,13 @@ import { WASI } from "node:wasi";
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 
 describe("#1035 — WASI writeFileSync via path_open + fd_write + fd_close", () => {
-  test("compiles writeFileSync to WASI imports (no JS host imports)", () => {
+  test("compiles writeFileSync to WASI imports (no JS host imports)", async () => {
     const src = `
 import { writeFileSync } from 'node:fs';
 console.log('hello world');
 writeFileSync('hello.txt', 'hello world\\n');
 `;
-    const r = compile(src, { fileName: "test.ts", target: "wasi" });
+    const r = await compile(src, { fileName: "test.ts", target: "wasi" });
     expect(r.success).toBe(true);
 
     const mod = new WebAssembly.Module(r.binary);
@@ -33,9 +33,9 @@ writeFileSync('hello.txt', 'hello world\\n');
     expect(exportNames).toContain("_start");
   });
 
-  test("console.log only — no path_open/fd_close imports", () => {
+  test("console.log only — no path_open/fd_close imports", async () => {
     const src = `console.log('hello');`;
-    const r = compile(src, { fileName: "test.ts", target: "wasi" });
+    const r = await compile(src, { fileName: "test.ts", target: "wasi" });
     expect(r.success).toBe(true);
 
     const mod = new WebAssembly.Module(r.binary);
@@ -53,7 +53,7 @@ import { writeFileSync } from 'node:fs';
 console.log('hello world');
 writeFileSync('hello.txt', 'hello world\\n');
 `;
-    const r = compile(src, { fileName: "test.ts", target: "wasi" });
+    const r = await compile(src, { fileName: "test.ts", target: "wasi" });
     expect(r.success).toBe(true);
 
     const workDir = "/tmp/wasi-test-1035";
@@ -74,13 +74,13 @@ writeFileSync('hello.txt', 'hello world\\n');
     expect(readFileSync(`${workDir}/hello.txt`, "utf-8")).toBe("hello world\n");
   });
 
-  test("node:fs import without writeFileSync does not add path_open", () => {
+  test("node:fs import without writeFileSync does not add path_open", async () => {
     // If only readFileSync is imported (not yet supported), don't add path_open
     const src = `
 import { readFileSync } from 'node:fs';
 console.log('test');
 `;
-    const r = compile(src, { fileName: "test.ts", target: "wasi" });
+    const r = await compile(src, { fileName: "test.ts", target: "wasi" });
     expect(r.success).toBe(true);
 
     const mod = new WebAssembly.Module(r.binary);
@@ -90,12 +90,12 @@ console.log('test');
     expect(importNames).not.toContain("path_open");
   });
 
-  test("bare fs module also detected", () => {
+  test("bare fs module also detected", async () => {
     const src = `
 import { writeFileSync } from 'fs';
 writeFileSync('test.txt', 'data');
 `;
-    const r = compile(src, { fileName: "test.ts", target: "wasi" });
+    const r = await compile(src, { fileName: "test.ts", target: "wasi" });
     expect(r.success).toBe(true);
 
     const mod = new WebAssembly.Module(r.binary);

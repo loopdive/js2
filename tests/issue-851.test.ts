@@ -9,7 +9,7 @@ async function runCloseTest(filename: string): Promise<number | string> {
   const src = readFileSync("/workspace/test262/test/language/statements/for-of/" + filename, "utf-8");
   const meta = parseMeta(src);
   const { source: w } = wrapTest(src, meta);
-  const r = compile(w, { fileName: "test.ts" });
+  const r = await compile(w, { fileName: "test.ts" });
   if (!r.success) return "CE:" + r.errors[0]?.message;
   const imports = buildImports(r.imports, undefined, r.stringPool);
   try {
@@ -77,7 +77,7 @@ export function test(): number {
   return 1;
 }
 `;
-    const r = compile(code, { fileName: "test.ts" });
+    const r = await compile(code, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const mod = await WebAssembly.instantiate(r.binary!, imports);

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message}`);
   // Build host imports the same way test262 does: build → instantiate →
   // setExports. The lazy `r.importObject` path used by #1667 doesn't wire

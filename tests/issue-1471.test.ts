@@ -23,7 +23,7 @@ import { compile } from "../src/index.js";
 const BOX_UNBOX_IMPORT_RE = /__box_|__unbox_|__to_primitive|__to_boolean|__typeof|__is_truthy/;
 
 async function compileStandalone(src: string): Promise<{ binary: Uint8Array; hostImports: string[] }> {
-  const r = compile(src, { fileName: "test.ts", target: "standalone" });
+  const r = await compile(src, { fileName: "test.ts", target: "standalone" });
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
   const mod = await WebAssembly.compile(r.binary);
   const hostImports = WebAssembly.Module.imports(mod)
@@ -94,7 +94,7 @@ describe("#1471 standalone numeric box/unbox — no JS host imports", () => {
 
 describe("#1471 default (JS-host) path is unchanged", () => {
   it("still emits the __box_number / __unbox_number host imports in default mode", async () => {
-    const r = compile(`export function test(): number { let x: any = 1 + 2; let y: number = x; return y; }`, {
+    const r = await compile(`export function test(): number { let x: any = 1 + 2; let y: number = x; return y; }`, {
       fileName: "test.ts",
     });
     expect(r.success).toBe(true);

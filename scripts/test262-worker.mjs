@@ -723,7 +723,7 @@ function restoreBuiltins() {
   }
 }
 
-function doCompile(source, sourceMapUrl) {
+async function doCompile(source, sourceMapUrl) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
   // interruption scenarios it may not have completed. Doing a cheap pre-
@@ -900,7 +900,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result) {
   if (offset !== undefined) parts.push(`[@+${offset}]`);
 
   try {
-    const watResult = compile(source, {
+    const watResult = await compile(source, {
       fileName: "test.ts",
       sourceMap: true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
@@ -922,7 +922,7 @@ process.on("message", async (msg) => {
 
   let result;
   try {
-    result = doCompile(source, msg.sourceMapUrl);
+    result = await doCompile(source, msg.sourceMapUrl);
   } catch (err) {
     // Thrown exception may have poisoned the incremental compiler's internal
     // state.  Recreate immediately so subsequent compilations don't cascade-fail.

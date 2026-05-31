@@ -9,7 +9,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(src: string): Promise<any> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`Compilation failed: ${r.errors[0]?.message}`);
   }
@@ -19,23 +19,23 @@ async function compileAndRun(src: string): Promise<any> {
 }
 
 describe("Issue #675: Dynamic import()", () => {
-  it("compiles basic import() call", () => {
-    const r = compile(`export function test(): number { import("./m"); return 1; }`, { fileName: "test.ts" });
+  it("compiles basic import() call", async () => {
+    const r = await compile(`export function test(): number { import("./m"); return 1; }`, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     // Should have __dynamic_import in imports
     const dynImport = r.imports.find((i: any) => i.name === "__dynamic_import");
     expect(dynImport).toBeDefined();
   });
 
-  it("compiles import() with variable specifier", () => {
-    const r = compile(`export function test(): number { const s = "./m"; import(s); return 1; }`, {
+  it("compiles import() with variable specifier", async () => {
+    const r = await compile(`export function test(): number { const s = "./m"; import(s); return 1; }`, {
       fileName: "test.ts",
     });
     expect(r.success).toBe(true);
   });
 
-  it("compiles import() with second argument (import attributes)", () => {
-    const r = compile(
+  it("compiles import() with second argument (import attributes)", async () => {
+    const r = await compile(
       `export function test(): number { import("./m", { with: { type: "json" } } as any); return 1; }`,
       { fileName: "test.ts" },
     );
@@ -57,9 +57,9 @@ describe("Issue #675: Dynamic import()", () => {
     expect(exports.test()).toBe(1);
   });
 
-  it("returns externref from import()", () => {
+  it("returns externref from import()", async () => {
     // Just verify it compiles -- runtime returns a Promise which is truthy externref
-    const r = compile(
+    const r = await compile(
       `export function test(): number {
         const p = import("./nonexistent");
         return p !== null && p !== undefined ? 1 : 0;
@@ -69,10 +69,10 @@ describe("Issue #675: Dynamic import()", () => {
     expect(r.success).toBe(true);
   });
 
-  it("import() with no arguments compiles", () => {
+  it("import() with no arguments compiles", async () => {
     // TS may error, but with our suppressed diagnostics it should compile.
     // The runtime receives null externref as specifier.
-    const r = compile(
+    const r = await compile(
       `export function test(): number {
         try { (import as any)(); } catch(e) {}
         return 1;

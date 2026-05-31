@@ -43,7 +43,7 @@ interface IterStub {
 }
 
 async function runWithIterable(src: string, iter: IterStub): Promise<{ exports: Record<string, unknown> }> {
-  const r = compile(src, { fileName: "t.ts" });
+  const r = await compile(src, { fileName: "t.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const imports = buildImports(r.imports, undefined, r.stringPool) as any;

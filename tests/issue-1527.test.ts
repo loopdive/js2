@@ -50,7 +50,7 @@ describe("#1527: module-code negative parse/resolution tests with FIXTURE import
         } catch {}
       }
 
-      const result = compileMulti(vfiles, "./test.ts", { skipSemanticDiagnostics: true });
+      const result = await compileMulti(vfiles, "./test.ts", { skipSemanticDiagnostics: true });
 
       // Either compilation rejects the malformed module (✓), or it succeeds
       // and we get a module without a `test` export (which #1527 now treats

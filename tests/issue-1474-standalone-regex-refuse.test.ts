@@ -15,8 +15,8 @@ import { compile } from "../src/index.js";
  * Phase 2 (a pure-Wasm NFA engine) is a separate follow-up issue.
  */
 
-function expectRefused(src: string): ReturnType<typeof compile> {
-  const r = compile(src, { target: "standalone" });
+async function expectRefused(src: string): Promise<ReturnType<typeof compile>> {
+  const r = await compile(src, { target: "standalone" });
   expect(r.success, `expected compile failure, got success for:\n${src}`).toBe(false);
   expect(r.errors.length).toBeGreaterThan(0);
   expect(r.errors.some((e) => /#1474/.test(e.message))).toBe(true);
@@ -27,44 +27,44 @@ function expectRefused(src: string): ReturnType<typeof compile> {
 }
 
 describe("#1474 --target standalone refuses RegExp", () => {
-  it("rejects a regex literal", () => {
-    expectRefused(`export function f(s: string): boolean { return /\\d+/.test(s); }`);
+  it("rejects a regex literal", async () => {
+    await expectRefused(`export function f(s: string): boolean { return /\\d+/.test(s); }`);
   });
 
-  it("rejects a flagged regex literal", () => {
-    expectRefused(`export function f(s: string): string { return s.replace(/a/g, "b"); }`);
+  it("rejects a flagged regex literal", async () => {
+    await expectRefused(`export function f(s: string): string { return s.replace(/a/g, "b"); }`);
   });
 
-  it("rejects new RegExp(...)", () => {
-    expectRefused(`export function f(p: string): boolean { return new RegExp(p, "g").test("x"); }`);
+  it("rejects new RegExp(...)", async () => {
+    await expectRefused(`export function f(p: string): boolean { return new RegExp(p, "g").test("x"); }`);
   });
 
-  it("rejects RegExp(...) called without new", () => {
-    expectRefused(`export function f(p: string): boolean { const r = RegExp(p); return r.test("x"); }`);
+  it("rejects RegExp(...) called without new", async () => {
+    await expectRefused(`export function f(p: string): boolean { const r = RegExp(p); return r.test("x"); }`);
   });
 
-  it("rejects s.match(regexLiteral)", () => {
-    expectRefused(`export function f(s: string): boolean { return s.match(/\\d+/) !== null; }`);
+  it("rejects s.match(regexLiteral)", async () => {
+    await expectRefused(`export function f(s: string): boolean { return s.match(/\\d+/) !== null; }`);
   });
 
-  it("rejects s.matchAll(regexLiteral)", () => {
-    expectRefused(`export function f(s: string): number { return [...s.matchAll(/\\d/g)].length; }`);
+  it("rejects s.matchAll(regexLiteral)", async () => {
+    await expectRefused(`export function f(s: string): number { return [...s.matchAll(/\\d/g)].length; }`);
   });
 
-  it("rejects s.search(regexLiteral)", () => {
-    expectRefused(`export function f(s: string): number { return s.search(/\\d/); }`);
+  it("rejects s.search(regexLiteral)", async () => {
+    await expectRefused(`export function f(s: string): number { return s.search(/\\d/); }`);
   });
 
-  it("rejects s.split(regexArg)", () => {
-    expectRefused(`export function f(s: string): number { const r = /,/; return s.split(r).length; }`);
+  it("rejects s.split(regexArg)", async () => {
+    await expectRefused(`export function f(s: string): number { const r = /,/; return s.split(r).length; }`);
   });
 
-  it("rejects s.replace(regexArg, ...)", () => {
-    expectRefused(`export function f(s: string): string { const r = /a/g; return s.replace(r, "b"); }`);
+  it("rejects s.replace(regexArg, ...)", async () => {
+    await expectRefused(`export function f(s: string): string { const r = /a/g; return s.replace(r, "b"); }`);
   });
 
-  it("emits no env::RegExp_new import when refused", () => {
-    const r = compile(`export function f(s: string): boolean { return /\\d+/.test(s); }`, {
+  it("emits no env::RegExp_new import when refused", async () => {
+    const r = await compile(`export function f(s: string): boolean { return /\\d+/.test(s); }`, {
       target: "standalone",
     });
     expect(r.success).toBe(false);
@@ -74,23 +74,23 @@ describe("#1474 --target standalone refuses RegExp", () => {
 });
 
 describe("#1474 default (JS-host) mode unchanged", () => {
-  it("compiles a regex literal in default mode", () => {
-    const r = compile(`export function f(s: string): boolean { return /\\d+/.test(s); }`, {});
+  it("compiles a regex literal in default mode", async () => {
+    const r = await compile(`export function f(s: string): boolean { return /\\d+/.test(s); }`, {});
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   });
 
-  it("compiles s.replace(regex, ...) in default mode", () => {
-    const r = compile(`export function f(s: string): string { return s.replace(/a/g, "b"); }`, {});
+  it("compiles s.replace(regex, ...) in default mode", async () => {
+    const r = await compile(`export function f(s: string): string { return s.replace(/a/g, "b"); }`, {});
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   });
 
-  it("compiles new RegExp(...) in default mode", () => {
-    const r = compile(`export function f(p: string): boolean { return new RegExp(p, "g").test("x"); }`, {});
+  it("compiles new RegExp(...) in default mode", async () => {
+    const r = await compile(`export function f(p: string): boolean { return new RegExp(p, "g").test("x"); }`, {});
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   });
 
-  it("standalone string methods without regex still compile", () => {
-    const r = compile(`export function f(s: string): string { return s.replace("a", "b").split(",")[0]!; }`, {
+  it("standalone string methods without regex still compile", async () => {
+    const r = await compile(`export function f(s: string): string { return s.replace("a", "b").split(",")[0]!; }`, {
       target: "standalone",
     });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);

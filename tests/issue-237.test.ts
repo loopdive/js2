@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "./equivalence/helpers.js";
 
 describe("Issue #237: BigInt i64 vs externref type mismatch", () => {
-  it("should compile BigInt literals without type mismatch errors", () => {
+  it("should compile BigInt literals without type mismatch errors", async () => {
     const source = `
       export function addBigInts(): number {
         const a: bigint = 10n;
@@ -11,7 +11,7 @@ describe("Issue #237: BigInt i64 vs externref type mismatch", () => {
         return Number(a + b);
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
@@ -23,14 +23,14 @@ describe("Issue #237: BigInt i64 vs externref type mismatch", () => {
         return Number(x);
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     const exports = instance.exports as Record<string, Function>;
     expect(exports.bigIntToNumber()).toBe(42);
   });
 
-  it("should compile BigInt subtraction without type errors", () => {
+  it("should compile BigInt subtraction without type errors", async () => {
     const source = `
       export function bigIntSub(): number {
         const a: bigint = 100n;
@@ -38,7 +38,7 @@ describe("Issue #237: BigInt i64 vs externref type mismatch", () => {
         return Number(a - b);
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     // Compilation should succeed (no i64 vs externref mismatch)
     expect(result.success).toBe(true);
   });
@@ -51,14 +51,14 @@ describe("Issue #237: BigInt i64 vs externref type mismatch", () => {
         return a < b;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     const exports = instance.exports as Record<string, Function>;
     expect(exports.bigIntCompare()).toBe(1);
   });
 
-  it("should handle i64 to externref coercion (BigInt passed where externref expected)", () => {
+  it("should handle i64 to externref coercion (BigInt passed where externref expected)", async () => {
     // This tests the specific type mismatch: i64 flowing into externref context
     const source = `
       export function identity(x: any): any {
@@ -69,7 +69,7 @@ describe("Issue #237: BigInt i64 vs externref type mismatch", () => {
         return Number(b);
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
   });
 
@@ -81,7 +81,7 @@ describe("Issue #237: BigInt i64 vs externref type mismatch", () => {
         return Number(a * b);
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     const exports = instance.exports as Record<string, Function>;

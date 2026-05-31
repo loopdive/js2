@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string, ...args: unknown[]): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -15,14 +15,14 @@ async function run(source: string, fn: string, ...args: unknown[]): Promise<unkn
 }
 
 describe("RegExp", () => {
-  it("new RegExp with pattern and flags compiles", () => {
+  it("new RegExp with pattern and flags compiles", async () => {
     const source = `
       export function test(): number {
         const re = new RegExp("\\\\d+", "g");
         return 1;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     if (!result.success) {
       console.log("Errors:", result.errors);
     }

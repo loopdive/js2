@@ -20,7 +20,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(src: string): Promise<any> {
-  const result = compile(src, { fileName: "test.ts" });
+  const result = await compile(src, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`compile failed: ${result.errors.map((e) => e.message).join("; ")}`);
   }

@@ -31,7 +31,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndCall(src: string, fnName: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success || r.errors.some((e) => e.severity === "error")) {
     const errs = r.errors
       .filter((e) => e.severity === "error")
@@ -114,14 +114,14 @@ describe("#1321 Number.prototype formatting", () => {
 
   describe("toString(radix) — RangeError for out-of-range radix", () => {
     it("toString(1) throws RangeError", async () => {
-      const r = compile(`export function f(): string { return (5).toString(1); }`, { fileName: "test.ts" });
+      const r = await compile(`export function f(): string { return (5).toString(1); }`, { fileName: "test.ts" });
       const env = buildImports(r.imports, undefined, r.stringPool);
       const { instance } = await WebAssembly.instantiate(r.binary, env);
       expect(() => (instance.exports as { f: () => unknown }).f()).toThrow();
     });
 
     it("toString(37) throws RangeError", async () => {
-      const r = compile(`export function f(): string { return (5).toString(37); }`, { fileName: "test.ts" });
+      const r = await compile(`export function f(): string { return (5).toString(37); }`, { fileName: "test.ts" });
       const env = buildImports(r.imports, undefined, r.stringPool);
       const { instance } = await WebAssembly.instantiate(r.binary, env);
       expect(() => (instance.exports as { f: () => unknown }).f()).toThrow();

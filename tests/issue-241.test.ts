@@ -11,8 +11,8 @@ import { compile } from "../src/index.js";
 import { wrapTest } from "./test262-runner.js";
 
 describe("Issue #241: yield in strict mode", () => {
-  it("should downgrade diagnostic 1214 for yield as identifier", () => {
-    const result = compile(
+  it("should downgrade diagnostic 1214 for yield as identifier", async () => {
+    const result = await compile(
       `
       var yield = 42;
       export function test(): number {
@@ -28,8 +28,8 @@ describe("Issue #241: yield in strict mode", () => {
     expect(errors.length).toBe(0);
   });
 
-  it("should compile generator functions with yield in module context", () => {
-    const result = compile(
+  it("should compile generator functions with yield in module context", async () => {
+    const result = await compile(
       `
       function* gen(): Generator<number> {
         yield 1;
@@ -78,7 +78,7 @@ assert.sameValue(result.value, 1);
     expect(wrapped).toContain("yield 2");
   });
 
-  it("wrapped yield-as-identifier test should not produce compile errors", () => {
+  it("wrapped yield-as-identifier test should not produce compile errors", async () => {
     const source = `/*---
 description: yield as identifier in sloppy mode
 flags: [noStrict]
@@ -87,7 +87,7 @@ var yield = 42;
 assert.sameValue(yield, 42);
 `;
     const { source: wrapped } = wrapTest(source);
-    const result = compile(wrapped, { fileName: "test.ts" });
+    const result = await compile(wrapped, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const errors = result.errors.filter((e) => e.severity === "error");
     expect(errors.length).toBe(0);

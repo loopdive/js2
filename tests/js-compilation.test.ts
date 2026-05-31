@@ -7,7 +7,7 @@ async function run(
   args: unknown[] = [],
   options: Parameters<typeof compile>[1] = {},
 ): Promise<unknown> {
-  const result = compile(source, options);
+  const result = await compile(source, options);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -44,22 +44,22 @@ describe("JS file compilation", () => {
     expect(await run(jsSource, "square", [4], { fileName: "input.js" })).toBe(16);
   });
 
-  it("returns success: true for valid JS input", () => {
+  it("returns success: true for valid JS input", async () => {
     const jsSource = `
       /** @param {number} a @param {number} b @returns {number} */
       export function sub(a, b) { return a - b; }
     `;
-    const result = compile(jsSource, { fileName: "input.js" });
+    const result = await compile(jsSource, { fileName: "input.js" });
     expect(result.success).toBe(true);
     expect(result.errors.filter((e) => e.severity === "error")).toHaveLength(0);
   });
 
-  it("auto-detects JS from fileName extension", () => {
+  it("auto-detects JS from fileName extension", async () => {
     const jsSource = `
       /** @param {number} n @returns {number} */
       export function inc(n) { return n + 1; }
     `;
-    const result = compile(jsSource, { fileName: "mymodule.js" });
+    const result = await compile(jsSource, { fileName: "mymodule.js" });
     expect(result.success).toBe(true);
   });
 
@@ -95,7 +95,7 @@ describe("JS file compilation", () => {
         return total;
       }
     `;
-    const result = compile(jsSource, { fileName: "input.js" });
+    const result = await compile(jsSource, { fileName: "input.js" });
     expect(result.success).toBe(true);
     expect(result.errors.filter((e) => e.severity === "error")).toHaveLength(0);
   });
@@ -132,11 +132,11 @@ describe("JS file compilation", () => {
     expect(await run(jsSource, "abs", [3], { fileName: "input.js" })).toBe(3);
   });
 
-  it("warns when JS has untyped parameters (no JSDoc)", () => {
+  it("warns when JS has untyped parameters (no JSDoc)", async () => {
     const jsSource = `
       export function mystery(a, b) { return a + b; }
     `;
-    const result = compile(jsSource, { fileName: "input.js" });
+    const result = await compile(jsSource, { fileName: "input.js" });
     // Should still compile (any → externref) but produce warnings
     const warnings = result.errors.filter((e) => e.severity === "warning");
     expect(warnings.length).toBeGreaterThan(0);
@@ -144,22 +144,22 @@ describe("JS file compilation", () => {
     expect(warnings.some((w) => w.message.includes("JSDoc"))).toBe(true);
   });
 
-  it("warns about implicit return type in JS", () => {
+  it("warns about implicit return type in JS", async () => {
     const jsSource = `
       /** @param {number} x */
       export function half(x) { return x / 2; }
     `;
-    const result = compile(jsSource, { fileName: "input.js" });
+    const result = await compile(jsSource, { fileName: "input.js" });
     // Parameter is typed, but return type is inferred — no warning for return
     // since TS can infer number from x / 2
     expect(result.success).toBe(true);
   });
 
-  it("provides helpful error message suggesting JSDoc", () => {
+  it("provides helpful error message suggesting JSDoc", async () => {
     const jsSource = `
       export function foo(x) { return x * 2; }
     `;
-    const result = compile(jsSource, { fileName: "input.js" });
+    const result = await compile(jsSource, { fileName: "input.js" });
     const warnings = result.errors.filter((e) => e.severity === "warning");
     // Should suggest adding @param annotation
     expect(warnings.some((w) => w.message.includes("@param"))).toBe(true);

@@ -18,7 +18,7 @@ import { buildImports } from "../src/runtime.js";
 import { createEvalShim } from "../src/runtime-eval.js";
 
 async function compileAndInstantiate(source: string): Promise<Record<string, Function>> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }

@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-function compileAndRun(code: string) {
-  const result = compile(code);
+async function compileAndRun(code: string) {
+  const result = await compile(code);
   if (!result.success) {
     throw new Error(`Compilation failed: ${result.errors.map((e) => e.message).join(", ")}`);
   }
@@ -13,8 +13,8 @@ function compileAndRun(code: string) {
 }
 
 describe("Issue #330: ClassExpression in unsupported positions", () => {
-  it("class expression in variable declaration (baseline)", () => {
-    const inst = compileAndRun(`
+  it("class expression in variable declaration (baseline)", async () => {
+    const inst = await compileAndRun(`
       const C = class {
         x: number;
         constructor() { this.x = 42; }
@@ -27,8 +27,8 @@ describe("Issue #330: ClassExpression in unsupported positions", () => {
     expect(test()).toBe(42);
   });
 
-  it("class expression in assignment RHS compiles without error", () => {
-    const result = compile(`
+  it("class expression in assignment RHS compiles without error", async () => {
+    const result = await compile(`
       let C: any;
       C = class {
         x: number;
@@ -42,8 +42,8 @@ describe("Issue #330: ClassExpression in unsupported positions", () => {
     expect(classExprErrors).toHaveLength(0);
   });
 
-  it("named class expression in assignment compiles without error", () => {
-    const result = compile(`
+  it("named class expression in assignment compiles without error", async () => {
+    const result = await compile(`
       let C: any;
       C = class MyClass {
         value: number;
@@ -56,8 +56,8 @@ describe("Issue #330: ClassExpression in unsupported positions", () => {
     expect(classExprErrors).toHaveLength(0);
   });
 
-  it("class expression compiles without error", () => {
-    const result = compile(`
+  it("class expression compiles without error", async () => {
+    const result = await compile(`
       let cls: any;
       cls = class {};
       export function test(): number { return 1; }
@@ -66,8 +66,8 @@ describe("Issue #330: ClassExpression in unsupported positions", () => {
     expect(classExprErrors).toHaveLength(0);
   });
 
-  it("class expression with new on same line", () => {
-    const inst = compileAndRun(`
+  it("class expression with new on same line", async () => {
+    const inst = await compileAndRun(`
       const obj = new (class {
         x: number;
         constructor() { this.x = 55; }

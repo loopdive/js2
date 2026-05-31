@@ -17,9 +17,9 @@ function loadLinkerFiles(): Record<string, string> {
 }
 
 describe("linker self-host", { timeout: 60_000 }, () => {
-  it("compiles the linker source files via the linear backend", () => {
+  it("compiles the linker source files via the linear backend", async () => {
     const files = loadLinkerFiles();
-    const result = compileMulti(files, "link/index.ts", { target: "linear" });
+    const result = await compileMulti(files, "link/index.ts", { target: "linear" });
 
     // Separate codegen errors from type-check errors
     const codegenErrors = result.errors.filter((e) => e.message.startsWith("Codegen error:"));
@@ -77,7 +77,7 @@ describe("linker self-host", { timeout: 60_000 }, () => {
 
   it("linker.wasm validates and instantiates", async () => {
     const files = loadLinkerFiles();
-    const result = compileMulti(files, "link/index.ts", { target: "linear" });
+    const result = await compileMulti(files, "link/index.ts", { target: "linear" });
     expect(result.success).toBe(true);
 
     // Write binary to file for wasm-tools analysis

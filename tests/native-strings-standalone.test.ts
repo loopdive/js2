@@ -16,8 +16,8 @@ import { compile } from "../src/index.js";
  */
 
 describe("nativeStrings flag (standalone, no fast mode)", () => {
-  it("compiles string literals using NativeString types", () => {
-    const result = compile(`export function test(): string { return "hello"; }`, { nativeStrings: true });
+  it("compiles string literals using NativeString types", async () => {
+    const result = await compile(`export function test(): string { return "hello"; }`, { nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(result.wat).toContain("NativeString");
     expect(result.wat).toContain("__str_data");
@@ -26,21 +26,21 @@ describe("nativeStrings flag (standalone, no fast mode)", () => {
     expect(result.wat).not.toContain("string_constants");
   });
 
-  it("numbers remain f64 (not i32) when nativeStrings is on without fast", () => {
-    const result = compile(`export function test(): number { return 42; }`, { nativeStrings: true });
+  it("numbers remain f64 (not i32) when nativeStrings is on without fast", async () => {
+    const result = await compile(`export function test(): number { return 42; }`, { nativeStrings: true });
     expect(result.success).toBe(true);
     // f64 numbers should be present, not i32
     expect(result.wat).toContain("f64.const");
   });
 
-  it("string and number types coexist correctly", () => {
+  it("string and number types coexist correctly", async () => {
     const src = `
       export function test(): number {
         const s = "hello";
         return s.length;
       }
     `;
-    const result = compile(src, { nativeStrings: true });
+    const result = await compile(src, { nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     // String uses native types
     expect(result.wat).toContain("NativeString");
@@ -48,41 +48,41 @@ describe("nativeStrings flag (standalone, no fast mode)", () => {
     expect(result.wat).toContain("(result f64)");
   });
 
-  it("auto-enables native strings for WASI target", () => {
-    const result = compile(`export function test(): string { return "hello"; }`, { target: "wasi" });
+  it("auto-enables native strings for WASI target", async () => {
+    const result = await compile(`export function test(): string { return "hello"; }`, { target: "wasi" });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(result.wat).toContain("NativeString");
     expect(result.wat).not.toContain("wasm:js-string");
   });
 
-  it("fast mode still enables native strings", () => {
-    const result = compile(`export function test(): string { return "hello"; }`, { fast: true });
+  it("fast mode still enables native strings", async () => {
+    const result = await compile(`export function test(): string { return "hello"; }`, { fast: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(result.wat).toContain("NativeString");
     expect(result.wat).not.toContain("wasm:js-string");
   });
 
-  it("non-fast non-nativeStrings mode uses externref strings", () => {
-    const result = compile(`export function test(): string { return "hello"; }`);
+  it("non-fast non-nativeStrings mode uses externref strings", async () => {
+    const result = await compile(`export function test(): string { return "hello"; }`);
     expect(result.success).toBe(true);
     expect(result.wat).toContain("externref");
     expect(result.wat).toContain("string_constants");
     expect(result.wat).not.toContain("NativeString");
   });
 
-  it("string equality compiles without wasm:js-string", () => {
+  it("string equality compiles without wasm:js-string", async () => {
     const src = `
       export function test(): number {
         return "hello" === "world" ? 1 : 0;
       }
     `;
-    const result = compile(src, { nativeStrings: true });
+    const result = await compile(src, { nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(result.wat).not.toContain("wasm:js-string");
     expect(result.wat).not.toContain("string_constants");
   });
 
-  it("string concatenation compiles without wasm:js-string", () => {
+  it("string concatenation compiles without wasm:js-string", async () => {
     const src = `
       export function test(): number {
         const a = "hello";
@@ -90,27 +90,30 @@ describe("nativeStrings flag (standalone, no fast mode)", () => {
         return (a + b).length;
       }
     `;
-    const result = compile(src, { nativeStrings: true });
+    const result = await compile(src, { nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(result.wat).not.toContain("wasm:js-string");
   });
 
-  it("string methods compile without host imports", () => {
+  it("string methods compile without host imports", async () => {
     const src = `
       export function test(): number {
         return "hello world".indexOf("world");
       }
     `;
-    const result = compile(src, { nativeStrings: true });
+    const result = await compile(src, { nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(result.wat).not.toContain("wasm:js-string");
     expect(result.wat).not.toContain("string_indexOf");
   });
 
-  it("nativeStrings: false explicitly disables even with fast", () => {
+  it("nativeStrings: false explicitly disables even with fast", async () => {
     // When nativeStrings is explicitly set to false, it should take
     // precedence over fast mode's default
-    const result = compile(`export function test(): string { return "hello"; }`, { fast: true, nativeStrings: false });
+    const result = await compile(`export function test(): string { return "hello"; }`, {
+      fast: true,
+      nativeStrings: false,
+    });
     expect(result.success).toBe(true);
     // Explicitly disabled native strings, so should use externref
     expect(result.wat).not.toContain("NativeString");

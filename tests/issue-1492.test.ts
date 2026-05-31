@@ -9,8 +9,8 @@
 import { describe, it, expect } from "vitest";
 import { compile, buildImports } from "../src/index.js";
 
-function compileAndInstantiate(src: string, opts: { deps?: Record<string, any> } = {}) {
-  const result = compile(src, { fileName: "test.ts" });
+async function compileAndInstantiate(src: string, opts: { deps?: Record<string, any> } = {}) {
+  const result = await compile(src, { fileName: "test.ts" });
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   const imports = buildImports(result.imports, opts.deps);
   const mod = new WebAssembly.Module(result.binary);
@@ -20,7 +20,7 @@ function compileAndInstantiate(src: string, opts: { deps?: Record<string, any> }
 }
 
 describe("crypto host imports (#1492)", () => {
-  it("classifies __nodefn__crypto__* imports with the correct ImportIntent", () => {
+  it("classifies __nodefn__crypto__* imports with the correct ImportIntent", async () => {
     const src = `
       import { randomBytes, randomUUID } from "node:crypto";
       export function main(): number {
@@ -29,7 +29,7 @@ describe("crypto host imports (#1492)", () => {
         return a.length + b.length;
       }
     `;
-    const result = compile(src, { fileName: "test.ts" });
+    const result = await compile(src, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     const cryptoImports = result.imports.filter((i) => i.name.startsWith("__nodefn__"));
     expect(cryptoImports.length).toBe(2);
@@ -41,7 +41,7 @@ describe("crypto host imports (#1492)", () => {
     }
   });
 
-  it("randomBytes(n) returns a Uint8Array of length n", () => {
+  it("randomBytes(n) returns a Uint8Array of length n", async () => {
     const src = `
       import { randomBytes } from "node:crypto";
       export function lenOf(n: number): number {
@@ -49,13 +49,13 @@ describe("crypto host imports (#1492)", () => {
         return buf.length;
       }
     `;
-    const { instance } = compileAndInstantiate(src);
+    const { instance } = await compileAndInstantiate(src);
     expect((instance.exports.lenOf as (n: number) => number)(16)).toBe(16);
     expect((instance.exports.lenOf as (n: number) => number)(32)).toBe(32);
     expect((instance.exports.lenOf as (n: number) => number)(1)).toBe(1);
   });
 
-  it("randomUUID() returns a 36-char string and successive calls differ", () => {
+  it("randomUUID() returns a 36-char string and successive calls differ", async () => {
     const src = `
       import { randomUUID } from "node:crypto";
       export function uuidLen(): number {
@@ -67,12 +67,12 @@ describe("crypto host imports (#1492)", () => {
         return a !== b ? 1 : 0;
       }
     `;
-    const { instance } = compileAndInstantiate(src);
+    const { instance } = await compileAndInstantiate(src);
     expect((instance.exports.uuidLen as () => number)()).toBe(36);
     expect((instance.exports.uuidsDiffer as () => number)()).toBe(1);
   });
 
-  it("combined randomBytes + randomUUID acceptance criteria", () => {
+  it("combined randomBytes + randomUUID acceptance criteria", async () => {
     // Mirrors the spec's acceptance code block.
     const src = `
       import { randomBytes, randomUUID } from "node:crypto";
@@ -86,11 +86,11 @@ describe("crypto host imports (#1492)", () => {
         return (ok1 << 0) | (ok2 << 1) | (ok3 << 2);
       }
     `;
-    const { instance } = compileAndInstantiate(src);
+    const { instance } = await compileAndInstantiate(src);
     expect((instance.exports.main as () => number)()).toBe(0b111);
   });
 
-  it("deps override takes precedence over require()", () => {
+  it("deps override takes precedence over require()", async () => {
     // Inject a deterministic crypto so we can prove the deps path is wired.
     const fakeCrypto = {
       randomUUID: () => "00000000-0000-0000-0000-000000000000",
@@ -106,7 +106,7 @@ describe("crypto host imports (#1492)", () => {
         return buf[0]!;
       }
     `;
-    const { instance } = compileAndInstantiate(src, { deps: { crypto: fakeCrypto } });
+    const { instance } = await compileAndInstantiate(src, { deps: { crypto: fakeCrypto } });
     expect((instance.exports.uuidFirstByte as () => number)()).toBe("0".charCodeAt(0));
     expect((instance.exports.byte0 as (n: number) => number)(4)).toBe(0x42);
   });

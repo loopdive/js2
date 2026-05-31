@@ -8,7 +8,7 @@ describe("playground", () => {
     const m = mainTs.match(/const DEFAULT_SOURCE = `([\s\S]*?)`;/);
     expect(m).toBeTruthy();
     const source = m![1];
-    const result = compile(source);
+    const result = await compile(source);
     if (result.errors.length > 0) {
       console.log("Compile errors:", result.errors);
     }

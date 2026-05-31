@@ -15,7 +15,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndInstantiate(source: string): Promise<Record<string, Function>> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -58,7 +58,7 @@ describe("#1236 — i32 specialization overflow safety", () => {
 
   describe("WAT-level proof: accumulator local is f64, not i32", () => {
     it("sum loop emits an f64 local for the accumulator (no i32 trunc_sat round-trip)", async () => {
-      const r = compile(
+      const r = await compile(
         `
           export function sumTo(): number {
             let s = 0;
@@ -123,7 +123,7 @@ describe("#1236 — i32 specialization overflow safety", () => {
 
   describe("regression guard for #595 — for-loop counters stay i32", () => {
     it("`for (let i = 0; i < n; i++)` counter is still i32 in the WAT", async () => {
-      const r = compile(
+      const r = await compile(
         `
           export function loop(n: number): number {
             let last = 0;
@@ -156,7 +156,7 @@ describe("#1236 — i32 specialization overflow safety", () => {
 
   describe("bitwise operations still i32-safe (unchanged)", () => {
     it("`mask = mask | bit` keeps mask as i32", async () => {
-      const r = compile(
+      const r = await compile(
         `
           export function buildMask(n: number): number {
             let mask = 0;

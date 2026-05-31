@@ -94,10 +94,10 @@ describe("#1290 forEachChild compat helper", () => {
     expect(visitedKinds).toEqual([1000]);
   });
 
-  it("compile() still works end-to-end after the helper migration (smoke test)", () => {
+  it("compile() still works end-to-end after the helper migration (smoke test)", async () => {
     // Sanity: every codegen pass that walks the AST now goes through the
     // helper. The default TS5 path must produce a working binary.
-    const r = compile(
+    const r = await compile(
       `
       export function add(a: number, b: number): number {
         return a + b;

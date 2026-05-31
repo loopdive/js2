@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("Issue #713: Cannot destructure: unknown type", () => {
-  it("object destructuring with unknown source type compiles (JS mode)", () => {
-    const result = compile(
+  it("object destructuring with unknown source type compiles (JS mode)", async () => {
+    const result = await compile(
       `
       function test(x) {
         var { a, b } = x;
@@ -17,8 +17,8 @@ describe("Issue #713: Cannot destructure: unknown type", () => {
     expect(result.success).toBe(true);
   });
 
-  it("object destructuring with any-typed source compiles", () => {
-    const result = compile(`
+  it("object destructuring with any-typed source compiles", async () => {
+    const result = await compile(`
       function getValue(): any {
         return { x: 1, y: 2 };
       }
@@ -32,8 +32,8 @@ describe("Issue #713: Cannot destructure: unknown type", () => {
     expect(result.success).toBe(true);
   });
 
-  it("object destructuring with default values on unknown type compiles", () => {
-    const result = compile(`
+  it("object destructuring with default values on unknown type compiles", async () => {
+    const result = await compile(`
       function getValue(): any {
         return { a: 1 };
       }
@@ -47,8 +47,8 @@ describe("Issue #713: Cannot destructure: unknown type", () => {
     expect(result.success).toBe(true);
   });
 
-  it("array destructuring with unknown source type compiles (JS mode)", () => {
-    const result = compile(
+  it("array destructuring with unknown source type compiles (JS mode)", async () => {
+    const result = await compile(
       `
       function test(x) {
         var [a, b] = x;
@@ -62,9 +62,9 @@ describe("Issue #713: Cannot destructure: unknown type", () => {
     expect(result.success).toBe(true);
   });
 
-  it("const destructuring with null initializer compiles", () => {
+  it("const destructuring with null initializer compiles", async () => {
     // Pattern from test262: const/dstr/obj-init-null.js
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         try {
           const {} = null as any;

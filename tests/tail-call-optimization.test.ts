@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -12,8 +12,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   return (instance.exports as any)[fn](...args);
 }
 
-function compileWat(source: string): string {
-  const result = compile(source);
+async function compileWat(source: string): Promise<string> {
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -34,7 +34,7 @@ describe("tail call optimization", () => {
     // Verify correctness
     expect(await run(src, "test")).toBe(3628800);
     // Verify return_call is emitted in WAT
-    const wat = compileWat(src);
+    const wat = await compileWat(src);
     expect(wat).toContain("return_call");
   });
 
@@ -66,11 +66,11 @@ describe("tail call optimization", () => {
       }
     `;
     expect(await run(src, "test")).toBe(1);
-    const wat = compileWat(src);
+    const wat = await compileWat(src);
     expect(wat).toContain("return_call");
   });
 
-  it("non-tail call is not optimized", () => {
+  it("non-tail call is not optimized", async () => {
     const src = `
       function factorial(n: number): number {
         if (n <= 1) return 1;
@@ -83,7 +83,7 @@ describe("tail call optimization", () => {
     // The recursive call is n * factorial(n-1), NOT in tail position
     // because the multiplication happens after the call.
     // The test() function itself does have return factorial(5) in tail position.
-    const wat = compileWat(src);
+    const wat = await compileWat(src);
     // The inner factorial call should NOT be return_call (it's multiplied after)
     // But test()'s return factorial(5) should be return_call
     // Just verify it compiles and runs correctly

@@ -10,7 +10,7 @@ describe("Issue #866: NaN sentinel regression", () => {
         return 1 + obj;
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     if (!r.success) throw new Error("Compile error: " + r.errors[0]?.message);
     const runtimeImports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, runtimeImports);
@@ -31,7 +31,7 @@ describe("Issue #866: NaN sentinel regression", () => {
         return f(NaN);
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     if (!r.success) throw new Error("Compile error: " + r.errors[0]?.message);
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -48,7 +48,7 @@ describe("Issue #866: NaN sentinel regression", () => {
         return f(0);
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     if (!r.success) throw new Error("Compile error: " + r.errors[0]?.message);
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -65,7 +65,7 @@ describe("Issue #866: NaN sentinel regression", () => {
         return f();
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     if (!r.success) throw new Error("Compile error: " + r.errors[0]?.message);
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports);

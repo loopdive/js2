@@ -24,11 +24,11 @@ const argsObjectSamples = [
 describe("Issue #984 — undefined AST nodes in private generator methods", () => {
   for (const tp of [...namedSamples, ...argsObjectSamples]) {
     const name = tp.split("/").pop()!;
-    it(`should compile: ${name}`, () => {
+    it(`should compile: ${name}`, async () => {
       const src = readFileSync(tp, "utf-8");
       const meta = parseMeta(src);
       const { source: w } = wrapTest(src, meta);
-      const r = compile(w, { fileName: "test.ts" });
+      const r = await compile(w, { fileName: "test.ts" });
       if (!r.success) {
         console.log("CE:", r.errors[0]?.message);
       }

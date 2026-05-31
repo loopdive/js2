@@ -21,7 +21,7 @@ import { planIrCompilation } from "../src/ir/select.js";
 import { buildTypeMap } from "../src/ir/propagate.js";
 
 async function runTest(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts", experimentalIR: true });
+  const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -76,7 +76,7 @@ export function test(): number {
     expect(claim.funcs).toContain("dot");
     expect(claim.funcs).toContain("test");
 
-    const r = compile(src, { fileName: "test.ts", experimentalIR: true, emitWat: true });
+    const r = await compile(src, { fileName: "test.ts", experimentalIR: true, emitWat: true });
     expect(r.success).toBe(true);
     // The IR-emitted dot body MUST use struct.get (not the legacy path's
     // uninitialised local-loads).

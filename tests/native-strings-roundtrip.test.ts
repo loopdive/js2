@@ -37,7 +37,7 @@ interface Helpers {
 }
 
 async function compileAndInstantiate(source: string, options: { testRuntime?: boolean } = {}): Promise<Helpers> {
-  const r = compile(source, {
+  const r = await compile(source, {
     nativeStrings: true,
     testRuntime: options.testRuntime ?? true,
     fileName: "test.ts",
@@ -110,7 +110,7 @@ describe("#1187 native-strings test runtime — round-trip helpers", () => {
   });
 
   it("does NOT emit the helpers when testRuntime is unset (zero overhead)", async () => {
-    const r = compile(SRC, { nativeStrings: true, fileName: "test.ts" });
+    const r = await compile(SRC, { nativeStrings: true, fileName: "test.ts" });
     expect(r.success).toBe(true);
     if (!r.success) return;
     const built = buildImports(r.imports, ENV_STUB, r.stringPool);
@@ -124,7 +124,7 @@ describe("#1187 native-strings test runtime — round-trip helpers", () => {
     // testRuntime without nativeStrings is meaningless — the helpers only
     // make sense for native-string param types. Setting testRuntime in
     // non-native mode does nothing.
-    const r = compile(SRC, { testRuntime: true, fileName: "test.ts" });
+    const r = await compile(SRC, { testRuntime: true, fileName: "test.ts" });
     expect(r.success).toBe(true);
     if (!r.success) return;
     const built = buildImports(r.imports, ENV_STUB, r.stringPool);

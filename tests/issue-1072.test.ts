@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndValidate(source: string): { valid: boolean; error?: string } {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndValidate(source: string): Promise<{ valid: boolean; error?: string }> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     return { valid: false, error: `Compile error: ${result.errors?.map((e) => e.message).join("; ")}` };
   }
@@ -22,8 +22,8 @@ function compileAndValidate(source: string): { valid: boolean; error?: string } 
 }
 
 describe("#1072 — wasm:js-string import name shadowing", () => {
-  it("user function named 'charCodeAt' should not shadow import", () => {
-    const { valid, error } = compileAndValidate(`
+  it("user function named 'charCodeAt' should not shadow import", async () => {
+    const { valid, error } = await compileAndValidate(`
       function charCodeAt(s: string, i: number): number {
         return s.charCodeAt(i);
       }
@@ -42,8 +42,8 @@ describe("#1072 — wasm:js-string import name shadowing", () => {
     expect(valid).toBe(true);
   });
 
-  it("user function named 'length' should not shadow import", () => {
-    const { valid, error } = compileAndValidate(`
+  it("user function named 'length' should not shadow import", async () => {
+    const { valid, error } = await compileAndValidate(`
       function length(s: string): number {
         return s.length;
       }
@@ -55,8 +55,8 @@ describe("#1072 — wasm:js-string import name shadowing", () => {
     expect(valid).toBe(true);
   });
 
-  it("user function named 'concat' should not shadow import", () => {
-    const { valid, error } = compileAndValidate(`
+  it("user function named 'concat' should not shadow import", async () => {
+    const { valid, error } = await compileAndValidate(`
       function concat(a: string, b: string): string {
         return a + b;
       }
@@ -68,8 +68,8 @@ describe("#1072 — wasm:js-string import name shadowing", () => {
     expect(valid).toBe(true);
   });
 
-  it("prettier trimNewlinesEnd pattern (charCodeAt + if/|| + slice)", () => {
-    const { valid, error } = compileAndValidate(`
+  it("prettier trimNewlinesEnd pattern (charCodeAt + if/|| + slice)", async () => {
+    const { valid, error } = await compileAndValidate(`
       function charCodeAt(s: string, i: number): number {
         return s.charCodeAt(i);
       }
@@ -88,8 +88,8 @@ describe("#1072 — wasm:js-string import name shadowing", () => {
     expect(valid).toBe(true);
   });
 
-  it("f64-returning function assigned to externref variable", () => {
-    const { valid, error } = compileAndValidate(`
+  it("f64-returning function assigned to externref variable", async () => {
+    const { valid, error } = await compileAndValidate(`
       function numFunc(): number {
         return 42;
       }

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -66,7 +66,7 @@ describe("null pointer dereference fixes (#622)", () => {
   });
 
   it("default parameter ref type becomes ref_null in signature", async () => {
-    const result = compile(`
+    const result = await compile(`
       export class C {
         method({ x }: { x: number } = { x: 5 }): number {
           return x;

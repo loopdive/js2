@@ -27,7 +27,7 @@ function scan(src: string): boolean {
 }
 
 async function run(source: string): Promise<Record<string, Function>> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error("Compile failed: " + result.errors.map((e) => `L${e.line}: ${e.message}`).join("; "));
   }
@@ -74,10 +74,10 @@ describe("#1719 S1: sourceOverridesArrayIterator pre-scan (ITER_OVERRIDDEN brand
 });
 
 describe("#1719 S1: brand gate is byte-identical when clear (zero-cost)", () => {
-  it("override-free array destructuring compiles deterministically", () => {
+  it("override-free array destructuring compiles deterministically", async () => {
     const src = `export function f(): number { const [x, y, z] = [1, 2, 3]; return x + y + z; }`;
-    const a = compile(src);
-    const b = compile(src);
+    const a = await compile(src);
+    const b = await compile(src);
     expect(a.success).toBe(true);
     expect(b.success).toBe(true);
     // Determinism check: the S1 gate predicate must not perturb codegen for an

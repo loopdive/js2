@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildStringConstants } from "../src/runtime.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -62,7 +62,7 @@ describe("local.set type mismatch (#625)", () => {
     // Regression: when coerceType cannot convert between unrelated struct types,
     // the stackType must remain the actual result type so emitCoercedLocalSet
     // can detect and fix the mismatch by updating the local's declared type.
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         var a: any[] = [1, 2, 3];
         return 1;

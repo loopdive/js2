@@ -29,7 +29,7 @@ import { buildImports } from "../src/runtime.js";
  * never goes through `__array_from_iter`.
  */
 async function run(src: string): Promise<{ exports: Record<string, any> }> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool) as any;
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -38,8 +38,8 @@ async function run(src: string): Promise<{ exports: Record<string, any> }> {
 }
 
 describe("#1158/#1159 — empty array binding patterns don't over-consume iterators", () => {
-  it("outer [] pattern: no __array_from_iter emitted", () => {
-    const wat = compileToWat(`
+  it("outer [] pattern: no __array_from_iter emitted", async () => {
+    const wat = await compileToWat(`
       function f([]: any[]): number { return 1; }
       export function test(): number { return f([1, 2, 3] as any); }
     `);
@@ -49,8 +49,8 @@ describe("#1158/#1159 — empty array binding patterns don't over-consume iterat
     expect(wat).not.toMatch(/call\s+\$__array_from_iter/);
   });
 
-  it("nested [[] = init]: no __array_from_iter emitted", () => {
-    const wat = compileToWat(`
+  it("nested [[] = init]: no __array_from_iter emitted", async () => {
+    const wat = await compileToWat(`
       function* gen() { yield 1; }
       function f([[] = gen()]: any[]): void {}
       export function test(): number { f([] as any); return 0; }
@@ -111,8 +111,8 @@ describe("#1158/#1159 — empty array binding patterns don't over-consume iterat
     expect((exports.test as () => number)()).toBe(9);
   });
 
-  it("[[], [], []] (all-empty siblings) takes the short-circuit", () => {
-    const wat = compileToWat(`
+  it("[[], [], []] (all-empty siblings) takes the short-circuit", async () => {
+    const wat = await compileToWat(`
       function f([[], [], []]: any[][]): void {}
       export function test(): number { f([] as any); return 0; }
     `);
@@ -122,10 +122,10 @@ describe("#1158/#1159 — empty array binding patterns don't over-consume iterat
     expect(wat).not.toMatch(/call\s+\$__array_from_iter/);
   });
 
-  it("rest element forces the materialization path (regression guard)", () => {
+  it("rest element forces the materialization path (regression guard)", async () => {
     // [...rest] is NOT empty-only; isPatternEmptyOnly returns false.
     // Existing materializing path still fires for rest.
-    const wat = compileToWat(`
+    const wat = await compileToWat(`
       function f([...rest]: any[]): number { return rest.length; }
       export function test(): number { return f([1, 2, 3] as any); }
     `);
@@ -133,8 +133,8 @@ describe("#1158/#1159 — empty array binding patterns don't over-consume iterat
     expect(wat.length).toBeGreaterThan(0);
   });
 
-  it("isPatternEmptyOnly detects [, ,] (elision-only) as empty-only", () => {
-    const wat = compileToWat(`
+  it("isPatternEmptyOnly detects [, ,] (elision-only) as empty-only", async () => {
+    const wat = await compileToWat(`
       function f([, ,]: any[]): void {}
       export function test(): number { f([1, 2, 3] as any); return 0; }
     `);

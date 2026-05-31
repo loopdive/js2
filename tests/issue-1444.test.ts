@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): any {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<any> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compile error: ${result.errors?.[0]?.message}`);
   }
@@ -16,8 +16,8 @@ function compileAndRun(source: string): any {
 
 describe("#1444 — RegExp named groups: `in` on result.groups", () => {
   describe("`in` operator on host externref objects", () => {
-    it("returns 1 for a key on regex result.groups (matched)", () => {
-      const r = compileAndRun(`
+    it("returns 1 for a key on regex result.groups (matched)", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<a>a)(?<b>b)?/.exec("a");
           return m && m.groups && ("a" in m.groups) ? 1 : 0;
@@ -26,11 +26,11 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
       expect(r).toBe(1);
     });
 
-    it("returns 1 for a key on regex result.groups (unmatched optional)", () => {
+    it("returns 1 for a key on regex result.groups (unmatched optional)", async () => {
       // Per §22.2.7.4 step 33.h, every named-capture key is set on `groups`
       // even when its alternative didn't match — value is `undefined` but
       // the key itself is present. `'b' in groups` must return true.
-      const r = compileAndRun(`
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<a>a)(?<b>b)?/.exec("a");
           return m && m.groups && ("b" in m.groups) ? 1 : 0;
@@ -39,10 +39,10 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
       expect(r).toBe(1);
     });
 
-    it("returns 1 for both groups in alternation", () => {
+    it("returns 1 for both groups in alternation", async () => {
       // groups-object-unmatched.js — every named group from the regex is an
       // own key on `groups`, regardless of which alternative matched.
-      const r = compileAndRun(`
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<x>x)|(?<y>y)/.exec("y");
           if (!m || !m.groups) return -1;
@@ -52,8 +52,8 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
       expect(r).toBe(1);
     });
 
-    it("returns 0 for a key not present on groups", () => {
-      const r = compileAndRun(`
+    it("returns 0 for a key not present on groups", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<a>a)/.exec("a");
           return m && m.groups && ("zzz" in m.groups) ? 1 : 0;
@@ -64,8 +64,8 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
   });
 
   describe("groups access (regression coverage)", () => {
-    it("groups.x === undefined when alternative didn't match", () => {
-      const r = compileAndRun(`
+    it("groups.x === undefined when alternative didn't match", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<a>a).|(?<x>x)/.exec("ab");
           return m && m.groups && m.groups.x === undefined ? 1 : 0;
@@ -74,8 +74,8 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
       expect(r).toBe(1);
     });
 
-    it("duplicate-named groups resolve to the matched alternative (ES2025)", () => {
-      const r = compileAndRun(`
+    it("duplicate-named groups resolve to the matched alternative (ES2025)", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<x>a)|(?<x>b)/.exec("bab");
           if (!m || !m.groups) return 0;
@@ -87,8 +87,8 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
   });
 
   describe("Lookbehind regressions (sticky / variable / alternation)", () => {
-    it("basic lookbehind matches", () => {
-      const r = compileAndRun(`
+    it("basic lookbehind matches", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<=x)y/.exec("xy");
           return m && m[0] === "y" ? 1 : 0;
@@ -97,8 +97,8 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
       expect(r).toBe(1);
     });
 
-    it("lookbehind with alternation", () => {
-      const r = compileAndRun(`
+    it("lookbehind with alternation", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<=a|bb)c/.exec("bbc");
           return m && m[0] === "c" ? 1 : 0;
@@ -107,8 +107,8 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
       expect(r).toBe(1);
     });
 
-    it("variable-length lookbehind", () => {
-      const r = compileAndRun(`
+    it("variable-length lookbehind", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const m: any = /(?<=ab+)c/.exec("abbbc");
           return m && m[0] === "c" ? 1 : 0;
@@ -119,8 +119,8 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
   });
 
   describe("`in` for non-host objects still resolves statically", () => {
-    it("array index `in` still works for vec structs", () => {
-      const r = compileAndRun(`
+    it("array index `in` still works for vec structs", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const arr = [10, 20, 30];
           return (0 in arr) && (2 in arr) && !(5 in arr) ? 1 : 0;
@@ -129,8 +129,8 @@ describe("#1444 — RegExp named groups: `in` on result.groups", () => {
       expect(r).toBe(1);
     });
 
-    it("'length' in array returns 1", () => {
-      const r = compileAndRun(`
+    it("'length' in array returns 1", async () => {
+      const r = await compileAndRun(`
         export function test(): number {
           const arr = [1, 2];
           return "length" in arr ? 1 : 0;

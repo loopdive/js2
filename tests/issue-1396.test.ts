@@ -4,7 +4,7 @@ import { buildImports } from "../src/runtime.js";
 
 describe("#1396 — for-of/dstr defaults fire on OOB extern-array reads (Task #50)", () => {
   async function runTest(src: string): Promise<{ pass: boolean; ret?: unknown; error?: string }> {
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     if (!result.success) {
       return { pass: false, error: result.errors.map((e) => e.message).join("; ") };
     }

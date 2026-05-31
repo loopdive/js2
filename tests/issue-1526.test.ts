@@ -90,11 +90,11 @@ export function test(): string {
     expect(exports.test!()).toBe("1x");
   });
 
-  it("compiles to valid wasm for repeated mixed-BigInt arithmetic", () => {
+  it("compiles to valid wasm for repeated mixed-BigInt arithmetic", async () => {
     // Stack-balance regression check — emitThrowTypeError pushes/pops the
     // same way as emitThrowString; verify the module validates with
     // multiple mixed-bigint sites and try/catch around them.
-    const result = compile(`
+    const result = await compile(`
 let fail: number = 0;
 function assert_throws(fn: () => void): void {
   try { fn(); } catch (e) { return; }

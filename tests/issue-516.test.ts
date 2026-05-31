@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
-function compileCheck(source: string): {
+async function compileCheck(source: string): Promise<{
   success: boolean;
   validationError?: string;
   wat?: string;
   compileErrors?: string[];
-} {
-  const result = compile(source);
+}> {
+  const result = await compile(source);
   if (!result.success) {
     return { success: false, compileErrors: result.errors.map((e) => e.message), wat: result.wat };
   }
@@ -20,7 +20,7 @@ function compileCheck(source: string): {
 }
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -102,8 +102,8 @@ describe("Issue #516: struct.new argument count mismatch in class constructors",
     ).toBe(6);
   });
 
-  it("child class without explicit constructor inherits parent fields", () => {
-    const r = compileCheck(`
+  it("child class without explicit constructor inherits parent fields", async () => {
+    const r = await compileCheck(`
       class Base {
         x: number;
         constructor(x: number) {
@@ -125,8 +125,8 @@ describe("Issue #516: struct.new argument count mismatch in class constructors",
     expect(r.success).toBe(true);
   });
 
-  it("class with methods only (no own fields, implicit empty constructor)", () => {
-    const r = compileCheck(`
+  it("class with methods only (no own fields, implicit empty constructor)", async () => {
+    const r = await compileCheck(`
       class Greeter {
         greet(): number { return 42; }
       }
@@ -142,8 +142,8 @@ describe("Issue #516: struct.new argument count mismatch in class constructors",
     expect(r.success).toBe(true);
   });
 
-  it("class with computed property names", () => {
-    const r = compileCheck(`
+  it("class with computed property names", async () => {
+    const r = await compileCheck(`
       const key = "x";
       class C {
         [key]: number;
@@ -163,8 +163,8 @@ describe("Issue #516: struct.new argument count mismatch in class constructors",
     }
   });
 
-  it("class extending class with no constructor", () => {
-    const r = compileCheck(`
+  it("class extending class with no constructor", async () => {
+    const r = await compileCheck(`
       class A {
         x: number = 5;
       }
@@ -183,8 +183,8 @@ describe("Issue #516: struct.new argument count mismatch in class constructors",
     expect(r.success).toBe(true);
   });
 
-  it("class with property initializers that use constructor params", () => {
-    const r = compileCheck(`
+  it("class with property initializers that use constructor params", async () => {
+    const r = await compileCheck(`
       class Pair {
         first: number;
         second: number;
@@ -207,10 +207,10 @@ describe("Issue #516: struct.new argument count mismatch in class constructors",
     expect(r.success).toBe(true);
   });
 
-  it("class where property is set outside constructor", () => {
+  it("class where property is set outside constructor", async () => {
     // This pattern triggers dynamic field addition: the property is known
     // by TS type system but not in the class body or constructor
-    const r = compileCheck(`
+    const r = await compileCheck(`
       class Config {
         name: string;
         constructor(name: string) {
@@ -233,9 +233,9 @@ describe("Issue #516: struct.new argument count mismatch in class constructors",
     expect(r.success).toBe(true);
   });
 
-  it("class with compound assignment on property", () => {
+  it("class with compound assignment on property", async () => {
     // Compound assignment (+=) on a property triggers dynamic field lookup
-    const r = compileCheck(`
+    const r = await compileCheck(`
       class Counter {
         count: number;
         constructor() {

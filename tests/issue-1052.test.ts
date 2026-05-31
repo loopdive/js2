@@ -5,7 +5,7 @@ import { buildImports } from "../src/runtime.js";
 type ImportInjector = (imports: any) => void;
 
 async function runExprWithHost(src: string, inject?: ImportInjector): Promise<number> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
   const imports = buildImports(r.imports, undefined, r.stringPool) as any;
   if (inject) inject(imports);

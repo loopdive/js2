@@ -103,8 +103,10 @@ describe("source map generation (unit)", () => {
 });
 
 describe("source map integration", () => {
-  it("generates source map when option is enabled", () => {
-    const result = compile(`export function add(a: number, b: number): number { return a + b; }`, { sourceMap: true });
+  it("generates source map when option is enabled", async () => {
+    const result = await compile(`export function add(a: number, b: number): number { return a + b; }`, {
+      sourceMap: true,
+    });
 
     expect(result.success).toBe(true);
     expect(result.sourceMap).toBeDefined();
@@ -115,15 +117,15 @@ describe("source map integration", () => {
     expect(sourceMap.mappings.length).toBeGreaterThan(0);
   });
 
-  it("does not generate source map when option is not set", () => {
-    const result = compile(`export function add(a: number, b: number): number { return a + b; }`);
+  it("does not generate source map when option is not set", async () => {
+    const result = await compile(`export function add(a: number, b: number): number { return a + b; }`);
 
     expect(result.success).toBe(true);
     expect(result.sourceMap).toBeUndefined();
   });
 
-  it("source map contains correct source file name", () => {
-    const result = compile(`export function add(a: number, b: number): number { return a + b; }`, {
+  it("source map contains correct source file name", async () => {
+    const result = await compile(`export function add(a: number, b: number): number { return a + b; }`, {
       sourceMap: true,
       moduleName: "mymodule.ts",
     });
@@ -133,8 +135,10 @@ describe("source map integration", () => {
     expect(sourceMap.sources).toContain("mymodule.ts");
   });
 
-  it("source map has valid mappings that decode", () => {
-    const result = compile(`export function add(a: number, b: number): number { return a + b; }`, { sourceMap: true });
+  it("source map has valid mappings that decode", async () => {
+    const result = await compile(`export function add(a: number, b: number): number { return a + b; }`, {
+      sourceMap: true,
+    });
 
     expect(result.success).toBe(true);
     const sourceMap = JSON.parse(result.sourceMap!) as SourceMapV3;
@@ -158,9 +162,9 @@ describe("source map integration", () => {
     }
   });
 
-  it("source map contains sourcesContent when sourceMap is enabled", () => {
+  it("source map contains sourcesContent when sourceMap is enabled", async () => {
     const source = `export function greet(): number { return 42; }`;
-    const result = compile(source, { sourceMap: true });
+    const result = await compile(source, { sourceMap: true });
 
     expect(result.success).toBe(true);
     const sourceMap = JSON.parse(result.sourceMap!) as SourceMapV3;
@@ -169,8 +173,8 @@ describe("source map integration", () => {
     expect(sourceMap.sourcesContent.some((c) => c !== null)).toBe(true);
   });
 
-  it("binary contains sourceMappingURL custom section when sourceMap enabled", () => {
-    const result = compile(`export function foo(): number { return 1; }`, {
+  it("binary contains sourceMappingURL custom section when sourceMap enabled", async () => {
+    const result = await compile(`export function foo(): number { return 1; }`, {
       sourceMap: true,
       sourceMapUrl: "test.wasm.map",
     });
@@ -186,7 +190,9 @@ describe("source map integration", () => {
   });
 
   it("binary is still valid wasm when sourceMap is enabled", async () => {
-    const result = compile(`export function add(a: number, b: number): number { return a + b; }`, { sourceMap: true });
+    const result = await compile(`export function add(a: number, b: number): number { return a + b; }`, {
+      sourceMap: true,
+    });
 
     expect(result.success).toBe(true);
 
@@ -200,12 +206,12 @@ describe("source map integration", () => {
     expect(add(2, 3)).toBe(5);
   });
 
-  it("source map line numbers point to valid source locations", () => {
+  it("source map line numbers point to valid source locations", async () => {
     const source = ["export function compute(x: number): number {", "  const y = x * 2;", "  return y + 1;", "}"].join(
       "\n",
     );
 
-    const result = compile(source, { sourceMap: true });
+    const result = await compile(source, { sourceMap: true });
     expect(result.success).toBe(true);
 
     const sourceMap = JSON.parse(result.sourceMap!) as SourceMapV3;

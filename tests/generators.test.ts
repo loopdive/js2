@@ -7,7 +7,7 @@ async function compileAndRun(source: string): Promise<{
   exports: Record<string, Function>;
   instance: WebAssembly.Instance;
 }> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -182,8 +182,8 @@ describe("generators", () => {
     expect((exports.sum as Function)()).toBe(141); // 42 + 99
   }, 30000);
 
-  it("compiles successfully with success flag", () => {
-    const result = compile(`
+  it("compiles successfully with success flag", async () => {
+    const result = await compile(`
       export function* simple(): Generator<number> {
         yield 1;
       }

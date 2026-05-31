@@ -35,7 +35,7 @@ interface InstantiateResult {
 }
 
 async function compileAndInstantiate(source: string, experimentalIR: boolean): Promise<InstantiateResult> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -47,8 +47,8 @@ async function compileAndInstantiate(source: string, experimentalIR: boolean): P
   return { exports: instance.exports as Record<string, unknown> };
 }
 
-function compileToWat(source: string, experimentalIR: boolean): string {
-  const r = compile(source, { experimentalIR, emitWat: true });
+async function compileToWat(source: string, experimentalIR: boolean): Promise<string> {
+  const r = await compile(source, { experimentalIR, emitWat: true });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -120,16 +120,16 @@ describe("#1232 — String prototype methods through IR (with args)", () => {
 // ---------------------------------------------------------------------------
 
 describe("#1232 — WAT verification (host-mode default)", () => {
-  it("toUpperCase compiles to a `string_toUpperCase` host call", () => {
+  it("toUpperCase compiles to a `string_toUpperCase` host call", async () => {
     const source = `export function f(s: string): string { return s.toUpperCase(); }`;
-    const wat = compileToWat(source, true);
+    const wat = await compileToWat(source, true);
     // `string_toUpperCase` import must be present in the module.
     expect(wat).toMatch(/string_toUpperCase/);
   });
 
-  it("slice compiles to a `string_slice` host call (f64 args, no truncation in host mode)", () => {
+  it("slice compiles to a `string_slice` host call (f64 args, no truncation in host mode)", async () => {
     const source = `export function f(s: string): string { return s.slice(0, 3); }`;
-    const wat = compileToWat(source, true);
+    const wat = await compileToWat(source, true);
     expect(wat).toMatch(/string_slice/);
     // No `i32.trunc_sat_f64_s` for the slice args (host mode keeps f64).
     // Use a regex that targets the function body to avoid false positives
@@ -138,9 +138,9 @@ describe("#1232 — WAT verification (host-mode default)", () => {
     expect(fnBody).not.toMatch(/i32\.trunc_sat_f64_s/);
   });
 
-  it("indexOf compiles to a `string_indexOf` host call", () => {
+  it("indexOf compiles to a `string_indexOf` host call", async () => {
     const source = `export function f(s: string, n: string): number { return s.indexOf(n); }`;
-    const wat = compileToWat(source, true);
+    const wat = await compileToWat(source, true);
     expect(wat).toMatch(/string_indexOf/);
   });
 });
@@ -169,8 +169,8 @@ describe("#1232 — unsupported methods fall back cleanly", () => {
     // pass the standard `js-string` builtins through to the WebAssembly
     // instance so the legacy + fallback paths can resolve them.
     const source = `export function f(s: string): number { return s.charCodeAt(0); }`;
-    const compileLegacy = compile(source, { experimentalIR: false });
-    const compileIr = compile(source, { experimentalIR: true });
+    const compileLegacy = await compile(source, { experimentalIR: false });
+    const compileIr = await compile(source, { experimentalIR: true });
     expect(compileLegacy.success).toBe(true);
     expect(compileIr.success).toBe(true);
     const builtLegacy = buildImports(compileLegacy.imports, ENV_STUB, compileLegacy.stringPool);

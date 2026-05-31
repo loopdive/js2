@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): any {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<any> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compile error: ${result.errors?.map((e) => e.message).join("; ")}`);
   }
@@ -14,8 +14,8 @@ function compileAndRun(source: string): any {
 }
 
 describe("#1068 — await as label identifier in non-async contexts", () => {
-  it("await: label in regular function should compile", () => {
-    const result = compileAndRun(`
+  it("await: label in regular function should compile", async () => {
+    const result = await compileAndRun(`
       function foo(): number {
         let sum = 0;
         await: for (let i = 0; i < 5; i++) {
@@ -30,8 +30,8 @@ describe("#1068 — await as label identifier in non-async contexts", () => {
     expect(result).toBe(3);
   });
 
-  it("await: label in regular function inside module should compile", () => {
-    const result = compileAndRun(`
+  it("await: label in regular function inside module should compile", async () => {
+    const result = await compileAndRun(`
       function bar(): number {
         await: while (true) {
           break await;

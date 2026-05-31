@@ -59,7 +59,7 @@ function runWasiCaptureStdout(binary: Uint8Array): Uint8Array {
 const DECL = `declare const process: { stdout: { write(c: Uint8Array): void } };`;
 
 describe("#1654 ArrayBuffer/DataView under --target wasi", () => {
-  it("compiles to a VALID, instantiable module (no `unknown global`)", () => {
+  it("compiles to a VALID, instantiable module (no `unknown global`)", async () => {
     const src = `${DECL}
       export function main(): void {
         const header = new ArrayBuffer(4);
@@ -67,7 +67,7 @@ describe("#1654 ArrayBuffer/DataView under --target wasi", () => {
         dv.setUint32(0, 11, true);
         process.stdout.write(new Uint8Array(header));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     // The invalid-module bug surfaced as a -1 global index in the WAT.
     expect(result.wat).not.toContain("global.get -1");
@@ -75,7 +75,7 @@ describe("#1654 ArrayBuffer/DataView under --target wasi", () => {
     expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
   });
 
-  it("the exact repro emits the LE uint32 header bytes 0b 00 00 00", () => {
+  it("the exact repro emits the LE uint32 header bytes 0b 00 00 00", async () => {
     const src = `${DECL}
       export function main(): void {
         const header = new ArrayBuffer(4);
@@ -83,13 +83,13 @@ describe("#1654 ArrayBuffer/DataView under --target wasi", () => {
         dv.setUint32(0, 11, true);
         process.stdout.write(new Uint8Array(header));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureStdout(result.binary);
     expect(Array.from(out)).toEqual([0x0b, 0x00, 0x00, 0x00]);
   });
 
-  it("DataView get/set round-trips little- and big-endian across widths", () => {
+  it("DataView get/set round-trips little- and big-endian across widths", async () => {
     const src = `${DECL}
       export function main(): void {
         const ab = new ArrayBuffer(16);
@@ -107,7 +107,7 @@ describe("#1654 ArrayBuffer/DataView under --target wasi", () => {
         dv.setUint8(13, s8 & 0xff);          // AB
         process.stdout.write(new Uint8Array(ab));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureStdout(result.binary);
     expect(Array.from(out)).toEqual([
@@ -130,7 +130,7 @@ describe("#1654 ArrayBuffer/DataView under --target wasi", () => {
     ]);
   });
 
-  it("new Uint8Array(arrayBuffer) views the buffer bytes (not a zeroed length)", () => {
+  it("new Uint8Array(arrayBuffer) views the buffer bytes (not a zeroed length)", async () => {
     const src = `${DECL}
       export function main(): void {
         const ab = new ArrayBuffer(3);
@@ -141,18 +141,18 @@ describe("#1654 ArrayBuffer/DataView under --target wasi", () => {
         const view = new Uint8Array(ab);
         process.stdout.write(view);
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureStdout(result.binary);
     expect(Array.from(out)).toEqual([0x10, 0x20, 0x30]);
   });
 
-  it("the literal-array Uint8Array path (#1651) still works (no regression)", () => {
+  it("the literal-array Uint8Array path (#1651) still works (no regression)", async () => {
     const src = `${DECL}
       export function main(): void {
         process.stdout.write(new Uint8Array([0, 1, 255, 10, 13]));
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiCaptureStdout(result.binary);
     expect(Array.from(out)).toEqual([0, 1, 255, 10, 13]);

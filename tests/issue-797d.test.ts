@@ -5,8 +5,8 @@ import { describe, test, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-function compileAndRun(source: string): any {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<any> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compilation failed: ${result.errors[0]?.message}`);
   }
@@ -14,7 +14,7 @@ function compileAndRun(source: string): any {
 }
 
 async function runWasm(source: string): Promise<number> {
-  const result = compileAndRun(source);
+  const result = await compileAndRun(source);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   return (instance.exports.test as Function)();

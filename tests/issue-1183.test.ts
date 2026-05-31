@@ -45,7 +45,7 @@ async function runOnce(
   experimentalIR: boolean,
   nativeStrings: boolean,
 ): Promise<Outcome> {
-  const r = compile(source, { experimentalIR, nativeStrings });
+  const r = await compile(source, { experimentalIR, nativeStrings });
   if (!r.success) {
     return { kind: "compile_fail", firstMessage: r.errors[0]?.message ?? "" };
   }
@@ -265,8 +265,8 @@ describe("#1183 — selector claims string-for-of-shaped functions", () => {
 
 describe("#1183 — IR compile produces no IR-fallback errors", () => {
   for (const tc of [...NATIVE_CASES, ...HOST_CASES]) {
-    it(`compiles "${tc.name}" cleanly under experimentalIR`, () => {
-      const r = compile(tc.source, { experimentalIR: true, nativeStrings: tc.nativeStrings });
+    it(`compiles "${tc.name}" cleanly under experimentalIR`, async () => {
+      const r = await compile(tc.source, { experimentalIR: true, nativeStrings: tc.nativeStrings });
       expect(r.success).toBe(true);
       const irErrors = r.errors.filter(
         (e) =>
@@ -291,7 +291,7 @@ describe("#1183 — vec / iter-host arms still work alongside string arm", () =>
         return sum;
       }
     `;
-    const r = compile(source, { experimentalIR: true });
+    const r = await compile(source, { experimentalIR: true });
     expect(r.success).toBe(true);
     const built = buildImports(r.imports, ENV_STUB, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, {
@@ -313,7 +313,7 @@ describe("#1183 — vec / iter-host arms still work alongside string arm", () =>
         return count;
       }
     `;
-    const r = compile(source, { experimentalIR: true });
+    const r = await compile(source, { experimentalIR: true });
     expect(r.success).toBe(true);
     const built = buildImports(r.imports, ENV_STUB, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, {

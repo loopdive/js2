@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("#1184 — depth-bounded worklist for rope flatten", () => {
-  function compileWasi(source: string) {
-    return compile(source, { fileName: "t.js", allowJs: true, target: "wasi", optimize: 0 });
+  async function compileWasi(source: string) {
+    return await compile(source, { fileName: "t.js", allowJs: true, target: "wasi", optimize: 0 });
   }
 
   it("shallow rope (depth ~10): correctness preserved", async () => {
@@ -29,7 +29,7 @@ describe("#1184 — depth-bounded worklist for rope flatten", () => {
         return sum;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -54,7 +54,7 @@ describe("#1184 — depth-bounded worklist for rope flatten", () => {
         return sum;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -78,7 +78,7 @@ describe("#1184 — depth-bounded worklist for rope flatten", () => {
         return sum;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});
@@ -110,7 +110,7 @@ describe("#1184 — depth-bounded worklist for rope flatten", () => {
         return h;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     const m = await WebAssembly.compile(r.binary);
     const inst = await WebAssembly.instantiate(m, {});

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string): Promise<any> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
   const importResult = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, importResult as any);
@@ -38,7 +38,7 @@ describe("Object.defineProperties accessor descriptors (#1027)", () => {
   });
 
   it("defineProperties with setter descriptor at least compiles (no 'Missing __make_getter_callback import' CE)", async () => {
-    const r = compile(
+    const r = await compile(
       `
         const obj: any = {};
         let stored: any = 0;
@@ -53,7 +53,7 @@ describe("Object.defineProperties accessor descriptors (#1027)", () => {
   });
 
   it("defineProperties with identifier-referenced setter at least compiles", async () => {
-    const r = compile(
+    const r = await compile(
       `
         const obj: any = {};
         let slot: any = 0;

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string): Promise<number> {
-  const r = compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
+  const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
   if (!r.success) throw new Error("CE: " + r.errors.map((e) => e.message).join("; "));
   const importObj = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown>;
   const { instance } = await WebAssembly.instantiate(r.binary, importObj as never);

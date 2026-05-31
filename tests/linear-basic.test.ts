@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 /** Compile with linear-memory backend and instantiate */
 async function compileLinear(source: string) {
-  const result = compile(source, { target: "linear" });
+  const result = await compile(source, { target: "linear" });
   expect(
     result.success,
     `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,

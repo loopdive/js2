@@ -71,8 +71,8 @@ describe("#1326 Phase 1B — JS-host mode (default) is unchanged", () => {
   // the SAME Wasm bytes (modulo non-deterministic order of new
   // `async-scheduler` registrations, which only fire when the WASI
   // path is taken).
-  it("Promise.resolve(value) compiles successfully in JS-host mode", () => {
-    const r = compile(`
+  it("Promise.resolve(value) compiles successfully in JS-host mode", async () => {
+    const r = await compile(`
       export async function test(): Promise<number> {
         return await Promise.resolve(42);
       }
@@ -80,8 +80,8 @@ describe("#1326 Phase 1B — JS-host mode (default) is unchanged", () => {
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
   });
 
-  it("Promise.resolve(...).then(fn) compiles successfully", () => {
-    const r = compile(`
+  it("Promise.resolve(...).then(fn) compiles successfully", async () => {
+    const r = await compile(`
       export function test(): number {
         let v = 0;
         Promise.resolve(7).then((x: number) => { v = x; });
@@ -91,8 +91,8 @@ describe("#1326 Phase 1B — JS-host mode (default) is unchanged", () => {
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
   });
 
-  it("JS-host mode emits Promise_resolve host import (unchanged)", () => {
-    const r = compile(
+  it("JS-host mode emits Promise_resolve host import (unchanged)", async () => {
+    const r = await compile(
       `
       export async function test(): Promise<number> {
         return await Promise.resolve(42);
@@ -115,7 +115,7 @@ describe("#1326 Phase 1B — WASI mode emits Wasm-native $Promise struct", () =>
   // The compiled module must NOT import `env::Promise_resolve` and must
   // contain a `$Promise` struct type definition.
   it("WASI: Promise.resolve(42) compiles + WAT shows no Promise_resolve host import", async () => {
-    const r = compile(
+    const r = await compile(
       `
       export function test(): number {
         Promise.resolve(42);
@@ -134,7 +134,7 @@ describe("#1326 Phase 1B — WASI mode emits Wasm-native $Promise struct", () =>
   });
 
   it("WASI: Promise.reject('err') compiles + no Promise_reject host import", async () => {
-    const r = compile(
+    const r = await compile(
       `
       export function test(): number {
         Promise.reject("err");
@@ -150,7 +150,7 @@ describe("#1326 Phase 1B — WASI mode emits Wasm-native $Promise struct", () =>
   });
 
   it("WASI: async function with await Promise.resolve(...) compiles + validates", async () => {
-    const r = compile(
+    const r = await compile(
       `
       export async function test(): Promise<number> {
         return await Promise.resolve(42);

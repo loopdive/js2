@@ -35,7 +35,7 @@ const ENV_STUB = {
 };
 
 async function runTest(source: string, exportName: string): Promise<unknown> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error("compile failed: " + r.errors.map((e) => e.message).join("\n"));
   }

@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("bigint mixed type operations — stack balance", () => {
-  it("mixed bigint/number closures compile to valid Wasm", () => {
+  it("mixed bigint/number closures compile to valid Wasm", async () => {
     // Reproduces the pattern from test262 bigint-and-number.js that caused
     // "expected 0 elements on the stack for fallthru, found 2".
     // Root cause: addUnionImports did not shift func indices in parent
     // function bodies when triggered from within nested closure compilation.
-    const result = compile(`
+    const result = await compile(`
 let __fail: number = 0;
 
 function assert_throws(fn: () => void): void {
@@ -38,8 +38,8 @@ export function test(): number {
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });
 
-  it("mixed bigint - number also produces valid Wasm", () => {
-    const result = compile(`
+  it("mixed bigint - number also produces valid Wasm", async () => {
+    const result = await compile(`
 let __fail: number = 0;
 
 function assert_throws(fn: () => void): void {
@@ -63,11 +63,11 @@ export function test(): number {
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });
 
-  it("closure triggering addUnionImports does not corrupt parent body", () => {
+  it("closure triggering addUnionImports does not corrupt parent body", async () => {
     // A closure that uses 'any' type triggers addUnionImports.
     // Earlier closures in the same parent function must have their
     // call indices properly shifted.
-    const result = compile(`
+    const result = await compile(`
 function foo(): number { return 42; }
 function bar(fn: () => void): void { fn(); }
 

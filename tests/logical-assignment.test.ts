@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function compileAndRun(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   expect(
     result.success,
     `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -29,7 +29,7 @@ describe("logical assignment operators", () => {
           return a;
         }
       `;
-      const result = compile(source);
+      const result = await compile(source);
       expect(
         result.success,
         `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -62,7 +62,7 @@ describe("logical assignment operators", () => {
           return a;
         }
       `;
-      const result = compile(source);
+      const result = await compile(source);
       expect(
         result.success,
         `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,

@@ -18,7 +18,7 @@ import { buildImports } from "../src/runtime.ts";
 
 async function runReturning(src: string): Promise<unknown> {
   const wrapped = `export function run(): any { ${src} }`;
-  const r = compile(wrapped, { fileName: "x.ts" });
+  const r = await compile(wrapped, { fileName: "x.ts" });
   if (!r.success) {
     throw new Error("compile failed: " + JSON.stringify(r.errors.slice(0, 3).map((e) => e.message)));
   }

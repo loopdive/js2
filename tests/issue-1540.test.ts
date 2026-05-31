@@ -27,7 +27,7 @@ async function compileAndRun(
   deps?: Record<string, unknown>,
   fileName = "x.tsx",
 ): Promise<{ instance: WebAssembly.Instance; exports: Record<string, Function> }> {
-  const r = compile(src, { fileName });
+  const r = await compile(src, { fileName });
   if (!r.success) {
     throw new Error("compile failed: " + JSON.stringify(r.errors.slice(0, 3).map((e) => e.message)));
   }
@@ -42,7 +42,7 @@ describe("issue #1540 — JSX runtime host binding", () => {
       import { jsx as _jsx } from "react/jsx-runtime";
       export function make() { return _jsx("div", null, null); }
     `;
-    const r = compile(src, { fileName: "x.tsx" });
+    const r = await compile(src, { fileName: "x.tsx" });
     expect(r.success).toBe(true);
     const jsxImports = (r.imports ?? []).filter((i) => i.name.includes("jsx"));
     expect(jsxImports.length).toBeGreaterThan(0);
@@ -127,7 +127,7 @@ describe("issue #1540 — JSX runtime host binding", () => {
       import { jsxs as _jsxs } from "react/jsx-runtime";
       export function make() { return _jsxs("ul", null, null); }
     `;
-    const r = compile(src, { fileName: "x.tsx" });
+    const r = await compile(src, { fileName: "x.tsx" });
     expect(r.success).toBe(true);
     const jsxs = (r.imports ?? []).find((i) => i.name === "__jsx_runtime_jsxs");
     expect(jsxs).toBeDefined();
@@ -154,7 +154,7 @@ describe("issue #1540 — JSX runtime host binding", () => {
       import { jsx as _jsx } from "preact/jsx-runtime";
       export function make() { return _jsx("p", null, null); }
     `;
-    const r = compile(src, { fileName: "x.tsx" });
+    const r = await compile(src, { fileName: "x.tsx" });
     expect(r.success).toBe(true);
     const jsxImport = (r.imports ?? []).find((i) => i.name === "__jsx_runtime_jsx");
     expect(jsxImport).toBeDefined();

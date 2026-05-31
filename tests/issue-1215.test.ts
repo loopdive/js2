@@ -20,7 +20,7 @@ const ENV_STUB = {
 };
 
 async function compileAndCapture(source: string): Promise<string[]> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) throw new Error(`compile: ${r.errors[0]?.message ?? "unknown"}`);
   const lines: string[] = [];
   const origLog = console.log;

@@ -50,7 +50,7 @@ async function runOnce(
   args: ReadonlyArray<number | boolean | string>,
   experimentalIR: boolean,
 ): Promise<Outcome> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     return { kind: "compile_fail", firstMessage: r.errors[0]?.message ?? "" };
   }
@@ -360,8 +360,8 @@ describe("#1169g — IR slice 8a destructuring + spread", () => {
 describe("#1169g — slice 8a functions reach the IR path without errors", () => {
   for (const tc of CASES) {
     if (!tc.expectedClaimed) continue;
-    it(`no IR-path errors: ${tc.name}`, () => {
-      const r = compile(tc.source, { experimentalIR: true });
+    it(`no IR-path errors: ${tc.name}`, async () => {
+      const r = await compile(tc.source, { experimentalIR: true });
       expect(r.success).toBe(true);
       const irErrors = r.errors.filter(
         (e) => e.message.startsWith("IR path failed") || e.message.startsWith("IR path: could not resolve"),

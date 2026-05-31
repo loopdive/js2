@@ -84,7 +84,7 @@ assert.compareArray(
     expect(wrapped).toContain("['1', '2', 'a', 'c']");
   });
 
-  it("compiles wrapped test with array literal in assert call", () => {
+  it("compiles wrapped test with array literal in assert call", async () => {
     // This simulates what a wrapped test262 test looks like after wrapTest
     const code = `
 let __fail: number = 0;
@@ -103,7 +103,7 @@ export function test(): number {
   return 1;
 }
 `;
-    const result = compile(code);
+    const result = await compile(code);
     expect(result.binary.length).toBeGreaterThan(0);
 
     const instance = new WebAssembly.Instance(
@@ -158,7 +158,7 @@ var gen = {
     expect(wrapped).toMatch(/async \*method\(\)\s*\{[\s\S]*?yield \{[\s\S]*?\.\.\.yield,/);
   });
 
-  it("compiles wrapped test with multiple commas in array literal argument", () => {
+  it("compiles wrapped test with multiple commas in array literal argument", async () => {
     // Simulates assert_sameValue([a, b, c].indexOf(b, 2), -1)
     // which previously broke due to commas in the array literal
     const code = `
@@ -182,7 +182,7 @@ export function test(): number {
   return 1;
 }
 `;
-    const result = compile(code);
+    const result = await compile(code);
     expect(result.binary.length).toBeGreaterThan(0);
 
     const instance = new WebAssembly.Instance(

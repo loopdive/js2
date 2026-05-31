@@ -4,7 +4,7 @@ import { buildImports } from "../src/runtime.js";
 
 describe("#1338 — Array.from fast path: externref element type default value", () => {
   async function run(src: string): Promise<any> {
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     if (!r.success) throw new Error(`CE: ${r.errors[0]?.message}`);
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports);

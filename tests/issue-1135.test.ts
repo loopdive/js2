@@ -5,7 +5,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(code: string, opts: { skipSemanticDiagnostics?: boolean } = {}): Promise<number> {
-  const r = compile(code, { fileName: "t.ts", ...opts });
+  const r = await compile(code, { fileName: "t.ts", ...opts });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

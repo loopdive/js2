@@ -37,7 +37,7 @@ interface InstantiateResult {
 }
 
 async function compileAndInstantiate(source: string): Promise<InstantiateResult> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => `L${e.line}:${e.column} ${e.message}`).join(" | ")}`);
   }

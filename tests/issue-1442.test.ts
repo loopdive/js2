@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): any {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<any> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compile error: ${result.errors?.[0]?.message}`);
   }
@@ -16,10 +16,10 @@ function compileAndRun(source: string): any {
 
 describe("#1442 — String.prototype methods: ToString on receiver", () => {
   describe("Boolean primitive receivers (the main regression)", () => {
-    it("String.prototype.trim.call(true) === 'true'", () => {
+    it("String.prototype.trim.call(true) === 'true'", async () => {
       // Without `__box_boolean` routing, `true` was boxed as `Number(1)` and
       // the result was `"1"` instead of `"true"`.
-      const r = compileAndRun(`
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           const r = String.prototype.trim.call(true);
@@ -29,8 +29,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
       expect(r).toBe(1);
     });
 
-    it("String.prototype.trim.call(false) === 'false'", () => {
-      const r = compileAndRun(`
+    it("String.prototype.trim.call(false) === 'false'", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           const r = String.prototype.trim.call(false);
@@ -40,8 +40,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
       expect(r).toBe(1);
     });
 
-    it("String.prototype.toLowerCase.call(true) === 'true'", () => {
-      const r = compileAndRun(`
+    it("String.prototype.toLowerCase.call(true) === 'true'", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           const r = String.prototype.toLowerCase.call(true);
@@ -51,8 +51,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
       expect(r).toBe(1);
     });
 
-    it("String.prototype.charAt.call(true, 0) === 't'", () => {
-      const r = compileAndRun(`
+    it("String.prototype.charAt.call(true, 0) === 't'", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           const r = String.prototype.charAt.call(true, 0);
@@ -64,8 +64,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
   });
 
   describe("Number primitive receivers", () => {
-    it("String.prototype.trim.call(-Infinity) === '-Infinity'", () => {
-      const r = compileAndRun(`
+    it("String.prototype.trim.call(-Infinity) === '-Infinity'", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           const r = String.prototype.trim.call(-Infinity);
@@ -75,8 +75,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
       expect(r).toBe(1);
     });
 
-    it("String.prototype.indexOf.call(123, '2') === 1", () => {
-      const r = compileAndRun(`
+    it("String.prototype.indexOf.call(123, '2') === 1", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           return String.prototype.indexOf.call(123, "2");
@@ -87,8 +87,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
   });
 
   describe("Null / undefined receivers (RequireObjectCoercible)", () => {
-    it("String.prototype.charAt.call(null) throws TypeError", () => {
-      const r = compileAndRun(`
+    it("String.prototype.charAt.call(null) throws TypeError", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           try {
@@ -102,8 +102,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
       expect(r).toBe(1);
     });
 
-    it("String.prototype.trim.call(undefined) throws TypeError", () => {
-      const r = compileAndRun(`
+    it("String.prototype.trim.call(undefined) throws TypeError", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           try {
@@ -119,8 +119,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
   });
 
   describe("Wrapper object receivers", () => {
-    it("String.prototype.trim.call(new Boolean(true)) === 'true'", () => {
-      const r = compileAndRun(`
+    it("String.prototype.trim.call(new Boolean(true)) === 'true'", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           const r = String.prototype.trim.call(new Boolean(true));
@@ -130,8 +130,8 @@ describe("#1442 — String.prototype methods: ToString on receiver", () => {
       expect(r).toBe(1);
     });
 
-    it("String.prototype.indexOf.call(new Number(123), '2') === 1", () => {
-      const r = compileAndRun(`
+    it("String.prototype.indexOf.call(new Number(123), '2') === 1", async () => {
+      const r = await compileAndRun(`
         declare const String: any;
         export function test(): number {
           return String.prototype.indexOf.call(new Number(123), "2");

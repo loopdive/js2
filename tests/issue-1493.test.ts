@@ -7,32 +7,32 @@ import { compile } from "../src/index.js";
 import { buildWasiPolyfill } from "../src/runtime.js";
 
 describe("#1493 — WASI console.error/warn route to stderr (fd=2)", () => {
-  it("emits __wasi_write_string_stderr helper when console.error is used", () => {
-    const result = compile(`console.error("oops");`, { target: "wasi" });
+  it("emits __wasi_write_string_stderr helper when console.error is used", async () => {
+    const result = await compile(`console.error("oops");`, { target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.wat).toContain("__wasi_write_string_stderr");
   });
 
-  it("emits __wasi_write_string_stderr helper when console.warn is used", () => {
-    const result = compile(`console.warn("careful");`, { target: "wasi" });
+  it("emits __wasi_write_string_stderr helper when console.warn is used", async () => {
+    const result = await compile(`console.warn("careful");`, { target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.wat).toContain("__wasi_write_string_stderr");
   });
 
-  it("does NOT emit stderr helper when only console.log is used (size optimisation)", () => {
-    const result = compile(`console.log("normal");`, { target: "wasi" });
+  it("does NOT emit stderr helper when only console.log is used (size optimisation)", async () => {
+    const result = await compile(`console.log("normal");`, { target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.wat).not.toContain("__wasi_write_string_stderr");
     // Stdout helper still present
     expect(result.wat).toContain("__wasi_write_string");
   });
 
-  it("emits both stdout and stderr helpers when log + error are mixed", () => {
+  it("emits both stdout and stderr helpers when log + error are mixed", async () => {
     const source = `
       console.log("stdout-msg");
       console.error("stderr-msg");
     `;
-    const result = compile(source, { target: "wasi" });
+    const result = await compile(source, { target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.wat).toContain("__wasi_write_string");
     expect(result.wat).toContain("__wasi_write_string_stderr");
@@ -45,7 +45,7 @@ describe("#1493 — WASI console.error/warn route to stderr (fd=2)", () => {
       console.warn("stderr-warn");
       console.log("done");
     `;
-    const result = compile(source, { target: "wasi" });
+    const result = await compile(source, { target: "wasi" });
     expect(result.success).toBe(true);
 
     // Spy on console.log and console.error to capture stdout/stderr separately.
@@ -89,8 +89,8 @@ describe("#1493 — WASI console.error/warn route to stderr (fd=2)", () => {
     expect(stderr).not.toContain("stdout-msg");
   });
 
-  it("routes f64 / number args through the stderr helper for console.error", () => {
-    const result = compile(`console.error(42);`, { target: "wasi" });
+  it("routes f64 / number args through the stderr helper for console.error", async () => {
+    const result = await compile(`console.error(42);`, { target: "wasi" });
     expect(result.success).toBe(true);
     // Number formatter for stderr lane
     expect(result.wat).toContain("__wasi_write_f64_stderr");

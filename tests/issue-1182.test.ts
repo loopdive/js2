@@ -34,7 +34,7 @@ type Outcome =
   | { kind: "invoke_fail"; reason?: string };
 
 async function runOnce(source: string, fnName: string, arg: unknown, experimentalIR: boolean): Promise<Outcome> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     return { kind: "compile_fail", firstMessage: r.errors[0]?.message ?? "" };
   }
@@ -197,8 +197,8 @@ describe("#1182 — selector claims iter-host-shaped functions", () => {
 
 describe("#1182 — IR compile produces no IR-fallback errors for iter-host cases", () => {
   for (const tc of CASES) {
-    it(`compiles "${tc.name}" cleanly under experimentalIR`, () => {
-      const r = compile(tc.source, { experimentalIR: true });
+    it(`compiles "${tc.name}" cleanly under experimentalIR`, async () => {
+      const r = await compile(tc.source, { experimentalIR: true });
       expect(r.success).toBe(true);
       const irErrors = r.errors.filter(
         (e) =>
@@ -225,7 +225,7 @@ describe("#1182 — vec fast path still works alongside iter-host", () => {
         return sum;
       }
     `;
-    const r = compile(source, { experimentalIR: true });
+    const r = await compile(source, { experimentalIR: true });
     expect(r.success).toBe(true);
     const built = buildImports(r.imports, ENV_STUB, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, {
@@ -246,7 +246,7 @@ describe("#1182 — vec fast path still works alongside iter-host", () => {
         return sum;
       }
     `;
-    const r2 = compile(source2, { experimentalIR: true });
+    const r2 = await compile(source2, { experimentalIR: true });
     expect(r2.success).toBe(true);
     const b2 = buildImports(r2.imports, ENV_STUB, r2.stringPool);
     const { instance: i2 } = await WebAssembly.instantiate(r2.binary, {

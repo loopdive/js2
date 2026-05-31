@@ -8,20 +8,20 @@ import { compile } from "../src/index.js";
  * Each `expect(WebAssembly.validate(...)).toBe(true)` is the regression guard:
  * before the fix these modules failed validation at the offending `call`.
  */
-function compileValid(source: string): Uint8Array {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileValid(source: string): Promise<Uint8Array> {
+  const result = await compile(source, { fileName: "test.ts" });
   expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
   return result.binary;
 }
 
 describe("#1602 call-site argument coercion emits valid wasm", () => {
-  it("new function(obj){...}({...null}) with an extern call in the body", () => {
+  it("new function(obj){...}({...null}) with an extern call in the body", async () => {
     // Bug A: the `new <FunctionExpression>(args)` call captured a stale lifted
     // func index — compiling the `{...null}` spread arg added late imports that
     // shifted every function index, but the `call` used the pre-shift value,
     // disagreeing with the already-shifted `ref.func`.
-    compileValid(`
+    await compileValid(`
       function asv(a: any, b: any): void {}
       export function test(): number {
         var callCount = 0;
@@ -34,13 +34,13 @@ describe("#1602 call-site argument coercion emits valid wasm", () => {
     `);
   });
 
-  it("sibling generator methods with default params in different positions", () => {
+  it("sibling generator methods with default params in different positions", async () => {
     // Bug B: `{ *m(x = 42, y) {} }` (params [f64, externref]) and
     // `{ *m(x, y = 42) {} }` (params [externref, f64]) structurally dedupe to
     // the same method name and shared one funcMap entry. The second body
     // overwrote the func type, so the first method's value-closure trampoline
     // forwarded args in the wrong order. Each literal must get its own funcIdx.
-    compileValid(`
+    await compileValid(`
       export function test(): number {
         var f1 = ({ *m(x = 42) {} }).m;
         var f2 = ({ *m(x = 42, y) {} }).m;
@@ -51,11 +51,11 @@ describe("#1602 call-site argument coercion emits valid wasm", () => {
     `);
   });
 
-  it("async object method accessed as a value", () => {
+  it("async object method accessed as a value", async () => {
     // Bug C: the method-as-closure trampoline body snapshotted the method
     // signature before it was finalized; rebuilding it against the final
     // signature after all bodies compiled keeps the forwarding consistent.
-    compileValid(`
+    await compileValid(`
       export function test(): number {
         var f = ({ async m() {} }).m;
         return f ? 1 : 0;
@@ -63,8 +63,8 @@ describe("#1602 call-site argument coercion emits valid wasm", () => {
     `);
   });
 
-  it("the four object-method literals together compile to one valid module", () => {
-    compileValid(`
+  it("the four object-method literals together compile to one valid module", async () => {
+    await compileValid(`
       function asv(a: any, b: any): void {}
       export function test(): number {
         var a = ({ *m(x = 42) {} }).m;
@@ -77,14 +77,14 @@ describe("#1602 call-site argument coercion emits valid wasm", () => {
     `);
   });
 
-  it("multiple static-async class-method extractions are valid wasm", () => {
+  it("multiple static-async class-method extractions are valid wasm", async () => {
     // Bug D: a class expression used as a value produced a bare `ref.func`
     // (funcref) for the constructor. funcref is not a subtype of
     // anyref/externref, so `(class {...}).f` member read fed the raw funcref
     // into `__extern_get` (externref param) — invalid module
     // ("call expected externref, found ref.func"). One extraction happened to
     // dead-code-eliminate clean; two or more left the funcref on the stack.
-    compileValid(`
+    await compileValid(`
       let x = "h";
       let f = class { static async f() {} }.f;
       let g = class { static async ["g"]() {} }.g;
@@ -93,8 +93,8 @@ describe("#1602 call-site argument coercion emits valid wasm", () => {
     `);
   });
 
-  it("class-expression value passed directly as a call argument is valid wasm", () => {
-    compileValid(`
+  it("class-expression value passed directly as a call argument is valid wasm", async () => {
+    await compileValid(`
       function use(v: any): void {}
       export function test(): number {
         use(class { m() {} });

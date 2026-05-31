@@ -72,13 +72,13 @@ describe("issue-1279: CJS require() static module graph", () => {
   });
 
   describe("acceptance criteria", () => {
-    it("AC1: `const path = require('node:path'); export function f()` compiles", () => {
+    it("AC1: `const path = require('node:path'); export function f()` compiles", async () => {
       const src = `
 const path = require("node:path");
 export function f(): string {
   return path.join("a", "b");
 }`;
-      const result = compile(src, { fileName: "test.ts" });
+      const result = await compile(src, { fileName: "test.ts" });
       if (!result.success) {
         const msgs = result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n");
         throw new Error(`expected success but got errors:\n${msgs}`);
@@ -93,7 +93,7 @@ export function f(): string {
 const { X } = require("./x");
 export function g(): number { return X(); }`,
       };
-      const r = compileMulti(files, "./entry.ts");
+      const r = await compileMulti(files, "./entry.ts");
       if (!r.success) {
         const msgs = r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n");
         throw new Error(`expected success but got errors:\n${msgs}`);
@@ -106,7 +106,7 @@ export function g(): number { return X(); }`,
       expect(g()).toBe(42);
     });
 
-    it("alias form `const { X: Y } = require('./x')` rewrites to `import { X as Y }` and compiles", () => {
+    it("alias form `const { X: Y } = require('./x')` rewrites to `import { X as Y }` and compiles", async () => {
       // Runtime linking of `import { X as Y }` and `import x from './x'` (default
       // imports across compiled modules) is a separate, pre-existing limitation in
       // the multi-source codegen — the ESM equivalents return 0 today. The rewrite
@@ -122,7 +122,7 @@ export function g(): number { return X(); }`,
 const { X: Y } = require("./x");
 export function g(): number { return Y(); }`,
       };
-      const r = compileMulti(files, "./entry.ts");
+      const r = await compileMulti(files, "./entry.ts");
       if (!r.success) {
         const msgs = r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n");
         throw new Error(`expected success but got errors:\n${msgs}`);
@@ -130,7 +130,7 @@ export function g(): number { return Y(); }`,
       expect(r.success).toBe(true);
     });
 
-    it("default-import form `const x = require('./x')` rewrites to `import x from './x'` and compiles", () => {
+    it("default-import form `const x = require('./x')` rewrites to `import x from './x'` and compiles", async () => {
       const rewritten = rewriteCjsRequire(`const x = require("./x");`);
       expect(rewritten).toContain(`import x from "./x";`);
 
@@ -140,7 +140,7 @@ export function g(): number { return Y(); }`,
 const x = require("./x");
 export function g(): number { return x(); }`,
       };
-      const r = compileMulti(files, "./entry.ts");
+      const r = await compileMulti(files, "./entry.ts");
       if (!r.success) {
         const msgs = r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n");
         throw new Error(`expected success but got errors:\n${msgs}`);
@@ -157,7 +157,7 @@ export function g(): number { return x(); }`,
 import { X } from "./x";
 export function g(): number { return X(); }`,
       };
-      const r = compileMulti(files, "./entry.ts");
+      const r = await compileMulti(files, "./entry.ts");
       expect(r.success).toBe(true);
       const imports = buildImports(r.imports, undefined, r.stringPool);
       const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -182,7 +182,7 @@ import { A } from "./a";
 const { B } = require("./b");
 export function g(): number { return A() + B(); }`,
       };
-      const r = compileMulti(files, "./entry.ts");
+      const r = await compileMulti(files, "./entry.ts");
       if (!r.success) {
         const msgs = r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n");
         throw new Error(`expected success but got errors:\n${msgs}`);

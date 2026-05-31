@@ -35,7 +35,7 @@ function buildImports(result: CompileResult): WebAssembly.Imports {
 }
 
 async function compileToWasm(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -46,8 +46,8 @@ async function compileToWasm(source: string) {
 }
 
 describe("Issue #319: Inline single-use function type signatures", () => {
-  it("inlines single-use func type into function signature", () => {
-    const wat = compileToWat(`
+  it("inlines single-use func type into function signature", async () => {
+    const wat = await compileToWat(`
       export function add(a: number, b: number): number {
         return a + b;
       }
@@ -88,8 +88,8 @@ describe("Issue #319: Inline single-use function type signatures", () => {
     expect(exports.negate(5)).toBe(-5);
   });
 
-  it("keeps shared types when multiple functions use same signature", () => {
-    const wat = compileToWat(`
+  it("keeps shared types when multiple functions use same signature", async () => {
+    const wat = await compileToWat(`
       export function add(a: number, b: number): number {
         return a + b;
       }
@@ -125,8 +125,8 @@ describe("Issue #319: Inline single-use function type signatures", () => {
     expect(exports.getCount()).toBe(2);
   });
 
-  it("WAT output does not contain standalone type for single-use void func", () => {
-    const wat = compileToWat(`
+  it("WAT output does not contain standalone type for single-use void func", async () => {
+    const wat = await compileToWat(`
       export function noop(): void {}
     `);
     // The function should have inlined signature

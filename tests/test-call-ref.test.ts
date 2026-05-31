@@ -49,7 +49,7 @@ export function test(): number {
   return probe();
 }
     `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.errors).toHaveLength(0);
     const imports = buildImports(result);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -68,7 +68,7 @@ export function test(): number {
   return callCount;
 }
     `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.errors).toHaveLength(0);
     const imports = buildImports(result);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string = "test", args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -93,9 +93,9 @@ describe("issue-382: spread argument in super/function calls", () => {
     ).toBe(6);
   });
 
-  it("TS2556 diagnostic is downgraded to warning", () => {
+  it("TS2556 diagnostic is downgraded to warning", async () => {
     // This should compile successfully (not fail with TS2556)
-    const result = compile(`
+    const result = await compile(`
       function foo(a: number, b: number): number {
         return a + b;
       }

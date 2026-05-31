@@ -30,7 +30,7 @@ import { wrapTest } from "./test262-runner.js";
 
 async function runWrappedJs(jsSource: string): Promise<unknown> {
   const wrapped = wrapTest(jsSource, {} as any);
-  const r = compile(wrapped.source, { fileName: "test.ts", allowJs: true });
+  const r = await compile(wrapped.source, { fileName: "test.ts", allowJs: true });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")}`);
   }

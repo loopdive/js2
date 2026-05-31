@@ -27,12 +27,12 @@ const HAS_TEST262 = existsSync(join(TEST262_ROOT, "test", "language"));
  * Verify that a test262 file compiles without CE (compile error).
  * Runtime correctness is validated by CI test262 runs.
  */
-function noCompileError(filepath: string): void {
+async function noCompileError(filepath: string): Promise<void> {
   if (!HAS_TEST262) return; // submodule not available in this worktree
   const src = readFileSync(join(TEST262_ROOT, filepath), "utf-8");
   const meta = parseMeta(src);
   const { source } = wrapTest(src, meta);
-  const r = compile(source, { fileName: "test.ts", sourceMap: true, emitWat: false });
+  const r = await compile(source, { fileName: "test.ts", sourceMap: true, emitWat: false });
   expect(r.success, `CE in ${filepath}:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(true);
 }
 
@@ -85,18 +85,18 @@ const FAILING_TESTS = [
 describe("issue-987: object-literal spread/shape fallbacks (40 tests, was 40 CE)", () => {
   describe("generator / yield-spread object literals (no CE)", () => {
     for (const f of FAILING_TESTS.slice(0, 24)) {
-      it(f.replace("test/language/", ""), () => noCompileError(f));
+      it(f.replace("test/language/", ""), async () => await noCompileError(f));
     }
   });
 
   describe("call/new/array spread with null/undefined/unresolvable sources (no CE)", () => {
     for (const f of FAILING_TESTS.slice(24)) {
-      it(f.replace("test/language/", ""), () => noCompileError(f));
+      it(f.replace("test/language/", ""), async () => await noCompileError(f));
     }
   });
 
   it("inline: {..null} produces empty object", async () => {
-    const r = compile(`
+    const r = await compile(`
 export function test(): number {
   const obj = {...null};
   return 1;
@@ -106,7 +106,7 @@ export function test(): number {
   });
 
   it("inline: {..undefined} produces empty object", async () => {
-    const r = compile(`
+    const r = await compile(`
 export function test(): number {
   const obj = {...undefined};
   return 1;
@@ -116,7 +116,7 @@ export function test(): number {
   });
 
   it("inline: generator yield {..yield, y: 1, ..yield yield}", async () => {
-    const r = compile(`
+    const r = await compile(`
 function* gen() {
   yield {
     ...yield,

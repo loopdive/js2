@@ -27,7 +27,7 @@ async function compileAndValidate(src: string): Promise<{ valid: boolean; size: 
   // Use a .js fileName so TypeScript's strict checks don't reject the
   // mixed-shape pushes (this is checking the codegen for JS-mode input,
   // which mirrors the ESLint linter.js path that triggered the bug).
-  const r = compile(src, { fileName: "test.js", allowJs: true });
+  const r = await compile(src, { fileName: "test.js", allowJs: true });
   if (!r.success) {
     throw new Error(`compile: ${r.errors.map((e) => e.message).join("; ")}`);
   }

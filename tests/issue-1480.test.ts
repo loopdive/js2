@@ -23,7 +23,7 @@ describe("issue #1480 — WASI console.error/warn → fd=2", () => {
   });
 
   async function runWasi(source: string): Promise<void> {
-    const result = compile(source, { target: "wasi" });
+    const result = await compile(source, { target: "wasi" });
     expect(result.success).toBe(true);
     const wasi = buildWasiPolyfill();
     const { instance } = await WebAssembly.instantiate(result.binary, {
@@ -33,8 +33,8 @@ describe("issue #1480 — WASI console.error/warn → fd=2", () => {
     (instance.exports._start as () => void)();
   }
 
-  it("emits __wasi_write_string_fd helper and references fd=2 for console.error", () => {
-    const result = compile(`console.error("boom");`, { target: "wasi" });
+  it("emits __wasi_write_string_fd helper and references fd=2 for console.error", async () => {
+    const result = await compile(`console.error("boom");`, { target: "wasi" });
     expect(result.success).toBe(true);
     // The fd-parameterized helper must be present.
     expect(result.wat).toContain("__wasi_write_string_fd");

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(src: string): Promise<any> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`CE: ${r.errors.map((e) => e.message).join("\n")}`);
   }
@@ -12,8 +12,8 @@ async function compileAndRun(src: string): Promise<any> {
   return (instance.exports as any).test();
 }
 
-function compileOnly(src: string): { success: boolean; errors?: any[]; imports?: any[] } {
-  return compile(src, { fileName: "test.ts" });
+async function compileOnly(src: string): Promise<{ success: boolean; errors?: any[]; imports?: any[] }> {
+  return await compile(src, { fileName: "test.ts" });
 }
 
 describe("#855 — Promise v2", () => {
@@ -140,8 +140,8 @@ describe("#855 — Promise v2", () => {
     expect(result).toBe(1);
   });
 
-  it("Promise.resolve registers the import correctly", () => {
-    const r = compileOnly(`
+  it("Promise.resolve registers the import correctly", async () => {
+    const r = await compileOnly(`
       export function test(): number {
         const p = Promise.resolve(42);
         return 1;

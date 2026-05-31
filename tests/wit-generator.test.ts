@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("WIT generator", () => {
-  it("generates WIT for exported functions with primitive types", () => {
-    const result = compile(
+  it("generates WIT for exported functions with primitive types", async () => {
+    const result = await compile(
       `
       export function add(a: number, b: number): number {
         return a + b;
@@ -38,8 +38,8 @@ describe("WIT generator", () => {
     expect(wit).toContain("export do-work: func();");
   });
 
-  it("generates WIT records from exported interfaces", () => {
-    const result = compile(
+  it("generates WIT records from exported interfaces", async () => {
+    const result = await compile(
       `
       export interface Point {
         x: number;
@@ -64,8 +64,8 @@ describe("WIT generator", () => {
     expect(wit).toContain("export distance: func(a: point, b: point) -> f64;");
   });
 
-  it("generates WIT records from exported type aliases", () => {
-    const result = compile(
+  it("generates WIT records from exported type aliases", async () => {
+    const result = await compile(
       `
       export type Config = {
         width: number;
@@ -89,8 +89,8 @@ describe("WIT generator", () => {
     expect(wit).toContain("title: string,");
   });
 
-  it("maps array types to list<T>", () => {
-    const result = compile(
+  it("maps array types to list<T>", async () => {
+    const result = await compile(
       `
       export function sum(nums: number[]): number {
         let total = 0;
@@ -111,8 +111,8 @@ describe("WIT generator", () => {
     expect(wit).toContain("export concat: func(strs: list<string>) -> string;");
   });
 
-  it("maps nullable types to option<T>", () => {
-    const result = compile(
+  it("maps nullable types to option<T>", async () => {
+    const result = await compile(
       `
       export function find(id: number): string | null {
         return null;
@@ -127,8 +127,8 @@ describe("WIT generator", () => {
     expect(wit).toContain("export find: func(id: f64) -> option<string>;");
   });
 
-  it("uses camelCase to kebab-case conversion", () => {
-    const result = compile(
+  it("uses camelCase to kebab-case conversion", async () => {
+    const result = await compile(
       `
       export function getUserName(userId: number): string {
         return "test";
@@ -143,8 +143,8 @@ describe("WIT generator", () => {
     expect(wit).toContain("export get-user-name: func(user-id: f64) -> string;");
   });
 
-  it("supports custom package and world names", () => {
-    const result = compile(
+  it("supports custom package and world names", async () => {
+    const result = await compile(
       `
       export function hello(): string { return "hi"; }
       `,
@@ -158,15 +158,15 @@ describe("WIT generator", () => {
     expect(wit).toContain("world my-world {");
   });
 
-  it("does not include wit when option is not set", () => {
-    const result = compile(`export function add(a: number, b: number): number { return a + b; }`);
+  it("does not include wit when option is not set", async () => {
+    const result = await compile(`export function add(a: number, b: number): number { return a + b; }`);
 
     expect(result.success).toBe(true);
     expect(result.wit).toBeUndefined();
   });
 
-  it("skips non-exported functions", () => {
-    const result = compile(
+  it("skips non-exported functions", async () => {
+    const result = await compile(
       `
       function helper(): number { return 42; }
       export function main(): number { return helper(); }

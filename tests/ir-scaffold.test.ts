@@ -40,14 +40,14 @@ const SOURCE = `
 const COMPILE_OPTS = { nativeStrings: true as const };
 
 describe("ir scaffold — phase 1", () => {
-  it("feature flag off → identical legacy-path output", () => {
-    const a = compile(SOURCE, COMPILE_OPTS).binary;
-    const b = compile(SOURCE, { ...COMPILE_OPTS, experimentalIR: false }).binary;
+  it("feature flag off → identical legacy-path output", async () => {
+    const a = (await compile(SOURCE, COMPILE_OPTS)).binary;
+    const b = (await compile(SOURCE, { ...COMPILE_OPTS, experimentalIR: false })).binary;
     expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
   });
 
   it("feature flag on → runtime behavior preserved", async () => {
-    const result = compile(SOURCE, { ...COMPILE_OPTS, experimentalIR: true });
+    const result = await compile(SOURCE, { ...COMPILE_OPTS, experimentalIR: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, {
       env: {

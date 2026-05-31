@@ -5,7 +5,7 @@ import { compile } from "../src/index.js";
 describe("Issue #666: await outside async should not block compilation", () => {
   it("compiles code with top-level await pattern", async () => {
     // Should compile without error (await in non-async is downgraded to warning)
-    const result = compile(
+    const result = await compile(
       `
       async function fetchData(): Promise<number> {
         return 42;
@@ -24,7 +24,7 @@ describe("Issue #666: await outside async should not block compilation", () => {
 describe("Issue #667: hint is not defined (spread in expression position)", () => {
   it("compiles spread element without ReferenceError", async () => {
     // The spread element fallback path referenced 'hint' which was not in scope
-    const result = compile(
+    const result = await compile(
       `
       function sum(...args: number[]): number {
         let total = 0;

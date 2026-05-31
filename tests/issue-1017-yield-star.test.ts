@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success || result.errors.some((e) => e.severity === "error")) {
     return { ce: result.errors.map((e) => e.message).join("; ") };
   }

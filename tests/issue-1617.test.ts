@@ -15,8 +15,8 @@ import { buildImports } from "../src/runtime.js";
 // to inline closure invocation; arrays-of-closures have a separate, pre-existing
 // runtime null-deref limitation unrelated to this fix.
 
-function compileValid(source: string) {
-  const result = compile(source);
+async function compileValid(source: string) {
+  const result = await compile(source);
   expect(result.success, `Compile failed:\n${result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")}`).toBe(
     true,
   );
@@ -26,7 +26,7 @@ function compileValid(source: string) {
 }
 
 async function run(source: string, fn: string) {
-  const result = compileValid(source);
+  const result = await compileValid(source);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   return (instance.exports as Record<string, Function>)[fn]!();
@@ -53,11 +53,11 @@ describe("#1617 — loop pre-box must not box body-local let/const captured by a
     ).toBe(6); // 1 + 2 + 3
   });
 
-  it("validates a body-local number const captured by two closures in the same iteration", () => {
+  it("validates a body-local number const captured by two closures in the same iteration", async () => {
     // Two captures of differently-typed body locals (number → f64, string → ref)
     // — the calendar's click/mouseenter handler shape. Validation-only: the
     // closures escape into DOM-like sinks, exercising the boxing path.
-    compileValid(`
+    await compileValid(`
       let sink: HTMLElement | null = null;
       function el(t: string): HTMLElement { return document.createElement(t); }
       export function render(): void {
@@ -75,17 +75,17 @@ describe("#1617 — loop pre-box must not box body-local let/const captured by a
     `);
   });
 
-  it("validates the playground calendar example (renderCal regression)", () => {
+  it("validates the playground calendar example (renderCal regression)", async () => {
     // Direct guard for the reported failure: function #25 "renderCal" must
     // produce a module that validates.
     const src = readFileSync(resolve(__dirname, "../playground/examples/dom/calendar.ts"), "utf-8");
-    compileValid(src);
+    await compileValid(src);
   });
 
-  it("does not regress #1589 var/enclosing capture in a for-loop", () => {
+  it("does not regress #1589 var/enclosing capture in a for-loop", async () => {
     // `var i` shares a single binding across iterations; the pre-box pass must
     // still box it so the loop condition sees mutations. Validation-only.
-    compileValid(`
+    await compileValid(`
       export function test(): number {
         var sum = 0;
         var fns: (() => void)[] = [];

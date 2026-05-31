@@ -5,8 +5,8 @@ import { compile } from "../src/index.ts";
 import { buildWasiPolyfill } from "../src/runtime.ts";
 
 describe("WASI clock_time_get (#1483)", () => {
-  it("compiles Date.now() to clock_time_get under --target wasi", () => {
-    const result = compile(`console.log(Date.now());`, {
+  it("compiles Date.now() to clock_time_get under --target wasi", async () => {
+    const result = await compile(`console.log(Date.now());`, {
       fileName: "test.ts",
       target: "wasi",
     });
@@ -16,8 +16,8 @@ describe("WASI clock_time_get (#1483)", () => {
     expect(result.wat).not.toContain("__date_now");
   });
 
-  it("compiles performance.now() to clock_time_get under --target wasi", () => {
-    const result = compile(`console.log(performance.now());`, {
+  it("compiles performance.now() to clock_time_get under --target wasi", async () => {
+    const result = await compile(`console.log(performance.now());`, {
       fileName: "test.ts",
       target: "wasi",
     });
@@ -26,8 +26,8 @@ describe("WASI clock_time_get (#1483)", () => {
     expect(result.wat).not.toContain("__date_now");
   });
 
-  it("compiles new Date() to clock_time_get under --target wasi", () => {
-    const result = compile(
+  it("compiles new Date() to clock_time_get under --target wasi", async () => {
+    const result = await compile(
       `
       const d = new Date();
       console.log(d.getTime());
@@ -39,11 +39,11 @@ describe("WASI clock_time_get (#1483)", () => {
     expect(result.wat).not.toContain("__date_now");
   });
 
-  it("Date.now() under WASI returns a positive ms timestamp via direct export", () => {
+  it("Date.now() under WASI returns a positive ms timestamp via direct export", async () => {
     // Use a direct f64 export rather than `console.log`, because the existing
     // `__wasi_write_f64` helper truncates large numbers to i32 — fine for the
     // print path but not for asserting the underlying value.
-    const result = compile(
+    const result = await compile(
       `
       export function now(): number {
         return Date.now();
@@ -69,8 +69,8 @@ describe("WASI clock_time_get (#1483)", () => {
     expect(value).toBeLessThanOrEqual(after + 1000);
   });
 
-  it("performance.now() under WASI returns a finite ms timestamp via direct export", () => {
-    const result = compile(
+  it("performance.now() under WASI returns a finite ms timestamp via direct export", async () => {
+    const result = await compile(
       `
       export function tick(): number {
         return performance.now();
@@ -92,10 +92,10 @@ describe("WASI clock_time_get (#1483)", () => {
     expect(value).toBeGreaterThanOrEqual(0);
   });
 
-  it("console.log(Date.now()) under WASI instantiates and runs", () => {
+  it("console.log(Date.now()) under WASI instantiates and runs", async () => {
     // Existing __wasi_write_f64 truncates to i32, so we only assert the module
     // links + runs end-to-end. The compile-time test above verifies WASI imports.
-    const result = compile(`console.log(Date.now());`, { fileName: "test.ts", target: "wasi" });
+    const result = await compile(`console.log(Date.now());`, { fileName: "test.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.wat).toContain("clock_time_get");
     expect(result.wat).not.toContain("__date_now");
@@ -116,8 +116,8 @@ describe("WASI clock_time_get (#1483)", () => {
     spy.mockRestore();
   });
 
-  it("module without time API does not import clock_time_get", () => {
-    const result = compile(`console.log("hi");`, {
+  it("module without time API does not import clock_time_get", async () => {
+    const result = await compile(`console.log("hi");`, {
       fileName: "test.ts",
       target: "wasi",
     });

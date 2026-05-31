@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): number {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<number> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compilation failed: ${result.errors[0]?.message}`);
   }
@@ -14,8 +14,8 @@ function compileAndRun(source: string): number {
 }
 
 describe("Negative zero preservation (#1132)", () => {
-  it("-0 literal produces IEEE 754 negative zero", () => {
-    const result = compileAndRun(`
+  it("-0 literal produces IEEE 754 negative zero", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         return 1 / -0 === -Infinity ? 1 : 0;
       }
@@ -23,8 +23,8 @@ describe("Negative zero preservation (#1132)", () => {
     expect(result).toBe(1);
   });
 
-  it("-0 assigned to const preserves sign", () => {
-    const result = compileAndRun(`
+  it("-0 assigned to const preserves sign", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         const x = -0;
         return 1 / x === -Infinity ? 1 : 0;
@@ -33,8 +33,8 @@ describe("Negative zero preservation (#1132)", () => {
     expect(result).toBe(1);
   });
 
-  it("runtime negation of zero variable produces -0", () => {
-    const result = compileAndRun(`
+  it("runtime negation of zero variable produces -0", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         var x: number = 0;
         x = -x;
@@ -44,8 +44,8 @@ describe("Negative zero preservation (#1132)", () => {
     expect(result).toBe(1);
   });
 
-  it("-(-0) produces +0", () => {
-    const result = compileAndRun(`
+  it("-(-0) produces +0", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         var x: number = -0;
         x = -x;
@@ -55,8 +55,8 @@ describe("Negative zero preservation (#1132)", () => {
     expect(result).toBe(1);
   });
 
-  it("WAT output shows -0.0 for negative zero constant", () => {
-    const result = compile(`export function test(): number { return -0; }`, {
+  it("WAT output shows -0.0 for negative zero constant", async () => {
+    const result = await compile(`export function test(): number { return -0; }`, {
       fileName: "test.ts",
       emitWat: true,
     });

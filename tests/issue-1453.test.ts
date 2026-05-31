@@ -16,8 +16,8 @@ import { buildImports } from "../src/runtime.ts";
  * the closures into individual locals/variables.
  */
 
-function compileAndRun(src: string): any {
-  const r = compile(src, { fileName: "test.ts" });
+async function compileAndRun(src: string): Promise<any> {
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`Compile error: ${r.errors?.[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const instance = new WebAssembly.Instance(new WebAssembly.Module(r.binary), imports);
@@ -25,10 +25,10 @@ function compileAndRun(src: string): any {
 }
 
 describe("#1453 — for (let) per-iteration fresh binding", () => {
-  test("each iteration's closure observes its own binding (digits-of-i pattern)", () => {
+  test("each iteration's closure observes its own binding (digits-of-i pattern)", async () => {
     // Snapshot one closure per iteration in three named slots. Without
     // per-iteration freshness, all three would return 3 (the post-loop value).
-    const result = compileAndRun(`
+    const result = await compileAndRun(`
       export function test(): number {
         let f0: () => number = () => 0;
         let f1: () => number = () => 0;
@@ -44,8 +44,8 @@ describe("#1453 — for (let) per-iteration fresh binding", () => {
     expect(result).toBe(12);
   });
 
-  test("closure assigned in body sees mid-iteration value, not final 5", () => {
-    const result = compileAndRun(`
+  test("closure assigned in body sees mid-iteration value, not final 5", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         let snapshot: () => number = () => -1;
         for (let i = 0; i < 5; ++i) {
@@ -57,8 +57,8 @@ describe("#1453 — for (let) per-iteration fresh binding", () => {
     expect(result).toBe(2);
   });
 
-  test("non-capturing loop still works (no perf regression path)", () => {
-    const result = compileAndRun(`
+  test("non-capturing loop still works (no perf regression path)", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         let total = 0;
         for (let i = 0; i < 100; ++i) total = total + i;
@@ -68,8 +68,8 @@ describe("#1453 — for (let) per-iteration fresh binding", () => {
     expect(result).toBe(4950);
   });
 
-  test("closure mutation in iteration N visible to same closure (within own cell)", () => {
-    const result = compileAndRun(`
+  test("closure mutation in iteration N visible to same closure (within own cell)", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         let captured: () => number = () => -1;
         for (let i = 0; i < 1; ++i) {
@@ -83,8 +83,8 @@ describe("#1453 — for (let) per-iteration fresh binding", () => {
     expect(result).toBe(300);
   });
 
-  test("function expression capture", () => {
-    const result = compileAndRun(`
+  test("function expression capture", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         let f1: () => number = () => 0;
         let f2: () => number = () => 0;
@@ -99,8 +99,8 @@ describe("#1453 — for (let) per-iteration fresh binding", () => {
     expect(result).toBe(201);
   });
 
-  test("multi-binding fresh allocation", () => {
-    const result = compileAndRun(`
+  test("multi-binding fresh allocation", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         let f0: () => number = () => 0;
         let f1: () => number = () => 0;
@@ -116,8 +116,8 @@ describe("#1453 — for (let) per-iteration fresh binding", () => {
     expect(result).toBe(119);
   });
 
-  test("body mutates i; fresh cell carries mutated value into next iteration", () => {
-    const result = compileAndRun(`
+  test("body mutates i; fresh cell carries mutated value into next iteration", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         let captured: () => number = () => -1;
         for (let i = 0; i < 10; ++i) {
@@ -132,8 +132,8 @@ describe("#1453 — for (let) per-iteration fresh binding", () => {
     expect(result).toBe(100);
   });
 
-  test("continue still triggers fresh-cell allocation", () => {
-    const result = compileAndRun(`
+  test("continue still triggers fresh-cell allocation", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         let f0: () => number = () => -1;
         let f2: () => number = () => -1;
@@ -150,8 +150,8 @@ describe("#1453 — for (let) per-iteration fresh binding", () => {
     expect(result).toBe(23);
   });
 
-  test("nested for-loops with same name do not leak", () => {
-    const result = compileAndRun(`
+  test("nested for-loops with same name do not leak", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         let outerCaptured: () => number = () => -1;
         let innerCaptured: () => number = () => -1;

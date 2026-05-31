@@ -34,15 +34,15 @@ function createFreshCompiler() {
 }
 createFreshCompiler();
 
-parentPort.on("message", (msg) => {
+parentPort.on("message", async (msg) => {
   const start = performance.now();
   try {
     const compileFn = incrementalCompiler ? incrementalCompiler.compile : compile;
     const result = incrementalCompiler
-      ? compileFn(msg.source, {
+      ? await compileFn(msg.source, {
           sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",
         })
-      : compile(msg.source, {
+      : await compile(msg.source, {
           fileName: "test.ts",
           sourceMap: true,
           sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",
@@ -51,15 +51,13 @@ parentPort.on("message", (msg) => {
         });
     const compileMs = performance.now() - start;
 
-    if (!result.success || result.errors.some(e => e.severity === "error")) {
+    if (!result.success || result.errors.some((e) => e.severity === "error")) {
       const errMsg = result.errors
-        .filter(e => e.severity === "error")
-        .map(e => `L${e.line}:${e.column} ${e.message}`)
+        .filter((e) => e.severity === "error")
+        .map((e) => `L${e.line}:${e.column} ${e.message}`)
         .join("; ");
       // Include TS diagnostic codes for early error detection
-      const errorCodes = result.errors
-        .filter(e => e.severity === "error" && e.code)
-        .map(e => e.code);
+      const errorCodes = result.errors.filter((e) => e.severity === "error" && e.code).map((e) => e.code);
       parentPort.postMessage({ id: msg.id, ok: false, error: errMsg || "unknown", errorCodes, compileMs });
       return;
     }

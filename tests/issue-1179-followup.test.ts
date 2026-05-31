@@ -36,7 +36,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(src: string, fn: string, args: number[] = []): Promise<number> {
-  const r = compile(src, { fileName: "t.js" });
+  const r = await compile(src, { fileName: "t.js" });
   if (!r.success) {
     throw new Error(`Compile failed: ${r.errors.map((e) => e.message).join(", ")}`);
   }
@@ -45,8 +45,8 @@ async function compileAndRun(src: string, fn: string, args: number[] = []): Prom
   return (instance.exports[fn] as (...a: number[]) => number)(...args);
 }
 
-function compileWat(src: string): string {
-  const r = compile(src, { fileName: "t.js" });
+async function compileWat(src: string): Promise<string> {
+  const r = await compile(src, { fileName: "t.js" });
   if (!r.success) {
     throw new Error(`Compile failed: ${r.errors.map((e) => e.message).join(", ")}`);
   }
@@ -101,7 +101,7 @@ describe("#1179-followup — i32 multiplication fast path is spec-conformant", (
     expect(await compileAndRun(src, "run")).toBe(expected);
   });
 
-  it("array-sum hot loop still hits the i32 fast path (no perf regression)", () => {
+  it("array-sum hot loop still hits the i32 fast path (no perf regression)", async () => {
     // The original #1179 workload — `((i*17) ^ (i>>>3)) & 1023`. Both
     // multiplications have a small literal (17), so isI32MulSafe returns
     // true and the i32 path fires. The WAT must still contain `i32.mul`
@@ -120,7 +120,7 @@ describe("#1179-followup — i32 multiplication fast path is spec-conformant", (
         return sum | 0;
       }
     `;
-    const wat = compileWat(src);
+    const wat = await compileWat(src);
     expect(wat).toMatch(/i32\.mul/);
     expect(wat).toMatch(/i32\.xor/);
     expect(wat).toMatch(/i32\.and/);
@@ -131,7 +131,7 @@ describe("#1179-followup — i32 multiplication fast path is spec-conformant", (
     expect(fillBody![0]).not.toMatch(/4294967296/);
   });
 
-  it("WAT-shape: bare-local `*` does NOT use i32.mul (falls back to f64)", () => {
+  it("WAT-shape: bare-local `*` does NOT use i32.mul (falls back to f64)", async () => {
     // Negative shape assertion — when both operands are bare i32 locals
     // with no small literal, the multiplication should compile in f64
     // (with the ToInt32 dance), NOT i32. This is the core fix.
@@ -140,7 +140,7 @@ describe("#1179-followup — i32 multiplication fast path is spec-conformant", (
         return (a * b) | 0;
       }
     `;
-    const wat = compileWat(src);
+    const wat = await compileWat(src);
     // The body must contain f64.mul (the safe path), not i32.mul, for the
     // `a * b` op when both are bare locals. We can't easily anchor without
     // a unique nearby string, so check that f64.mul appears AND that the

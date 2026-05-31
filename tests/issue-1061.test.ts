@@ -20,7 +20,7 @@ describe("issue #1061: multi-source allowJs", () => {
       `,
     };
 
-    const result = compileMulti(files, "./main.ts", { allowJs: true });
+    const result = await compileMulti(files, "./main.ts", { allowJs: true });
     expect(
       result.success,
       `Compile failed: ${result.errors.map((e) => `${e.message} @ ${e.line}:${e.column}`).join("; ")}`,
@@ -45,7 +45,7 @@ describe("issue #1061: multi-source allowJs", () => {
       `,
     };
 
-    const result = compileMulti(files, "./main.ts", { allowJs: true });
+    const result = await compileMulti(files, "./main.ts", { allowJs: true });
     expect(
       result.success,
       `Compile failed: ${result.errors.map((e) => `${e.message} @ ${e.line}:${e.column}`).join("; ")}`,
@@ -68,7 +68,7 @@ describe("issue #1061: multi-source allowJs", () => {
       `,
     };
 
-    const result = compileMulti(files, "./main.js", { allowJs: true });
+    const result = await compileMulti(files, "./main.js", { allowJs: true });
     expect(
       result.success,
       `Compile failed: ${result.errors.map((e) => `${e.message} @ ${e.line}:${e.column}`).join("; ")}`,

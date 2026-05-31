@@ -151,8 +151,8 @@ describe("Issue #121: Function.prototype.call/apply", () => {
 
   // --- Compilation success tests ---
 
-  it("compiles fn.call without errors", () => {
-    const result = compile(`
+  it("compiles fn.call without errors", async () => {
+    const result = await compile(`
       function greet(name: string): string { return name; }
       export function test(): string {
         return greet.call(null, "hello");
@@ -161,8 +161,8 @@ describe("Issue #121: Function.prototype.call/apply", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it("compiles fn.apply without errors", () => {
-    const result = compile(`
+  it("compiles fn.apply without errors", async () => {
+    const result = await compile(`
       function add(a: number, b: number): number { return a + b; }
       export function test(): number {
         return add.apply(null, [1, 2]);

@@ -23,7 +23,7 @@ import { compile, compileMulti } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runExport(source: string, exportName: string, args: unknown[]): Promise<unknown> {
-  const r = compile(source, {
+  const r = await compile(source, {
     fileName: "test.js",
     skipSemanticDiagnostics: true,
     allowJs: true,
@@ -41,8 +41,8 @@ async function runExport(source: string, exportName: string, args: unknown[]): P
   return (fn as (...a: unknown[]) => unknown)(...args);
 }
 
-function getExports(source: string): string[] {
-  const r = compile(source, {
+async function getExports(source: string): Promise<string[]> {
+  const r = await compile(source, {
     fileName: "test.js",
     skipSemanticDiagnostics: true,
     allowJs: true,
@@ -60,7 +60,7 @@ describe("Issue #1277 — CJS module.exports → Wasm export mapping", () => {
   it("module.exports = ident — exports both ident and default", async () => {
     const src = `function identity(value) { return value; }
 module.exports = identity;`;
-    const exps = getExports(src);
+    const exps = await getExports(src);
     expect(exps).toContain("identity");
     expect(exps).toContain("default");
     expect(await runExport(src, "default", [42])).toBe(42);
@@ -70,20 +70,20 @@ module.exports = identity;`;
   it("module.exports.foo = ident — exports as foo", async () => {
     const src = `function double(x) { return x * 2; }
 module.exports.double = double;`;
-    expect(getExports(src)).toContain("double");
+    expect(await getExports(src)).toContain("double");
     expect(await runExport(src, "double", [21])).toBe(42);
   });
 
   it("exports.foo = ident — exports as foo", async () => {
     const src = `function add(a, b) { return a + b; }
 exports.add = add;`;
-    expect(getExports(src)).toContain("add");
+    expect(await getExports(src)).toContain("add");
     expect(await runExport(src, "add", [2, 3])).toBe(5);
   });
 
   it("exports.foo = function expression — exports as foo", async () => {
     const src = `exports.add = function(a, b) { return a + b; };`;
-    expect(getExports(src)).toContain("add");
+    expect(await getExports(src)).toContain("add");
     expect(await runExport(src, "add", [2, 3])).toBe(5);
   });
 
@@ -92,7 +92,7 @@ exports.add = add;`;
     const src = `function inc(x) { return x + 1; }
 function dec(x) { return x - 1; }
 module.exports = { inc, dec };`;
-    const exps = getExports(src);
+    const exps = await getExports(src);
     expect(exps).toContain("inc");
     expect(exps).toContain("dec");
     expect(await runExport(src, "inc", [10])).toBe(11);
@@ -102,7 +102,7 @@ module.exports = { inc, dec };`;
   it("module.exports = { alias: ident } — exports under aliased name", async () => {
     const src = `function _double(x) { return x * 2; }
 module.exports = { times2: _double };`;
-    expect(getExports(src)).toContain("times2");
+    expect(await getExports(src)).toContain("times2");
     expect(await runExport(src, "times2", [21])).toBe(42);
   });
 
@@ -110,14 +110,14 @@ module.exports = { times2: _double };`;
   it("export { ident } — exports as ident (JS mode)", async () => {
     const src = `function identity(v) { return v; }
 export { identity };`;
-    expect(getExports(src)).toContain("identity");
+    expect(await getExports(src)).toContain("identity");
     expect(await runExport(src, "identity", [42])).toBe(42);
   });
 
   it("export { ident as alias } — exports under alias", async () => {
     const src = `function identity(v) { return v; }
 export { identity as id };`;
-    expect(getExports(src)).toContain("id");
+    expect(await getExports(src)).toContain("id");
     expect(await runExport(src, "id", [99])).toBe(99);
   });
 
@@ -125,7 +125,7 @@ export { identity as id };`;
     const src = `function inc(x) { return x + 1; }
 function dec(x) { return x - 1; }
 export { inc, dec };`;
-    const exps = getExports(src);
+    const exps = await getExports(src);
     expect(exps).toContain("inc");
     expect(exps).toContain("dec");
     expect(await runExport(src, "inc", [5])).toBe(6);
@@ -134,7 +134,7 @@ export { inc, dec };`;
 
   // ── compileMulti routes through generateMultiModule ───────────────
   it("compileMulti routes module.exports through the same path", async () => {
-    const r = compileMulti(
+    const r = await compileMulti(
       {
         "./identity.js": `function identity(value) { return value; }
 module.exports = identity;`,
@@ -151,7 +151,7 @@ module.exports = identity;`,
   });
 
   it("compileMulti supports module.exports = { a, b } across files", async () => {
-    const r = compileMulti(
+    const r = await compileMulti(
       {
         "./mod.js": `function inc(x) { return x + 1; }
 function dec(x) { return x - 1; }
@@ -171,14 +171,14 @@ module.exports = { inc, dec };`,
   // ── Regression: ESM still works ──────────────────────────────────
   it("regression guard: export function foo still emits foo export", async () => {
     const src = `export function foo(x) { return x + 1; }`;
-    expect(getExports(src)).toContain("foo");
+    expect(await getExports(src)).toContain("foo");
     expect(await runExport(src, "foo", [10])).toBe(11);
   });
 
   it("regression guard: export default ident still emits both names", async () => {
     const src = `function identity(v) { return v; }
 export default identity;`;
-    const exps = getExports(src);
+    const exps = await getExports(src);
     expect(exps).toContain("identity");
     expect(exps).toContain("default");
   });

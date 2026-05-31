@@ -24,7 +24,7 @@ describe("Issue #927 batch test — negative test rejection rate", () => {
         const { source: wrapped } = wrapTest(src, meta);
 
         // Compile with skipSemanticDiagnostics like the worker does
-        const result = compile(wrapped, {
+        const result = await compile(wrapped, {
           fileName: "test.ts",
           emitWat: false,
           skipSemanticDiagnostics: true,

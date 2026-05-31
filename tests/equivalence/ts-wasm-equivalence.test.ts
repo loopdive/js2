@@ -306,9 +306,9 @@ describe("TS ↔ Wasm equivalence", () => {
     }
   });
 
-  it("game-loop.ts compiles to WAT and .d.ts", () => {
+  it("game-loop.ts compiles to WAT and .d.ts", async () => {
     const source = readFileSync(resolve(__dirname, "..", "game-loop.ts"), "utf-8");
-    const result = compile(source);
+    const result = await compile(source);
     expect(
       result.success,
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`,
@@ -333,7 +333,7 @@ describe("TS ↔ Wasm equivalence", () => {
 
   it("game-loop.ts binary instantiates successfully", async () => {
     const source = readFileSync(resolve(__dirname, "..", "game-loop.ts"), "utf-8");
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
 
     // Build imports using the standard helper (covers env + wasm:js-string)

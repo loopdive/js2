@@ -10,7 +10,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function instantiate(src: string): Promise<WebAssembly.Exports> {
-  const r = compile(src);
+  const r = await compile(src);
   if (!r.success) throw new Error("compile failed: " + JSON.stringify(r.errors));
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const m = await WebAssembly.instantiate(r.binary, imports);

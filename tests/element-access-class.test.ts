@@ -54,10 +54,10 @@ describe("element access on class instances", () => {
     );
   });
 
-  it("dynamic key on struct compiles without error (externref fallback)", () => {
+  it("dynamic key on struct compiles without error (externref fallback)", async () => {
     // When key can't be resolved at compile time, should fall back
     // to externref conversion instead of producing a compile error
-    const result = compile(`
+    const result = await compile(`
       export function test(key: string): any {
         var obj = { x: 10, y: 20 };
         return obj[key];

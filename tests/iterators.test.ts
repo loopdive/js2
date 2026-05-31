@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -74,8 +74,8 @@ describe("iterators", () => {
   });
 
   describe("compilation", () => {
-    it("generates iterator imports for string for...of", () => {
-      const result = compile(`
+    it("generates iterator imports for string for...of", async () => {
+      const result = await compile(`
         export function test(): string {
           let r: string = "";
           for (const ch of "hi") {
@@ -93,8 +93,8 @@ describe("iterators", () => {
       expect(result.wat).not.toContain("__iterator_value");
     });
 
-    it("does NOT generate iterator imports for array for...of", () => {
-      const result = compile(`
+    it("does NOT generate iterator imports for array for...of", async () => {
+      const result = await compile(`
         export function test(): number {
           let sum: number = 0;
           for (const x of [1, 2, 3]) {

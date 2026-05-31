@@ -15,7 +15,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(source: string): Promise<Record<string, any>> {
-  const result = compile(source, { allowJs: true, fileName: "test.js" });
+  const result = await compile(source, { allowJs: true, fileName: "test.js" });
   if (!result.success) {
     throw new Error(`Compile error: ${result.errors.map((e) => e.message).join(", ")}`);
   }
@@ -24,8 +24,8 @@ async function compileAndRun(source: string): Promise<Record<string, any>> {
   return instance.exports as Record<string, any>;
 }
 
-function getExportNames(source: string): string[] {
-  const result = compile(source, { allowJs: true, fileName: "test.js" });
+async function getExportNames(source: string): Promise<string[]> {
+  const result = await compile(source, { allowJs: true, fileName: "test.js" });
   if (!result.success) {
     throw new Error(`Compile error: ${result.errors.map((e) => e.message).join(", ")}`);
   }
@@ -45,8 +45,8 @@ describe("CJS module.exports = <identifier>", () => {
     expect(exports.default(42)).toBe(42);
   });
 
-  it("exports function names correctly", () => {
-    const names = getExportNames(`
+  it("exports function names correctly", async () => {
+    const names = await getExportNames(`
       function identity(x) { return x; }
       module.exports = identity;
     `);
@@ -110,7 +110,7 @@ describe("CJS mixed patterns", () => {
   });
 
   it("supports multiple named exports without default", async () => {
-    const names = getExportNames(`
+    const names = await getExportNames(`
       exports.add = function add(a, b) { return a + b; };
       exports.sub = function sub(a, b) { return a - b; };
       module.exports.mul = function mul(a, b) { return a * b; };

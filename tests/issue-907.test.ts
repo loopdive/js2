@@ -18,7 +18,7 @@ import { buildImports } from "../src/runtime.ts";
  */
 
 async function compileAndInstantiate(src: string) {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`CE: ${r.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -28,7 +28,7 @@ async function compileAndInstantiate(src: string) {
 }
 
 describe("#907 — Wasm start section replaces __init_done guards", () => {
-  it("module-init-only program (the issue example) emits start section, not __init_done", () => {
+  it("module-init-only program (the issue example) emits start section, not __init_done", async () => {
     const src = `
 function squared(n: number): number { return n * n; }
 
@@ -40,7 +40,7 @@ for (let i = 0; i < 10000; i++) {
 
 console.log(result);
 `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(r.wat).toContain("(start ");
     expect(r.wat).not.toContain("__init_done");
@@ -61,7 +61,7 @@ for (let i = 0; i < 100; i++) {
 
 console.log(result);
 `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     const imports = buildImports(r.imports, undefined, r.stringPool);
     // Override console_log_number to capture output
@@ -84,44 +84,44 @@ export function test(): number { return initialized; }
     expect(test()).toBe(42);
   });
 
-  it("exports + top-level emits start section but no __init_done guard", () => {
+  it("exports + top-level emits start section but no __init_done guard", async () => {
     const src = `
 let x = 0;
 x = 7;
 export function getX(): number { return x; }
 `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(r.wat).toContain("(start ");
     expect(r.wat).not.toContain("__init_done");
   });
 
-  it("module with main() and top-level statements: init prepended to main, no start section", () => {
+  it("module with main() and top-level statements: init prepended to main, no start section", async () => {
     const src = `
 let counter = 0;
 counter = 5;
 export function main(): number { return counter; }
 `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     // main() carries the init body; no start section needed
     expect(r.wat).not.toContain("(start ");
     expect(r.wat).not.toContain("__init_done");
   });
 
-  it("pure exports without top-level statements: no start section, no __init_done", () => {
+  it("pure exports without top-level statements: no start section, no __init_done", async () => {
     const src = `export function add(a: number, b: number): number { return a + b; }`;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(r.wat).not.toContain("(start ");
     expect(r.wat).not.toContain("__init_done");
   });
 
-  it("WASI target keeps _start export and does NOT use start section", () => {
+  it("WASI target keeps _start export and does NOT use start section", async () => {
     // For WASI mode, the host calls _start() explicitly; the start section
     // would cause init to run twice (once on instantiate + once on _start()).
     const src = `console.log("hello");`;
-    const r = compile(src, { fileName: "test.ts", target: "wasi" });
+    const r = await compile(src, { fileName: "test.ts", target: "wasi" });
     expect(r.success).toBe(true);
     expect(r.wat).toMatch(/\(export "_start"/);
     expect(r.wat).not.toContain("(start ");

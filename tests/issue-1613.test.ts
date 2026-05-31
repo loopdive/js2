@@ -15,7 +15,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runTest(source: string): Promise<number | string> {
-  const r = compile(source, {
+  const r = await compile(source, {
     fileName: "test.ts",
     skipSemanticDiagnostics: true,
     allowJs: true,
@@ -29,8 +29,8 @@ async function runTest(source: string): Promise<number | string> {
   return (instance.exports as { test: () => number | string }).test();
 }
 
-function compileErrors(source: string): string[] {
-  const r = compile(source, {
+async function compileErrors(source: string): Promise<string[]> {
+  const r = await compile(source, {
     fileName: "test.ts",
     skipSemanticDiagnostics: true,
     allowJs: true,
@@ -86,13 +86,15 @@ describe("Issue #1613 — for-in non-identifier head", () => {
     expect(await runTest(src)).toBe(1);
   });
 
-  it("rejects duplicate bound names in a lexical for-in head (SyntaxError)", () => {
-    const errs = compileErrors(`export function test(): number { for (let [x, x] in ({} as any)) {} return 0; }`);
+  it("rejects duplicate bound names in a lexical for-in head (SyntaxError)", async () => {
+    const errs = await compileErrors(`export function test(): number { for (let [x, x] in ({} as any)) {} return 0; }`);
     expect(errs.some((m) => /Duplicate binding 'x' in for-in declaration/.test(m))).toBe(true);
   });
 
-  it("rejects duplicate bound names for const for-in head", () => {
-    const errs = compileErrors(`export function test(): number { for (const [x, x] in ({} as any)) {} return 0; }`);
+  it("rejects duplicate bound names for const for-in head", async () => {
+    const errs = await compileErrors(
+      `export function test(): number { for (const [x, x] in ({} as any)) {} return 0; }`,
+    );
     expect(errs.some((m) => /Duplicate binding 'x' in for-in declaration/.test(m))).toBe(true);
   });
 

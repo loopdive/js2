@@ -54,7 +54,7 @@ function buildImports(result: CompileResult): WebAssembly.Imports {
 }
 
 async function compileToWasm(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,

@@ -23,8 +23,11 @@ import { compile } from "../src/index.js";
  * tracked in the issue file as a follow-up.
  */
 
-function expectRefused(src: string, target: "standalone" | "wasi" = "standalone"): ReturnType<typeof compile> {
-  const r = compile(src, { target });
+async function expectRefused(
+  src: string,
+  target: "standalone" | "wasi" = "standalone",
+): Promise<ReturnType<typeof compile>> {
+  const r = await compile(src, { target });
   expect(r.success, `expected compile failure, got success for:\n${src}`).toBe(false);
   expect(r.errors.length).toBeGreaterThan(0);
   expect(r.errors.some((e) => /#1599/.test(e.message))).toBe(true);
@@ -34,33 +37,33 @@ function expectRefused(src: string, target: "standalone" | "wasi" = "standalone"
 }
 
 describe("#1599 --target standalone refuses unsupported JSON shapes", () => {
-  it("rejects JSON.stringify of an object", () => {
-    expectRefused(`export function f(): string { return JSON.stringify({ a: 1 }); }`);
+  it("rejects JSON.stringify of an object", async () => {
+    await expectRefused(`export function f(): string { return JSON.stringify({ a: 1 }); }`);
   });
 
-  it("rejects JSON.stringify of an array", () => {
-    expectRefused(`export function f(): string { return JSON.stringify([1, 2, 3]); }`);
+  it("rejects JSON.stringify of an array", async () => {
+    await expectRefused(`export function f(): string { return JSON.stringify([1, 2, 3]); }`);
   });
 
-  it("rejects JSON.stringify of a string", () => {
-    expectRefused(`export function f(s: string): string { return JSON.stringify(s); }`);
+  it("rejects JSON.stringify of a string", async () => {
+    await expectRefused(`export function f(s: string): string { return JSON.stringify(s); }`);
   });
 
-  it("rejects JSON.parse", () => {
-    expectRefused(`export function f(s: string): number { return JSON.parse(s).x; }`);
+  it("rejects JSON.parse", async () => {
+    await expectRefused(`export function f(s: string): number { return JSON.parse(s).x; }`);
   });
 
-  it("rejects JSON.parse of a string literal", () => {
-    expectRefused(`export function f(): number { return JSON.parse('{"x":42}').x; }`);
+  it("rejects JSON.parse of a string literal", async () => {
+    await expectRefused(`export function f(): number { return JSON.parse('{"x":42}').x; }`);
   });
 
-  it("also refuses under --target wasi", () => {
-    expectRefused(`export function f(): string { return JSON.stringify({ a: 1 }); }`, "wasi");
-    expectRefused(`export function f(s: string): number { return JSON.parse(s).x; }`, "wasi");
+  it("also refuses under --target wasi", async () => {
+    await expectRefused(`export function f(): string { return JSON.stringify({ a: 1 }); }`, "wasi");
+    await expectRefused(`export function f(s: string): number { return JSON.parse(s).x; }`, "wasi");
   });
 
-  it("emits no env::JSON_* import when refused", () => {
-    const r = compile(`export function f(): string { return JSON.stringify({ a: 1 }); }`, {
+  it("emits no env::JSON_* import when refused", async () => {
+    const r = await compile(`export function f(): string { return JSON.stringify({ a: 1 }); }`, {
       target: "standalone",
     });
     expect(r.success).toBe(false);
@@ -71,7 +74,7 @@ describe("#1599 --target standalone refuses unsupported JSON shapes", () => {
 
 describe("#1599 primitive JSON.stringify slice still works standalone (#1324)", () => {
   async function runStandalone(src: string, expected: string | undefined) {
-    const r = compile(src, { target: "standalone" });
+    const r = await compile(src, { target: "standalone" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     // No JSON host import was registered.
     const labels = r.imports.map((i) => `${i.module}::${i.name}`);
@@ -94,15 +97,15 @@ describe("#1599 primitive JSON.stringify slice still works standalone (#1324)", 
 });
 
 describe("#1599 default (JS-host) mode unchanged", () => {
-  it("compiles JSON.stringify of an object in default mode", () => {
-    const r = compile(`export function f(): string { return JSON.stringify({ a: 1 }); }`, {});
+  it("compiles JSON.stringify of an object in default mode", async () => {
+    const r = await compile(`export function f(): string { return JSON.stringify({ a: 1 }); }`, {});
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     const labels = r.imports.map((i) => `${i.module}::${i.name}`);
     expect(labels.some((l) => /JSON_stringify/.test(l))).toBe(true);
   });
 
-  it("compiles JSON.parse in default mode", () => {
-    const r = compile(`export function f(s: string): number { return JSON.parse(s).x; }`, {});
+  it("compiles JSON.parse in default mode", async () => {
+    const r = await compile(`export function f(s: string): number { return JSON.parse(s).x; }`, {});
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     const labels = r.imports.map((i) => `${i.module}::${i.name}`);
     expect(labels.some((l) => /JSON_parse/.test(l))).toBe(true);

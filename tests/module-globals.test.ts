@@ -18,7 +18,7 @@ export function main(): number {
   return counter;
 }
 `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     const imports = buildImports(result.imports);
     const { instance } = await WebAssembly.instantiate(result.binary as BufferSource, imports);
@@ -41,7 +41,7 @@ export function main(): number {
   return items.length;
 }
 `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     const imports = buildImports(result.imports);
     const { instance } = await WebAssembly.instantiate(result.binary as BufferSource, imports);

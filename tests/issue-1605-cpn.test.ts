@@ -27,8 +27,8 @@ function buildImports(wasmModule: WebAssembly.Module): Record<string, Record<str
   return importObj;
 }
 
-function compileAndRun(code: string): number {
-  const result = compile(code);
+async function compileAndRun(code: string): Promise<number> {
+  const result = await compile(code);
   expect(result.success).toBe(true);
   const wasmModule = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(wasmModule, buildImports(wasmModule));
@@ -36,9 +36,9 @@ function compileAndRun(code: string): number {
 }
 
 describe("class computed-accessor setter call-arg fixup (#1605-cpn)", () => {
-  it("c[null] = null on an accessor-only class compiles to valid wasm and calls the setter", () => {
+  it("c[null] = null on an accessor-only class compiles to valid wasm and calls the setter", async () => {
     expect(
-      compileAndRun(`
+      await compileAndRun(`
         let calls = 0;
         class C {
           get [null]() { return null; }
@@ -53,9 +53,9 @@ describe("class computed-accessor setter call-arg fixup (#1605-cpn)", () => {
     ).toBe(1);
   });
 
-  it("does not regress a normal string-key setter on a class", () => {
+  it("does not regress a normal string-key setter on a class", async () => {
     expect(
-      compileAndRun(`
+      await compileAndRun(`
         let calls = 0;
         class C {
           set ['x'](v: any) { calls = calls + 1; }

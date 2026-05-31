@@ -108,8 +108,8 @@ describe("Issue #261: ClassDeclaration + new expression", () => {
     );
   });
 
-  it("should compile class in function body without errors", () => {
-    const result = compile(`
+  it("should compile class in function body without errors", async () => {
+    const result = await compile(`
       export function test(): number {
         class C {
           x: number;
@@ -145,9 +145,9 @@ describe("Issue #261: ClassDeclaration + new expression", () => {
     );
   });
 
-  it("should support class factory pattern (class inside function)", () => {
+  it("should support class factory pattern (class inside function)", async () => {
     // This pattern triggers the __class symbol name issue
-    const result = compile(`
+    const result = await compile(`
       function makeClass() {
         const C = class {
           x: number;
@@ -166,11 +166,11 @@ describe("Issue #261: ClassDeclaration + new expression", () => {
     expect(classErrors).toEqual([]);
   });
 
-  it("should handle new expression when checker resolves unknown class name gracefully", () => {
+  it("should handle new expression when checker resolves unknown class name gracefully", async () => {
     // When the checker resolves a class name that isn't in classSet,
     // and it's not a built-in, it should not produce an error if the
     // identifier text matches a class in classSet
-    const result = compile(`
+    const result = await compile(`
       class Foo {
         x: number;
         constructor() { this.x = 5; }
@@ -186,8 +186,8 @@ describe("Issue #261: ClassDeclaration + new expression", () => {
     expect(classErrors).toEqual([]);
   });
 
-  it("should handle new for class expression inside nested function", () => {
-    const result = compile(`
+  it("should handle new for class expression inside nested function", async () => {
+    const result = await compile(`
       export function test(): number {
         function factory() {
           const C = class {
@@ -206,9 +206,9 @@ describe("Issue #261: ClassDeclaration + new expression", () => {
     expect(classErrors).toEqual([]);
   });
 
-  it("should not error for built-in constructors like new Number()", () => {
+  it("should not error for built-in constructors like new Number()", async () => {
     // Built-in JS constructors should not produce "Unsupported new expression" errors
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         const n = new Number(42);
         return 1;
@@ -218,8 +218,8 @@ describe("Issue #261: ClassDeclaration + new expression", () => {
     expect(newExprErrors).toEqual([]);
   });
 
-  it("should not error for new RangeError()", () => {
-    const result = compile(`
+  it("should not error for new RangeError()", async () => {
+    const result = await compile(`
       export function test(): number {
         const e = new RangeError("out of range");
         return 1;

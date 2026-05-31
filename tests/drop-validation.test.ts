@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
-function compileAndValidate(source: string): { success: boolean; error?: string } {
-  const result = compile(source);
+async function compileAndValidate(source: string): Promise<{ success: boolean; error?: string }> {
+  const result = await compile(source);
   if (!result.success) {
     return { success: false, error: `Compile: ${result.errors.map((e) => e.message).join("; ")}` };
   }
@@ -15,7 +15,7 @@ function compileAndValidate(source: string): { success: boolean; error?: string 
 }
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -24,11 +24,11 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
 }
 
 describe("drop validation - async void expressions (#617)", { timeout: 15000 }, () => {
-  it("async void function call in statement position", () => {
+  it("async void function call in statement position", async () => {
     // This was the primary trigger: async function returning Promise<void>
     // TS checker sees Promise<void> (not void), so isVoidType returned false,
     // causing the codegen to emit `drop` on an empty stack.
-    const r = compileAndValidate(`
+    const r = await compileAndValidate(`
       async function f(): Promise<void> {}
       f();
     `);
@@ -36,8 +36,8 @@ describe("drop validation - async void expressions (#617)", { timeout: 15000 }, 
     expect(r.success).toBe(true);
   });
 
-  it("async void call inside function body", () => {
-    const r = compileAndValidate(`
+  it("async void call inside function body", async () => {
+    const r = await compileAndValidate(`
       async function f(): Promise<void> {}
       function g() { f(); }
     `);
@@ -46,7 +46,7 @@ describe("drop validation - async void expressions (#617)", { timeout: 15000 }, 
   });
 
   it("async void call inside export function", async () => {
-    const r = compileAndValidate(`
+    const r = await compileAndValidate(`
       async function f(): Promise<void> {}
       export function test(): number { f(); return 1; }
     `);
@@ -54,8 +54,8 @@ describe("drop validation - async void expressions (#617)", { timeout: 15000 }, 
     expect(r.success).toBe(true);
   });
 
-  it("async void call inside class method", () => {
-    const r = compileAndValidate(`
+  it("async void call inside class method", async () => {
+    const r = await compileAndValidate(`
       async function f(): Promise<void> {}
       class C { m() { f(); } }
     `);
@@ -63,8 +63,8 @@ describe("drop validation - async void expressions (#617)", { timeout: 15000 }, 
     expect(r.success).toBe(true);
   });
 
-  it("async void call in for-loop initializer", () => {
-    const r = compileAndValidate(`
+  it("async void call in for-loop initializer", async () => {
+    const r = await compileAndValidate(`
       async function f(): Promise<void> {}
       for (f();;) { break; }
     `);
@@ -72,9 +72,9 @@ describe("drop validation - async void expressions (#617)", { timeout: 15000 }, 
     expect(r.success).toBe(true);
   });
 
-  it("async void call result assigned to variable", () => {
+  it("async void call result assigned to variable", async () => {
     // Promise<void> assigned — should produce a default value, not crash
-    const r = compileAndValidate(`
+    const r = await compileAndValidate(`
       async function f(): Promise<void> {}
       const x = f();
     `);

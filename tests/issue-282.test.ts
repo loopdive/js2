@@ -32,7 +32,7 @@ function buildImports(result: CompileResult): WebAssembly.Imports {
 }
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -50,7 +50,7 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
 describe("Issue #282: Variable declaration complex initializers", () => {
   describe("string literals in module-level variable initializers", () => {
     it("module-level var with string literal is properly registered", async () => {
-      const result = compile(`
+      const result = await compile(`
         var x = "hello";
         export function test(): number {
           return x === "hello" ? 1 : 0;
@@ -63,7 +63,7 @@ describe("Issue #282: Variable declaration complex initializers", () => {
     });
 
     it("module-level var with string used only in init", async () => {
-      const result = compile(`
+      const result = await compile(`
         var x = "unique_init_only";
         export function test(): number { return 42; }
       `);
@@ -73,7 +73,7 @@ describe("Issue #282: Variable declaration complex initializers", () => {
     });
 
     it("module-level var with template literal", async () => {
-      const result = compile(`
+      const result = await compile(`
         var greeting = "world";
         export function test(): number { return 1; }
       `);
@@ -175,7 +175,7 @@ describe("Issue #282: Variable declaration complex initializers", () => {
     });
 
     it("top-level arrow function", async () => {
-      const result = compile(`
+      const result = await compile(`
         const fn = (x: number): number => x * 2;
         export function test(): number { return fn(21); }
       `);
@@ -183,7 +183,7 @@ describe("Issue #282: Variable declaration complex initializers", () => {
     });
 
     it("top-level function expression", async () => {
-      const result = compile(`
+      const result = await compile(`
         const fn = function(x: number): number { return x * 2; };
         export function test(): number { return fn(21); }
       `);

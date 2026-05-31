@@ -12,14 +12,14 @@ describe("wasm-opt optimization pass", () => {
     }
   `;
 
-  it("compiles successfully without optimize flag", () => {
-    const result = compile(source);
+  it("compiles successfully without optimize flag", async () => {
+    const result = await compile(source);
     expect(result.success).toBe(true);
     expect(result.binary.byteLength).toBeGreaterThan(0);
   });
 
-  it("compiles successfully with optimize: true", () => {
-    const result = compile(source, { optimize: true });
+  it("compiles successfully with optimize: true", async () => {
+    const result = await compile(source, { optimize: true });
     expect(result.success).toBe(true);
     expect(result.binary.byteLength).toBeGreaterThan(0);
     // When wasm-opt is not available, we should get the original binary back
@@ -27,17 +27,17 @@ describe("wasm-opt optimization pass", () => {
     // Either way, compilation should succeed.
   });
 
-  it("compiles successfully with optimize: 1", () => {
-    const result = compile(source, { optimize: 1 });
+  it("compiles successfully with optimize: 1", async () => {
+    const result = await compile(source, { optimize: 1 });
     expect(result.success).toBe(true);
     expect(result.binary.byteLength).toBeGreaterThan(0);
   });
 
-  it("gracefully handles missing wasm-opt with a warning", () => {
+  it("gracefully handles missing wasm-opt with a warning", async () => {
     // This test verifies the graceful fallback behavior.
     // If wasm-opt is not installed, the result should still be successful
     // but may contain a warning about wasm-opt not being available.
-    const result = compile(source, { optimize: true });
+    const result = await compile(source, { optimize: true });
     expect(result.success).toBe(true);
 
     const hasOptWarning = result.errors.some((e) => e.severity === "warning" && e.message.includes("wasm-opt"));
@@ -47,13 +47,13 @@ describe("wasm-opt optimization pass", () => {
     // We just verify the contract: success is true in both cases.
     if (hasOptWarning) {
       // Verify the binary is the same as without optimization
-      const unoptimized = compile(source);
+      const unoptimized = await compile(source);
       expect(result.binary.byteLength).toBe(unoptimized.binary.byteLength);
     }
   });
 
-  it("produces valid wasm binary header with optimize flag", () => {
-    const result = compile(source, { optimize: true });
+  it("produces valid wasm binary header with optimize flag", async () => {
+    const result = await compile(source, { optimize: true });
     expect(result.success).toBe(true);
     // Wasm magic number: \0asm
     expect(result.binary[0]).toBe(0x00);
@@ -62,9 +62,9 @@ describe("wasm-opt optimization pass", () => {
     expect(result.binary[3]).toBe(0x6d);
   });
 
-  it("does not affect WAT output (WAT is from pre-optimization IR)", () => {
-    const withOpt = compile(source, { optimize: true });
-    const withoutOpt = compile(source);
+  it("does not affect WAT output (WAT is from pre-optimization IR)", async () => {
+    const withOpt = await compile(source, { optimize: true });
+    const withoutOpt = await compile(source);
     // WAT should be the same regardless of optimize flag,
     // because WAT is emitted from the IR, not from the binary
     expect(withOpt.wat).toBe(withoutOpt.wat);

@@ -50,7 +50,7 @@ interface InstantiateResult {
 }
 
 async function compileAndInstantiate(source: string, experimentalIR: boolean): Promise<InstantiateResult> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }

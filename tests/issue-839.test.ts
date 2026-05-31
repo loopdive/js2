@@ -9,8 +9,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 
 function expectValid(name: string, source: string) {
-  it(name, () => {
-    const result = compile(source, { fileName: "test.ts" });
+  it(name, async () => {
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
     if (result.success) {
       // Validate the wasm binary

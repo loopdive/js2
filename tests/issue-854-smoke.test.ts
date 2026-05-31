@@ -5,7 +5,7 @@ import { readFileSync, existsSync } from "fs";
 import { describe, it, expect } from "vitest";
 
 async function runTest(source: string) {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     return `CE: ${r.errors.map((e) => e.message).join("; ")}`;
   }
@@ -58,7 +58,7 @@ describe("issue-854 test262 cases", () => {
 describe("issue-854 Symbol.iterator tests", () => {
   it("array[Symbol.iterator] returns non-null", async () => {
     // This tests the element access path (not call path)
-    const r = compile(
+    const r = await compile(
       `
       export function test(): number {
         const arr = [10, 20, 30];

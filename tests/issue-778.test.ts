@@ -9,7 +9,7 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function runWasm(src: string): Promise<any> {
-  const result = compile(src, { fileName: "test.ts" });
+  const result = await compile(src, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compile error: ${result.errors[0]?.message}`);
   }
@@ -48,7 +48,7 @@ describe("issue-778: illegal cast guards", () => {
 
   it("closure funcref cast is guarded", async () => {
     // Closure dispatch should not trap even with type mismatches
-    const result = compile(
+    const result = await compile(
       `
       function apply(fn: (x: number) => number, val: number): number {
         return fn(val);

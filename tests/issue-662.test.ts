@@ -14,7 +14,7 @@ describe("issue-662: for-of timeout fixes", () => {
         return sum;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     const test = (instance.exports as any).test;
@@ -33,7 +33,7 @@ describe("issue-662: for-of timeout fixes", () => {
         return sum;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     const test = (instance.exports as any).test;
@@ -51,7 +51,7 @@ describe("issue-662: for-of timeout fixes", () => {
         return sum;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     const test = (instance.exports as any).test;
@@ -73,7 +73,7 @@ describe("issue-662: for-of timeout fixes", () => {
         return count;
       }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
     const test = (instance.exports as any).test;

@@ -29,7 +29,7 @@ async function compileAndCall(
   experimentalIR: boolean,
   nativeStrings: boolean,
 ): Promise<{ success: boolean; value?: unknown; error?: string }> {
-  const r = compile(source, { experimentalIR, nativeStrings });
+  const r = await compile(source, { experimentalIR, nativeStrings });
   if (!r.success) {
     return { success: false, error: r.errors[0]?.message ?? "" };
   }
@@ -86,7 +86,7 @@ describe("#1185 — slot-binding asType widening (native-strings string for-of)"
     // We can only verify length here since native-string-to-JS-string
     // round-tripping requires #1187. Just compile and instantiate to
     // confirm Wasm is valid.
-    const r = compile(source, { experimentalIR: true, nativeStrings: true });
+    const r = await compile(source, { experimentalIR: true, nativeStrings: true });
     expect(r.success).toBe(true);
     const irErrors = r.errors.filter(
       (e) =>

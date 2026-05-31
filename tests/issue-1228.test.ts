@@ -26,7 +26,7 @@ import { buildImports } from "../src/runtime.js";
 const ENV_STUB = {} as const;
 
 async function compileAndInstantiate(source: string): Promise<Record<string, Function>> {
-  const r = compile(source, { experimentalIR: true });
+  const r = await compile(source, { experimentalIR: true });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }

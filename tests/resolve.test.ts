@@ -344,7 +344,7 @@ describe("multi-file compilation with resolution concepts", () => {
         }
       `,
     };
-    const result = compileMulti(files, "./main.ts");
+    const result = await compileMulti(files, "./main.ts");
     expect(result.success, `Compile failed: ${result.errors.map((e) => e.message).join(", ")}`).toBe(true);
 
     const imports = {

@@ -316,8 +316,8 @@ describe("Object file emission", () => {
     expect(sectionIndex).toBe(codeSectionOrdinal);
   });
 
-  it("existing emitBinary still works the same", { timeout: 15000 }, () => {
-    const result = compile(`
+  it("existing emitBinary still works the same", { timeout: 15000 }, async () => {
+    const result = await compile(`
       export function add(a: number, b: number): number {
         return a + b;
       }

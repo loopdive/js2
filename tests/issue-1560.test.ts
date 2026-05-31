@@ -105,8 +105,8 @@ describe("#1560 — CJS named class re-export links to compiled class", () => {
    * the `module.exports = { Foo }` hop loses the class identity and
    * the codegen emits a host import.
    */
-  it("compiles without __new_Foo extern in import manifest", () => {
-    const r = compileProject(entryPath, { allowJs: true });
+  it("compiles without __new_Foo extern in import manifest", async () => {
+    const r = await compileProject(entryPath, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
 
@@ -122,7 +122,7 @@ describe("#1560 — CJS named class re-export links to compiled class", () => {
    * passes, this is the integration gate.
    */
   it("instantiates and `new Foo().hello()` returns 42", async () => {
-    const r = compileProject(entryPath, { allowJs: true });
+    const r = await compileProject(entryPath, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
 
@@ -185,7 +185,7 @@ export function test(): number {
     );
 
     try {
-      const r = compileProject(entry3, { allowJs: true });
+      const r = await compileProject(entry3, { allowJs: true });
       expect(r.success).toBe(true);
       if (!r.success) return;
 

@@ -10,7 +10,7 @@ import { buildImports } from "../src/runtime.ts";
 // matching how test262 / the real driver run — the host needs the module's
 // `__vec_len`/`__sget_*` exports to materialize WasmGC vec/struct arguments.
 async function run(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "t.ts" });
+  const r = await compile(src, { fileName: "t.ts" });
   if (!r.success) throw new Error("CE: " + (r.errors[0]?.message ?? "unknown"));
   const imports = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown>;
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);

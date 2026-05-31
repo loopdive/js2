@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(source: string) {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.binary || result.binary.length === 0) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -12,14 +12,14 @@ async function compileAndRun(source: string) {
   return instance.exports as Record<string, Function>;
 }
 
-function compileOnly(source: string) {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileOnly(source: string) {
+  const result = await compile(source, { fileName: "test.ts" });
   return result;
 }
 
 describe("issue-146: unknown identifier errors from scope/hoisting issues", () => {
   it("catch clause variable is in scope within catch body", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       export function test(): number {
         try {
           throw 42;
@@ -48,7 +48,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("for-loop let variable is in scope within loop body", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       export function test(): number {
         let sum: number = 0;
         for (let i: number = 0; i < 5; i++) {
@@ -87,7 +87,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("function declaration inside if-block hoisted to function scope", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       export function test(): number {
         if (true) {
           function inner(): number { return 42; }
@@ -186,7 +186,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("nested function declarations hoisted", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       export function test(): number {
         var r: number = outer();
         function outer(): number {
@@ -230,7 +230,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("catch variable used in expressions inside catch block", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       export function test(): number {
         try {
           return 1;
@@ -259,7 +259,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("module-level var inside for loop hoisted as module global", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       for (var i: number = 0; i < 3; i++) {
       }
       export function test(): number {
@@ -271,7 +271,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("module-level var inside if block hoisted as module global", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       if (true) {
         var y: number = 42;
       }
@@ -284,7 +284,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("module-level var inside try/catch hoisted as module global", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       try {
         var z: number = 99;
       } catch (e) {
@@ -299,7 +299,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("module-level var inside while loop hoisted as module global", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       var count: number = 0;
       while (count < 1) {
         var inside: number = 10;
@@ -314,7 +314,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("module-level var inside switch hoisted as module global", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       var val: number = 1;
       switch (val) {
         case 1:
@@ -330,7 +330,7 @@ describe("issue-146: unknown identifier errors from scope/hoisting issues", () =
   });
 
   it("module-level top-level statements compiled into init", async () => {
-    const result = compileOnly(`
+    const result = await compileOnly(`
       var iterCount: number = 0;
       for (var i: number = 0; i < 3; i++) {
         iterCount = iterCount + 1;

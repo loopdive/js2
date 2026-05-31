@@ -25,8 +25,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-function compileAndRun(source: string): number {
-  const result = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<number> {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     throw new Error(`Compilation failed: ${result.errors[0]?.message}`);
   }
@@ -38,11 +38,11 @@ function compileAndRun(source: string): number {
 
 describe("Issue #1252 — SameValue +0/-0 distinction in DefineProperty", () => {
   // ── The new gap closed by this commit ──────────────────────────────
-  it("frozen { x: +0 } rejects defineProperty value -0 via 0 * -1", () => {
+  it("frozen { x: +0 } rejects defineProperty value -0 via 0 * -1", async () => {
     // SameValue(+0, -0) is false per ECMA-262 §7.2.10. Under the old
     // copysign(value, 1) bug both sides had positive sign and the
     // comparison returned true, silently allowing the redefinition.
-    const result = compileAndRun(`
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 0 };
         Object.freeze(obj);
@@ -57,8 +57,8 @@ describe("Issue #1252 — SameValue +0/-0 distinction in DefineProperty", () => 
     expect(result).toBe(1);
   });
 
-  it("frozen { x: +0 } rejects defineProperty value -0 via 1 / -Infinity", () => {
-    const result = compileAndRun(`
+  it("frozen { x: +0 } rejects defineProperty value -0 via 1 / -Infinity", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 0 };
         Object.freeze(obj);
@@ -73,8 +73,8 @@ describe("Issue #1252 — SameValue +0/-0 distinction in DefineProperty", () => 
     expect(result).toBe(1);
   });
 
-  it("frozen { x: -0 } rejects defineProperty value +0", () => {
-    const result = compileAndRun(`
+  it("frozen { x: -0 } rejects defineProperty value +0", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 0 * -1 };
         Object.freeze(obj);
@@ -90,8 +90,8 @@ describe("Issue #1252 — SameValue +0/-0 distinction in DefineProperty", () => 
   });
 
   // ── Regression guards: the existing #1127 cases ────────────────────
-  it("regression: SameValue(NaN, NaN) = true — redefine NaN with NaN succeeds", () => {
-    const result = compileAndRun(`
+  it("regression: SameValue(NaN, NaN) = true — redefine NaN with NaN succeeds", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: NaN };
         Object.freeze(obj);
@@ -106,8 +106,8 @@ describe("Issue #1252 — SameValue +0/-0 distinction in DefineProperty", () => 
     expect(result).toBe(1);
   });
 
-  it("regression: same +0 -> +0 succeeds (not all sign-equal-1 paths throw)", () => {
-    const result = compileAndRun(`
+  it("regression: same +0 -> +0 succeeds (not all sign-equal-1 paths throw)", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 0 };
         Object.freeze(obj);
@@ -122,8 +122,8 @@ describe("Issue #1252 — SameValue +0/-0 distinction in DefineProperty", () => 
     expect(result).toBe(1);
   });
 
-  it("regression: same -0 -> -0 succeeds", () => {
-    const result = compileAndRun(`
+  it("regression: same -0 -> -0 succeeds", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 0 * -1 };
         Object.freeze(obj);
@@ -138,8 +138,8 @@ describe("Issue #1252 — SameValue +0/-0 distinction in DefineProperty", () => 
     expect(result).toBe(1);
   });
 
-  it("regression: distinct positives still throw — 42 -> 99", () => {
-    const result = compileAndRun(`
+  it("regression: distinct positives still throw — 42 -> 99", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 42 };
         Object.freeze(obj);
@@ -154,8 +154,8 @@ describe("Issue #1252 — SameValue +0/-0 distinction in DefineProperty", () => 
     expect(result).toBe(1);
   });
 
-  it("regression: distinct sign 1 vs -1 throws", () => {
-    const result = compileAndRun(`
+  it("regression: distinct sign 1 vs -1 throws", async () => {
+    const result = await compileAndRun(`
       export function test(): number {
         const obj: any = { x: 1 };
         Object.freeze(obj);

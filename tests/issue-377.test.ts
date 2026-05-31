@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string = "test", args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -14,13 +14,13 @@ async function run(source: string, fn: string = "test", args: unknown[] = []): P
   return (instance.exports as any)[fn](...args);
 }
 
-function compileOnly(source: string) {
-  return compile(source);
+async function compileOnly(source: string) {
+  return await compile(source);
 }
 
 describe("Issue #377: Getter/setter accessor edge cases", () => {
-  it("getter without explicit return compiles successfully", () => {
-    const result = compileOnly(`
+  it("getter without explicit return compiles successfully", async () => {
+    const result = await compileOnly(`
       class Foo {
         get value(): number {
           // no return statement - should compile (returns 0 by default)
@@ -49,8 +49,8 @@ describe("Issue #377: Getter/setter accessor edge cases", () => {
     expect(result).toBe(0);
   });
 
-  it("object literal getter without explicit return compiles", () => {
-    const result = compileOnly(`
+  it("object literal getter without explicit return compiles", async () => {
+    const result = await compileOnly(`
       export function test(): number {
         var obj = {
           get prop(): number {
@@ -77,8 +77,8 @@ describe("Issue #377: Getter/setter accessor edge cases", () => {
     expect(result).toBe(0);
   });
 
-  it("setter with parameter default compiles in class", () => {
-    const result = compileOnly(`
+  it("setter with parameter default compiles in class", async () => {
+    const result = await compileOnly(`
       class Foo {
         _val: number = 0;
         set value(v: number = 42) {
@@ -117,8 +117,8 @@ describe("Issue #377: Getter/setter accessor edge cases", () => {
     expect(result).toBe(10);
   });
 
-  it("setter with parameter default compiles in object literal", () => {
-    const result = compileOnly(`
+  it("setter with parameter default compiles in object literal", async () => {
+    const result = await compileOnly(`
       export function test(): number {
         var val = 0;
         var obj = {
@@ -174,8 +174,8 @@ describe("Issue #377: Getter/setter accessor edge cases", () => {
     expect(result).toBe(10);
   });
 
-  it("getter returning string without explicit return compiles", () => {
-    const result = compileOnly(`
+  it("getter returning string without explicit return compiles", async () => {
+    const result = await compileOnly(`
       class Foo {
         get label(): string {
           // no return

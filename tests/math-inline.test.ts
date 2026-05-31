@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(source: string) {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.binary || result.binary.length === 0) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -284,7 +284,7 @@ describe("Inline Math functions (no host imports)", () => {
 
   describe("No host imports for Math methods", () => {
     it("compile result should not contain Math_ imports (except random)", async () => {
-      const result = compile(
+      const result = await compile(
         `
         export function test(): number {
           return Math.sin(1) + Math.cos(1) + Math.exp(1) + Math.log(2) + Math.tan(1) + Math.atan(1);

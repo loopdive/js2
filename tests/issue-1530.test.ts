@@ -22,16 +22,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const hostPath = join(here, "..", "examples", "native-messaging", "host.ts");
 
 describe("#1530 Native Messaging host example", () => {
-  it("compiles examples/native-messaging/host.ts under --target wasi", () => {
+  it("compiles examples/native-messaging/host.ts under --target wasi", async () => {
     const src = readFileSync(hostPath, "utf-8");
-    const result = compile(src, { fileName: "host.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "host.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.binary.length).toBeGreaterThan(0);
   });
 
-  it("imports stdin (fd_read) and stdout (fd_write) WASI syscalls, no env imports", () => {
+  it("imports stdin (fd_read) and stdout (fd_write) WASI syscalls, no env imports", async () => {
     const src = readFileSync(hostPath, "utf-8");
-    const result = compile(src, { fileName: "host.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "host.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.wat).toContain("wasi_snapshot_preview1");
     expect(result.wat).toContain("fd_read"); // process.stdin.read()
@@ -40,9 +40,9 @@ describe("#1530 Native Messaging host example", () => {
     expect(result.wat).not.toContain('(import "env"');
   });
 
-  it("produces a binary that WebAssembly accepts", () => {
+  it("produces a binary that WebAssembly accepts", async () => {
     const src = readFileSync(hostPath, "utf-8");
-    const result = compile(src, { fileName: "host.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "host.ts", target: "wasi" });
     expect(result.success).toBe(true);
     // Throws on an invalid module; passing means the structure/types are sound.
     expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
@@ -122,7 +122,7 @@ describe("#1618/#1651 framed stdin→stdout round-trip", () => {
     return out;
   }
 
-  it("decodes a framed input and re-frames the response with a 4-byte LE prefix", () => {
+  it("decodes a framed input and re-frames the response with a 4-byte LE prefix", async () => {
     // A self-contained host that mirrors the example: read the 4-byte prefix and
     // then exactly the declared body bytes via process.stdin.read read-until
     // loops, rebuild the body char-by-char, then write a framed response (binary
@@ -159,7 +159,7 @@ export function main(): void {
   );
   process.stdout.write(response);
 }`;
-    const result = compile(src, { fileName: "rt.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "rt.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
 
@@ -171,9 +171,9 @@ export function main(): void {
     expect(new TextDecoder().decode(out.subarray(4))).toBe(expectedBody);
   });
 
-  it("compiles the shipped example and round-trips it byte-exactly", () => {
+  it("compiles the shipped example and round-trips it byte-exactly", async () => {
     const src = readFileSync(hostPath, "utf-8");
-    const result = compile(src, { fileName: "host.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "host.ts", target: "wasi" });
     expect(result.success).toBe(true);
 
     // The shipped host echoes the received body verbatim (byte-for-byte, no
@@ -197,9 +197,9 @@ export function main(): void {
   // We build a frame whose body is non-trivial bytes (a repeating 0..250 ramp,
   // so any truncation, zeroing, or aliasing shows up as a byte mismatch) and
   // assert the response is the exact same 1 MiB body with the right prefix.
-  it("echoes a 1 MiB framed body byte-exactly (#389 large-message regression)", () => {
+  it("echoes a 1 MiB framed body byte-exactly (#389 large-message regression)", async () => {
     const src = readFileSync(hostPath, "utf-8");
-    const result = compile(src, { fileName: "host.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "host.ts", target: "wasi" });
     expect(result.success).toBe(true);
 
     const SIZE = 1024 * 1024; // 1 MiB
@@ -278,7 +278,7 @@ describe("#389 large raw-byte stdout write grows memory", () => {
     return out;
   }
 
-  it("writes a 1 MiB Uint8Array to stdout without trapping", () => {
+  it("writes a 1 MiB Uint8Array to stdout without trapping", async () => {
     const src = `
 declare const process: {
   stdout: { write(chunk: Uint8Array | string): void };
@@ -290,7 +290,7 @@ export function main(): void {
   while (i < n) { buf[i] = (i % 251); i = i + 1; }
   process.stdout.write(buf);
 }`;
-    const result = compile(src, { fileName: "u8write.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "u8write.ts", target: "wasi" });
     expect(result.success).toBe(true);
 
     const out = runWriteOnly(result.binary);

@@ -9,7 +9,7 @@ const defaultImports = {
 };
 
 async function compileAndRun(source: string, imports?: Record<string, any>): Promise<any> {
-  const result = compile(source);
+  const result = await compile(source);
   expect(result.success, `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(
     true,
   );

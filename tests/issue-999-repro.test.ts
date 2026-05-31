@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(source: string): Promise<{ ce?: string; result?: unknown }> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     return { ce: result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n") };
   }

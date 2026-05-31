@@ -614,7 +614,7 @@ describe("#1167a — end-to-end (CF → DCE → simplifyCFG)", () => {
         return n;
       }
     `;
-    const result = compile(source, { experimentalIR: true, nativeStrings: true });
+    const result = await compile(source, { experimentalIR: true, nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, {
       env: {
@@ -631,7 +631,7 @@ describe("#1167a — end-to-end (CF → DCE → simplifyCFG)", () => {
 
   it("still compiles a straight `return <literal>` (no passes fire)", async () => {
     const source = `export function f(): number { return 42; }`;
-    const result = compile(source, { experimentalIR: true, nativeStrings: true });
+    const result = await compile(source, { experimentalIR: true, nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, {
       env: {
@@ -651,7 +651,7 @@ describe("#1167a — end-to-end (CF → DCE → simplifyCFG)", () => {
         return 0;
       }
     `;
-    const result = compile(source, { experimentalIR: true, nativeStrings: true });
+    const result = await compile(source, { experimentalIR: true, nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, {
       env: {
@@ -673,7 +673,7 @@ describe("#1167a — end-to-end (CF → DCE → simplifyCFG)", () => {
         return x + n;
       }
     `;
-    const result = compile(source, { experimentalIR: true, nativeStrings: true });
+    const result = await compile(source, { experimentalIR: true, nativeStrings: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, {
       env: {

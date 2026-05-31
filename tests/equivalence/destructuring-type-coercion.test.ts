@@ -6,7 +6,7 @@ describe("destructuring parameter type coercion (#658)", () => {
   it("class generator method with tuple destructuring default validates Wasm", async () => {
     // Pattern 1 (96 CE): local.set[0] expected type f64, found struct.get of type i32
     // struct.get on a tuple produces i32 but ensureBindingLocals typed the local as f64
-    const result = compile(`
+    const result = await compile(`
       class C {
         *method([x = 23] = [,]): Generator<number> {
           yield x;
@@ -32,7 +32,7 @@ describe("destructuring parameter type coercion (#658)", () => {
   it("tuple array destructuring with type coercion validates Wasm", async () => {
     // Verify Wasm validation passes (no CompileError on local.set type mismatch)
     // for patterns where the tuple field type differs from the TS-resolved binding type
-    const result = compile(`
+    const result = await compile(`
       class C {
         *method([x = "hello"] = [,]): Generator<string> {
           yield x;
@@ -50,7 +50,7 @@ describe("destructuring parameter type coercion (#658)", () => {
   it("vec array destructuring with type coercion validates Wasm", async () => {
     // Verify that array element destructuring where elem type differs from local type
     // does not produce local.set type mismatch
-    const result = compile(`
+    const result = await compile(`
       function destructure([a, b]: number[]): number {
         return a + b;
       }

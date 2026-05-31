@@ -30,7 +30,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -42,8 +42,8 @@ async function run(src: string): Promise<unknown> {
   return (instance.exports as { test: () => unknown }).test();
 }
 
-function watFor(src: string): string {
-  const r = compile(src, { fileName: "test.ts" });
+async function watFor(src: string): Promise<string> {
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -131,8 +131,8 @@ describe("#1269 — struct field inference Phase 3 — consumer-side direct stru
   // Structural assertions — no box → unbox roundtrip
   // ---------------------------------------------------------------------
 
-  it("issue example — `distance(createPoint(3,4))` emits zero `__unbox_number` calls", () => {
-    const wat = watFor(`
+  it("issue example — `distance(createPoint(3,4))` emits zero `__unbox_number` calls", async () => {
+    const wat = await watFor(`
       function createPoint(x: number, y: number) { return { x, y }; }
       export function distance(p: { x: number; y: number }): number {
         return Math.sqrt(p.x * p.x + p.y * p.y);
@@ -143,11 +143,11 @@ describe("#1269 — struct field inference Phase 3 — consumer-side direct stru
     expect(countCalls(wat, "__box_number")).toBe(0);
   });
 
-  it("any-typed local: `__box_number` is NOT called on struct.get result (Phase 3 fix)", () => {
+  it("any-typed local: `__box_number` is NOT called on struct.get result (Phase 3 fix)", async () => {
     // The struct-then path should emit `struct.get` directly (no boxing).
     // The extern_get-else fallback may still call `__unbox_number` once
     // per field access, but the box→unbox roundtrip is gone.
-    const wat = watFor(`
+    const wat = await watFor(`
       function createPoint(x: number, y: number) { return { x, y }; }
       export function test(): number {
         const p: any = createPoint(3, 4);
@@ -159,8 +159,8 @@ describe("#1269 — struct field inference Phase 3 — consumer-side direct stru
     expect(countCalls(wat, "__box_number")).toBe(0);
   });
 
-  it("any-typed local: `struct.get` reads field directly without intermediate box", () => {
-    const wat = watFor(`
+  it("any-typed local: `struct.get` reads field directly without intermediate box", async () => {
+    const wat = await watFor(`
       function createPoint(x: number, y: number) { return { x, y }; }
       export function test(): number {
         const p: any = createPoint(3, 4);

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -38,7 +38,7 @@ describe("SpreadElement in IIFE and expression positions", () => {
   });
 
   it("should not produce SpreadElement errors", async () => {
-    const result = compile(`
+    const result = await compile(`
       let result = 0;
       (function(a: number, b: number, c: number) {
         result = a + b + c;

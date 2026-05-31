@@ -16,22 +16,22 @@ import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
 async function run(src: string): Promise<number> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message}`);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
   return (instance.exports.test as () => number)();
 }
 
-function compileWat(src: string): string {
-  const r = compile(src, { fileName: "test.ts" });
+async function compileWat(src: string): Promise<string> {
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(`CE: ${r.errors[0]?.message}`);
   return r.wat;
 }
 
 describe("Issue #906: TDZ elision for top-level definite-assignment let/const", () => {
-  it("issue example: top-level let result, loop body assigns, console.log reads — no __tdz_result", () => {
-    const wat = compileWat(`
+  it("issue example: top-level let result, loop body assigns, console.log reads — no __tdz_result", async () => {
+    const wat = await compileWat(`
       function squared(n: number): number { return n * n; }
       let result = 0;
       for (let i = 0; i < 10000; i++) {
@@ -59,16 +59,16 @@ describe("Issue #906: TDZ elision for top-level definite-assignment let/const", 
     expect(result).toBe(1_000_000);
   });
 
-  it("simple top-level const with straight-line use — no __tdz_x", () => {
-    const wat = compileWat(`
+  it("simple top-level const with straight-line use — no __tdz_x", async () => {
+    const wat = await compileWat(`
       const x: number = 42;
       console.log(x);
     `);
     expect(wat).not.toContain("__tdz_x");
   });
 
-  it("multiple top-level let/const all definite-assigned — no __tdz_* globals", () => {
-    const wat = compileWat(`
+  it("multiple top-level let/const all definite-assigned — no __tdz_* globals", async () => {
+    const wat = await compileWat(`
       let a = 1;
       let b = 2;
       const c = a + b;
@@ -79,19 +79,19 @@ describe("Issue #906: TDZ elision for top-level definite-assignment let/const", 
     expect(wat).not.toContain("__tdz_c");
   });
 
-  it("module-level let read inside hoisted function declaration — preserves TDZ", () => {
+  it("module-level let read inside hoisted function declaration — preserves TDZ", async () => {
     // Function declarations are hoisted; they could be called before the
     // variable's initializer runs. analyzeTdzAccess returns "check" for
     // function-declaration access, so we conservatively keep TDZ tracking.
-    const wat = compileWat(`
+    const wat = await compileWat(`
       export function getResult(): number { return result; }
       let result: number = 42;
     `);
     expect(wat).toContain("__tdz_result");
   });
 
-  it("forward reference inside hoisted function — preserves TDZ", () => {
-    const wat = compileWat(`
+  it("forward reference inside hoisted function — preserves TDZ", async () => {
+    const wat = await compileWat(`
       function early(): number { return result; }
       const before: number = early();
       let result: number = 42;
@@ -99,11 +99,11 @@ describe("Issue #906: TDZ elision for top-level definite-assignment let/const", 
     expect(wat).toContain("__tdz_result");
   });
 
-  it("arrow function captured before init — preserves TDZ", () => {
+  it("arrow function captured before init — preserves TDZ", async () => {
     // The arrow function definition is at position before `let x = 0;`,
     // so the closure-deferred-call optimization in analyzeTdzAccess won't
     // apply (closureStart < declEnd) — the result is "check", not "skip".
-    const wat = compileWat(`
+    const wat = await compileWat(`
       let cb: () => number = () => x;
       let x = 0;
       cb();
@@ -112,8 +112,8 @@ describe("Issue #906: TDZ elision for top-level definite-assignment let/const", 
     expect(wat).toContain("__tdz_x");
   });
 
-  it("arrow function defined after init reads safely — TDZ elided", () => {
-    const wat = compileWat(`
+  it("arrow function defined after init reads safely — TDZ elided", async () => {
+    const wat = await compileWat(`
       let x = 42;
       const f = () => x;
       console.log(f());
@@ -123,8 +123,8 @@ describe("Issue #906: TDZ elision for top-level definite-assignment let/const", 
     expect(wat).not.toContain("__tdz_x");
   });
 
-  it("read inside a for-loop that does not contain the declaration — TDZ elided", () => {
-    const wat = compileWat(`
+  it("read inside a for-loop that does not contain the declaration — TDZ elided", async () => {
+    const wat = await compileWat(`
       let total = 0;
       for (let i = 0; i < 5; i++) {
         total = total + i;
@@ -136,8 +136,8 @@ describe("Issue #906: TDZ elision for top-level definite-assignment let/const", 
     expect(wat).not.toContain("__tdz_total");
   });
 
-  it("definite-assigned let unused after init — no __tdz_unused", () => {
-    const wat = compileWat(`
+  it("definite-assigned let unused after init — no __tdz_unused", async () => {
+    const wat = await compileWat(`
       let unused = 5;
       console.log("ok");
     `);

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("async/await support", () => {
   it("async function returning a number compiles and runs", async () => {
-    const result = compile(`
+    const result = await compile(`
       export async function getNum(): Promise<number> {
         return 42;
       }
@@ -21,7 +21,7 @@ describe("async/await support", () => {
   });
 
   it("await on a host-provided value", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class DataService {
           constructor();
@@ -50,7 +50,7 @@ describe("async/await support", () => {
   });
 
   it("async function with multiple sequential awaits", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Api {
           constructor();
@@ -82,7 +82,7 @@ describe("async/await support", () => {
   });
 
   it("async void function compiles and runs", async () => {
-    const result = compile(`
+    const result = await compile(`
       export async function doWork(): Promise<void> {
         const x = 1 + 2;
       }
@@ -100,8 +100,8 @@ describe("async/await support", () => {
     expect(() => exports.doWork()).not.toThrow();
   });
 
-  it("Promise<number> return type maps correctly in .d.ts", () => {
-    const result = compile(`
+  it("Promise<number> return type maps correctly in .d.ts", async () => {
+    const result = await compile(`
       export async function compute(): Promise<number> {
         return 5;
       }
@@ -112,7 +112,7 @@ describe("async/await support", () => {
   });
 
   it("async function with arithmetic on awaited values", async () => {
-    const result = compile(`
+    const result = await compile(`
       declare namespace Host {
         class Calc {
           constructor();
@@ -144,7 +144,7 @@ describe("async/await support", () => {
   });
 
   it("async function with boolean return", async () => {
-    const result = compile(`
+    const result = await compile(`
       export async function check(): Promise<boolean> {
         return true;
       }
@@ -161,8 +161,8 @@ describe("async/await support", () => {
     expect(exports.check()).toBe(1); // boolean true = i32(1)
   });
 
-  it("non-async function is not marked as async in .d.ts", () => {
-    const result = compile(`
+  it("non-async function is not marked as async in .d.ts", async () => {
+    const result = await compile(`
       export function syncFn(): number { return 1; }
       export async function asyncFn(): Promise<number> { return 2; }
     `);

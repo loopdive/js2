@@ -12,8 +12,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): { success: boolean; result?: number; error?: string } {
-  const compiled = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<{ success: boolean; result?: number; error?: string }> {
+  const compiled = await compile(source, { fileName: "test.ts" });
   if (!compiled.success) return { success: false, error: compiled.errors[0]?.message };
   try {
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
@@ -27,26 +27,26 @@ function compileAndRun(source: string): { success: boolean; result?: number; err
 }
 
 describe("Issue #841: Math method support", () => {
-  it("Math.cosh(0) returns 1", () => {
-    const r = compileAndRun(`export function test(): number { return Math.cosh(0) === 1 ? 1 : 0; }`);
+  it("Math.cosh(0) returns 1", async () => {
+    const r = await compileAndRun(`export function test(): number { return Math.cosh(0) === 1 ? 1 : 0; }`);
     expect(r.success).toBe(true);
     expect(r.result).toBe(1);
   });
 
-  it("Math.sinh(0) returns 0", () => {
-    const r = compileAndRun(`export function test(): number { return Math.sinh(0) === 0 ? 1 : 0; }`);
+  it("Math.sinh(0) returns 0", async () => {
+    const r = await compileAndRun(`export function test(): number { return Math.sinh(0) === 0 ? 1 : 0; }`);
     expect(r.success).toBe(true);
     expect(r.result).toBe(1);
   });
 
-  it("Math.tanh(0) returns 0", () => {
-    const r = compileAndRun(`export function test(): number { return Math.tanh(0) === 0 ? 1 : 0; }`);
+  it("Math.tanh(0) returns 0", async () => {
+    const r = await compileAndRun(`export function test(): number { return Math.tanh(0) === 0 ? 1 : 0; }`);
     expect(r.success).toBe(true);
     expect(r.result).toBe(1);
   });
 
-  it("Math.cosh(1) returns approximately 1.543", () => {
-    const r = compileAndRun(`
+  it("Math.cosh(1) returns approximately 1.543", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const v = Math.cosh(1);
         return v > 1.54 && v < 1.55 ? 1 : 0;
@@ -56,10 +56,10 @@ describe("Issue #841: Math method support", () => {
     expect(r.result).toBe(1);
   });
 
-  it("unknown Math method does not produce compile error", () => {
+  it("unknown Math method does not produce compile error", async () => {
     // This tests the false positive fix — unknown methods should fall through
     // instead of emitting "Unsupported Math method" errors
-    const compiled = compile(`export function test(): number { return 1; }`, { fileName: "test.ts" });
+    const compiled = await compile(`export function test(): number { return 1; }`, { fileName: "test.ts" });
     // Just verify the compiler doesn't crash on normal code
     expect(compiled.success).toBe(true);
   });

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("anonymous object types", () => {
   it("function returning anonymous object type", async () => {
-    const result = compile(`
+    const result = await compile(`
       function makePoint(x: number, y: number): { x: number; y: number } {
         return { x: x, y: y };
       }
@@ -29,7 +29,7 @@ describe("anonymous object types", () => {
   });
 
   it("destructuring declaration with anonymous return type", async () => {
-    const result = compile(`
+    const result = await compile(`
       function makePoint(x: number, y: number): { x: number; y: number } {
         return { x: x, y: y };
       }
@@ -54,7 +54,7 @@ describe("anonymous object types", () => {
   });
 
   it("destructuring assignment into existing locals", async () => {
-    const result = compile(`
+    const result = await compile(`
       function makeSize(w: number, h: number): { width: number; height: number } {
         return { width: w, height: h };
       }
@@ -80,8 +80,8 @@ describe("anonymous object types", () => {
     expect(exports.test()).toBe(50);
   });
 
-  it("import statement is ignored gracefully", () => {
-    const result = compile(`
+  it("import statement is ignored gracefully", async () => {
+    const result = await compile(`
       import * as THREE from "three";
       export function test(): number {
         return 42;

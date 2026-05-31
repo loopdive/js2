@@ -16,17 +16,17 @@ import { readFileSync, existsSync } from "fs";
 // test262 files live in /workspace/test262 (shared across worktrees)
 const TEST262_ROOT = "/workspace/test262/test";
 
-function compileTest262(path: string) {
+async function compileTest262(path: string) {
   const fullPath = `${TEST262_ROOT}/${path}`;
   if (!existsSync(fullPath)) throw new Error(`test262 file not found: ${path}`);
   const src = readFileSync(fullPath, "utf-8");
   const meta = parseMeta(src);
   const { source: w } = wrapTest(src, meta);
-  return compile(w, { fileName: "test.ts" });
+  return await compile(w, { fileName: "test.ts" });
 }
 
 async function runTest262(path: string): Promise<string> {
-  const r = compileTest262(path);
+  const r = await compileTest262(path);
   if (!r.success) return `CE: ${r.errors[0]?.message}`;
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -53,7 +53,7 @@ describe("#986 BigInt serialization in try/finally and for-of generator close", 
     expect(result).not.toMatch(/^CE:/);
   });
 
-  it("inline: try/finally in a generator should compile without BigInt serialization crash", () => {
+  it("inline: try/finally in a generator should compile without BigInt serialization crash", async () => {
     // Directly test that try/finally inside a generator compiles without crash.
     // The original bug: cloneFinally() used JSON.parse(JSON.stringify(...)) which
     // threw when finally instructions contained i64.const (BigInt) values.
@@ -72,7 +72,7 @@ function test() {
   return 1;
 }
 `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     // The critical check: no BigInt serialization error
     if (!r.success) {
       const msg = r.errors[0]?.message ?? "";
@@ -82,7 +82,7 @@ function test() {
     expect(r.success).toBe(true);
   });
 
-  it("inline: try/catch in a generator should compile without BigInt serialization crash", () => {
+  it("inline: try/catch in a generator should compile without BigInt serialization crash", async () => {
     // cloneCatchBody() had the same JSON.parse/stringify issue as cloneFinally()
     const src = `
 function* gen() {
@@ -99,7 +99,7 @@ function test() {
   return 1;
 }
 `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     if (!r.success) {
       const msg = r.errors[0]?.message ?? "";
       expect(msg).not.toMatch(/Do not know how to serialize a BigInt/);

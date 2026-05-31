@@ -34,7 +34,7 @@ import { compile } from "../src/index.js";
  * stands in for the OS entropy source a real WASI runtime would use).
  */
 async function runWasi(src: string): Promise<{ exports: Record<string, unknown>; memory: WebAssembly.Memory }> {
-  const r = compile(src, { fileName: "t.ts", target: "wasi" });
+  const r = await compile(src, { fileName: "t.ts", target: "wasi" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   // Allow the import callback to look up the exported memory after
   // instantiation (JS scope binding — the closure captures `state`,
@@ -95,7 +95,7 @@ describe("#1322 — Math.random() in WASI mode uses random_get", () => {
   });
 
   it("WASI binary imports `wasi_snapshot_preview1.random_get` (not `env.Math_random`)", async () => {
-    const r = compile(
+    const r = await compile(
       `
       export function r(): number { return Math.random(); }
     `,
@@ -113,7 +113,7 @@ describe("#1322 — Math.random() in WASI mode uses random_get", () => {
   it("JS-host mode regression guard: env.Math_random remains the path (no random_get)", async () => {
     // Default target (gc) keeps the host import. Don't instantiate — just
     // verify the import shape is unchanged from pre-fix behavior.
-    const r = compile(
+    const r = await compile(
       `
       export function r(): number { return Math.random(); }
     `,

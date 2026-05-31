@@ -15,7 +15,7 @@ const LODASH_DIR = path.dirname(require.resolve("lodash-es/identity.js"));
 
 async function compileSingleFile(file: string) {
   const src = readFileSync(path.join(LODASH_DIR, file), "utf-8");
-  const result = compile(src, { fileName: file });
+  const result = await compile(src, { fileName: file });
   expect(result.success, `compile ${file}: ${result.errors?.[0]?.message}`).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -23,7 +23,7 @@ async function compileSingleFile(file: string) {
 }
 
 async function compileMultiFile(file: string) {
-  const result = compileProject(path.join(LODASH_DIR, file));
+  const result = await compileProject(path.join(LODASH_DIR, file));
   expect(result.success, `compileProject ${file}: ${result.errors?.[0]?.message}`).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -66,7 +66,7 @@ describe("lodash-es Tier 1 — self-contained functions", () => {
 
 describe("lodash-es Tier 1 — multi-file functions", () => {
   it("compileProject resolves identity.js (allowJs auto-detection)", async () => {
-    const result = compileProject(path.join(LODASH_DIR, "identity.js"));
+    const result = await compileProject(path.join(LODASH_DIR, "identity.js"));
     expect(result.success, `CE: ${result.errors?.[0]?.message}`).toBe(true);
     const imports = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);

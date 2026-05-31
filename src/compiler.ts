@@ -32,7 +32,7 @@ import { applyDefineSubstitutions } from "./compiler/define-substitution.js";
 import { rewriteCjsRequire } from "./cjs-rewrite.js";
 import { preprocessImports } from "./import-resolver.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
-import { optimizeBinary } from "./optimize.js";
+import { optimizeBinaryAsync } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
 export { compileToObjectSource } from "./compiler/output.js";
 export type { ObjectCompileResult } from "./compiler/output.js";
@@ -133,7 +133,59 @@ function detectNodeFsImports(source: string): Set<string> {
  * Orchestrates the full compilation pipeline:
  * TS Source → tsc Parser+Checker → Codegen → Binary + WAT
  */
-export function compileSource(
+/**
+ * Public, async compile entry point (#1757).
+ *
+ * Codegen itself is fully synchronous; the only async-needing step is the
+ * optional Binaryen optimizer, which is now loaded lazily via
+ * `await import("binaryen")` (`optimizeBinaryAsync`) so a standalone
+ * `bun build --compile` / `deno compile` binary can embed the optimizer.
+ *
+ * The synchronous core lives in {@link compileSourceCore} for callers that
+ * MUST stay synchronous (the `eval()` host shim in `runtime-eval.ts`, which
+ * never requests optimization since Wasm host imports return synchronously).
+ */
+export async function compileSource(
+  source: string,
+  options: CompileOptions = {},
+  /** Optional persistent language service for incremental compilation */
+  languageService?: IncrementalLanguageService,
+): Promise<CompileResult> {
+  const result = compileSourceCore(source, options, languageService);
+  return applyOptionalOptimize(result, options);
+}
+
+/**
+ * Apply the optional Binaryen optimizer to a {@link CompileResult} (#1757).
+ *
+ * Uses the async {@link optimizeBinaryAsync}, which lazy-loads the Binaryen
+ * module via `await import("binaryen")` — the whole reason `compileSource` is
+ * async. No-op (returns the input unchanged) when optimization wasn't
+ * requested or the compile failed, so the sync `compileSourceCore` path pays
+ * nothing.
+ */
+async function applyOptionalOptimize(result: CompileResult, options: CompileOptions): Promise<CompileResult> {
+  if (!options.optimize || !result.success) return result;
+  const level = typeof options.optimize === "number" ? options.optimize : 3;
+  const optResult = await optimizeBinaryAsync(result.binary, { level });
+  if (optResult.optimized) {
+    result.binary = optResult.binary;
+  }
+  if (optResult.warning) {
+    result.errors.push({ message: optResult.warning, line: 0, column: 0, severity: "warning" });
+  }
+  return result;
+}
+
+/**
+ * Synchronous compile core. Produces a complete {@link CompileResult} with an
+ * **unoptimized** binary — the optional Binaryen pass is applied separately by
+ * the async {@link compileSource} wrapper (or skipped entirely for the sync
+ * `eval` shim). Everything downstream of codegen (WAT, .d.ts, imports helper,
+ * WIT) is derived from the binaryen-independent module IR, not from the
+ * post-optimize binary, so deferring optimization to the wrapper is sound.
+ */
+export function compileSourceCore(
   source: string,
   options: CompileOptions = {},
   /** Optional persistent language service for incremental compilation */
@@ -485,17 +537,12 @@ export function compileSource(
     };
   }
 
-  // Step 3b: Optimize binary with Binaryen (optional)
-  if (options.optimize) {
-    const level = typeof options.optimize === "number" ? options.optimize : 3;
-    const optResult = optimizeBinary(binary, { level });
-    if (optResult.optimized) {
-      binary = optResult.binary;
-    }
-    if (optResult.warning) {
-      pushSourceAnchoredDiagnostic(errors, ast.sourceFile, optResult.warning, "warning");
-    }
-  }
+  // Step 3b: Optimize binary with Binaryen (optional) — deferred to the async
+  // {@link compileSource} wrapper via {@link applyOptionalOptimize} so the
+  // Binaryen module can be lazily `await import`-ed (#1757). The unoptimized
+  // binary flows through here unchanged; everything below derives from the
+  // module IR, not the binary, so the deferred swap is observationally
+  // identical to optimizing inline.
 
   // Step 4: Emit WAT (optional)
   let wat = "";
@@ -548,11 +595,11 @@ export function compileSource(
  * Compile multiple TypeScript source files into a single Wasm module.
  * Supports cross-file imports: `import { foo } from "./bar"`.
  */
-export function compileMultiSource(
+export async function compileMultiSource(
   files: Record<string, string>,
   entryFile: string,
   options: CompileOptions = {},
-): CompileResult {
+): Promise<CompileResult> {
   const errors: CompileError[] = [];
   const emitWatOutput = options.emitWat !== false;
 
@@ -769,7 +816,7 @@ export function compileMultiSource(
   // Optimize binary with Binaryen (optional)
   if (options.optimize) {
     const level = typeof options.optimize === "number" ? options.optimize : 3;
-    const optResult = optimizeBinary(binary, { level });
+    const optResult = await optimizeBinaryAsync(binary, { level });
     if (optResult.optimized) {
       binary = optResult.binary;
     }
@@ -823,7 +870,7 @@ export function compileMultiSource(
  * Uses ts.createProgram with real filesystem access -- TypeScript resolves
  * all imports automatically via standard module resolution.
  */
-export function compileFilesSource(entryPath: string, options: CompileOptions = {}): CompileResult {
+export async function compileFilesSource(entryPath: string, options: CompileOptions = {}): Promise<CompileResult> {
   const errors: CompileError[] = [];
   const emitWatOutput = options.emitWat !== false;
 
@@ -1009,7 +1056,7 @@ export function compileFilesSource(entryPath: string, options: CompileOptions = 
 
   if (options.optimize) {
     const level = typeof options.optimize === "number" ? options.optimize : 3;
-    const optResult = optimizeBinary(binary, { level });
+    const optResult = await optimizeBinaryAsync(binary, { level });
     if (optResult.optimized) {
       binary = optResult.binary;
     }

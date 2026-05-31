@@ -43,11 +43,11 @@ describe("#1679 — new this(...) dynamic constructor", () => {
     expect(exports.test()).toBe(7);
   });
 
-  it("function-style class with new this() static factory compiles (acorn idiom)", () => {
+  it("function-style class with new this() static factory compiles (acorn idiom)", async () => {
     // The acorn pattern: a constructor *function* with prototype methods and a
     // static factory using `new this(...)`. This used to emit "Unsupported new
     // expression for class" — it must now compile to valid Wasm.
-    const result = compile(`
+    const result = await compile(`
       function Parser(this: any, x: number) { this.x = x; }
       Parser.prototype.getX = function (this: any): number { return this.x; };
       Parser.make = function (this: any, v: number): any { return new this(v); };

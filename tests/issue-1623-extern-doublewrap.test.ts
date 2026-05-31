@@ -8,7 +8,7 @@ import { compile } from "../src/index.ts";
 // with `expected type anyref, found global.get of type externref`.
 
 async function instantiates(src: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) return { ok: false, reason: `CE: ${r.errors[0]?.message ?? "unknown"}` };
   try {
     const imports = new Proxy({}, { get: () => new Proxy({}, { get: () => () => undefined }) });

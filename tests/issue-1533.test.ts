@@ -46,7 +46,7 @@ afterAll(() => {
 });
 
 async function compileAndInstantiate(source: string, opts: { allowFs?: boolean } = {}) {
-  const r = compile(source, {
+  const r = await compile(source, {
     allowFs: opts.allowFs ?? false,
     fileName: "input.ts",
   });
@@ -164,7 +164,7 @@ describe("#1533 — Node API host imports", () => {
     });
 
     it("without allowFs the compiler refuses the import (capability gate)", async () => {
-      const r = compile(
+      const r = await compile(
         `
           import { readFileSync } from "node:fs";
           export function readFixture(path: string): string {
@@ -223,8 +223,8 @@ describe("#1533 — Node API host imports", () => {
   // ReferenceError. A separate spec-gap issue tracks adding them; this test
   // file documents the current state as a regression guard.
   describe("known gaps (#1533 scope)", () => {
-    it("bare `__dirname` reference is treated as an undeclared identifier (warning, not host import)", () => {
-      const r = compile(
+    it("bare `__dirname` reference is treated as an undeclared identifier (warning, not host import)", async () => {
+      const r = await compile(
         `
           export function dir(): any { return __dirname; }
         `,

@@ -3,8 +3,8 @@ import { compile } from "../src/index.js";
 import { assertEquivalent } from "./equivalence/helpers.js";
 
 describe("Issue #381: Nullish coalescing false positives", () => {
-  it("compiles ?? on number (never nullish) without error", () => {
-    const result = compile(`
+  it("compiles ?? on number (never nullish) without error", async () => {
+    const result = await compile(`
       export function test(): number {
         var x = 42;
         var y = x ?? 0;
@@ -16,8 +16,8 @@ describe("Issue #381: Nullish coalescing false positives", () => {
     expect(errors).toEqual([]);
   });
 
-  it("compiles ?? on string (never nullish) without error", () => {
-    const result = compile(`
+  it("compiles ?? on string (never nullish) without error", async () => {
+    const result = await compile(`
       export function test(): string {
         var s = "hello";
         var t = s ?? "default";
@@ -28,8 +28,8 @@ describe("Issue #381: Nullish coalescing false positives", () => {
     expect(errors).toEqual([]);
   });
 
-  it("compiles ?? on boolean (never nullish) without error", () => {
-    const result = compile(`
+  it("compiles ?? on boolean (never nullish) without error", async () => {
+    const result = await compile(`
       export function test(): number {
         var flag = true;
         var val = flag ?? false;

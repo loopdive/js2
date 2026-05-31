@@ -3,7 +3,7 @@ import { compile } from "../../src/index.js";
 import { instantiateWithRuntime } from "./helpers.js";
 
 async function compileAndRun(source: string) {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   expect(result.success, `CE: ${result.errors.map((e) => e.message).join("; ")}`).toBe(true);
   const instance = await instantiateWithRuntime(result);
   return instance.exports as Record<string, Function>;

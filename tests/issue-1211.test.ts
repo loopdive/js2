@@ -27,7 +27,7 @@ import { buildImports, instantiateWasm } from "../src/runtime.js";
  * of the natural operand types.
  */
 async function run(src: string, exportName: string, ...args: number[]): Promise<number> {
-  const r = compile(src, { fileName: "t.ts", allowJs: true, target: "gc", fast: true, optimize: 0 });
+  const r = await compile(src, { fileName: "t.ts", allowJs: true, target: "gc", fast: true, optimize: 0 });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors.map((e) => e.message).join("; ")}`);
   }
@@ -99,7 +99,7 @@ describe("#1211 — fast-mode recursive arithmetic", () => {
         return result;
       }
     `;
-    const r = compile(src, { fileName: "t.ts", allowJs: true, target: "gc", fast: true, optimize: 0 });
+    const r = await compile(src, { fileName: "t.ts", allowJs: true, target: "gc", fast: true, optimize: 0 });
     expect(r.success).toBe(true);
     if (!r.success) return;
     const imports = buildImports(r.imports, {}, r.stringPool);

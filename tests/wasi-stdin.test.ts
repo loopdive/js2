@@ -8,8 +8,8 @@ const PROCESS_DECL = `declare const process: {
 };`;
 
 describe("WASI stdin via fd_read (#1653)", () => {
-  it("registers fd_read import when process.stdin.read() is used", () => {
-    const result = compile(
+  it("registers fd_read import when process.stdin.read() is used", async () => {
+    const result = await compile(
       `
       ${PROCESS_DECL}
       export function main(): void {
@@ -26,16 +26,16 @@ describe("WASI stdin via fd_read (#1653)", () => {
     expect(result.binary.length).toBeGreaterThan(0);
   });
 
-  it("does NOT register fd_read when process.stdin.read() is not used", () => {
-    const result = compile(`console.log("no stdin here");`, { target: "wasi" });
+  it("does NOT register fd_read when process.stdin.read() is not used", async () => {
+    const result = await compile(`console.log("no stdin here");`, { target: "wasi" });
     expect(result.success).toBe(true);
     expect(result.wat).not.toContain("fd_read");
   });
 
-  it("does not add WASI imports in default (non-wasi) mode", () => {
+  it("does not add WASI imports in default (non-wasi) mode", async () => {
     // In non-wasi mode the codegen path is gated by ctx.wasi, so no WASI
     // imports should leak in.
-    const result = compile(
+    const result = await compile(
       `
       ${PROCESS_DECL}
       export function main(): void {

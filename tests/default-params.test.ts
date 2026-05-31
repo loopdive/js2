@@ -4,7 +4,7 @@ import { buildImports } from "../src/runtime.js";
 
 describe("default parameter values", () => {
   it("numeric default value is used when argument is omitted", { timeout: 15000 }, async () => {
-    const result = compile(`
+    const result = await compile(`
       function foo(x: number = 42): number {
         return x;
       }
@@ -26,7 +26,7 @@ describe("default parameter values", () => {
   });
 
   it("numeric default value is overridden when argument is provided", { timeout: 15000 }, async () => {
-    const result = compile(`
+    const result = await compile(`
       function foo(x: number = 42): number {
         return x;
       }
@@ -48,7 +48,7 @@ describe("default parameter values", () => {
   });
 
   it("multiple numeric defaults", { timeout: 15000 }, async () => {
-    const result = compile(`
+    const result = await compile(`
       function add(a: number = 1, b: number = 2): number {
         return a + b;
       }
@@ -78,7 +78,7 @@ describe("default parameter values", () => {
   });
 
   it("string default value is used when argument is omitted", { timeout: 15000 }, async () => {
-    const result = compile(`
+    const result = await compile(`
       function greet(name: string = "world"): string {
         return "Hello " + name;
       }
@@ -100,7 +100,7 @@ describe("default parameter values", () => {
   });
 
   it("string default value is overridden when argument is provided", { timeout: 15000 }, async () => {
-    const result = compile(`
+    const result = await compile(`
       function greet(name: string = "world"): string {
         return "Hello " + name;
       }
@@ -122,7 +122,7 @@ describe("default parameter values", () => {
   });
 
   it("mixed required and default params", { timeout: 15000 }, async () => {
-    const result = compile(`
+    const result = await compile(`
       function calc(base: number, multiplier: number = 10): number {
         return base * multiplier;
       }
@@ -148,7 +148,7 @@ describe("default parameter values", () => {
   });
 
   it("boolean default value (true)", { timeout: 15000 }, async () => {
-    const result = compile(`
+    const result = await compile(`
       function check(flag: boolean = true): number {
         if (flag) {
           return 1;
@@ -177,7 +177,7 @@ describe("default parameter values", () => {
   });
 
   it("expression as default value", { timeout: 15000 }, async () => {
-    const result = compile(`
+    const result = await compile(`
       function doubleOrDefault(x: number = 3 + 4): number {
         return x * 2;
       }

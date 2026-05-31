@@ -9,21 +9,21 @@ const SIMPLE_SOURCE = `
 `;
 
 describe("emitWat option (#693)", () => {
-  it("emits WAT by default", () => {
-    const result = compile(SIMPLE_SOURCE);
+  it("emits WAT by default", async () => {
+    const result = await compile(SIMPLE_SOURCE);
     expect(result.success).toBe(true);
     expect(result.wat).toBeTruthy();
     expect(result.wat).toContain("func");
   });
 
-  it("emits WAT when emitWat: true", () => {
-    const result = compile(SIMPLE_SOURCE, { emitWat: true });
+  it("emits WAT when emitWat: true", async () => {
+    const result = await compile(SIMPLE_SOURCE, { emitWat: true });
     expect(result.success).toBe(true);
     expect(result.wat).toBeTruthy();
   });
 
-  it("skips WAT when emitWat: false", () => {
-    const result = compile(SIMPLE_SOURCE, { emitWat: false });
+  it("skips WAT when emitWat: false", async () => {
+    const result = await compile(SIMPLE_SOURCE, { emitWat: false });
     expect(result.success).toBe(true);
     expect(result.wat).toBe("");
     // Binary should still be valid
@@ -31,7 +31,7 @@ describe("emitWat option (#693)", () => {
   });
 
   it("produces valid binary with emitWat: false", async () => {
-    const result = compile(SIMPLE_SOURCE, { emitWat: false });
+    const result = await compile(SIMPLE_SOURCE, { emitWat: false });
     expect(result.success).toBe(true);
 
     const { instance } = await WebAssembly.instantiate(result.binary, {

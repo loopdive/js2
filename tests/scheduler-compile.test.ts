@@ -18,7 +18,7 @@ import { buildImports } from "../src/runtime.js";
 // Helper: compile + instantiate + call exported function
 // ---------------------------------------------------------------------------
 async function run(source: string, fn: string = "test", args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -234,13 +234,13 @@ function resetHeap(): void {
 // Tests
 // ---------------------------------------------------------------------------
 describe("React scheduler min-heap compiled to Wasm", () => {
-  it("compiles the min-heap source without errors", () => {
+  it("compiles the min-heap source without errors", async () => {
     const source =
       SCHEDULER_HEAP_SOURCE +
       `
 export function test(): number { return 1; }
 `;
-    const result = compile(source);
+    const result = await compile(source);
     if (!result.success) {
       console.log("Compile errors:");
       for (const e of result.errors) {
@@ -442,7 +442,7 @@ export function test(): number {
   return 0;
 }
 `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     // When null-check works, this will return 1
     // Currently returns 0 because the null check fails

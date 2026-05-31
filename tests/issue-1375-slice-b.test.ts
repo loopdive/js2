@@ -4,7 +4,7 @@ import { buildImports } from "./src/runtime.js";
 
 describe("#1375 Slice B — IR-native ?. on nullable extern receivers (#1392 primitives)", () => {
   async function runTest(src: string): Promise<{ pass: boolean; ret?: unknown; error?: string }> {
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     if (!result.success) return { pass: false, error: result.error };
     const importObj = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);

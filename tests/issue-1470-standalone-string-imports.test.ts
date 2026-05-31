@@ -34,8 +34,8 @@ function assertNoJsHostStringImports(imports: ReadonlyArray<{ module: string; na
 }
 
 describe("#1470 --target standalone removes JS-host string imports", () => {
-  it("string + string concatenation uses no __concat_N", () => {
-    const r = compile(
+  it("string + string concatenation uses no __concat_N", async () => {
+    const r = await compile(
       `
         export function plus(a: string, b: string, c: string): string {
           return a + b + c;
@@ -49,8 +49,8 @@ describe("#1470 --target standalone removes JS-host string imports", () => {
     expect(r.wat).toContain("NativeString");
   });
 
-  it("template literal substitution uses no __concat_N", () => {
-    const r = compile(
+  it("template literal substitution uses no __concat_N", async () => {
+    const r = await compile(
       `
         export function tmpl(name: string, n: number): string {
           return \`hi \${name} #\${n}!\`;
@@ -62,8 +62,8 @@ describe("#1470 --target standalone removes JS-host string imports", () => {
     assertNoJsHostStringImports(r.imports);
   });
 
-  it("string equality uses native helpers, not wasm:js-string", () => {
-    const r = compile(
+  it("string equality uses native helpers, not wasm:js-string", async () => {
+    const r = await compile(
       `
         export function eq(a: string, b: string): number {
           return a === b ? 1 : 0;
@@ -76,8 +76,8 @@ describe("#1470 --target standalone removes JS-host string imports", () => {
     expect(r.wat).not.toContain("wasm:js-string");
   });
 
-  it("string.length / slice / indexOf compile without host string_method", () => {
-    const r = compile(
+  it("string.length / slice / indexOf compile without host string_method", async () => {
+    const r = await compile(
       `
         export function probe(s: string): number {
           const a = s.length;
@@ -92,20 +92,20 @@ describe("#1470 --target standalone removes JS-host string imports", () => {
     assertNoJsHostStringImports(r.imports);
   });
 
-  it("forces nativeStrings: true even when caller passes nativeStrings: false", () => {
+  it("forces nativeStrings: true even when caller passes nativeStrings: false", async () => {
     // standalone is the strongest assertion: even an explicit `nativeStrings:
     // undefined` (the default) must imply true under target=standalone.
-    const r = compile(`export function id(s: string): string { return s; }`, { target: "standalone" });
+    const r = await compile(`export function id(s: string): string { return s; }`, { target: "standalone" });
     expect(r.success).toBe(true);
     expect(r.wat).toContain("NativeString");
     expect(r.wat).not.toContain("wasm:js-string");
   });
 
-  it("default target (gc) still uses the JS-host wasm:js-string path", () => {
+  it("default target (gc) still uses the JS-host wasm:js-string path", async () => {
     // Regression guard: standalone is opt-in. Default mode keeps the host
     // string machinery so browser-targeted modules stay small and use native
     // wasm:js-string builtins where the engine provides them.
-    const r = compile(
+    const r = await compile(
       `
         export function tmpl(name: string, n: number): string {
           return \`hi \${name} #\${n}!\`;

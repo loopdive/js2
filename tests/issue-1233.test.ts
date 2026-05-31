@@ -28,7 +28,7 @@ interface InstantiateResult {
 }
 
 async function compileAndInstantiate(source: string, experimentalIR: boolean): Promise<InstantiateResult> {
-  const r = compile(source, { fileName: "test.ts", experimentalIR });
+  const r = await compile(source, { fileName: "test.ts", experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -198,8 +198,8 @@ describe("#1233 — pseudo-extern Array registry has all 7 target methods", () =
     ["join", `export function f(a: number[]): number { return a.join(",").length; }`],
     ["concat", `export function f(a: number[], b: number[]): number { return a.concat(b).length; }`],
   ] as const) {
-    it(`${method}: IR compile succeeds`, () => {
-      const r = compile(src, { fileName: "test.ts", experimentalIR: true });
+    it(`${method}: IR compile succeeds`, async () => {
+      const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
       expect(r.success).toBe(true);
     });
   }

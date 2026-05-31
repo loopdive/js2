@@ -15,16 +15,16 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 
-function rejects(src: string): boolean {
-  const r = compile(src, { fileName: "test.ts" });
+async function rejects(src: string): Promise<boolean> {
+  const r = await compile(src, { fileName: "test.ts" });
   return r.success === false;
 }
 
 describe("#1722 — AssignmentTargetType early SyntaxError", () => {
   it.each(["() => ({}) = 1;", "async () => ({}) = 1;", "({}) = 1;", "({a:1}) = 1;", "() => (1 = 1);"])(
     "rejects invalid assignment target: %j",
-    (src) => {
-      expect(rejects(src)).toBe(true);
+    async (src) => {
+      expect(await rejects(src)).toBe(true);
     },
   );
 
@@ -34,7 +34,7 @@ describe("#1722 — AssignmentTargetType early SyntaxError", () => {
     "let a = 0, b = 0; [a, b] = [1, 2];",
     "let a = 0; ({ a } = { a: 1 });",
     "let y = 0; const f = () => (y = 1); f();",
-  ])("still accepts valid assignment target: %j", (src) => {
-    expect(rejects(src)).toBe(false);
+  ])("still accepts valid assignment target: %j", async (src) => {
+    expect(await rejects(src)).toBe(false);
   });
 });

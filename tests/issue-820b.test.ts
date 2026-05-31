@@ -9,7 +9,7 @@ import { compile } from "../src/index.js";
 //   - language/computed-property-names/object/accessor/setter.js
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -136,7 +136,7 @@ describe("#820b — Object literal computed accessor names with literal keys", (
     // Sanity: we only handle literal-only computed keys; runtime-evaluated keys
     // remain out of scope (would require runtime key resolution).
     // The compile should at least succeed without crashing.
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         const k: string = 'computed';
         const obj: any = {

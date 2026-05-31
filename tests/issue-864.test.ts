@@ -13,8 +13,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): { success: boolean; result?: number; error?: string } {
-  const compiled = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<{ success: boolean; result?: number; error?: string }> {
+  const compiled = await compile(source, { fileName: "test.ts" });
   if (!compiled.success) return { success: false, error: compiled.errors[0]?.message };
   try {
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
@@ -28,8 +28,8 @@ function compileAndRun(source: string): { success: boolean; result?: number; err
 }
 
 describe("Issue #864: WeakMap/WeakSet Symbol keys", () => {
-  it("Symbol as WeakMap key", () => {
-    const r = compileAndRun(`
+  it("Symbol as WeakMap key", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const map = new WeakMap();
         const key = Symbol('test');
@@ -41,8 +41,8 @@ describe("Issue #864: WeakMap/WeakSet Symbol keys", () => {
     expect(r.result).toBe(1);
   });
 
-  it("Symbol as WeakSet element", () => {
-    const r = compileAndRun(`
+  it("Symbol as WeakSet element", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const set = new WeakSet();
         const key = Symbol('test');
@@ -54,8 +54,8 @@ describe("Issue #864: WeakMap/WeakSet Symbol keys", () => {
     expect(r.result).toBe(1);
   });
 
-  it("two different Symbols have distinct identities", () => {
-    const r = compileAndRun(`
+  it("two different Symbols have distinct identities", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const map = new WeakMap();
         const a = Symbol('a');
@@ -69,8 +69,8 @@ describe("Issue #864: WeakMap/WeakSet Symbol keys", () => {
     expect(r.result).toBe(1);
   });
 
-  it("object keys still work after Symbol fix", () => {
-    const r = compileAndRun(`
+  it("object keys still work after Symbol fix", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const map = new WeakMap();
         const key = {};

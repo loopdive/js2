@@ -9,7 +9,7 @@ import { buildImports } from "../src/runtime.ts";
 // edit can't quietly drop the descriptor shape or iterator semantics.
 
 async function run(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "t.ts" });
+  const r = await compile(src, { fileName: "t.ts" });
   if (!r.success) throw new Error("CE: " + (r.errors[0]?.message ?? "unknown"));
   const imports = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown>;
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);

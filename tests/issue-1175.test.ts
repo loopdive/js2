@@ -21,8 +21,8 @@ import { compile } from "../src/index.js";
  * `addStringImports` late.
  */
 describe("#1175 — string += under --target wasi produces a valid binary", () => {
-  function compileWasi(source: string) {
-    return compile(source, { fileName: "t.js", allowJs: true, target: "wasi", optimize: 0 });
+  async function compileWasi(source: string) {
+    return await compile(source, { fileName: "t.js", allowJs: true, target: "wasi", optimize: 0 });
   }
 
   it("simple `text += literal` compiles to a valid binary", async () => {
@@ -34,7 +34,7 @@ describe("#1175 — string += under --target wasi produces a valid binary", () =
         return text.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     // Hand the binary to WebAssembly to confirm validation passes —
     // browser/Node WebAssembly only accepts validated bytes. Failure to
@@ -62,7 +62,7 @@ describe("#1175 — string += under --target wasi produces a valid binary", () =
         return hash | 0;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     await WebAssembly.compile(r.binary);
   });
@@ -78,7 +78,7 @@ describe("#1175 — string += under --target wasi produces a valid binary", () =
         return s.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     await WebAssembly.compile(r.binary);
   });
@@ -93,7 +93,7 @@ describe("#1175 — string += under --target wasi produces a valid binary", () =
         return s.length;
       }
     `;
-    const r = compileWasi(src);
+    const r = await compileWasi(src);
     expect(r.success).toBe(true);
     await WebAssembly.compile(r.binary);
   });
@@ -107,7 +107,7 @@ describe("#1175 — string += under --target wasi produces a valid binary", () =
         return s.length;
       }
     `;
-    const r = compile(src, { fileName: "t.ts" });
+    const r = await compile(src, { fileName: "t.ts" });
     expect(r.success).toBe(true);
     await WebAssembly.compile(r.binary);
   });

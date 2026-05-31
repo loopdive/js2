@@ -28,7 +28,7 @@ async function compileAndRun(
   args: ReadonlyArray<string | number | boolean>,
   experimentalIR: boolean,
 ): Promise<unknown> {
-  const r = compile(source, { experimentalIR });
+  const r = await compile(source, { experimentalIR });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "<unknown>"}`);
   }

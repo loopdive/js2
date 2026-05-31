@@ -7,8 +7,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 function expectError(source: string, description: string) {
-  it(description, () => {
-    const result = compile(source, { fileName: "test.ts", emitWat: false });
+  it(description, async () => {
+    const result = await compile(source, { fileName: "test.ts", emitWat: false });
     const hasError = !result.success || result.errors.some((e) => e.severity === "error");
     const hasWarning = result.errors.some((e) => e.severity === "warning");
     expect(hasError || hasWarning).toBe(true);
@@ -16,8 +16,8 @@ function expectError(source: string, description: string) {
 }
 
 function expectSuccess(source: string, description: string) {
-  it(description, () => {
-    const result = compile(source, { fileName: "test.ts", emitWat: false });
+  it(description, async () => {
+    const result = await compile(source, { fileName: "test.ts", emitWat: false });
     expect(result.success).toBe(true);
   });
 }

@@ -107,7 +107,7 @@ export interface CompileResult {
    * into a single object the caller passes directly:
    *
    * ```js
-   * const r = compile(src);
+   * const r = await compile(src);
    * const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
    * ```
    *
@@ -245,9 +245,14 @@ import { buildImports as buildImportsRuntime } from "./runtime.js";
 /**
  * Compile TypeScript source to Wasm GC binary.
  *
+ * Returns a `Promise` — `compile()` is async so the optional Binaryen
+ * optimizer can be lazily loaded via `await import("binaryen")` (#1757),
+ * which lets a standalone `bun build --compile` / `deno compile` binary
+ * embed the optimizer.
+ *
  * @example
  * ```ts
- * const result = compile(`
+ * const result = await compile(`
  *   export function add(a: number, b: number): number {
  *     return a + b;
  *   }
@@ -258,8 +263,8 @@ import { buildImports as buildImportsRuntime } from "./runtime.js";
  * }
  * ```
  */
-export function compile(source: string, options?: CompileOptions): CompileResult {
-  return withImportObject(compileSource(source, options));
+export async function compile(source: string, options?: CompileOptions): Promise<CompileResult> {
+  return withImportObject(await compileSource(source, options));
 }
 
 /**
@@ -304,12 +309,12 @@ function withImportObject(result: CompileResult): CompileResult {
  * Compile multiple TypeScript source files into a single Wasm GC binary.
  * Supports cross-file imports: `import { foo } from "./bar"`.
  */
-export function compileMulti(
+export async function compileMulti(
   files: Record<string, string>,
   entryFile: string,
   options?: CompileOptions,
-): CompileResult {
-  return withImportObject(compileMultiSource(files, entryFile, options));
+): Promise<CompileResult> {
+  return withImportObject(await compileMultiSource(files, entryFile, options));
 }
 
 /**
@@ -325,17 +330,17 @@ export function compileMulti(
  * @example
  * ```ts
  * // Given: src/main.ts imports from src/utils.ts
- * const result = compileFiles("src/main.ts");
+ * const result = await compileFiles("src/main.ts");
  * // TypeScript resolves src/utils.ts automatically
  * ```
  */
-export function compileFiles(entryPath: string, options?: CompileOptions): CompileResult {
-  return withImportObject(compileFilesSource(entryPath, options));
+export async function compileFiles(entryPath: string, options?: CompileOptions): Promise<CompileResult> {
+  return withImportObject(await compileFilesSource(entryPath, options));
 }
 
 /** Only WAT text (debug) */
-export function compileToWat(source: string): string {
-  const result = compileSource(source, { emitWat: true });
+export async function compileToWat(source: string): Promise<string> {
+  const result = await compileSource(source, { emitWat: true });
   return result.wat;
 }
 
@@ -356,7 +361,7 @@ export function compileToObject(source: string, options?: CompileOptions) {
  * @param entryFile - Absolute or relative path to the entry .ts file
  * @param options - Compile options including resolve and externals settings
  */
-export function compileProject(entryFile: string, options?: CompileOptions): CompileResult {
+export async function compileProject(entryFile: string, options?: CompileOptions): Promise<CompileResult> {
   const resolvedEntry = path.resolve(entryFile);
   const rootDir = path.dirname(resolvedEntry);
 
@@ -383,7 +388,7 @@ export function compileProject(entryFile: string, options?: CompileOptions): Com
   // Entry file key
   const entryKey = `./${path.relative(rootDir, resolvedEntry)}`;
 
-  return withImportObject(compileMultiSource(files, entryKey, effectiveOptions));
+  return withImportObject(await compileMultiSource(files, entryKey, effectiveOptions));
 }
 
 /**
@@ -397,18 +402,18 @@ export function compileProject(entryFile: string, options?: CompileOptions): Com
  * @example
  * ```ts
  * const compiler = createIncrementalCompiler();
- * const result1 = compiler.compile("export function a(): number { return 1; }");
- * const result2 = compiler.compile("export function b(): number { return 2; }"); // faster
+ * const result1 = await compiler.compile("export function a(): number { return 1; }");
+ * const result2 = await compiler.compile("export function b(): number { return 2; }"); // faster
  * compiler.dispose(); // free resources when done
  * ```
  */
 export function createIncrementalCompiler(defaultOptions?: CompileOptions): {
-  compile: (source: string, options?: CompileOptions) => CompileResult;
+  compile: (source: string, options?: CompileOptions) => Promise<CompileResult>;
   dispose: () => void;
 } {
   const service = new IncrementalLanguageService();
   return {
-    compile(source: string, options?: CompileOptions): CompileResult {
+    compile(source: string, options?: CompileOptions): Promise<CompileResult> {
       return compileSource(source, { ...defaultOptions, ...options }, service);
     },
     dispose() {

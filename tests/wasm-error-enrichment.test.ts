@@ -56,13 +56,13 @@ describe("lookupSourceMapOffset", () => {
     expect(lookupSourceMapOffset("not json", 100)).toBeUndefined();
   });
 
-  it("looks up a line from a real compile result", () => {
+  it("looks up a line from a real compile result", async () => {
     // Compile a simple program with source maps
     const source = `export function test(): f64 {
   const x: f64 = 42;
   return x;
 }`;
-    const result = compile(source, { sourceMap: true });
+    const result = await compile(source, { sourceMap: true });
     expect(result.success).toBe(true);
     expect(result.sourceMap).toBeDefined();
 
@@ -89,13 +89,13 @@ describe("enrichErrorMessage", () => {
     expect(enriched).toBe("something");
   });
 
-  it("includes source line when source map and byte offset available", () => {
+  it("includes source line when source map and byte offset available", async () => {
     // Compile with source map, then simulate an error with byte offset
     const source = `export function test(): f64 {
   const x: f64 = 42;
   return x;
 }`;
-    const result = compile(source, { sourceMap: true });
+    const result = await compile(source, { sourceMap: true });
     expect(result.success).toBe(true);
 
     // Parse source map to find a valid offset
@@ -126,7 +126,7 @@ export function test(): f64 {
   let f: Foo | null = null;
   return f!.value;
 }`;
-    const result = compile(source, { sourceMap: true });
+    const result = await compile(source, { sourceMap: true });
     if (!result.success) {
       // If compilation fails, skip this test (codegen issue, not our concern)
       return;

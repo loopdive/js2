@@ -3,7 +3,7 @@ import { compile } from "../../src/index.js";
 import { buildImports } from "../../src/runtime.js";
 
 async function run(source: string, fn: string = "main"): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -21,8 +21,8 @@ async function run(source: string, fn: string = "main"): Promise<unknown> {
  * succeeds and basic pass-through semantics work for simple patterns.
  */
 describe("Proxy compilation equivalence", () => {
-  it("Proxy compiles with class target and empty handler", () => {
-    const result = compile(`
+  it("Proxy compiles with class target and empty handler", async () => {
+    const result = await compile(`
       class Point {
         x: number;
         y: number;
@@ -40,8 +40,8 @@ describe("Proxy compilation equivalence", () => {
     expect(result.success).toBe(true);
   });
 
-  it("Proxy compiles with object literal target", () => {
-    const result = compile(`
+  it("Proxy compiles with object literal target", async () => {
+    const result = await compile(`
       export function main(): number {
         const target = { a: 3, b: 7 };
         const proxy = new Proxy(target, {});
@@ -51,8 +51,8 @@ describe("Proxy compilation equivalence", () => {
     expect(result.success).toBe(true);
   });
 
-  it("Proxy compiles with get handler (compiled as pass-through)", () => {
-    const result = compile(`
+  it("Proxy compiles with get handler (compiled as pass-through)", async () => {
+    const result = await compile(`
       class Box {
         value: number;
         constructor(v: number) { this.value = v; }
@@ -68,8 +68,8 @@ describe("Proxy compilation equivalence", () => {
     expect(result.success).toBe(true);
   });
 
-  it("Proxy compiles with set handler", () => {
-    const result = compile(`
+  it("Proxy compiles with set handler", async () => {
+    const result = await compile(`
       class Box {
         value: number;
         constructor(v: number) { this.value = v; }
@@ -86,8 +86,8 @@ describe("Proxy compilation equivalence", () => {
     expect(result.success).toBe(true);
   });
 
-  it("Proxy compiles with has handler", () => {
-    const result = compile(`
+  it("Proxy compiles with has handler", async () => {
+    const result = await compile(`
       export function main(): number {
         const target = { x: 1 };
         const p = new Proxy(target, {

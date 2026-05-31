@@ -31,16 +31,16 @@ function createFreshCompiler() {
 }
 createFreshCompiler();
 
-process.on("message", (msg) => {
+process.on("message", async (msg) => {
   const start = performance.now();
   try {
     try {
       const compileFn = incrementalCompiler ? incrementalCompiler.compile : compile;
       const result = incrementalCompiler
-        ? compileFn(msg.source, {
+        ? await compileFn(msg.source, {
             sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",
           })
-        : compile(msg.source, {
+        : await compile(msg.source, {
             fileName: "test.ts",
             sourceMap: true,
             sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",

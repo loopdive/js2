@@ -7,7 +7,7 @@ import { buildImports } from "../src/runtime.js";
 // iterable case is the real exerciser of __iterator_next (string for-of uses the
 // array fast-path and never calls it).
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -20,8 +20,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
 }
 
 describe("#1620 multi-value __iterator_next", () => {
-  it("eliminates __iterator_done / __iterator_value imports", () => {
-    const result = compile(`
+  it("eliminates __iterator_done / __iterator_value imports", async () => {
+    const result = await compile(`
       export function test(): string {
         let r: string = "";
         for (const ch of "hi") { r = r + ch; }

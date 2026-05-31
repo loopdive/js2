@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function compileAndRun(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   expect(
     result.success,
     `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -196,24 +196,24 @@ describe("math builtins", () => {
 });
 
 describe("binary encoder", () => {
-  it("valid wasm header", () => {
-    const r = compile(`export function id(x: number): number { return x; }`);
+  it("valid wasm header", async () => {
+    const r = await compile(`export function id(x: number): number { return x; }`);
     expect(r.binary[0]).toBe(0x00);
     expect(r.binary[1]).toBe(0x61);
     expect(r.binary[2]).toBe(0x73);
     expect(r.binary[3]).toBe(0x6d);
   });
 
-  it("WebAssembly.validate accepts output", () => {
-    const r = compile(`export function add(a: number, b: number): number { return a + b; }`);
+  it("WebAssembly.validate accepts output", async () => {
+    const r = await compile(`export function add(a: number, b: number): number { return a + b; }`);
     expect(r.success).toBe(true);
     expect(WebAssembly.validate(r.binary)).toBe(true);
   });
 });
 
 describe("wat output", () => {
-  it("readable", () => {
-    const r = compile(`export function add(a: number, b: number): number { return a + b; }`);
+  it("readable", async () => {
+    const r = await compile(`export function add(a: number, b: number): number { return a + b; }`);
     expect(r.wat).toContain("func");
     expect(r.wat).toContain("f64.add");
     expect(r.wat).toContain("export");

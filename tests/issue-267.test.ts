@@ -14,7 +14,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("Issue #267 — yield outside generator suppression", () => {
-  it("compiles code using yield as an identifier without hard error", () => {
+  it("compiles code using yield as an identifier without hard error", async () => {
     // In sloppy JS, "yield" can be used as an identifier.
     // The test262 suite wraps code in modules where TS may flag this.
     const source = `
@@ -23,13 +23,13 @@ describe("Issue #267 — yield outside generator suppression", () => {
         return yield_val as f64;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     // Should not have fatal errors (warnings are OK)
     const fatalErrors = result.errors.filter((e) => e.severity === "error");
     expect(fatalErrors.length).toBe(0);
   });
 
-  it("does not produce a fatal error for diagnostic 1163", () => {
+  it("does not produce a fatal error for diagnostic 1163", async () => {
     // Simulate code that would trigger TS diagnostic 1163
     // by using yield in a context TS might not recognise as a generator.
     // Since we cannot easily create a true generator in our compiler,
@@ -42,12 +42,12 @@ describe("Issue #267 — yield outside generator suppression", () => {
         return helper();
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     const fatalErrors = result.errors.filter((e) => e.severity === "error");
     expect(fatalErrors.length).toBe(0);
   });
 
-  it("diagnostic 1163 in TOLERATED_SYNTAX_CODES prevents syntax bail-out", () => {
+  it("diagnostic 1163 in TOLERATED_SYNTAX_CODES prevents syntax bail-out", async () => {
     // Verify the compiler does not abort early on code that would
     // otherwise be blocked by syntactic diagnostic 1163.
     // A simple valid program should compile even if other yield-related
@@ -58,7 +58,7 @@ describe("Issue #267 — yield outside generator suppression", () => {
         return x;
       }
     `;
-    const result = compile(source, { fileName: "test.ts" });
+    const result = await compile(source, { fileName: "test.ts" });
     expect(result.success).toBe(true);
   });
 });

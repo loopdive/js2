@@ -24,7 +24,7 @@ import { buildImports } from "../src/runtime.js";
  */
 
 async function run(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown>;
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

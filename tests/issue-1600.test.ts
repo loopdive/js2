@@ -14,7 +14,7 @@ describe("#1600 FinalizationRegistry host-delegate + no-op stub", () => {
   `;
 
   it("compiles new FinalizationRegistry + register/unregister in JS-host mode", async () => {
-    const r = compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
+    const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
     expect(r.success).toBe(true);
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -22,14 +22,14 @@ describe("#1600 FinalizationRegistry host-delegate + no-op stub", () => {
   });
 
   it("compiles to byte-valid Wasm in standalone (--target wasi) mode", async () => {
-    const r = compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true, target: "wasi" });
+    const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true, target: "wasi" });
     expect(r.success).toBe(true);
     await expect(WebAssembly.compile(r.binary)).resolves.toBeDefined();
   });
 
   it("does not regress WeakRef", async () => {
     const wr = `var o = {}; var w = new WeakRef(o); export function test(): number { return 1; }`;
-    const r = compile(wr, { fileName: "test.ts", skipSemanticDiagnostics: true });
+    const r = await compile(wr, { fileName: "test.ts", skipSemanticDiagnostics: true });
     expect(r.success).toBe(true);
   });
 });

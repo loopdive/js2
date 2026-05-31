@@ -4,7 +4,7 @@ import { buildImports } from "./src/runtime.js";
 
 describe("#860 — Wasm closure stored as host-object property value", () => {
   async function run(src: string): Promise<{ ret?: unknown; error?: string }> {
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     if (!result.success) return { error: result.error };
     const importObj = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);

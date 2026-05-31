@@ -2,8 +2,8 @@ import { describe, test, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-function compileAndRun(code: string): number {
-  const result = compile(code);
+async function compileAndRun(code: string): Promise<number> {
+  const result = await compile(code);
   expect(result.success).toBe(true);
   const wasmModule = new WebAssembly.Module(result.binary);
   const imports = buildImports(
@@ -20,9 +20,9 @@ function compileAndRun(code: string): number {
 }
 
 describe("Static TDZ optimization (#800)", () => {
-  test("access after declaration skips TDZ check", { timeout: 15000 }, () => {
+  test("access after declaration skips TDZ check", { timeout: 15000 }, async () => {
     // Access is after declaration — should compile and run without TDZ check
-    const val = compileAndRun(`
+    const val = await compileAndRun(`
       export function test(): number {
         let x: number = 42;
         return x;
@@ -31,8 +31,8 @@ describe("Static TDZ optimization (#800)", () => {
     expect(val).toBe(42);
   });
 
-  test("multiple sequential let/const", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("multiple sequential let/const", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       export function test(): number {
         let a: number = 1;
         let b: number = 2;
@@ -43,8 +43,8 @@ describe("Static TDZ optimization (#800)", () => {
     expect(val).toBe(3);
   });
 
-  test("let in for loop body works correctly", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("let in for loop body works correctly", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       export function test(): number {
         let sum: number = 0;
         for (let i: number = 0; i < 3; i = i + 1) {
@@ -57,8 +57,8 @@ describe("Static TDZ optimization (#800)", () => {
     expect(val).toBe(3);
   });
 
-  test("let in if-else branches", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("let in if-else branches", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       export function test(): number {
         let x: number = 10;
         let result: number = 0;
@@ -75,8 +75,8 @@ describe("Static TDZ optimization (#800)", () => {
     expect(val).toBe(11);
   });
 
-  test("const used in expression after declaration", { timeout: 15000 }, () => {
-    const val = compileAndRun(`
+  test("const used in expression after declaration", { timeout: 15000 }, async () => {
+    const val = await compileAndRun(`
       export function test(): number {
         const a: number = 7;
         const b: number = a * 2;
@@ -87,11 +87,11 @@ describe("Static TDZ optimization (#800)", () => {
     expect(val).toBe(21);
   });
 
-  test("WAT output has fewer TDZ checks for simple straight-line code", { timeout: 15000 }, () => {
+  test("WAT output has fewer TDZ checks for simple straight-line code", { timeout: 15000 }, async () => {
     // Simple straight-line code: let x = 1; return x;
     // The TDZ flag local may still be allocated by hoistLetConstWithTdz,
     // but the if/throw TDZ check should be optimized away
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         let x: number = 42;
         return x;
@@ -106,10 +106,10 @@ describe("Static TDZ optimization (#800)", () => {
     expect(tdzCheckPattern.test(wat)).toBe(false);
   });
 
-  test("module-level let accessed in function keeps TDZ check", { timeout: 15000 }, () => {
+  test("module-level let accessed in function keeps TDZ check", { timeout: 15000 }, async () => {
     // Module-level let accessed from a function must keep TDZ check
     // because the function could be called before the let runs
-    const result = compile(`
+    const result = await compile(`
       export function test(): number { return x; }
       let x: number = 1;
     `);

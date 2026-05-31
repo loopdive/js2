@@ -3,7 +3,7 @@ import { compile } from "../../src/index.js";
 import { buildImports } from "./helpers.js";
 
 async function compileAndRun(source: string): Promise<number> {
-  const result = compile(source, { fileName: "test.ts" });
+  const result = await compile(source, { fileName: "test.ts" });
   const errors = result.errors.filter((e) => e.severity === "error");
   if (errors.length > 0) {
     throw new Error("Compile errors: " + errors.map((e) => e.message).join("; "));

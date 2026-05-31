@@ -24,7 +24,7 @@ const ENV_STUB = {
 };
 
 async function runTest(source: string): Promise<number> {
-  const r = compile(source);
+  const r = await compile(source);
   if (!r.success) {
     throw new Error("compile failed: " + r.errors.map((e) => e.message).join("\n"));
   }

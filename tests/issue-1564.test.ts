@@ -16,7 +16,7 @@ import { instantiateWasm } from "../src/runtime-instantiate.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string): Promise<unknown> {
-  const r = compile(source, { fileName: "test.ts" });
+  const r = await compile(source, { fileName: "test.ts" });
   if (!r.success) {
     throw new Error(`compile failed: ${r.errors[0]?.message ?? "unknown"}`);
   }

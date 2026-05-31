@@ -27,7 +27,7 @@ async function instantiate(r: CompileResult): Promise<WebAssembly.Instance> {
 
 describe("#1700 TypedArray export-parameter marshalling", () => {
   it("compiles: round-trips Uint8Array through a Uint8Array-typed export", async () => {
-    const r = compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
+    const r = await compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
     expect(r.exportSignatures).toBeDefined();
     const sig = r.exportSignatures!.echoBytes;
     expect(sig).toBeDefined();
@@ -43,7 +43,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("empty Uint8Array round-trips as length-zero Uint8Array", async () => {
-    const r = compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
+    const r = await compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
     const instance = await instantiate(r);
     const exports = wrapExports(instance.exports, { signatures: r.exportSignatures });
     const out = exports.echoBytes(new Uint8Array(0));
@@ -52,7 +52,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("accepts plain Array<number> for a Uint8Array param (Uint8Array.from-style)", async () => {
-    const r = compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
+    const r = await compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
     const instance = await instantiate(r);
     const exports = wrapExports(instance.exports, { signatures: r.exportSignatures });
     const out = exports.echoBytes([1, 2, 3]);
@@ -61,7 +61,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("masks out-of-range values into byte range (matches Uint8Array semantics)", async () => {
-    const r = compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
+    const r = await compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
     const instance = await instantiate(r);
     const exports = wrapExports(instance.exports, { signatures: r.exportSignatures });
     const out = exports.echoBytes([256, -1, 257]);
@@ -70,7 +70,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("throws TypeError when caller passes a non-array to a Uint8Array param", async () => {
-    const r = compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
+    const r = await compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
     const instance = await instantiate(r);
     const exports = wrapExports(instance.exports, { signatures: r.exportSignatures });
     expect(() => exports.echoBytes("foo" as any)).toThrow(TypeError);
@@ -78,7 +78,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("multi-arg: only Uint8Array slot is marshalled; number and string pass through", async () => {
-    const r = compile(`
+    const r = await compile(`
       export function blendBytes(n: number, buf: Uint8Array): Uint8Array {
         return buf;
       }
@@ -94,7 +94,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   it("regression guard: externref/any param keeps the externref pass-through path", async () => {
     // No Uint8Array in the signature → no exportSignatures entry, wrapper
     // is the legacy pass-through (this is the path that already worked).
-    const r = compile(`
+    const r = await compile(`
       export function echoAny(input: any): any { return input; }
     `);
     expect(r.exportSignatures?.echoAny).toBeUndefined();
@@ -107,7 +107,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("module size: a TypedArray-free module does not emit __new_vec_f64", async () => {
-    const r = compile(`
+    const r = await compile(`
       export function add(a: number, b: number): number { return a + b; }
     `);
     const instance = await instantiate(r);
@@ -116,7 +116,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("marshal: false — argument marshalling still runs (export must be callable)", async () => {
-    const r = compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
+    const r = await compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`);
     const instance = await instantiate(r);
     const exports = wrapExports(instance.exports, {
       marshal: false,
@@ -137,7 +137,9 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
     // tracked alongside #1664). What #1700 fixes — the JS→Wasm arg
     // path — must still work. Verify by passing marshal:false and using
     // `__vec_len` directly to confirm the vec made it across.
-    const r = compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`, { target: "wasi" });
+    const r = await compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`, {
+      target: "wasi",
+    });
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
     expect(r.exportSignatures?.echoBytes?.result).toBe("uint8array");
     const { instance } = await WebAssembly.instantiate(r.binary, {});
@@ -151,7 +153,7 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("null pass-through: Uint8Array param accepting null forwards null without alloc", async () => {
-    const r = compile(`export function echoBytes(input: Uint8Array | null): Uint8Array | null { return input; }`);
+    const r = await compile(`export function echoBytes(input: Uint8Array | null): Uint8Array | null { return input; }`);
     expect(r.exportSignatures?.echoBytes?.params).toEqual(["uint8array"]);
     const instance = await instantiate(r);
     const exports = wrapExports(instance.exports, { signatures: r.exportSignatures });

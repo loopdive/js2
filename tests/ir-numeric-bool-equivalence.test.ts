@@ -26,11 +26,11 @@ async function dualRun(
   fnName: string,
   args: ReadonlyArray<number | boolean>,
 ): Promise<{ legacy: unknown; ir: unknown }> {
-  const legacy = compile(source, { nativeStrings: true });
+  const legacy = await compile(source, { nativeStrings: true });
   if (!legacy.success) {
     throw new Error(`legacy compile failed:\n${legacy.errors.map((e) => e.message).join("\n")}`);
   }
-  const ir = compile(source, { nativeStrings: true, experimentalIR: true });
+  const ir = await compile(source, { nativeStrings: true, experimentalIR: true });
   if (!ir.success) {
     throw new Error(`ir compile failed:\n${ir.errors.map((e) => e.message).join("\n")}`);
   }
@@ -194,24 +194,24 @@ describe("IR path — byte-identical output for narrow subset", () => {
   // Constant-only returns lower to byte-identical output vs legacy because
   // tree emission reproduces the exact op sequence. This case is the direct
   // #1131 §7 bullet 6 "first divergence test" — converted to an assertion.
-  it("return literal → byte-identical", () => {
+  it("return literal → byte-identical", async () => {
     const source = `export function f(): number { return 42; }`;
-    const a = compile(source, { nativeStrings: true }).binary;
-    const b = compile(source, { nativeStrings: true, experimentalIR: true }).binary;
+    const a = (await compile(source, { nativeStrings: true })).binary;
+    const b = (await compile(source, { nativeStrings: true, experimentalIR: true })).binary;
     expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
   });
 
-  it("return param → byte-identical", () => {
+  it("return param → byte-identical", async () => {
     const source = `export function f(x: number): number { return x; }`;
-    const a = compile(source, { nativeStrings: true }).binary;
-    const b = compile(source, { nativeStrings: true, experimentalIR: true }).binary;
+    const a = (await compile(source, { nativeStrings: true })).binary;
+    const b = (await compile(source, { nativeStrings: true, experimentalIR: true })).binary;
     expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
   });
 
-  it("return a + b → byte-identical", () => {
+  it("return a + b → byte-identical", async () => {
     const source = `export function f(a: number, b: number): number { return a + b; }`;
-    const a = compile(source, { nativeStrings: true }).binary;
-    const b = compile(source, { nativeStrings: true, experimentalIR: true }).binary;
+    const a = (await compile(source, { nativeStrings: true })).binary;
+    const b = (await compile(source, { nativeStrings: true, experimentalIR: true })).binary;
     expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
   });
 });

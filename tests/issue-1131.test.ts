@@ -62,7 +62,7 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
   `;
 
   it("fully-typed fib computes correct values", async () => {
-    const result = compile(SOURCE_TYPED, { nativeStrings: true });
+    const result = await compile(SOURCE_TYPED, { nativeStrings: true });
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, ENV);
     const run = instance.exports.run as (n: number) => number;
@@ -73,8 +73,8 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
     expect(run(20)).toBe(6765);
   });
 
-  it("fully-typed fib body contains no boxing imports", () => {
-    const result = compile(SOURCE_TYPED, { nativeStrings: true });
+  it("fully-typed fib body contains no boxing imports", async () => {
+    const result = await compile(SOURCE_TYPED, { nativeStrings: true });
     expect(result.success).toBe(true);
     const fibBody = extractFuncBody(result.wat, "fib");
     expect(fibBody).not.toBeNull();
@@ -85,7 +85,7 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
   it("propagates typed caller into untyped callee (f64 signature)", async () => {
     // fib has no annotation in source. run's explicit TS annotation should
     // flow into fib's param via propagation, and the IR should claim both.
-    const result = compile(SOURCE_PROPAGATED, { nativeStrings: true });
+    const result = await compile(SOURCE_PROPAGATED, { nativeStrings: true });
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, ENV);
     const run = instance.exports.run as (n: number) => number;
@@ -93,8 +93,8 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
     expect(run(10)).toBe(55);
   });
 
-  it("propagated fib body contains no boxing imports", () => {
-    const result = compile(SOURCE_PROPAGATED, { nativeStrings: true });
+  it("propagated fib body contains no boxing imports", async () => {
+    const result = await compile(SOURCE_PROPAGATED, { nativeStrings: true });
     expect(result.success).toBe(true);
     const fibBody = extractFuncBody(result.wat, "fib");
     expect(fibBody).not.toBeNull();
@@ -102,13 +102,13 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
     expect(fibBody!).not.toContain("__unbox_number");
   });
 
-  it("propagated fib signature matches run's (f64) -> f64", () => {
+  it("propagated fib signature matches run's (f64) -> f64", async () => {
     // The strongest check we can make from the WAT dump: fib and run
     // must reference the same function-type index. Since `run` is
     // explicitly annotated as `(n: number): number`, if fib shares
     // run's type-index then fib is also (f64) -> f64. This is
     // independent of the particular index the emitter chose.
-    const result = compile(SOURCE_PROPAGATED, { nativeStrings: true });
+    const result = await compile(SOURCE_PROPAGATED, { nativeStrings: true });
     expect(result.success).toBe(true);
     const fibHeader = result.wat.match(/\(func \$fib\s+\(type\s+(\d+)\)/);
     const runHeader = result.wat.match(/\(func \$run\s+\(type\s+(\d+)\)/);
@@ -119,13 +119,13 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
 
   it("works without experimentalIR flag (IR is on by default)", async () => {
     // No `experimentalIR` in options → should still produce f64 fib.
-    const result = compile(SOURCE_PROPAGATED, { nativeStrings: true });
+    const result = await compile(SOURCE_PROPAGATED, { nativeStrings: true });
     expect(result.success).toBe(true);
     const fibBody = extractFuncBody(result.wat, "fib");
     expect(fibBody!).not.toContain("__box_number");
   });
 
-  it("benchmarks/competitive/programs/fib-recursive.js compiles fib without boxing", () => {
+  it("benchmarks/competitive/programs/fib-recursive.js compiles fib without boxing", async () => {
     // The real benchmark file uses JSDoc annotations — this test ensures
     // the end-to-end compile path against the exact file the benchmark
     // harness consumes, so a later refactor can't silently drop the
@@ -133,7 +133,7 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
     // declares a `benchmark` const literal, whose compiled form needs
     // string_constants import wiring the test ENV doesn't provide.
     const source = readFileSync(resolve(__dirname, "../benchmarks/competitive/programs/fib-recursive.js"), "utf8");
-    const result = compile(source, { allowJs: true, nativeStrings: true });
+    const result = await compile(source, { allowJs: true, nativeStrings: true });
     expect(result.success).toBe(true);
     const fibBody = extractFuncBody(result.wat, "fib");
     expect(fibBody).not.toBeNull();
@@ -144,7 +144,7 @@ describe("issue #1131 — SSA IR Phase 2 — numeric recursive kernel", () => {
   it("legacy path still works when experimentalIR: false is explicit", async () => {
     // Escape hatch for divergence tests: the legacy path must remain
     // reachable via `experimentalIR: false`.
-    const result = compile(SOURCE_PROPAGATED, { nativeStrings: true, experimentalIR: false });
+    const result = await compile(SOURCE_PROPAGATED, { nativeStrings: true, experimentalIR: false });
     expect(result.success).toBe(true);
     const { instance } = await WebAssembly.instantiate(result.binary, ENV);
     const run = instance.exports.run as (n: number) => number;

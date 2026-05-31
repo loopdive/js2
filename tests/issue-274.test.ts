@@ -38,7 +38,7 @@ describe("Issue #274: Property access on function type", () => {
       function myFunc(): number { return 1; }
       export function test(): string { return myFunc.name; }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
     // Verify no compile errors about property access
     const propErrors = result.errors.filter((e) => e.message.includes("Cannot access property"));
@@ -50,7 +50,7 @@ describe("Issue #274: Property access on function type", () => {
       function add(a: number, b: number): number { return a + b; }
       export function test(): string { return add.name; }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     expect(result.success).toBe(true);
   });
 
@@ -99,7 +99,7 @@ describe("Issue #274: Property access on function type", () => {
       const myArrow = (x: number): number => x * 2;
       export function test(): string { return myArrow.name; }
     `;
-    const result = compile(source);
+    const result = await compile(source);
     // Should compile without "Cannot access property 'name'" error
     const propErrors = result.errors.filter((e) => e.message.includes("Cannot access property 'name'"));
     expect(propErrors).toHaveLength(0);

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -14,13 +14,13 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   return (instance.exports as any)[fn](...args);
 }
 
-function compileOnly(source: string): { success: boolean; errors: { message: string }[] } {
-  return compile(source);
+async function compileOnly(source: string): Promise<{ success: boolean; errors: { message: string }[] }> {
+  return await compile(source);
 }
 
 describe("ArrayBuffer and DataView constructors", () => {
-  it("new ArrayBuffer(n) compiles without error", () => {
-    const result = compileOnly(`
+  it("new ArrayBuffer(n) compiles without error", async () => {
+    const result = await compileOnly(`
       const buf = new ArrayBuffer(16);
       export function test(): number { return 42; }
     `);
@@ -41,8 +41,8 @@ describe("ArrayBuffer and DataView constructors", () => {
     ).toBe(42);
   });
 
-  it("new DataView(buffer) compiles without error", () => {
-    const result = compileOnly(`
+  it("new DataView(buffer) compiles without error", async () => {
+    const result = await compileOnly(`
       const buf = new ArrayBuffer(8);
       const view = new DataView(buf);
       export function test(): number { return 99; }

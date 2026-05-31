@@ -21,7 +21,7 @@ import { buildImports } from "../src/runtime.js";
  * in the ~252 `dstr-binding/*-init-skipped.js` test262 cases.
  */
 async function run(src: string): Promise<{ exports: Record<string, any> }> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool) as any;
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

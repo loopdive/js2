@@ -13,7 +13,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function run(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("compile error: " + r.errors?.[0]?.message);
   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
   return (instance.exports as { test?: () => unknown }).test?.();

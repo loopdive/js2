@@ -15,7 +15,7 @@ import { buildImports } from "../src/runtime.js";
 // closure-struct externref does not yet carry an ES `.name` property.
 
 async function runWithCheck<T>(src: string, check: (o: unknown) => T): Promise<T> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool) as Record<string, unknown> & {
     env?: Record<string, unknown>;

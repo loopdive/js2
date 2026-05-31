@@ -23,7 +23,7 @@ import { buildImports } from "../src/runtime.js";
  * dispatch path (call_ref through the local).
  */
 describe("#1301 closure environment field-type mismatch (param shadowing outer fn name)", () => {
-  it("two arrow middlewares each calling param `next` (same name as outer fn) compile + validate", () => {
+  it("two arrow middlewares each calling param `next` (same name as outer fn) compile + validate", async () => {
     const src = `
       type Next = () => string;
       type Middleware = (c: Context, next: Next) => string;
@@ -51,7 +51,7 @@ describe("#1301 closure environment field-type mismatch (param shadowing outer f
         return compose(mws)(new Context("/x"));
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     // The literal bug: `WebAssembly.Module(...)` rejected the binary with
     // "struct.new[0] expected type f64, found local.get of type anyref".
@@ -59,7 +59,7 @@ describe("#1301 closure environment field-type mismatch (param shadowing outer f
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });
 
-  it("single-mw recursive compose with arrow `next` param compiles + validates (regression guard)", () => {
+  it("single-mw recursive compose with arrow `next` param compiles + validates (regression guard)", async () => {
     // Minimal repro that triggers the same shadow path with one arrow.
     const src = `
       type N = () => string;
@@ -85,7 +85,7 @@ describe("#1301 closure environment field-type mismatch (param shadowing outer f
         return compose(mws)(0);
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });
@@ -106,7 +106,7 @@ describe("#1301 closure environment field-type mismatch (param shadowing outer f
         return outer();
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -114,7 +114,7 @@ describe("#1301 closure environment field-type mismatch (param shadowing outer f
     expect((instance.exports.test as () => number)()).toBe(23);
   });
 
-  it("validation passes when shadowed callee has nested captures (narrow trigger)", () => {
+  it("validation passes when shadowed callee has nested captures (narrow trigger)", async () => {
     // The narrow #1301 trigger is: outer fn has nested captures AND inline
     // arrow has a callable param that shadows its name. Without the fix the
     // arrow body wrongly direct-calls the outer fn AND prepends nested
@@ -136,7 +136,7 @@ describe("#1301 closure environment field-type mismatch (param shadowing outer f
         return caller(() => 42);
       }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
     expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
   });

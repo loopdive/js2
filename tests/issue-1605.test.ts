@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 async function compilesToValidWasm(src: string): Promise<boolean> {
-  const r = compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
+  const r = await compile(src, { fileName: "test.ts", skipSemanticDiagnostics: true });
   if (!r.success || r.errors.some((e) => e.severity === "error")) return false;
   return WebAssembly.validate(r.binary);
 }

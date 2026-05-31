@@ -373,7 +373,7 @@ describe("#1167b — inlineSmall (end-to-end)", () => {
       function abs(x: number): number { return x < 0 ? -x : x; }
       export function run(n: number): number { return abs(n); }
     `;
-    const result = compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
+    const result = await compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
 
     // After inlining, `run`'s Wasm body should no longer contain a `call`.
@@ -396,7 +396,7 @@ describe("#1167b — inlineSmall (end-to-end)", () => {
     expect(run(0)).toBe(0);
   });
 
-  it("does NOT inline a recursive callee: run body still contains a call", () => {
+  it("does NOT inline a recursive callee: run body still contains a call", async () => {
     // `rec` is trivially self-recursive, single-block, small — the only
     // reason inlineSmall should skip it is the recursion guard. (We don't
     // execute the compiled wasm: IR `select` evaluates BOTH arms, so a
@@ -406,7 +406,7 @@ describe("#1167b — inlineSmall (end-to-end)", () => {
       function rec(n: number): number { return n < 0 ? n : rec(n - 1); }
       export function run(n: number): number { return rec(n); }
     `;
-    const result = compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
+    const result = await compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     // run's body should still call rec (not inlined, because rec is recursive).
     const runBody = extractFuncBody(result.wat, "run");
@@ -430,7 +430,7 @@ describe("#1167b — inlineSmall (end-to-end)", () => {
       }
       export function run(n: number): number { return sgn(n); }
     `;
-    const result = compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
+    const result = await compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     const runBody = extractFuncBody(result.wat, "run");
     expect(runBody).not.toBe("");
@@ -454,7 +454,7 @@ describe("#1167b — inlineSmall (end-to-end)", () => {
     const source = `
       export function f(n: number): number { return n * 2 + 1; }
     `;
-    const result = compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
+    const result = await compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
 
     const { instance } = await WebAssembly.instantiate(result.binary, {

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 
 async function runFast(source: string, exportName = "test"): Promise<any> {
-  const result = compile(source, { fast: true });
+  const result = await compile(source, { fast: true });
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -39,8 +39,8 @@ describe("fast mode: native arrays", () => {
       expect(await runFast(src)).toBe(3);
     });
 
-    it("length returns i32 (no f64 conversion in WAT)", () => {
-      const result = compile(
+    it("length returns i32 (no f64 conversion in WAT)", async () => {
+      const result = await compile(
         `export function test(): number {
           const arr = [1, 2, 3];
           return arr.length;
@@ -248,8 +248,8 @@ describe("fast mode: native arrays", () => {
       expect(await runFast(src)).toBe(-1);
     });
 
-    it("indexOf returns i32 in fast mode (no f64 conversion)", () => {
-      const result = compile(
+    it("indexOf returns i32 in fast mode (no f64 conversion)", async () => {
+      const result = await compile(
         `export function test(): number {
           const arr = [1, 2, 3];
           return arr.indexOf(2);
@@ -733,8 +733,8 @@ describe("fast mode: native arrays", () => {
       expect(await runFast(src)).toBe(1);
     });
 
-    it("returns i32 in fast mode (no f64 conversion)", () => {
-      const result = compile(
+    it("returns i32 in fast mode (no f64 conversion)", async () => {
+      const result = await compile(
         `export function test(): number {
           const arr = [1, 2, 3];
           return arr.lastIndexOf(2);

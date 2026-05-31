@@ -26,7 +26,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndInstantiate(source: string): Promise<Record<string, unknown>> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`compile failed: ${result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -84,7 +84,7 @@ describe("#1636-S1 __call_fn_method_N — host-supplied `this` for Wasm closures
       export function getProbe(): any { return probe; }
       export function test(): number { return 0; }
     `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success, JSON.stringify(result.errors)).toBe(true);
     const imports = buildImports(result.imports, undefined, result.stringPool) as Record<string, unknown> & {
       env?: Record<string, unknown>;

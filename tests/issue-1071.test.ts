@@ -7,16 +7,16 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 
-function expectCompileSuccess(source: string, description: string) {
-  const result = compile(source, { fileName: "test.ts" });
+async function expectCompileSuccess(source: string, description: string) {
+  const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) {
     const msgs = result.errors.map((e) => e.message).join("; ");
     expect.fail(`Should compile: ${description} — errors: ${msgs}`);
   }
 }
 
-function expectNoForOfError(source: string, description: string) {
-  const result = compile(source, { fileName: "test.ts" });
+async function expectNoForOfError(source: string, description: string) {
+  const result = await compile(source, { fileName: "test.ts" });
   const forOfErrors = result.errors?.filter(
     (e) => e.message.includes("for-of requires an array") || e.message.includes("for-of on non-array"),
   );
@@ -24,8 +24,8 @@ function expectNoForOfError(source: string, description: string) {
 }
 
 describe("Issue #1071: for-of over non-array iterables", () => {
-  it("compiles for-of over Map", () => {
-    expectNoForOfError(
+  it("compiles for-of over Map", async () => {
+    await expectNoForOfError(
       `
       function test(): number {
         const m = new Map<string, number>();
@@ -40,8 +40,8 @@ describe("Issue #1071: for-of over non-array iterables", () => {
     );
   });
 
-  it("compiles for-of over Set", () => {
-    expectNoForOfError(
+  it("compiles for-of over Set", async () => {
+    await expectNoForOfError(
       `
       function test(): number {
         const s = new Set<number>();
@@ -56,8 +56,8 @@ describe("Issue #1071: for-of over non-array iterables", () => {
     );
   });
 
-  it("compiles for-of over Map.entries()", () => {
-    expectNoForOfError(
+  it("compiles for-of over Map.entries()", async () => {
+    await expectNoForOfError(
       `
       function test(): number {
         const m = new Map<string, number>();
@@ -72,8 +72,8 @@ describe("Issue #1071: for-of over non-array iterables", () => {
     );
   });
 
-  it("compiles for-of over generator function", () => {
-    expectNoForOfError(
+  it("compiles for-of over generator function", async () => {
+    await expectNoForOfError(
       `
       function* gen(): Generator<number> {
         yield 1;
@@ -92,8 +92,8 @@ describe("Issue #1071: for-of over non-array iterables", () => {
     );
   });
 
-  it("still compiles for-of over arrays", () => {
-    expectCompileSuccess(
+  it("still compiles for-of over arrays", async () => {
+    await expectCompileSuccess(
       `
       function test(): number {
         const arr = [1, 2, 3];
@@ -108,8 +108,8 @@ describe("Issue #1071: for-of over non-array iterables", () => {
     );
   });
 
-  it("still compiles for-of over strings", () => {
-    expectNoForOfError(
+  it("still compiles for-of over strings", async () => {
+    await expectNoForOfError(
       `
       function test(): number {
         let count = 0;

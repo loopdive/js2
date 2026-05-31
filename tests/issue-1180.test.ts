@@ -31,8 +31,8 @@ interface CompileResultMinimal {
   errors: { message: string }[];
 }
 
-function compileWasi(source: string): CompileResultMinimal {
-  return compile(source, { fileName: "test.js", allowJs: true, target: "wasi" });
+async function compileWasi(source: string): Promise<CompileResultMinimal> {
+  return await compile(source, { fileName: "test.js", allowJs: true, target: "wasi" });
 }
 
 function envImports(result: CompileResultMinimal): string[] {
@@ -49,7 +49,7 @@ describe("#1180 — boxing helpers do not leak as env::* imports under --target 
   // would call into the corresponding `env::__*` helper. Under wasi mode
   // we expect ZERO env imports.
 
-  it("__unbox_number — typed callee receiving externref arg", () => {
+  it("__unbox_number — typed callee receiving externref arg", async () => {
     // Untyped param `x` defaults to externref under JS-frontend semantics.
     // The call `inner(x)` to a typed callee unboxes externref → f64.
     const source = `
@@ -57,12 +57,12 @@ describe("#1180 — boxing helpers do not leak as env::* imports under --target 
       function inner(n) { return n + 1; }
       export function outer(x) { return inner(x); }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     expect(envImports(r)).toEqual([]);
   });
 
-  it("__box_number — f64 result stored into externref slot", () => {
+  it("__box_number — f64 result stored into externref slot", async () => {
     // `arr` defaults to externref; `arr[i] = f64` boxes the f64 to fit
     // the externref element slot.
     const source = `
@@ -74,35 +74,35 @@ describe("#1180 — boxing helpers do not leak as env::* imports under --target 
         return arr;
       }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     expect(envImports(r)).toEqual([]);
   });
 
-  it("__unbox_boolean — typed boolean callee receiving externref", () => {
+  it("__unbox_boolean — typed boolean callee receiving externref", async () => {
     const source = `
       /** @param {boolean} b @returns {number} */
       function take(b) { return b ? 1 : 0; }
       export function f(x) { return take(x); }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     expect(envImports(r)).toEqual([]);
   });
 
-  it("__is_truthy — if(externref)", () => {
+  it("__is_truthy — if(externref)", async () => {
     const source = `
       export function f(x) {
         if (x) return 1;
         return 0;
       }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     expect(envImports(r)).toEqual([]);
   });
 
-  it("__typeof_* — typeof comparisons against literal tags", () => {
+  it("__typeof_* — typeof comparisons against literal tags", async () => {
     const source = `
       export function f(x) {
         if (typeof x === "number") return 1;
@@ -112,12 +112,12 @@ describe("#1180 — boxing helpers do not leak as env::* imports under --target 
         return 0;
       }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     expect(envImports(r)).toEqual([]);
   });
 
-  it("array-sum bench shape — the original repro from #1180", () => {
+  it("array-sum bench shape — the original repro from #1180", async () => {
     // The exact source the benchmark harness produces (createCompileSource
     // in benchmarks/compare-runtimes.ts) when wrapping array-sum.js.
     const source = `
@@ -142,7 +142,7 @@ export function run_hot(iterations, input) {
   return result;
 }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     expect(envImports(r)).toEqual([]);
   });
@@ -172,7 +172,7 @@ export function run_hot(iterations, input) {
   return result;
 }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     expect(WebAssembly.validate(r.binary)).toBe(true);
     const instance = await instantiateNoImports(r.binary);
@@ -203,7 +203,7 @@ export function run_hot(iterations, input) {
         return result;
       }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     const instance = await instantiateNoImports(r.binary);
     const runHot = instance.exports.run_hot as (a: unknown, b: unknown) => number;
@@ -220,7 +220,7 @@ export function run_hot(iterations, input) {
         return s | 0;
       }
     `;
-    const r = compileWasi(source);
+    const r = await compileWasi(source);
     expect(r.success).toBe(true);
     const instance = await instantiateNoImports(r.binary);
     const run = instance.exports.run as (n: number) => number;
@@ -235,23 +235,23 @@ describe("#1180 — host mode (default --target gc) still uses env::* imports as
   // helpers come from `env::*` (where the host has fast native impls);
   // only wasi mode uses the Wasm-native fallback.
 
-  it("host mode keeps env::__is_truthy import for if(externref)", () => {
+  it("host mode keeps env::__is_truthy import for if(externref)", async () => {
     const source = `
       export function f(x) {
         if (x) return 1;
         return 0;
       }
     `;
-    const r = compile(source); // no target → host gc mode
+    const r = await compile(source); // no target → host gc mode
     expect(r.success).toBe(true);
     expect(envImports(r as CompileResultMinimal)).toContain("__is_truthy");
   });
 
-  it("host mode keeps env::__typeof import for bare `typeof x`", () => {
+  it("host mode keeps env::__typeof import for bare `typeof x`", async () => {
     const source = `
       export function f(x) { return typeof x; }
     `;
-    const r = compile(source);
+    const r = await compile(source);
     expect(r.success).toBe(true);
     expect(envImports(r as CompileResultMinimal)).toContain("__typeof");
   });

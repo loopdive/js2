@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { compile, compileMulti, createIncrementalCompiler } from "../src/index.ts";
 
 describe("TypeScript incompatibility diagnostics", () => {
-  it("fails compilation on TS2322 assignment mismatches", () => {
-    const result = compile(
+  it("fails compilation on TS2322 assignment mismatches", async () => {
+    const result = await compile(
       `
         export function main(): number {
           const value: number = "hello";
@@ -17,8 +17,8 @@ describe("TypeScript incompatibility diagnostics", () => {
     expect(result.errors.some((error) => error.code === 2322 && error.severity === "error")).toBe(true);
   });
 
-  it("fails compilation on TS2345 argument mismatches", () => {
-    const result = compile(
+  it("fails compilation on TS2345 argument mismatches", async () => {
+    const result = await compile(
       `
         function takesNumber(value: number): number {
           return value;
@@ -35,8 +35,8 @@ describe("TypeScript incompatibility diagnostics", () => {
     expect(result.errors.some((error) => error.code === 2345 && error.severity === "error")).toBe(true);
   });
 
-  it("fails multi-file compilation on hard TS type mismatches", () => {
-    const result = compileMulti(
+  it("fails multi-file compilation on hard TS type mismatches", async () => {
+    const result = await compileMulti(
       {
         "./main.ts": `
           import { takesNumber } from "./dep";

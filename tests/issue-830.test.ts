@@ -13,8 +13,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): { success: boolean; result?: number; error?: string } {
-  const compiled = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<{ success: boolean; result?: number; error?: string }> {
+  const compiled = await compile(source, { fileName: "test.ts" });
   if (!compiled.success) return { success: false, error: compiled.errors[0]?.message };
   try {
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
@@ -28,8 +28,8 @@ function compileAndRun(source: string): { success: boolean; result?: number; err
 }
 
 describe("Issue #830: DisposableStack host import", () => {
-  it("DisposableStack can be constructed (no CE)", () => {
-    const r = compileAndRun(`
+  it("DisposableStack can be constructed (no CE)", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const stack = new DisposableStack();
         return 1;
@@ -39,8 +39,8 @@ describe("Issue #830: DisposableStack host import", () => {
     expect(r.success).toBe(true);
   });
 
-  it("DisposableStack.disposed starts false", () => {
-    const r = compileAndRun(`
+  it("DisposableStack.disposed starts false", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const stack = new DisposableStack();
         return stack.disposed === false ? 1 : 0;
@@ -50,8 +50,8 @@ describe("Issue #830: DisposableStack host import", () => {
     expect(r.result).toBe(1);
   });
 
-  it("DisposableStack.disposed is true after dispose()", () => {
-    const r = compileAndRun(`
+  it("DisposableStack.disposed is true after dispose()", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const stack = new DisposableStack();
         stack.dispose();
@@ -62,8 +62,8 @@ describe("Issue #830: DisposableStack host import", () => {
     expect(r.result).toBe(1);
   });
 
-  it("SuppressedError can be constructed (no CE)", () => {
-    const r = compileAndRun(`
+  it("SuppressedError can be constructed (no CE)", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         const e = new SuppressedError(new Error("a"), new Error("b"));
         return e instanceof SuppressedError ? 1 : 0;

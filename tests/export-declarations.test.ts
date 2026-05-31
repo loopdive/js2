@@ -8,7 +8,7 @@ import { compile } from "../src/index.js";
  */
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -18,8 +18,8 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
   return (instance.exports as any)[fn](...args);
 }
 
-function compileOnly(source: string) {
-  const result = compile(source);
+async function compileOnly(source: string) {
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -29,18 +29,18 @@ function compileOnly(source: string) {
 }
 
 describe("export declarations (#332)", () => {
-  it("export default expression does not crash", () => {
+  it("export default expression does not crash", async () => {
     // export default should evaluate the expression and discard it
-    compileOnly(`
+    await compileOnly(`
       const x = 42;
       export default x;
       export function test(): number { return x; }
     `);
   });
 
-  it("named export declaration does not crash", () => {
+  it("named export declaration does not crash", async () => {
     // export { x } should be a no-op
-    compileOnly(`
+    await compileOnly(`
       const x = 10;
       export { x };
       export function test(): number { return x; }

@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 
 describe("Issue #190 — assignment target patterns", () => {
   it("property access assignment: obj.x = value", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         let obj = { x: 0, y: 0 };
         obj.x = 42;
@@ -27,7 +27,7 @@ describe("Issue #190 — assignment target patterns", () => {
   });
 
   it("element access assignment: arr[i] = value", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         const arr: number[] = [10, 20, 30];
         arr[0] = 100;
@@ -51,7 +51,7 @@ describe("Issue #190 — assignment target patterns", () => {
   });
 
   it("array destructuring assignment: [a, b] = [1, 2]", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         let a: number = 0;
         let b: number = 0;
@@ -75,7 +75,7 @@ describe("Issue #190 — assignment target patterns", () => {
   });
 
   it("array destructuring with omitted elements: [, b] = arr", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         let a: number = 0;
         let b: number = 0;
@@ -99,7 +99,7 @@ describe("Issue #190 — assignment target patterns", () => {
   });
 
   it("object destructuring assignment: ({a, b} = obj)", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         let a: number = 0;
         let b: number = 0;
@@ -124,7 +124,7 @@ describe("Issue #190 — assignment target patterns", () => {
   });
 
   it("swap via array destructuring: [a, b] = [b, a]", async () => {
-    const result = compile(`
+    const result = await compile(`
       export function test(): number {
         let a: number = 1;
         let b: number = 2;

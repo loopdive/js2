@@ -10,8 +10,8 @@ import { compile } from "../src/index.ts";
 import { buildWasiPolyfill } from "../src/runtime.ts";
 
 describe("WASI process.env (#1482)", () => {
-  it("compiles with __wasi_env_get_str import declared when process.env is used", () => {
-    const result = compile(`console.log(process.env.GREETING);`, { fileName: "test.ts", target: "wasi" });
+  it("compiles with __wasi_env_get_str import declared when process.env is used", async () => {
+    const result = await compile(`console.log(process.env.GREETING);`, { fileName: "test.ts", target: "wasi" });
     expect(result.success).toBe(true);
     // The JS-polyfill fast-path import MUST survive — the compiled module
     // calls `__wasi_env_get_str` directly, so dead-elimination cannot drop it.
@@ -23,8 +23,8 @@ describe("WASI process.env (#1482)", () => {
     expect(result.wat).toContain('"env" "__wasi_env_get_str"');
   });
 
-  it("does NOT declare __wasi_env_get_str when process.env is unused", () => {
-    const result = compile(`console.log("no env access here");`, {
+  it("does NOT declare __wasi_env_get_str when process.env is unused", async () => {
+    const result = await compile(`console.log("no env access here");`, {
       fileName: "test.ts",
       target: "wasi",
     });
@@ -32,8 +32,8 @@ describe("WASI process.env (#1482)", () => {
     expect(result.wat ?? "").not.toContain("__wasi_env_get_str");
   });
 
-  it("returns the value from the polyfill env dict", () => {
-    const result = compile(`console.log(process.env.GREETING);`, { fileName: "test.ts", target: "wasi" });
+  it("returns the value from the polyfill env dict", async () => {
+    const result = await compile(`console.log(process.env.GREETING);`, { fileName: "test.ts", target: "wasi" });
     expect(result.success).toBe(true);
 
     const wasi = buildWasiPolyfill({ env: { GREETING: "hello" } });
@@ -60,11 +60,11 @@ describe("WASI process.env (#1482)", () => {
     spy.mockRestore();
   });
 
-  it("missing key returns undefined-equivalent from the polyfill", () => {
+  it("missing key returns undefined-equivalent from the polyfill", async () => {
     // The wiring decision is symmetric: missing → externref null/undefined.
     // We verify by instantiating with a fixture that uses process.env.X and
     // confirming no LinkError and no JS-side throw.
-    const result = compile(`const v = process.env.MISSING; console.log("done");`, {
+    const result = await compile(`const v = process.env.MISSING; console.log("done");`, {
       fileName: "test.ts",
       target: "wasi",
     });

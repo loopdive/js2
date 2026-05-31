@@ -8,7 +8,7 @@ async function run(
   src: string,
   define?: Record<string, string>,
 ): Promise<{ ret: any; wat: string; binary: Uint8Array }> {
-  const r = compile(src, { fileName: "test.ts", ...(define ? { define } : {}) });
+  const r = await compile(src, { fileName: "test.ts", ...(define ? { define } : {}) });
   if (!r.success) throw new Error("CE: " + r.errors[0]?.message);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -287,8 +287,8 @@ describe("#1043 — process.env.NODE_ENV compile-time substitution + DCE", () =>
   });
 
   describe("no-define behavior is unchanged", () => {
-    it("without define option, source is not substituted", () => {
-      const r = compile(
+    it("without define option, source is not substituted", async () => {
+      const r = await compile(
         `
           export function test(): number {
             // process is not defined; this should compile because

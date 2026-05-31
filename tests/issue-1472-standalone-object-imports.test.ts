@@ -41,8 +41,8 @@ function assertNoHostObjectImports(imports: ReadonlyArray<{ module: string; name
 }
 
 describe("#1472 Phase A — --target standalone dynamic-object refusal", () => {
-  it("typed object literal (closed shape) compiles with zero host object imports", () => {
-    const r = compile(
+  it("typed object literal (closed shape) compiles with zero host object imports", async () => {
+    const r = await compile(
       `
         interface Point { x: number; y: number; }
         export function dist(): number {
@@ -56,8 +56,8 @@ describe("#1472 Phase A — --target standalone dynamic-object refusal", () => {
     assertNoHostObjectImports(r.imports);
   });
 
-  it("class instance with method dispatch compiles with zero host object imports", () => {
-    const r = compile(
+  it("class instance with method dispatch compiles with zero host object imports", async () => {
+    const r = await compile(
       `
         class Counter {
           n: number = 0;
@@ -75,8 +75,8 @@ describe("#1472 Phase A — --target standalone dynamic-object refusal", () => {
     assertNoHostObjectImports(r.imports);
   });
 
-  it("dynamic property add on an any-typed object refuses with a #1472 Phase B error", () => {
-    const r = compile(
+  it("dynamic property add on an any-typed object refuses with a #1472 Phase B error", async () => {
+    const r = await compile(
       `
         export function leak(): number {
           const o: any = { x: 1 };
@@ -94,10 +94,10 @@ describe("#1472 Phase A — --target standalone dynamic-object refusal", () => {
     assertNoHostObjectImports(r.imports);
   });
 
-  it("default target (gc) still uses the JS-host object machinery", () => {
+  it("default target (gc) still uses the JS-host object machinery", async () => {
     // Regression guard: standalone is opt-in. Default mode keeps the host
     // object imports so browser-targeted modules work with the JS runtime.
-    const r = compile(
+    const r = await compile(
       `
         export function obj(): number {
           const o: any = { x: 1 };

@@ -3,15 +3,15 @@ import { compile } from "../src/index.js";
 import { compileToWasm, assertEquivalent } from "./equivalence/helpers.js";
 
 /** Helper: compile source, return errors array (empty if success) */
-function compileErrors(source: string): string[] {
-  const r = compile(source);
+async function compileErrors(source: string): Promise<string[]> {
+  const r = await compile(source);
   return r.success ? [] : r.errors.map((e) => e.message);
 }
 
 describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   describe("Array destructuring compiles without unknown identifier errors", () => {
-    it("basic array destructuring: const [a, b, c] = [1, 2, 3]", () => {
-      const errors = compileErrors(`
+    it("basic array destructuring: const [a, b, c] = [1, 2, 3]", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const arr: number[] = [1, 2, 3];
           const [a, b, c] = arr;
@@ -22,8 +22,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("rest element in array destructuring: const [a, ...rest] = arr", () => {
-      const errors = compileErrors(`
+    it("rest element in array destructuring: const [a, ...rest] = arr", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const arr: number[] = [1, 2, 3, 4];
           const [a, ...rest] = arr;
@@ -34,8 +34,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("nested array destructuring: const [[a, b], [c, d]] = nested", () => {
-      const errors = compileErrors(`
+    it("nested array destructuring: const [[a, b], [c, d]] = nested", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const nested: number[][] = [[1, 2], [3, 4]];
           const [[a, b], [c, d]] = nested;
@@ -48,8 +48,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("Object destructuring compiles without unknown identifier errors", () => {
-    it("basic object destructuring: const {x, y} = obj", () => {
-      const errors = compileErrors(`
+    it("basic object destructuring: const {x, y} = obj", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const obj = {x: 1, y: 2};
           const {x, y} = obj;
@@ -60,8 +60,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("nested object destructuring: const {a, b: {c}} = obj", () => {
-      const errors = compileErrors(`
+    it("nested object destructuring: const {a, b: {c}} = obj", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const obj = {a: 1, b: {c: 2}};
           const {a, b: {c}} = obj;
@@ -72,8 +72,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("object destructuring with renaming: const {x: a, y: b} = obj", () => {
-      const errors = compileErrors(`
+    it("object destructuring with renaming: const {x: a, y: b} = obj", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const obj = {x: 10, y: 20};
           const {x: a, y: b} = obj;
@@ -86,8 +86,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("Multi-variable let/const declarations", () => {
-    it("let x = 1, y = 2, z = 3", () => {
-      const errors = compileErrors(`
+    it("let x = 1, y = 2, z = 3", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           let x = 1, y = 2, z = 3;
           return x + y + z;
@@ -97,8 +97,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("const a = 1, b = 2", () => {
-      const errors = compileErrors(`
+    it("const a = 1, b = 2", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const a = 1, b = 2;
           return a + b;
@@ -110,8 +110,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("For statement with destructuring initializer", () => {
-    it("for (const [x, y, z] = [1, 2, 3]; ...)", () => {
-      const errors = compileErrors(`
+    it("for (const [x, y, z] = [1, 2, 3]; ...)", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const arr: number[] = [1, 2, 3];
           let sum = 0;
@@ -125,8 +125,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("for (const {a, b} = obj; ...)", () => {
-      const errors = compileErrors(`
+    it("for (const {a, b} = obj; ...)", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const obj = {a: 10, b: 20};
           let sum = 0;
@@ -140,8 +140,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("for (let [a, b] = arr; ...) compiles without unknown identifiers", () => {
-      const errors = compileErrors(`
+    it("for (let [a, b] = arr; ...) compiles without unknown identifiers", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const arr: number[] = [3, 5];
           let r = 0;
@@ -157,8 +157,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("For loop destructuring", () => {
-    it("for...in loop variable is in scope (compile only)", () => {
-      const r = compile(`
+    it("for...in loop variable is in scope (compile only)", async () => {
+      const r = await compile(`
         export function test(): number {
           const obj = {a: 1, b: 2};
           let count = 0;
@@ -176,8 +176,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("Var hoisting with destructuring", () => {
-    it("var [a, b] = arr should be hoisted", () => {
-      const errors = compileErrors(`
+    it("var [a, b] = arr should be hoisted", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           var arr: number[] = [1, 2];
           var [a, b] = arr;
@@ -188,8 +188,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("var {x, y} = obj should be hoisted", () => {
-      const errors = compileErrors(`
+    it("var {x, y} = obj should be hoisted", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           var obj = {x: 10, y: 20};
           var {x, y} = obj;
@@ -202,8 +202,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("Destructuring in for-of loops", () => {
-    it("for (const [a, b] of arr) -- array destructuring in for-of", () => {
-      const errors = compileErrors(`
+    it("for (const [a, b] of arr) -- array destructuring in for-of", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const arr: number[][] = [[1, 2], [3, 4]];
           let sum = 0;
@@ -219,8 +219,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("Multiple destructuring in same scope", () => {
-    it("two destructuring declarations in same function", () => {
-      const errors = compileErrors(`
+    it("two destructuring declarations in same function", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const obj1 = {a: 1, b: 2};
           const obj2 = {c: 3, d: 4};
@@ -235,8 +235,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("Destructuring with default values", () => {
-    it("const {x = 10, y = 20} = obj", () => {
-      const errors = compileErrors(`
+    it("const {x = 10, y = 20} = obj", async () => {
+      const errors = await compileErrors(`
         export function test(): number {
           const obj: {x?: number, y?: number} = {};
           const {x = 10, y = 20} = obj;
@@ -249,8 +249,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
   });
 
   describe("Function parameter destructuring", () => {
-    it("function with array destructured parameter", () => {
-      const errors = compileErrors(`
+    it("function with array destructured parameter", async () => {
+      const errors = await compileErrors(`
         export function test([x, y, z]: number[]): number {
           return x + y + z;
         }
@@ -259,8 +259,8 @@ describe("Issue #266: Scope resolution for multi-variable patterns", () => {
       expect(unknowns).toEqual([]);
     });
 
-    it("function with object destructured parameter", () => {
-      const errors = compileErrors(`
+    it("function with object destructured parameter", async () => {
+      const errors = await compileErrors(`
         export function test({a, b}: {a: number, b: number}): number {
           return a + b;
         }

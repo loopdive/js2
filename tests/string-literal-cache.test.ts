@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -15,13 +15,13 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
 }
 
 describe("string literal caching", () => {
-  it("string literals use imported string constants (WAT inspection)", { timeout: 15000 }, () => {
+  it("string literals use imported string constants (WAT inspection)", { timeout: 15000 }, async () => {
     const src = `
       export function greet(): string {
         return "hello";
       }
     `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     const wat = result.wat!;
     // String literals are now imported as string_constants globals
@@ -29,7 +29,7 @@ describe("string literal caching", () => {
     expect(wat).toContain("global.get");
   });
 
-  it("string literal in loop uses global.get", () => {
+  it("string literal in loop uses global.get", async () => {
     const src = `
       export function bench(): string {
         let s: string = "";
@@ -39,7 +39,7 @@ describe("string literal caching", () => {
         return s;
       }
     `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     const wat = result.wat!;
     // String constants should be imported as globals
@@ -60,7 +60,7 @@ describe("string literal caching", () => {
     expect(await run(src, "repeat5")).toBe("ababababab");
   });
 
-  it("multiple different string literals have separate constants", () => {
+  it("multiple different string literals have separate constants", async () => {
     const src = `
       export function test(): string {
         const a: string = "hello";
@@ -68,7 +68,7 @@ describe("string literal caching", () => {
         return a + " " + b;
       }
     `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     // Each unique string should be in the stringPool
     expect(result.stringPool).toContain("hello");
@@ -76,7 +76,7 @@ describe("string literal caching", () => {
     expect(result.stringPool).toContain(" ");
   });
 
-  it("same string literal used twice appears once in stringPool", () => {
+  it("same string literal used twice appears once in stringPool", async () => {
     const src = `
       export function test(): string {
         const a: string = "x";
@@ -84,7 +84,7 @@ describe("string literal caching", () => {
         return a + b;
       }
     `;
-    const result = compile(src);
+    const result = await compile(src);
     expect(result.success).toBe(true);
     // "x" appears twice in source but should only be in stringPool once
     const xCount = result.stringPool.filter((s: string) => s === "x").length;

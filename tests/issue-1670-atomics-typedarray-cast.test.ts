@@ -18,7 +18,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function compileAndRun(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   expect(r.success, `Compile failed:\n${r.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
@@ -43,7 +43,7 @@ describe("#1670 Int32Array over SharedArrayBuffer must not trap on construction 
     // model the spec throw with an explicit guard so the test stays
     // host-runtime-agnostic; the regression was that construction trapped
     // *before* any such guard could run.
-    const r = compile(
+    const r = await compile(
       `
       const i32a = new Int32Array(new SharedArrayBuffer(16));
       i32a[0] = 5;

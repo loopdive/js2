@@ -4,7 +4,7 @@ import { buildImports } from "./src/runtime.js";
 
 describe("#1630 — Object.assign writeback into typed wasmGC struct", () => {
   async function runReturn(src: string): Promise<{ ret?: unknown; error?: string }> {
-    const result = compile(src, { skipSemanticDiagnostics: true });
+    const result = await compile(src, { skipSemanticDiagnostics: true });
     if (!result.success) return { error: result.errors?.[0]?.message ?? "compile failed" };
     const importObj = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);

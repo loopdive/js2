@@ -19,7 +19,7 @@ import { compile } from "../src/index.js";
 const HOST_LEAK_RE = /__extern_|__register_|__iterator|__array_from/;
 
 async function runWasi(src: string): Promise<unknown> {
-  const r = compile(src, { fileName: "test.ts", target: "wasi" });
+  const r = await compile(src, { fileName: "test.ts", target: "wasi" });
   expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
   const mod = await WebAssembly.compile(r.binary);
   const leaks = WebAssembly.Module.imports(mod)

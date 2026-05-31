@@ -14,7 +14,7 @@ import { buildImports } from "../src/runtime.ts";
 // could run, so the ReferenceError never surfaced.
 
 async function compileOk(src: string) {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error("Compile: " + r.errors.map((e) => `L${e.line}: ${e.message}`).join("; "));
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);

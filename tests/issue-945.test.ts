@@ -14,11 +14,11 @@ describe("#945 __vec_get i32_byte boxing fix", () => {
   for (const sample of SAMPLES) {
     const label = sample.split("/").slice(-3).join("/");
 
-    it(`compiles without extern.convert_any CE: ${label}`, () => {
+    it(`compiles without extern.convert_any CE: ${label}`, async () => {
       const src = readFileSync(sample, "utf-8");
       const meta = parseMeta(src);
       const { source: w } = wrapTest(src, meta);
-      const r = compile(w, { fileName: "test.ts" });
+      const r = await compile(w, { fileName: "test.ts" });
       // The fix: i32_byte elements must not hit extern.convert_any
       // Before fix: CE "extern.convert_any[0] expected type shared anyref, found array.get of type i32"
       if (!r.success) {
@@ -32,7 +32,7 @@ describe("#945 __vec_get i32_byte boxing fix", () => {
       const src = readFileSync(sample, "utf-8");
       const meta = parseMeta(src);
       const { source: w } = wrapTest(src, meta);
-      const r = compile(w, { fileName: "test.ts" });
+      const r = await compile(w, { fileName: "test.ts" });
       if (!r.success) return; // already covered above
       const imports = buildImports(r.imports, undefined, r.stringPool);
       // Must not throw WebAssembly.CompileError — instantiation should succeed

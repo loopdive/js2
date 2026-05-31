@@ -3,7 +3,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
@@ -61,8 +61,8 @@ describe("string enums", () => {
     expect(await run(src, "getNum")).toBe(20);
   });
 
-  it("string enum in string pool", () => {
-    const result = compile(`
+  it("string enum in string pool", async () => {
+    const result = await compile(`
       enum Color { Red = "RED", Green = "GREEN" }
       export function test(): string {
         return Color.Red;

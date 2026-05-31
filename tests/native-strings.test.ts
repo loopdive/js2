@@ -7,7 +7,7 @@ import { buildImports, instantiateWasm } from "../src/runtime.js";
  * Handles setExports for marshal helpers that need memory access.
  */
 async function runFast(source: string, exportName = "test"): Promise<any> {
-  const result = compile(source, { fast: true });
+  const result = await compile(source, { fast: true });
   if (!result.success) {
     throw new Error(result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n"));
   }
@@ -23,7 +23,7 @@ async function runFast(source: string, exportName = "test"): Promise<any> {
  * Helper: compile with fast mode, instantiate, and call with args.
  */
 async function runFastWithArgs(source: string, args: any[], exportName = "test"): Promise<any> {
-  const result = compile(source, { fast: true });
+  const result = await compile(source, { fast: true });
   if (!result.success) {
     throw new Error(result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n"));
   }
@@ -38,13 +38,13 @@ async function runFastWithArgs(source: string, args: any[], exportName = "test")
 describe("fast mode: native strings", () => {
   // ── String literal and identity ──────────────────────────────────
 
-  it("compiles without errors", () => {
-    const result = compile(`export function test(): string { return "hello"; }`, { fast: true });
+  it("compiles without errors", async () => {
+    const result = await compile(`export function test(): string { return "hello"; }`, { fast: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   });
 
-  it("WAT contains NativeString struct type", () => {
-    const result = compile(`export function test(): string { return "hello"; }`, { fast: true });
+  it("WAT contains NativeString struct type", async () => {
+    const result = await compile(`export function test(): string { return "hello"; }`, { fast: true });
     expect(result.success).toBe(true);
     expect(result.wat).toContain("__str_data");
     expect(result.wat).toContain("NativeString");
@@ -54,8 +54,8 @@ describe("fast mode: native strings", () => {
     expect(result.wat).not.toContain("wasm:js-string");
   });
 
-  it("WAT uses struct.new for string literals", () => {
-    const result = compile(`export function test(): string { return "hi"; }`, { fast: true });
+  it("WAT uses struct.new for string literals", async () => {
+    const result = await compile(`export function test(): string { return "hi"; }`, { fast: true });
     expect(result.success).toBe(true);
     expect(result.wat).toContain("struct.new");
     expect(result.wat).toContain("array.new_fixed");
@@ -634,8 +634,8 @@ describe("fast mode: native strings", () => {
 
   // ── Existing tests must still pass in non-fast mode ──────────────
 
-  it("non-fast mode still uses externref strings", () => {
-    const result = compile(`export function test(): string { return "hello"; }`);
+  it("non-fast mode still uses externref strings", async () => {
+    const result = await compile(`export function test(): string { return "hello"; }`);
     expect(result.success).toBe(true);
     expect(result.wat).toContain("externref");
     expect(result.wat).toContain("string_constants");

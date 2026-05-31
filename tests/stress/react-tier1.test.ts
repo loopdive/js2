@@ -75,7 +75,7 @@ describe("#1033 React Tier 1 — bare-package import + direct CJS compile", () =
    * (the resolver follows `react/index.js`'s CJS dispatch, which has its
    * own runtime-init blocker — see Tier 1f).
    */
-  itIfInstalled('Tier 1a — entry with `import React from "react"` compiles', () => {
+  itIfInstalled('Tier 1a — entry with `import React from "react"` compiles', async () => {
     const entry = writeEntry(
       "tier1a-entry.ts",
       `
@@ -86,7 +86,7 @@ export function test(): number {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.binary.byteLength).toBeGreaterThan(0);
@@ -101,7 +101,7 @@ export function test(): number {
    * extern reference to `React.createElement`; the meat of React is not in
    * this binary yet.
    */
-  itIfInstalled("Tier 1b — Tier 1a binary is structurally valid Wasm", () => {
+  itIfInstalled("Tier 1b — Tier 1a binary is structurally valid Wasm", async () => {
     const entry = writeEntry(
       "tier1b-entry.ts",
       `
@@ -112,7 +112,7 @@ export function test(): number {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -132,8 +132,8 @@ export function test(): number {
    * What this rung asserts: compile-time success against a real
    * single-file source. The binary-size and validation rungs are next.
    */
-  itIfInstalled("Tier 1c — `react/cjs/react.development.js` direct compile succeeds", () => {
-    const r = compileProject(REACT_DEV_CJS, { allowJs: true });
+  itIfInstalled("Tier 1c — `react/cjs/react.development.js` direct compile succeeds", async () => {
+    const r = await compileProject(REACT_DEV_CJS, { allowJs: true });
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.binary.byteLength).toBeGreaterThan(0);
@@ -155,7 +155,7 @@ export function test(): number {
    * with a pointer to the next blocker.
    */
   itIfInstalled("Tier 1d — Tier 1c binary instantiates (currently empty — see survey NEW issue 3)", async () => {
-    const r = compileProject(REACT_DEV_CJS, { allowJs: true });
+    const r = await compileProject(REACT_DEV_CJS, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -186,7 +186,7 @@ export function test(): number {
 }
 `,
     );
-    const r = compileProject(entry, { allowJs: true });
+    const r = await compileProject(entry, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     const imps = buildImports(r.imports as never, undefined, r.stringPool);
@@ -217,7 +217,7 @@ export function test(): number {
    * BLOCKED on survey NEW issue 2 (resolver + runtime stub).
    */
   it.skip("Tier 1f — `react/index.js` CJS shim instantiates (survey NEW issue 2)", async () => {
-    const r = compileProject(REACT_INDEX, { allowJs: true });
+    const r = await compileProject(REACT_INDEX, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -236,8 +236,8 @@ export function test(): number {
    * survey NEW issue 1 (return-type unification across branches with
    * mixed i32-literal and f64-arithmetic returns).
    */
-  it.skip("Tier 1g — `react.production.js` direct compile validates (survey NEW issue 1)", () => {
-    const r = compileProject(REACT_PROD_CJS, { allowJs: true });
+  it.skip("Tier 1g — `react.production.js` direct compile validates (survey NEW issue 1)", async () => {
+    const r = await compileProject(REACT_PROD_CJS, { allowJs: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(WebAssembly.validate(r.binary)).toBe(true);

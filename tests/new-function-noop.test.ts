@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
 describe("new Function() compiles without errors (#711)", () => {
-  it("new Function('return 1') compiles to a no-op externref", () => {
-    const result = compile(`
+  it("new Function('return 1') compiles to a no-op externref", async () => {
+    const result = await compile(`
       export function test(): number {
         const f = new Function("return 1");
         return 42;
@@ -16,8 +16,8 @@ describe("new Function() compiles without errors (#711)", () => {
     expect(newFuncErrors).toHaveLength(0);
   });
 
-  it("new Function with multiple args compiles", () => {
-    const result = compile(`
+  it("new Function with multiple args compiles", async () => {
+    const result = await compile(`
       export function test(): number {
         const add = new Function("a", "b", "return a + b");
         return 42;
@@ -29,8 +29,8 @@ describe("new Function() compiles without errors (#711)", () => {
     expect(newFuncErrors).toHaveLength(0);
   });
 
-  it("new Function with no args compiles", () => {
-    const result = compile(`
+  it("new Function with no args compiles", async () => {
+    const result = await compile(`
       export function test(): number {
         const f = new Function();
         return 42;

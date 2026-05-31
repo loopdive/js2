@@ -10,7 +10,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function run(src: string): Promise<number | string | null> {
-  const r = compile(src, { fileName: "test.ts" });
+  const r = await compile(src, { fileName: "test.ts" });
   if (!r.success) throw new Error(r.errors[0]?.message ?? "compile error");
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -32,12 +32,12 @@ describe("#955 ref.test+ref.cast elimination", () => {
     expect(await run(src)).toBe(3);
   });
 
-  it("struct field access with typed variable has no ref.test+ref.cast in user code", () => {
+  it("struct field access with typed variable has no ref.test+ref.cast in user code", async () => {
     const src = `
       class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } }
       export function test(): number { const p = new Point(1, 2); return p.x + p.y; }
     `;
-    const r = compile(src, { fileName: "test.ts" });
+    const r = await compile(src, { fileName: "test.ts" });
     if (!r.success) throw new Error(r.errors[0]?.message ?? "compile error");
     // The WAT should NOT have ref.test+ref.cast in the $test function
     // (the $__sget_* getter functions still need ref.test+ref.cast for JS interop)

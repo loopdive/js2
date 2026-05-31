@@ -99,16 +99,16 @@ const FRAMED_ECHO = `${DECL}
   }`;
 
 describe("#1653 process.stdin.read under --target wasi", () => {
-  it("compiles and produces an instantiable WASI module", () => {
-    const result = compile(FRAMED_ECHO, { fileName: "x.ts", target: "wasi" });
+  it("compiles and produces an instantiable WASI module", async () => {
+    const result = await compile(FRAMED_ECHO, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
     // fd_read import must be registered even without readStdin().
     expect(result.wat).toContain("fd_read");
   });
 
-  it("reads a 4-byte LE header then the exact body, binary-verbatim", () => {
-    const result = compile(FRAMED_ECHO, { fileName: "x.ts", target: "wasi" });
+  it("reads a 4-byte LE header then the exact body, binary-verbatim", async () => {
+    const result = await compile(FRAMED_ECHO, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     // header len=5 (LE), body = bytes incl. non-printable / high bytes
     const frame = Uint8Array.from([0x05, 0x00, 0x00, 0x00, 0x00, 0xff, 0x0a, 0x7f, 0x80]);
@@ -116,7 +116,7 @@ describe("#1653 process.stdin.read under --target wasi", () => {
     expect(Array.from(out)).toEqual([0x00, 0xff, 0x0a, 0x7f, 0x80]);
   });
 
-  it("read() returns the byte count (used to advance the offset)", () => {
+  it("read() returns the byte count (used to advance the offset)", async () => {
     // Echo only what the FIRST read() returns, by writing header[0..n).
     const src = `${DECL}
       export function main(): void {
@@ -128,14 +128,14 @@ describe("#1653 process.stdin.read under --target wasi", () => {
         while (i < n) { out[i] = buf[i]; i = i + 1; }
         process.stdout.write(out);
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiStdinToStdout(result.binary, Uint8Array.from([1, 2, 3]));
     // The shim serves the whole 3-byte payload in one fd_read (iov len was 8).
     expect(Array.from(out)).toEqual([1, 2, 3]);
   });
 
-  it("supports a while(true) port loop over two consecutive messages", () => {
+  it("supports a while(true) port loop over two consecutive messages", async () => {
     const src = `${DECL}
       export function main(): void {
         while (true) {
@@ -159,7 +159,7 @@ describe("#1653 process.stdin.read under --target wasi", () => {
           process.stdout.write(body);
         }
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     // frame1: len=2 "AB"; frame2: len=3 "XYZ"
     const frames = Uint8Array.from([0x02, 0, 0, 0, 0x41, 0x42, 0x03, 0, 0, 0, 0x58, 0x59, 0x5a]);
@@ -167,7 +167,7 @@ describe("#1653 process.stdin.read under --target wasi", () => {
     expect(Array.from(out)).toEqual([0x02, 0, 0, 0, 0x41, 0x42, 0x03, 0, 0, 0, 0x58, 0x59, 0x5a]);
   });
 
-  it("reads into an ArrayBuffer-backed Uint8Array at a non-zero offset", () => {
+  it("reads into an ArrayBuffer-backed Uint8Array at a non-zero offset", async () => {
     const src = `${DECL}
       export function main(): void {
         const ab = new ArrayBuffer(6);
@@ -178,14 +178,14 @@ describe("#1653 process.stdin.read under --target wasi", () => {
         const n = process.stdin.read(view, 2);
         process.stdout.write(view);
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiStdinToStdout(result.binary, Uint8Array.from([0x11, 0x22, 0x33]));
     // [AA BB] preserved, then 3 read bytes at offset 2, byte 5 stays 0.
     expect(Array.from(out)).toEqual([0xaa, 0xbb, 0x11, 0x22, 0x33, 0x00]);
   });
 
-  it("returns 0 at EOF (empty stdin)", () => {
+  it("returns 0 at EOF (empty stdin)", async () => {
     const src = `${DECL}
       export function main(): void {
         const buf = new Uint8Array(4);
@@ -195,7 +195,7 @@ describe("#1653 process.stdin.read under --target wasi", () => {
         out[0] = n === 0 ? 1 : 0;
         process.stdout.write(out);
       }`;
-    const result = compile(src, { fileName: "x.ts", target: "wasi" });
+    const result = await compile(src, { fileName: "x.ts", target: "wasi" });
     expect(result.success).toBe(true);
     const out = runWasiStdinToStdout(result.binary, new Uint8Array(0));
     expect(Array.from(out)).toEqual([1]);

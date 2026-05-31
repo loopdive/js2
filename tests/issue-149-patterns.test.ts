@@ -2,14 +2,14 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "./equivalence/helpers.js";
 
-function compileAndCheck(source: string) {
-  const result = compile(source);
+async function compileAndCheck(source: string) {
+  const result = await compile(source);
   const unsupported = result.errors?.filter((e) => e.message === "Unsupported call expression");
   return { result, unsupported };
 }
 
 async function compileToWasm(source: string) {
-  const result = compile(source);
+  const result = await compile(source);
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }

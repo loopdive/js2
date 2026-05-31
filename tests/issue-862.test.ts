@@ -12,8 +12,8 @@ import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
 
-function compileAndRun(source: string): { success: boolean; result?: number; error?: string } {
-  const compiled = compile(source, { fileName: "test.ts" });
+async function compileAndRun(source: string): Promise<{ success: boolean; result?: number; error?: string }> {
+  const compiled = await compile(source, { fileName: "test.ts" });
   if (!compiled.success) return { success: false, error: compiled.errors[0]?.message };
   try {
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
@@ -27,8 +27,8 @@ function compileAndRun(source: string): { success: boolean; result?: number; err
 }
 
 describe("Issue #862: generator exception deferral", () => {
-  it("generator throw is deferred to .next() and catchable", () => {
-    const r = compileAndRun(`
+  it("generator throw is deferred to .next() and catchable", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         function* gen(): Generator<number> { throw new Error("boom"); }
         const iter = gen();
@@ -41,8 +41,8 @@ describe("Issue #862: generator exception deferral", () => {
     expect(r.result).toBe(1);
   });
 
-  it("generator yield-then-throw defers error after yields", () => {
-    const r = compileAndRun(`
+  it("generator yield-then-throw defers error after yields", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         function* gen(): Generator<number> { yield 1; throw new Error("boom"); }
         const iter = gen();
@@ -56,8 +56,8 @@ describe("Issue #862: generator exception deferral", () => {
     expect(r.result).toBe(1);
   });
 
-  it("normal generator still works", () => {
-    const r = compileAndRun(`
+  it("normal generator still works", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         function* gen(): Generator<number> { yield 42; yield 99; }
         const iter = gen();
@@ -71,8 +71,8 @@ describe("Issue #862: generator exception deferral", () => {
     expect(r.result).toBe(1);
   });
 
-  it("gen() creation does not throw (deferred to .next())", () => {
-    const r = compileAndRun(`
+  it("gen() creation does not throw (deferred to .next())", async () => {
+    const r = await compileAndRun(`
       export function test(): number {
         function* gen(): Generator<number> { throw new Error("boom"); }
         let threw = 0;

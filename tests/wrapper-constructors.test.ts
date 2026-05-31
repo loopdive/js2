@@ -63,8 +63,8 @@ describe("Issue #1110: Wrapper constructors (new Number/String/Boolean)", () => 
     );
   });
 
-  it("compiles new Number without errors", () => {
-    const result = compile(`
+  it("compiles new Number without errors", async () => {
+    const result = await compile(`
       export function test(): number {
         const n = new Number(42);
         return +n;
@@ -73,8 +73,8 @@ describe("Issue #1110: Wrapper constructors (new Number/String/Boolean)", () => 
     expect(result.errors).toHaveLength(0);
   });
 
-  it("compiles new String without errors", () => {
-    const result = compile(`
+  it("compiles new String without errors", async () => {
+    const result = await compile(`
       export function test(): string {
         const s = new String("hello");
         return "" + s;
@@ -83,8 +83,8 @@ describe("Issue #1110: Wrapper constructors (new Number/String/Boolean)", () => 
     expect(result.errors).toHaveLength(0);
   });
 
-  it("compiles new Boolean without errors", () => {
-    const result = compile(`
+  it("compiles new Boolean without errors", async () => {
+    const result = await compile(`
       export function test(): boolean {
         const b = new Boolean(false);
         return !!b;
