@@ -48,6 +48,27 @@ async function getNodeImports() {
 // for the four built-in modules we need. #1580: the previous body silently
 // returned null in ESM contexts, which made `optimize: true` fall through to
 // the "wasm-opt not available" warning even when the binary was on PATH.
+// Bundler-safe synchronous `require`. Reaches `node:module#createRequire` via
+// `process.getBuiltinModule` (Node ≥ 22) so the same code path works in CJS
+// hosts, ESM hosts, esbuild, AND `bun build`/`deno compile`. Crucially, bundlers
+// can't statically follow this dynamic getter, so they never try to resolve (and
+// reject) a bare `require("binaryen")` whose transitive deps use top-level await
+// (#986). Returns null in browser-like / non-Node runtimes (the async path
+// handles those).
+function getNodeRequireSync(): NodeRequire | null {
+  if (typeof process === "undefined" || !process.versions || !process.versions.node) {
+    return null;
+  }
+  const getBuiltin = (process as unknown as { getBuiltinModule?: (name: string) => unknown }).getBuiltinModule;
+  if (typeof getBuiltin !== "function") return null;
+  const moduleNs = getBuiltin("node:module") as typeof import("node:module") | undefined;
+  if (!moduleNs || typeof moduleNs.createRequire !== "function") return null;
+  // Anchor the resolver at the project root; sync code can run under CJS or ESM,
+  // and the resolver only needs a starting directory to walk node_modules from.
+  const req = moduleNs.createRequire(`file://${process.cwd()}/`);
+  return typeof req === "function" ? req : null;
+}
+
 function getNodeImportsSync() {
   if (_nodeImports) return _nodeImports;
   // Bail in browser-like contexts. `optimizeBinary` should only be invoked
@@ -244,10 +265,15 @@ function optimizeWithBinaryenPackage(
   referenceTypes: boolean,
   exceptionHandling: boolean,
 ): OptimizeResult | null {
-  // Dynamic import to avoid hard dependency
+  // Load the optional `binaryen` package without a bare `require`. #986: a bare
+  // `require("binaryen")` makes ESM bundlers (bun build / deno compile) fail —
+  // binaryen's transitive deps use top-level await, which `require` can't load.
+  // The bundler-opaque createRequire shim keeps this synchronous and optional.
   let binaryen: any;
   try {
-    binaryen = require("binaryen");
+    const req = getNodeRequireSync();
+    if (!req) return null;
+    binaryen = req("binaryen");
   } catch {
     return null;
   }
@@ -477,8 +503,8 @@ function optimizeWithSystemBinary(
       n.unlinkSync(tmpDir);
     } catch {
       try {
-        const fs = require("node:fs");
-        fs.rmdirSync(tmpDir);
+        const fs = getNodeRequireSync()?.("node:fs") as typeof import("node:fs") | undefined;
+        fs?.rmdirSync(tmpDir);
       } catch {
         /* ignore */
       }
