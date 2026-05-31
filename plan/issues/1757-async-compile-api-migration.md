@@ -1,9 +1,10 @@
 ---
 id: 1757
 title: "Migrate the public compile() API to async (embed binaryen via await import)"
-status: in-progress
+status: done
 created: 2026-05-31
 updated: 2026-05-31
+completed: 2026-05-31
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -88,3 +89,53 @@ be **async**. User-directed (2026-05-31) to do the full migration.
   green.
 - The codemod is the risk centre — do it AST-based and review a sample diff
   before the repo-wide run.
+
+## Implementation notes (sendev, 2026-05-31)
+
+**Why the design, not just the what:**
+
+1. **The `eval()` host shim forced a sync core.** `runtime-eval.ts`'s
+   `__extern_eval(src, isDirect)` is a *Wasm host import* — Wasm imports must
+   return synchronously, and `eval` is synchronous in JS. It compiles its
+   wrapper source with `compileSource` and instantiates with the **sync**
+   `new WebAssembly.Module`. Making `compileSource` `async` would have made the
+   eval shim return a `Promise` it can't await. Resolution: split
+   `compileSource` into a **synchronous** `compileSourceCore` (full codegen, no
+   optimizer) + an `async compileSource` wrapper that applies the optional
+   Binaryen pass via `applyOptionalOptimize` → `optimizeBinaryAsync` (the
+   `await import("binaryen")` loader). The eval shim calls `compileSourceCore`
+   directly and is unchanged. This is sound because **nothing downstream of
+   codegen depends on the optimized binary** — WAT, `.d.ts`, imports-helper and
+   WIT all derive from the binaryen-independent module IR — so deferring the
+   optimize (which only swaps `result.binary`) to the wrapper is observationally
+   identical to optimizing inline. `compileMultiSource`/`compileFilesSource`
+   have no sync caller, so they stayed monolithic-async with inline
+   `await optimizeBinaryAsync`.
+
+2. **Codemod = the bulk + the only real regression risk.** `tests/` is
+   **excluded from `tsconfig.json`**, so `tsc` does NOT typecheck tests — a
+   missing `await` surfaces only as a *runtime* vitest failure (`.success`/
+   `.errors` read off a Promise). So the codemod had to be transitively
+   complete, validated by `npm test`, not by tsc. Implemented AST-based with
+   ts-morph (`.tmp/codemod-await-compile.mjs`, gitignored) with three
+   non-obvious behaviours the regex approach would miss:
+   - **Fixpoint transitive propagation**: a sync local helper (e.g.
+     `function internalCrashErrors(): string[] { … compile() … }`) becomes
+     `async`, so every caller of *that helper* must also `await` it and become
+     async — iterated to a fixpoint within each file.
+   - **Return-type rewrite**: an `async` fn with an explicit non-Promise return
+     annotation (`: string[]`) is wrapped to `: Promise<string[]>`.
+   - **Parenthesising chained access**: `compile(...).binary` →
+     `(await compile(...)).binary`, not `await compile(...).binary`.
+   - Dynamic `const { compile } = await import("../src/index.js")` sites (3
+     files) are missed by the static-import scan; fixed by hand.
+
+   Repo-wide run: **768 files, 2140 `await`s added, 1189 fns marked async.**
+
+3. **Standalone embed (Phase 3)**: the async path is reachable end-to-end from
+   the CLI (`cli.ts await compile → applyOptionalOptimize → await
+   import("binaryen")`); verified `npx tsx src/cli.ts add.ts --optimize`
+   produces a valid optimized binary, loading binaryen via dynamic import.
+   `bun build --compile` / `deno compile` can now statically bundle binaryen
+   from that `await import`. (Neither `bun` nor `deno` is installed in this
+   container, so the single-file-binary build itself was not run here.)
