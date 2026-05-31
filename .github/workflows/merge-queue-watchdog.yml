@@ -1,0 +1,59 @@
+name: Merge-queue watchdog
+
+# WHY: GitHub's merge queue periodically wedges — PRs sit in AWAITING_CHECKS and
+# ZERO merge_group runs dispatch, with no githubstatus.com incident (#1761, ~4x
+# in 24h). The one proven recovery is a ~10-minute disable of the merge_queue
+# rule in the branch ruleset, then restore (see
+# .claude/memory/feedback_wedged_merge_queue_reset). This watchdog detects the
+# wedge and performs that reset automatically, idempotently and rate-limited.
+#
+# The recover path needs Administration:write to edit the ruleset. If MQ_ADMIN_TOKEN
+# is wired it takes the clean reset path; otherwise it falls back to draining the
+# stuck green head with `gh pr merge --admin --merge` (a logged gate bypass).
+
+on:
+  schedule:
+    # every 15 min — must be > the script's 600s sleep + API time, single-flight
+    # concurrency below prevents overlap if a recovery run is still sleeping.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Detect + log decision only, no mutation"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  checks: read
+
+concurrency:
+  group: mq-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # recover path sleeps 600s; leave margin for API + restore
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/merge-queue-watchdog.mjs
+            scripts/enqueue-green-prs.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Run merge-queue watchdog
+        env:
+          # Prefer an admin-capable PAT for the ruleset-reset path. AUTO_ENQUEUE_TOKEN
+          # is the existing queue-ops PAT; if it lacks Administration:write the script
+          # auto-detects and falls back to the admin-merge drain. GITHUB_TOKEN is the
+          # last resort (fallback path only).
+          GH_TOKEN: ${{ secrets.MQ_ADMIN_TOKEN || secrets.AUTO_ENQUEUE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
+        run: node scripts/merge-queue-watchdog.mjs
