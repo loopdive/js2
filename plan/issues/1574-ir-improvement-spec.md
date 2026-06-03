@@ -1,13 +1,14 @@
 ---
 id: 1574
 title: "IR Type Analysis & Optimization Pass Improvements"
-status: ready
+status: backlog
 created: 2026-05-21
-updated: 2026-05-21
+updated: 2026-06-03
 goal: ir-retirement
 sprint: Backlog
 owner: architect
 related: 1131, 1167a, 1167b, 1167c, 1126, 1231, 1169, 1370, 1373
+blocked_on: "§2.4 monomorphize re-inference needs an operand-coercion insertion layer in clones (insert f64.convert_i32_s etc.) before the numeric-helper case is reachable; the param-type-not-resolvable straggler needs closure-typed-param support in the IR selector. Sound §2.4 re-inference impl + analysis preserved on branch issue-1574-ir-type-analysis (PR #1088, closed). See Implementation log below."
 ---
 
 # IR Type Analysis & Optimization Pass Improvements
