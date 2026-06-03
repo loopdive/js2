@@ -93,7 +93,7 @@ import {
   nativeStringType,
   nativeStringTypeNullable,
 } from "./native-strings.js";
-import { emitJsonQuoteString } from "./json-runtime.js";
+import { emitJsonParsePrimitive, emitJsonQuoteString } from "./json-runtime.js";
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -5636,6 +5636,19 @@ function collectPrimitiveMethodImports(ctx: CodegenContext, sourceFile: ts.Sourc
           needed.add("__json_quote_string");
         }
       }
+      // (#1599 Phase 2 slice b) JSON.parse(<runtime arg>) in standalone/WASI
+      // lowers to the pure-Wasm `__json_parse_primitive` helper. Pre-register
+      // it (and the $AnyValue boxers) here so func indices are stable. Static
+      // literal parses are folded earlier and don't need this.
+      if (
+        (ctx.standalone || ctx.wasi) &&
+        ts.isIdentifier(prop.expression) &&
+        prop.expression.text === "JSON" &&
+        methodName === "parse" &&
+        node.arguments.length >= 1
+      ) {
+        needed.add("__json_parse_primitive");
+      }
       if (isNumberType(receiverType) && methodName === "toFixed") {
         needed.add("number_toFixed");
       }
@@ -5752,6 +5765,13 @@ function collectPrimitiveMethodImports(ctx: CodegenContext, sourceFile: ts.Sourc
   if (needed.has("__json_quote_string")) {
     // (#1599 Phase 2) emit the pure-Wasm runtime JSON string quoter up-front.
     emitJsonQuoteString(ctx);
+  }
+  if (needed.has("__json_parse_primitive")) {
+    // (#1599 Phase 2 slice b) emit $AnyValue type + boxers + the primitive
+    // JSON parser up-front so their defined-function indices are stable.
+    ensureAnyValueType(ctx);
+    ensureAnyHelpers(ctx);
+    emitJsonParsePrimitive(ctx);
   }
 }
 

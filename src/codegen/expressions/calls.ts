@@ -55,7 +55,8 @@ import {
 } from "../index.js";
 import { compileArrayConstructorCall, compileSymbolCall, resolveComputedKeyExpression } from "../literals.js";
 import { tryEmitJsonParseLiteral, tryEmitJsonStringifyStatic } from "../json-standalone.js";
-import { emitJsonQuoteString } from "../json-runtime.js";
+import { emitJsonParsePrimitive, emitJsonQuoteString } from "../json-runtime.js";
+import { ensureAnyHelpers, ensureAnyValueType } from "../any-helpers.js";
 import {
   compileObjectDefineProperties,
   compileObjectDefineProperty,
@@ -5173,6 +5174,35 @@ function compileCallExpression(
           const parsedType = tryEmitJsonParseLiteral(ctx, fctx, expr);
           if (parsedType !== undefined) {
             return parsedType;
+          }
+          // (#1599 Phase 2 slice b) Runtime JSON.parse of a primitive value
+          // (null / true / false / number) → pure-Wasm `__json_parse_primitive`
+          // returning a WasmGC `$AnyValue`. Object/array/string JSON traps at
+          // runtime (spec SyntaxError) until the WasmGC value-graph parser lands
+          // (#1472 Phase B follow-up). No env::JSON_parse host import.
+          // Only route to the pure-Wasm primitive parser when the result is
+          // consumed in a numeric / boolean context (typed binding, return, or
+          // arg). This keeps `JSON.parse(s).x` and other object/array uses on
+          // the clear #1599 compile-error path rather than degrading them to a
+          // runtime trap. The $AnyValue result is coerced to f64/i32 by the
+          // caller's expectedType.
+          if (expectedType && (expectedType.kind === "f64" || expectedType.kind === "i32")) {
+            // Lazily materialize $AnyValue + its boxers + the parser. These are
+            // designed for on-demand emission (mirrors expressions.ts AnyValue
+            // ops); flushLateImportShifts keeps indices correct afterwards.
+            ensureAnyValueType(ctx);
+            ensureAnyHelpers(ctx);
+            const parseIdx = emitJsonParsePrimitive(ctx);
+            const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+            if (argType && argType.kind !== "externref") {
+              coerceType(ctx, fctx, argType, { kind: "externref" });
+            }
+            flushLateImportShifts(ctx, fctx);
+            fctx.body.push({
+              op: "call",
+              funcIdx: ctx.funcMap.get("__json_parse_primitive") ?? parseIdx,
+            } as Instr);
+            return { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
           }
         }
         // (#1599 Phase 1) Refuse-and-document: in standalone (no-JS-host) /

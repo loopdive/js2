@@ -368,3 +368,43 @@ import.
 
 `status` stays `ready` because Phase 2 (full dynamic codec) is not complete;
 this slice only adds runtime string stringify.
+
+## Status — Phase 2 Slice (b): runtime `JSON.parse` → primitive `$AnyValue`
+
+Adds runtime `JSON.parse(s)` of a **primitive** JSON value (`null` / `true` /
+`false` / number) lowering to a pure-Wasm helper that returns a WasmGC
+`$AnyValue`, in `--target standalone` / `--target wasi`, with **no**
+`env::JSON_parse` host import.
+
+### What changed
+
+- `src/codegen/json-runtime.ts` — `emitJsonParsePrimitive(ctx)` emits
+  `__json_parse_primitive(s: externref) -> ref $AnyValue`: flattens the input
+  `$AnyString`, skips leading/trailing JSON whitespace, dispatches on the first
+  non-ws char — `null` → `__any_box_null`, `true`/`false` → `__any_box_bool`,
+  `-`/digit → an inlined number scan (sign, integer, fraction, exponent; the
+  exponent is applied by a multiply/divide loop) → `__any_box_f64`. Object /
+  array / string text (`{` / `[` / `"`) and malformed input `unreachable`-trap
+  (spec `SyntaxError`, ECMA-262 §25.5.1 / §25.5.2). Number parsing is inlined
+  rather than reusing the conditionally-registered `parseFloat`.
+- `src/codegen/expressions/calls.ts` — the `JSON.parse` standalone/WASI branch
+  routes to `__json_parse_primitive` **only when the result's `expectedType`
+  is `f64` / `i32`** (a typed numeric/boolean binding, return, or argument).
+  This keeps `JSON.parse(s).x` and other object/array uses on the clear #1599
+  compile-error path rather than degrading them to a runtime trap. `$AnyValue`
+  is then coerced to the expected `f64`/`i32` by the caller.
+- `tests/issue-1599-runtime.test.ts` — adds 6 parse tests (int / fraction /
+  exponent / negative number into `const x: number`, `true`/`false` into
+  `const b: boolean`, and no `env::JSON_parse` import).
+
+### Known limitation (follow-up)
+
+`JSON.parse(s) === <literal>` with the parse as a bare equality operand (no
+numeric/boolean `expectedType`) still refuses — routing it would return an
+`$AnyValue` whose `===` goes through the shared `__any_strict_eq`, whose
+string branch degrades to `i32.const 0` in standalone (no wasm:js-string
+`equals`). Making that case work needs the shared `$AnyValue` string-equals
+native fallback (`__str_equals`) — the **senior-dev** follow-up noted above.
+Object/array parse remains blocked on #1472 Phase B.
+
+`status` stays `ready` — Phase 2's object/array codec is still outstanding.

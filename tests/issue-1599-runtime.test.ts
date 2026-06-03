@@ -71,3 +71,68 @@ describe("#1599 Phase 2 — runtime JSON.stringify(string) standalone", () => {
     assertNoJsonHostImports(result);
   });
 });
+
+describe("#1599 Phase 2 — runtime JSON.parse(primitive) standalone", () => {
+  // Result of JSON.parse is consumed in a typed numeric/boolean binding so the
+  // $AnyValue is coerced to f64/i32. (Bare `JSON.parse(x) === <lit>` against a
+  // literal operand needs the shared $AnyValue strict-equals work — follow-up.)
+  it("parses an integer number", async () => {
+    const r = await runStandalone(`
+      let s: string = "4"; s = s + "2";
+      const x: number = JSON.parse(s);
+      return x === 42 ? 1 : 0;
+    `);
+    expect(r).toBe(1);
+  });
+
+  it("parses a fractional number", async () => {
+    const r = await runStandalone(`
+      let s: string = "3."; s = s + "25";
+      const x: number = JSON.parse(s);
+      return x === 3.25 ? 1 : 0;
+    `);
+    expect(r).toBe(1);
+  });
+
+  it("parses an exponent number", async () => {
+    const r = await runStandalone(`
+      let s: string = "1e"; s = s + "3";
+      const x: number = JSON.parse(s);
+      return x === 1000 ? 1 : 0;
+    `);
+    expect(r).toBe(1);
+  });
+
+  it("parses a negative number", async () => {
+    const r = await runStandalone(`
+      let s: string = "-2"; s = s + "0";
+      const x: number = JSON.parse(s);
+      return x === -20 ? 1 : 0;
+    `);
+    expect(r).toBe(1);
+  });
+
+  it("parses true / false into a boolean binding", async () => {
+    const t = await runStandalone(`
+      let s: string = "tr"; s = s + "ue";
+      const b: boolean = JSON.parse(s);
+      return b ? 1 : 0;
+    `);
+    expect(t).toBe(1);
+    const fa = await runStandalone(`
+      let s: string = "fal"; s = s + "se";
+      const b: boolean = JSON.parse(s);
+      return b ? 0 : 1;
+    `);
+    expect(fa).toBe(1);
+  });
+
+  it("does not pull in env::JSON_parse for runtime primitive parse", async () => {
+    const result = await compile(
+      "export function test(s: string): number { const x: number = JSON.parse(s); return x; }",
+      { target: "standalone" },
+    );
+    expect(result.success).toBe(true);
+    assertNoJsonHostImports(result);
+  });
+});
