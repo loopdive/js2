@@ -26,19 +26,38 @@
 //
 //   - non-recursive (not part of any SCC, including self-loops)
 //   - single-block body
-//   - body instructions do NOT consume any parameter as an operand.
-//     Rationale: if a callee's `f64.add(param, const)` is retyped from
-//     `param: f64` to `param: externref`, the instruction's operand type
-//     no longer matches the operator — producing invalid Wasm. V1 rejects
-//     such callees; later phases will re-infer instruction resultTypes
-//     under the retyped params.
 //   - body size ≤ MAX_CALLEE_SIZE
+//   - terminator is a single-value `return`
 //   - there exist ≥ 2 distinct argument-type tuples across its call sites
 //   - distinct tuple count ≤ MAX_VARIANTS_PER_CALLEE
 //
-// The operand-free-of-params guard is narrow BUT covers the common
-// "identity-like" polymorphic helpers (return-param, return-const) that
-// pure-numeric code paths boxed-and-unboxed through on the legacy path.
+// #1574 §2.4 — re-infer resultType in clones (relax the operand guard)
+// ====================================================================
+//
+// The original V1 guard ALSO required that "body instructions do NOT
+// consume any parameter as an operand." Rationale: if a callee's
+// `f64.add(param, const)` is retyped from `param: f64` to `param:
+// externref`, the operand type no longer matches the operator —
+// producing invalid Wasm. That guard structurally ruled out the most
+// valuable monomorphization targets — typed helpers like
+// `function add(a, b) { return a + b; }` whose bodies DO consume their
+// params.
+//
+// We now RELAX (not drop) that guard. When a clone's params are
+// substituted, we walk the clone body and re-infer each instruction's
+// `resultType` from the substituted operand types via `reinferCloneBody`.
+// Crucially the re-inferer is SOUND, not optimistic: for every
+// param-consuming instruction it verifies the operator actually accepts
+// the substituted operand type (e.g. `f64.add` rejects a non-numeric
+// operand). If any instruction cannot be soundly retyped — or uses an
+// op-kind the re-inferer doesn't model — the whole clone is ABANDONED
+// (`reinferCloneBody` returns null) and that call-site group stays on the
+// original callee / legacy path. This keeps the pass strictly additive:
+// it can only ever turn a boxed polymorphic call into a typed one, never
+// emit invalid Wasm.
+//
+// The original "identity-like" helpers (return-param, return-const) still
+// clone — they're the degenerate case where re-inference is a no-op.
 //
 // Growth guard (pass-end)
 // =======================
@@ -56,6 +75,8 @@
 
 import {
   asBlockId,
+  irTypeEquals,
+  type IrBinop,
   type IrBlock,
   type IrFuncRef,
   type IrFunction,
@@ -63,6 +84,7 @@ import {
   type IrModule,
   type IrParam,
   type IrType,
+  type IrUnop,
   type IrValueId,
 } from "../nodes.js";
 import type { ValType } from "../types.js";
@@ -240,23 +262,41 @@ export function monomorphize(mod: IrModule, registry?: AllocSiteRegistry): Monom
 
   // -------------------------------------------------------------------------
   // Step 5 — build clones (fresh IrFunctions).
+  //
+  // #1574 §2.4 — `cloneWithParamTypes` can now return null when the clone's
+  // body can't be soundly re-typed under the substituted params. Such a
+  // specialization is ABANDONED: we record its name so Step 6 leaves the
+  // matching call sites pointing at the original callee. The growth guard
+  // (Step 4) already accounted for it pessimistically; abandoning only
+  // shrinks the actual growth, so the budget stays satisfied.
   // -------------------------------------------------------------------------
   const clonedFuncs: IrFunction[] = [];
   const cloneSignatures = new Map<string, MonomorphizeCloneSignature>();
+  const abandonedClones = new Set<string>();
   for (const [calleeName, plans] of planByCallee) {
     const callee = byName.get(calleeName)!;
     for (const plan of plans) {
-      const { fn: clone, returnType } = cloneWithParamTypes(callee, plan.cloneName, plan.argTypes, registry);
-      clonedFuncs.push(clone);
+      const result = cloneWithParamTypes(callee, plan.cloneName, plan.argTypes, registry);
+      if (result === null) {
+        abandonedClones.add(plan.cloneName);
+        continue;
+      }
+      clonedFuncs.push(result.fn);
       cloneSignatures.set(plan.cloneName, {
         params: plan.argTypes,
-        returnType,
+        returnType: result.returnType,
       });
     }
   }
 
+  // If every planned clone was abandoned, the pass made no changes.
+  if (clonedFuncs.length === 0) {
+    return { module: mod, cloneSignatures: new Map() };
+  }
+
   // -------------------------------------------------------------------------
-  // Step 6 — rewrite call sites in their source functions.
+  // Step 6 — rewrite call sites in their source functions. Skip edits for
+  // abandoned clones — their call sites keep targeting the original callee.
   // -------------------------------------------------------------------------
   interface Edit {
     readonly blockIdx: number;
@@ -266,6 +306,7 @@ export function monomorphize(mod: IrModule, registry?: AllocSiteRegistry): Monom
   const edits = new Map<string, Edit[]>();
   for (const [, plans] of planByCallee) {
     for (const plan of plans) {
+      if (abandonedClones.has(plan.cloneName)) continue;
       for (const call of plan.calls) {
         let arr = edits.get(call.callerName);
         if (!arr) {
@@ -371,27 +412,27 @@ function buildLocalTypeOf(fn: IrFunction): (v: IrValueId) => IrType | null {
 // ---------------------------------------------------------------------------
 
 /**
- * A callee is safely cloneable iff:
+ * A callee is structurally cloneable iff:
  *   - single-block
  *   - body ≤ MAX_CALLEE_SIZE instructions
- *   - body instructions do NOT reference any parameter as an operand
- *     (so retyping params cannot invalidate any operation)
  *   - terminator is a `return` (and single-block means that's the only
  *     terminator shape)
+ *
+ * #1574 §2.4 — the old "body instructions do NOT reference any parameter
+ * as an operand" guard lived here. It is GONE: param-consuming bodies are
+ * now eligible. Soundness moves to clone-construction time —
+ * `reinferCloneBody` re-types every instruction under the substituted
+ * params and abandons the clone (returns null) if any op can't be soundly
+ * retyped. This gate stays purely structural so a typed helper like
+ * `add(a, b) { return a + b; }` reaches the per-tuple re-inference step
+ * (where it succeeds for numeric tuples and is rejected for, e.g., an
+ * externref tuple). See `cloneWithParamTypes`.
  */
 function isMonomorphizable(fn: IrFunction): boolean {
   if (fn.blocks.length !== 1) return false;
   const block = fn.blocks[0]!;
   if (block.instrs.length > MAX_CALLEE_SIZE) return false;
   if (block.terminator.kind !== "return") return false;
-
-  const paramIds = new Set<IrValueId>();
-  for (const p of fn.params) paramIds.add(p.value);
-  for (const instr of block.instrs) {
-    for (const u of collectUses(instr)) {
-      if (paramIds.has(u)) return false;
-    }
-  }
   return true;
 }
 
@@ -476,50 +517,38 @@ function uniquifyName(base: string, used: ReadonlySet<string>): string {
 
 /**
  * Deep-copy `callee` into a new IrFunction with `cloneName`, retyping each
- * parameter to the corresponding entry in `newParamTypes`. Also computes
- * and returns the clone's single return type (V1 restricts clones to
- * single-return, single-block shapes).
+ * parameter to the corresponding entry in `newParamTypes`, and re-inferring
+ * every body instruction's `resultType` under the substituted params
+ * (#1574 §2.4). Returns the clone + its single return type, or `null` when
+ * re-inference fails — see `reinferCloneBody` for the soundness contract.
  *
- * Because `isMonomorphizable` guarantees no instruction consumes a param as
- * an operand, instruction-level resultTypes remain valid verbatim. Only the
- * function's own params (and downstream `fn.resultTypes`) shift.
+ * A `null` return means "this specialization is not safe to clone": the
+ * caller skips the clone and the call-site group stays on the original
+ * callee / legacy path. Never throws on a re-inference failure — only on
+ * structural invariants (arity, terminator shape) that the gate already
+ * guaranteed.
  */
 function cloneWithParamTypes(
   callee: IrFunction,
   cloneName: string,
   newParamTypes: readonly IrType[],
   registry?: AllocSiteRegistry,
-): { fn: IrFunction; returnType: IrType } {
+): { fn: IrFunction; returnType: IrType } | null {
   if (newParamTypes.length !== callee.params.length) {
     throw new Error(
       `ir/monomorphize: param-arity mismatch cloning ${callee.name}: expected ${callee.params.length}, got ${newParamTypes.length}`,
     );
   }
 
-  // Param SSA ids are preserved verbatim (isMonomorphizable ensured nothing
-  // in the body consumes them as operands, so no renaming is needed).
+  // Param SSA ids are preserved verbatim. The body may now consume them as
+  // operands (#1574 §2.4) — re-inference handles the retyped operands.
   const newParams: IrParam[] = callee.params.map((p, i) => ({
     value: p.value,
     type: newParamTypes[i]!,
     name: p.name,
   }));
 
-  // Blocks are copied with terminator / instrs untouched. Single-block
-  // invariant guarantees there is exactly one.
   const oldBlock = callee.blocks[0]!;
-  const newBlock: IrBlock = {
-    id: asBlockId(0),
-    blockArgs: oldBlock.blockArgs,
-    blockArgTypes: oldBlock.blockArgTypes,
-    // Fork allocation ids per specialization — a clone is a distinct runtime
-    // allocation set, so its alloc sites must not share the source's ids
-    // (#1586 fork rule). `forkAllocInInstr` is a no-op for non-alloc instrs and
-    // when no registry is wired, preserving the prior shallow-copy behavior.
-    instrs: oldBlock.instrs.map((i) => forkAllocInInstr(i, registry)),
-    terminator: oldBlock.terminator,
-  };
-
-  // Compute return type from the (single) return terminator.
   const term = oldBlock.terminator;
   if (term.kind !== "return") {
     throw new Error(`ir/monomorphize: clone ${cloneName} has non-return terminator`);
@@ -527,8 +556,35 @@ function cloneWithParamTypes(
   if (term.values.length !== 1) {
     throw new Error(`ir/monomorphize: clone ${cloneName} has ${term.values.length} return values; V1 requires 1`);
   }
+
+  // Re-infer the body under the substituted params. A null result means an
+  // instruction could not be soundly retyped — abandon this clone.
+  const reinferred = reinferCloneBody(oldBlock.instrs, newParams);
+  if (reinferred === null) return null;
+
+  // Fork allocation ids per specialization — a clone is a distinct runtime
+  // allocation set, so its alloc sites must not share the source's ids
+  // (#1586 fork rule). `forkAllocInInstr` is a no-op for non-alloc instrs and
+  // when no registry is wired, preserving the prior shallow-copy behavior.
+  const newInstrs = reinferred.instrs.map((i) => forkAllocInInstr(i, registry));
+
+  const newBlock: IrBlock = {
+    id: asBlockId(0),
+    blockArgs: oldBlock.blockArgs,
+    blockArgTypes: oldBlock.blockArgTypes,
+    instrs: newInstrs,
+    terminator: oldBlock.terminator,
+  };
+
+  // Return type = type of the single returned value under the new typing.
   const returnValueId = term.values[0]!;
-  const returnType = deriveReturnType(returnValueId, newParams, oldBlock.instrs, callee);
+  const returnType = reinferred.typeOf.get(returnValueId);
+  if (!returnType) {
+    // The returned value has no resolvable type post-substitution (e.g. a
+    // block arg, which V1 single-block clones never have). Abandon rather
+    // than emit a clone whose result type we can't name.
+    return null;
+  }
 
   const fn: IrFunction = {
     name: cloneName,
@@ -541,28 +597,277 @@ function cloneWithParamTypes(
   return { fn, returnType };
 }
 
+// ---------------------------------------------------------------------------
+// #1574 §2.4 — sound clone-body re-inference
+// ---------------------------------------------------------------------------
+
 /**
- * Determine the return type of a monomorphized clone. Because the clone's
- * body instructions don't consume params, the return value is either:
- *   - a parameter → return type = retyped param type
- *   - an instruction result → return type = that instr's resultType
- *   - a block arg → entry block has no args in V1; this shouldn't happen
+ * Result of re-inferring a clone body: the rewritten instructions (with
+ * fresh `resultType`s where they shifted) plus a `valueId → IrType` map
+ * covering params + every instruction result, used to type the return
+ * value.
  */
-function deriveReturnType(
-  returnId: IrValueId,
-  newParams: readonly IrParam[],
-  instrs: readonly IrInstr[],
-  callee: IrFunction,
-): IrType {
-  for (const p of newParams) {
-    if (p.value === returnId) return p.type;
+interface ReinferredBody {
+  readonly instrs: readonly IrInstr[];
+  readonly typeOf: ReadonlyMap<IrValueId, IrType>;
+}
+
+/**
+ * Re-type a single-block clone body under substituted param types. Walks
+ * the instruction list in order, maintaining a `valueId → IrType` map
+ * seeded with the retyped params; for each value-producing instruction it
+ * recomputes the result type from its (possibly retyped) operands and
+ * VERIFIES the operator accepts those operand types.
+ *
+ * Returns null — abandoning the clone — when ANY of:
+ *   - an instruction consumes a value whose type isn't in the map yet
+ *     (shouldn't happen in verified SSA, defensive);
+ *   - an operator's operand type became incompatible under substitution
+ *     (e.g. `f64.add` on a non-numeric operand);
+ *   - the instruction kind is outside the modelled set AND it consumes a
+ *     retyped param (conservative: we only clone bodies we can fully
+ *     re-verify).
+ *
+ * Instructions whose operands are all param-independent keep their original
+ * `resultType` verbatim — re-inference is a no-op for them, matching the
+ * pre-#1574 "identity-like helper" behaviour.
+ */
+function reinferCloneBody(instrs: readonly IrInstr[], params: readonly IrParam[]): ReinferredBody | null {
+  const typeOf = new Map<IrValueId, IrType>();
+  for (const p of params) typeOf.set(p.value, p.type);
+
+  // Which SSA values are (transitively) derived from a substituted param.
+  // Only these need operator re-verification; param-independent instrs are
+  // copied verbatim (their original resultType is still valid).
+  const paramTainted = new Set<IrValueId>();
+  for (const p of params) paramTainted.add(p.value);
+
+  const out: IrInstr[] = [];
+  for (const instr of instrs) {
+    const uses = collectUses(instr);
+    const consumesTainted = uses.some((u) => paramTainted.has(u));
+
+    if (!consumesTainted) {
+      // Param-independent: result type is unchanged. Record it and copy.
+      if (instr.result !== null && instr.resultType) typeOf.set(instr.result, instr.resultType);
+      out.push(instr);
+      continue;
+    }
+
+    // This instruction depends on a substituted param — re-infer + verify.
+    const inferred = reinferInstr(instr, typeOf);
+    if (inferred === null) return null; // unsound under substitution — abandon
+
+    out.push(inferred.instr);
+    if (inferred.instr.result !== null && inferred.resultType) {
+      typeOf.set(inferred.instr.result, inferred.resultType);
+      paramTainted.add(inferred.instr.result);
+    }
   }
-  for (const inst of instrs) {
-    if (inst.result === returnId && inst.resultType) return inst.resultType;
+
+  return { instrs: out, typeOf };
+}
+
+// #1574 §2.4 soundness model
+// ===========================
+//
+// A Wasm arithmetic/comparison op consumes its operands' EXACT ValType off
+// the value stack — there is NO implicit numeric coercion at the IR→Wasm
+// boundary. `f64.add` requires two f64s; if a clone's substituted param is
+// i32, the body's `f64.add` would be invalid Wasm unless an
+// `f64.convert_i32_s` is inserted (a separate operand-coercion feature, out
+// of scope here). So the re-inferer requires every typed-op operand to
+// EXACTLY match the storage type the op already consumed. This correctly
+// ABANDONS any clone that would change an arithmetic operand's storage
+// type, guaranteeing the pass never emits invalid Wasm. The sound wins it
+// keeps:
+//   - identity-like bodies (param flows only to return / call) — re-inference
+//     is a no-op (these were already cloneable pre-#1574);
+//   - reference-polymorphic ops (`ref.is_null`, `select` over a shared ref
+//     supertype) where the substituted operand is still a valid operand.
+
+function isF64Val(t: IrType): boolean {
+  return t.kind === "val" && t.val.kind === "f64";
+}
+
+function isI32Val(t: IrType): boolean {
+  // `bool` lattice values lower to i32 storage too — any `val` whose
+  // ValType.kind is "i32" qualifies (the `signed` fact is irrelevant for
+  // storage; the op tag already encoded signed-vs-unsigned).
+  return t.kind === "val" && t.val.kind === "i32";
+}
+
+const IR_F64: IrType = { kind: "val", val: { kind: "f64" } };
+const IR_I32: IrType = { kind: "val", val: { kind: "i32" } };
+
+/**
+ * Re-infer the result type of one param-tainted instruction and verify the
+ * operator accepts its (retyped) operands. Returns the (possibly rewritten)
+ * instruction plus its new result type, or null when the substitution makes
+ * the op unsound. Conservatively returns null for any instruction kind not
+ * explicitly modelled — those are never cloned when param-tainted.
+ *
+ * The modelled set is the pure value-computation subset that polymorphic
+ * numeric helpers actually use: binary / unary / select / box / unbox /
+ * tag.test. Everything else (calls, memory ops, control flow) is rejected
+ * when param-tainted so we never silently emit an operator/operand mismatch.
+ */
+function reinferInstr(
+  instr: IrInstr,
+  typeOf: ReadonlyMap<IrValueId, IrType>,
+): { instr: IrInstr; resultType: IrType } | null {
+  switch (instr.kind) {
+    case "binary": {
+      const lt = typeOf.get(instr.lhs);
+      const rt = typeOf.get(instr.rhs);
+      if (!lt || !rt) return null;
+      const rty = reinferBinary(instr.op, lt, rt);
+      if (rty === null) return null;
+      return { instr: { ...instr, resultType: rty }, resultType: rty };
+    }
+    case "unary": {
+      const ot = typeOf.get(instr.rand);
+      if (!ot) return null;
+      const rty = reinferUnary(instr.op, ot);
+      if (rty === null) return null;
+      return { instr: { ...instr, resultType: rty }, resultType: rty };
+    }
+    case "select": {
+      // Condition is an i32 bool; both arms must agree post-substitution.
+      const ct = typeOf.get(instr.condition);
+      const tt = typeOf.get(instr.whenTrue);
+      const ft = typeOf.get(instr.whenFalse);
+      if (!ct || !tt || !ft) return null;
+      if (!isI32Val(ct)) return null; // condition must stay a bool
+      if (!irTypeEquals(tt, ft)) return null; // arms must have identical Wasm type
+      return { instr: { ...instr, resultType: tt }, resultType: tt };
+    }
+    // box / unbox / tag.test carry an explicit target/tag ValType that is
+    // independent of the operand's substituted type. A substituted operand
+    // changes whether the box is still VALID (the value's type must be a
+    // member of the union), which we cannot re-verify here without the
+    // union registry — so conservatively abandon when these consume a
+    // tainted operand. (Polymorphic numeric helpers don't box internally;
+    // this only forgoes an exotic case, never miscompiles one.)
+    case "box":
+    case "unbox":
+    case "tag.test":
+      return null;
+    default:
+      // Any other instruction kind consuming a substituted param is outside
+      // the modelled set — abandon the clone rather than risk an unverified
+      // operator/operand mismatch.
+      return null;
   }
-  // Fall back to the callee's original declared return type.
-  if (callee.resultTypes.length >= 1) return callee.resultTypes[0]!;
-  throw new Error(`ir/monomorphize: cannot determine return type for clone of ${callee.name}`);
+}
+
+/**
+ * Result type of a binary op under (possibly retyped) operand types, or
+ * null when the op no longer accepts the operands. Mirrors the lowerer's
+ * 1:1 op→Wasm mapping: the op tag already fixes the expected operand
+ * domain, so re-inference is mostly a verification that the substituted
+ * operands still inhabit that domain.
+ */
+function reinferBinary(op: IrBinop, lt: IrType, rt: IrType): IrType | null {
+  switch (op) {
+    // f64 arithmetic → f64. BOTH operands must already be exactly f64 on the
+    // stack — there's no implicit widening. A substituted operand that
+    // changed away from f64 (to i32, a ref, etc.) is rejected: the body
+    // would emit `f64.add` on a non-f64 stack value (invalid Wasm).
+    case "f64.add":
+    case "f64.sub":
+    case "f64.mul":
+    case "f64.div":
+      if (!isF64Val(lt) || !isF64Val(rt)) return null;
+      return IR_F64;
+    // f64 comparisons → i32 bool. Operands must be exactly f64.
+    case "f64.eq":
+    case "f64.ne":
+    case "f64.lt":
+    case "f64.le":
+    case "f64.gt":
+    case "f64.ge":
+      if (!isF64Val(lt) || !isF64Val(rt)) return null;
+      return IR_I32;
+    // i32 ops: operands must be exactly i32-storage. bool lowers to i32.
+    case "i32.eq":
+    case "i32.ne":
+    case "i32.and":
+    case "i32.or":
+    case "i32.lt_s":
+    case "i32.le_s":
+    case "i32.gt_s":
+    case "i32.ge_s":
+    case "i32.lt_u":
+    case "i32.le_u":
+    case "i32.gt_u":
+    case "i32.ge_u":
+      if (!isI32Val(lt) || !isI32Val(rt)) return null;
+      return IR_I32;
+    // js.* bitwise composite ops are lowered as a ToInt32-dance on f64
+    // operands, returning f64. The lowering dispatch keys off the operand
+    // IrTypes (#1126 Stage 3 emits the native i32 path when both are i32),
+    // so changing an operand's storage type would silently switch the
+    // emitted op sequence. Only clone when operands are exactly f64 (the
+    // composite path) and keep the f64 result.
+    case "js.bitand":
+    case "js.bitor":
+    case "js.bitxor":
+    case "js.shl":
+    case "js.shr_s":
+    case "js.shr_u":
+      if (!isF64Val(lt) || !isF64Val(rt)) return null;
+      return IR_F64;
+    default:
+      return null;
+  }
+}
+
+/** Result type of a unary op under a retyped operand, or null when unsound. */
+function reinferUnary(op: IrUnop, ot: IrType): IrType | null {
+  switch (op) {
+    // f64 unary ops consume an f64 off the stack — operand must be exactly f64.
+    case "f64.neg":
+    case "f64.abs":
+    case "f64.sqrt":
+    case "f64.floor":
+    case "f64.ceil":
+    case "f64.trunc":
+      if (!isF64Val(ot)) return null;
+      return IR_F64;
+    case "i32.eqz":
+      if (!isI32Val(ot)) return null;
+      return IR_I32;
+    case "i32.trunc_sat_f64_s":
+      if (!isF64Val(ot)) return null;
+      return IR_I32;
+    case "ref.is_null":
+      // `ref.is_null` accepts ANY reference operand and returns i32 — this is
+      // the one genuinely ref-polymorphic op, so a clone whose param was
+      // retyped from one reference type to another stays sound. A numeric
+      // substitution (f64/i32) is invalid (ref.is_null needs a ref).
+      if (
+        ot.kind === "val" &&
+        (ot.val.kind === "ref" ||
+          ot.val.kind === "ref_null" ||
+          ot.val.kind === "externref" ||
+          ot.val.kind === "funcref")
+      ) {
+        return IR_I32;
+      }
+      if (
+        ot.kind === "string" ||
+        ot.kind === "object" ||
+        ot.kind === "class" ||
+        ot.kind === "extern" ||
+        ot.kind === "closure"
+      ) {
+        return IR_I32;
+      }
+      return null;
+    default:
+      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

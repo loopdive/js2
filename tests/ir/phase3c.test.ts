@@ -25,6 +25,7 @@ import {
   verifyIrFunction,
   type IrFunction,
   type IrInstr,
+  type IrType,
   type IrLowerResolver,
   type IrUnionLowering,
   type IrValueId,
@@ -201,9 +202,21 @@ describe("#1167c — monomorphize (unit)", () => {
     expect(result.cloneSignatures.size).toBe(0);
   });
 
-  it("skips callees whose body reads a param as an operand", () => {
-    // `double(n) = n + n` — `f64.add` consumes the param. Retyping to
-    // externref would invalidate the operator. isMonomorphizable rejects.
+  it("#1574 §2.4: abandons a param-arithmetic clone that would retype an f64 operand to i32", () => {
+    // `double(n) = n + n` — `f64.add` consumes the param. Called with an f64
+    // tuple and an i32 tuple. The canonical tuple sort puts `v:f64` before
+    // `v:i32`, so the f64 tuple keeps the original callee (no clone) and the
+    // i32 tuple is the clone CANDIDATE. Cloning it would leave the body's
+    // `f64.add` consuming i32 operands off the stack — INVALID Wasm (there's
+    // no implicit i32→f64 widening at the IR→Wasm boundary). `reinferBinary`
+    // returns null for `f64.add` on a non-f64 operand, so the clone is
+    // abandoned and the i32 call site stays on the original callee. Net: no
+    // clones.
+    //
+    // (Pre-#1574 the operand-free gate rejected the whole callee earlier; the
+    // observable "no clones" result is unchanged, but the rejection now
+    // happens at clone-construction time via the soundness check — which is
+    // what lets the SOUND ref-polymorphic case below succeed.)
     const doubler: IrFunction = {
       name: "double",
       params: [{ value: id(0), type: F64, name: "n" }],
@@ -230,10 +243,76 @@ describe("#1167c — monomorphize (unit)", () => {
       valueCount: 2,
     };
     const callerA = makeCallerPassingParam("run_a", "double", F64);
-    const callerB = makeCallerPassingParam("run_b", "double", EXTERNREF);
+    const callerB = makeCallerPassingParam("run_b", "double", I32);
 
     const result = monomorphize({ functions: [doubler, callerA, callerB] });
     expect(result.cloneSignatures.size).toBe(0);
+    // The unsound i32 call site must remain pointing at the original callee.
+    const callerBAfter = result.module.functions.find((f) => f.name === "run_b")!;
+    const bCall = callerBAfter.blocks[0]!.instrs.find((i) => i.kind === "call")! as Extract<IrInstr, { kind: "call" }>;
+    expect(bCall.target.name).toBe("double");
+  });
+
+  it("#1574 §2.4: clones a param-consuming ref.is_null body across reference tuples", () => {
+    // `isNull(x) = ref.is_null(x)` consumes the param. `ref.is_null` is the
+    // one genuinely ref-polymorphic op — valid for ANY reference operand —
+    // so substituting the param from externref to a struct ref keeps the
+    // body sound, and re-inference produces a distinct, valid clone. The
+    // result type (i32 bool) is unchanged across tuples; the param type
+    // shifts. This is the real capability §2.4 unlocks: a param-consuming
+    // body cloned per call-site reference type without invalid Wasm.
+    const STRUCT_REF: IrType = irVal({ kind: "ref", typeIdx: 7 });
+    const isNull: IrFunction = {
+      name: "isNull",
+      params: [{ value: id(0), type: EXTERNREF, name: "x" }],
+      resultTypes: [I32],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [{ kind: "unary", op: "ref.is_null", rand: id(0), result: id(1), resultType: I32 }],
+          terminator: { kind: "return", values: [id(1)] },
+        },
+      ],
+      exported: false,
+      valueCount: 2,
+    };
+    // Caller A passes an externref param; caller B passes a struct ref param.
+    // Both flow their param straight into isNull → two distinct ref tuples.
+    const callerExt = makeCallerPassingParam("run_ext", "isNull", EXTERNREF);
+    const callerStruct = makeCallerPassingParam("run_struct", "isNull", STRUCT_REF);
+    // Callers return i32 (the isNull result), not their param — fix the
+    // call-result type so the module verifies.
+    const fixCaller = (c: IrFunction): IrFunction => ({
+      ...c,
+      resultTypes: [I32],
+      blocks: c.blocks.map((b) => ({
+        ...b,
+        instrs: b.instrs.map((i) => (i.kind === "call" ? { ...i, resultType: I32 } : i)),
+      })),
+    });
+
+    const result = monomorphize({
+      functions: [isNull, fixCaller(callerExt), fixCaller(callerStruct)],
+    });
+
+    // One clone (first tuple keeps the original). The clone's param is the
+    // non-original reference type; its result type stays i32.
+    expect(result.cloneSignatures.size).toBe(1);
+    const cloneName = [...result.cloneSignatures.keys()][0]!;
+    expect(cloneName.startsWith("isNull$")).toBe(true);
+    const sig = result.cloneSignatures.get(cloneName)!;
+    expect(sig.returnType).toEqual(I32);
+    // The clone's param is a reference type (externref or the struct ref),
+    // not a numeric — and the clone body verifies.
+    const cloneFn = result.module.functions.find((f) => f.name === cloneName)!;
+    expect(cloneFn.params[0]!.type.kind).toBe("val");
+    expect(verifyIrFunction(cloneFn)).toEqual([]);
+    // The re-typed clone's ref.is_null result type is still i32.
+    const cloneInstr = cloneFn.blocks[0]!.instrs[0]! as Extract<IrInstr, { kind: "unary" }>;
+    expect(cloneInstr.op).toBe("ref.is_null");
+    expect(cloneInstr.resultType).toEqual(I32);
   });
 
   it("growth guard: fan-out that exceeds 1.5× module budget is rejected", () => {

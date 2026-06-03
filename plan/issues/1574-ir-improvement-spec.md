@@ -9,6 +9,7 @@ sprint: Backlog
 owner: architect
 related: 1131, 1167a, 1167b, 1167c, 1126, 1231, 1169, 1370, 1373
 ---
+
 # IR Type Analysis & Optimization Pass Improvements
 
 A research document scoping concrete, file/line-anchored improvements to the
@@ -32,17 +33,17 @@ Reading order for a dev picking up any item below:
 The middle-end IR (`src/ir/nodes.ts`) carries an `IrType` discriminated union
 that covers:
 
-| `IrType.kind`  | Storage                              | Where it's produced                                                |
-|----------------|--------------------------------------|--------------------------------------------------------------------|
-| `val { val }`  | a `ValType` (i32, i64, f32, f64, …)  | leaf nodes, arithmetic, comparison                                 |
-| `val { signed }` (#1126 Stage 1) | `i32` w/ signedness fact | `js.bit*` chains, comparisons, conversions                         |
-| `string`       | backend-resolved (extern or `$AnyString`) | string literals, `string.concat`                              |
-| `object { shape }` | `(ref $S)` for canonicalised struct | object literals, propagated #1231 inference                       |
-| `closure { signature }` | `(ref $base)` + subtype for captures | function expressions / arrow fns                              |
-| `class { shape }` | `(ref $ClassStruct)`                | `new ClassName(...)` (#1169d)                                      |
-| `extern { className }` | `externref`                     | `extern.new`, `extern.regex` (#1169i)                              |
-| `union { members }` | `$union_<members>` tagged struct | propagation (`f64 \| bool`), `box`/`unbox`/`tag.test`              |
-| `boxed { inner }` | `$box_<inner>` ref-cell struct      | mutable closure captures                                           |
+| `IrType.kind`                    | Storage                                   | Where it's produced                                   |
+| -------------------------------- | ----------------------------------------- | ----------------------------------------------------- |
+| `val { val }`                    | a `ValType` (i32, i64, f32, f64, …)       | leaf nodes, arithmetic, comparison                    |
+| `val { signed }` (#1126 Stage 1) | `i32` w/ signedness fact                  | `js.bit*` chains, comparisons, conversions            |
+| `string`                         | backend-resolved (extern or `$AnyString`) | string literals, `string.concat`                      |
+| `object { shape }`               | `(ref $S)` for canonicalised struct       | object literals, propagated #1231 inference           |
+| `closure { signature }`          | `(ref $base)` + subtype for captures      | function expressions / arrow fns                      |
+| `class { shape }`                | `(ref $ClassStruct)`                      | `new ClassName(...)` (#1169d)                         |
+| `extern { className }`           | `externref`                               | `extern.new`, `extern.regex` (#1169i)                 |
+| `union { members }`              | `$union_<members>` tagged struct          | propagation (`f64 \| bool`), `box`/`unbox`/`tag.test` |
+| `boxed { inner }`                | `$box_<inner>` ref-cell struct            | mutable closure captures                              |
 
 Propagation (`src/ir/propagate.ts`) computes a per-function `TypeMap` over a
 seven-element lattice (`unknown / f64 / i32 / u32 / bool / string / object /
@@ -79,7 +80,7 @@ cap to guarantee termination.
    under a hard guard: "body instructions do NOT consume any parameter as an
    operand" (lines 28-34). The guard structurally rules out the most
    valuable monomorphization targets — typed helpers like
-   `function add(a, b) { return a + b; }` — because their bodies *do*
+   `function add(a, b) { return a + b; }` — because their bodies _do_
    consume `a` and `b`. Re-inferring `resultType` after clone-time param
    substitution is the listed follow-up; it has not landed.
 
@@ -162,6 +163,7 @@ arm.
    per-function `typeOf` map.
 
 **Mechanism.**
+
 - Add a new `IrType` overlay on `IrBlock` (sibling to `blockArgs`) called
   `narrowings: ReadonlyMap<IrValueId, IrType>`.
 - In `from-ast.ts`'s `lowerIfStatement`, before recursing into either arm,
@@ -181,7 +183,7 @@ arm.
 (`scripts/ir-fallback-baseline.json` line 4 — 22 unintended) includes a
 known cluster of functions that use `if (typeof x === 'string')` to guard
 string operations. A best-guess estimate is **5–8 functions claimed back**
-into the IR. Bigger win: the *already-claimed* IR functions that use
+into the IR. Bigger win: the _already-claimed_ IR functions that use
 narrowing today emit one `__unbox_number` / `extern.convert_any` per use of
 the narrowed variable; expect ~2-5% Wasm size reduction in code that uses
 union-typed locals.
@@ -246,12 +248,14 @@ i32 atom with `signed: undefined`) that represents "we know the storage is
 i32 but we've forgotten the domain." Operations that depend on signedness
 (`shr_s` vs `shr_u`, signed vs unsigned compare) check for the unspecified
 atom and either:
+
 - Emit the signed variant (matching JS `| 0` semantics) when the consumer
   doesn't care, OR
 - Insert an explicit re-sign coercion (`i32` is bit-identical to `u32`, so
   the coercion is free — just a typing fact, no Wasm op).
 
 **Mechanism.**
+
 - Add `signed: "signed" | "unsigned" | "either"` to the `i32` lattice atom.
 - `join(i32-signed, i32-unsigned)` → `i32-either`.
 - Joining `i32-either` with `f64` still widens to `f64` (Wasm storage
@@ -275,7 +279,9 @@ matching read in `from-ast.ts`'s bit-op lowerer.
 params" guard as a hard requirement. A callee like:
 
 ```ts
-function add(a, b) { return a + b; }
+function add(a, b) {
+  return a + b;
+}
 ```
 
 uses params as operands and is excluded — even though the call sites have
@@ -296,6 +302,7 @@ If the re-inference cannot type the body (e.g. produces a `dynamic` atom),
 abandon the clone — fall back to legacy behavior for the call site.
 
 **Mechanism.**
+
 - Add `reinferTypes(fn: IrFunction, paramOverride: IrType[]): IrFunction | null`
   in `src/ir/passes/monomorphize.ts`. Returns `null` when re-inference
   fails.
@@ -376,6 +383,7 @@ instruction. The constant-folder propagates this through `ref.is_null` →
 short-circuit chains.
 
 **Mechanism.**
+
 - Add `{ kind: "ref-non-null"; producer: IrValueId }` to `IrConst`.
 - In `constant-fold.ts`, when the producing instruction is
   `class.new` / `object.new` / `extern.new` / `array.new` / `closure.new`,
@@ -560,6 +568,7 @@ distinct ops.
 after constant-fold and before lower.
 
 **Patterns:**
+
 - `i32.mul x C` where `C` is a power of 2 → `i32.shl x log2(C)`
 - `i32.mul x 1` → `x`
 - `i32.mul x 0` → `i32.const 0`
@@ -572,7 +581,7 @@ after constant-fold and before lower.
 
 **Expected impact.** Mostly compiler-side wins (smaller IR → faster
 later passes). Wasm size: ~0.5%; runtime: Binaryen does these too at
--O2+, so end-binary impact is negligible. The win is in *unoptimized*
+-O2+, so end-binary impact is negligible. The win is in _unoptimized_
 output, useful when `--optimize` isn't on.
 
 **Difficulty.** Easy.
@@ -620,6 +629,7 @@ emits `return_call` instead of `call + return`. The IR already supports
 post-inline and post-monomorphize so we see the final call graph.
 
 **Patterns recognized.**
+
 - Terminator block ends in `call f` immediately followed by `return v`
   where `v` is the call result and the call has all args fully
   materialized in the same block.
@@ -682,6 +692,7 @@ already handles the analogous `ref.cast + ref.as_non_null` case.
 
 **Mechanism (Wasm-IR level).** In `src/codegen/peephole.ts`, add a
 Pattern 7:
+
 ```
 local.set N    ;; an externref
 local.get N
@@ -737,6 +748,7 @@ definition to the loop's pre-header.
 local-CSE (§3.3) so the dominant CSE opportunities are already collapsed.
 
 **Caveats.**
+
 - Side-effecting ops (call, global.set, raw.wasm) are never hoistable.
 - Loops in our IR are represented as `for.loop` / `while.loop` / `forof.*`
   instructions whose `body` is an instruction buffer (`lower.ts:1714-1773`)
@@ -757,9 +769,11 @@ that lookup simpler than a typical LICM.
 ### 3.9 Pass: switch-table generation from dense if-else chains
 
 **What it does.** Recognise patterns like
+
 ```ts
 if (n === 0) return a; else if (n === 1) return b; else if …
 ```
+
 and emit a `br_table` instead of a cascade of `i32.eq + br_if`. The IR
 doesn't represent `br_table` yet (only `br_table` in the `types.ts` Instr
 union as a no-immediate placeholder; `select.ts` doesn't even claim
@@ -767,6 +781,7 @@ union as a no-immediate placeholder; `select.ts` doesn't even claim
 
 **Pipeline position.** New pass; AND a feature gate at the selector level
 to claim `SwitchStatement`. Both pieces needed; recommend in this order:
+
 1. Selector slice for `SwitchStatement` lowering to a chain of `br_if`s
    (no perf gain on its own).
 2. This pass to consolidate into `br_table`.
@@ -794,6 +809,7 @@ doesn't emit the redundant op at all. New IR pass
 `src/ir/passes/cast-elimination.ts`, run after local-CSE.
 
 **Patterns.**
+
 - `ref.cast T` on a value already typed as `(ref T)` → no-op.
 - `ref.cast T` on a value of type `(ref U)` where `U <: T` → no-op.
 - `ref.cast T` immediately after `ref.test T → bool: true (constant)` →
@@ -821,6 +837,7 @@ is a single `struct.get`.
 
 This already works for `IrType.class` (`lower.ts:1112-1138`,
 `class.get`/`class.set`/`class.call`). What does NOT work:
+
 - Property accesses lowered through `extern { className: "Map" }` (which
   go through `extern.prop` host calls — fine, that's the contract for
   pseudo-extern classes).
@@ -837,7 +854,9 @@ members, and `struct.get` directly on the common supertype's fields.
 
 ```ts
 type Shape = Circle | Square;
-function area(s: Shape): number { return s.kind === "circle" ? Math.PI * s.r * s.r : s.s * s.s; }
+function area(s: Shape): number {
+  return s.kind === "circle" ? Math.PI * s.r * s.r : s.s * s.s;
+}
 ```
 
 — today `area` falls back. With this feature, claim back **~5 functions
@@ -912,32 +931,32 @@ machinery — design with care. Reasonable target post-#1238.
 
 Sort key: `(claim-back functions × Wasm-size delta × confidence) / difficulty`.
 
-| Rank | Title                                                                   | Impact (claims / size) | Difficulty | Depends on |
-|------|-------------------------------------------------------------------------|------------------------|------------|------------|
-| 1    | §2.4 Re-infer resultType in monomorphize clones                         | 10-30 / 2-5%           | Medium     | —          |
-| 2    | §2.1 Typeof control-flow narrowing                                      | 5-8 / 2-5%             | Medium     | per-block overlay |
-| 3    | §3.3 Local CSE within basic block                                       | 0 / 2-4%               | Easy-med   | —          |
-| 4    | §2.2 Non-null narrowing                                                 | 1-2 / 3-5%             | Easy       | §2.1 overlay |
-| 5    | §3.4 Tail-call optimization (return_call)                               | 0 / stack savings      | Medium     | —          |
-| 6    | §3.6 extern.convert_any / any.convert_extern round-trip elimination     | 0 / 1-3%               | Medium     | —          |
-| 7    | §2.5 Locals in propagation TypeMap                                      | 2-4 / 0.5%             | Easy       | —          |
-| 8    | §2.6 Symbolic ref-non-null lattice                                      | 0 / 0.5-1%             | Easy       | —          |
-| 9    | §3.1 Dead-arm elimination in `IrInstrIf`                                | 0 / <1%                | Medium     | —          |
-| 10   | §3.5 Closure-call devirtualization                                      | 0 / 1-3% (hot)         | Medium     | —          |
-| 11   | §3.10 IR-level ref.cast elimination                                     | 0 / 0.5-1%             | Easy       | §2.6       |
-| 12   | §3.2 Strength reduction                                                 | 0 / <0.5%              | Easy       | —          |
-| 13   | §3.7 Short-circuit folding                                              | 0 / <0.5%              | Trivial    | §3.1       |
-| 14   | §2.10 TS-checker per-expression narrowing pass-through                  | 8-15 / 2-4%            | Hard       | —          |
-| 15   | §4.1 Field-access devirt on monomorphic receivers (union<class>)        | 5+ / 2-3%              | Hard       | lattice extension |
-| 16   | §3.8 LICM                                                               | 0 / 1-2% (hot loops)   | Medium     | §3.3       |
-| 17   | §3.9 Switch-table generation                                            | 0 / 5-15% (switch hot) | Hard       | selector slice |
-| 18   | §2.3 Lattice i32 vs u32 join refinement                                 | 0 / <0.5%              | Easy       | —          |
-| 19   | §2.8 Iterate CF + DCE post-inline                                       | 0 / 0.3-1%             | Trivial    | —          |
-| 20   | §2.7 Cross-function arg-narrowing call-site refinement                  | depends on §2.4        | Easy       | §2.4       |
-| 21   | §4.5 Devirtualized iterator protocol                                    | 0 / depends            | Medium     | extern-class work |
-| 22   | §2.9 Branded primitives (defensive)                                     | 0 / 0                  | Easy       | — (defer)  |
-| 23   | §4.2 Escape analysis                                                    | 0 / GC pressure        | Hard       | — (defer)  |
-| 24   | §4.3 Sub-struct inlining                                                | 0 / GC pressure        | Hard       | — (defer)  |
+| Rank | Title                                                               | Impact (claims / size) | Difficulty | Depends on        |
+| ---- | ------------------------------------------------------------------- | ---------------------- | ---------- | ----------------- |
+| 1    | §2.4 Re-infer resultType in monomorphize clones                     | 10-30 / 2-5%           | Medium     | —                 |
+| 2    | §2.1 Typeof control-flow narrowing                                  | 5-8 / 2-5%             | Medium     | per-block overlay |
+| 3    | §3.3 Local CSE within basic block                                   | 0 / 2-4%               | Easy-med   | —                 |
+| 4    | §2.2 Non-null narrowing                                             | 1-2 / 3-5%             | Easy       | §2.1 overlay      |
+| 5    | §3.4 Tail-call optimization (return_call)                           | 0 / stack savings      | Medium     | —                 |
+| 6    | §3.6 extern.convert_any / any.convert_extern round-trip elimination | 0 / 1-3%               | Medium     | —                 |
+| 7    | §2.5 Locals in propagation TypeMap                                  | 2-4 / 0.5%             | Easy       | —                 |
+| 8    | §2.6 Symbolic ref-non-null lattice                                  | 0 / 0.5-1%             | Easy       | —                 |
+| 9    | §3.1 Dead-arm elimination in `IrInstrIf`                            | 0 / <1%                | Medium     | —                 |
+| 10   | §3.5 Closure-call devirtualization                                  | 0 / 1-3% (hot)         | Medium     | —                 |
+| 11   | §3.10 IR-level ref.cast elimination                                 | 0 / 0.5-1%             | Easy       | §2.6              |
+| 12   | §3.2 Strength reduction                                             | 0 / <0.5%              | Easy       | —                 |
+| 13   | §3.7 Short-circuit folding                                          | 0 / <0.5%              | Trivial    | §3.1              |
+| 14   | §2.10 TS-checker per-expression narrowing pass-through              | 8-15 / 2-4%            | Hard       | —                 |
+| 15   | §4.1 Field-access devirt on monomorphic receivers (union<class>)    | 5+ / 2-3%              | Hard       | lattice extension |
+| 16   | §3.8 LICM                                                           | 0 / 1-2% (hot loops)   | Medium     | §3.3              |
+| 17   | §3.9 Switch-table generation                                        | 0 / 5-15% (switch hot) | Hard       | selector slice    |
+| 18   | §2.3 Lattice i32 vs u32 join refinement                             | 0 / <0.5%              | Easy       | —                 |
+| 19   | §2.8 Iterate CF + DCE post-inline                                   | 0 / 0.3-1%             | Trivial    | —                 |
+| 20   | §2.7 Cross-function arg-narrowing call-site refinement              | depends on §2.4        | Easy       | §2.4              |
+| 21   | §4.5 Devirtualized iterator protocol                                | 0 / depends            | Medium     | extern-class work |
+| 22   | §2.9 Branded primitives (defensive)                                 | 0 / 0                  | Easy       | — (defer)         |
+| 23   | §4.2 Escape analysis                                                | 0 / GC pressure        | Hard       | — (defer)         |
+| 24   | §4.3 Sub-struct inlining                                            | 0 / GC pressure        | Hard       | — (defer)         |
 
 ---
 
@@ -946,16 +965,16 @@ Sort key: `(claim-back functions × Wasm-size delta × confidence) / difficulty`
 Cherry-picked from the backlog. A dev with no prior IR exposure can
 implement any of these in a session by following the linked spec section.
 
-| # | Title | Section | Expected outcome |
-|---|-------|---------|------------------|
-| Q1 | Iterate CF + DCE in post-inline integration loop | §2.8 | Single 5-line change in `integration.ts:354`; small Wasm size win. |
-| Q2 | Symbolic ref-non-null lattice for `IrConst` | §2.6 | Add one `IrConst` variant + ~10 lines in `constant-fold.ts`. Eliminates `?.` overhead on `new` results. |
-| Q3 | Strength reduction pass | §3.2 | New 60-line file; pure rewrite, no IR-shape changes. |
-| Q4 | Lattice `i32 vs u32 join` refinement | §2.3 | One-field-on-atom change + 3 callsites in `propagate.ts`. |
-| Q5 | Local CSE within basic block (`global.get`-only fast slice) | §3.3 | Start with the safest pure ops (`global.get`, `const`); extend later. ~150 LOC. |
-| Q6 | Locals in propagation TypeMap | §2.5 | Single function in `propagate.ts` (~30 lines). Claims back a handful of functions. |
-| Q7 | Short-circuit folding for `i32.and`/`i32.or` with known boolean operand | §3.7 | 20 lines in `BINARY_FOLD_TABLE` of `constant-fold.ts`. |
-| Q8 | Dead-arm collapse for `IrInstrIf` with const cond | §3.1 (subset: don't rebuild SSA) | Punt on full splice; just record the dead arm in DCE liveness so its instructions get reaped. ~50 LOC. |
+| #   | Title                                                                   | Section                          | Expected outcome                                                                                        |
+| --- | ----------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Q1  | Iterate CF + DCE in post-inline integration loop                        | §2.8                             | Single 5-line change in `integration.ts:354`; small Wasm size win.                                      |
+| Q2  | Symbolic ref-non-null lattice for `IrConst`                             | §2.6                             | Add one `IrConst` variant + ~10 lines in `constant-fold.ts`. Eliminates `?.` overhead on `new` results. |
+| Q3  | Strength reduction pass                                                 | §3.2                             | New 60-line file; pure rewrite, no IR-shape changes.                                                    |
+| Q4  | Lattice `i32 vs u32 join` refinement                                    | §2.3                             | One-field-on-atom change + 3 callsites in `propagate.ts`.                                               |
+| Q5  | Local CSE within basic block (`global.get`-only fast slice)             | §3.3                             | Start with the safest pure ops (`global.get`, `const`); extend later. ~150 LOC.                         |
+| Q6  | Locals in propagation TypeMap                                           | §2.5                             | Single function in `propagate.ts` (~30 lines). Claims back a handful of functions.                      |
+| Q7  | Short-circuit folding for `i32.and`/`i32.or` with known boolean operand | §3.7                             | 20 lines in `BINARY_FOLD_TABLE` of `constant-fold.ts`.                                                  |
+| Q8  | Dead-arm collapse for `IrInstrIf` with const cond                       | §3.1 (subset: don't rebuild SSA) | Punt on full splice; just record the dead arm in DCE liveness so its instructions get reaped. ~50 LOC.  |
 
 For each quick-win, the dev workflow is:
 
@@ -964,7 +983,7 @@ For each quick-win, the dev workflow is:
 3. Add a test case in `tests/ir/` (mirroring existing tests for the pass).
 4. Implement + verify.
 5. Run `pnpm run check:ir-fallbacks` to confirm no fallback regressions
-   (Q6 should *reduce* counts, others should be neutral).
+   (Q6 should _reduce_ counts, others should be neutral).
 6. Run `npm test -- tests/equivalence.test.ts` for the affected scope.
 
 ---
@@ -987,6 +1006,7 @@ of two stages:
    - LICM AFTER local-CSE (so hoisted ops aren't redundant with hoisted siblings).
 
 Every pass must:
+
 - Return the same `IrFunction` / `IrModule` reference if it made no changes
   (so the surrounding loop can detect fixpoint via `Object.is`).
 - Preserve the verifier invariants (`verifyIrFunction` runs after every
@@ -1021,4 +1041,56 @@ Every pass must:
 
 ---
 
-*End of spec.*
+## Implementation log
+
+### §2.4 — Re-infer resultType in monomorphize clones (landed, sound subset)
+
+`src/ir/passes/monomorphize.ts`. The pre-#1574 pass refused to clone any
+callee whose body consumed a parameter as an operand. This relaxes that
+gate: param-consuming single-block bodies are now eligible, and
+`cloneWithParamTypes` re-types the clone body under the substituted params
+via `reinferCloneBody` → `reinferInstr` → `reinferBinary`/`reinferUnary`.
+A clone is **abandoned** (the call-site group stays on the original callee)
+the moment any param-tainted instruction can't be soundly re-typed.
+
+**Soundness boundary (important — narrows the spec's §2.4 estimate).** A
+Wasm arithmetic/comparison op consumes its operands' EXACT ValType off the
+value stack; there is no implicit numeric coercion at the IR→Wasm boundary.
+So `f64.add` is only valid on two f64 operands — cloning a numeric helper
+`add(a, b) { return a + b; }` for an i32 tuple would emit `f64.add` on i32
+operands (invalid Wasm) unless an `f64.convert_i32_s` is inserted. Inserting
+those conversions is a **separate operand-coercion layer (future work)**, so
+the re-inferer requires exact operand-storage match and abandons any clone
+that would change an arithmetic operand's storage type. The spec's flagship
+"numeric helper cloned across f64/i32 → 10-30 functions" estimate is
+therefore **not reachable without that coercion layer**.
+
+**What the sound subset DOES unlock** (strictly additive, never invalid Wasm):
+
+- identity-like bodies (param flows only to `return`/`call`) — already
+  cloneable pre-#1574; re-inference is a no-op for them;
+- **reference-polymorphic ops** — `ref.is_null` accepts any reference
+  operand, and `select` over a shared ref supertype — so a param-consuming
+  body using those can now be cloned per call-site _reference_ type
+  (e.g. `isNull(x) { return x == null }` specialised for externref vs a
+  struct ref). This is the genuine new capability.
+
+Tests: `tests/ir/phase3c.test.ts` — negative (`f64.add`/i32 tuple →
+abandoned, call site stays on original) + positive (`ref.is_null` body
+cloned across two reference tuples, both verify). IR fallback gate
+unchanged (this pass affects emitted-Wasm quality, not selection).
+
+**Follow-ups (not done here):**
+
+- Operand-coercion layer in clones (insert `f64.convert_i32_s` etc.) to
+  unlock the numeric-helper case — own issue, larger scope.
+- `param-type-not-resolvable` straggler (`addBenchCard`'s `fn: () => number`
+  in `website/playground/examples/benchmarks/helpers.ts`) needs closure-typed
+  params end-to-end through the selector+lowerer; not a propagation fix.
+- §2.5 (locals in TypeMap) was already implemented in `propagate.ts`
+  (`walkBodyForReturns` tracks `let`/`const` initializers) — the spec's
+  "current behavior" text for it is stale.
+
+---
+
+_End of spec._
