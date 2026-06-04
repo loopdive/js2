@@ -2,9 +2,9 @@
 id: 1792
 title: "node:url — URL / URLSearchParams as host constructors"
 status: ready
-sprint: Backlog
+sprint: 60
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-04
 priority: high
 feasibility: medium
 reasoning_effort: medium

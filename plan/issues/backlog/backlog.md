@@ -2,12 +2,6 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
-## Harvest re-run 2026-06-04 (post sprint-58/59 merge)
-
-Re-ran `/harvest-errors` after pulling 346 commits. Both prior-harvest issues are genuinely fixed (#1809 shift-walker 157→0; #1808 emit crash per-file clean). One baseline-accounting follow-up filed:
-
-- [#1862](../1862-residual-poison-burst-binary-emit-still-in-baseline.md) — residual poisoned-worker `Binary emit error` burst still in the published baseline (~269, barely down from 291) despite #1808's blast-radius cap; either the cap is incomplete or `promote-baseline` carried the entries forward without re-running. Over-counts the failure set by ~0.6%. medium, medium, **ready (backlog)**. Follow-up to #1808; ties to #1080 drift umbrella.
-
 ## Sprint 57 — acorn dogfood + backend-agnostic IR (2026-05-29)
 
 Architectural sprint (no pass-count target; zero-regression guard). Goals:
@@ -97,10 +91,10 @@ Standalone lane:
 
 ## TypedArray packed-integer follow-ups (2026-06-03)
 
-- [#1810](../1810-typedarray-packed-lane-storage.md) — Generalize TypedArray storage to packed WasmGC lanes: `i8`/`i16`/`i32`/`f32`/`f64` backing instead of the legacy f64 representation for all numeric typed arrays — medium, hard, **ready (backlog)**; follow-up to #1767/#389.
-- [#1811](../1811-typedarray-element-metadata.md) — TypedArray element metadata for signedness, clamping, storage lanes, and load/store behavior so codegen stops inferring semantics from vec-key strings — high, hard, **ready (backlog)**; unlocks #1810/#1786.
-- [#1786](../1786-wrapexports-packed-typedarray-abi.md) — `wrapExports` ABI support for packed TypedArray vectors at the JS-host boundary, replacing the f64-only allocator/mutator assumption — medium, hard, **ready (backlog)**; follow-up to #1700/#1810.
-- [#1787](../1787-packed-typedarray-semantics-regressions.md) — Regression coverage for packed TypedArray integer semantics: unsigned/signed reads, clamping, and invalid `array.get` guards — medium, medium, **ready (backlog)**; test guardrails for #1810/#1811.
+- [#1799](../1799-typedarray-packed-lane-storage.md) — Generalize TypedArray storage to packed WasmGC lanes: `i8`/`i16`/`i32`/`f32`/`f64` backing instead of the legacy f64 representation for all numeric typed arrays — medium, hard, **ready (backlog)**; follow-up to #1767/#389.
+- [#1800](../1800-typedarray-element-metadata.md) — TypedArray element metadata for signedness, clamping, storage lanes, and load/store behavior so codegen stops inferring semantics from vec-key strings — high, hard, **ready (backlog)**; unlocks #1799/#1786.
+- [#1786](../1786-wrapexports-packed-typedarray-abi.md) — `wrapExports` ABI support for packed TypedArray vectors at the JS-host boundary, replacing the f64-only allocator/mutator assumption — medium, hard, **ready (backlog)**; follow-up to #1700/#1799.
+- [#1787](../1787-packed-typedarray-semantics-regressions.md) — Regression coverage for packed TypedArray integer semantics: unsigned/signed reads, clamping, and invalid `array.get` guards — medium, medium, **ready (backlog)**; test guardrails for #1799/#1800.
 
 ## Sprint 55 — repo structure / website (2026-05-24)
 

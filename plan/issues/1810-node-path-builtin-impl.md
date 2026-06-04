@@ -1,7 +1,8 @@
 ---
 id: 1810
 title: "node:path — typed host import + standalone TS-port fallback"
-status: ready
+status: wont-fix
+duplicate_of: 1791
 sprint: Backlog
 created: 2026-06-03
 updated: 2026-06-03

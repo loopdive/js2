@@ -2,9 +2,9 @@
 id: 1793
 title: "node:buffer + global Buffer — host class with from/concat/toString"
 status: ready
-sprint: Backlog
+sprint: 60
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-04
 priority: high
 feasibility: hard
 reasoning_effort: high

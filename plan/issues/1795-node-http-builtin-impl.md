@@ -2,9 +2,9 @@
 id: 1795
 title: "node:http (+ https) — GET round-trip host import (axios unblocker)"
 status: ready
-sprint: Backlog
+sprint: 60
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-04
 priority: high
 feasibility: hard
 reasoning_effort: high

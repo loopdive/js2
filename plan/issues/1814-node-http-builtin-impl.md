@@ -1,7 +1,8 @@
 ---
 id: 1814
 title: "node:http (+ https) — GET round-trip host import (axios unblocker)"
-status: ready
+status: wont-fix
+duplicate_of: 1795
 sprint: Backlog
 created: 2026-06-03
 updated: 2026-06-03

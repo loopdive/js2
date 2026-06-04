@@ -9,7 +9,7 @@ feasibility: medium
 task_type: bugfix
 area: codegen
 goal: correctness
-sprint: 59
+sprint: 60
 ---
 # #1837 — standalone enumeration order violates spec
 

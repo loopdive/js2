@@ -9,7 +9,7 @@ feasibility: medium
 task_type: bugfix
 area: codegen
 goal: correctness
-sprint: 59
+sprint: 60
 ---
 # #1827 — BigInt loose-equality precision / semantics
 

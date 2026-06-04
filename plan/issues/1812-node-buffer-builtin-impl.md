@@ -1,7 +1,8 @@
 ---
 id: 1812
 title: "node:buffer + global Buffer — host class with from/concat/toString"
-status: ready
+status: wont-fix
+duplicate_of: 1793
 sprint: Backlog
 created: 2026-06-03
 updated: 2026-06-03

@@ -1,7 +1,8 @@
 ---
 id: 1813
 title: "node:events / EventEmitter — host class + closure-callback contract"
-status: ready
+status: wont-fix
+duplicate_of: 1794
 sprint: Backlog
 created: 2026-06-03
 updated: 2026-06-03

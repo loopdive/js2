@@ -1,7 +1,8 @@
 ---
 id: 1811
 title: "node:url — URL / URLSearchParams as host constructors"
-status: ready
+status: wont-fix
+duplicate_of: 1792
 sprint: Backlog
 created: 2026-06-03
 updated: 2026-06-03
