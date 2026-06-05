@@ -531,3 +531,260 @@ writes + `any` function params to force the open path (TS narrows a literal
   the `OBJECT_RUNTIME_HELPER_NAMES` tail + `tests/issue-1472.test.ts`). As of
   this audit #1195/#1196 are CI-green + enqueued in the merge queue (behind
   #1205); start Slice 1 once they land to avoid a shared-file re-conflict.
+
+## S5c Representation — struct-accessor closure-capture (arch spec for sd-1888)
+
+> Cross-refs: **#1629 S3** (the bug surfaces as a #1629 S3 correctness defect),
+> **#1888 S5b** (the open-`$Object` `$PropEntry.$get/$set` accessor repr this
+> reconciles with), **#1636-S1** (`__call_fn_method_N` + `__current_this`),
+> **#1896** (closure-callable contract). This section is the *representation
+> agreement* sd-1888 reviews before implementing. **Spec only — no code here.**
+
+### Root cause (verified, sd-1888 + arch read of current main + worktree)
+
+The **static-struct accessor path** in `object-ops.ts` (the
+`Object.defineProperty(o, "p", {get/set})` arm when `o` resolves to a struct
+type) at `src/codegen/object-ops.ts:954-1171` compiles each getter/setter as a
+**bare Wasm function** `${structName}_get_${prop}` / `${structName}_set_${prop}`
+with signature `(this: ref null $struct[, value]) -> result` and **no
+closure-capture environment**. The body is compiled into a fresh
+`FunctionContext` whose `localMap` contains only `this` (+ setter value) — so
+any identifier that refers to an enclosing-scope variable resolves to nothing
+and falls through to a 0/undefined default. Verified standalone failures:
+`let n=5; ({get v(){return n+37}}).v` → 37 not 42; `let k=42; get(){return k}` →
+0; capturing setter `set(nv){b=nv*2}` → 0. Only pure-`this`/constant-body
+accessors work.
+
+Crucially, the **object-literal accessor path** (`literals.ts:1411/1495/1679`)
+and the class-member / nested-decl paths *do* call
+`promoteAccessorCapturesToGlobals` (`closures.ts:277`), which snapshots each
+captured local into a fresh `__captured_<name>` Wasm global. The
+`Object.defineProperty` struct arm at `object-ops.ts:954-1171` **never calls
+it** — that asymmetry is the localized defect.
+
+Two further facts shape the design:
+
+1. **`promoteAccessorCapturesToGlobals` is a snapshot, not a live capture.** It
+   copies the *current* local value into a module global at define time. That is
+   wrong for closures that must observe later outer-scope mutation, and it is
+   not per-instance (two objects sharing the same `${structName}_get_${prop}`
+   function would share one global). It is a stopgap that happens to pass the
+   simple objlit tests; it is **not** the representation S5c should generalize.
+2. **LATENT in GC mode.** GC routes most accessor-bearing `any` receivers
+   through `__make_getter_callback` (`declarations.ts:1255`,
+   `closures.ts:2704`), which builds a real capturing callback (cbId + captures
+   externref). That masks the bare-fn defect for the host path. The struct fast
+   path (`property-access.ts:870-882`, `assignment.ts:2332-2375`) has the same
+   bare-fn defect in *both* modes, but GC programs rarely hit it because the
+   struct fast path requires a statically-resolved `structName`.
+
+### Decision (option B): re-represent the struct accessor as a host-free capturing closure stored in a per-(struct,prop) global, invoked via `call_ref` with `this` threaded through `__current_this`.
+
+This is the S5b representation, lifted out of the `$Object` runtime so the
+static-struct fast path and the open-`$Object` path share **one** accessor
+representation and **one** invocation primitive (`__call_fn_method_N`).
+
+#### Q1 — Storage: a per-(struct,prop) nullable Wasm global holding a boxed `$Closure`.
+
+- For each `(structName, prop)` accessor, allocate **two** nullable Wasm globals
+  (lazy — only when a getter/setter exists):
+  `$__acc_get_<structName>_<prop> : (ref null $any)` and
+  `$__acc_set_<structName>_<prop> : (ref null $any)` (type `anyref`; a getter-
+  or setter-only accessor leaves the other null).
+- The global holds the **boxed closure wrapper** produced by
+  `compileArrowAsClosure` (`closures.ts:1247`) for the getter/setter
+  function-expression — i.e. a `$Closure`-family subtype struct whose field 0 is
+  the funcref and fields 1..N are the captured outer values (ref-celled when
+  mutable, per the standard closure machinery). This is **identical in shape** to
+  what S5b stores in `$PropEntry.$get/$set` (an `anyref` holding a boxed
+  closure), so the two paths converge on the same boxed-closure contract and the
+  same `__call_fn_method_N` invoker.
+- **Why a global, not a struct slot:** the static-struct receiver is a *closed*
+  WasmGC struct (`$struct`) whose field layout is fixed at type-creation time and
+  is shared by every instance — we cannot add per-instance get/set funcref slots
+  without changing the closed-struct layout (which would regress the #1472 R2
+  closed-struct fast path and every `struct.get`/`struct.set` site). A
+  getter/setter installed via `Object.defineProperty(o, "p", …)` on a
+  struct-typed receiver is, in practice, a *per-(type,property)* construct in
+  this compiler (the read/write sites already key off `${structName}_${prop}`
+  via `ctx.classAccessorSet`), so a module-level global keyed by the same string
+  is the minimal, layout-stable carrier. **Per-instance accessors with distinct
+  captures on the same property are out of scope** (refuse-loud — see Q5/edge
+  cases); they require the open-`$Object` runtime path (S5b), which already
+  stores per-instance `$PropEntry.$get/$set`.
+- Register the closure-bearing pair in a new `ctx` side table
+  `structAccessorClosure: Map<string, {getGlobalIdx?: number; setGlobalIdx?: number}>`
+  keyed by `${structName}_${prop}`, set alongside the existing
+  `ctx.classAccessorSet.add(accessorKey)`. The read/write sites consult it to
+  decide closure-invoke vs. (legacy) bare-fn call.
+
+#### Q2 — Invocation + capture-env threading (the crux sd-1888 flagged).
+
+Reuse the **#1636-S1** mechanism end-to-end — do **not** invent a new call path:
+
+- **Capture-env reaches the body via the `$Closure` wrapper's `$self`**, exactly
+  as `compileArrowAsClosure` already arranges: the lifted body's param 0 is
+  `__self` (the wrapper struct), and outer-var reads inside the body
+  `ref.cast`-down to the capture subtype and `struct.get` the capture field
+  (`closures.ts:1694-1781`). So **there is no separate "capture env" to thread at
+  the call site** — it is baked into the boxed closure value sitting in the
+  global. This is the seam that was missing: the bare-fn form had no `$self`, so
+  no capture field existed to read.
+- **`this` is threaded via `__current_this`**, not via a closure param.
+  `__call_fn_method_<arity>` (`index.ts:3052`, emitted for N=0..2 today, extended
+  to 4 by S2's `emitClosureMethodCallExportN(3,4)`) installs its `thisVal` arg
+  into the `__current_this` global before the inner `call_ref` and restores it
+  after (`index.ts:3125-3260`). Inside the getter/setter body, `this` resolves to
+  `global.get __current_this` (the #1636-S1 read-drive). So:
+  - **Getter read** (`property-access.ts:870-882`): replace the bare
+    `call ${getterName}` with: box the receiver `$struct` → externref; then
+    `__call_fn_method_0(boxedClosure, thisExtern)` (arity 0 = no user args). The
+    result externref is unboxed/coerced to the getter's declared return type.
+  - **Setter write** (`assignment.ts:2332-2375`): replace the bare
+    `call ${setterName}` with: box receiver + box the new value;
+    `__call_fn_method_1(boxedClosure, thisExtern, valueExtern)`; the `=`
+    expression still yields the RHS (unchanged), per current behavior.
+- **`this` inside the body** must read `__current_this` and `ref.cast` it back to
+  `$struct` for `this.field` reads/writes. The getter/setter body is compiled
+  with the standard closure-body machinery (`compileArrowAsClosure`), which
+  already supports `this` capture for arrow/method bodies via the existing
+  `this`-tracking (`closures.ts:190-201`); the implementer threads the receiver
+  through `__current_this` rather than as the old explicit struct param 0.
+- **#1896 contract:** the boxed value MUST be a `$Closure`-family wrapper that
+  `__call_fn_method_N`'s `ref.test`→`ref.cast`→`struct.get $func`→`call_ref`
+  dispatch recognizes. `compileArrowAsClosure` self-registers each compiled
+  fn-expr in `closureInfoByTypeIdx` (`closures.ts`, the same mechanism S2 relied
+  on), so the method-call export emits a matching arm with no extra registration.
+  Under `--nativeStrings`/standalone, honor the #1896-prereq ref-arg coercion
+  (externref→anyref) already landed in task #332.
+
+#### Q3 — Compile-site change at `object-ops.ts:954-1171`.
+
+Replace the two bare-fn emission blocks (getter at 996-1086, setter at
+1089-1166) with a shared helper, e.g.
+`emitStructAccessorClosure(ctx, fctx, structName, prop, node, kind)` that:
+
+1. Calls `compileArrowAsClosure(ctx, fctx, <getter/setter as FunctionExpression>)`
+   to produce a boxed `$Closure` value on the stack (this performs the capture
+   analysis + ref-cell packing the bare path skipped). The getter is arity-0,
+   the setter arity-1 (the value param); `this` is *not* a closure param (it
+   comes via `__current_this`).
+2. `extern.convert_any` (or store as `anyref`) and `global.set` into the lazily
+   created `$__acc_get_…` / `$__acc_set_…` global; record in
+   `ctx.structAccessorClosure`.
+3. Still `ctx.classAccessorSet.add(accessorKey)` so the read/write dispatch
+   sites fire (they gate on it today).
+
+**Factor the helper so the open-`$Object` arm (S5b) can call the same closure
+builder** — i.e. the closure-construction (steps 1) is shared; only the
+*storage target* differs (global for the closed-struct path; `$PropEntry.$get`
+/`$set` field for the open-`$Object` path). Put the shared builder in
+`closures.ts` next to `compileArrowAsClosure`; the two storage sites
+(`object-ops.ts` struct arm and `object-runtime.ts` `__defineProperty_accessor`)
+each consume its result.
+
+#### Q4 — Object-literal `{get x(){}}` standalone u32 -1.
+
+The objlit path (`compileObjectLiteralWithAccessors`, `literals.ts:250-520`)
+routes accessors through `compileArrowAsCallback` + `__defineProperty_accessor`.
+Under standalone this currently fails because the callback-lift assumes the
+host `__make_getter_callback` import (a JS callback table), which has no
+standalone backing — the lift emits an unresolved index (the "u32 -1"). **Fix on
+the same S5c representation:** under `ctx.standalone`, the objlit accessor arm
+must build the getter/setter via the **shared closure builder** (Q3 step 1),
+box it, and pass it as the `getterCb`/`setterCb` argument to the native
+`__defineProperty_accessor` (which S5b/main already routes to the
+`$PropEntry.$get/$set` store via `OBJECT_RUNTIME_HELPER_NAMES`). So the objlit
+path stops calling `__make_getter_callback` standalone and instead hands a real
+boxed `$Closure` to the native descriptor-store, exactly the value S5b's
+`__extern_get`/`__extern_set` already `call_ref` via `__call_fn_method_N`. GC
+mode keeps the `__make_getter_callback` host path unchanged.
+
+#### Q5 — Dual-mode safety / regression surface (load-bearing).
+
+The change is **standalone-gated and additive** wherever it touches shared
+read/write/dispatch:
+
+- **GC/host struct accessors:** keep the **bare-fn `call ${getterName}`** path
+  (`property-access.ts:874`, `assignment.ts`'s `call finalSetterIdx`) **for GC
+  mode** OR adopt the closure path in both — *decision: adopt the closure path in
+  both modes for the struct arm*, because the bare-fn path is simply buggy
+  (drops captures) in GC too, and the closure path is host-free. BUT this is the
+  **biggest regression surface** — every existing class-accessor test
+  (`#459` suite, `#1680`/`#1681` private accessors, `#1605`/`#1117` accessor-only
+  ctor) currently relies on the bare-fn `call`. The implementer MUST keep the
+  read/write dispatch **keyed on `ctx.structAccessorClosure.has(key)`**: only
+  accessors *defined via the S5c closure builder* use `call_ref`; class-declared
+  accessors compiled elsewhere (class-bodies.ts, literals.ts class path) keep
+  their existing bare-fn `call` until/unless migrated. **Do not migrate the
+  class-accessor emission in this issue** — scope S5c to the
+  `Object.defineProperty` struct arm + the objlit standalone arm. This keeps the
+  `#459`/`#1680` suites on their proven path.
+- **Closed-struct fast path (#1472 R2):** untouched — no struct-layout change
+  (storage is a module global, not a struct field). Verify the closed-struct
+  data-field `struct.get`/`struct.set` sites are byte-for-byte unchanged.
+- **S5b open-`$Object` accessors:** unchanged representation
+  (`$PropEntry.$get/$set` `anyref` + `FLAG_ACCESSOR=0x08`); S5c only *shares the
+  closure builder* with it, it does not alter the `$PropEntry` layout or the
+  `__extern_get`/`__extern_set` accessor arms.
+- **Refuse-loud** (per the #1888 conservative invariant): per-instance accessors
+  with distinct captures on the same `(struct,prop)` (two `defineProperty` calls
+  on different instances installing different closures) ⇒ the global is
+  single-valued, so the *second* install would clobber the first. The struct
+  fast path is type-keyed, so this is inherently a per-type construct; if the
+  implementer detects two installs on the same key with materially different
+  capture sets, emit `Codegen error: per-instance struct accessor with distinct
+  captures not supported in standalone (#1888 S5c)` rather than silently sharing.
+  (In practice test262/real programs install one accessor per type-property.)
+- Arity ceiling: getters are arity 0, setters arity 1 — both well within the
+  `__call_fn_method_0..4` range (S2 extended to 4), so no ceiling concern.
+
+### Slice breakdown (reviewable PRs for sd-1888)
+
+Each slice is independently verifiable, instantiate-and-run under Node WasmGC,
+zero `env::` imports for the standalone cases. Gate the whole feature behind a
+`S5C_STRUCT_ACCESSOR_CLOSURE` boolean (mirroring S2's `S2_OPENANY_DISPATCH_WIRED`)
+so it can land dark and flip on after the regression gate is green.
+
+- **Slice C1 — shared closure builder + storage globals (foundation).**
+  Factor `buildAccessorClosure(ctx, fctx, fnExprNode, arity)` in `closures.ts`
+  from `compileArrowAsClosure` (it IS `compileArrowAsClosure` specialized to
+  arity-0 getter / arity-1 setter with `this`-via-`__current_this`). Add the
+  `ctx.structAccessorClosure` side table + lazy per-(struct,prop) globals.
+  No read/write wiring yet. Unit test: builder produces a valid boxed `$Closure`
+  for a capturing getter; module validates.
+- **Slice C2 — define-site rewrite (`object-ops.ts:954-1171`).** Replace the two
+  bare-fn blocks with `buildAccessorClosure` + `global.set`. Behind the flag,
+  keep the bare-fn path when the flag is off. Test: compile-only — verify the
+  globals are populated and `ctx.structAccessorClosure` is keyed.
+- **Slice C3 — read-path (`property-access.ts:870-882`).** When
+  `ctx.structAccessorClosure.has(key)` and a getter global exists: box receiver,
+  `__call_fn_method_0(getterClosure, thisExtern)`, unbox to declared return type;
+  else fall through to the existing bare-fn `call`. Tests (the verified repros):
+  `let n=5; ...{get v(){return n+37}}...v` → 42; `let k=42; get(){return k}` →
+  42; getter reading `this.x` AND an outer capture together.
+- **Slice C4 — write-path (`assignment.ts:2332-2375`).** Symmetric:
+  `__call_fn_method_1(setterClosure, thisExtern, valueExtern)`; `=` yields RHS.
+  Tests: capturing setter `set(nv){ b = nv*2 }` writes outer `b`; setter writing
+  `this.x` from the value; setter-only property read returns undefined;
+  getter-only property write is a sloppy no-op.
+- **Slice C5 — objlit `{get x(){}}` standalone (`literals.ts:250-520`).** Under
+  `ctx.standalone`, build getter/setter via `buildAccessorClosure`, pass the
+  boxed closures to native `__defineProperty_accessor` (S5b store). Stop emitting
+  `__make_getter_callback` standalone. Tests: `const o = { get x(){ return cap },
+  set x(v){ cap = v } }` under `--target standalone` — read/write observe the
+  capture; zero `env::` imports; GC-mode objlit accessor regression guard.
+
+### Acceptance (S5c)
+
+- [ ] Capturing struct getter/setter (`Object.defineProperty` + struct receiver)
+      observes outer-scope captures, standalone + GC, zero host imports.
+- [ ] Objlit `{get x(){}}` with captures compiles + runs standalone (no
+      `__make_getter_callback`, no unresolved-index serializer failure).
+- [ ] `#459`/`#1680`/`#1681`/`#1605` class-accessor suites stay green (class
+      accessors are NOT migrated; bare-fn path preserved behind the key gate).
+- [ ] Closed-struct fast-path (#1472 R2) byte-for-byte unchanged.
+- [ ] S5b open-`$Object` `$PropEntry.$get/$set` representation unchanged; only
+      the closure *builder* is shared.
+- [ ] Per-instance distinct-capture accessor on one `(struct,prop)` refuses-loud
+      with a `#1888 S5c` cite.
