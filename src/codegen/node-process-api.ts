@@ -24,6 +24,7 @@ import {
 } from "./index.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression, VOID_RESULT } from "./shared.js";
+import { tryEmitLinearU8StdinRead, tryEmitLinearU8StdWrite } from "./linear-uint8-codegen.js";
 
 export function tryCompileNodeProcessCall(
   ctx: CodegenContext,
@@ -50,6 +51,20 @@ export function tryCompileNodeProcessCall(
 
   const { useStderr } = stdoutWrite;
   const argExpr = expr.arguments[0]!;
+
+  // #1886 Slice B: zero-copy `process.std*.write(buf)` for a linear-backed
+  // Uint8Array — fd_write reads straight from `ptr` for `len` bytes (no
+  // GC→linear staging copy). Only fires for a registered linear-safe buffer.
+  if (ctx.wasiFdWriteIdx !== undefined && ctx.wasiFdWriteIdx >= 0) {
+    if (tryEmitLinearU8StdWrite(fctx, argExpr, ctx.wasiFdWriteIdx, useStderr)) {
+      // Match the GC Uint8Array write path's contract: push `1` (write
+      // succeeded) and return i32, so the expression-statement wrapper drops it
+      // exactly like the GC path. (#1886)
+      fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+      return { kind: "i32" };
+    }
+  }
+
   const argTsType = ctx.checker.getTypeAtLocation(argExpr);
   if (isStringType(argTsType)) {
     const compiled = compileExpression(ctx, fctx, argExpr);
@@ -162,6 +177,11 @@ function matchProcessStdinRead(ctx: CodegenContext, fctx: FunctionContext, expr:
 function emitProcessStdinRead(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult | null {
   const fdReadIdx = ctx.wasiFdReadIdx;
   if (fdReadIdx === undefined || fdReadIdx < 0) return null;
+
+  // #1886 Slice B: when the buffer arg is a linear-backed Uint8Array, fd_read
+  // straight into `ptr+off` — no GC↔linear element-copy loop.
+  const linRead = tryEmitLinearU8StdinRead(ctx, fctx, expr, fdReadIdx);
+  if (linRead !== null) return linRead;
 
   const bufType = compileExpression(ctx, fctx, expr.arguments[0]!);
   if (!bufType || (bufType.kind !== "ref" && bufType.kind !== "ref_null") || !("typeIdx" in bufType)) {

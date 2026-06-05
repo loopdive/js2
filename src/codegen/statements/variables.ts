@@ -20,6 +20,7 @@ import { compileArrayDestructuring, compileObjectDestructuring } from "./destruc
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
+import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
 
 function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
@@ -299,6 +300,22 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // (compileStringBuilderInit didn't set localMap, so emitTdzInit only
       // touches the flag local if one was already allocated by the hoist
       // pre-pass.)
+      emitTdzInit(ctx, fctx, name);
+      continue;
+    }
+
+    // #1886 Slice B: linear-backed Uint8Array. When the analysis proved this
+    // `new Uint8Array(...)` binding is a pure I/O buffer that never escapes the
+    // GC heap, back it by linear memory (a (ptr,len) pair) instead of a GC vec.
+    // Like the string-builder path above, the binding name is intentionally NOT
+    // placed in `localMap` — element-access/.length/I/O reads route through
+    // `fctx.linearU8Buffers` (see linear-uint8-codegen.ts). The TDZ flag, if the
+    // hoist pre-pass allocated one, is marked initialised.
+    if (
+      decl.initializer &&
+      ts.isNewExpression(decl.initializer) &&
+      tryEmitLinearU8New(ctx, fctx, decl.name, decl.initializer)
+    ) {
       emitTdzInit(ctx, fctx, name);
       continue;
     }

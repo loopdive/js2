@@ -4,7 +4,7 @@ title: "Linear-backed Uint8Array for WASI I/O buffers (escape analysis) — avoi
 status: in-progress
 sprint: Backlog
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-05
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -21,6 +21,16 @@ related: [1863, 1527, 389]
 the `.wat` shows why, and it points at a concrete, *targeted* optimization.
 
 ## Why AssemblyScript is faster (measured + confirmed from its `.wat`)
+
+> **Framing correction (esch 2026-06-05):** the original issue title/body framed
+> this as "hold the body in memory to beat AS." That is **wrong** and the title
+> is kept only for issue continuity. The team-lead's held-GC-body measurement
+> confirmed that holding the 64 MiB body in a **GC array** is both *slower* and
+> *fatter* than streaming a 1 MiB window — retention is not the lever. **The
+> lever is getting the bytes out of the GC heap and into linear memory so
+> `fd_read`/`fd_write` touch them with zero copy** (and so element ops are
+> `i32.load8_u`/`i32.store8` against that same linear region). We *beat* AS on
+> memory precisely by NOT holding the body — we stream a small linear window.
 
 AssemblyScript uses **linear memory exclusively** — no WasmGC, no `array.new`/
 `array.copy`/`struct.new`. Its message buffer *is* linear memory, so `fd_read`
@@ -313,34 +323,115 @@ non-WASI and any escaping `Uint8Array` are byte-identical to today.
 
 ### 7. Phasing (slices for safe landing)
 
-- **Slice A** — analysis module + unit tests (no codegen change); prove it marks
-  every `nm_js2wasm.ts` buffer linear-safe and correctly *rejects* a crafted
-  escaping case. Lands behind the flag, gated off.
-- **Slice B** — linear allocator + `new`/index/`.length` codegen + the
-  intraprocedural buffers (`header`, `one`, `buf` in `main`). No signature
-  rewrite yet (so `readExact`/`emitRun` still take GC — but those are only the
-  small/parameter paths; measure the partial win).
+- **Slice A** — analysis module + unit tests (no codegen change). **DONE**
+  (merged): marks every `nm_js2wasm.ts` buffer linear-safe and rejects crafted
+  escaping cases; wired behind `ctx.wasi`, byte-identical to baseline.
+- **Slice B** — linear allocator + `new`/index/`.length`/zero-copy-I/O codegen,
+  **intraprocedural only**. **DONE** (this PR).
 - **Slice C** — interprocedural signature rewrite so `readExact`/`readAt`/
-  `emitRun` take linear `(ptr,len)` params → full zero-copy I/O. This is where
-  the big number lands.
-- **Slice D** (optional follow-up) — loop-scoped arena reset for unbounded
-  streams.
+  `emitRun` take linear `(ptr,len)` params → full zero-copy I/O. **NOT STARTED.**
+- **Slice D** — zero-copy direct-slice write + loop-scoped arena reset.
+  **NOT STARTED.**
 
-**Landing plan (revised, esch 2026-06-05):** PR #1 = **Slice A** only (the
-analysis pass, wired behind `ctx.wasi`, with no codegen consumer — emitted
-WASI modules verified byte-identical to baseline via `cmp`). Tech lead approved
-splitting the risky signature-rewrite (Slice C) into its own PR; the same
-isolation logic applies to the codegen wiring (Slice B), so the bump allocator
-+ `new`/index/`.length`/zero-copy I/O codegen lands as **PR #2** and the
-interprocedural signature rewrite as **PR #3**. This banks the analysis
-foundation (zero runtime risk) and keeps each codegen change independently
-reviewable + benchmarkable. The allocator design (page-4 arena at
-`LINEAR_U8_ARENA_START = 256 KiB`, a dedicated `$__lin_u8_arena_ptr` bump global
-— NOT the page-0 `$__wasi_bump_ptr`, which aliases string-literal data —
-emitted lazily reusing the #1856 align8 + page-grow idiom) is prototyped and
-typechecks; it ships with PR #2.
+## Slice B — what landed (esch 2026-06-05)
 
-Slices A+B+C are the core of this issue; D can be a follow-up if the per-message
-allocation proves to leak on infinite streams (the benchmark sends one large
-message, so A–C suffice to hit the acceptance numbers, but D is needed for
-production correctness on long-lived ports — call it out in the PR).
+Intraprocedural linear backing for a `new Uint8Array(...)` **local**. A buffer
+qualifies (`isLocalLinearNewBinding` in `src/codegen/linear-uint8-codegen.ts`)
+iff Slice-A proved it linear-safe AND, additionally for Slice B:
+1. it is a `new Uint8Array(...)` **local** (not a param — params stay GC);
+2. it is used **only intraprocedurally** — `b[i]`, `b.length`, and the I/O
+   intrinsics `process.std*.{read,write}(b)` only. A buffer passed to a **user
+   function** is rejected here even though Slice A admits it (Slice A's
+   permissive set is forward-looking to Slice C's signature rewrite; Slice B has
+   no callee-signature rewrite, so a `(ptr,len)` local cannot cross a GC-typed
+   call ABI);
+3. it is **allocated at most once per run** (`isAllocatedAtMostOnce`) — not
+   inside a loop, and its enclosing function is the module entry or is called at
+   most once and never from a loop. This is the **bump-arena leak guard**: the
+   arena is monotonic (no free) until Slice D, so a per-iteration `new` would
+   leak ~1 MiB/iteration. Buffers that fail this stay GC-backed.
+
+Codegen: `(ptr,len)` i32 locals via a lazily-emitted `__lin_u8_alloc(len)->ptr`
+bump allocator over a dedicated page-4 arena global `$__lin_u8_arena_ptr`
+(NOT the page-0 `$__wasi_bump_ptr`, which aliases string-literal data). `b[i]` →
+`i32.load8_u`, `b[i]=v` → `i32.store8`, `b.length` → the `len` local,
+`stdin.read`/`stdout.write` → zero-copy `fd_read`/`fd_write` against `ptr`.
+
+**Two root-caused codegen bugs fixed (the WIP's validation failure):**
+1. **Allocator funcIdx desync → bare `ref.null extern` in a void fn.** The WIP
+   pre-emitted `__lin_u8_alloc` *before* `collectAllSourceImports`. `addImport`
+   does NOT shift already-registered defined functions, so every later import
+   shifted the module's import/defined boundary and left `call __lin_u8_alloc`
+   pointing at an *import* (e.g. `__extern_get`, 2 params/1 result). That made
+   the function's net stack delta `-1`; `stackBalance`'s function-level
+   `fixBranch(expected=0)` then saw the body as "short one value" and, for an
+   empty block type, pushed a `ref.null extern` to fill it — leaving a value on
+   the stack at the end of a void `main` → invalid wasm
+   (`expected externref, found i32`). **Fix:** emit `__lin_u8_alloc` in the
+   deferred-helper zone (alongside `emitToUint32Helper`/`emitDeferredWasiHelpers`,
+   after `collectAllSourceImports`, before the final
+   `reconcileNativeStrFinalizeShift` and before user functions), so its index is
+   stable and any residual drift is reconciled by the native-string regime.
+2. **Predicate mismatch → spurious `__extern_get`/`__str_flatten` desync.** The
+   hoist pre-pass skipped the GC `$buf` local using the *raw* Slice-A
+   `safeBindings` set, but the declaration-site lowering used the tighter Slice-B
+   predicate. For a buffer Slice A admitted but Slice B declined (e.g. the nm
+   host's `buf`, threaded through `readExact`), the GC local was skipped yet the
+   binding fell back to the GC path with no storage → it pulled in GC extern
+   helpers against a missing local and desynced `__str_flatten`. **Fix:** the
+   hoist-skip now uses the same `isLocalLinearNewBinding` predicate.
+
+**Result.** `probe_u8` (single buffer in `main`) is fully linear-backed and
+round-trips correctly under wasmtime **v44** and **v45** (stdin `0x41` →
+`buf[0]=(0x41+1)&255=0x42` → stdout, rest zero-filled). The native-messaging
+host (`nm_js2wasm.ts`) is **byte-identical** to current main (`cmp` passes):
+every one of its buffers either escapes via a helper param (Slice C territory)
+or is allocated per-frame in a loop (Slice D territory), so Slice B correctly
+declines all of them and emits no allocator/arena — h2h on v44/v45 is unchanged
+(`validJSON=true match=true`, 65 frames, flat ~24 MB on v45). **The host speedup
+is therefore NOT in Slice B** — it requires Slice C (cross-function `(ptr,len)`)
+and Slice D (zero-copy direct-slice write + arena reset). Slice B lands the
+allocator + intraprocedural codegen + the two index-shift fixes as a safe
+foundation.
+
+## Slice C — interprocedural signature rewrite (NOT STARTED — the host win)
+
+Rewrite each linear-safe `Uint8Array` **parameter** of a non-exported function to
+a `(ptr: i32, len: i32)` pair, and thread linear args as two i32s at every call
+site. This is what unlocks the nm host: `readExact`/`readAt`/`emitRun` currently
+receive `buf` as a GC vec, forcing the buffer GC-backed; once they take
+`(ptr,len)`, `buf` in `main` becomes linear and the whole read/build/write path
+is zero-copy. Risk (per §5): the rewrite must consult the *same frozen*
+classification at the callee def and every call site — a single missed escape
+that should have demoted the param makes the module fail validation. Add a
+verifier assertion: a linear-rewritten function must have linear args at every
+call. Slice A already froze `linearParams` (funcSym → linear param indices) for
+exactly this consumer.
+
+## Slice D — zero-copy direct-slice write + loop-scoped arena reset (NOT STARTED)
+
+Two related follow-ons, landable together once B+C make the host buffers linear:
+
+1. **Loop-scoped arena reset** (lifts Slice B's allocate-at-most-once guard).
+   The bump arena is monotonic today. Snapshot `$__lin_u8_arena_ptr` at loop
+   entry and rewind to it at the bottom of each iteration (`__lin_u8_arena_mark`
+   / `__lin_u8_reset`). Sound because a linear-safe buffer allocated *inside* an
+   iteration cannot escape it. `new Uint8Array(n)` into a reused slot must then
+   `memory.fill(ptr,0,len)` to honour the zero-fill contract. This lets
+   per-frame buffers (`frame`, `small`, `tmp`) be linear-backed without leaking,
+   and lets the nm host's `emitRun` frame buffer go linear.
+
+2. **Zero-copy direct-slice write.** Once a buffer is linear-backed, drop
+   `emitRun`'s per-frame element-copy entirely and write the run's bytes
+   DIRECTLY from the linear window: `stdout.write("[")`, a zero-copy `fd_write`
+   of `buf[start .. start+runLen)`, `stdout.write("]")`. Clean API (no bespoke
+   builtin): linear-backed `Uint8Array.prototype.subarray(start,end)` returns a
+   zero-copy VIEW (`ptr+offset`, `len`) over the same arena — not a copy — and
+   `process.stdout.write(view)` does `fd_write` from `view.ptr+view.offset` for
+   `view.len`. "The fastest copy is the one you don't do" — this beats AS (which
+   does one memmove into its output buffer) on both wall and memory.
+
+**Sequencing:** Slice B (this) → Slice C (interprocedural signature rewrite) →
+Slice D (arena reset + zero-copy direct-slice write). Acceptance for C+D: the nm
+host h2h reaches AS-class wall (~0.15–0.25 s) at flat ~24–31 MB, with
+`emitRun`'s per-frame copy gone and no arena leak on long-lived streams.

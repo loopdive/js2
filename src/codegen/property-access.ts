@@ -26,6 +26,7 @@ import { patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { addUnionImports, resolveWasmType } from "./index.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
+import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8-codegen.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
@@ -975,6 +976,12 @@ export function compilePropertyAccess(
   if (expr.questionDotToken) {
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
+
+  // #1886 Slice B: linear-backed Uint8Array `buf.length` → the len i32 local
+  // (widened to f64). Only fires for a registered linear-safe buffer; any other
+  // receiver falls through to the GC property-access path unchanged.
+  const linU8Len = tryEmitLinearU8Length(fctx, expr);
+  if (linU8Len !== null) return linU8Len;
 
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
@@ -3314,6 +3321,12 @@ export function compileElementAccess(
 ): ValType | null {
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;
+
+  // #1886 Slice B: linear-backed Uint8Array read `buf[i]` → i32.load8_u(ptr+i).
+  // Only fires when `buf` is a registered linear-safe buffer in this function;
+  // every other receiver falls through to the GC element-access path unchanged.
+  const linU8Get = tryEmitLinearU8ElementGet(ctx, fctx, expr);
+  if (linU8Get !== null) return linU8Get;
 
   // Handle super[expr] — access parent class property via computed key on `this`
   if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) {

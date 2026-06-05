@@ -2,6 +2,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
+import { isLocalLinearNewBinding, sourceHasLinearBackedUint8 } from "./linear-uint8-codegen.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import {
   isBigIntType,
@@ -926,6 +927,10 @@ export function generateModule(
       // zero-copy fd_read/fd_write. Side-effect free; codegen consumers are
       // additive (empty result ⇒ emitted module identical to today).
       ctx.linearUint8 = analyzeLinearUint8(ast.checker, ast.sourceFile);
+      // #1886 Slice B: the `__lin_u8_alloc` bump allocator is emitted in the
+      // deferred-helper zone below (after collectAllSourceImports + the final
+      // reconcileNativeStrFinalizeShift, before user functions), NOT here.
+      // See the emit site near emitToUint32Helper / emitDeferredWasiHelpers.
     }
 
     // $AnyValue struct type is now registered lazily via ensureAnyValueType()
@@ -1041,6 +1046,32 @@ export function generateModule(
     // funcMap, and addImport callers earlier in this pipeline (lib-globals
     // scan adding `eval` / `parseInt`) do not shift defined-func entries.
     emitDeferredWasiHelpers(ctx);
+
+    // #1886 Slice B — emit the `__lin_u8_alloc` bump allocator in this same
+    // deferred-helper zone (alongside __toUint32 / the WASI write helpers) for
+    // BOTH reasons those helpers live here:
+    //   1. It is AFTER `collectAllSourceImports`, so its absolute funcMap index
+    //      is not silently invalidated by later `addImport` calls — `addImport`
+    //      does NOT shift already-registered defined functions (see the
+    //      emitToUint32Helper note above). Emitting it before the import scan
+    //      (the original Slice-B WIP) left every linear `new Uint8Array(n)`
+    //      `call __lin_u8_alloc` pointing at the wrong (import) slot, which
+    //      desynced the function stack so badly the void-fn finalizer appended a
+    //      bare `ref.null extern` (#1886 Slice-B validation failure).
+    //   2. It is BEFORE the trailing `reconcileNativeStrFinalizeShift` below,
+    //      so if any later import is added between here and user-function
+    //      compilation, the SAME reconcile that keeps `__str_flatten` & the
+    //      other native-string helpers' indices correct also fixes up this
+    //      helper's `call`/funcMap entry — avoiding the `__str_flatten` type
+    //      desync the deferred emitters are carefully sequenced around.
+    // Idempotent and a no-op when no `new Uint8Array` binding actually qualifies
+    // for Slice-B linear backing (`sourceHasLinearBackedUint8` applies the full
+    // intraprocedural + allocated-at-most-once predicate, so e.g. the
+    // native-messaging host — whose buffers all flow through helper params —
+    // emits NO allocator and stays byte-identical to today).
+    if (ctx.wasi && sourceHasLinearBackedUint8(ctx, ast.sourceFile)) {
+      ensureLinearU8AllocHelper(ctx);
+    }
 
     // Emit wrapper valueOf functions (after all imports registered, before user funcs)
     emitWrapperValueOfFunctions(ctx);
@@ -4588,6 +4619,12 @@ function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
   });
   ctx.wasiBumpPtrGlobalIdx = bumpGlobalIdx;
 
+  // #1886 Slice B — the dedicated page-4 arena bump-pointer global
+  // (`__lin_u8_arena_ptr`) for linear-backed Uint8Array buffers is registered
+  // ON DEMAND in `ensureLinearU8AllocHelper` (deferred-helper zone), gated on a
+  // buffer actually qualifying for Slice-B backing. A WASI module with no linear
+  // buffer therefore stays byte-identical to today (no stray unused global).
+
   // Check if source uses console.log/warn/error, process.exit, or node:fs functions
   let needsFdWrite = false;
   let needsConsoleStderr = false;
@@ -5073,6 +5110,121 @@ function emitWasiWriteStringStderrHelper(ctx: CodegenContext): void {
  */
 export const WASI_STDIN_BUF_START = 64 * 1024;
 const WASI_WRITE_SCRATCH_START = 128 * 1024;
+
+/**
+ * #1886 Slice B — start of the linear-backed `Uint8Array` arena (page 4,
+ * 256 KiB). It sits above the page-2 write scratch with page 3 left as a guard,
+ * so a proven-I/O-only buffer never aliases the iovec scratch, string-literal
+ * data, the stdin buffer, or the write scratch. The arena grows on demand via
+ * `memory.grow` in `__lin_u8_alloc`.
+ */
+const LINEAR_U8_ARENA_START = 256 * 1024;
+
+/**
+ * #1886 Slice B — Ensure the `__lin_u8_alloc(len: i32) -> i32` bump allocator
+ * exists and return its function index (lazy, emitted on first linear-backed
+ * `new Uint8Array`). Allocates `align8(len)` bytes from the page-4 linear arena
+ * pointed at by `$__lin_u8_arena_ptr`, growing memory on demand, and returns
+ * the (8-byte-aligned) base pointer. Mirrors the #1856 align8 + page-grow idiom
+ * from `codegen-linear/runtime.ts`; emitted here because the WasmGC front-end
+ * owns its own memory/globals and cannot call the linear backend bootstrap.
+ *
+ * NOTE: the returned region is NOT explicitly zero-filled — `memory.grow`
+ * zeroes fresh pages, and the arena today only ever grows (no reset yet, see
+ * Slice D), so every byte handed out is freshly-grown zero memory, satisfying
+ * the `new Uint8Array(n)` zero-fill contract. A future arena reset (Slice D)
+ * that reuses slots must `memory.fill` callers' buffers.
+ */
+export function ensureLinearU8AllocHelper(ctx: CodegenContext): number {
+  if (ctx.linearU8AllocFuncIdx !== undefined) return ctx.linearU8AllocFuncIdx;
+  if (!ctx.wasi) return -1;
+
+  // Register the dedicated page-4 arena bump-pointer global ON DEMAND, here in
+  // the deferred-helper zone, so a WASI module with no Slice-B linear buffer is
+  // byte-identical to today (no stray unused global). Safe to register now: this
+  // helper is emitted before any user-function body compiles, so no compiled
+  // body's global index can shift under it. Starts at LINEAR_U8_ARENA_START
+  // (page 4) so it never aliases the page-0 string-literal data, the stdin
+  // buffer, or the write scratch; the region grows on demand via memory.grow.
+  if (ctx.linearU8ArenaGlobalIdx === undefined) {
+    const u8ArenaGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: "__lin_u8_arena_ptr",
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: LINEAR_U8_ARENA_START } as Instr],
+    });
+    ctx.linearU8ArenaGlobalIdx = u8ArenaGlobalIdx;
+  }
+
+  const arenaGlobal = ctx.linearU8ArenaGlobalIdx;
+  // param: len(0); locals: ret(1), next(2)
+  const LEN = 0;
+  const RET = 1;
+  const NEXT = 2;
+  const PAGE = 65536;
+
+  const funcTypeIdx = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "i32" }]);
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.funcMap.set("__lin_u8_alloc", funcIdx);
+
+  const body: Instr[] = [
+    // ret = arena_ptr
+    { op: "global.get", index: arenaGlobal } as Instr,
+    { op: "local.set", index: RET } as Instr,
+    // next = align8(ret + len) = (ret + len + 7) & ~7
+    { op: "local.get", index: RET } as Instr,
+    { op: "local.get", index: LEN } as Instr,
+    { op: "i32.add" } as Instr,
+    { op: "i32.const", value: 7 } as Instr,
+    { op: "i32.add" } as Instr,
+    { op: "i32.const", value: -8 } as Instr,
+    { op: "i32.and" } as Instr,
+    { op: "local.set", index: NEXT } as Instr,
+    // if (next > memory.size * PAGE) grow by ceil((next - cur)/PAGE)
+    { op: "local.get", index: NEXT } as Instr,
+    { op: "memory.size" } as Instr,
+    { op: "i32.const", value: PAGE } as Instr,
+    { op: "i32.mul" } as Instr,
+    { op: "i32.gt_u" } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: NEXT } as Instr,
+        { op: "memory.size" } as Instr,
+        { op: "i32.const", value: PAGE } as Instr,
+        { op: "i32.mul" } as Instr,
+        { op: "i32.sub" } as Instr,
+        { op: "i32.const", value: PAGE - 1 } as Instr,
+        { op: "i32.add" } as Instr,
+        { op: "i32.const", value: PAGE } as Instr,
+        { op: "i32.div_u" } as Instr,
+        { op: "memory.grow" } as Instr,
+        { op: "drop" } as Instr,
+      ],
+    } as Instr,
+    // arena_ptr = next
+    { op: "local.get", index: NEXT } as Instr,
+    { op: "global.set", index: arenaGlobal } as Instr,
+    // return ret
+    { op: "local.get", index: RET } as Instr,
+  ];
+
+  ctx.mod.functions.push({
+    name: "__lin_u8_alloc",
+    typeIdx: funcTypeIdx,
+    locals: [
+      { name: "ret", type: { kind: "i32" } },
+      { name: "next", type: { kind: "i32" } },
+    ],
+    body,
+    exported: false,
+  });
+
+  ctx.linearU8AllocFuncIdx = funcIdx;
+  return funcIdx;
+}
 
 /**
  * #1618: Ensure __wasi_write_any_string(s: ref NativeString) -> void exists and
@@ -10723,6 +10875,26 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
       // #1210: skip declarations matched by detectStringBuilders — their
       // storage is replaced by a synthetic buffer triple at compile time.
       if (fctx.pendingStringBuilders?.has(decl)) continue;
+      // #1886 Slice B: skip linear-backed `new Uint8Array(...)` bindings — their
+      // storage is a synthetic (ptr,len) i32 pair set up at the declaration site
+      // (see tryEmitLinearU8New), and the name is intentionally kept out of
+      // localMap so reads route through `fctx.linearU8Buffers`. Pre-allocating a
+      // GC `(ref null …)` local here would leave a dangling uninitialised local
+      // (which the function finalizer then treats as a live value).
+      //
+      // Use the SAME predicate the declaration-site lowering uses
+      // (`isLocalLinearNewBinding`), not the raw Slice-A `safeBindings` set:
+      // Slice A admits buffers that flow into linear-safe callee params (a
+      // forward-looking Slice-C allowance), but Slice B only linear-backs
+      // buffers used purely intraprocedurally AND allocated at most once.
+      // Skipping the GC local for a binding that then FALLS BACK to the GC `new
+      // Uint8Array` path (because it is passed to a user function / allocated in
+      // a loop) would leave it with no storage and pull in GC extern helpers
+      // against a missing local (observed: spurious `__extern_get` /
+      // `__str_flatten` desync in the native-messaging host).
+      if (ctx.linearUint8 && ts.isIdentifier(decl.name) && isLocalLinearNewBinding(ctx, decl.name)) {
+        continue;
+      }
       if (ts.isIdentifier(decl.name)) {
         const name = decl.name.text;
         if (fctx.localMap.has(name)) continue;

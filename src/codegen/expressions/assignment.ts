@@ -6,6 +6,7 @@ import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
+import { tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitModulo, emitToInt32 } from "../binary-ops.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
@@ -2576,6 +2577,12 @@ function compileElementAssignment(
   target: ts.ElementAccessExpression,
   value: ts.Expression,
 ): InnerResult {
+  // #1886 Slice B: linear-backed Uint8Array write `buf[i] = v` →
+  // i32.store8(ptr+i, trunc(v)). Only fires for a registered linear-safe
+  // buffer; any other target falls through to the GC element-assign path.
+  const linU8Set = tryEmitLinearU8ElementSet(ctx, fctx, target, value);
+  if (linU8Set !== null) return linU8Set;
+
   // Handle ClassName[key] = value for static setter accessors and static properties (#848)
   if (ts.isIdentifier(target.expression)) {
     const objName = target.expression.text;

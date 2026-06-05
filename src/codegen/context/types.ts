@@ -390,6 +390,22 @@ export interface FunctionContext {
       presized?: boolean; // #1761: true when buffer presized; appends skip cap-check
     }
   >;
+  /**
+   * #1886 Slice B — live linear-backed `Uint8Array` buffers in this function,
+   * keyed by binding name. A buffer proven linear-safe by the #1886 analysis
+   * (`ctx.linearUint8.safeBindings`) is represented as a `(ptr, len)` pair of
+   * i32 locals instead of a GC vec, so `buf[i]`, `buf.length`, and
+   * `process.std*.{read,write}(buf)` operate on linear memory with zero
+   * GC↔linear copies. Absent entry ⇒ the binding uses the existing GC-vec path
+   * unchanged.
+   */
+  linearU8Buffers?: Map<
+    string,
+    {
+      ptrLocalIdx: number; // i32 — base byte offset into the page-4 linear arena
+      lenLocalIdx: number; // i32 — element length (== byte length for Uint8Array)
+    }
+  >;
 }
 
 /** Context shared across all codegen. */
@@ -972,6 +988,19 @@ export interface CodegenContext {
    * side-effect free and safe to run unconditionally behind the WASI gate.)
    */
   linearUint8?: import("../linear-uint8-analysis.js").LinearUint8Result;
+  /**
+   * #1886 Slice B — Func index of the lazily-emitted
+   * `__lin_u8_alloc(len:i32)->i32` bump allocator for linear-backed Uint8Array
+   * buffers (`undefined` = not yet emitted). Allocates from a dedicated page-4
+   * arena pointed at by `$__lin_u8_arena_ptr` (NOT the page-0 string-literal
+   * `$__wasi_bump_ptr`, which would alias literal data). Reuses the #1856
+   * align8 + on-demand `memory.grow` idiom (see `codegen-linear/runtime.ts
+   * addRuntime`), emitted here because the WasmGC front-end owns its own
+   * memory/globals and cannot call the linear backend's module bootstrap.
+   */
+  linearU8AllocFuncIdx?: number;
+  /** #1886 Slice B — global index of the page-4 linear-U8 arena bump pointer. */
+  linearU8ArenaGlobalIdx?: number;
   /** Whether `node:fs` JS-host imports are permitted (non-WASI target only, #1491). */
   allowFs: boolean;
   /**
