@@ -2393,6 +2393,8 @@ const ARRAY_METHODS = new Set([
   "forEach",
   "find",
   "findIndex",
+  "findLast",
+  "findLastIndex",
   "some",
   "every",
   "entries",
@@ -2639,6 +2641,18 @@ export function compileArrayMethodCall(
       result =
         elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
           ? compileArrayFindIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          : undefined;
+      break;
+    case "findLast":
+      result =
+        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
+          ? compileArrayFindLast(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          : undefined;
+      break;
+    case "findLastIndex":
+      result =
+        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
+          ? compileArrayFindLastIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
           : undefined;
       break;
     case "some":
@@ -5873,6 +5887,197 @@ function compileArrayFindIndex(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: fiResTmp });
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+}
+
+/**
+ * Reverse-iteration setup for findLast/findLastIndex (§23.1.3.12/.13): start the
+ * cursor at len-1 instead of 0. Reuses `setupArrayLoop`'s vec/data/len read, then
+ * overwrites `iTmp = len - 1`. Pair with `loopExitCheckReverse`/`loopDecrement`.
+ */
+function setupArrayLoopReverse(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+  tag: string,
+): ArrayLoopLocals {
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, tag);
+  // i = len - 1 (setupArrayLoop left it at 0).
+  fctx.body.push({ op: "local.get", index: loop.lenTmp });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "i32.sub" });
+  fctx.body.push({ op: "local.set", index: loop.iTmp });
+  return loop;
+}
+
+/** Reverse loop-exit check: if (i < 0) br 1. */
+function loopExitCheckReverse(loop: ArrayLoopLocals): Instr[] {
+  return [
+    { op: "local.get", index: loop.iTmp } as Instr,
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "i32.lt_s" } as Instr,
+    { op: "br_if", depth: 1 } as Instr,
+  ];
+}
+
+/** Reverse i-- / br 0 at the end of each iteration. */
+function loopDecrement(loop: ArrayLoopLocals): Instr[] {
+  return [
+    { op: "local.get", index: loop.iTmp } as Instr,
+    { op: "i32.const", value: 1 } as Instr,
+    { op: "i32.sub" } as Instr,
+    { op: "local.set", index: loop.iTmp } as Instr,
+    { op: "br", depth: 0 } as Instr,
+  ];
+}
+
+/**
+ * arr.findLast(cb) -> iterate from the last index toward 0, return the first
+ * element whose callback result is truthy, else undefined (NaN in non-fast mode).
+ * Mirror of compileArrayFind but reverse-iterating (§23.1.3.12).
+ */
+function compileArrayFindLast(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findLast")) {
+    fctx.body.push({ op: "unreachable" });
+    return elemType;
+  }
+
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "findLast", "findLast");
+  if (!setup) return null;
+
+  const elemTmpLocal = allocLocal(fctx, `__arr_findLast_el_${fctx.locals.length}`, elemType);
+
+  const loop = setupArrayLoopReverse(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "findLast");
+
+  const callAndCheck = buildCallAndCheck(
+    ctx,
+    fctx,
+    setup,
+    elemType,
+    vecTypeIdx,
+    arrTypeIdx,
+    loop,
+    { kind: "local", index: elemTmpLocal },
+    "truthy",
+  );
+
+  const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
+  const findResTmp = allocLocal(fctx, `__arr_findLast_res_${fctx.locals.length}`, findResType);
+  if (ctx.fast) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  } else {
+    fctx.body.push({ op: "f64.const", value: 0 });
+    fctx.body.push({ op: "f64.const", value: 0 });
+    fctx.body.push({ op: "f64.div" }); // NaN (undefined sentinel)
+  }
+  fctx.body.push({ op: "local.set", index: findResTmp });
+
+  const loopBody: Instr[] = [
+    ...loopExitCheckReverse(loop),
+
+    { op: "local.get", index: loop.dataTmp } as Instr,
+    { op: "local.get", index: loop.iTmp } as Instr,
+    { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
+    { op: "local.set", index: elemTmpLocal } as Instr,
+
+    ...callAndCheck,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: elemTmpLocal } as Instr,
+        ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        { op: "local.set", index: findResTmp } as Instr,
+        { op: "br", depth: 2 } as Instr,
+      ],
+    } as Instr,
+
+    ...loopDecrement(loop),
+  ];
+
+  emitArrayLoop(fctx, loopBody);
+
+  fctx.body.push({ op: "local.get", index: findResTmp });
+  return ctx.fast ? elemType : { kind: "f64" };
+}
+
+/**
+ * arr.findLastIndex(cb) -> reverse-iterate, return index (f64/i32) of the last
+ * element whose callback result is truthy, else -1. Mirror of compileArrayFindIndex
+ * but reverse-iterating (§23.1.3.13).
+ */
+function compileArrayFindLastIndex(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findLastIndex")) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "i32" };
+  }
+
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "findLastIndex", "fli");
+  if (!setup) return null;
+
+  const loop = setupArrayLoopReverse(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fli");
+
+  const callAndCheck = buildCallAndCheck(
+    ctx,
+    fctx,
+    setup,
+    elemType,
+    vecTypeIdx,
+    arrTypeIdx,
+    loop,
+    { kind: "inline" },
+    "truthy",
+  );
+
+  const fliResType: ValType = ctx.fast ? { kind: "i32" } : { kind: "f64" };
+  const fliResTmp = allocLocal(fctx, `__arr_fli_res_${fctx.locals.length}`, fliResType);
+  if (ctx.fast) {
+    fctx.body.push({ op: "i32.const", value: -1 });
+  } else {
+    fctx.body.push({ op: "f64.const", value: -1 });
+  }
+  fctx.body.push({ op: "local.set", index: fliResTmp });
+
+  const loopBody: Instr[] = [
+    ...loopExitCheckReverse(loop),
+
+    ...callAndCheck,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: loop.iTmp } as Instr,
+        ...(ctx.fast ? [] : [{ op: "f64.convert_i32_s" } as Instr]),
+        { op: "local.set", index: fliResTmp } as Instr,
+        { op: "br", depth: 2 } as Instr,
+      ],
+    } as Instr,
+
+    ...loopDecrement(loop),
+  ];
+
+  emitArrayLoop(fctx, loopBody);
+
+  fctx.body.push({ op: "local.get", index: fliResTmp });
   return ctx.fast ? { kind: "i32" } : { kind: "f64" };
 }
 
