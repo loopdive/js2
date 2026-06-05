@@ -1196,11 +1196,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         ],
         else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
       },
-      // struct.new $Object {proto, props, count=0, tombstones=0, flags=0}
+      // struct.new $Object {proto, props, count=0, tombstones=0, flags=0, nextSeq=0}
       { op: "local.get", index: 2 },
       { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
+      { op: "i32.const", value: 0 }, // nextSeq (#1837) — #1196 omitted this, breaking standalone (#1898)
       { op: "struct.new", typeIdx: objectTypeIdx },
       { op: "extern.convert_any" },
     ];
