@@ -27,7 +27,8 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
+import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureTimsortHelper } from "./timsort.js";
 import { coerceType, coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 
@@ -6053,6 +6054,24 @@ function compileArraySort(
   }
 
   const elemKind = elemType.kind as "i32" | "f64";
+
+  // #1816 residual: with no comparator, §23.1.3.30 (SortIndexedProperties →
+  // SortCompare → CompareArrayElements) requires comparing elements by their
+  // ToString in UTF-16 code-unit order — NOT numerically. So `[10,2,1].sort()`
+  // is `[1,10,2]`, not `[1,2,10]`. The default Timsort hard-codes numeric `<`,
+  // which is wrong. For numeric (i32/f64) element arrays in native-strings
+  // mode (standalone/WASI) we can synthesise the spec-correct order from
+  // `number_toString` (ToString) + `__str_compare` (a code-unit lexicographic
+  // compare) — so route the default sort through a stable insertion sort over
+  // stringified keys instead. `tryCompileDefaultLexSort` ensures both helpers
+  // are emitted, so this does not require the program to otherwise use them.
+  if ((elemKind === "i32" || elemKind === "f64") && ctx.nativeStrings) {
+    const lexResult = tryCompileDefaultLexSort(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType);
+    if (lexResult) return lexResult;
+    // Fell through (e.g. helpers unavailable) — fall back to the numeric
+    // Timsort below. Better wrong-order than a compile error.
+  }
+
   const timsortIdx = ensureTimsortHelper(ctx, vecTypeIdx, arrTypeIdx, elemKind);
 
   const vecTmp = allocLocal(fctx, `__arr_sort_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
@@ -6068,6 +6087,262 @@ function compileArraySort(
   // Return the same vec ref (sort is in-place)
   fctx.body.push({ op: "local.get", index: vecTmp });
   fctx.body.push({ op: "ref.as_non_null" });
+  return { kind: "ref_null", typeIdx: vecTypeIdx };
+}
+
+/**
+ * #1816 residual — default (no-comparator) Array.prototype.sort.
+ *
+ * Implements §23.1.3.30 SortCompare with `comparefn` undefined: each element is
+ * converted to a String (ToString) and the pair is ordered by
+ * IsLessThan(xString, yString) — i.e. UTF-16 code-unit lexicographic order. So
+ * `[10, 2, 1].sort()` yields `[1, 10, 2]`.
+ *
+ * Strategy: build a parallel array of native-string sort keys (one
+ * `number_toString` call per element), then run an in-place stable insertion
+ * sort that reorders BOTH the data array and the key array in lockstep,
+ * comparing keys via the native `__str_compare` helper (-1/0/1, code-unit
+ * lexicographic). Insertion sort is naturally stable, which matches the spec's
+ * stability guarantee for sort.
+ *
+ * Returns the result ValType on success, or `null` if a required helper is not
+ * available (caller then falls back to the numeric Timsort).
+ */
+function tryCompileDefaultLexSort(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  // Ensure the native string runtime (incl. __str_compare, the code-unit
+  // lexicographic comparator) and native `number_toString` (ToString) are both
+  // emitted — the program may never use them otherwise, but the default sort
+  // needs them. Emit them before capturing any funcIdx, since helper emission
+  // appends module functions.
+  ensureNativeStringHelpers(ctx);
+  if (!ctx.funcMap.has("number_toString")) {
+    emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+  }
+  const cmpIdx = ctx.nativeStrHelpers.get("__str_compare");
+  const toStrIdx = ctx.funcMap.get("number_toString");
+  if (cmpIdx === undefined || toStrIdx === undefined) return null;
+
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const anyStrRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
+  const anyStrRefNull: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
+  // Parallel key array: array (ref_null $AnyString).
+  const keyArrTypeIdx = getOrRegisterArrayType(ctx, `anystr_sortkey_${anyStrTypeIdx}`, anyStrRef);
+
+  const vecTmp = allocLocal(fctx, `__arr_lsort_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__arr_lsort_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const keysTmp = allocLocal(fctx, `__arr_lsort_keys_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: keyArrTypeIdx,
+  });
+  const lenTmp = allocLocal(fctx, `__arr_lsort_len_${fctx.locals.length}`, { kind: "i32" });
+  const iTmp = allocLocal(fctx, `__arr_lsort_i_${fctx.locals.length}`, { kind: "i32" });
+  const jTmp = allocLocal(fctx, `__arr_lsort_j_${fctx.locals.length}`, { kind: "i32" });
+  const keyElemTmp = allocLocal(fctx, `__arr_lsort_keyelem_${fctx.locals.length}`, elemType);
+  const keyStrTmp = allocLocal(fctx, `__arr_lsort_keystr_${fctx.locals.length}`, anyStrRefNull);
+
+  // Compile receiver -> vec ref.
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  // len = vec.length, data = vec.data
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // keys = new (ref_null $AnyString)[len]
+  fctx.body.push({ op: "ref.null", typeIdx: anyStrTypeIdx } as unknown as Instr);
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "array.new", typeIdx: keyArrTypeIdx } as unknown as Instr);
+  fctx.body.push({ op: "local.set", index: keysTmp });
+
+  const getOp: Instr["op"] =
+    elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
+
+  // number_toString returns externref-wrapped native string; bridge back to
+  // `ref $AnyString` so it can be stored and compared.
+  const elemToKeyInstrs = (loadElem: Instr[]): Instr[] => [
+    ...loadElem,
+    ...(elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+    { op: "call", funcIdx: toStrIdx } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.cast", typeIdx: anyStrTypeIdx } as unknown as Instr,
+  ];
+
+  // Phase 1: keys[i] = ToString(data[i]) for each i.
+  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+  fctx.body.push({ op: "local.set", index: iTmp } as Instr);
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [
+      {
+        op: "loop",
+        blockType: { kind: "empty" },
+        body: [
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "local.get", index: lenTmp } as Instr,
+          { op: "i32.ge_s" } as Instr,
+          { op: "br_if", depth: 1 } as Instr,
+          // keys[i] = ToString(data[i])
+          { op: "local.get", index: keysTmp } as Instr,
+          { op: "ref.as_non_null" } as Instr,
+          { op: "local.get", index: iTmp } as Instr,
+          ...elemToKeyInstrs([
+            { op: "local.get", index: dataTmp } as Instr,
+            { op: "ref.as_non_null" } as Instr,
+            { op: "local.get", index: iTmp } as Instr,
+            { op: getOp, typeIdx: arrTypeIdx } as Instr,
+          ]),
+          { op: "array.set", typeIdx: keyArrTypeIdx } as Instr,
+          // i++
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.add" } as Instr,
+          { op: "local.set", index: iTmp } as Instr,
+          { op: "br", depth: 0 } as Instr,
+        ],
+      } as Instr,
+    ],
+  } as Instr);
+
+  // Phase 2: stable insertion sort over keys, moving data in lockstep.
+  //   for (i = 1; i < len; i++) {
+  //     keyElem = data[i]; keyStr = keys[i]; j = i-1;
+  //     while (j >= 0 && __str_compare(keys[j], keyStr) > 0) {
+  //       data[j+1] = data[j]; keys[j+1] = keys[j]; j--;
+  //     }
+  //     data[j+1] = keyElem; keys[j+1] = keyStr;
+  //   }
+  fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+  fctx.body.push({ op: "local.set", index: iTmp } as Instr);
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [
+      {
+        op: "loop",
+        blockType: { kind: "empty" },
+        body: [
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "local.get", index: lenTmp } as Instr,
+          { op: "i32.ge_s" } as Instr,
+          { op: "br_if", depth: 1 } as Instr,
+          // keyElem = data[i]
+          { op: "local.get", index: dataTmp } as Instr,
+          { op: "ref.as_non_null" } as Instr,
+          { op: "local.get", index: iTmp } as Instr,
+          { op: getOp, typeIdx: arrTypeIdx } as Instr,
+          { op: "local.set", index: keyElemTmp } as Instr,
+          // keyStr = keys[i]
+          { op: "local.get", index: keysTmp } as Instr,
+          { op: "ref.as_non_null" } as Instr,
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "array.get", typeIdx: keyArrTypeIdx } as Instr,
+          { op: "local.set", index: keyStrTmp } as Instr,
+          // j = i - 1
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.sub" } as Instr,
+          { op: "local.set", index: jTmp } as Instr,
+          // inner while
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  // if (j < 0) break
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "i32.const", value: 0 } as Instr,
+                  { op: "i32.lt_s" } as Instr,
+                  { op: "br_if", depth: 1 } as Instr,
+                  // if (__str_compare(keys[j], keyStr) > 0) == 0 → break
+                  { op: "local.get", index: keysTmp } as Instr,
+                  { op: "ref.as_non_null" } as Instr,
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "array.get", typeIdx: keyArrTypeIdx } as Instr,
+                  { op: "ref.as_non_null" } as Instr,
+                  { op: "local.get", index: keyStrTmp } as Instr,
+                  { op: "ref.as_non_null" } as Instr,
+                  { op: "call", funcIdx: cmpIdx } as Instr,
+                  { op: "i32.const", value: 0 } as Instr,
+                  { op: "i32.gt_s" } as Instr,
+                  { op: "i32.eqz" } as Instr,
+                  { op: "br_if", depth: 1 } as Instr,
+                  // data[j+1] = data[j]
+                  { op: "local.get", index: dataTmp } as Instr,
+                  { op: "ref.as_non_null" } as Instr,
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "i32.const", value: 1 } as Instr,
+                  { op: "i32.add" } as Instr,
+                  { op: "local.get", index: dataTmp } as Instr,
+                  { op: "ref.as_non_null" } as Instr,
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: getOp, typeIdx: arrTypeIdx } as Instr,
+                  { op: "array.set", typeIdx: arrTypeIdx } as Instr,
+                  // keys[j+1] = keys[j]
+                  { op: "local.get", index: keysTmp } as Instr,
+                  { op: "ref.as_non_null" } as Instr,
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "i32.const", value: 1 } as Instr,
+                  { op: "i32.add" } as Instr,
+                  { op: "local.get", index: keysTmp } as Instr,
+                  { op: "ref.as_non_null" } as Instr,
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "array.get", typeIdx: keyArrTypeIdx } as Instr,
+                  { op: "array.set", typeIdx: keyArrTypeIdx } as Instr,
+                  // j--
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "i32.const", value: 1 } as Instr,
+                  { op: "i32.sub" } as Instr,
+                  { op: "local.set", index: jTmp } as Instr,
+                  { op: "br", depth: 0 } as Instr,
+                ],
+              } as Instr,
+            ],
+          } as Instr,
+          // data[j+1] = keyElem
+          { op: "local.get", index: dataTmp } as Instr,
+          { op: "ref.as_non_null" } as Instr,
+          { op: "local.get", index: jTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.add" } as Instr,
+          { op: "local.get", index: keyElemTmp } as Instr,
+          { op: "array.set", typeIdx: arrTypeIdx } as Instr,
+          // keys[j+1] = keyStr
+          { op: "local.get", index: keysTmp } as Instr,
+          { op: "ref.as_non_null" } as Instr,
+          { op: "local.get", index: jTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.add" } as Instr,
+          { op: "local.get", index: keyStrTmp } as Instr,
+          { op: "ref.as_non_null" } as Instr,
+          { op: "array.set", typeIdx: keyArrTypeIdx } as Instr,
+          // i++
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.add" } as Instr,
+          { op: "local.set", index: iTmp } as Instr,
+          { op: "br", depth: 0 } as Instr,
+        ],
+      } as Instr,
+    ],
+  } as Instr);
+
+  // Return the same vec ref (sort is in-place).
+  fctx.body.push({ op: "local.get", index: vecTmp } as Instr);
+  fctx.body.push({ op: "ref.as_non_null" } as Instr);
   return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 

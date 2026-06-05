@@ -10,8 +10,13 @@
  * (§23.1.3.30 / SortIndexedProperties / CompareArrayElements).
  *
  * These tests assert the resulting *order* (the prior test only asserted
- * "doesn't throw", which masked the bug). The no-arg default sort remains the
- * existing numeric Timsort (the default-ToString half is tracked separately).
+ * "doesn't throw", which masked the bug).
+ *
+ * #1816 residual (default-ToString half): with `comparefn` undefined,
+ * SortCompare converts each element to a String and orders by UTF-16 code-unit
+ * comparison, so `[10,2,1].sort()` is `[1,10,2]`, not the numeric `[1,2,10]`.
+ * In native-strings mode (standalone/WASI) the default path now stringifies via
+ * `number_toString` and compares via the native `__str_compare` helper.
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -117,11 +122,46 @@ describe("#1816 — Array.prototype.sort honors the comparator", () => {
     ).toBe(15);
   });
 
-  it("default no-arg sort still works (numeric Timsort, unchanged)", async () => {
-    // The default-ToString half is tracked separately; the numeric default path
-    // must remain intact for arrays sorted without a comparator.
+  it("default no-arg sort already-sorted-by-string input is a no-op", async () => {
+    // "1" < "2" < "3" coincides with numeric order here, so [1,2,3] stays put.
     expect(
-      await runExport(`export function test(){ const a=[3,1,2]; a.sort(); return a[0]*100+a[1]*10+a[2]; }`, "test"),
+      await runExport(`export function test(){ const a=[1,2,3]; a.sort(); return a[0]*100+a[1]*10+a[2]; }`, "test"),
     ).toBe(123);
+  });
+
+  it("default no-arg sort uses ToString code-unit order, not numeric (#1816 residual)", async () => {
+    // §23.1.3.30 SortCompare with comparefn undefined → ToString both operands,
+    // compare in UTF-16 code-unit order. `[10,2,1].sort()` is `[1,10,2]`
+    // ("1" < "10" < "2"), NOT the numeric `[1,2,10]`.
+    expect(
+      await runExport(`export function test(){ const a=[10,2,1]; a.sort(); return a[0]*10000+a[1]*100+a[2]; }`, "test"),
+    ).toBe(1_10_02); // [1, 10, 2]
+  });
+
+  it("default sort orders by leading code unit, not magnitude", async () => {
+    // strings: "1" < "100" < "11" < "2" < "20" < "3" → [1, 100, 11, 2, 20, 3].
+    expect(
+      await runExport(
+        `export function test(){
+           const a=[3,20,100,1,11,2]; a.sort();
+           return (a[0]===1 && a[1]===100 && a[2]===11 && a[3]===2 && a[4]===20 && a[5]===3) ? 1 : 0;
+         }`,
+        "test",
+      ),
+    ).toBe(1);
+  });
+
+  it("default sort over negatives uses string order", async () => {
+    // strings: "-1" < "-10" < "-2" → [-1, -10, -2]. a[0] === -1.
+    expect(await runExport(`export function test(){ const a=[-1,-10,-2]; a.sort(); return a[0]; }`, "test")).toBe(-1);
+  });
+
+  it("default sort: single-element and empty arrays are unchanged", async () => {
+    expect(await runExport(`export function test(){ const a=[42]; a.sort(); return a[0]; }`, "test")).toBe(42);
+    // Empty: start from a 1-element array, pop, then sort — exercises the len<2
+    // early path without needing a type annotation (the harness compiles as .js).
+    expect(await runExport(`export function test(){ const a=[7]; a.pop(); a.sort(); return a.length; }`, "test")).toBe(
+      0,
+    );
   });
 });
