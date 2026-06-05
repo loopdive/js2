@@ -2,7 +2,7 @@
 id: 1850
 title: "Harden the IR verifier into a hard between-pass contract (cross-block dominance + per-backend legality + fail-CI)"
 status: in-progress
-sprint: 59
+sprint: Backlog
 created: 2026-06-04
 updated: 2026-06-04
 priority: high

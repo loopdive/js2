@@ -9,7 +9,7 @@ feasibility: low
 task_type: bugfix
 area: codegen
 goal: correctness
-sprint: 59
+sprint: Backlog
 ---
 # #1832 — destructured param shadowing fails in new-function-expression
 

@@ -9,7 +9,7 @@ feasibility: hard
 task_type: bugfix
 area: codegen
 goal: correctness
-sprint: 59
+sprint: Backlog
 needs: architect-or-senior-dev
 ---
 # #1828 — array-like find/findIndex/map hole handling

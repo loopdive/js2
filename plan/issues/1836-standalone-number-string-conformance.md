@@ -9,7 +9,7 @@ feasibility: medium
 task_type: bugfix
 area: codegen
 goal: correctness
-sprint: 59
+sprint: Backlog
 parent: 1335
 ---
 # #1836 — standalone Number↔String conformance gaps

@@ -10,7 +10,7 @@ task_type: bugfix
 area: codegen+runtime
 language_feature: array-methods
 goal: correctness
-sprint: 59
+sprint: Backlog
 blocks: [1828, 1830, 1831, 1832]
 ---
 # #6407 — `Array.prototype.<m>.call(receiver, …)` can't read elements of a compiled receiver

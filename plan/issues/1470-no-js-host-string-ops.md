@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen, runtime
 language_feature: strings
 goal: host-independence
-sprint: 59
+sprint: Backlog
 related: []
 ---
 # #1470 — Eliminate JS host string ops for standalone Wasm
