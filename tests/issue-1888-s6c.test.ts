@@ -39,24 +39,31 @@ async function runStandalone(source: string): Promise<number> {
 }
 
 describe("#1888 S6-c — Math/Number constants reach native f64.const under standalone", () => {
-  it("Math.PI returns 3.141592653589793 (was a __get_builtin refusal)", async () => {
-    expect(await runStandalone(`export function run(): number { return Math.PI; }`)).toBe(Math.PI);
+  // Lock EVERY gated name: each must read-as-value to its exact constant under
+  // standalone (the tech-lead guardrail — a name gated OUT of __get_builtin whose
+  // downstream emitter doesn't actually fire would turn refuse-loud into invalid
+  // Wasm). Keep these lists identical to MATH_CONSTANT_PROPS / NUMBER_CONSTANT_PROPS
+  // in property-access.ts.
+  const MATH_NAMES = ["PI", "E", "LN2", "LN10", "SQRT2", "SQRT1_2", "LOG2E", "LOG10E"] as const;
+  const NUMBER_NAMES = [
+    "EPSILON",
+    "MAX_SAFE_INTEGER",
+    "MIN_SAFE_INTEGER",
+    "MAX_VALUE",
+    "MIN_VALUE",
+    "POSITIVE_INFINITY",
+    "NEGATIVE_INFINITY",
+    "NaN",
+  ] as const;
+
+  it.each(MATH_NAMES)("Math.%s reads its native f64 constant under standalone", async (name) => {
+    const v = await runStandalone(`export function run(): number { return Math.${name}; }`);
+    expect(v).toBe((Math as unknown as Record<string, number>)[name]);
   });
 
-  it("Math.E and Math.SQRT2 are native", async () => {
-    expect(await runStandalone(`export function run(): number { return Math.E + Math.SQRT2; }`)).toBe(
-      Math.E + Math.SQRT2,
-    );
-  });
-
-  it("Number.MAX_SAFE_INTEGER is native", async () => {
-    expect(await runStandalone(`export function run(): number { return Number.MAX_SAFE_INTEGER; }`)).toBe(
-      Number.MAX_SAFE_INTEGER,
-    );
-  });
-
-  it("Number.EPSILON is native", async () => {
-    expect(await runStandalone(`export function run(): number { return Number.EPSILON; }`)).toBe(Number.EPSILON);
+  it.each(NUMBER_NAMES)("Number.%s reads its native f64 constant under standalone", async (name) => {
+    const v = await runStandalone(`export function run(): number { return Number.${name}; }`);
+    expect(v).toBe((Number as unknown as Record<string, number>)[name]);
   });
 
   it("Math.PI composes in arithmetic (Math.PI * 2)", async () => {
