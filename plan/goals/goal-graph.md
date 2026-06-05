@@ -134,15 +134,21 @@ and a goal being "ready" doesn't mean it should be worked on immediately.
 
 ## Sprint priority ranking (by expected pass impact)
 
-For the next sprint, these are the highest-impact issues across all active goals:
+> **Updated 2026-06-05 (post-execution sync).** Sprint 60 execution revealed the previous
+> ranking was stale: #852, #848, #847 are **done** (sprint 30); #846 is a blocked-umbrella
+> with no localized win left (~1,282 residual gated on dense-struct descriptors + hole tracking).
+> The active work has pivoted to **standalone conformance catch-up** (#1806, #1827, #1837,
+> #1801 merged; native ToPrimitive Phase 1 centerpiece pending architect spec).
 
-1. **#852** (1,525 FAIL) -- destructuring params null_deref + illegal_cast [crash-free]
-2. **#846** (2,799 FAIL) -- assert.throws not thrown [error-model]
-3. **#848** (1,015 FAIL) -- class computed property/accessor [class-system]
-4. **#822** (907 CE) -- Wasm type mismatch compile errors [compilable]
-5. **#847** (660 FAIL) -- for-of destructuring wrong values [core-semantics]
-6. **#824** (548 CE) -- compilation timeouts [compilable/performance]
-7. **#827/#857** (490 CE) -- Array callback "fn is not a function" [builtin-methods]
-8. **#839** (158 CE) -- return_call stack/type mismatch [compilable]
-9. **#851** (147 FAIL) -- iterator close protocol [iterator-protocol]
-10. **#850** (135 FAIL) -- valueOf/toString not called [core-semantics]
+For the remainder of sprint 60 and planning sprint 61, highest-impact issues are:
+
+1. **Native ToPrimitive Phase 1** (~2,136 ceiling, standalone) — **pending file + architect spec**
+2. **#681** (~331 FAIL) -- pure-Wasm iterator protocol `.values()`/remaining imports [standalone-mode]
+3. **#1539** -- standalone Wasm RegExp Phase 2d (remaining flags) [standalone-mode]
+4. **#1644** -- standalone BigInt i64 brand + typed-paths [standalone-mode]
+5. **#1348** -- class static-init + private fields [class-system, hard, senior-dev]
+6. **#1346** -- yield in nested try/finally [generator-model, hard, senior-dev]
+7. **#1525b** (142 FAIL) -- ToPrimitive method-trampoline invalid Wasm [shared with Phase 1]
+8. **#1833** -- subclass forwarder multi-arg super [correctness, senior-dev]
+9. **#846** (~1,282 FAIL) -- assert.throws not thrown [error-model, **blocked-umbrella**]
+10. **#1130** (in-review) -- array hole/getter-observing model [unblocks #846 reduce cluster]

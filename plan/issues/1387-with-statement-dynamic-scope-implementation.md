@@ -11,7 +11,7 @@ task_type: feature
 area: codegen, ir
 language_feature: with
 goal: spec-completeness
-sprint: Backlog
+sprint: 61
 owner: Hooke
 claimed_by: codex-developer
 claimed_at: 2026-06-02T22:34:54.398Z

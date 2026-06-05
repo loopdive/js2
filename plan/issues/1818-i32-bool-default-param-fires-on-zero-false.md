@@ -10,7 +10,7 @@ feasibility: hard
 task_type: bugfix
 area: codegen
 goal: correctness
-sprint: Backlog
+sprint: 61
 ---
 # #1818 — i32/boolean parameter default fires on `0` / `false`
 

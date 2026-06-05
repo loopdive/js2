@@ -9,7 +9,7 @@ feasibility: low
 task_type: bugfix
 area: runtime
 goal: correctness
-sprint: Backlog
+sprint: 61
 parent: 1334
 ---
 # #1831 — partial redefine clears previously-set descriptor flags
