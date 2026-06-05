@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-05T00:32:01.924Z",
-  "baseline_generated_at": "2026-06-05T00:32:01Z",
-  "baseline_sha": "68e9fd62551acb87f1c60c137c9e1eda0289abed",
+  "timestamp": "2026-06-05T00:48:08.095Z",
+  "baseline_generated_at": "2026-06-05T00:48:07Z",
+  "baseline_sha": "3303876705f117f3a26b09e6881930b8a156fb3d",
   "mode": {
     "target": "standalone",
     "include_proposals": 1,
@@ -9,8 +9,8 @@
   },
   "summary": {
     "total": 43125,
-    "pass": 12472,
-    "fail": 8767,
+    "pass": 12480,
+    "fail": 8759,
     "compile_error": 21855,
     "compile_timeout": 13,
     "skip": 18,
@@ -19,8 +19,8 @@
     "by_category": {
       "standard": {
         "total": 42039,
-        "pass": 12077,
-        "fail": 8343,
+        "pass": 12085,
+        "fail": 8335,
         "compile_error": 21588,
         "compile_timeout": 13,
         "skip": 18,
@@ -52,8 +52,8 @@
       },
       "official": {
         "total": 43125,
-        "pass": 12472,
-        "fail": 8767,
+        "pass": 12480,
+        "fail": 8759,
         "compile_error": 21855,
         "compile_timeout": 13,
         "skip": 18,
@@ -63,8 +63,8 @@
       },
       "full": {
         "total": 48107,
-        "pass": 12692,
-        "fail": 9032,
+        "pass": 12700,
+        "fail": 9024,
         "compile_error": 26256,
         "compile_timeout": 13,
         "skip": 114,
@@ -76,8 +76,8 @@
   },
   "official_summary": {
     "total": 43125,
-    "pass": 12472,
-    "fail": 8767,
+    "pass": 12480,
+    "fail": 8759,
     "compile_error": 21855,
     "compile_timeout": 13,
     "skip": 18,
@@ -86,8 +86,8 @@
   },
   "full_summary": {
     "total": 48107,
-    "pass": 12692,
-    "fail": 9032,
+    "pass": 12700,
+    "fail": 9024,
     "compile_error": 26256,
     "compile_timeout": 13,
     "skip": 114,
@@ -96,8 +96,8 @@
   },
   "strict_summary": {
     "total": 40616,
-    "pass": 11672,
-    "fail": 8038,
+    "pass": 11680,
+    "fail": 8030,
     "compile_error": 20875,
     "compile_timeout": 13,
     "skip": 18,
@@ -127,8 +127,8 @@
     },
     "standard": {
       "total": 42039,
-      "pass": 12077,
-      "fail": 8343,
+      "pass": 12085,
+      "fail": 8335,
       "compile_error": 21588,
       "compile_timeout": 13,
       "skip": 18,
@@ -540,8 +540,8 @@
     {
       "name": "built-ins/Number",
       "path": "built-ins/Number",
-      "pass": 87,
-      "fail": 87,
+      "pass": 89,
+      "fail": 85,
       "compile_error": 164,
       "compile_timeout": 0,
       "skip": 0,
@@ -560,8 +560,8 @@
     {
       "name": "built-ins/parseFloat",
       "path": "built-ins/parseFloat",
-      "pass": 34,
-      "fail": 12,
+      "pass": 37,
+      "fail": 9,
       "compile_error": 8,
       "compile_timeout": 0,
       "skip": 0,
@@ -570,8 +570,8 @@
     {
       "name": "built-ins/parseInt",
       "path": "built-ins/parseInt",
-      "pass": 34,
-      "fail": 11,
+      "pass": 37,
+      "fail": 8,
       "compile_error": 10,
       "compile_timeout": 0,
       "skip": 0,
@@ -1079,7 +1079,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 7005,
+    "assertion_fail": 7000,
     "illegal_cast": 203,
     "negative_test_fail": 73,
     "null_deref": 220,
@@ -1087,7 +1087,7 @@
     "other": 20111,
     "promise_error": 32,
     "range_error": 27,
-    "runtime_error": 2100,
+    "runtime_error": 2097,
     "type_error": 1,
     "unreachable": 36,
     "wasm_compile": 5382
@@ -1098,8 +1098,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 35301,
-    "classified": 35301,
+    "total_non_pass_non_skip": 35293,
+    "classified": 35293,
     "unclassified_threshold": 0,
     "buckets": [
       {
@@ -1226,7 +1226,7 @@
           "test/built-ins/Temporal/Duration/prototype/add/balance-negative-time-units.js",
           "test/built-ins/Temporal/Duration/compare/builtin.js",
           "test/built-ins/Temporal/Duration/prototype/round/balance-subseconds.js",
-          "test/built-ins/Temporal/Duration/prototype/round/throws-on-wrong-offset-for-zoned-date-time-relative-to.js"
+          "test/built-ins/Temporal/Duration/prototype/round/relativeto-propertybag-optional-properties.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: '__extern_method_call' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get",
@@ -1417,15 +1417,15 @@
         "sample_files": [
           "test/language/literals/regexp/S7.8.5_A2.4_T2.js",
           "test/built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js",
-          "test/built-ins/RegExp/S15.10.2.13_A1_T4.js",
           "test/built-ins/RegExp/S15.10.2.15_A1_T8.js",
+          "test/built-ins/RegExp/S15.10.2.13_A1_T4.js",
           "test/built-ins/RegExp/S15.10.2.6_A4_T4.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(pattern.source, xx, \"Code unit: \" + cu.toString(#));",
           "other:L#:## Codegen error: standalone RegExp engine does not support flags \"u\" (u/v/d are ## Phase 2d) (## Phase 2a). Use a supported pattern/flag set, or recompile without --target standalone.; L#:## Codegen error: standalone RegExp engine does ",
-          "other:L#:## Codegen error: standalone RegExp engine does not support lookahead (?= / ?!) — ## Phase 2d (## Phase 2a). Use a supported pattern/flag set, or recompile without --target standalone.",
           "other:L#:## Codegen error: standalone RegExp engine does not support negated shorthand \\W inside [...] — ## Phase 2b (## Phase 2a). Use a supported pattern/flag set, or recompile without --target standalone.",
+          "other:L#:## Codegen error: standalone RegExp engine does not support lookahead (?= / ?!) — ## Phase 2d (## Phase 2a). Use a supported pattern/flag set, or recompile without --target standalone.",
           "other:L#:## Codegen error: standalone RegExp engine does not support word-boundary \\B — ## Phase 2b (## Phase 2a). Use a supported pattern/flag set, or recompile without --target standalone."
         ]
       },
@@ -1435,17 +1435,17 @@
           "#1776"
         ],
         "label": "Residual standalone isSameValue invalid-Wasm validator failures",
-        "count": 4071,
+        "count": 4066,
         "statuses": {
           "pass": 0,
-          "fail": 4070,
+          "fail": 4065,
           "compile_error": 1,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 4071
+          "total": 4066
         },
         "error_categories": {
-          "assertion_fail": 4064,
+          "assertion_fail": 4059,
           "unreachable": 3,
           "runtime_error": 1,
           "promise_error": 3
@@ -1674,17 +1674,17 @@
           "#1759"
         ],
         "label": "ToPrimitive / object-to-string dispatch residuals",
-        "count": 1003,
+        "count": 1000,
         "statuses": {
           "pass": 0,
-          "fail": 796,
+          "fail": 793,
           "compile_error": 207,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 1003
+          "total": 1000
         },
         "error_categories": {
-          "runtime_error": 942,
+          "runtime_error": 939,
           "other": 37,
           "wasm_compile": 8,
           "assertion_fail": 16
@@ -1962,15 +1962,15 @@
           "test/language/function-code/10.4.3-1-48-s.js",
           "test/built-ins/Function/S15.3.5_A3_T1.js",
           "test/language/function-code/10.4.3-1-83-s.js",
-          "test/built-ins/Function/15.3.5.4_2-9gs.js",
-          "test/built-ins/Function/StrictFunction_reservedwords_with.js"
+          "test/built-ins/Function/StrictFunction_reservedwords_with.js",
+          "test/built-ins/Function/15.3.5.4_2-9gs.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert(f1(), 'f1() !== true');",
           "wasm_compile:L#:## No dependency provided for extern class \"FACTORY\"",
           "assertion_fail:returned # — assert ## at L#: assert((function () {return Function(\"\\\"use strict\\\";return f();\")();})());",
-          "assertion_fail:returned # — assert ## at L#: assert.throws(TypeError, function() { f(); });",
-          "assertion_fail:returned # — assert ## at L#: assert.throws(SyntaxError, function() { new Function(\"'use strict'; with ({}) {}\"); }, '`new Function(\"\\'use strict\\'; with ({}) {}\")` throws a SyntaxError exception');"
+          "assertion_fail:returned # — assert ## at L#: assert.throws(SyntaxError, function() { new Function(\"'use strict'; with ({}) {}\"); }, '`new Function(\"\\'use strict\\'; with ({}) {}\")` throws a SyntaxError exception');",
+          "assertion_fail:returned # — assert ## at L#: assert.throws(TypeError, function() { f(); });"
         ]
       },
       {
