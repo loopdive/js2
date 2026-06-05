@@ -1119,6 +1119,18 @@ export function destructureParamArray(
       // Materialize via Array.from first so iterator protocol runs (generators, custom
       // @@iterator); then walk with __extern_length + __extern_get_idx. (#825, #1150)
       if (fbLenFn !== undefined && fbGetIdxFn !== undefined && fbIterFn !== undefined) {
+        // (#1890) Re-resolve the fallback helper funcIdxs from funcMap. They were
+        // captured (above) BEFORE `__array_from_iter_n` was registered; under
+        // `--target standalone` that registration adds a NEW `env::` import (the
+        // helper has no native object-runtime impl), which SHIFTS every later
+        // function index. `flushLateImportShifts` rewrites `fctx.body`, but these
+        // escaped integer captures are not, so without this re-read the emitted
+        // `call fbLenFn` / `call fbGetIdxFn` target the wrong (post-shift) function
+        // and `i32.trunc_sat_f64_s` receives externref instead of f64 → invalid
+        // Wasm (~1,142 standalone dstr-rest-param failures). Same class as #1839.
+        const fbLenFnIdx = ctx.funcMap.get("__extern_length") ?? fbLenFn;
+        const fbGetIdxFnIdx = ctx.funcMap.get("__extern_get_idx") ?? fbGetIdxFn;
+        const fbIterFnIdx = ctx.funcMap.get("__array_from_iter_n") ?? fbIterFn;
         const fbMatTmp = allocLocal(fctx, `__dparam_fb_mat_${fctx.locals.length}`, { kind: "externref" });
         const fbLenTmp = allocLocal(fctx, `__dparam_fb_len_${fctx.locals.length}`, { kind: "i32" });
         const fbArrTmp = allocLocal(fctx, `__dparam_fb_arr_${fctx.locals.length}`, {
@@ -1132,11 +1144,11 @@ export function destructureParamArray(
           // iterator .next() propagate; stepCount bounds the drain (#1592).
           { op: "local.get", index: paramIdx } as Instr,
           { op: "f64.const", value: fbIterStepCount } as Instr,
-          { op: "call", funcIdx: fbIterFn } as Instr,
+          { op: "call", funcIdx: fbIterFnIdx } as Instr,
           { op: "local.set", index: fbMatTmp } as Instr,
           // len = i32(__extern_length(materialized))
           { op: "local.get", index: fbMatTmp } as Instr,
-          { op: "call", funcIdx: fbLenFn } as Instr,
+          { op: "call", funcIdx: fbLenFnIdx } as Instr,
           { op: "i32.trunc_sat_f64_s" },
           { op: "local.set", index: fbLenTmp } as Instr,
           // arr = array.new_default(len)
@@ -1166,7 +1178,7 @@ export function destructureParamArray(
                   { op: "local.get", index: fbMatTmp } as Instr,
                   { op: "local.get", index: fbIdxTmp } as Instr,
                   { op: "f64.convert_i32_s" } as Instr,
-                  { op: "call", funcIdx: fbGetIdxFn } as Instr,
+                  { op: "call", funcIdx: fbGetIdxFnIdx } as Instr,
                   { op: "array.set", typeIdx: extArrTypeIdx } as Instr,
                   // idx++
                   { op: "local.get", index: fbIdxTmp } as Instr,
