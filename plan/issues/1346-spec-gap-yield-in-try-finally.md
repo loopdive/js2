@@ -15,7 +15,7 @@ sprint: 60
 parent: 1328
 related: [1665, 1042, 1620, 1320]
 claimed_by: codex-developer
-claimed_at: 2026-06-06T09:10:15.635Z
+claimed_at: 2026-06-06T09:30:22.669Z
 pr: 1246
 ---
 # #1346 — yield expression: try/finally + evaluation order
@@ -307,3 +307,13 @@ Focused validation added in `tests/issue-1346.test.ts`:
 - `.return(value)` at a yield inside `try` runs the pending `finally`.
 - Normal resume after a yield inside `try` runs `finally`.
 - `.return(value)` before the first `.next()` does not enter the generator body.
+
+Verification refresh from the PR branch:
+
+- `pnpm exec vitest run tests/issue-1346.test.ts --maxWorkers=1` — pass
+  (4 tests).
+- `pnpm exec vitest run tests/issue-680.test.ts tests/issue-1665-standalone-generator-forof.test.ts --maxWorkers=1`
+  — pass (8 tests).
+- `pnpm run typecheck` — pass.
+- Scoped test262 fixture recheck was not possible in this workspace because
+  `test262/` is empty.
