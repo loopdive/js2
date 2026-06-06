@@ -18,15 +18,27 @@ import { addFuncType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "./shared.js";
 
 const STATE_FIELD = 0;
+const SENT_FIELD = 1;
+const MODE_FIELD = 2;
+const ABRUPT_FIELD = 3;
 const RESULT_VALUE_FIELD = 0;
 const RESULT_DONE_FIELD = 1;
-const PARAM_FIELD_OFFSET = 1;
+const PARAM_FIELD_OFFSET = 4;
 const MAX_NATIVE_GENERATOR_STATES = 256;
 
 interface NativeGeneratorSegment {
+  resumeBindings: string[];
+  abruptResume?: {
+    finalizers: readonly ts.Statement[][];
+  };
   statements: ts.Statement[];
   yieldExpr?: ts.YieldExpression;
   returnStmt?: ts.ReturnStatement;
+}
+
+interface NativeGeneratorPlan {
+  segments: NativeGeneratorSegment[];
+  spills: string[];
 }
 
 function noJsHostTarget(ctx: CodegenContext): boolean {
@@ -57,50 +69,128 @@ function statementContainsYield(stmt: ts.Statement): boolean {
   return found;
 }
 
-function buildNativeGeneratorSegments(
-  ctx: CodegenContext,
-  decl: ts.FunctionDeclaration,
-): NativeGeneratorSegment[] | null {
+function buildNativeGeneratorPlan(ctx: CodegenContext, decl: ts.FunctionDeclaration): NativeGeneratorPlan | null {
   if (!decl.body) return null;
   const segments: NativeGeneratorSegment[] = [];
+  const spills: string[] = [];
+  const spillSet = new Set<string>();
   let current: ts.Statement[] = [];
+  let pendingResumeBindings: string[] = [];
+  let pendingAbruptResume: NativeGeneratorSegment["abruptResume"] | undefined;
 
-  for (const stmt of decl.body.statements) {
-    if (stmt.kind === ts.SyntaxKind.EmptyStatement) continue;
+  const addSpill = (name: string): void => {
+    if (spillSet.has(name)) return;
+    spillSet.add(name);
+    spills.push(name);
+  };
 
-    if (ts.isExpressionStatement(stmt) && ts.isYieldExpression(stmt.expression)) {
-      const yieldExpr = stmt.expression;
-      if (yieldExpr.asteriskToken || !isNumericExpression(ctx, yieldExpr.expression)) return null;
-      segments.push({ statements: current, yieldExpr });
-      current = [];
-      continue;
+  const pushSegment = (yieldExpr: ts.YieldExpression | undefined, returnStmt: ts.ReturnStatement | undefined): void => {
+    segments.push({
+      resumeBindings: pendingResumeBindings,
+      abruptResume: pendingAbruptResume,
+      statements: current,
+      yieldExpr,
+      returnStmt,
+    });
+    pendingResumeBindings = [];
+    pendingAbruptResume = undefined;
+    current = [];
+  };
+
+  const emitYieldSegment = (
+    yieldExpr: ts.YieldExpression,
+    bindSentTo: string | undefined,
+    activeFinalizers: readonly ts.Statement[][],
+  ): boolean => {
+    if (yieldExpr.asteriskToken || !isNumericExpression(ctx, yieldExpr.expression)) return false;
+    pushSegment(yieldExpr, undefined);
+    pendingAbruptResume = {
+      // GeneratorResumeAbrupt resumes at the suspended yield with a return
+      // completion. Any enclosing finally blocks run nearest-first.
+      finalizers: [...activeFinalizers].reverse(),
+    };
+    if (bindSentTo) {
+      addSpill(bindSentTo);
+      pendingResumeBindings = [bindSentTo];
     }
+    return true;
+  };
 
-    if (ts.isReturnStatement(stmt)) {
-      if (!isNumericExpression(ctx, stmt.expression)) return null;
-      segments.push({ statements: current, returnStmt: stmt });
-      current = [];
-      break;
+  const tryYieldDeclaration = (stmt: ts.Statement): { name: string; yieldExpr: ts.YieldExpression } | null => {
+    if (!ts.isVariableStatement(stmt)) return null;
+    if (stmt.declarationList.declarations.length !== 1) return null;
+    const declStmt = stmt.declarationList.declarations[0]!;
+    if (!ts.isIdentifier(declStmt.name)) return null;
+    if (!declStmt.initializer || !ts.isYieldExpression(declStmt.initializer)) return null;
+    return { name: declStmt.name.text, yieldExpr: declStmt.initializer };
+  };
+
+  const statementsAreYieldFree = (statements: readonly ts.Statement[]): boolean =>
+    statements.every((stmt) => !statementContainsYield(stmt));
+
+  const visitStatements = (
+    statements: readonly ts.Statement[],
+    activeFinalizers: readonly ts.Statement[][],
+  ): boolean => {
+    for (const stmt of statements) {
+      if (stmt.kind === ts.SyntaxKind.EmptyStatement) continue;
+
+      if (ts.isExpressionStatement(stmt) && ts.isYieldExpression(stmt.expression)) {
+        if (!emitYieldSegment(stmt.expression, undefined, activeFinalizers)) return false;
+        continue;
+      }
+
+      const yieldedDeclaration = tryYieldDeclaration(stmt);
+      if (yieldedDeclaration) {
+        if (!emitYieldSegment(yieldedDeclaration.yieldExpr, yieldedDeclaration.name, activeFinalizers)) return false;
+        continue;
+      }
+
+      if (ts.isTryStatement(stmt)) {
+        if (stmt.catchClause || !stmt.finallyBlock) return false;
+        if (!statementsAreYieldFree(stmt.finallyBlock.statements)) return false;
+        if (!visitStatements(stmt.tryBlock.statements, [...activeFinalizers, [...stmt.finallyBlock.statements]])) {
+          return false;
+        }
+        current.push(...stmt.finallyBlock.statements);
+        continue;
+      }
+
+      if (ts.isReturnStatement(stmt)) {
+        if (statementContainsYield(stmt) || !isNumericExpression(ctx, stmt.expression)) return false;
+        pushSegment(undefined, stmt);
+        current = [];
+        break;
+      }
+
+      // Phase 1 allows ordinary expression statements in a segment so side
+      // effects before a yield stay lazy. Declarations/control flow need spill
+      // analysis and are left to follow-up phases.
+      if (ts.isExpressionStatement(stmt) && !statementContainsYield(stmt)) {
+        current.push(stmt);
+        continue;
+      }
+
+      return false;
     }
+    return true;
+  };
 
-    // Phase 1 allows ordinary expression statements in a segment so side
-    // effects before a yield stay lazy. Declarations/control flow need spill
-    // analysis and are left to follow-up phases.
-    if (ts.isExpressionStatement(stmt) && !statementContainsYield(stmt)) {
-      current.push(stmt);
-      continue;
-    }
+  if (!visitStatements(decl.body.statements, [])) return null;
 
-    return null;
-  }
-
-  if (current.length > 0 || segments.length === 0 || segments.at(-1)?.returnStmt === undefined) {
-    segments.push({ statements: current });
+  if (
+    current.length > 0 ||
+    pendingResumeBindings.length > 0 ||
+    pendingAbruptResume !== undefined ||
+    segments.length === 0 ||
+    segments.at(-1)?.returnStmt === undefined
+  ) {
+    pushSegment(undefined, undefined);
   }
 
   const yieldCount = segments.filter((s) => s.yieldExpr !== undefined).length;
   if (yieldCount > MAX_NATIVE_GENERATOR_STATES) return null;
-  return segments;
+  return { segments, spills };
 }
 
 export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
@@ -113,8 +203,8 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: ts.Functio
   for (const param of decl.parameters) {
     if (param.dotDotDotToken || !ts.isIdentifier(param.name)) return false;
   }
-  const segments = buildNativeGeneratorSegments(ctx, decl);
-  return segments !== null && segments.some((s) => s.yieldExpr !== undefined);
+  const plan = buildNativeGeneratorPlan(ctx, decl);
+  return plan !== null && plan.segments.some((s) => s.yieldExpr !== undefined);
 }
 
 export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
@@ -176,17 +266,30 @@ export function registerNativeGenerator(
   if (existing) return existing;
   if (!isNativeGeneratorCandidate(ctx, decl)) return null;
 
-  const segments = buildNativeGeneratorSegments(ctx, decl);
-  if (!segments) return null;
+  const plan = buildNativeGeneratorPlan(ctx, decl);
+  if (!plan) return null;
 
   const resultTypeIdx = ensureNativeGeneratorResultType(ctx);
   const paramNames = decl.parameters.map((p) => (ts.isIdentifier(p.name) ? p.name.text : ""));
-  const stateFields: FieldDef[] = [{ name: "state", type: { kind: "i32" }, mutable: true }];
+  const stateFields: FieldDef[] = [
+    { name: "state", type: { kind: "i32" }, mutable: true },
+    { name: "sent", type: { kind: "f64" }, mutable: true },
+    { name: "mode", type: { kind: "i32" }, mutable: true },
+    { name: "abrupt", type: { kind: "f64" }, mutable: true },
+  ];
   for (let i = 0; i < paramTypes.length; i++) {
     stateFields.push({
       name: `param_${paramNames[i] ?? i}`,
       type: paramTypes[i]!,
       mutable: false,
+    });
+  }
+  const spillFieldOffset = PARAM_FIELD_OFFSET + paramTypes.length;
+  for (const spill of plan.spills) {
+    stateFields.push({
+      name: `spill_${spill}`,
+      type: { kind: "f64" },
+      mutable: true,
     });
   }
 
@@ -197,7 +300,7 @@ export function registerNativeGenerator(
   ctx.typeIdxToStructName.set(stateTypeIdx, stateName);
   ctx.structFields.set(stateName, stateFields);
 
-  const yieldCount = segments.filter((s) => s.yieldExpr !== undefined).length;
+  const yieldCount = plan.segments.filter((s) => s.yieldExpr !== undefined).length;
   const info: NativeGeneratorInfo = {
     functionName,
     decl,
@@ -206,6 +309,11 @@ export function registerNativeGenerator(
     paramNames,
     paramTypes,
     paramFieldOffset: PARAM_FIELD_OFFSET,
+    sentFieldIdx: SENT_FIELD,
+    modeFieldIdx: MODE_FIELD,
+    abruptFieldIdx: ABRUPT_FIELD,
+    spillNames: plan.spills,
+    spillFieldOffset,
     yieldCount,
     doneState: yieldCount + 1,
   };
@@ -230,6 +338,65 @@ function setState(info: NativeGeneratorInfo, state: number): Instr[] {
     { op: "local.get", index: 0 },
     { op: "i32.const", value: state },
     { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+  ];
+}
+
+function setMode(info: NativeGeneratorInfo, mode: number): Instr[] {
+  return [
+    { op: "local.get", index: 0 },
+    { op: "i32.const", value: mode },
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+  ];
+}
+
+function setStateFieldFromLocal(
+  info: NativeGeneratorInfo,
+  selfLocal: number,
+  fieldIdx: number,
+  valueLocal: number,
+): Instr[] {
+  return [
+    { op: "local.get", index: selfLocal },
+    { op: "local.get", index: valueLocal },
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx },
+  ];
+}
+
+function setStateI32FromConst(info: NativeGeneratorInfo, selfLocal: number, fieldIdx: number, value: number): Instr[] {
+  return [
+    { op: "local.get", index: selfLocal },
+    { op: "i32.const", value },
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx },
+  ];
+}
+
+function nativeReturnResultFromLocal(info: NativeGeneratorInfo, valueLocal: number): Instr[] {
+  return [
+    { op: "local.get", index: valueLocal },
+    { op: "i32.const", value: 1 },
+    { op: "struct.new", typeIdx: info.resultTypeIdx },
+  ];
+}
+
+function storeSpills(info: NativeGeneratorInfo, fctx: FunctionContext): Instr[] {
+  const body: Instr[] = [];
+  for (let i = 0; i < info.spillNames.length; i++) {
+    const localIdx = fctx.localMap.get(info.spillNames[i]!);
+    if (localIdx === undefined) continue;
+    body.push({ op: "local.get", index: 0 });
+    body.push({ op: "local.get", index: localIdx });
+    body.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + i });
+  }
+  return body;
+}
+
+function returnAbruptResult(info: NativeGeneratorInfo): Instr[] {
+  return [
+    ...setState(info, info.doneState),
+    { op: "local.get", index: 0 },
+    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx },
+    { op: "i32.const", value: 1 },
+    { op: "struct.new", typeIdx: info.resultTypeIdx },
   ];
 }
 
@@ -265,24 +432,68 @@ function compileSegment(
   const body: Instr[] = [];
   fctx.body = body;
 
+  if (segment.abruptResume) {
+    const abruptBody: Instr[] = [];
+    const savedAbruptBody = fctx.body;
+    fctx.body = abruptBody;
+    for (const finalizer of segment.abruptResume.finalizers) {
+      for (const stmt of finalizer) {
+        compileStatement(ctx, fctx, stmt);
+      }
+    }
+    abruptBody.push(...storeSpills(info, fctx));
+    abruptBody.push(...returnAbruptResult(info));
+    abruptBody.push({ op: "return" });
+    fctx.body = savedAbruptBody;
+
+    body.push({ op: "local.get", index: 0 });
+    body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx });
+    body.push({ op: "i32.const", value: 1 });
+    body.push({ op: "i32.eq" });
+    body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: abruptBody,
+      else: [],
+    });
+  }
+
+  for (const name of segment.resumeBindings) {
+    const localIdx = fctx.localMap.get(name);
+    const spillIdx = info.spillNames.indexOf(name);
+    if (localIdx === undefined || spillIdx < 0) continue;
+    body.push({ op: "local.get", index: 0 });
+    body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.sentFieldIdx });
+    body.push({ op: "local.set", index: localIdx });
+    body.push({ op: "local.get", index: 0 });
+    body.push({ op: "local.get", index: localIdx });
+    body.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + spillIdx });
+  }
+
   for (const stmt of segment.statements) {
     compileStatement(ctx, fctx, stmt);
   }
 
   if (segment.yieldExpr) {
     const tmp = emitExpressionAsF64(ctx, fctx, segment.yieldExpr.expression);
+    body.push(...storeSpills(info, fctx));
     body.push(...setState(info, yieldIndex + 1));
+    body.push(...setMode(info, 0));
     body.push({ op: "local.get", index: tmp });
     body.push({ op: "i32.const", value: 0 });
     body.push({ op: "struct.new", typeIdx: info.resultTypeIdx });
   } else if (segment.returnStmt) {
     const tmp = emitExpressionAsF64(ctx, fctx, segment.returnStmt.expression);
+    body.push(...storeSpills(info, fctx));
     body.push(...setState(info, info.doneState));
+    body.push(...setMode(info, 0));
     body.push({ op: "local.get", index: tmp });
     body.push({ op: "i32.const", value: 1 });
     body.push({ op: "struct.new", typeIdx: info.resultTypeIdx });
   } else {
+    body.push(...storeSpills(info, fctx));
     body.push(...setState(info, info.doneState));
+    body.push(...setMode(info, 0));
     body.push(...emptyResult(info));
   }
 
@@ -348,8 +559,15 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     resumeFctx.body.push({ op: "local.set", index: localIdx });
   }
 
-  const segments = buildNativeGeneratorSegments(ctx, info.decl);
-  if (!segments) {
+  for (let i = 0; i < info.spillNames.length; i++) {
+    const localIdx = allocLocal(resumeFctx, info.spillNames[i]!, { kind: "f64" });
+    resumeFctx.body.push({ op: "local.get", index: 0 });
+    resumeFctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + i });
+    resumeFctx.body.push({ op: "local.set", index: localIdx });
+  }
+
+  const plan = buildNativeGeneratorPlan(ctx, info.decl);
+  if (!plan) {
     reportError(ctx, info.decl, "Internal error: native generator plan disappeared during emission");
     resumeFctx.body.push(...emptyResult(info));
   } else {
@@ -357,7 +575,7 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     ctx.currentFunc = resumeFctx;
     try {
       let yieldIndex = 0;
-      const cases = segments.map((segment) => {
+      const cases = plan.segments.map((segment) => {
         const caseBody = compileSegment(ctx, resumeFctx, info, segment, yieldIndex);
         if (segment.yieldExpr) yieldIndex++;
         return caseBody;
@@ -388,8 +606,14 @@ export function compileNativeGeneratorFunction(
 ): void {
   ensureNativeGeneratorResumeFunction(ctx, info);
   fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "f64.const", value: NaN });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "f64.const", value: NaN });
   for (let i = 0; i < decl.parameters.length; i++) {
     fctx.body.push({ op: "local.get", index: i });
+  }
+  for (let i = 0; i < info.spillNames.length; i++) {
+    fctx.body.push({ op: "f64.const", value: NaN });
   }
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 }
@@ -437,7 +661,10 @@ function compileDirectNativeGeneratorMethod(
   fctx.body.push({ op: "local.set", index: selfLocal });
 
   if (methodName === "next") {
-    compileIgnoredArgs(ctx, fctx, args);
+    const sentTmp = emitExpressionAsF64(ctx, fctx, args[0]);
+    compileIgnoredArgs(ctx, fctx, args.slice(1));
+    fctx.body.push(...setStateFieldFromLocal(info, selfLocal, info.sentFieldIdx, sentTmp));
+    fctx.body.push(...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0));
     fctx.body.push({ op: "local.get", index: selfLocal });
     fctx.body.push({ op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) });
     return { kind: "ref", typeIdx: info.resultTypeIdx };
@@ -445,13 +672,40 @@ function compileDirectNativeGeneratorMethod(
 
   if (methodName === "return") {
     const valueTmp = emitExpressionAsF64(ctx, fctx, args[0]);
-    fctx.body.push({ op: "local.get", index: selfLocal });
-    fctx.body.push({ op: "i32.const", value: info.doneState });
-    fctx.body.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
-    fctx.body.push({ op: "local.get", index: valueTmp });
-    fctx.body.push({ op: "i32.const", value: 1 });
-    fctx.body.push({ op: "struct.new", typeIdx: info.resultTypeIdx });
     compileIgnoredArgs(ctx, fctx, args.slice(1));
+    fctx.body.push({ op: "local.get", index: selfLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.eq" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: info.resultTypeIdx } },
+      then: [
+        ...setStateI32FromConst(info, selfLocal, STATE_FIELD, info.doneState),
+        ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0),
+        ...nativeReturnResultFromLocal(info, valueTmp),
+      ],
+      else: [
+        { op: "local.get", index: selfLocal },
+        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+        { op: "i32.const", value: info.doneState },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "ref", typeIdx: info.resultTypeIdx } },
+          then: [
+            ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0),
+            ...nativeReturnResultFromLocal(info, valueTmp),
+          ],
+          else: [
+            ...setStateFieldFromLocal(info, selfLocal, info.abruptFieldIdx, valueTmp),
+            ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 1),
+            { op: "local.get", index: selfLocal },
+            { op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) },
+          ],
+        },
+      ],
+    });
     return { kind: "ref", typeIdx: info.resultTypeIdx };
   }
 
@@ -480,17 +734,73 @@ function buildNativeGeneratorDispatch(
       thenBody = [
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: info.stateTypeIdx },
+        { op: "local.get", index: valueLocal! },
+        { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.sentFieldIdx },
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: info.stateTypeIdx },
+        { op: "i32.const", value: 0 },
+        { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: info.stateTypeIdx },
         { op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) },
       ];
     } else {
       thenBody = [
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: info.stateTypeIdx },
-        { op: "i32.const", value: info.doneState },
-        { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
-        { op: "local.get", index: valueLocal! },
-        { op: "i32.const", value: 1 },
-        { op: "struct.new", typeIdx: info.resultTypeIdx },
+        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+        { op: "i32.const", value: 0 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: resultType },
+          then: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: info.stateTypeIdx },
+            { op: "i32.const", value: info.doneState },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: info.stateTypeIdx },
+            { op: "i32.const", value: 0 },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+            { op: "local.get", index: valueLocal! },
+            { op: "i32.const", value: 1 },
+            { op: "struct.new", typeIdx: info.resultTypeIdx },
+          ],
+          else: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: info.stateTypeIdx },
+            { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+            { op: "i32.const", value: info.doneState },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: resultType },
+              then: [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: info.stateTypeIdx },
+                { op: "i32.const", value: 0 },
+                { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+                { op: "local.get", index: valueLocal! },
+                { op: "i32.const", value: 1 },
+                { op: "struct.new", typeIdx: info.resultTypeIdx },
+              ],
+              else: [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: info.stateTypeIdx },
+                { op: "local.get", index: valueLocal! },
+                { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx },
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: info.stateTypeIdx },
+                { op: "i32.const", value: 1 },
+                { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: info.stateTypeIdx },
+                { op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) },
+              ],
+            },
+          ],
+        },
       ];
     }
     return [
@@ -538,11 +848,9 @@ export function tryCompileNativeGeneratorMethodCall(
   fctx.body.push({ op: "local.set", index: anyLocal });
 
   let valueLocal: number | undefined;
-  if (methodName === "return") {
+  if (methodName === "return" || methodName === "next") {
     valueLocal = emitExpressionAsF64(ctx, fctx, args[0]);
     compileIgnoredArgs(ctx, fctx, args.slice(1));
-  } else {
-    compileIgnoredArgs(ctx, fctx, args);
   }
 
   fctx.body.push(...buildNativeGeneratorDispatch(ctx, anyLocal, methodName, valueLocal));

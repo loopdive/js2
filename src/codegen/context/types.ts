@@ -144,6 +144,16 @@ export interface NativeGeneratorInfo {
   paramTypes: ValType[];
   /** Field index where captured params start in the state struct. */
   paramFieldOffset: number;
+  /** Field index for the value passed to `.next(value)`. */
+  sentFieldIdx: number;
+  /** Field index for resume mode: 0 = next, 1 = return. */
+  modeFieldIdx: number;
+  /** Field index for the value passed to `.return(value)`. */
+  abruptFieldIdx: number;
+  /** Function-local names spilled into the state struct across suspensions. */
+  spillNames: string[];
+  /** Field index where spilled locals start in the state struct. */
+  spillFieldOffset: number;
   /** Number of top-level yield suspension points. */
   yieldCount: number;
   /** Terminal state value. */

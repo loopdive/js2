@@ -1,9 +1,9 @@
 ---
 id: 1346
 title: "spec gap: yield in nested try/finally + yield expression evaluation order (46 test262 fails)"
-status: ready
+status: in-review
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-06-06
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -14,6 +14,9 @@ goal: spec-completeness
 sprint: 60
 parent: 1328
 related: [1665, 1042, 1620, 1320]
+claimed_by: codex-developer
+claimed_at: 2026-06-06T09:10:15.635Z
+pr: 1246
 ---
 # #1346 — yield expression: try/finally + evaluation order
 
@@ -265,3 +268,42 @@ yield suspends, so the partial results survive the suspension).
 > Slice 0 belongs to a **senior-dev** as a design task, not a routine dev pickup.
 > The other four sprint-59 specs (#1818/#1644/#1320/#1348/#6407) are
 > dev-claimable; this one should be senior-dev-gated on Slice 0 first.
+
+## Implementation Update — 2026-06-06
+
+Implemented the first suspendable-generator slice on the existing
+`generators-native.ts` substrate, following ECMA-262 2026 §15.5.5
+(`YieldExpression`) and §27.5.3.4/§27.5.3.6 (`GeneratorResumeAbrupt` /
+`GeneratorYield`):
+
+- Added native generator state fields for `sent`, `mode`, and `abrupt` values.
+- Added state-struct spill slots for simple `const x = yield n` bindings so
+  `.next(value)` becomes the yield expression result after resumption.
+- Taught `.next(value)` to store the sent value before calling the resume
+  function.
+- Taught `.return(value)` to resume suspended-yield states with
+  `mode=return`; suspended-start and completed states still complete
+  immediately.
+- Added simple `try/finally` planning for non-yielding finalizers so a
+  `.return(value)` from a yield inside `try` runs pending `finally` statements
+  before completing.
+
+Scope intentionally remains native-generator-only (`standalone` / `wasi`) and
+numeric-yield-only. The eager JS-host buffer path still cannot satisfy the full
+test262 cluster because it has no real suspension point. Remaining full-issue
+work:
+
+- `yield*` delegation forwarding (`return`/`throw`) is still not implemented.
+- `throw()` injection is still not implemented for native generators.
+- Yield operands inside arbitrary call/array expressions still need the broader
+  expression-spill lowering described in Slice C.
+- Full `language/expressions/yield` pass-rate was not rerun locally; this
+  workspace's `test262/` directory is empty, and the task rules prohibit full
+  local test262.
+
+Focused validation added in `tests/issue-1346.test.ts`:
+
+- `.next(value)` feeds sequential `yield` expression results.
+- `.return(value)` at a yield inside `try` runs the pending `finally`.
+- Normal resume after a yield inside `try` runs `finally`.
+- `.return(value)` before the first `.next()` does not enter the generator body.
