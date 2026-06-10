@@ -1949,6 +1949,104 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
     });
   }
 
+  // --- $__str_charAt_cp(s: ref $NativeString, idx: i32) -> ref $NativeString ---
+  // (#1470) Code-POINT charAt: like __str_charAt but when the code unit at
+  // `idx` is a high surrogate followed by a low surrogate, returns the whole
+  // 2-code-unit pair (§22.1.5.1 String iteration / §11.1.4 CodePointAt).
+  // Lone surrogates and BMP scalars return the single unit. Used by the
+  // for-of / spread / Array.from string-iteration lowerings; callers advance
+  // their cursor by the returned string's `len`.
+  {
+    const typeIdx = addFuncType(ctx, [strRef, { kind: "i32" }], [strRef]);
+    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.nativeStrHelpers.set("__str_charAt_cp", funcIdx);
+    const substringIdx = ctx.nativeStrHelpers.get("__str_substring")!;
+
+    const body: Instr[] = [
+      // Bounds check: if idx < 0 || idx >= s.len, return empty string
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      { op: "local.get", index: 1 },
+      { op: "local.get", index: 0 },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+      { op: "i32.ge_s" },
+      { op: "i32.or" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: strRef },
+        then: [
+          // empty string: len=0, off=0, empty array
+          { op: "i32.const", value: 0 },
+          { op: "i32.const", value: 0 },
+          { op: "i32.const", value: 0 },
+          { op: "array.new_default", typeIdx: strDataTypeIdx },
+          { op: "struct.new", typeIdx: strTypeIdx },
+        ],
+        else: [
+          // __str_substring(s, idx, idx + 1 + isPair)
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          // isPair = (data[off+idx] & 0xFC00) == 0xD800 && idx + 1 < len
+          //          && (data[off+idx+1] & 0xFC00) == 0xDC00
+          { op: "local.get", index: 0 },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // .data
+          { op: "local.get", index: 0 },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // .off
+          { op: "local.get", index: 1 },
+          { op: "i32.add" },
+          { op: "array.get_u", typeIdx: strDataTypeIdx },
+          { op: "i32.const", value: 0xfc00 },
+          { op: "i32.and" },
+          { op: "i32.const", value: 0xd800 },
+          { op: "i32.eq" },
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.get", index: 0 },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }, // .len
+          { op: "i32.lt_s" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              // The low-surrogate read is guarded: only reached when
+              // idx + 1 < len, so data[off+idx+1] is in bounds.
+              { op: "local.get", index: 0 },
+              { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // .data
+              { op: "local.get", index: 0 },
+              { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // .off
+              { op: "local.get", index: 1 },
+              { op: "i32.add" },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "array.get_u", typeIdx: strDataTypeIdx },
+              { op: "i32.const", value: 0xfc00 },
+              { op: "i32.and" },
+              { op: "i32.const", value: 0xdc00 },
+              { op: "i32.eq" },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          } as Instr,
+          { op: "i32.add" }, // end = idx + 1 + isPair
+          { op: "call", funcIdx: substringIdx },
+        ],
+      },
+    ];
+
+    ctx.mod.functions.push({
+      name: "__str_charAt_cp",
+      typeIdx,
+      locals: [],
+      body: wrapBodyWithFlatten(body, [0]),
+      exported: false,
+    });
+  }
+
   // --- $__str_slice(s: ref $NativeString, start: i32, end: i32) -> ref $NativeString ---
   // Like substring but handles negative indices
   {
@@ -5494,6 +5592,201 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * #1470 — Emit `$__str_to_char_vec(s: ref $AnyString) -> ref $vec_nstr`: the
+ * pure-Wasm String-iterator materializer. Splits the string into single
+ * **code point** strings per §22.1.5.1 (the String Iteration protocol that
+ * `[...s]`, `Array.from(s)` and for-of observe): a well-formed surrogate
+ * pair yields one 2-code-unit string; everything else (BMP scalars and lone
+ * surrogates) yields a 1-code-unit string.
+ *
+ * The result reuses the `ref_<anyStr>` vec registration that `__str_split`
+ * established, so callers get the exact vec shape `string[]` lowers to
+ * (`.length`, indexing, spreads compose without conversion). The backing
+ * array is sized `len` (the code-unit count — an upper bound on the code
+ * point count); the vec's `len` field carries the actual element count, so
+ * trailing unused slots are never observed.
+ *
+ * Returns both the helper funcIdx (current at call time — late-import shifts
+ * keep `nativeStrHelpers` patched, #1839) and the nstr vec type index.
+ */
+export function ensureStrToCharVecHelper(ctx: CodegenContext): { funcIdx: number; vecTypeIdx: number } {
+  ensureNativeStringHelpers(ctx);
+
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
+
+  // Same registration key/type as `__str_split` so the vec matches string[].
+  const nstrElemKey = `ref_${anyStrTypeIdx}`;
+  const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
+  const nstrArrTypeIdx = getOrRegisterArrayType(ctx, nstrElemKey, nstrElemType);
+  const nstrVecTypeIdx = getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
+
+  const existing = ctx.nativeStrHelpers.get("__str_to_char_vec");
+  if (existing !== undefined) return { funcIdx: existing, vecTypeIdx: nstrVecTypeIdx };
+
+  const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
+  const flattenIdx = ctx.funcMap.get("__str_flatten") ?? ctx.nativeStrHelpers.get("__str_flatten")!;
+  const substringIdx = ctx.nativeStrHelpers.get("__str_substring")!;
+
+  // param: s(0); locals: flat(1), len(2), off(3), data(4), out(5), n(6),
+  // i(7), cu(8), take(9)
+  const S = 0;
+  const FLAT = 1;
+  const LEN = 2;
+  const OFF = 3;
+  const DATA = 4;
+  const OUT = 5;
+  const N = 6;
+  const I = 7;
+  const CU = 8;
+  const TAKE = 9;
+
+  const body: Instr[] = [
+    // flat = __str_flatten(s); cache len/off/data
+    { op: "local.get", index: S },
+    { op: "call", funcIdx: flattenIdx },
+    { op: "local.set", index: FLAT },
+    { op: "local.get", index: FLAT },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: LEN },
+    { op: "local.get", index: FLAT },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: OFF },
+    { op: "local.get", index: FLAT },
+    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+    { op: "local.set", index: DATA },
+
+    // out = new (ref null $AnyString)[len] — len is an upper bound on the
+    // code-point count; the vec's len field below carries the real count.
+    { op: "local.get", index: LEN },
+    { op: "array.new_default", typeIdx: nstrArrTypeIdx },
+    { op: "local.set", index: OUT },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: N },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: I },
+
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: I },
+            { op: "local.get", index: LEN },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+
+            // cu = data[off + i]; take = 1
+            { op: "local.get", index: DATA },
+            { op: "local.get", index: OFF },
+            { op: "local.get", index: I },
+            { op: "i32.add" },
+            { op: "array.get_u", typeIdx: strDataTypeIdx },
+            { op: "local.set", index: CU },
+            { op: "i32.const", value: 1 },
+            { op: "local.set", index: TAKE },
+
+            // High surrogate with a following low surrogate → take = 2
+            // (cu & 0xFC00) == 0xD800 && i + 1 < len
+            { op: "local.get", index: CU },
+            { op: "i32.const", value: 0xfc00 },
+            { op: "i32.and" },
+            { op: "i32.const", value: 0xd800 },
+            { op: "i32.eq" },
+            { op: "local.get", index: I },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.get", index: LEN },
+            { op: "i32.lt_s" },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                // (data[off + i + 1] & 0xFC00) == 0xDC00 → take = 2
+                { op: "local.get", index: DATA },
+                { op: "local.get", index: OFF },
+                { op: "local.get", index: I },
+                { op: "i32.add" },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "array.get_u", typeIdx: strDataTypeIdx },
+                { op: "i32.const", value: 0xfc00 },
+                { op: "i32.and" },
+                { op: "i32.const", value: 0xdc00 },
+                { op: "i32.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: 2 },
+                    { op: "local.set", index: TAKE },
+                  ],
+                } as Instr,
+              ],
+            } as Instr,
+
+            // out[n] = __str_substring(flat, i, i + take); n++; i += take
+            { op: "local.get", index: OUT },
+            { op: "local.get", index: N },
+            { op: "local.get", index: FLAT },
+            { op: "ref.as_non_null" } as Instr,
+            { op: "local.get", index: I },
+            { op: "local.get", index: I },
+            { op: "local.get", index: TAKE },
+            { op: "i32.add" },
+            { op: "call", funcIdx: substringIdx },
+            { op: "array.set", typeIdx: nstrArrTypeIdx },
+            { op: "local.get", index: N },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: N },
+            { op: "local.get", index: I },
+            { op: "local.get", index: TAKE },
+            { op: "i32.add" },
+            { op: "local.set", index: I },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+
+    // return { len: n, data: out }
+    { op: "local.get", index: N },
+    { op: "local.get", index: OUT },
+    { op: "ref.as_non_null" } as Instr,
+    { op: "struct.new", typeIdx: nstrVecTypeIdx },
+  ];
+
+  const typeIdx = addFuncType(ctx, [strRef], [{ kind: "ref", typeIdx: nstrVecTypeIdx }]);
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.nativeStrHelpers.set("__str_to_char_vec", funcIdx);
+  ctx.funcMap.set("__str_to_char_vec", funcIdx);
+  ctx.mod.functions.push({
+    name: "__str_to_char_vec",
+    typeIdx,
+    locals: [
+      { name: "flat", type: { kind: "ref_null", typeIdx: strTypeIdx } },
+      { name: "len", type: { kind: "i32" } },
+      { name: "off", type: { kind: "i32" } },
+      { name: "data", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
+      { name: "out", type: { kind: "ref_null", typeIdx: nstrArrTypeIdx } },
+      { name: "n", type: { kind: "i32" } },
+      { name: "i", type: { kind: "i32" } },
+      { name: "cu", type: { kind: "i32" } },
+      { name: "take", type: { kind: "i32" } },
+    ],
+    body,
+    exported: false,
+  });
+  return { funcIdx, vecTypeIdx: nstrVecTypeIdx };
 }
 
 export function ensureNativeStringExternBridge(ctx: CodegenContext): void {

@@ -121,6 +121,7 @@ import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-sup
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import {
   ensureNativeStringExternBridge,
+  ensureStrToCharVecHelper,
   ensureTextEncodingHelpers,
   stringConstantExternrefInstrs,
 } from "../native-strings.js";
@@ -3678,6 +3679,31 @@ function compileCallExpression(
       // `_wrapWasmClosure`. The fast path's `array.copy` would silently
       // drop the mapFn.
       const hasMapFn = expr.arguments.length >= 2;
+      // (#1470) Array.from(string) without a mapFn — the string iterable
+      // yields code points (§23.1.2.1 via §22.1.5.1). In native-strings mode
+      // materialize the char vec in pure Wasm. Without this the string fell
+      // into the host `__array_from` fallback below, which both leaks a JS
+      // host import and (post late-import shift) emitted an invalid module
+      // under --target standalone. Tentatively compile and only commit when
+      // the argument genuinely lowers to a native string ref (#1610 pattern).
+      if (!hasMapFn && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && isStringType(argTsType)) {
+        const bodyLenBefore = fctx.body.length;
+        const t = compileExpression(ctx, fctx, expr.arguments[0]!);
+        if (
+          t &&
+          (t.kind === "ref" || t.kind === "ref_null") &&
+          (t.typeIdx === ctx.anyStrTypeIdx || t.typeIdx === ctx.nativeStrTypeIdx)
+        ) {
+          if (t.kind === "ref_null") {
+            fctx.body.push({ op: "ref.as_non_null" } as Instr);
+          }
+          const { funcIdx: toCharVecIdx, vecTypeIdx: nstrVecTypeIdx } = ensureStrToCharVecHelper(ctx);
+          fctx.body.push({ op: "call", funcIdx: toCharVecIdx });
+          return { kind: "ref", typeIdx: nstrVecTypeIdx };
+        }
+        // Didn't lower as a native string — roll back and use the paths below.
+        fctx.body.length = bodyLenBefore;
+      }
       // Only handle array arguments — create a shallow copy
       if (!hasMapFn && (argWasmType.kind === "ref" || argWasmType.kind === "ref_null")) {
         const arrInfo = resolveArrayInfo(ctx, argTsType);
@@ -4450,8 +4476,10 @@ function compileCallExpression(
             .map((f, idx) => ({ field: f, fieldIdx: idx }))
             .filter((e) => !e.field.name.startsWith("__"));
           const entry = userFields.find((e) => e.field.name === propLiteral);
+          const sidecarDefinedKey =
+            ts.isIdentifier(arg0) && ctx.sidecarDefinedPropertyKeys.has(`${arg0.text}:${propLiteral}`);
 
-          if (entry) {
+          if (entry && !sidecarDefinedKey) {
             // #1629b: Object.defineProperty updates `definedPropertyFlags`
             // (keyed `varName:propName`) but `shapePropFlags` is built AFTER
             // body compilation finishes, so per-variable updates made during
@@ -4603,21 +4631,23 @@ function compileCallExpression(
           // (#1395) Same logic for static methods on the class object —
           // `verifyProperty(C, "m", {...})` lookups need the runtime arm to
           // fire instead of returning `ref.null.extern` here.
-          const methodNames = ctx.classMethodNames.get(structName);
-          const staticMethodNames = ctx.classStaticMethodNames.get(structName);
-          const isMethodLookup =
-            (methodNames && methodNames.includes(propLiteral)) ||
-            (staticMethodNames && staticMethodNames.includes(propLiteral));
-          if (isMethodLookup) {
-            // Skip the fast-path null-return; let the dynamic fallback below
-            // handle the method case via the host import.
-          } else {
-            // Property not found in struct — return undefined
-            // (own property doesn't exist on this shape)
-            const argResult = compileExpression(ctx, fctx, arg0);
-            if (argResult) fctx.body.push({ op: "drop" });
-            fctx.body.push({ op: "ref.null.extern" });
-            return { kind: "externref" };
+          if (!sidecarDefinedKey) {
+            const methodNames = ctx.classMethodNames.get(structName);
+            const staticMethodNames = ctx.classStaticMethodNames.get(structName);
+            const isMethodLookup =
+              (methodNames && methodNames.includes(propLiteral)) ||
+              (staticMethodNames && staticMethodNames.includes(propLiteral));
+            if (isMethodLookup) {
+              // Skip the fast-path null-return; let the dynamic fallback below
+              // handle the method case via the host import.
+            } else {
+              // Property not found in struct — return undefined
+              // (own property doesn't exist on this shape)
+              const argResult = compileExpression(ctx, fctx, arg0);
+              if (argResult) fctx.body.push({ op: "drop" });
+              fctx.body.push({ op: "ref.null.extern" });
+              return { kind: "externref" };
+            }
           }
         }
       }

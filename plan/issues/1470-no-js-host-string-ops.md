@@ -531,3 +531,71 @@ standalone + WASI + gc-default regression + explicit nativeStrings).
 `native-strings`, `native-strings-standalone`,
 `issue-1470-standalone-string-imports` (14) all green; default `gc` JS-host
 path unchanged.
+
+### 2026-06-10 — residual sweep: string iteration + localeCompare + toLocale case
+
+Behavioral probe of all string surfaces under `--target standalone` (45-case
+battery, compared against real JS evaluation) found the remaining defects were
+not import *leaks* — the import section was already clean for every probed op
+— but silently-wrong or invalid lowerings on the **String-iteration** and
+**string_method-fall-through** paths:
+
+1. **`[...str]` produced an empty array** (`[..."abc"].length === 0`,
+   elements null). Root cause: `compileArrayLiteralWithSpread`
+   (`src/codegen/literals.ts`) pushed the native-string struct into the
+   generic vec-spread branch; `getArrTypeIdxFromVec` fails for the string
+   type and the branch silently `continue`d — the spread contributed
+   nothing while the result vec's `len` stayed 0.
+2. **`Array.from(str)` emitted an INVALID module** under standalone: the
+   string argument fell to the `__array_from` JS-host fallback (#965),
+   which both leaks `env::__array_from` and corrupted `__str_flatten`'s
+   body through the late-import shift ("call[0] expected (ref null 5),
+   found i32.const").
+3. **for-of / IR `forof.string` iterated code UNITS** — §22.1.5.1 String
+   iteration yields code POINTS (a surrogate pair is one 2-unit element).
+   Both the legacy `compileForOfString` (loops.ts) and the IR lowering
+   (`src/ir/lower.ts` `forof.string`) advanced by a fixed +1.
+4. **`localeCompare` always returned 0** — fell through to "Unknown string
+   method", demoted to a `f64.const 0` stub. Violates §22.1.3.12's
+   consistency requirement (everything compared "equal").
+5. **`toLocaleLowerCase`/`toLocaleUpperCase`** hit the same numeric-zero
+   stub.
+
+**Fixes (pure Wasm, no new imports):**
+- New `$__str_to_char_vec(s: ref $AnyString) -> ref $vec_nstr` helper
+  (`src/codegen/native-strings.ts`, `ensureStrToCharVecHelper`) — the
+  §22.1.5.1 materializer; reuses `__str_split`'s `ref_<anyStr>` vec
+  registration so the result IS the `string[]` shape. Wired into the
+  array-literal spread path and a new `Array.from(string)` fast path
+  (`src/codegen/expressions/calls.ts`, tentative-compile + rollback per the
+  #1610 pattern). Spread element-type inference now maps a string spread
+  source to the nstr element type.
+- New `$__str_charAt_cp(s, idx)` helper (registered with the main suite,
+  right after `__str_charAt`) — code-point charAt returning the whole pair.
+  The IR `forof.string` lowering calls it and advances the cursor by the
+  element's `len` (no new slots needed). The legacy `compileForOfString`
+  flattens once up front and does the surrogate check inline on the raw
+  code units (also removes the per-iteration re-flatten).
+- `localeCompare` lowers to the native `__str_compare` (-1/0/1, UTF-16
+  code-unit order — a valid §22.1.3.12 implementation-defined consistent
+  total order absent ECMA-402); locales/options args evaluated + dropped.
+- `toLocale{Lower,Upper}Case` alias the default case-fold arm.
+
+**Verified:** `[..."a😀b"].length === 3` (middle element len 2),
+`Array.from("abc")` native vec (no env imports, empty-import instantiate),
+for-of yields pairs as one element in BOTH IR and legacy paths, lone
+surrogates stay separate, localeCompare total order matches `<`. Tests:
+`tests/issue-1470-string-iteration-standalone.test.ts` (8 cases:
+standalone + WASI parity + gc-host regression guard).
+
+**Known remaining (documented, deferred):**
+- Non-ASCII case folding (`"À".toLowerCase()` is identity) and
+  `normalize()` composition (identity) need Unicode tables — the issue's
+  `--full-unicode` follow-up (#640-family). Both are *silent-identity*, not
+  import leaks.
+- gc / JS-host mode `[..."abc"]` returns an empty array on main too
+  (pre-existing host-mode gap in the externref spread branch's
+  `__extern_length` on a JS string) — out of #1470's standalone scope,
+  needs its own issue.
+- Standalone `Array.from(<non-string non-array iterable>)` still falls to
+  the `__array_from` host fallback — owned by the #1320 iterator bridge.

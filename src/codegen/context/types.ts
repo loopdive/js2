@@ -1086,6 +1086,8 @@ export interface CodegenContext {
   tdzLetConstNames: Set<string>;
   /** Compile-time property descriptor flags */
   definedPropertyFlags: Map<string, number>;
+  /** Properties whose descriptor/value lives in the runtime sidecar. */
+  sidecarDefinedPropertyKeys: Set<string>;
   /** Object mutability state sets */
   nonExtensibleVars: Set<string>;
   frozenVars: Set<string>;

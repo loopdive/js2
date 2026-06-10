@@ -2111,13 +2111,49 @@ export function compileNativeStringMethodCall(
   }
 
   // toLowerCase, toUpperCase: native helpers
-  if (method === "toLowerCase" || method === "toUpperCase") {
+  if (
+    method === "toLowerCase" ||
+    method === "toUpperCase" ||
+    method === "toLocaleLowerCase" ||
+    method === "toLocaleUpperCase"
+  ) {
+    // (#1470) toLocale{Lower,Upper}Case without ECMA-402 falls back to the
+    // default case conversion (§22.1.3.27/§22.1.3.29 note this is the same as
+    // toLowerCase/toUpperCase except for locale-sensitive mappings, which a
+    // standalone module has no ICU tables for). Previously these fell through
+    // to "Unknown string method" and got demoted to a numeric-zero stub.
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
-    const helperName = `__str_${method}`;
+    // Locale arguments are still evaluated, in order, for side effects.
+    for (const arg of expr.arguments) {
+      const argType = compileExpression(ctx, fctx, arg);
+      if (argType) fctx.body.push({ op: "drop" });
+    }
+    const helperName = `__str_${method.replace("Locale", "")}`;
     const funcIdx = ctx.nativeStrHelpers.get(helperName)!;
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
+  }
+
+  // (#1470) localeCompare — §22.1.3.12 only requires an implementation-
+  // defined CONSISTENT total order when ECMA-402 is absent; we use UTF-16
+  // code-unit order via the native __str_compare helper (the same order the
+  // relational operators use). Previously this fell through to "Unknown
+  // string method" and got demoted to an always-0 stub, which violates the
+  // consistency requirement (every pair compared "equal"). The locales /
+  // options arguments are evaluated for side effects and ignored.
+  if (method === "localeCompare") {
+    compileExpression(ctx, fctx, propAccess.expression);
+    const thatLocal = compileStringValueToLocal(expr.arguments[0], "undefined", "__lc_that");
+    for (let ai = 1; ai < expr.arguments.length; ai++) {
+      const argType = compileExpression(ctx, fctx, expr.arguments[ai]!);
+      if (argType) fctx.body.push({ op: "drop" });
+    }
+    fctx.body.push({ op: "local.get", index: thatLocal });
+    const funcIdx = ctx.nativeStrHelpers.get("__str_compare")!;
+    fctx.body.push({ op: "call", funcIdx });
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    return { kind: "f64" };
   }
 
   // For replace/replaceAll/split with non-string args (RegExp or custom objects

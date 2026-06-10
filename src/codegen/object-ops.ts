@@ -29,6 +29,7 @@ import {
   buildAccessorClosure,
   ensureStructAccessorGlobal,
 } from "./struct-accessor-closure.js";
+import { emitUndefined } from "./expressions/late-imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { compileNativeStringLiteral, compileStringLiteral } from "./string-ops.js";
 import { getVecInfo } from "./type-coercion.js";
@@ -127,6 +128,155 @@ function isStaticallyNonObjectDescArg(descArg: ts.Expression): boolean {
   if (ts.isIdentifier(descArg) && descArg.text === "undefined") return true;
   if (ts.isPrefixUnaryExpression(descArg) && ts.isNumericLiteral(descArg.operand)) return true;
   return false;
+}
+
+const DESCRIPTOR_FIELD_NAMES = new Set(["value", "writable", "enumerable", "configurable", "get", "set"]);
+
+function unwrapTransparentExpression(expr: ts.Expression): ts.Expression {
+  while (
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isParenthesizedExpression(expr) ||
+    ts.isSatisfiesExpression(expr)
+  ) {
+    expr = (
+      expr as
+        | ts.AsExpression
+        | ts.TypeAssertion
+        | ts.NonNullExpression
+        | ts.ParenthesizedExpression
+        | ts.SatisfiesExpression
+    ).expression;
+  }
+  return expr;
+}
+
+function isUndefinedLikeExpression(expr: ts.Expression): boolean {
+  const inner = unwrapTransparentExpression(expr);
+  return (
+    inner.kind === ts.SyntaxKind.UndefinedKeyword ||
+    (ts.isIdentifier(inner) && inner.text === "undefined") ||
+    ts.isVoidExpression(inner)
+  );
+}
+
+function descriptorFieldName(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) {
+    return DESCRIPTOR_FIELD_NAMES.has(name.text) ? name.text : undefined;
+  }
+  return undefined;
+}
+
+function descriptorUndefinedFields(descArg: ts.Expression): string[] {
+  const desc = unwrapTransparentExpression(descArg);
+  if (!ts.isObjectLiteralExpression(desc)) return [];
+  const fields: string[] = [];
+  for (const prop of desc.properties) {
+    if (!ts.isPropertyAssignment(prop)) continue;
+    const field = descriptorFieldName(prop.name);
+    if (field !== undefined && isUndefinedLikeExpression(prop.initializer)) fields.push(field);
+  }
+  return fields;
+}
+
+function descriptorInitializerForIdentifier(
+  ctx: CodegenContext,
+  descArg: ts.Expression,
+): ts.ObjectLiteralExpression | undefined {
+  const unwrapped = unwrapTransparentExpression(descArg);
+  if (!ts.isIdentifier(unwrapped)) return undefined;
+  const sym = ctx.checker.getSymbolAtLocation(unwrapped);
+  const decl = sym?.valueDeclaration;
+  if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return undefined;
+  const init = unwrapTransparentExpression(decl.initializer);
+  return ts.isObjectLiteralExpression(init) ? init : undefined;
+}
+
+function markRuntimeDefinedProperty(ctx: CodegenContext, objArg: ts.Expression, propArg: ts.Expression): void {
+  if (!ts.isIdentifier(objArg)) return;
+  const propName = ts.isStringLiteral(propArg) ? propArg.text : ts.isNumericLiteral(propArg) ? propArg.text : undefined;
+  if (propName === undefined) return;
+  ctx.sidecarDefinedPropertyKeys.add(`${objArg.text}:${propName}`);
+}
+
+function emitDescriptorUndefinedSidecars(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  descLocal: number,
+  fields: readonly string[],
+): void {
+  if (fields.length === 0) return;
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (setIdx === undefined) return;
+  for (const field of fields) {
+    fctx.body.push({ op: "local.get", index: descLocal });
+    addStringConstantGlobal(ctx, field);
+    for (const instr of stringConstantExternrefInstrs(ctx, field)) fctx.body.push(instr);
+    emitUndefined(ctx, fctx);
+    fctx.body.push({ op: "call", funcIdx: setIdx });
+  }
+}
+
+function emitDefinePropertyDescRuntime(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  objArg: ts.Expression,
+  propArg: ts.Expression,
+  descArg: ts.Expression,
+  undefinedFields: readonly string[],
+): ValType | null {
+  markRuntimeDefinedProperty(ctx, objArg, propArg);
+
+  const objType = compileExpression(ctx, fctx, objArg);
+  if (!objType) return null;
+  if (objType.kind === "ref" || objType.kind === "ref_null") {
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+  } else if (objType.kind !== "externref") {
+    coerceType(ctx, fctx, objType, { kind: "externref" });
+  }
+
+  const propType = compileExpression(ctx, fctx, propArg, { kind: "externref" });
+  if (propType && propType.kind !== "externref") {
+    coerceType(ctx, fctx, propType, { kind: "externref" });
+  } else if (!propType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  const descType = compileExpression(ctx, fctx, descArg);
+  if (descType) {
+    if (descType.kind === "ref" || descType.kind === "ref_null") {
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+    } else if (descType.kind !== "externref") {
+      coerceType(ctx, fctx, descType, { kind: "externref" });
+    }
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const descLocal = allocLocal(fctx, `__defprop_desc_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: descLocal });
+  emitDescriptorUndefinedSidecars(ctx, fctx, descLocal, undefinedFields);
+  fctx.body.push({ op: "local.get", index: descLocal });
+
+  const dpDescIdx = ensureLateImport(
+    ctx,
+    "__defineProperty_desc",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (dpDescIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: dpDescIdx });
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  return { kind: "externref" };
 }
 
 // ── #1130 PR-0: array-index-exotic length growth on defineProperty ───
@@ -846,46 +996,32 @@ export function compileObjectDefineProperty(
   // externref so the runtime sees a uniform entry point — this matches the
   // sibling Object.create path at calls.ts:3996+ (#1631).
   if (!ts.isObjectLiteralExpression(descArg)) {
-    // Compile obj → externref
-    const objType = compileExpression(ctx, fctx, objArg);
-    if (!objType) return null;
-    if (objType.kind === "ref" || objType.kind === "ref_null") {
-      fctx.body.push({ op: "extern.convert_any" } as Instr);
-    } else if (objType.kind !== "externref") {
-      coerceType(ctx, fctx, objType, { kind: "externref" });
-    }
-    // Compile prop → externref
-    const propType = compileExpression(ctx, fctx, propArg, { kind: "externref" });
-    if (propType && propType.kind !== "externref") {
-      coerceType(ctx, fctx, propType, { kind: "externref" });
-    } else if (!propType) {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    // Compile descArg → externref (WasmGC struct or plain object both work;
-    // runtime helper handles both via struct-aware getField).
-    const descType = compileExpression(ctx, fctx, descArg);
-    if (descType) {
-      if (descType.kind === "ref" || descType.kind === "ref_null") {
-        fctx.body.push({ op: "extern.convert_any" } as Instr);
-      } else if (descType.kind !== "externref") {
-        coerceType(ctx, fctx, descType, { kind: "externref" });
-      }
-    } else {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    const dpDescIdx = ensureLateImport(
+    const init = descriptorInitializerForIdentifier(ctx, descArg);
+    return emitDefinePropertyDescRuntime(
       ctx,
-      "__defineProperty_desc",
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
+      fctx,
+      objArg,
+      propArg,
+      descArg,
+      init ? descriptorUndefinedFields(init) : [],
     );
-    flushLateImportShifts(ctx, fctx);
-    if (dpDescIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: dpDescIdx });
-    } else {
-      fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  // (#1629) Explicit-`undefined` descriptor fields (e.g. `{ value: undefined }`,
+  // `{ get: undefined }`) need the runtime __defineProperty_desc path so the
+  // field is recorded as PRESENT (not omitted) per ToPropertyDescriptor. That
+  // path emits the `__defineProperty_desc` / `__extern_set` JS-host imports,
+  // which are refused in `--target standalone` (#1472 Phase B) and would turn
+  // every such inline literal into a compile_error. The standalone fast path
+  // (struct.set + flag table) already compiles these correctly — origin/main
+  // passed all of test/built-ins/Object/define*({value:undefined}) in
+  // standalone via that path — so only take the host-runtime branch when a JS
+  // host is available. JS-host mode keeps the precise presence-bit behavior.
+  if (!ctx.standalone) {
+    const explicitUndefinedFields = descriptorUndefinedFields(descArg);
+    if (explicitUndefinedFields.length > 0) {
+      return emitDefinePropertyDescRuntime(ctx, fctx, objArg, propArg, descArg, explicitUndefinedFields);
     }
-    return { kind: "externref" };
   }
 
   // Check if obj is a struct type with the given field
@@ -1730,6 +1866,8 @@ function emitExternDefinePropertyValue(
   descEnumerable: boolean | undefined,
   descConfigurable: boolean | undefined,
 ): ValType | null {
+  markRuntimeDefinedProperty(ctx, objArg, propArg);
+
   // Compile obj WITHOUT externref hint to get the raw Wasm type.
   // For vec structs (e.g. string[], number[]) coerceType would call __make_iterable,
   // which creates a NEW JS array on every call — breaking sidecar property descriptor
@@ -1929,40 +2067,32 @@ function emitExternDefinePropertyNoValue(
   // For accessor descriptors (get/set), skip compiling descArg for side effects —
   // we'll compile getter/setter directly as JS-callable callbacks below.
   const isAccessorDesc = !!(getNode || setNode || getExpr || setExpr);
-  // Early compute isKnownStructField to decide descriptor side effects.
-  // For struct fields, the accessor path below is skipped, so we must still
-  // compile the descriptor for side effects even when isAccessorDesc=true.
-  const _earlyObjTsType = ctx.checker.getTypeAtLocation(objArg);
-  const _earlyStructName =
-    resolveStructName(ctx, _earlyObjTsType) ||
-    (ts.isIdentifier(objArg) ? ctx.widenedVarStructMap.get(objArg.text) : undefined);
-  const _earlyPropName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
-  const _earlyStructTypeIdx = _earlyStructName ? ctx.structMap.get(_earlyStructName) : undefined;
-  const _earlyFields = _earlyStructName ? ctx.structFields.get(_earlyStructName) : undefined;
-  const _earlyFieldIdx = _earlyFields && _earlyPropName ? _earlyFields.findIndex((f) => f.name === _earlyPropName) : -1;
-  const _earlyIsKnownStructField =
-    _earlyStructTypeIdx !== undefined && _earlyFields !== undefined && _earlyFieldIdx >= 0;
-  if (!isAccessorDesc || _earlyIsKnownStructField) {
+  if (!isAccessorDesc) {
     // Compile descriptor for side effects:
-    // - always for non-accessor descriptors
-    // - also for accessor descriptors on struct fields (accessor path is skipped for structs)
+    // - non-accessor descriptors are applied through the flag-only runtime
+    //   helper or compile-time flag table after descriptor evaluation.
+    // - accessor descriptors compile their getter/setter operands directly in
+    //   the accessor runtime branch below.
     const descType = compileExpression(ctx, fctx, descArg);
     if (descType) fctx.body.push({ op: "drop" });
   }
 
-  // For externref objects (or non-struct GC types like arrays), call __defineProperty_value
-  // with no value (flags without bit 7). This ensures runtime validation of property descriptors.
-  // We check if the object is a known struct type — if not, delegate to runtime (#856).
+  // For externref objects (or non-struct GC types like arrays), call the runtime
+  // helper. Accessor descriptors also need the runtime path even when the key is
+  // a known struct field: the sidecar is the only store that compiled reads can
+  // consult for `get: identifierRef` / `set: identifierRef` descriptors.
   const objTsType = ctx.checker.getTypeAtLocation(objArg);
+  const _staticStructName = resolveStructName(ctx, objTsType);
   const _structName =
-    resolveStructName(ctx, objTsType) ||
-    (ts.isIdentifier(objArg) ? ctx.widenedVarStructMap.get(objArg.text) : undefined);
+    _staticStructName || (ts.isIdentifier(objArg) ? ctx.widenedVarStructMap.get(objArg.text) : undefined);
   const _propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
   const _structTypeIdx = _structName ? ctx.structMap.get(_structName) : undefined;
   const _fields = _structName ? ctx.structFields.get(_structName) : undefined;
   const _fieldIdx = _fields && _propName ? _fields.findIndex((f) => f.name === _propName) : -1;
-  const isKnownStructField = _structTypeIdx !== undefined && _fields !== undefined && _fieldIdx >= 0;
-  if (!isKnownStructField && propLocal !== undefined) {
+  const isKnownStructField =
+    _staticStructName !== undefined && _structTypeIdx !== undefined && _fields !== undefined && _fieldIdx >= 0;
+  if ((!isKnownStructField || isAccessorDesc) && propLocal !== undefined) {
+    markRuntimeDefinedProperty(ctx, objArg, propArg);
     const propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
 
     // Compile-time tracking
@@ -2138,7 +2268,11 @@ function emitExternDefinePropertyNoValue(
   // (struct fields don't support property attributes)
   const propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
   if (propName && ts.isObjectLiteralExpression(descArg)) {
-    const isAccessor = !!(getNode || setNode);
+    // #1629: treat identifier-reference accessors (get/set: fnRef) as accessor
+    // descriptors too, not just inline get/set methods — `isAccessorDesc`
+    // includes getExpr/setExpr. #1718's applyDescriptorFlags below preserves
+    // omitted writable/enumerable/configurable on partial redefine.
+    const isAccessor = isAccessorDesc;
     const varName = ts.isIdentifier(objArg) ? objArg.text : undefined;
     if (varName) {
       const key = `${varName}:${propName}`;

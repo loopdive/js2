@@ -1,9 +1,9 @@
 ---
 id: 1712
 title: "acceptance: compiled acorn parses a representative .js with AST structurally equal to node-acorn"
-status: ready
+status: in-progress
 created: 2026-05-29
-updated: 2026-06-02
+updated: 2026-06-10
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -76,3 +76,65 @@ surfaces. The optimistic case — given the known blockers are cleared — is th
 - Status starts `backlog`; the tech lead flips it to `ready` once the blocking
   issues merge. Do NOT dispatch a dev to "make #1712 pass" directly — it is an
   integration gate, satisfied by fixing its dependencies.
+
+## Dogfood lap 2026-06-10 (fable-1712, main 6efc0d279)
+
+Prior attempt: **Codex PR #1293** (symphony/1712) implemented the full
+acceptance in one 1,700-line PR, but is CONFLICTING with main, stale since
+2026-06-08, and its own equivalence-gate found **24 new regressions** from its
+broad codegen edits (typeof-member, computed properties, shape-inference,
+refcast fallback, destructuring initializers) — violating acceptance #5.
+Treated as superseded; this lap re-fixes the blockers minimally off current
+main, one root cause per slice.
+
+### Blocker 1 — invalid Wasm: stale module-global index in `__closure_86` (FIXED, this PR)
+
+`pnpm run dogfood:acorn` on 6efc0d279: compile succeeds, binary INVALID —
+`f64.trunc[0] expected type f64, found global.get of type (ref null 1)`.
+
+**Root cause** (not the #1690/#1839 surface — a NEW orphan-buffer window):
+`compileIfStatement` (`src/codegen/statements/control-flow.ts`) finishes the
+then branch, then raw-swaps `fctx.body = []` for the else branch. The
+completed then-buffer survives only in the `thenInstrs` local — unreachable
+by `fixupModuleGlobalIndices` (and the func-idx shifters). When the else
+branch registers a brand-new string constant (acorn: a property null-throw
+TypeError message — codegen-generated, so not pre-collected by the module
+scan), the late `string_constants` import global shifts every module-global
+index +1, but the detached then-buffer's `global.get`s stay stale. In acorn,
+`return this.parseFunction(fNode, FUNC_STATEMENT | FUNC_NULLABLE_ID, …)`
+(dist line 1855) sits in exactly such a then branch; its stale reads landed
+on the neighbouring globals (one a `(ref null $array)`) → invalid Wasm.
+
+**Fix** (2 sites):
+1. `compileIfStatement` parks `thenInstrs` in `fctx.savedBodies` for the
+   else-compilation window (savedBodies is walked by every late-import
+   shifter), unparked LIFO before assembling the `if` instr.
+2. `fixupModuleGlobalIndices` (`src/codegen/registry/imports.ts`) now also
+   walks `ctx.liveBodies` — parity with `addStringImports`/`addUnionImports`
+   (#1384); the #779d destructuring branch buffers register there expecting
+   "every shift path" to walk them, but the *global*-index fixup never did.
+
+Regression pin: `tests/issue-1712-ifelse-global-shift.test.ts` (verified red
+on unfixed tree by reverse-applying the fix, green with it).
+
+Result: acorn binary now **validates** (835,680 bytes).
+
+### Blocker 2 — instantiation: `function.prototype` host bridge (NEXT)
+
+With the binary valid, instantiation fails in module-init:
+`Object.defineProperties called on non-object` (acorn dist 685:
+`Object.defineProperties(Parser.prototype, prototypeAccessors)`).
+`<fn>.prototype` on a function-style constructor compiles to
+`__extern_get(closureStruct→externref, "prototype")` which has no sidecar
+entry and no `__sget_prototype` export → undefined. This is the known
+function.prototype host-bridge gap (#1340 recon — escalated NEEDS-SPEC).
+25-line repro: `var P = function P(x){this.x=x}; P.prototype.m =
+function(){…}; Object.defineProperties(P.prototype, …); new P(1).m()` —
+all three flows fail (`m is not a function` / defineProperties non-object).
+
+Bridge sketch (JS-host lap-1 scope per the acceptance note): vivify a
+sidecar `prototype` object on closure structs in `__extern_get`; link
+functor instances → ctor closure at `new`-site codegen; `_wrapForHost` get
+trap falls back to the ctor's vivified proto and threads `this` via
+`__call_fn_method_N` (#1636-S1). Acorn's `var pp$N = Parser.prototype;
+pp$N.method = fn` aliasing is satisfied by the vivified object's identity.

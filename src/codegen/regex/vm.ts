@@ -55,6 +55,11 @@ function isLineTerminator(c: number): boolean {
   return c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029;
 }
 
+/** §22.2.2.6 IsWordChar (ASCII; Unicode case folding lands with `u` in 2d). */
+function isWordChar(c: number): boolean {
+  return (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || c === 0x5f || (c >= 0x61 && c <= 0x7a);
+}
+
 /**
  * Run `prog` against `input` starting at `startIdx`. Returns the filled
  * capture array on a match (anchored at `startIdx`), or null on no match /
@@ -147,6 +152,50 @@ export function runAt(
         // before a line terminator (§22.2.2.7).
         if (sp === len || (a !== 0 && isLineTerminator(input.charCodeAt(sp)))) pc++;
         else failed = true;
+        break;
+      }
+      case ReOp.WBOUND: {
+        // a = negated (`\B`). Word boundary: exactly one of the neighbouring
+        // code units is a word char (§22.2.2.6); out-of-bounds neighbours are
+        // non-word.
+        const before = sp > 0 ? isWordChar(input.charCodeAt(sp - 1)) : false;
+        const after = sp < len ? isWordChar(input.charCodeAt(sp)) : false;
+        const boundary = before !== after;
+        if (a !== 0 ? !boundary : boundary) pc++;
+        else failed = true;
+        break;
+      }
+      case ReOp.BACKREF: {
+        // a = group index, b = case-insensitive. An unset group matches the
+        // empty string (§22.2.2.9 BackreferenceMatcher step 3).
+        const gs = caps[2 * a]!;
+        const ge = caps[2 * a + 1]!;
+        if (gs < 0 || ge < 0) {
+          pc++;
+          break;
+        }
+        const blen = ge - gs;
+        if (sp + blen > len) {
+          failed = true;
+          break;
+        }
+        let ok = true;
+        for (let j = 0; j < blen; j++) {
+          let c1 = input.charCodeAt(gs + j);
+          let c2 = input.charCodeAt(sp + j);
+          if (b !== 0) {
+            c1 = asciiFold(c1);
+            c2 = asciiFold(c2);
+          }
+          if (c1 !== c2) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) {
+          sp += blen;
+          pc++;
+        } else failed = true;
         break;
       }
       case ReOp.MATCH: {

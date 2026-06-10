@@ -37,6 +37,14 @@ export enum ReOp {
   EOL = 8,
   /** `[CHARI, foldedCodeUnit, 0]` — match one code unit, ASCII-case-insensitive. */
   CHARI = 9,
+  /** `[WBOUND, negated, 0]` — assert a word boundary (`\b`; `\B` when
+   *  `negated`=1). Word characters are `[0-9A-Za-z_]` (§22.2.2.6 IsWordChar,
+   *  ASCII — Unicode case folding lands with the `u` flag in 2d). #1912. */
+  WBOUND = 10,
+  /** `[BACKREF, groupIdx, caseInsensitive]` — match the text captured by group
+   *  `groupIdx` (§22.2.2.9 BackreferenceMatcher). An unset group matches the
+   *  empty string. `caseInsensitive`=1 compares ASCII-folded units. #1912. */
+  BACKREF = 11,
 }
 
 /** Slots per instruction in the flat program array. */

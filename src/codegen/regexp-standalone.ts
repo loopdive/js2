@@ -21,7 +21,9 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
-import { ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
+import { ensureNativeStringHelpers, nativeStringType, stringConstantExternrefInstrs } from "./native-strings.js";
+import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import {
   ensureRegexCaptureArray,
   ensureRegexReplace,
@@ -499,6 +501,46 @@ export function compileStandaloneRegExpLiteral(
   return compileStandaloneRegExpPattern(ctx, fctx, pattern, flags, node);
 }
 
+/**
+ * Genuine (pattern, flags) SyntaxErrors vs. engine limitations (#1912).
+ *
+ * The compiler runs on a JS host whose `RegExp` constructor is a spec-exact
+ * validity oracle: any pair the host rejects with a SyntaxError is invalid per
+ * §22.2.3.2 and must throw a *runtime* SyntaxError when the compiled
+ * `new RegExp(...)` evaluates — not fail the whole compile (test262's
+ * S15.10.1/S15.10.2.15 families catch exactly this). Host-VALID patterns our
+ * matcher can't handle stay compile-time narrowed refusals.
+ */
+function hostRegExpSyntaxErrorMessage(pattern: string, flags: string): string | null {
+  try {
+    // eslint-disable-next-line no-new
+    new RegExp(pattern, flags);
+    return null;
+  } catch (e) {
+    if (e instanceof SyntaxError) return e.message;
+    return e instanceof Error ? e.message : "Invalid regular expression";
+  }
+}
+
+/**
+ * Lower an invalid `new RegExp(...)` to a runtime `throw new SyntaxError(msg)`
+ * (#1912). The trailing `unreachable` makes the post-throw stack polymorphic,
+ * so the claimed `$NativeRegExp` result type validates without materializing a
+ * struct — downstream creation-site codegen (e.g. an `.exec` chained on the
+ * receiver) emits normally as dead code.
+ */
+function emitThrowRegExpSyntaxError(ctx: CodegenContext, fctx: FunctionContext, message: string): ValType {
+  emitWasiErrorConstructor(ctx, "SyntaxError", 1);
+  addStringConstantGlobal(ctx, message);
+  const ctorIdx = ctx.funcMap.get("__new_SyntaxError")!;
+  const tagIdx = ensureExnTag(ctx);
+  for (const instr of stringConstantExternrefInstrs(ctx, message)) fctx.body.push(instr);
+  fctx.body.push({ op: "call", funcIdx: ctorIdx });
+  fctx.body.push({ op: "throw", tagIdx } as Instr);
+  fctx.body.push({ op: "unreachable" } as Instr);
+  return { kind: "ref", typeIdx: ensureStandaloneRegExpStruct(ctx) };
+}
+
 export function compileStandaloneRegExpConstructor(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -518,6 +560,15 @@ export function compileStandaloneRegExpConstructor(
   if (flags === null) {
     reportStandaloneRegExpUnsupported(ctx, flagsArg, "dynamic constructor flags");
     return null;
+  }
+
+  // §22.2.3.2: an invalid static pattern/flags pair throws SyntaxError when
+  // the constructor call evaluates — emit the runtime throw, not a compile
+  // refusal (#1912). Regex *literals* keep the compile-time diagnostic since
+  // an invalid literal is an early error.
+  const syntaxMsg = hostRegExpSyntaxErrorMessage(pattern ?? "", flags ?? "");
+  if (syntaxMsg !== null && hasStandaloneRegExpEngine(ctx)) {
+    return emitThrowRegExpSyntaxError(ctx, fctx, syntaxMsg);
   }
 
   return compileStandaloneRegExpPattern(ctx, fctx, pattern ?? "", flags ?? "", node);

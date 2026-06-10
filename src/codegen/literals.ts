@@ -14,7 +14,7 @@
  */
 
 import ts from "typescript";
-import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import {
   compileArrowAsCallback,
@@ -24,7 +24,7 @@ import {
   promoteAccessorCapturesToGlobals,
 } from "./closures.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -2405,9 +2405,16 @@ export function compileArrayLiteral(
   const firstElem = firstSignificantElem ?? expr.elements[0]!;
   if (ts.isSpreadElement(firstElem)) {
     const spreadType = ctx.checker.getTypeAtLocation(firstElem.expression);
-    const typeArgs = ctx.checker.getTypeArguments(spreadType as ts.TypeReference);
-    const innerType = typeArgs[0];
-    elemWasm = innerType ? resolveWasmType(ctx, innerType) : { kind: "f64" };
+    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && isStringType(spreadType)) {
+      // (#1470) String spread iterates code points (§22.1.5.1) — each
+      // element is a single-code-point string. Must match the element type
+      // `__str_to_char_vec` produces (same key as `__str_split`'s string[]).
+      elemWasm = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    } else {
+      const typeArgs = ctx.checker.getTypeArguments(spreadType as ts.TypeReference);
+      const innerType = typeArgs[0];
+      elemWasm = innerType ? resolveWasmType(ctx, innerType) : { kind: "f64" };
+    }
   } else if (ts.isOmittedExpression(firstElem) || _isUndefinedLike(firstElem)) {
     // All elements are omitted or undefined-like — consult the contextual type
     // to choose an element kind so destructuring defaults fire correctly (#1553e).
@@ -2508,6 +2515,40 @@ export function compileArrayLiteral(
     if (ts.isSpreadElement(el)) {
       const srcType = compileExpression(ctx, fctx, el.expression);
       if (!srcType) continue;
+      if (
+        (srcType.kind === "ref" || srcType.kind === "ref_null") &&
+        ctx.nativeStrings &&
+        ctx.anyStrTypeIdx >= 0 &&
+        (srcType.typeIdx === ctx.anyStrTypeIdx || srcType.typeIdx === ctx.nativeStrTypeIdx)
+      ) {
+        // (#1470) Spread of a native string — previously this fell into the
+        // generic vec-struct branch below, whose getArrTypeIdxFromVec lookup
+        // fails for the string struct and silently contributed NOTHING (the
+        // result array stayed empty). Materialize the §22.1.5.1 code-point
+        // vec in pure Wasm instead.
+        const { funcIdx: toCharVecIdx, vecTypeIdx: nstrVecTypeIdx } = ensureStrToCharVecHelper(ctx);
+        if (vecTypeIdx !== nstrVecTypeIdx) {
+          // Result element type is not string (mixed literal like
+          // `[1, ..."ab"]` whose first-element heuristic picked f64) —
+          // copying string refs into that array would be invalid Wasm.
+          // Preserve the pre-existing skip behavior for this rare shape.
+          fctx.body.push({ op: "drop" });
+          continue;
+        }
+        if (srcType.kind === "ref_null") {
+          fctx.body.push({ op: "ref.as_non_null" } as Instr);
+        }
+        fctx.body.push({ op: "call", funcIdx: toCharVecIdx });
+        const srcLocal = allocLocal(fctx, `__spread_str_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: nstrVecTypeIdx,
+        });
+        fctx.body.push({ op: "local.tee", index: srcLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: nstrVecTypeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "i32.add" });
+        spreadLocals.push({ local: srcLocal, elemIdx: i, srcVecTypeIdx: nstrVecTypeIdx });
+        continue;
+      }
       if (srcType.kind === "externref") {
         // #1514 — Spread of a JS iterable (Set, Map, generator, Array, etc.)
         // arriving as externref. Materialize into a wasm vec matching the

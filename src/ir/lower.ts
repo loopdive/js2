@@ -1725,9 +1725,13 @@ export function lowerIrFunctionBody<S>(
       // ensures this case only runs in native-strings mode (host-strings
       // mode falls through to forof.iter).
       case "forof.string": {
+        // (#1470) __str_charAt_cp — the code-POINT charAt. §22.1.5.1 String
+        // iteration yields code points: a well-formed surrogate pair is ONE
+        // 2-code-unit element. The cursor advances by the element's `len`
+        // (1, or 2 for a pair) below instead of a fixed +1.
         const charAtIdx = resolver.resolveFunc({
           kind: "func",
-          name: "__str_charAt",
+          name: "__str_charAt_cp",
         });
         // The AnyString struct's `len` field is at index 0 (matches
         // `nativeStringType` in src/codegen/native-strings.ts).
@@ -1779,7 +1783,7 @@ export function lowerIrFunctionBody<S>(
         // #1584 (a3): control-flow ops route through the trait.
         emitter.emitBrIf(1, loopBody as unknown as S);
 
-        // element = __str_charAt(str, counter)
+        // element = __str_charAt_cp(str, counter)
         loopBody.push({ op: "local.get", index: slotWasmIdx(instr.strSlot) });
         loopBody.push({
           op: "local.get",
@@ -1805,12 +1809,18 @@ export function lowerIrFunctionBody<S>(
           }
         }
 
-        // counter = counter + 1
+        // counter = counter + element.len — the element is the whole code
+        // point (1 code unit, or 2 for a surrogate pair), and it is never
+        // empty inside the bounds-checked loop, so this always advances.
         loopBody.push({
           op: "local.get",
           index: slotWasmIdx(instr.counterSlot),
         });
-        loopBody.push({ op: "i32.const", value: 1 });
+        loopBody.push({
+          op: "local.get",
+          index: slotWasmIdx(instr.elementSlot),
+        });
+        loopBody.push({ op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 });
         loopBody.push({ op: "i32.add" });
         loopBody.push({
           op: "local.set",
