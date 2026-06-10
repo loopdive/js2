@@ -104,3 +104,33 @@ late-import flushing) is what exposes it.
 - Emit-time index validation produces a named error with location for any
   future `-1`/`undefined` index (no more opaque encoder RangeError).
 - Bucket reduced from 497 toward 0; no host-mode regressions.
+
+## Producer diagnosis (2026-06-10, from the #1923 always-on validation — sd-fable-emit)
+
+The #1923 PR landed inline emit-time index validation; the minimal repro now
+fails with the named error instead of the raw RangeError:
+
+```
+Codegen error: global index out of range — -1 (valid: [0, 3)) at function 'MyArr_new'. …
+```
+
+**Confirmed producer for the builtin-subclass cluster:** under
+standalone/nativeStrings, `addStringConstantGlobal`
+(`src/codegen/registry/imports.ts:74`) stores the documented **-1 sentinel**
+in `ctx.stringGlobalMap` ("no host import — materialize inline at use
+sites", #1174). `emitSetSubclassProto` (`src/codegen/class-bodies.ts:230-254`)
+then reads `ctx.stringGlobalMap.get(subName/parentName)` and guards only
+`undefined` — NOT the -1 sentinel — before emitting
+`{ op: "global.get", index: subNameGlobal }` into the if/else arm. Note the
+flow also implies `ensureLateImport("__set_subclass_proto", …)` returned a
+defined index under `--target standalone` (the early standalone return did
+not trigger) — check whether that import should exist standalone at all.
+
+**Fix shape:** in `emitSetSubclassProto`, treat `-1` like the comment in
+`addStringConstantGlobal` prescribes (use the native string materialization
+path, or skip the proto adjustment + record a standalone fallback), and
+audit every other `stringGlobalMap.get` consumer for the same missing
+sentinel check — the Object.create / Iterator.prototype / DisposableStack
+clusters in this bucket are likely the same pattern. `grep -n
+"stringGlobalMap.get" src/codegen/` and check each use site emits
+`global.get` only for `idx >= 0`.

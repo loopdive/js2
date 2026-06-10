@@ -1,7 +1,7 @@
 ---
 id: 1919
 title: "standalone invalid-Wasm residual bucket after #1623/#1666/#1677: async-gen i64 ABI, __obj_find externref key, __str_flatten, arguments arity (~1,135 tests)"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-06-10
 updated: 2026-06-10
@@ -96,6 +96,55 @@ three signatures alone recovers ~530 tests.
 3. Add a regression gate: any `invalid Wasm binary` row in the standalone
    lane should be triaged as a P1 compiler bug class, distinct from
    `Codegen error:` refusals (see #1853 hard-error stability bucket).
+
+## Root cause — `__obj_find` sub-bucket (146 tests) — FIXED (slice 1)
+
+**Mechanism (confirmed by instrumentation, not just WAT reading):** a
+pending-late-import-batch over-shift, *not* a bad hash-key type. The key is
+externref by signature; the probe call `call $__obj_hash` was simply pointing
+one function past `__obj_hash` (at `$__new_plain_object`, which returns
+externref → `i32.and[0] expected i32, found call of type externref`).
+
+Sequence (representative test, instrumented on main @ 8ba0a82b6):
+
+1. Codegen calls `ensureLateImport(A)` for some name that falls through to
+   `addImport` — this **defers** the index shift by recording
+   `ctx.pendingLateImportShift = {importsBefore: 74}` (`numImportFuncs` → 75).
+2. Within the same batch window, `ensureLateImport("__extern_get_idx")`
+   routes to `ensureObjectRuntime(ctx)` (standalone open-object runtime).
+   `registerNative` bakes every helper's funcIdx as
+   `ctx.numImportFuncs (=75, post-batch) + position` — **final-correct** values
+   (`__obj_hash` = 157), into both `funcMap` and the sibling-call instruction
+   literals (`__obj_find`/`__obj_insert` → `call 157`).
+3. The caller then runs `flushLateImportShifts` → `shiftLateImportIndices`
+   bumps every funcIdx ≥ 74 by +1 — **including the just-baked 157s** → 158,
+   while the function's actual emitted index stays 157. Every internal
+   object-runtime call and `funcMap` entry is now one too high. Helpers
+   registered *before* the batch (e.g. `__str_flatten`) baked stale-low values
+   and were *corrected* by the same flush — which is why only the
+   object-runtime-internal calls misresolve.
+4. `eliminateDeadImports` later remaps everything uniformly (75→16 imports),
+   preserving the relative off-by-one into the final binary.
+
+**Fix:** end any pending batch *before* native defined-function registration,
+so registration always happens in a settled index regime. Two guards:
+`flushLateImportShifts(ctx, null)` at the top of `ensureObjectRuntime`
+(covers the `ensureLateImport` route AND `ensureObjVecBuilders` & co.) and at
+the top of `addUnionImports` (covers the standalone `__is_truthy`/box/typeof
+native registration — likely the same mechanism behind the truthiness
+`if[0] expected i32, found call of type externref` sub-bucket — and the
+host-mode flavor where the deferred flush's `added` over-counts imports that
+`addUnionImports`' internal shift already handled). `shiftLateImportIndices`
+/ `flushLateImportShifts` now accept `fctx: null` for these fctx-less flushes
+— same body coverage (`mod.functions` + `currentFunc` + `funcStack` +
+`liveBodies` + `parentBodiesStack` + `pendingInitBody`) that
+`addUnionImports`' own internal shift has always relied on.
+
+**Why not "shift-aware registration" instead** (registering with
+`importsBefore`-regime indices and letting the flush correct them): callers of
+`ensureLateImport` hold the returned funcIdx as a plain number and push it
+*after* flushing — a stale-low return value would never be repaired. Ending
+the batch first keeps the "funcMap values are always current" invariant.
 
 ## Acceptance criteria
 

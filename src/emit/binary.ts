@@ -87,73 +87,166 @@ export function computeRecGroups(types: TypeDef[]): Array<[number, number]> {
 }
 
 /**
- * Validate that every function reference (`call` / `return_call` / `ref.func`)
- * in the module targets a real function slot `[0, numImportFuncs + funcs)`.
+ * #1923 — always-on emit-time index validation (the durable safety net for
+ * the late-import index-shift class; instances #1809/#1839/#1602/#1886/
+ * #1666/#1677/#1915).
  *
- * This is the durable safety net for the late-import function-index-shift class
- * (#1809/#1839/#1602/#1886/@@toPrimitive/`__str_flatten`): a `funcIdx` captured
- * into a JS local before a deferred `flushLateImportShifts`/`addUnionImports`
- * shift goes stale-low (off-by-`delta`), and a failed `funcMap.get` baked into a
- * `call` lands as `-1`. The first used to surface as a silently-valid-but-wrong
- * index → `expected externref, found i32` deep inside wasmtime on a random
- * test262 shard; the second as the raw encoder's opaque `u32 out of range: -1`.
- * Both are now a single named, pinpointed codegen error at emit time.
+ * The failure mode: an index captured into a JS local before a deferred
+ * `flushLateImportShifts`/`addUnionImports`/`addStringImports` shift goes
+ * stale-low (off-by-`delta`), or a failed map lookup bakes `-1`/`undefined`
+ * into an instruction. Stale-low used to surface as a silently-valid-but-
+ * wrong index → `expected externref, found i32` deep inside wasmtime on a
+ * random test262 shard; `-1` as the raw encoder's opaque
+ * `u32 out of range: -1`. #1915 proved a separate funcref-only walker's
+ * coverage was insufficient — its repro's poison was a `global.get -1`, a
+ * space that walker never visited.
  *
- * Walks defined-function bodies, global initializers, element-segment offsets,
- * and `declaredFuncRefs`. Pure read-only validation; throws on the first bad ref.
+ * Design: the checks live INLINE at the encoder sites that serialize each
+ * index, not in a separate pre-walk. That gives (a) coverage by construction
+ * — every ValType funnels through `encodeValType`, every instruction
+ * immediate through `encodeInstr`, so a new emission site cannot dodge the
+ * guard — and (b) near-zero cost: the encoder already dispatches per-op, so
+ * each index pays only a null-check plus a range compare (a separate full
+ * walk measured ~15% of emit time on the playground-examples corpus; inline
+ * is <1%). `valCtx` is set only inside `emitBinaryWithSourceMap` (cleared in
+ * a finally); the relocatable object emitter (`src/emit/object.ts`) reuses
+ * the encode helpers with symbolic placeholder indices and intentionally
+ * runs unchecked.
+ *
+ * Spaces covered: functions (call/return_call/ref.func, element segments,
+ * declaredFuncRefs, start, exports), types (function/import/tag signatures,
+ * call_indirect/call_ref/struct/array immediates, block types, supertypes,
+ * ValType ref/ref_null in params/results/locals/fields/globals), heap-type
+ * s33 positions (ref.null/ref.cast/ref.cast_null/ref.test — negative
+ * abstract heap-type codes are legal there, but `-1` never is: 0x7f is not a
+ * heap type, and a `-1` heap type is always a failed lookup, see #1338),
+ * globals, locals (against params+locals), exception tags (throw/try-catch/
+ * exports), tables, struct field indices, and memory exports.
+ *
+ * Pure read-only validation — when it does not throw, the emitted bytes are
+ * identical to an unvalidated emit. Sound by construction: every in-range
+ * index is accepted, so it cannot reject a module the encoder would have
+ * serialized into a structurally valid binary. Always-on since #1923; set
+ * JS2WASM_SKIP_INDEX_VALIDATION=1 to bypass (escape hatch only).
  */
-function validateFuncRefs(mod: WasmModule, numImportFuncs: number): void {
-  const maxFuncIdx = numImportFuncs + mod.functions.length; // exclusive upper bound
+interface EmitValidationCtx {
+  numFuncs: number;
+  numTypes: number;
+  numGlobals: number;
+  numTags: number;
+  numTables: number;
+  numMemories: number;
+  /**
+   * Flat type list for struct-field / signature resolution. Wasm type
+   * indices equal `mod.types` array positions only while the array is flat
+   * (no "rec" wrapper entries — codegen never pushes them today). If rec
+   * wrappers appear, this is null and the resolution-dependent checks
+   * (struct field bounds, local param counts) are skipped; the pure bound
+   * checks stay valid because `numTypes` counts nested entries.
+   */
+  flatTypes: TypeDef[] | null;
+  /** Human label for the structure currently being encoded. */
+  where: string;
+  /** params+locals of the function being encoded; -1 = unknown/const-expr context (skip local checks). */
+  maxLocals: number;
+}
 
-  const check = (funcIdx: number, where: string): void => {
-    if (!Number.isInteger(funcIdx) || funcIdx < 0 || funcIdx >= maxFuncIdx) {
-      throw new RangeError(
-        `Codegen error: function reference out of range — funcIdx ${funcIdx} ` +
-          `(valid: [0, ${maxFuncIdx})) at ${where}. This is the late-import ` +
-          `function-index-shift class: a captured funcIdx went stale across a ` +
-          `deferred shift, or a funcMap lookup failed and baked -1. Re-resolve ` +
-          `the funcIdx by name AFTER the last ensureLateImport/flushLateImportShifts.`,
-      );
-    }
-  };
+let valCtx: EmitValidationCtx | null = null;
 
-  const seen = new WeakSet<object>();
-  const walk = (instrs: Instr[] | undefined, where: string): void => {
-    if (!instrs || seen.has(instrs)) return;
-    seen.add(instrs);
-    for (const instr of instrs) {
-      const a = instr as {
-        op: string;
-        funcIdx?: number;
-        body?: Instr[];
-        then?: Instr[];
-        else?: Instr[];
-        catches?: { body?: Instr[] }[];
-        catchAll?: Instr[];
-      };
-      if ((a.op === "call" || a.op === "return_call" || a.op === "ref.func") && typeof a.funcIdx === "number") {
-        check(a.funcIdx, where);
-      }
-      if (Array.isArray(a.body)) walk(a.body, where);
-      if (Array.isArray(a.then)) walk(a.then, where);
-      if (Array.isArray(a.else)) walk(a.else, where);
-      if (Array.isArray(a.catches)) for (const c of a.catches) walk(c.body, where);
-      if (Array.isArray(a.catchAll)) walk(a.catchAll, where);
-    }
-  };
-
-  for (const f of mod.functions) {
-    walk(f.body, `function '${(f as { name?: string }).name ?? "?"}'`);
+function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
+  let numImportFuncs = 0;
+  let numImportGlobals = 0;
+  let numImportTags = 0;
+  let numImportTables = 0;
+  for (const imp of mod.imports) {
+    if (imp.desc.kind === "func") numImportFuncs++;
+    else if (imp.desc.kind === "global") numImportGlobals++;
+    else if (imp.desc.kind === "tag") numImportTags++;
+    else if (imp.desc.kind === "table") numImportTables++;
   }
-  for (const g of mod.globals) walk(g.init, `global '${(g as { name?: string }).name ?? "?"}' init`);
-  for (const elem of mod.elements) {
-    walk(elem.offset, "element-segment offset");
-    if (elem.funcIndices) {
-      for (const fi of elem.funcIndices) check(fi, "element-segment function list");
+  let typesAreFlat = true;
+  let numTypes = 0;
+  for (const t of mod.types) {
+    if (t.kind === "rec") {
+      typesAreFlat = false;
+      numTypes += t.types.length;
+    } else {
+      numTypes += 1;
     }
   }
-  for (const fi of mod.declaredFuncRefs) check(fi, "declared func ref");
-  if (mod.startFuncIdx !== undefined) check(mod.startFuncIdx, "start function");
+  return {
+    numFuncs: numImportFuncs + mod.functions.length,
+    numTypes,
+    numGlobals: numImportGlobals + mod.globals.length,
+    numTags: numImportTags + mod.tags.length,
+    numTables: numImportTables + mod.tables.length,
+    numMemories: mod.memories ? mod.memories.length : 0,
+    flatTypes: typesAreFlat ? mod.types : null,
+    where: "module",
+    maxLocals: -1,
+  };
+}
+
+function failIndex(space: string, value: unknown, max: number): never {
+  throw new RangeError(
+    `Codegen error: ${space} index out of range — ${String(value)} ` +
+      `(valid: [0, ${max})) at ${valCtx ? valCtx.where : "?"}. This is the late-import index-shift ` +
+      `class (#1923): a captured index went stale across a deferred ` +
+      `flushLateImportShifts/addUnionImports/addStringImports shift, or a map ` +
+      `lookup failed and baked -1/undefined. Re-resolve the index by name ` +
+      `AFTER the last shift, or make the producer refuse loudly.`,
+  );
+}
+
+function vIdx(space: string, value: number, max: number): void {
+  if (!Number.isInteger(value) || value < 0 || value >= max) failIndex(space, value, max);
+}
+
+/**
+ * s33 heap-type positions: non-negative values are concrete type indices;
+ * negative values are abstract heap-type codes (eq=-19, any=-18, …), which
+ * encode as a single signed-LEB byte, i.e. [-64, -2]. -1 is rejected even
+ * though it is negative: 0x7f is not a heap type, and -1 is exactly the
+ * failed-lookup poison value (#1338 "Unknown heap type -1").
+ */
+function vHeapType(value: number): void {
+  const max = (valCtx as EmitValidationCtx).numTypes;
+  if (!Number.isInteger(value) || value >= max || value < -64 || value === -1) {
+    failIndex("heap type", value, max);
+  }
+}
+
+/**
+ * Resolve a type index to its definition, unwrapping sub wrappers. Returns
+ * undefined when unresolvable — callers skip the check, never false-fire.
+ */
+function resolveTypeDefAt(typeIdx: number): TypeDef | undefined {
+  const types = (valCtx as EmitValidationCtx).flatTypes;
+  if (!types || typeIdx < 0 || typeIdx >= types.length) return undefined;
+  let t: TypeDef | undefined = types[typeIdx];
+  while (t && t.kind === "sub") t = t.type;
+  return t;
+}
+
+/** Resolved param count of a function's signature, or -1 when unresolvable. */
+function resolveParamCount(typeIdx: number): number {
+  const sig = resolveTypeDefAt(typeIdx);
+  return sig && sig.kind === "func" ? sig.params.length : -1;
+}
+
+/** struct.get/struct.set: type bound check + field bound check when the struct resolves. */
+function vStructField(typeIdx: number, fieldIdx: number, op: string): void {
+  vIdx("type", typeIdx, (valCtx as EmitValidationCtx).numTypes);
+  const td = resolveTypeDefAt(typeIdx);
+  if (td && td.kind === "struct" && (!Number.isInteger(fieldIdx) || fieldIdx < 0 || fieldIdx >= td.fields.length)) {
+    const saved = (valCtx as EmitValidationCtx).where;
+    (valCtx as EmitValidationCtx).where = `${saved} (${op} on type ${typeIdx})`;
+    try {
+      failIndex("struct field", fieldIdx, td.fields.length);
+    } finally {
+      (valCtx as EmitValidationCtx).where = saved;
+    }
+  }
 }
 
 /** Emit a complete Wasm binary from an IR module */
@@ -161,8 +254,24 @@ export function emitBinary(mod: WasmModule): Uint8Array {
   return emitBinaryWithSourceMap(mod).binary;
 }
 
-/** Emit a Wasm binary and collect source map entries */
+/**
+ * Emit a Wasm binary and collect source map entries.
+ *
+ * Arms the #1923 always-on index validation (see `EmitValidationCtx` above)
+ * for the duration of this emit and disarms it in a finally, so the encode
+ * helpers run unchecked for other callers (the relocatable object emitter).
+ * JS2WASM_SKIP_INDEX_VALIDATION=1 is an escape hatch only.
+ */
 export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
+  valCtx = process.env.JS2WASM_SKIP_INDEX_VALIDATION ? null : makeValidationCtx(mod);
+  try {
+    return emitBinaryWithSourceMapUnguarded(mod);
+  } finally {
+    valCtx = null;
+  }
+}
+
+function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
   const enc = new WasmEncoder();
   const sourceMapEntries: SourceMapEntry[] = [];
 
@@ -171,25 +280,6 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
   enc.bytes([0x01, 0x00, 0x00, 0x00]); // version 1
 
   const numImportFuncs = mod.imports.filter((i) => i.desc.kind === "func").length;
-
-  // Pre-emit guard: every `call`/`return_call`/`ref.func` funcIdx must point at a
-  // real function slot. Catches the recurring late-import index-shift class
-  // (#1809/#1839/#1602/#1886/@@toPrimitive) — a funcIdx captured into a JS local
-  // before a deferred shift goes stale-low or, on a failed funcMap lookup, lands
-  // as -1. Both used to surface only as an opaque `u32 out of range: -1` at the
-  // raw encoder, or (worse) as a silently valid-but-wrong index that became
-  // "expected externref, found i32" inside wasmtime on a test262 shard. This
-  // turns the whole class into a named, pinpointed codegen error at emit time.
-  //
-  // Opt-in (env-gated) so the default compile path is byte-for-byte unchanged —
-  // a diagnostic CI/devs enable, never a behaviour change that could false-fire
-  // on a long-tail construct. A pure range check is sound: any in-range index is
-  // accepted, so it cannot reject a valid module; it only converts the two
-  // already-broken outcomes above into an actionable message. Validated as a
-  // no-op across the issue-16xx/17xx/18xx + WASI corpus (0 fires).
-  if (process.env.JS2WASM_VALIDATE_FUNCREFS) {
-    validateFuncRefs(mod, numImportFuncs);
-  }
 
   // Type section
   if (mod.types.length > 0) {
@@ -205,11 +295,13 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
       s.u32(recGroups.length);
       for (const [start, end] of recGroups) {
         if (start === end) {
+          if (valCtx) valCtx.where = `type definition #${start}`;
           encodeTypeDef(mod.types[start]!, s);
         } else {
           s.byte(TYPE.rec);
           s.u32(end - start + 1);
           for (let i = start; i <= end; i++) {
+            if (valCtx) valCtx.where = `type definition #${i}`;
             encodeTypeDef(mod.types[i]!, s);
           }
         }
@@ -220,14 +312,23 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
   // Import section
   if (mod.imports.length > 0) {
     enc.section(SECTION.import, (s) => {
-      s.vector(mod.imports, (imp, e) => encodeImport(imp, e));
+      s.vector(mod.imports, (imp, e) => {
+        if (valCtx) valCtx.where = `import '${imp.module}.${imp.name}'`;
+        encodeImport(imp, e);
+      });
     });
   }
 
   // Function section (type indices for each function)
   if (mod.functions.length > 0) {
     enc.section(SECTION.function, (s) => {
-      s.vector(mod.functions, (f, e) => e.u32(f.typeIdx));
+      s.vector(mod.functions, (f, e) => {
+        if (valCtx) {
+          valCtx.where = `function '${f.name || "?"}' signature`;
+          vIdx("type", f.typeIdx, valCtx.numTypes);
+        }
+        e.u32(f.typeIdx);
+      });
     });
   }
 
@@ -269,6 +370,10 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
   if (mod.tags.length > 0) {
     enc.section(SECTION.tag, (s) => {
       s.vector(mod.tags, (tag, e) => {
+        if (valCtx) {
+          valCtx.where = `tag '${tag.name}'`;
+          vIdx("type", tag.typeIdx, valCtx.numTypes);
+        }
         e.byte(0x00); // attribute: exception (0)
         e.u32(tag.typeIdx);
       });
@@ -278,20 +383,33 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
   // Global section
   if (mod.globals.length > 0) {
     enc.section(SECTION.global, (s) => {
-      s.vector(mod.globals, (g, e) => encodeGlobal(g, e));
+      s.vector(mod.globals, (g, e) => {
+        if (valCtx) {
+          valCtx.where = `global '${g.name || "?"}' init`;
+          valCtx.maxLocals = -1; // const-expr context: no locals exist
+        }
+        encodeGlobal(g, e);
+      });
     });
   }
 
   // Export section
   if (mod.exports.length > 0) {
     enc.section(SECTION.export, (s) => {
-      s.vector(mod.exports, (exp, e) => encodeExport(exp, e, numImportFuncs));
+      s.vector(mod.exports, (exp, e) => {
+        if (valCtx) valCtx.where = `export '${exp.name}'`;
+        encodeExport(exp, e, numImportFuncs);
+      });
     });
   }
 
   // Start section — auto-run function on instantiation (#907)
   if (mod.startFuncIdx !== undefined) {
     enc.section(SECTION.start, (s) => {
+      if (valCtx) {
+        valCtx.where = "start function";
+        vIdx("function", mod.startFuncIdx!, valCtx.numFuncs);
+      }
       s.u32(mod.startFuncIdx!);
     });
   }
@@ -306,17 +424,29 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
       // Active element segments (table initializers)
       for (const elem of mod.elements) {
         s.byte(0x00); // active, table 0, funcref
+        if (valCtx) {
+          valCtx.where = "element-segment offset";
+          valCtx.maxLocals = -1; // const-expr context: no locals exist
+        }
         for (const instr of elem.offset) encodeInstr(instr, s);
         s.byte(OP.end);
         s.u32(elem.funcIndices.length);
-        for (const idx of elem.funcIndices) s.u32(idx);
+        if (valCtx) valCtx.where = "element-segment function list";
+        for (const idx of elem.funcIndices) {
+          if (valCtx) vIdx("function", idx, valCtx.numFuncs);
+          s.u32(idx);
+        }
       }
       // Declarative element segment for ref.func targets
       if (hasDeclaredRefs) {
         s.byte(0x03); // declarative, elemkind
         s.byte(0x00); // elemkind = funcref
         s.u32(mod.declaredFuncRefs.length);
-        for (const idx of mod.declaredFuncRefs) s.u32(idx);
+        if (valCtx) valCtx.where = "declared func ref";
+        for (const idx of mod.declaredFuncRefs) {
+          if (valCtx) vIdx("function", idx, valCtx.numFuncs);
+          s.u32(idx);
+        }
       }
     });
   }
@@ -330,6 +460,11 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
 
     codeSectionBody.u32(mod.functions.length); // vector count
     for (const f of mod.functions) {
+      if (valCtx) {
+        valCtx.where = `function '${f.name || "?"}'`;
+        const params = resolveParamCount(f.typeIdx);
+        valCtx.maxLocals = params >= 0 ? params + f.locals.length : -1;
+      }
       const bodyStartInSection = codeSectionBody.length;
       encodeFunctionWithSourceMap(f, codeSectionBody, bodyStartInSection, funcRelativeEntries);
     }
@@ -494,6 +629,9 @@ export function encodeTypeDef(t: TypeDef, enc: WasmEncoder): void {
         // Wrap in sub-type encoding for class inheritance
         enc.byte(t.final ? TYPE.sub_final : TYPE.sub);
         if (t.superTypeIdx >= 0) {
+          // superTypeIdx < 0 is the "root of hierarchy" sentinel — only a
+          // concrete (non-negative) supertype reference is range-checked.
+          if (valCtx) vIdx("supertype", t.superTypeIdx, valCtx.numTypes);
           enc.u32(1); // 1 supertype
           enc.u32(t.superTypeIdx);
         } else {
@@ -518,6 +656,7 @@ export function encodeTypeDef(t: TypeDef, enc: WasmEncoder): void {
       break;
     case "sub":
       if (t.superType !== null) {
+        if (valCtx) vIdx("supertype", t.superType, valCtx.numTypes);
         enc.byte(t.final ? TYPE.sub_final : TYPE.sub);
         enc.u32(1); // 1 supertype
         enc.u32(t.superType);
@@ -581,10 +720,12 @@ export function encodeValType(t: ValType, enc: WasmEncoder): void {
       enc.byte(TYPE.externref); // extern abstract heap type (-17 as s33)
       break;
     case "ref":
+      if (valCtx) vHeapType(t.typeIdx);
       enc.byte(TYPE.ref);
       enc.i32(t.typeIdx);
       break;
     case "ref_null":
+      if (valCtx) vHeapType(t.typeIdx);
       enc.byte(TYPE.ref_null);
       enc.i32(t.typeIdx);
       break;
@@ -613,6 +754,7 @@ export function encodeImport(imp: Import, enc: WasmEncoder): void {
   enc.name(imp.name);
   switch (imp.desc.kind) {
     case "func":
+      if (valCtx) vIdx("type", imp.desc.typeIdx, valCtx.numTypes);
       enc.byte(0x00);
       enc.u32(imp.desc.typeIdx);
       break;
@@ -634,6 +776,7 @@ export function encodeImport(imp: Import, enc: WasmEncoder): void {
       enc.byte(imp.desc.mutable ? 0x01 : 0x00);
       break;
     case "tag":
+      if (valCtx) vIdx("type", imp.desc.typeIdx, valCtx.numTypes);
       enc.byte(0x04); // import kind: tag
       enc.byte(0x00); // attribute: exception
       enc.u32(imp.desc.typeIdx);
@@ -649,6 +792,14 @@ export function encodeGlobal(g: GlobalDef, enc: WasmEncoder): void {
 }
 
 export function encodeExport(exp: WasmExport, enc: WasmEncoder, _numImportFuncs: number): void {
+  if (valCtx) {
+    const k = exp.desc.kind;
+    if (k === "func") vIdx("function", exp.desc.index, valCtx.numFuncs);
+    else if (k === "global") vIdx("global", exp.desc.index, valCtx.numGlobals);
+    else if (k === "table") vIdx("table", exp.desc.index, valCtx.numTables);
+    else if (k === "tag") vIdx("exception tag", exp.desc.index, valCtx.numTags);
+    else vIdx("memory", exp.desc.index, valCtx.numMemories);
+  }
   enc.name(exp.name);
   const kindByte =
     exp.desc.kind === "func"
@@ -720,6 +871,7 @@ export function encodeBlockType(bt: BlockType, enc: WasmEncoder): void {
       encodeValType(bt.type, enc);
       break;
     case "type":
+      if (valCtx) vIdx("block type", bt.typeIdx, valCtx.numTypes);
       enc.i32(bt.typeIdx);
       break;
   }
@@ -775,14 +927,20 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.return);
       break;
     case "call":
+      if (valCtx) vIdx("function", instr.funcIdx, valCtx.numFuncs);
       enc.byte(OP.call);
       enc.u32(instr.funcIdx);
       break;
     case "return_call":
+      if (valCtx) vIdx("function", instr.funcIdx, valCtx.numFuncs);
       enc.byte(OP.return_call);
       enc.u32(instr.funcIdx);
       break;
     case "call_indirect":
+      if (valCtx) {
+        vIdx("type", instr.typeIdx, valCtx.numTypes);
+        vIdx("table", instr.tableIdx, valCtx.numTables);
+      }
       enc.byte(OP.call_indirect);
       enc.u32(instr.typeIdx);
       enc.u32(instr.tableIdx);
@@ -794,22 +952,27 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.select);
       break;
     case "local.get":
+      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
       enc.byte(OP.local_get);
       enc.u32(instr.index);
       break;
     case "local.set":
+      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
       enc.byte(OP.local_set);
       enc.u32(instr.index);
       break;
     case "local.tee":
+      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
       enc.byte(OP.local_tee);
       enc.u32(instr.index);
       break;
     case "global.get":
+      if (valCtx) vIdx("global", instr.index, valCtx.numGlobals);
       enc.byte(OP.global_get);
       enc.u32(instr.index);
       break;
     case "global.set":
+      if (valCtx) vIdx("global", instr.index, valCtx.numGlobals);
       enc.byte(OP.global_set);
       enc.u32(instr.index);
       break;
@@ -1046,6 +1209,7 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.f64_convert_i32_u);
       break;
     case "ref.null":
+      if (valCtx) vHeapType(instr.typeIdx);
       enc.byte(OP.ref_null);
       enc.i32(instr.typeIdx);
       break;
@@ -1071,11 +1235,13 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.ref_eq);
       break;
     case "ref.cast":
+      if (valCtx) vHeapType(instr.typeIdx);
       enc.byte(GC.prefix);
       enc.byte(GC.ref_cast);
       enc.i32(instr.typeIdx);
       break;
     case "ref.cast_null":
+      if (valCtx) vHeapType(instr.typeIdx);
       enc.byte(GC.prefix);
       enc.byte(GC.ref_cast_null);
       enc.i32(instr.typeIdx);
@@ -1089,59 +1255,70 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(GC.extern_convert_any);
       break;
     case "ref.test":
+      if (valCtx) vHeapType(instr.typeIdx);
       enc.byte(GC.prefix);
       enc.byte(GC.ref_test);
       enc.i32(instr.typeIdx);
       break;
     case "struct.new":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.struct_new);
       enc.u32(instr.typeIdx);
       break;
     case "struct.get":
+      if (valCtx) vStructField(instr.typeIdx, instr.fieldIdx, "struct.get");
       enc.byte(GC.prefix);
       enc.byte(GC.struct_get);
       enc.u32(instr.typeIdx);
       enc.u32(instr.fieldIdx);
       break;
     case "struct.set":
+      if (valCtx) vStructField(instr.typeIdx, instr.fieldIdx, "struct.set");
       enc.byte(GC.prefix);
       enc.byte(GC.struct_set);
       enc.u32(instr.typeIdx);
       enc.u32(instr.fieldIdx);
       break;
     case "array.new":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.array_new);
       enc.u32(instr.typeIdx);
       break;
     case "array.new_fixed":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.array_new_fixed);
       enc.u32(instr.typeIdx);
       enc.u32(instr.length);
       break;
     case "array.new_default":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.array_new_default);
       enc.u32(instr.typeIdx);
       break;
     case "array.get":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.array_get);
       enc.u32(instr.typeIdx);
       break;
     case "array.get_s":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.array_get_s);
       enc.u32(instr.typeIdx);
       break;
     case "array.get_u":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.array_get_u);
       enc.u32(instr.typeIdx);
       break;
     case "array.set":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.array_set);
       enc.u32(instr.typeIdx);
@@ -1151,25 +1328,33 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(GC.array_len);
       break;
     case "array.copy":
+      if (valCtx) {
+        vIdx("type", instr.dstTypeIdx, valCtx.numTypes);
+        vIdx("type", instr.srcTypeIdx, valCtx.numTypes);
+      }
       enc.byte(GC.prefix);
       enc.byte(GC.array_copy);
       enc.u32(instr.dstTypeIdx);
       enc.u32(instr.srcTypeIdx);
       break;
     case "array.fill":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(GC.prefix);
       enc.byte(GC.array_fill);
       enc.u32(instr.typeIdx);
       break;
     case "ref.func":
+      if (valCtx) vIdx("function", instr.funcIdx, valCtx.numFuncs);
       enc.byte(OP.ref_func);
       enc.u32(instr.funcIdx);
       break;
     case "call_ref":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(OP.call_ref);
       enc.u32(instr.typeIdx);
       break;
     case "return_call_ref":
+      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
       enc.byte(OP.return_call_ref);
       enc.u32(instr.typeIdx);
       break;
@@ -1182,6 +1367,7 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(0x00);
       break;
     case "throw":
+      if (valCtx) vIdx("exception tag", instr.tagIdx, valCtx.numTags);
       enc.byte(OP.throw);
       enc.u32(instr.tagIdx);
       break;
@@ -1195,6 +1381,7 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       for (const i of instr.body) encodeInstr(i, enc);
       // Encode catch clauses (catch $tag)
       for (const c of instr.catches) {
+        if (valCtx) vIdx("exception tag", c.tagIdx, valCtx.numTags);
         enc.byte(OP.catch);
         enc.u32(c.tagIdx);
         for (const i of c.body) encodeInstr(i, enc);
