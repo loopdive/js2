@@ -1202,6 +1202,19 @@ export function coerceType(
       }
     }
     if (from.kind === "externref") {
+      // (#1888) No-JS-host targets: the externref carries the union
+      // box-struct family, not a host string — dispatch on the runtime brand
+      // via __any_from_extern (registered by ensureAnyHelpers under
+      // standalone/wasi). Unconditionally tagging as string (tag 5) made
+      // __any_add & co. compute over f64val=0 for boxed numbers. GC/host
+      // keeps the original string assumption byte-for-byte.
+      if (ctx.standalone || ctx.wasi) {
+        const fromExternIdx = ctx.funcMap.get("__any_from_extern");
+        if (fromExternIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: fromExternIdx });
+          return;
+        }
+      }
       const funcIdx = ctx.funcMap.get("__any_box_string");
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
@@ -1295,6 +1308,18 @@ export function coerceType(
       }
     }
     if (to.kind === "externref") {
+      // (#1888) No-JS-host targets: a bare extern.convert_any leaks the raw
+      // $AnyValue struct into the externref ABI, where no downstream unboxer
+      // (__unbox_number / __is_truthy / …) recognizes it. Convert back to the
+      // interchange representation by tag via __any_to_extern. GC/host keeps
+      // the raw convert (the host shims read AnyValue structs reflectively).
+      if (ctx.standalone || ctx.wasi) {
+        const toExternIdx = ctx.funcMap.get("__any_to_extern");
+        if (toExternIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: toExternIdx });
+          return;
+        }
+      }
       // Convert GC ref (AnyValue struct) to externref via extern.convert_any
       fctx.body.push({ op: "extern.convert_any" });
       return;

@@ -9,7 +9,7 @@ import type { Instr, StructTypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringType } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
-import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
+import { addStringImportsDelegate, addUnionImportsViaRegistry, registerEnsureAnyHelpers } from "./shared.js";
 
 /**
  * Register the $AnyValue struct type for boxing `any` typed values.
@@ -324,6 +324,210 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
       { op: "struct.new", typeIdx: anyTypeIdx },
     ],
   );
+
+  // ── #1888 standalone interchange bridges ─────────────────────────────────
+  // Under no-JS-host targets the externref ABI (closure params/results,
+  // __call_fn_* dispatch) carries the union box-struct family ($box_number /
+  // $box_boolean / NativeString / $Object / …), NOT host JS values. The two
+  // conversions between that interchange representation and the $AnyValue
+  // compute representation must dispatch on the runtime brand:
+  //   - externref → $AnyValue: __any_box_string mis-tags a boxed number as a
+  //     string (tag 5 with f64val=0), so __any_add & co. compute over zeros.
+  //   - $AnyValue → externref: a bare extern.convert_any leaks the raw
+  //     $AnyValue struct, which no downstream unboxer (__unbox_number …)
+  //     recognizes.
+  // GC/host mode keeps the original helpers untouched (these two are not even
+  // registered) — JS-host externrefs cannot be brand-tested in pure Wasm.
+  if (ctx.standalone || ctx.wasi) {
+    // The brand predicates / (un)boxers are the union native helpers.
+    // Registering them here adds DEFINED functions only (no imports under a
+    // no-JS-host target), so no function-index shift is triggered.
+    addUnionImportsViaRegistry(ctx);
+    const typeofNumberIdx = ctx.funcMap.get("__typeof_number");
+    const typeofBooleanIdx = ctx.funcMap.get("__typeof_boolean");
+    const typeofStringIdx = ctx.funcMap.get("__typeof_string");
+    const unboxNumberIdx = ctx.funcMap.get("__unbox_number");
+    const unboxBooleanIdx = ctx.funcMap.get("__unbox_boolean");
+    const boxNumberIdx = ctx.funcMap.get("__box_number");
+    const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
+    const anyHelperIdx = (name: string) => ctx.anyHelpers.get(name)!;
+
+    if (
+      typeofNumberIdx !== undefined &&
+      typeofBooleanIdx !== undefined &&
+      typeofStringIdx !== undefined &&
+      unboxNumberIdx !== undefined &&
+      unboxBooleanIdx !== undefined &&
+      boxNumberIdx !== undefined &&
+      boxBooleanIdx !== undefined
+    ) {
+      // __any_from_extern(val: externref) -> ref $AnyValue
+      // Runtime brand dispatch over the standalone box-struct family.
+      addHelper(
+        "__any_from_extern",
+        [{ kind: "externref" }],
+        [anyRef],
+        [
+          // null externref → undefined (standalone conflates null/undefined)
+          { op: "local.get", index: 0 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "call", funcIdx: anyHelperIdx("__any_box_undefined") }, { op: "return" }],
+          },
+          // $box_number → tag 3 (f64)
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: typeofNumberIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: unboxNumberIdx },
+              { op: "call", funcIdx: anyHelperIdx("__any_box_f64") },
+              { op: "return" },
+            ],
+          },
+          // $box_boolean → tag 4 (bool)
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: typeofBooleanIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: unboxBooleanIdx },
+              { op: "call", funcIdx: anyHelperIdx("__any_box_bool") },
+              { op: "return" },
+            ],
+          },
+          // NativeString → tag 5 (string, externval carries the ref)
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: typeofStringIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: anyHelperIdx("__any_box_string") },
+              { op: "return" },
+            ],
+          },
+          // Everything else ($Object / $Vec / closures / $BigInt …) → tag 6
+          // (eqref). All standalone reps are GC structs, hence eq-testable.
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "local.tee", index: 1 },
+          { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+              { op: "call", funcIdx: anyHelperIdx("__any_box_ref") },
+              { op: "return" },
+            ],
+          },
+          // Non-eq anyref cannot occur for standalone-produced values; keep
+          // the helper total rather than trapping.
+          { op: "call", funcIdx: anyHelperIdx("__any_box_undefined") },
+        ],
+        [{ name: "$any_tmp", type: { kind: "anyref" } }],
+      );
+
+      // __any_to_extern(val: ref null $AnyValue) -> externref
+      // Tag dispatch back to the interchange representation.
+      addHelper(
+        "__any_to_extern",
+        [anyRefNull],
+        [{ kind: "externref" }],
+        [
+          // null AnyValue ref → null externref
+          { op: "local.get", index: 0 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "ref.null.extern" }, { op: "return" }],
+          },
+          { op: "local.get", index: 0 },
+          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+          { op: "local.tee", index: 1 },
+          // tag 0 (null) / tag 1 (undefined) → null externref
+          { op: "i32.const", value: 2 },
+          { op: "i32.lt_u" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "ref.null.extern" }, { op: "return" }],
+          },
+          // tag 2 (i32) → __box_number(f64(i32val))
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 2 },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
+              { op: "f64.convert_i32_s" },
+              { op: "call", funcIdx: boxNumberIdx },
+              { op: "return" },
+            ],
+          },
+          // tag 3 (f64) → __box_number(f64val)
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 3 },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
+              { op: "call", funcIdx: boxNumberIdx },
+              { op: "return" },
+            ],
+          },
+          // tag 4 (bool) → __box_boolean(i32val)
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 4 },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 1 },
+              { op: "call", funcIdx: boxBooleanIdx },
+              { op: "return" },
+            ],
+          },
+          // tag 5 (string) → externval as-is
+          { op: "local.get", index: 1 },
+          { op: "i32.const", value: 5 },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+              { op: "return" },
+            ],
+          },
+          // tag 6 (ref) → extern.convert_any(refval)
+          { op: "local.get", index: 0 },
+          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 },
+          { op: "extern.convert_any" },
+        ],
+        [{ name: "$tag_tmp", type: { kind: "i32" } }],
+      );
+    }
+  }
 
   // __any_unbox_i32(val: ref $AnyValue) -> i32
   // Returns i32val field; if tag==3 (f64), truncate f64val
