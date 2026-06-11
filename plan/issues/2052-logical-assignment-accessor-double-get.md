@@ -1,10 +1,11 @@
 ---
 id: 2052
 title: "||= / &&= (and ref-typed ??=) on accessor properties call the getter twice on the keep path"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
+completed: 2026-06-11
 priority: medium
 feasibility: easy
 reasoning_effort: medium
@@ -78,3 +79,24 @@ Grepped `getter twice`, `twice.*getter`, `GetValue once`, `logical assignment`:
 #50, #194, #286, #415, #424, #1250, #1268, #1819 (all done; compile errors,
 struct resolution, global-index offsets, `??=` NaN). None mention double getter
 evaluation.
+
+## Resolution (2026-06-11)
+
+Fixed in `emitLogicalAssignmentPattern` (`src/codegen/expressions/assignment.ts`)
+by teeing the first `emitGet()` result into a temp local before the truthiness
+test and reusing the temp as the keep-branch value, instead of calling
+`emitGet()` a second time. Applied to all three arms (`??=` ref path, `||=`,
+`&&=`). For identifier targets `emitGet` was a harmless `local.get`; for accessor
+targets it was a real getter call, now invoked exactly once. The ref-typed `??=`
+arm previously teed into `tmpForUndef` only for externref and discarded it —
+generalized to tee for all ref types and reuse on the keep path.
+
+### Test Results
+
+Added 5 accessor cases to `tests/equivalence/logical-assignment-property.test.ts`
+(`&&=`/`||=`/`??=` keep+assign, getter/setter call counts via side-effecting
+accessor). All 13 tests in that file pass. The repro returns `100`/`105` (one
+get) instead of `200`/`205` (two gets). No new regressions in
+logical-operators / coalesce / compound-assignment suites (the 3 pre-existing
+`void x` TS-strictness failures in logical-conditional-identity also fail on
+main, unrelated to this change).
