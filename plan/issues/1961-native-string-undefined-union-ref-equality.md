@@ -12,7 +12,7 @@ task_type: bugfix
 area: codegen
 language_feature: equality
 goal: standalone-mode
-related: [1352, 1931]
+related: [1352, 2051]
 origin: "2026-06-10 deep-audit sweep (strings agent): verified miscompile on main, native backend"
 ---
 
@@ -57,6 +57,6 @@ null-guard (null ref ↔ undefined ≠ any string), mirroring the existing
 
 ## Dupe check
 
-#1931 (today) is optional-chain default-value fabrication — different root
+#2051 (today) is optional-chain default-value fabrication — different root
 cause. #1352 is exec-result externref equality in JS-host mode. Union-typed
 native-string `===` untracked.

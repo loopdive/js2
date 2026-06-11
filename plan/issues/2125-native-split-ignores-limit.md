@@ -1,5 +1,6 @@
 ---
-id: 1958
+id: 2125
+renumbered_from: 1958
 title: "nativeStrings split() ignores the limit argument; split(undefined) emits an invalid Wasm module"
 status: ready
 sprint: 61
@@ -16,7 +17,7 @@ related: [1369, 1913]
 origin: "2026-06-10 deep-audit sweep (strings agent): verified on main, native backend"
 ---
 
-# #1958 — native `__str_split` has no limit param
+# #2125 — native `__str_split` has no limit param
 
 ## Problem
 

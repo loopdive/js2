@@ -1,5 +1,6 @@
 ---
-id: 1956
+id: 2123
+renumbered_from: 1956
 title: "nativeStrings slice() swaps start/end like substring — \"hello\".slice(3,1) returns \"el\" instead of \"\""
 status: ready
 sprint: 61
@@ -12,11 +13,11 @@ task_type: bugfix
 area: codegen
 language_feature: string-methods
 goal: standalone-mode
-related: [1381, 1957]
+related: [1381, 2124]
 origin: "2026-06-10 deep-audit sweep (strings agent): verified miscompile on main, native backend"
 ---
 
-# #1956 — native `__str_slice` delegates to the swapping substring helper
+# #2123 — native `__str_slice` delegates to the swapping substring helper
 
 ## Problem
 

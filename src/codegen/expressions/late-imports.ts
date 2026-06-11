@@ -172,7 +172,7 @@ export function shiftLateImportIndices(
   for (const func of ctx.mod.functions) {
     shiftInstrs(func.body);
   }
-  // fctx may be null for fctx-less flushes (#1919: flushing a pending batch
+  // fctx may be null for fctx-less flushes (#2039: flushing a pending batch
   // before native defined-function registration). ctx.currentFunc / funcStack /
   // liveBodies / parentBodiesStack below provide the same coverage addUnionImports
   // has always relied on for its own fctx-less internal shift.
@@ -242,7 +242,7 @@ export function shiftLateImportIndices(
       ctx.nativeStrHelpers.set(name, idx + added);
     }
   }
-  // (#1919 slice 2) Re-base the native-string finalize-shift regime. The loop
+  // (#2039 slice 2) Re-base the native-string finalize-shift regime. The loop
   // above plus the mod.functions body walk fully repaired the helpers for the
   // `added` imports of this batch, so the helpers are now consistent with the
   // CURRENT import count. Without this, the next

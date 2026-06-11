@@ -1,5 +1,6 @@
 ---
-id: 1953
+id: 2120
+renumbered_from: 1953
 title: "captured let loop variable also mutated in the loop body produces an invalid module (F64Add type mismatch)"
 status: ready
 sprint: 61
@@ -16,7 +17,7 @@ related: [1589, 1617, 1453]
 origin: "2026-06-10 deep-audit sweep (closures agent): verified on main"
 ---
 
-# #1953 — loop pre-box pass inconsistent when the loop var is captured AND body-written
+# #2120 — loop pre-box pass inconsistent when the loop var is captured AND body-written
 
 ## Problem
 

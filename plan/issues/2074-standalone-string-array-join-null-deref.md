@@ -50,4 +50,4 @@ already strings — concat directly, no conversion).
 ## Dupe check
 
 #1998 (host mode, externref elements, illegal cast — different shape and
-mode), #1958 (split limit). New.
+mode), #2125 (ex-#1958, split limit). New.

@@ -1,5 +1,6 @@
 ---
-id: 1955
+id: 2122
+renumbered_from: 1955
 title: "String.fromCharCode/fromCodePoint silently drop all arguments after the first (host backend; native fromCodePoint too)"
 status: ready
 sprint: 61
@@ -16,7 +17,7 @@ related: [1598]
 origin: "2026-06-10 deep-audit sweep (strings agent): verified miscompile on main"
 ---
 
-# #1955 — variadic fromCharCode/fromCodePoint compiled as 1-arg
+# #2122 — variadic fromCharCode/fromCodePoint compiled as 1-arg
 
 ## Problem
 

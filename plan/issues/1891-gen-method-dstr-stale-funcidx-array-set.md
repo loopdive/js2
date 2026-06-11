@@ -1,9 +1,9 @@
 ---
 id: 1891
 title: "standalone: generator-method destructuring param emits invalid Wasm (array.set externref vs (ref null N)) — over-shifted funcIdx after generator-body late imports"
-status: in-review
+status: done
 created: 2026-06-05
-updated: 2026-06-06
+updated: 2026-06-11
 priority: high
 feasibility: medium
 task_type: bugfix
@@ -15,6 +15,7 @@ related: [1890, 1839, 1602, 1886, 1530]
 claimed_by: codex-developer
 claimed_at: 2026-06-06T09:09:55.112Z
 pr: 1248
+completed: 2026-06-06
 ---
 # #1891 — generator-method dstr param uses an over-shifted funcIdx → invalid Wasm
 

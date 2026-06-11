@@ -203,7 +203,7 @@ export function flatStringType(ctx: CodegenContext): ValType {
 export function ensureNativeStringHelpers(ctx: CodegenContext): void {
   if (ctx.nativeStrHelpersEmitted) return;
   ctx.nativeStrHelpersEmitted = true;
-  // #1919: settle any deferred ensureLateImport batch before baking funcIdx
+  // #2039: settle any deferred ensureLateImport batch before baking funcIdx
   // values. Registering these helpers mid-batch would bake post-batch indices
   // that the deferred flush then over-shifts by its delta. Same guard as
   // ensureObjectRuntime / addUnionImports.
