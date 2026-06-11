@@ -1,9 +1,9 @@
 ---
 id: 1831
 title: "_validatePropertyDescriptor resets omitted attributes to false on redefine (residual #1334)"
-status: in-review
+status: done
 created: 2026-06-04
-updated: 2026-06-07
+updated: 2026-06-11
 priority: medium
 feasibility: low
 task_type: bugfix
@@ -14,6 +14,7 @@ parent: 1334
 pr: 1282
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:12:25.359Z
+completed: 2026-06-10
 ---
 # #1831 — partial redefine clears previously-set descriptor flags
 

@@ -1,10 +1,11 @@
 ---
 id: 1966
 title: "arr.unshift(...) is a silent no-op returning 0 — missing from ARRAY_METHODS, falls into garbage generic fallback"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
+completed: 2026-06-11
 priority: critical
 feasibility: easy
 reasoning_effort: medium
@@ -64,3 +65,12 @@ class (see also #1967) into diagnostics.
 #1377/#1234/#1461 (done) cover `Array.prototype.unshift.call(arrayLike)`
 generic-receiver semantics, not direct `arr.unshift`; #1608 is a `set` typeidx
 crash. Unfiled.
+
+## Addendum (2026-06-11 standalone audit, fable agent) — root cause located
+
+Verified standalone too, with array corruption: `a=[2,3]; a.unshift(1);
+a.shift()` leaves the array as `[3,3]`. Root cause:
+`src/codegen/array-methods.ts:2539` — the `MUTATING` write-back set
+(`push,pop,shift,reverse,splice,fill,copyWithin,sort,set`) is missing
+`"unshift"`, so the mutated vec is never written back to the receiver.
+One-line fix candidate + write-back audit for other missing members.

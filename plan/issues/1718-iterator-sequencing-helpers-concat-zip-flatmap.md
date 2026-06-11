@@ -1,9 +1,9 @@
 ---
 id: 1718
 title: "Iterator sequencing helpers (Iterator.concat / zip / zipKeyed) + Iterator.prototype.flatMap not implemented (101 fails)"
-status: in-review
+status: done
 created: 2026-05-29
-updated: 2026-06-07
+updated: 2026-06-11
 priority: high
 feasibility: hard
 task_type: bugfix
@@ -18,6 +18,7 @@ related: [1340, 1320]
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:03:03.373Z
 pr: 1279
+completed: 2026-06-09
 ---
 # #1718 — Iterator sequencing helpers + Iterator.prototype.flatMap (101 fails)
 

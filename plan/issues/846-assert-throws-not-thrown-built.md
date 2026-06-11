@@ -1,9 +1,9 @@
 ---
 id: 846
 title: "assert.throws not thrown: built-in methods accept invalid arguments silently (2,799 tests)"
-status: in-review
+status: done
 created: 2026-03-28
-updated: 2026-06-03
+updated: 2026-06-11
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -12,6 +12,7 @@ sprint: 58
 parent: 779
 test262_fail: 2799
 pr: 1098
+completed: 2026-06-03
 ---
 # #846 -- assert.throws not thrown: built-in methods accept invalid arguments silently (2,799 tests)
 

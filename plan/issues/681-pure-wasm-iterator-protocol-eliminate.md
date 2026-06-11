@@ -1,9 +1,9 @@
 ---
 id: 681
 title: "Pure Wasm iterator protocol (eliminate 5 host imports)"
-status: in-review
+status: done
 created: 2026-03-20
-updated: 2026-06-06
+updated: 2026-06-11
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -21,6 +21,7 @@ files:
 claimed_by: codex-developer
 claimed_at: 2026-06-06T18:07:10.511Z
 pr: 1256
+completed: 2026-06-06
 ---
 # #681 — Pure Wasm iterator protocol (eliminate 5 host imports)
 
@@ -31,7 +32,7 @@ pr: 1256
 - [§7.4.7 IteratorClose](https://tc39.es/ecma262/#sec-iteratorclose) — calls .return() if it exists
 
 
-## Status: in-progress
+## Status: done
 
 Iterator protocol uses 5 host imports (__iterator, __iterator_next, __iterator_done, __iterator_value, __iterator_return). Should be pure Wasm.
 

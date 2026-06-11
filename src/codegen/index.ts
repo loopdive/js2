@@ -66,7 +66,7 @@ import {
   getOrRegisterVecType,
 } from "./registry/types.js";
 import { exportDrainMicrotasksIfRegistered, getDrainFuncIdxForWasiStart } from "./async-scheduler.js";
-import { registerAddStringImports, registerAddUnionImports } from "./shared.js";
+import { flushLateImportShifts, registerAddStringImports, registerAddUnionImports } from "./shared.js";
 import { stackBalance } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureRegexMatchVecType } from "./native-regex.js";
@@ -6510,6 +6510,13 @@ export function addStringImports(ctx: CodegenContext): void {
         ctx.nativeStrHelpers.set(name, idx + delta);
       }
     }
+    // (#2039 slice 2) Re-base so reconcileNativeStrFinalizeShift doesn't apply
+    // the same `delta` a second time — this inline shift already repaired the
+    // helper bodies and the map. Matches addUnionImports (#1677-fast-path) and
+    // shiftLateImportIndices.
+    if (ctx.nativeStrHelperImportBase >= 0) {
+      ctx.nativeStrHelperImportBase = ctx.numImportFuncs;
+    }
     // (#1839) The module start function index also moves if it was a defined
     // function at or above the insertion point. Matches addUnionImports.
     if (ctx.mod.startFuncIdx !== undefined && ctx.mod.startFuncIdx >= importsBefore) {
@@ -7686,6 +7693,15 @@ function collectUnionImports(ctx: CodegenContext, sourceFile: ts.SourceFile): vo
 export function addUnionImports(ctx: CodegenContext): void {
   if (ctx.hasUnionImports) return;
   ctx.hasUnionImports = true;
+
+  // #2039: settle any deferred ensureLateImport batch before this pass bakes
+  // or shifts funcIdx values. Under wasi/standalone the native-helper
+  // registration below computes indices from the post-batch `numImportFuncs`;
+  // in host mode the internal shift below uses its own `importsBefore`. Either
+  // way, a still-pending batch flush would later re-apply its delta on top —
+  // an over-shift that desyncs funcMap/bodies from actual function positions
+  // (same mechanism as the ensureObjectRuntime guard; see object-runtime.ts).
+  flushLateImportShifts(ctx, null);
 
   // Under `--target wasi` (#1180) and `--standalone` (#1471): emit Wasm-native
   // implementations of the box / unbox / typeof / is_truthy helpers instead of

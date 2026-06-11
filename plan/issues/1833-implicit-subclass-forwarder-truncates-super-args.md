@@ -1,10 +1,10 @@
 ---
 id: 1833
 title: "Implicit subclass constructor forwarder truncates multi-arg super(...)"
-status: in-review
+status: done
 pr: 1255
 created: 2026-06-04
-updated: 2026-06-06
+updated: 2026-06-11
 priority: medium
 feasibility: medium
 task_type: bugfix
@@ -13,6 +13,7 @@ goal: correctness
 sprint: 61
 claimed_by: codex-developer
 claimed_at: 2026-06-06T18:07:20.508Z
+completed: 2026-06-06
 ---
 # #1833 — implicit derived constructor forwards only the first arg
 

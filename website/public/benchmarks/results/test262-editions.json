@@ -11,8 +11,8 @@
   {
     "edition": "ES5",
     "pass": 9512,
-    "fail": 3225,
-    "ce": 349,
+    "fail": 3224,
+    "ce": 350,
     "skip": 0,
     "total": 13086,
     "pct": 73

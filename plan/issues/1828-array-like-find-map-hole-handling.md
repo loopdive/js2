@@ -1,10 +1,10 @@
 ---
 id: 1828
 title: "Array-like find/findIndex skip holes; map compacts holes (sparse .call receivers)"
-status: in-review
+status: done
 pr: 1271
 created: 2026-06-04
-updated: 2026-06-07
+updated: 2026-06-11
 priority: medium
 feasibility: hard
 task_type: bugfix
@@ -14,6 +14,7 @@ sprint: 61
 needs: architect-or-senior-dev
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:27:48.839Z
+completed: 2026-06-08
 ---
 
 # #1828 — array-like find/findIndex/map hole handling

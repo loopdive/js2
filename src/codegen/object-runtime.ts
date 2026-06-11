@@ -67,7 +67,7 @@ import {
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
-import { addUnionImportsViaRegistry } from "./shared.js";
+import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1). */
@@ -128,9 +128,21 @@ export interface ObjectRuntimeTypes {
  * guarantee that. Because this path adds only DEFINED functions (no imports),
  * the freshly-allocated func indices sit above every existing function and no
  * index shift is required (same invariant as `addUnionImportsAsNativeFuncs`).
+ *
+ * That invariant only holds when NO late-import batch is pending: a deferred
+ * `ensureLateImport` shift (ctx.pendingLateImportShift) would later add its
+ * delta to every funcIdx >= its importsBefore — including the indices this
+ * function is about to bake with the post-batch `numImportFuncs` — leaving
+ * funcMap and every internal sibling call one regime too high while the
+ * function itself sits lower (#2039: `__obj_find` calling `__new_plain_object`
+ * instead of `__obj_hash`, 146 invalid-Wasm test262 binaries). So we end any
+ * pending batch first; registration then happens in a clean, final regime.
  */
 export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   if (ctx.objectRuntimeTypes) return ctx.objectRuntimeTypes;
+
+  // #2039: settle any deferred late-import shift before baking funcIdx values.
+  flushLateImportShifts(ctx, null);
 
   // Dependencies: native string helpers (flatten + equals) and the string type
   // indices they populate.

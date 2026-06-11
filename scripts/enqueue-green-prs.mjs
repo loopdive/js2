@@ -200,9 +200,21 @@ const updated = [];
 
 // Auto-update BEHIND PRs: merge base branch in via GitHub API so they can
 // re-run CI and eventually become CLEAN. DIRTY PRs (merge conflicts) are
-// skipped — those need manual resolution. This prevents agents silently
-// stalling when main advances while their PR's CI is running.
+// skipped — those need manual resolution.
+//
+// OPT-IN ONLY (ALLOW_UPDATE_BRANCH=1). update-branch pushes a merge commit
+// authored by the CALLER'S token. From auto-enqueue.yml that caller is
+// github-actions[bot], and GitHub parks pull_request runs triggered by bot
+// pushes in `action_required` — a state that is neither approvable via API
+// for same-repo branches nor rerunnable. The 21:05 sweep on 2026-06-11
+// bot-updated 17 BEHIND PRs and stranded every one with a dead check set
+// (the exact failure mode that got auto-refresh-prs.yml retired — see its
+// header). The merge queue builds merge groups against main itself, so PR
+// branches never need auto-updating from CI. A human running this script
+// locally with their own token may opt in via ALLOW_UPDATE_BRANCH=1.
+const ALLOW_UPDATE_BRANCH = process.env.ALLOW_UPDATE_BRANCH === "1";
 for (const pr of prs) {
+  if (!ALLOW_UPDATE_BRANCH) break;
   if (pr.mergeStateStatus !== "BEHIND") continue;
   const labels = (pr.labels || []).map((l) => (l.name || "").toLowerCase());
   if (pr.isDraft || labels.some((l) => HOLD_LABELS.has(l))) continue;

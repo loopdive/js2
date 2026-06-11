@@ -53,3 +53,13 @@ reset the counter on loop entry so re-entry doesn't accumulate.
 
 Grepped `1000000`, `iteration cap`, `guard` in plan/issues/ — no issue on file
 (control-flow audit 2026-06-10).
+
+## Addendum (2026-06-11 WAT review, fable agent) — wrong-result verified, guard located
+
+Runtime-verified: a 1.5M-iteration generator for-of sums to 1,000,000
+(node: 1,500,000) — silent truncation, then normal iterator-close. WAT:
+`local.get $__forof_guard / i32.const 1 / i32.add / local.tee /
+i32.const 1000000 / i32.gt_s / br_if 1`. Guard lives at
+`src/codegen/statements/loops.ts:4103-4111`, introduced by #662 against
+collection-mutation hangs. Should throw loudly (RangeError-style) or be
+removed/raised — silent wrong results are worse than a hang.
