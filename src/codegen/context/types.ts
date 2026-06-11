@@ -333,6 +333,25 @@ export interface FunctionContext {
     cloneFinally: () => Instr[];
     breakStackLen: number;
     continueStackLen: number;
+    /**
+     * Clone the finally body and bump every `br`/`br_if`/`br_table` in it that
+     * targets a label OUTSIDE the finally body by `extraDepth`. The pre-compiled
+     * finally was lowered at the try-frame depth (+1); inlining it at an
+     * abrupt-completion site nested deeper than the try frame (inside an
+     * `if`/`switch`/inner-`try` within the try) requires bumping those
+     * outer-targeting branches by the extra nesting delta. (#2061)
+     */
+    cloneFinallyAtDepth: (extraDepth: number) => Instr[];
+    /**
+     * Snapshot of `breakStack` taken when this entry was pushed (i.e. at the
+     * try-frame depth). At an inline site the nesting delta is
+     * `current breakStack value − this snapshot value` for any outer label
+     * (every label op bumps all outer entries uniformly, so the delta is the
+     * same across entries). (#2061)
+     */
+    breakDepthBaseline: number[];
+    /** Snapshot of `continueStack` at push time — see `breakDepthBaseline`. (#2061) */
+    continueDepthBaseline: number[];
   }[];
   /**
    * Pending writeback instructions for mutable callback captures (#859).

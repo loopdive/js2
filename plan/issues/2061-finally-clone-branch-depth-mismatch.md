@@ -1,10 +1,11 @@
 ---
 id: 2061
 title: "cloned finally branch depths not adjusted for nesting of the abrupt-completion site (return/break inside if inside try)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
+completed: 2026-06-11
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -95,3 +96,39 @@ Grepped `finally`, `cloneFinally`, `bumpOuterBranchDepths`: #1378 (completion
 override itself — works), #1858 C6 (the dual defect: branches inside the
 finally body, fixed), #1169h (IR port notes). The insertion-site-depth defect
 is unfiled.
+
+## Resolution (2026-06-11)
+
+Implemented the fix-direction approach. The key invariant that makes the delta
+cheap to compute: **every label-creating construct (`if`, `block`, `loop`,
+`switch`, `try`) bumps ALL pre-existing outer break/continue stack entries by
++1, uniformly** (verified in `compileIfStatement` :449, `compileSwitchStatement`
+:710/745, `compileTryStatement` :272, loops). So the extra nesting between an
+abrupt-completion site and the try frame at which the finally body was
+pre-compiled is a single scalar, readable from any outer entry as
+`current depth − try-entry-baseline depth`.
+
+Changes:
+- `FunctionContext.finallyStack` entries (`context/types.ts`) gained
+  `cloneFinallyAtDepth`, `breakDepthBaseline`, `continueDepthBaseline`. The
+  baselines are snapshots of `breakStack`/`continueStack` taken when the entry
+  is pushed (i.e. already at try-frame +1).
+- The three push sites set the new fields: `exceptions.ts` try-body (:281) and
+  catch-body (:379) entries forward the existing `cloneFinallyAtDepth`
+  (already used for the +2 catch_all sites) and snapshot the stacks;
+  `loops.ts` for-of iterator-close (:4098) uses the same closure for both clone
+  variants (its body has no outer-targeting `br`, so the delta is a no-op).
+- `control-flow.ts` gained `finallyInlineDelta(fctx, entry)` and routes all
+  three inline sites — `compileReturnStatement` (:196), `compileBreakStatement`
+  (:884), `compileContinueStatement` (:914) — through
+  `entry.cloneFinallyAtDepth(finallyInlineDelta(...))` instead of the raw
+  `entry.cloneFinally()`. When the site is at the try frame itself the delta is
+  0 and `cloneFinallyAtDepth(0)` is identical to `cloneFinally()`, so the prior
+  (correct) shallow-nesting behavior is preserved.
+
+Regression coverage: `tests/issue-2061-finally-clone-depth.test.ts` (6 cases)
+covers the two repros plus a depth-2 `return`, `continue`-in-finally nested in
+`if`, a labeled-break-from-finally three `if`s deep, and a `break`-in-finally
+where the abrupt site is inside a `switch` in the try. All match Node via
+`assertEquivalent` (which also runs `WebAssembly.validate`). The #1858 C6 suite
+(branches *inside* the finally body) stays green.

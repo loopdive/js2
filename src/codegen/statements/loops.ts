@@ -4076,24 +4076,32 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
     const capturedDoneFlag = doneFlag;
     const capturedIterLocal = iterLocal;
     const capturedReturnIdx = returnIdx;
+    // The iterator-close finally body contains no `br` to any outer label
+    // (only `local.get`/`call`/`if`), so the #2061 abrupt-site depth delta is a
+    // no-op here: `cloneFinallyAtDepth` ignores `extraDepth` and the baselines
+    // are unused. We still satisfy the finallyStack entry shape.
+    const cloneIterClose = (): Instr[] =>
+      structuredClone([
+        { op: "local.get", index: capturedDoneFlag } as Instr,
+        { op: "i32.eqz" } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: capturedIterLocal } as Instr,
+            { op: "call", funcIdx: capturedReturnIdx } as Instr,
+          ],
+          else: [],
+        },
+      ]);
     if (!fctx.finallyStack) fctx.finallyStack = [];
     fctx.finallyStack.push({
-      cloneFinally: (): Instr[] =>
-        structuredClone([
-          { op: "local.get", index: capturedDoneFlag } as Instr,
-          { op: "i32.eqz" } as Instr,
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: capturedIterLocal } as Instr,
-              { op: "call", funcIdx: capturedReturnIdx } as Instr,
-            ],
-            else: [],
-          },
-        ]),
+      cloneFinally: cloneIterClose,
+      cloneFinallyAtDepth: cloneIterClose,
       breakStackLen: iterCloseBreakStackLen,
       continueStackLen: iterCloseContinueStackLen,
+      breakDepthBaseline: fctx.breakStack.slice(),
+      continueDepthBaseline: fctx.continueStack.slice(),
     });
   }
 

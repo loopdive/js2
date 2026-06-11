@@ -280,8 +280,11 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
     if (!fctx.finallyStack) fctx.finallyStack = [];
     fctx.finallyStack.push({
       cloneFinally,
+      cloneFinallyAtDepth,
       breakStackLen: fctx.breakStack.length,
       continueStackLen: fctx.continueStack.length,
+      breakDepthBaseline: fctx.breakStack.slice(),
+      continueDepthBaseline: fctx.continueStack.slice(),
     });
   }
 
@@ -375,8 +378,11 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
         if (!fctx.finallyStack) fctx.finallyStack = [];
         fctx.finallyStack.push({
           cloneFinally,
+          cloneFinallyAtDepth,
           breakStackLen: fctx.breakStack.length,
           continueStackLen: fctx.continueStack.length,
+          breakDepthBaseline: fctx.breakStack.slice(),
+          continueDepthBaseline: fctx.continueStack.slice(),
         });
       }
 
