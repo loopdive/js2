@@ -6,7 +6,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { popBody, pushBody } from "./context/bodies.js";
+import { popBody, pushBody, pushBodyTo } from "./context/bodies.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { shiftLateImportIndices } from "./expressions/late-imports.js";
@@ -410,19 +410,17 @@ export function destructureParamObjectExternref(
           fctx.body.push({ op: "ref.is_null" } as Instr);
         }
 
-        const savedBody = fctx.body;
         const thenInstrs: Instr[] = [];
-        fctx.body = thenInstrs;
+        const savedBody = pushBodyTo(fctx, thenInstrs);
         compileExpression(ctx, fctx, element.initializer, localType ?? elemType);
         fctx.body.push({ op: "local.set", index: localIdx! } as Instr);
-        fctx.body = savedBody;
+        popBody(fctx, savedBody);
 
         const elseCoerce: Instr[] = [];
         if (localType && !valTypesMatch(elemType, localType)) {
-          const savedBody2 = fctx.body;
-          fctx.body = elseCoerce;
+          const savedBody2 = pushBodyTo(fctx, elseCoerce);
           coerceType(ctx, fctx, elemType, localType);
-          fctx.body = savedBody2;
+          popBody(fctx, savedBody2);
         }
 
         fctx.body.push({
@@ -456,9 +454,8 @@ export function destructureParamObjectExternref(
           flushLateImportShifts(ctx, fctx);
           fctx.body.push({ op: "local.get", index: nestedLocal });
           fctx.body.push({ op: "call", funcIdx: undefIdx });
-          const savedBodyInit = fctx.body;
           const initThen: Instr[] = [];
-          fctx.body = initThen;
+          const savedBodyInit = pushBodyTo(fctx, initThen);
           // Compile initializer; coerce to externref so we can store back.
           const initType = compileExpression(ctx, fctx, element.initializer, elemType);
           if (initType && initType.kind !== "externref") {
@@ -474,7 +471,7 @@ export function destructureParamObjectExternref(
             }
           }
           fctx.body.push({ op: "local.set", index: nestedLocal } as Instr);
-          fctx.body = savedBodyInit;
+          popBody(fctx, savedBodyInit);
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
@@ -638,18 +635,17 @@ export function destructureParamObject(
         // keeping them tracked until the `if` is emitted closes the orphan window.
         ctx.liveBodies.add(thenInstrs);
         ctx.liveBodies.add(elseInstrs);
-        const savedBody = fctx.body;
-        fctx.body = thenInstrs;
+        const savedBody = pushBodyTo(fctx, thenInstrs);
         fctx.body.push({ op: "local.get", index: anyTmp });
         fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });
         fctx.body.push({ op: "local.set", index: tmpLocal });
         destructureParamObject(ctx, fctx, tmpLocal, pattern, convertedType, opts);
-        fctx.body = savedBody;
+        popBody(fctx, savedBody);
 
         // Else branch: cast would fail (primitive/different struct) — use __extern_get (#852)
-        fctx.body = elseInstrs;
+        pushBodyTo(fctx, elseInstrs);
         destructureParamObjectExternref(ctx, fctx, paramIdx, pattern, opts);
-        fctx.body = savedBody;
+        popBody(fctx, savedBody);
 
         fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs, else: elseInstrs });
         ctx.liveBodies.delete(thenInstrs);
@@ -714,15 +710,15 @@ export function destructureParamObject(
   if (isNullable && pattern.elements.length > 0) {
     addStringConstantGlobal(ctx, "Cannot destructure 'null' or 'undefined'");
   }
-  const savedBody = fctx.body;
   const destructInstrs: Instr[] = [];
+  let savedBody = fctx.body;
   if (isNullable) {
     // Keep `destructInstrs` reachable to global/late-import index fixups while
     // it is the active emission buffer (#1553d) — a function-call default
     // (`{ c = f() }`, where `f` adds a late import) would otherwise corrupt
     // indices in this buffer.
     fctx.savedBodies.push(destructInstrs);
-    fctx.body = destructInstrs;
+    savedBody = pushBodyTo(fctx, destructInstrs);
   }
 
   for (const element of pattern.elements) {
@@ -798,7 +794,7 @@ export function destructureParamObject(
     // the `if.else` is assembled — then pop it, since it is reachable via the
     // restored `savedBody` and an extra stack entry would be walked twice by a
     // later shift (#1529).
-    fctx.body = savedBody;
+    popBody(fctx, savedBody);
     fctx.body.push({ op: "local.get", index: paramIdx });
     fctx.body.push({ op: "ref.is_null" } as Instr);
     fctx.body.push({
@@ -809,7 +805,7 @@ export function destructureParamObject(
     });
     fctx.savedBodies.pop();
   } else if (isNullable) {
-    fctx.body = savedBody;
+    popBody(fctx, savedBody);
     fctx.body.push(...destructInstrs);
     fctx.savedBodies.pop();
   }

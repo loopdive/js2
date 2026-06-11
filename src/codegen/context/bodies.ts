@@ -19,3 +19,19 @@ export function popBody(fctx: FunctionContext, saved: Instr[]): void {
   fctx.savedBodies.pop();
   fctx.body = saved;
 }
+
+/**
+ * Like pushBody, but redirect emission into a caller-provided buffer instead
+ * of a fresh array. Registers the outgoing body on `savedBodies` so
+ * shiftLateImportIndices / global-index fixups can still reach the calls
+ * already baked into it while the buffer is active (#1919 slice 3: a raw
+ * `const saved = fctx.body; fctx.body = buf` swap detaches the outer body —
+ * any late import flushed inside the window leaves its baked funcIdx values
+ * one slot low). Restore with popBody(fctx, saved).
+ */
+export function pushBodyTo(fctx: FunctionContext, buffer: Instr[]): Instr[] {
+  const saved = fctx.body;
+  fctx.savedBodies.push(saved);
+  fctx.body = buffer;
+  return saved;
+}

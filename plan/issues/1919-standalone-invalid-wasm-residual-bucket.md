@@ -92,7 +92,7 @@ after the slice-1 flush guards (fork PR #4) and #1923 validation landed:
 | long tail | class/elements/private-{getter,method}-is-not-a-own-property | `C_checkPrivateGetter/Method`: `call[0] expected externref, found local.get (ref null 27)` — arg-type flavor, untriaged |
 | long tail | for-await-of/async-func-dstr-var-async-obj-ptrn-empty | runtime `illegal cast` (instantiates) — not this bucket |
 
-## Root cause — `__str_flatten` sub-bucket (~165 tests) — FIXED (slice 2, this PR)
+## Root cause — `__str_flatten` sub-bucket (~165 tests) — FIXED (slice 2, fork PR #6)
 
 **Mechanism (instrumented):** two shift regimes overlap. When an
 `ensureLateImport` batch lands, `shiftLateImportIndices` repairs the
@@ -112,6 +112,51 @@ helpers — the exact re-base `addUnionImports`' inline shift has done since
 late-import batch before baking funcIdx values (same slice-1 guard as
 `ensureObjectRuntime`). Regression test: `tests/issue-1919-strflatten.test.ts`
 (standalone + wasi + host-guard).
+
+## Root cause — async-gen `i64` (~230) + truthiness `if[0]` (~150) — FIXED (slice 3)
+
+One bug, two validator spellings. **Raw body swaps detach the function
+prologue while late imports land.** The generator lowering
+(`compileNestedFunctionDeclaration` ×2, `literals.ts` generator methods,
+`closures.ts` function-expression generators) and the param-destructure
+branch builders (`destructuring-params.ts` ×5 windows) all used
+`const saved = fctx.body; fctx.body = buffer; …; fctx.body = saved;`.
+During the window, the OUTER body — which already holds baked
+`call __extern_is_undefined` / `call __new_TypeError` prologue instructions —
+is reachable only through the local variable. `shiftLateImportIndices` walks
+`mod.functions` + `fctx.body`/`savedBodies` + `currentFunc` + `funcStack` +
+`liveBodies` + `parentBodiesStack`, none of which see it, so every late
+import flushed inside the window (e.g. `__get_undefined` from a param
+sentinel, `__array_from_iter_n` from a nested array destructure) leaves the
+prologue's baked calls one slot low per missed flush. Confirmed by tagging
+the exact instruction and logging which flushes visit it: the
+`dflt-ary-ptrn-rest-id` rep missed exactly flush `importsBefore=67`
+(−1 → `if[0] expected i32`, the call lands on an externref-returning
+neighbor); the `obj-ptrn-prop-ary-trailing-comma` rep missed two flushes
+(−2 → `call[0] expected i64`, lands on `__box_bigint` — the "i64 ABI" in
+the original table row was always the bystander's signature, as #1924's
+attribution said).
+
+**Fix:** `pushBody`/`popBody` at the four generator raw-swap sites, and a
+new `pushBodyTo(fctx, buffer)` helper (`src/codegen/context/bodies.ts`) —
+register the outgoing body on `savedBodies`, emit into a caller-provided
+buffer — for the five destructure windows. Walking an array reachable
+through two paths is safe: every shift walker dedupes (#1109).
+Regression test: `tests/issue-1919-asyncgen-bodyswap.test.ts`.
+The hazard class (any remaining raw swaps elsewhere) is the architectural
+scope of #1984/#1985 (index-space freeze point / stale-proof index cells).
+
+## Residuals after slice 3 (re-probed)
+
+- `C_checkPrivateGetter`/`C_checkPrivateMethod` `call[0] expected externref,
+  found local.get (ref null 27)`: **not** an index skew — the
+  `this.hasOwnProperty("#m")` lowering passes a typed class ref to
+  `__hasOwnProperty(externref, externref)` without `extern.convert_any`
+  (the `"#m" in this` path right below it converts correctly). Needs a
+  child issue.
+- Runtime (instantiates, then traps): `dereferencing a null pointer`
+  (`while/S12.6.2_A4_T4`, `indexOf/15.4.4.14-5-23`), `illegal cast`
+  (for-await-of dstr). Separate classes, not invalid-Wasm rows.
 
 ## Why this is the right next split
 
