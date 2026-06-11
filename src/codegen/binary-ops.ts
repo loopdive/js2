@@ -818,6 +818,70 @@ export function compileBinaryExpression(
   const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
   const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
 
+  // ── Relational (< <= > >=) on two `any`/externref operands (#2059) ──
+  // §7.2.13 IsLessThan compares strings lexicographically when both ToPrimitive
+  // results are strings. The numeric fast path below unboxes both externref
+  // operands to f64 (`Number("a")` → NaN), so every string relational wrongly
+  // yields false. When neither operand is statically typed as a primitive that
+  // we already handle numerically (number / boolean / bigint / string), and a
+  // JS host is available, delegate to `__host_relational` which runs the real
+  // JS operator. Standalone/WASI falls through to the numeric path (no host).
+  {
+    const relOpcode =
+      op === ts.SyntaxKind.LessThanToken
+        ? 0
+        : op === ts.SyntaxKind.LessThanEqualsToken
+          ? 1
+          : op === ts.SyntaxKind.GreaterThanToken
+            ? 2
+            : op === ts.SyntaxKind.GreaterThanEqualsToken
+              ? 3
+              : -1;
+    const noJsHost = ctx.standalone === true || ctx.wasi === true;
+    const isPrimNumericish = (t: ts.Type): boolean =>
+      isNumberType(t) || isBooleanType(t) || isBigIntType(t) || isStringType(t);
+    // Apply only when BOTH sides are non-primitive (any / unknown / object /
+    // union with externref) — a statically-string or statically-numeric side
+    // is already handled correctly by the dedicated paths below. This keeps the
+    // provably-numeric fast path untouched (no perf regression).
+    if (relOpcode >= 0 && !noJsHost && !isPrimNumericish(leftTsType) && !isPrimNumericish(rightTsType)) {
+      const leftResult = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
+      if (leftResult) {
+        if (leftResult.kind !== "externref") coerceType(ctx, fctx, leftResult, { kind: "externref" });
+        const tmpL = allocTempLocal(fctx, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: tmpL });
+        const rightResult = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
+        if (rightResult) {
+          if (rightResult.kind !== "externref") coerceType(ctx, fctx, rightResult, { kind: "externref" });
+          const tmpR = allocTempLocal(fctx, { kind: "externref" });
+          fctx.body.push({ op: "local.set", index: tmpR });
+          const hostIdx = ensureLateImport(
+            ctx,
+            "__host_relational",
+            [{ kind: "externref" }, { kind: "externref" }, { kind: "i32" }],
+            [{ kind: "i32" }],
+          );
+          flushLateImportShifts(ctx, fctx);
+          const finalIdx = ctx.funcMap.get("__host_relational") ?? hostIdx;
+          if (finalIdx !== undefined) {
+            fctx.body.push({ op: "local.get", index: tmpL });
+            fctx.body.push({ op: "local.get", index: tmpR });
+            fctx.body.push({ op: "i32.const", value: relOpcode });
+            fctx.body.push({ op: "call", funcIdx: finalIdx });
+            releaseTempLocal(fctx, tmpR);
+            releaseTempLocal(fctx, tmpL);
+            return { kind: "i32" };
+          }
+          releaseTempLocal(fctx, tmpR);
+        }
+        releaseTempLocal(fctx, tmpL);
+        // If we bailed after compiling operands, we cannot cleanly recover the
+        // stack — but ensureLateImport for a host import effectively never
+        // returns undefined in JS-host mode, so this path is not reached.
+      }
+    }
+  }
+
   // ── Loose equality (== / !=) with mixed types ──
   // JS loose equality coerces types before comparing. Handle common cases:
   //   number == boolean / boolean == number → coerce boolean to number

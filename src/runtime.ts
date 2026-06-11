@@ -10271,6 +10271,23 @@ assert._isSameValue = isSameValue;
       // Handles null == undefined → true and other JS coercion rules.
       // biome-ignore lint/suspicious/noDoubleEquals: §7.2.15 IsLooselyEqual requires == semantics (null == undefined, type coercion)
       return (a: any, b: any) => (a == b ? 1 : 0);
+    case "host_relational":
+      // #2059 — relational comparison for two externref operands (§7.2.13
+      // IsLessThan). The native JS `<`/`<=`/`>`/`>=` operators already implement
+      // ToPrimitive + the string-vs-number dispatch (lexicographic when both
+      // sides are strings), so we delegate to them. opcode: 0=`<`,1=`<=`,2=`>`,3=`>=`.
+      return (a: any, b: any, opcode: number) => {
+        switch (opcode) {
+          case 0:
+            return a < b ? 1 : 0;
+          case 1:
+            return a <= b ? 1 : 0;
+          case 2:
+            return a > b ? 1 : 0;
+          default:
+            return a >= b ? 1 : 0;
+        }
+      };
     case "same_value_zero":
       // #1360 — SameValueZero comparison (§7.2.11).
       // Same as Strict Equality except NaN === NaN is true.

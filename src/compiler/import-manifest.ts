@@ -128,6 +128,12 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // Used for `any`-typed loose equality where null == undefined must be true. (#1134)
   if (name === "__host_loose_eq") return { type: "host_loose_eq" };
 
+  // Host relational comparison for two externref operands (§7.2.13 IsLessThan).
+  // The third arg is an opcode: 0=`<`, 1=`<=`, 2=`>`, 3=`>=`. Implements the
+  // string-vs-number ToPrimitive dispatch (lexicographic for two strings) that
+  // the f64 fast path gets wrong for `any < any`. (#2059)
+  if (name === "__host_relational") return { type: "host_relational" };
+
   // SameValueZero comparison (§7.2.11) — like === except NaN equals NaN.
   // Used by Array.prototype.includes on array-like receivers (#1360).
   if (name === "__same_value_zero") return { type: "same_value_zero" };

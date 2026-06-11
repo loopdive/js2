@@ -1,10 +1,11 @@
 ---
 id: 2059
 title: "relational operators on two any/externref operands never perform string comparison (\"a\" < \"b\" → false)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
+completed: 2026-06-11
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -66,3 +67,35 @@ policy). Likely shares plumbing with #2058.
 Grepped `relational`, `string comparison`, `__any_lt` — #117 (harness string
 compare, done), #295 (comparison ops, bigint-focused, done), #1563/#1577
 (broad spec audits, item absent). Not covered.
+
+## Resolution (2026-06-11)
+
+The root-cause note about `__any_lt` was a red herring for the **default**
+(JS-host) compile path: there `ctx.anyValueTypeIdx` is `-1`, so the AnyValue
+helpers are never registered and `any` operands compile to **externref**, not
+`$AnyValue`. The numeric fast path then coerces both externrefs to f64
+(`__unbox_number` → `Number("a") = NaN`), so every string relational was false.
+
+Fix (JS-host path, dual-mode safe):
+- Added a `__host_relational` host import + `host_relational` intent
+  (`src/compiler/import-manifest.ts`, `src/index.ts`, `src/runtime.ts`). It
+  takes `(externref, externref, i32 opcode)` where opcode 0/1/2/3 =
+  `<`/`<=`/`>`/`>=` and delegates to the native JS operator, which already
+  implements §7.2.13 (ToPrimitive + lexicographic string compare).
+- In `compileBinaryExpression` (`src/codegen/binary-ops.ts`), before the numeric
+  coercion, when the op is relational, a JS host is available, **and neither
+  operand is statically typed as a primitive we already handle numerically**
+  (number / boolean / bigint / string), compile both operands as externref and
+  call `__host_relational`. The "both non-primitive" guard keeps the
+  provably-numeric and provably-string fast paths untouched (no perf
+  regression). Standalone/WASI (`ctx.standalone`/`ctx.wasi`) falls through to
+  the existing numeric path — no new unsatisfiable host import is emitted.
+
+### Test Results
+
+New `tests/equivalence/any-relational-string.test.ts` — 16 cases covering
+string lexicographic (`"a"<"b"`, `"10"<"9"`, `"abc"<"abd"`, `"abc"<"ab"`),
+mixed string/number (numeric), pure numeric, NaN, and null/undefined, across
+all four operators. All pass. No regressions in string-relational-operators /
+comparison-coercion / boolean-relational-comparison / i32-loop-compare /
+string-arithmetic-coercion / logical-operators (48 tests green).
