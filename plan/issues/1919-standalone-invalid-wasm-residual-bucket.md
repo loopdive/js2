@@ -43,6 +43,76 @@ validator signature (function × first mismatch):
 (Counts from the standalone-vs-host gap diff; signatures normalized over
 function name + mismatch instruction.)
 
+## Attribution: the ~230-row i64 bucket is NOT BigInt (from #1924, 2026-06-10)
+
+The `call[0] expected type i64, found extern.convert_any` signature is **ruled
+out as the BigInt-brand representation surface** — the "NB" in the table row
+above is resolved. Root cause (reproduced on main `8ba0a82b6`):
+
+- The failing instruction is the **destructuring null/undefined TypeError
+  throw** emitted by `buildDestructureNullThrow`
+  (`src/codegen/destructuring-params.ts:247-252`) in the function's param
+  prologue. Its baked `call` index to the in-module `__new_TypeError` is
+  **stale by exactly one slot** and lands on the adjacent
+  `__box_bigint(i64)→externref` — the i64 in the validator message is the
+  bystander's signature, not an async-gen/BigInt ABI.
+- Mechanism: **late-import index shift missing detached instruction arrays**
+  (#1923 / #1109 / #1384 class). Instrumented trace: the throw bakes
+  `call 49` at `numImportFuncs=14`; four late imports follow
+  (`__array_from_iter_n`, `__get_undefined` during the same param
+  destructure; `Promise_resolve`, `Promise_reject` later); the baked call
+  receives only 3 of the 4 `flushLateImportShifts` +1 repairs (ends at 52,
+  `__new_TypeError` ends at 53).
+- Minimal repro (standalone target): a **nested** `async function*` (or plain
+  `async function`) with a destructured parameter —
+  `export function test() { async function* f({ x: [y], }) {} f({x:[45]}).next(); return 1; }`.
+  Top-level async generators refuse loudly (#680); nested ones slip past the
+  gate. The non-generator variant fails with `expected i32` — different
+  bystander, same mechanism — and likely shares roots with the ~150-row
+  `if[0] expected i32` row above (same nested-async destructure window).
+- Full evidence and trace in
+  `plan/issues/1924-bigint-i64-brand-valtype-decision.md` (§ #1919
+  attribution). No #1644 BigInt slice gates or fixes this bucket; fix lives
+  in the late-import-shift lane, and #1923's emit-time total index validation
+  would catch the class at compile time.
+
+## Re-measurement on main @ 3b8013d37 (2026-06-10, post slice-1 + #1923)
+
+Representative-test probe (`.tmp/standalone-audit/probe-file.mts`) results
+after the slice-1 flush guards (fork PR #4) and #1923 validation landed:
+
+| Sub-bucket | Representative | Status on 3b8013d37 |
+| --- | --- | --- |
+| `__obj_find` (146) | class/elements/after-same-line-static-method-…privatename-identifier | **FIXED** (returns 1) |
+| arguments arity (93) | eval-code/direct/async-gen-meth-…arguments-lex-bind… | **FIXED** (returns 1) — slice-1 guards covered it |
+| async-gen `i64` (~230) | async-generator/dstr/obj-ptrn-prop-ary-trailing-comma | **still invalid** — `call[0] expected i64, found extern.convert_any` in `f` |
+| truthiness `if[0]` (~150) | async-generator/dstr/dflt-ary-ptrn-rest-id | **still invalid** — `if[0] expected i32, found call of type externref` in `f` (the addUnionImports guard did NOT cover this; see slice 3) |
+| `__str_flatten` validation flavor (~165) | class/elements/set-access-of-missing-private-setter | **still invalid** until slice 2 (fixed by this PR) |
+| `__str_flatten` null-deref flavor | while/S12.6.2_A4_T4, Array/prototype/indexOf/15.4.4.14-5-23 | **separate bug** — binary instantiates but traps `dereferencing a null pointer` at runtime; not an invalid-Wasm row, needs its own triage |
+| long tail | class/elements/private-{getter,method}-is-not-a-own-property | `C_checkPrivateGetter/Method`: `call[0] expected externref, found local.get (ref null 27)` — arg-type flavor, untriaged |
+| long tail | for-await-of/async-func-dstr-var-async-obj-ptrn-empty | runtime `illegal cast` (instantiates) — not this bucket |
+
+## Root cause — `__str_flatten` sub-bucket (~165 tests) — FIXED (slice 2, this PR)
+
+**Mechanism (instrumented):** two shift regimes overlap. When an
+`ensureLateImport` batch lands, `shiftLateImportIndices` repairs the
+native-string helper map AND the helper bodies (it walks `mod.functions`) —
+but did not advance `nativeStrHelperImportBase`. The next
+`reconcileNativeStrFinalizeShift` computed `added = numImportFuncs - base`
+over the SAME imports and re-applied the delta: `__str_flatten`'s internal
+`call __str_copy_tree` ended one slot high (calling itself, hence the
+`call[0] expected (ref null N), found i32.const` signature — the i32.const
+on the stack was meant for the sibling's later parameter).
+
+**Fix:** `shiftLateImportIndices` and `addStringImports`' inline shift now
+re-base `nativeStrHelperImportBase = numImportFuncs` after repairing the
+helpers — the exact re-base `addUnionImports`' inline shift has done since
+#1677-fast-path. Base stays -1 on the default GC path (host mode hard no-op,
+#618 hazard). Also: `ensureNativeStringHelpers` settles any pending
+late-import batch before baking funcIdx values (same slice-1 guard as
+`ensureObjectRuntime`). Regression test: `tests/issue-1919-strflatten.test.ts`
+(standalone + wasi + host-guard).
+
 ## Why this is the right next split
 
 This bucket is pure compiler bugs — no spec work, no new runtime features.

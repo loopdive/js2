@@ -6643,6 +6643,13 @@ export function addStringImports(ctx: CodegenContext): void {
         ctx.nativeStrHelpers.set(name, idx + delta);
       }
     }
+    // (#1919 slice 2) Re-base so reconcileNativeStrFinalizeShift doesn't apply
+    // the same `delta` a second time — this inline shift already repaired the
+    // helper bodies and the map. Matches addUnionImports (#1677-fast-path) and
+    // shiftLateImportIndices.
+    if (ctx.nativeStrHelperImportBase >= 0) {
+      ctx.nativeStrHelperImportBase = ctx.numImportFuncs;
+    }
     // (#1839) The module start function index also moves if it was a defined
     // function at or above the insertion point. Matches addUnionImports.
     if (ctx.mod.startFuncIdx !== undefined && ctx.mod.startFuncIdx >= importsBefore) {
