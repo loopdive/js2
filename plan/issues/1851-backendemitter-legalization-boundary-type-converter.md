@@ -4,10 +4,11 @@ title: "Make BackendEmitter an explicit legalization boundary + extract a declar
 status: backlog
 sprint: Backlog
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-10
 priority: medium
 feasibility: hard
 reasoning_effort: high
+model: fable
 task_type: refactor
 area: ir
 language_feature: compiler-internals
