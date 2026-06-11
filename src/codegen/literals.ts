@@ -2990,8 +2990,42 @@ export function compileArrayConstructorCall(
   }
 
   if (args.length === 1) {
-    // Array(n) → sparse array of length n with default values
+    // Array(n) → sparse array of length n with default values.
+    // #2000 — §23.1.1.1 step 4.b: when the single argument is a Number it is a
+    // length, and `len !== ToUint32(len)` must throw a RangeError ("Invalid
+    // array length"). Without this guard `Array(3.5)` / `Array(-1)` truncated
+    // to a dense array or trapped at array.new_default. Emit the integer/range
+    // check around the (already correct) length-array build.
+    const lenLocal = allocLocal(fctx, `__arr_len_f64_${fctx.locals.length}`, { kind: "f64" });
     compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
+    fctx.body.push({ op: "local.tee", index: lenLocal });
+    // valid = (n >= 0) & (n <= 4294967295) & (floor(n) === n)
+    //   n >= 0
+    fctx.body.push({ op: "f64.const", value: 0 });
+    fctx.body.push({ op: "f64.ge" });
+    //   n <= 2^32 - 1
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "f64.const", value: 4294967295 });
+    fctx.body.push({ op: "f64.le" });
+    fctx.body.push({ op: "i32.and" });
+    //   floor(n) === n  (integer check; also rejects NaN since NaN !== NaN)
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "f64.floor" } as Instr);
+    fctx.body.push({ op: "f64.eq" });
+    fctx.body.push({ op: "i32.and" });
+    // if (!valid) throw RangeError
+    fctx.body.push({ op: "i32.eqz" });
+    const rangeErrMsg = "RangeError: Invalid array length";
+    addStringConstantGlobal(ctx, rangeErrMsg);
+    const tagIdx = ensureExnTag(ctx);
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
+    } as Instr);
+    // Valid length: build the array of that size.
+    fctx.body.push({ op: "local.get", index: lenLocal });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     const sizeLocal = allocLocal(fctx, `__arr_size_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.tee", index: sizeLocal });
