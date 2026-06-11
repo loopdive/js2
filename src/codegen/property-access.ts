@@ -30,6 +30,10 @@ import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js"
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
 import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8-codegen.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import {
+  tryCompileStandaloneRegExpMatchResultRead,
+  tryCompileStandaloneRegExpPropertyRead,
+} from "./regexp-standalone.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
@@ -1367,6 +1371,18 @@ export function compilePropertyAccess(
     }
   }
 
+  // #1914 — standalone RegExp reflection (`re.source`/`.flags`/`.global`/…/
+  // `.lastIndex`) and match-result fields (`m.index`/`m.input`). Must run
+  // BEFORE the extern-class property path, which would otherwise emit an
+  // `env.RegExp_get_*` host import (a standalone purity leak), and before the
+  // generic struct/vec fallbacks, which silently return 0 for `.index`.
+  {
+    const standaloneRegExpRead = tryCompileStandaloneRegExpPropertyRead(ctx, fctx, expr);
+    if (standaloneRegExpRead !== undefined) return standaloneRegExpRead;
+    const standaloneMatchResultRead = tryCompileStandaloneRegExpMatchResultRead(ctx, fctx, expr);
+    if (standaloneMatchResultRead !== undefined) return standaloneMatchResultRead;
+  }
+
   // #1780 — `TextEncoder.encodeInto(...).read` / `.written` under no-host
   // targets. The call lowers to a native helper returning a
   // `TextEncoderEncodeIntoResult` WasmGC struct; read its fields with a direct
@@ -2694,7 +2710,13 @@ export function compilePropertyAccess(
     if (nativeResult !== undefined) return nativeResult;
     if (propName === "value") {
       compileExpression(ctx, fctx, expr.expression);
-      // Check the expected value type from the IteratorResult<T>
+      // Check the expected value type from the IteratorResult<T>. NOTE (#2030):
+      // an exhausted result's `.value` is `undefined`; the f64 fast path below
+      // runs `Number(undefined)` → NaN, so a string context of the
+      // value-after-done prints "NaN". Making that survive as "undefined"
+      // requires the value-buffer representation work tracked by #2035 and is
+      // intentionally NOT changed here — routing `.value` through externref
+      // breaks numeric consumers (illegal cast on the raw-f64 iteration path).
       const valueType = getIteratorResultValueType(ctx, objType);
       if (valueType && valueType.kind === "f64") {
         const funcIdx = ctx.funcMap.get("__gen_result_value_f64");
@@ -2714,7 +2736,9 @@ export function compilePropertyAccess(
       const funcIdx = ctx.funcMap.get("__gen_result_done");
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
-        return { kind: "i32" };
+        // #2030: `.done` is a boolean — brand it so string contexts render
+        // "true"/"false" rather than the raw i32 "1"/"0".
+        return { kind: "i32", boolean: true };
       }
     }
   }
@@ -3934,7 +3958,12 @@ export function compileElementAccessBody(
     const isVecStructAccess =
       typeDef.fields[0]?.name === "length" &&
       typeDef.fields[1]?.name === "data" &&
-      (typeDef.fields.length === 2 || (typeDef.fields.length === 3 && typeDef.fields[2]?.name === "raw"));
+      (typeDef.fields.length === 2 ||
+        (typeDef.fields.length === 3 && typeDef.fields[2]?.name === "raw") ||
+        // #1914 — $__regexp_match_vec: the vec subtype carrying the spec
+        // exec/match result fields. Indexed reads use the same {length, data}
+        // prefix; index/input are property reads, not elements.
+        (typeDef.fields.length === 4 && typeDef.fields[2]?.name === "index" && typeDef.fields[3]?.name === "input"));
 
     if (!isVecStructAccess) {
       // Check if this is a tuple struct (registered in tupleTypeMap)

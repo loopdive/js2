@@ -99,11 +99,61 @@ describe("#1911 standalone RegExp Phase 2d Slice A — dual-run vs native", () =
     expect((instance.exports as { run(): number }).run()).toBe(1);
   });
 
-  it("u flag stays a narrowed refusal (2d Slice B)", async () => {
-    const r = await compile(`export function f(s: string): boolean { return /^a/u.test(s); }`, {
+  it("\\q{…} string disjunctions stay a narrowed refusal (match strings)", async () => {
+    const r = await compile(`export function f(s: string): boolean { return /[\\q{abc}]/v.test(s); }`, {
       target: "standalone",
     });
     expect(r.success).toBe(false);
-    expect(r.errors.some((e) => /#1539|#1474/.test(e.message))).toBe(true);
+    expect(r.errors.some((e) => /#1539|#1474|\\q/.test(e.message))).toBe(true);
+  });
+});
+
+// #1911 Slice B — u/v code-point semantics. Class atoms resolve at COMPILE
+// time through the host RegExp into code-point ranges, then desugar to the
+// unit-level VM (astral pairs, lone-surrogate lookaround guards). The emitted
+// module is still pure Wasm — the empty-import-object instantiation proves it.
+describe("#1911 Slice B standalone u/v — dual-run vs native", () => {
+  const CASES_B: Array<{ p: string; f: string; inputs: string[] }> = [
+    { p: "^.$", f: "u", inputs: ["\u{1F600}", "ab", "\uD800"] }, // code-point dot incl. lone surrogate
+    { p: "\\u{1F600}+", f: "u", inputs: ["\u{1F600}\u{1F600}", "z"] }, // astral atom quantified by code point
+    { p: "[\u{1F600}-\u{1F64F}]", f: "u", inputs: ["\u{1F601}", "z"] }, // astral class range
+    { p: "[^a]+x", f: "u", inputs: ["\u{1F600}\u{1F600}x", "aax"] }, // negated class consumes pairs
+    { p: "\\p{Script=Greek}+", f: "u", inputs: ["αβγ", "abc"] }, // property escape
+    { p: "\\P{L}", f: "u", inputs: ["1", "a"] },
+    { p: "k", f: "ui", inputs: ["K", "x"] }, // Canonicalize: KELVIN SIGN
+    { p: "σ", f: "ui", inputs: ["Σ", "ς", "x"] }, // Greek sigma fold orbit
+    { p: "\\D", f: "u", inputs: ["\u{1F600}", "5"] }, // negated shorthand by code point
+    { p: "\\w+", f: "u", inputs: ["abc_1", "!!"] },
+    { p: "[\\p{L}--\\p{Ll}]+", f: "v", inputs: ["ABC", "abc"] }, // v-mode set subtraction
+    { p: "a(?=\u{1F600})", f: "u", inputs: ["a\u{1F600}", "ab"] }, // lookahead + astral
+    { p: "(?s:.)", f: "u", inputs: ["\n", "\u{1F600}"] }, // modifier-scoped u dot
+    { p: "(a)(b)?", f: "ud", inputs: ["ab", "a"] }, // u+d flags together
+  ];
+  for (const { p, f, inputs } of CASES_B) {
+    for (const input of inputs) {
+      it(`/${p}/${f} on ${JSON.stringify(input)}`, async () => {
+        const expected = new RegExp(p, f).test(input);
+        expect(await standaloneTest(p, f, input)).toBe(expected);
+      });
+    }
+  }
+
+  it("invalid u pattern in a LITERAL refuses at compile (host pre-validation)", async () => {
+    const r = await compile(`export function f(s: string): boolean { return /a{2,1}/u.test(s); }`, {
+      target: "standalone",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("invalid u pattern via new RegExp throws a runtime SyntaxError", async () => {
+    const src = `
+      export function run(): number {
+        try { new RegExp("\\\\m", "u").test("m"); return 0; }
+        catch (e) { return e instanceof SyntaxError ? 1 : 2; }
+      }`;
+    const r = await compile(src, { fileName: "test.ts", target: "standalone" });
+    expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as { run(): number }).run()).toBe(1);
   });
 });

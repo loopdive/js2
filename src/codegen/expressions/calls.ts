@@ -75,6 +75,7 @@ import {
 } from "../statements/nested-declarations.js";
 import { compileNativeStringMethodCall, compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { tryCompileNodeProcessCall } from "../node-process-api.js";
+import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -1883,6 +1884,68 @@ function compileStandalonePromiseThenCallback(
   }
 }
 
+/**
+ * #2034: compile a `Number.is*` predicate argument as an f64, honouring the
+ * spec rule that these predicates do NOT coerce (ES §21.1.2.x): a non-Number
+ * argument must yield `false` without ToNumber. (The *global* `isNaN`/`isFinite`
+ * DO coerce — they are handled elsewhere and unaffected.)
+ *
+ * Emits one of two shapes and returns i32 (0/1):
+ *   - static number arg → `predicate(arg)` (unchanged fast path).
+ *   - any-typed arg → `__typeof_number(box) ? predicate(__unbox_number(box)) : 0`.
+ *     The typeof guard runs first, so a string/object/null box short-circuits to
+ *     0 (false) and never reaches the numeric test.
+ *
+ * `emitPredicate` receives the local holding the f64 value and pushes the
+ * boolean (i32) test for that value.
+ */
+function compileNumberIsPredicate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+  emitPredicate: (valLocal: number) => Instr[],
+): ValType {
+  const argTsType = ctx.checker.getTypeAtLocation(arg);
+  const argWasm = resolveWasmType(ctx, argTsType);
+  const isStaticNumber = isNumberType(argTsType) || argWasm.kind === "f64" || argWasm.kind === "i32";
+
+  if (isStaticNumber) {
+    // Fast path: the argument is statically a number — apply the test directly.
+    compileExpression(ctx, fctx, arg, { kind: "f64" });
+    const valTmp = allocLocal(fctx, `__numpred_${fctx.locals.length}`, { kind: "f64" });
+    fctx.body.push({ op: "local.set", index: valTmp });
+    for (const instr of emitPredicate(valTmp)) fctx.body.push(instr);
+    return { kind: "i32" };
+  }
+
+  // Any-typed argument: inspect the box's runtime type. Non-numbers are `false`
+  // (no coercion); numbers unbox to f64 and run the test.
+  addUnionImports(ctx);
+  const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
+  const unboxIdx = ctx.funcMap.get("__unbox_number")!;
+
+  compileExpression(ctx, fctx, arg, { kind: "externref" });
+  const boxTmp = allocLocal(fctx, `__numpred_box_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: boxTmp });
+
+  const valTmp = allocLocal(fctx, `__numpred_${fctx.locals.length}`, { kind: "f64" });
+
+  fctx.body.push({ op: "local.get", index: boxTmp });
+  fctx.body.push({ op: "call", funcIdx: typeofNumIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      { op: "local.get", index: boxTmp } as Instr,
+      { op: "call", funcIdx: unboxIdx } as Instr,
+      { op: "local.set", index: valTmp } as Instr,
+      ...emitPredicate(valTmp),
+    ],
+    else: [{ op: "i32.const", value: 0 } as Instr],
+  } as Instr);
+  return { kind: "i32" };
+}
+
 function compileCallExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3369,73 +3432,65 @@ function compileCallExpression(
     // Handle Number.isNaN(n) and Number.isInteger(n)
     if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Number") {
       const method = propAccess.name.text;
+      // #2034: `Number.is*` predicates must NOT coerce their argument — a
+      // non-Number value is `false` (ES §21.1.2.x). compileNumberIsPredicate
+      // guards an any-typed argument with `__typeof_number` before applying the
+      // numeric test; a static number keeps the direct f64 fast path.
       if (method === "isNaN" && expr.arguments.length >= 1) {
-        // NaN !== NaN is true; for any other value it's false
-        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-        const tmp = allocLocal(fctx, `__isnan_${fctx.locals.length}`, {
-          kind: "f64",
-        });
-        fctx.body.push({ op: "local.tee", index: tmp });
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "f64.ne" } as Instr);
-        return { kind: "i32" };
+        // NaN !== NaN is true; for any other number it's false.
+        return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
+          { op: "local.get", index: v },
+          { op: "local.get", index: v },
+          { op: "f64.ne" } as Instr,
+        ]);
       }
       if (method === "isInteger" && expr.arguments.length >= 1) {
-        // n === Math.trunc(n) && isFinite(n)
-        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-        const tmp = allocLocal(fctx, `__isint_${fctx.locals.length}`, {
-          kind: "f64",
-        });
-        fctx.body.push({ op: "local.tee", index: tmp });
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "f64.trunc" } as Instr);
-        fctx.body.push({ op: "f64.eq" } as Instr);
-        // Also check finite: n - n === 0 (Infinity - Infinity = NaN, NaN !== 0)
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "f64.sub" } as Instr);
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.eq" } as Instr);
-        fctx.body.push({ op: "i32.and" } as Instr);
-        return { kind: "i32" };
+        // n === trunc(n) && isFinite(n)
+        return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
+          { op: "local.get", index: v },
+          { op: "local.get", index: v },
+          { op: "f64.trunc" } as Instr,
+          { op: "f64.eq" } as Instr,
+          // finite: n - n === 0 (Infinity - Infinity = NaN, NaN !== 0)
+          { op: "local.get", index: v },
+          { op: "local.get", index: v },
+          { op: "f64.sub" } as Instr,
+          { op: "f64.const", value: 0 },
+          { op: "f64.eq" } as Instr,
+          { op: "i32.and" } as Instr,
+        ]);
       }
       if (method === "isFinite" && expr.arguments.length >= 1) {
         // isFinite(n) → n - n === 0.0
-        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-        const tmp = allocLocal(fctx, `__isfin_${fctx.locals.length}`, {
-          kind: "f64",
-        });
-        fctx.body.push({ op: "local.tee", index: tmp });
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "f64.sub" } as Instr);
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.eq" } as Instr);
-        return { kind: "i32" };
+        return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
+          { op: "local.get", index: v },
+          { op: "local.get", index: v },
+          { op: "f64.sub" } as Instr,
+          { op: "f64.const", value: 0 },
+          { op: "f64.eq" } as Instr,
+        ]);
       }
       if (method === "isSafeInteger" && expr.arguments.length >= 1) {
         // isSafeInteger(n) = isInteger(n) && abs(n) <= MAX_SAFE_INTEGER
-        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
-        const tmp = allocLocal(fctx, `__issafe_${fctx.locals.length}`, {
-          kind: "f64",
-        });
-        fctx.body.push({ op: "local.tee", index: tmp });
-        // isInteger: n === trunc(n) && isFinite(n)
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "f64.trunc" } as Instr);
-        fctx.body.push({ op: "f64.eq" } as Instr);
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "f64.sub" } as Instr);
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.eq" } as Instr);
-        fctx.body.push({ op: "i32.and" } as Instr);
-        // abs(n) <= MAX_SAFE_INTEGER
-        fctx.body.push({ op: "local.get", index: tmp });
-        fctx.body.push({ op: "f64.abs" } as Instr);
-        fctx.body.push({ op: "f64.const", value: Number.MAX_SAFE_INTEGER });
-        fctx.body.push({ op: "f64.le" } as Instr);
-        fctx.body.push({ op: "i32.and" } as Instr);
-        return { kind: "i32" };
+        return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
+          // isInteger: n === trunc(n) && isFinite(n)
+          { op: "local.get", index: v },
+          { op: "local.get", index: v },
+          { op: "f64.trunc" } as Instr,
+          { op: "f64.eq" } as Instr,
+          { op: "local.get", index: v },
+          { op: "local.get", index: v },
+          { op: "f64.sub" } as Instr,
+          { op: "f64.const", value: 0 },
+          { op: "f64.eq" } as Instr,
+          { op: "i32.and" } as Instr,
+          // abs(n) <= MAX_SAFE_INTEGER
+          { op: "local.get", index: v },
+          { op: "f64.abs" } as Instr,
+          { op: "f64.const", value: Number.MAX_SAFE_INTEGER },
+          { op: "f64.le" } as Instr,
+          { op: "i32.and" } as Instr,
+        ]);
       }
       if ((method === "parseFloat" || method === "parseInt") && expr.arguments.length >= 1) {
         // Delegate to the global parseInt / parseFloat host import
@@ -7590,8 +7645,15 @@ function compileCallExpression(
         // Try to resolve via registered extern classes (e.g. Set.union, Map.get)
         // when the receiver type is `any` but the method matches a built-in.
         {
-          const externResult = tryExternClassMethodOnAny(ctx, fctx, expr, propAccess, methodName);
-          if (externResult !== null) return externResult;
+          const builtinNamespace = ctx.standalone
+            ? resolveBuiltinNamespaceValueName(ctx, propAccess.expression)
+            : undefined;
+          const preferOpenBuiltinNamespace =
+            builtinNamespace !== undefined && isSupportedBuiltinStaticProperty(builtinNamespace, methodName);
+          if (!preferOpenBuiltinNamespace) {
+            const externResult = tryExternClassMethodOnAny(ctx, fctx, expr, propAccess, methodName);
+            if (externResult !== null) return externResult;
+          }
         }
 
         // (#799 WI3) Generic host-delegated method call for any/externref receivers.

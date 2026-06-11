@@ -1,0 +1,218 @@
+# #1951 — Scheduled fallback for the main-repo baseline summary commit.
+#
+# promote-baseline (test262-sharded.yml) now DEFERS its main-repo summary
+# commit whenever the merge queue is non-empty, because any push to main
+# (even [skip ci]) makes GitHub rebuild every queued merge group — each
+# rebuild costs a full 114-job validation per queued PR plus ~10 min of
+# added queue latency. The per-merge push to the loopdive/js2wasm-baselines
+# repo is NOT deferred (it doesn't move main and the regression gates need
+# it fresh), so the baselines repo is always the source of truth.
+#
+# This workflow closes the gap when the queue never empties between merges:
+# hourly, it diffs the baselines repo's latest report against the committed
+# summary and, when drifted AND the queue is empty (or the committed summary
+# is >6h old, or the dispatch `force` input is set), lands the same atomic
+# file set promote-baseline would have committed: summary JSONs + edition
+# buckets + conformance numbers in the prose docs (sync-conformance-numbers
+# keeps the number and its derived docs in ONE commit — see #1522 for why
+# splitting them drops PRs at the merge-queue head).
+#
+# Push auth: the same MAIN_DEPLOY_KEY dance as promote-baseline — GITHUB_TOKEN
+# pushes to main are rejected by ruleset GH013; the deploy key is in the
+# ruleset's bypass_actors. The key is an ENVIRONMENT secret on
+# `baseline-promote` (deployment branches restricted to main), which scheduled
+# runs on main satisfy.
+name: Baseline summary sync (#1951)
+
+on:
+  schedule:
+    - cron: "37 * * * *" # hourly, offset to avoid the top-of-hour Actions rush
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Push even if the merge queue is non-empty (accepts one queue-rebuild churn event)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write # gh workflow run deploy-pages.yml
+
+concurrency:
+  group: baseline-summary-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: baseline-promote
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+
+      - name: Fetch latest baselines (sparse)
+        run: |
+          # Sparse + blob-filtered: the baselines repo carries a large runs/
+          # history; materialize only the three files this sync needs.
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /test262-current.json /test262-current.jsonl /test262-standalone-report.json
+          git -C /tmp/js2wasm-baselines checkout main
+
+      - name: Decide whether to sync
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force && 'true' || 'false' }}
+        run: |
+          set -uo pipefail
+          # 1) Drift check — semantic compare (ignores volatile timestamp/sha
+          #    metadata). Unchanged on both lanes → nothing to do this hour.
+          HOST_UNCHANGED=0
+          node scripts/compare-test262-artifact.mjs --type report \
+            --baseline benchmarks/results/test262-current.json \
+            --candidate /tmp/js2wasm-baselines/test262-current.json && HOST_UNCHANGED=1
+          STANDALONE_UNCHANGED=0
+          node scripts/compare-test262-artifact.mjs --type report \
+            --baseline public/benchmarks/results/test262-standalone-report.json \
+            --candidate /tmp/js2wasm-baselines/test262-standalone-report.json && STANDALONE_UNCHANGED=1
+          if [ "$HOST_UNCHANGED" = "1" ] && [ "$STANDALONE_UNCHANGED" = "1" ]; then
+            echo "Committed summary already matches the baselines repo — nothing to sync."
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 2) Queue check — don't create queue-rebuild churn unless forced or
+          #    the committed summary has been stale for >6h (freshness floor:
+          #    accept at most one churn event per 6h of continuous traffic).
+          OWNER="${GITHUB_REPOSITORY%/*}"; NAME="${GITHUB_REPOSITORY#*/}"
+          QUEUE_LEN=$(gh api graphql \
+            -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){mergeQueue{entries(first:1){totalCount}}}}' \
+            -f owner="$OWNER" -f name="$NAME" \
+            --jq '.data.repository.mergeQueue.entries.totalCount' 2>/dev/null || echo "")
+          COMMITTED_TS=$(git log -1 --format=%ct -- benchmarks/results/test262-current.json 2>/dev/null || echo 0)
+          AGE_H=$(( ($(date +%s) - ${COMMITTED_TS:-0}) / 3600 ))
+          echo "Drift detected (host_unchanged=$HOST_UNCHANGED standalone_unchanged=$STANDALONE_UNCHANGED); queue=${QUEUE_LEN:-?} committed-summary age=${AGE_H}h force=$FORCE"
+          if [ "$FORCE" != "true" ] && [ -n "$QUEUE_LEN" ] && [ "$QUEUE_LEN" -gt 0 ] 2>/dev/null && [ "$AGE_H" -lt 6 ]; then
+            echo "Merge queue busy and summary <6h old — skipping this cycle (#1951)."
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "sync=true" >> "$GITHUB_OUTPUT"
+
+      - name: Sync summary files + conformance docs and push to main
+        if: steps.decide.outputs.sync == 'true'
+        env:
+          MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
+        run: |
+          set -uo pipefail
+          if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
+            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset (environment baseline-promote)."
+            exit 1
+          fi
+          # Sanity: never promote a corrupt/empty report to main.
+          PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/js2wasm-baselines/test262-current.json','utf8')).summary.pass)")
+          TOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/js2wasm-baselines/test262-current.json','utf8')).summary.total)")
+          if [ "$PASS" -lt 1000 ] || [ "$TOTAL" -lt 40000 ]; then
+            echo "ABORT: baselines report looks corrupt (pass=$PASS total=$TOTAL). Not committing."
+            exit 0
+          fi
+
+          # Mirror the promote-baseline file set exactly (same paths, same
+          # atomic docs sync). Sources come from the baselines repo instead of
+          # this run's shard artifacts.
+          mkdir -p benchmarks/results public/benchmarks/results
+          cp /tmp/js2wasm-baselines/test262-current.json benchmarks/results/test262-current.json
+          cp /tmp/js2wasm-baselines/test262-current.json benchmarks/results/test262-report.json
+          cp /tmp/js2wasm-baselines/test262-current.json public/benchmarks/results/test262-report.json
+          cp /tmp/js2wasm-baselines/test262-standalone-report.json public/benchmarks/results/test262-standalone-report.json
+          node --experimental-strip-types scripts/generate-editions.ts \
+            --results /tmp/js2wasm-baselines/test262-current.jsonl || \
+            echo "WARN: generate-editions failed (non-fatal) — edition buckets may lag"
+          node scripts/sync-conformance-numbers.mjs || \
+            echo "WARN: sync-conformance-numbers failed (non-fatal) — docs may drift"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          eval "$(ssh-agent -s)"
+          echo "$MAIN_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git remote remove deploykey 2>/dev/null || true
+          git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
+
+          stage_files() {
+            git add -f benchmarks/results/test262-current.json \
+              benchmarks/results/test262-report.json \
+              public/benchmarks/results/test262-report.json \
+              public/benchmarks/results/test262-standalone-report.json
+            [ -f website/public/benchmarks/results/test262-editions.json ] && \
+              git add -f website/public/benchmarks/results/test262-editions.json || true
+            [ -f website/public/benchmarks/results/test262-category-editions.json ] && \
+              git add -f website/public/benchmarks/results/test262-category-editions.json || true
+            git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
+              2>/dev/null || true
+          }
+          stage_files
+          if git diff --cached --quiet; then
+            echo "No changes to commit after staging — main already current."
+            exit 0
+          fi
+
+          # Option A re-anchor loop (see promote-baseline / #1861): snapshot
+          # the staged files, hard-checkout a clean tip of main on every
+          # attempt, re-apply, commit [skip ci], push via the deploy key.
+          PROMOTE_FILES=$(git diff --cached --name-only)
+          PROMOTE_SNAPSHOT="$(mktemp -d)"
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            mkdir -p "$PROMOTE_SNAPSHOT/$(dirname "$f")"
+            cp "$f" "$PROMOTE_SNAPSHOT/$f"
+          done <<< "$PROMOTE_FILES"
+          PUSHED=0
+          for attempt in 1 2 3 4 5; do
+            git fetch deploykey main
+            git checkout -f -B _summary_sync_tmp deploykey/main || {
+              echo "checkout of deploykey/main failed (attempt ${attempt}) — retrying"
+              sleep $((attempt * 5))
+              continue
+            }
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              mkdir -p "$(dirname "$f")"
+              cp "$PROMOTE_SNAPSHOT/$f" "$f"
+              git add -f "$f"
+            done <<< "$PROMOTE_FILES"
+            if git diff --cached --quiet; then
+              echo "Summary already current on main after re-anchor — nothing to push."
+              PUSHED=1
+              break
+            fi
+            git commit -m "chore(test262): scheduled baseline summary sync — ${PASS}/${TOTAL} pass [skip ci] (#1951)"
+            if git push deploykey HEAD:main; then
+              echo "Pushed baseline summary sync to main (attempt ${attempt})."
+              PUSHED=1
+              break
+            fi
+            echo "push race lost (attempt ${attempt}) — re-anchoring and retrying"
+            sleep $((attempt * 5))
+          done
+          if [ "$PUSHED" != "1" ]; then
+            echo "::error::Failed to push baseline summary sync after 5 attempts."
+            exit 1
+          fi
+
+      - name: Trigger Pages deploy
+        if: steps.decide.outputs.sync == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The [skip ci] commit suppresses deploy-pages.yml; dispatch it so
+          # the landing page picks up the refreshed numbers. Idempotent.
+          gh workflow run deploy-pages.yml --ref main || true

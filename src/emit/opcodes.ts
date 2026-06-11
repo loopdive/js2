@@ -91,6 +91,7 @@ export const OP = {
   f64_copysign: 0xa6,
   i32_wrap_i64: 0xa7,
   i32_trunc_f64_s: 0xaa,
+  i32_trunc_f64_u: 0xab,
   f32_demote_f64: 0xb6,
   f64_promote_f32: 0xbb,
   // i64 comparison
