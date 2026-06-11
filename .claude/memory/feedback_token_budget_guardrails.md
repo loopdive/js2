@@ -11,6 +11,12 @@ Hard thresholds on weekly token budget to prevent a single long session from bur
 - **40%** crossed: stop dispatching new work in the current session. Finish any in-flight commit/push, write tech-lead context summary to `plan/agent-context/tech-lead.md`, end the session. Resume in a fresh session tomorrow.
 - **50%** crossed: hard stop, even mid-task. Budget for the week is at risk.
 
+**Override (2026-06-11):** these thresholds are defaults for unattended
+sessions, NOT absolute limits — when the user explicitly allocates a
+specific share of remaining budget to a named program (e.g. "use the
+remaining 44% for analysis"), follow the explicit allocation; flag the
+override once, then don't renag.
+
 ## Why
 
 A single tech-lead session that triages 80 regressions, merges 6 PRs, files follow-up issues, handles infra fixes, and does sprint planning can do ~150+ tool calls. Every tool call pays the cumulative history as input tokens, so the marginal cost climbs linearly. One day at 43% weekly budget (observed: 2026-04-11) means only 57% remains for the other 6 days.

@@ -1,4 +1,4 @@
-// #1919 — standalone invalid-Wasm residual: pending-late-import-batch over-shift
+// #2039 — standalone invalid-Wasm residual: pending-late-import-batch over-shift
 // corrupting native defined-function registration (`__obj_find` sub-bucket).
 //
 // Under `--target standalone`, the async-generator `.next()` plumbing requests
@@ -47,7 +47,7 @@ Promise.all([g([1]).next()]).then(results => {
 }).then($DONE, $DONE);
 `;
 
-describe("#1919 pending-late-import-batch over-shift of native registrations", () => {
+describe("#2039 pending-late-import-batch over-shift of native registrations", () => {
   it("standalone: object runtime initialized inside a deferred import batch stays valid", async () => {
     const meta = parseMeta(ASYNC_GEN_PROMISE_ALL);
     const { source: wrapped } = wrapTest(ASYNC_GEN_PROMISE_ALL, meta);

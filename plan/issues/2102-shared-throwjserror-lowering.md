@@ -23,7 +23,7 @@ origin: "2026-06-11 analysis program (report 01 ERR family — the review's blin
 Runtime checks lower to uncatchable Wasm traps (or to nothing) where the
 spec requires catchable TypeError/RangeError/ReferenceError — 10+ June
 issues: charCodeAt OOB traps (#2003), getter-only assignment traps
-(#2017), freeze writes silent (#2012), TDZ unenforced (#1954), Array
+(#2017), freeze writes silent (#2012), TDZ unenforced (#2121), Array
 RangeError missing (#2000), extracted-method null-this trap (#2025).
 Invisible to test262 until the #1945 oracle upgrade lands — which is this
 issue's detector.

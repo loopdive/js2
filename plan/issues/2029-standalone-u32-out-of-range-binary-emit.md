@@ -105,9 +105,9 @@ late-import flushing) is what exposes it.
   future `-1`/`undefined` index (no more opaque encoder RangeError).
 - Bucket reduced from 497 toward 0; no host-mode regressions.
 
-## Producer diagnosis (2026-06-10, from the #1923 always-on validation — sd-fable-emit)
+## Producer diagnosis (2026-06-10, from the #2043 always-on validation — sd-fable-emit)
 
-The #1923 PR landed inline emit-time index validation; the minimal repro now
+The #2043 PR landed inline emit-time index validation; the minimal repro now
 fails with the named error instead of the raw RangeError:
 
 ```

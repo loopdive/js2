@@ -1,9 +1,9 @@
 ---
 id: 1348
 title: "spec gap: class static initialization order + private field semantics (significant share of 1500+ class fails)"
-status: in-review
+status: done
 created: 2026-05-08
-updated: 2026-06-06
+updated: 2026-06-11
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -16,6 +16,7 @@ parent: 1328
 claimed_by: codex-developer
 claimed_at: 2026-06-06T09:51:22.932Z
 pr: 1250
+completed: 2026-06-06
 ---
 # #1348 — Class: static block order, private field exotics, super-class field shadow
 

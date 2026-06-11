@@ -1,5 +1,6 @@
 ---
-id: 1957
+id: 2124
+renumbered_from: 1957
 title: "explicit undefined as optional string-index arg coerced to NaN/0 instead of per-method default (substring/slice/lastIndexOf/endsWith/repeat, both backends)"
 status: ready
 sprint: 61
@@ -12,11 +13,11 @@ task_type: bugfix
 area: codegen
 language_feature: string-methods
 goal: core-semantics
-related: [1248, 1381, 1956]
+related: [1248, 1381, 2123]
 origin: "2026-06-10 deep-audit sweep (strings agent): verified miscompile on main"
 ---
 
-# #1957 — explicit `undefined` ≠ absent for string method index args
+# #2124 — explicit `undefined` ≠ absent for string method index args
 
 ## Problem
 

@@ -1,4 +1,4 @@
-// #1919 slice 2 — native-string helper double-shift between the two shift
+// #2039 slice 2 — native-string helper double-shift between the two shift
 // regimes (`__str_flatten` sub-bucket, ~165 standalone invalid-Wasm tests).
 //
 // The native-string helpers bake sibling-call funcIdx values at emission and
@@ -14,7 +14,7 @@
 // `nativeStrHelperImportBase` (shiftLateImportIndices and addStringImports'
 // inline shift now match the re-base addUnionImports has done since
 // #1677-fast-path), and ensureNativeStringHelpers settles any pending batch
-// before baking (same #1919 guard as ensureObjectRuntime).
+// before baking (same #2039 guard as ensureObjectRuntime).
 
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
@@ -43,7 +43,7 @@ let c = new C();
 assert.throws(TypeError, function() { c.setAccess(); }, 'msg');
 `;
 
-describe("#1919 slice 2: native-string helper shift-regime double-shift", () => {
+describe("#2039 slice 2: native-string helper shift-regime double-shift", () => {
   it("standalone: late-import flush + finalize reconcile do not double-shift __str_flatten", async () => {
     const meta = parseMeta(PRIVATE_SETTER_TYPEERROR);
     const { source: wrapped } = wrapTest(PRIVATE_SETTER_TYPEERROR, meta);

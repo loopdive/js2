@@ -1,5 +1,6 @@
 ---
-id: 1954
+id: 2121
+renumbered_from: 1954
 title: "parameter-default TDZ not enforced: f(a = a) yields NaN and f(a = b, b = 2) reads later params instead of throwing ReferenceError"
 status: ready
 sprint: 61
@@ -16,7 +17,7 @@ related: [1128]
 origin: "2026-06-10 deep-audit sweep (closures agent): verified on main"
 ---
 
-# #1954 — parameter defaults ignore the TDZ for self/forward references
+# #2121 — parameter defaults ignore the TDZ for self/forward references
 
 ## Problem
 

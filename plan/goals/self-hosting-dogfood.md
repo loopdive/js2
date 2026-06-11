@@ -63,7 +63,7 @@ differential test, not a green compile.
 | **1690b** | Inner function `var x` aliases module-level `__mod_x` global instead of allocating a function-local | Backlog | done | high |
 | **1710** | acorn dogfood harness: compile + validate + differential-AST vs node-acorn | 58 | done | high |
 | **1711** | acorn failure-surface triage: bucket harness output + file sized child issues | 58 | done | high |
-| **1712** | acceptance: compiled acorn parses a representative .js with AST structurally equal to node-acorn | 58 | backlog | high |
+| **1712** | acceptance: compiled acorn parses a representative .js with AST structurally equal to node-acorn | 61 | in-progress | high |
 | **1725** | acorn dogfood: __fnctor_<Ctor>_new emits any.convert_extern on a ref.cast-null struct ref → invalid Wasm | Backlog | done | high |
 | **1734** | acorn dogfood: __closure_11 emits unguarded struct.get on a call result of the wrong struct type → invalid Wasm | Backlog | done | high |
 | **1745** | acorn dogfood: __closure_37 global.set expects f64, found if of (ref null 3) → invalid Wasm | Backlog | done | high |

@@ -12,7 +12,7 @@ task_type: bugfix
 area: codegen
 language_feature: string-methods
 goal: core-semantics
-related: [1445, 1957]
+related: [1445, 2124]
 origin: "2026-06-10 spec-conformance sweep (strings agent): verified on main"
 ---
 
@@ -50,4 +50,4 @@ undefined/NaN sentinel for the omitted arg (parseInt pattern).
 ## Dupe check
 
 #1445 (in-review) covers ToInteger coercion of these args, not the drop;
-#1957 covers explicit-undefined args. New.
+#2124 (ex-#1957) covers explicit-undefined args. New.

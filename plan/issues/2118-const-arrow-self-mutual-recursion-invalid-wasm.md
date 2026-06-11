@@ -1,5 +1,6 @@
 ---
-id: 1951
+id: 2118
+renumbered_from: 1951
 title: "self/mutually-recursive const-arrow closures emit invalid Wasm (struct.get type mismatch) or runtime ref.cast traps"
 status: ready
 sprint: 61
@@ -16,7 +17,7 @@ related: [897, 1312, 1314, 1178]
 origin: "2026-06-10 deep-audit sweep (closures agent): verified on main"
 ---
 
-# #1951 — `const f = (n) => ... f(n-1)` produces an invalid module
+# #2118 — `const f = (n) => ... f(n-1)` produces an invalid module
 
 ## Problem
 
