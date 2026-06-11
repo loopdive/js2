@@ -187,7 +187,19 @@ export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
   // accepted, so it cannot reject a valid module; it only converts the two
   // already-broken outcomes above into an actionable message. Validated as a
   // no-op across the issue-16xx/17xx/18xx + WASI corpus (0 fires).
-  if (process.env.JS2WASM_VALIDATE_FUNCREFS) {
+  // #1939 — run the funcref range-check by default everywhere except a
+  // production build. It is a pure in-range check (cannot reject a valid
+  // module; only turns the recurring stale-funcIdx bug class — #1891/#1899 —
+  // into a named emit-time error instead of an opaque wasmtime type mismatch),
+  // and it is a per-emit linear scan (negligible). Explicitly forced on in
+  // vitest/CI; `JS2WASM_VALIDATE_FUNCREFS` still force-enables, and a
+  // production build (`NODE_ENV=production`) opts out for byte-identical output.
+  const validateFuncRefsEnabled =
+    !!process.env.JS2WASM_VALIDATE_FUNCREFS ||
+    !!process.env.VITEST ||
+    !!process.env.CI ||
+    process.env.NODE_ENV !== "production";
+  if (validateFuncRefsEnabled) {
     validateFuncRefs(mod, numImportFuncs);
   }
 
@@ -597,14 +609,18 @@ export function encodeValType(t: ValType, enc: WasmEncoder): void {
       enc.byte(TYPE.any);
       break;
     case "i8":
-      // i8 is only valid as a packed storage type — encode as i32 fallback
-      enc.byte(TYPE.i32);
-      break;
     case "i16":
-      // i16 is only valid as a packed storage type in struct fields/array elements,
-      // but if it appears in encodeValType, encode it as i32 (this shouldn't happen)
-      enc.byte(TYPE.i32);
-      break;
+      // #1939 — i8/i16 are *packed storage* types, valid only inside struct
+      // fields and array elements (encoded by the dedicated path at the top of
+      // this function / the field encoder). Reaching them here means a packed
+      // type leaked into a value position (param/result/local/global) where
+      // Wasm has no such type; silently encoding it as i32 produced a binary
+      // whose declared type disagreed with the values flowing through it — a
+      // downstream validation error far from the leak. Fail loud instead.
+      throw new Error(
+        `encodeValType: packed storage type "${t.kind}" is not valid in a value position ` +
+          `(only struct fields / array elements) — a packed type leaked into a param/result/local/global`,
+      );
   }
 }
 
@@ -1038,6 +1054,11 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       break;
     case "i32.trunc_f64_s":
       enc.byte(OP.i32_trunc_f64_s);
+      break;
+    case "i32.trunc_f64_u":
+      // #1939 — was a union member with no encoder case (silently dropped if
+      // ever emitted). Unsigned f64→i32 truncation, opcode 0xab.
+      enc.byte(OP.i32_trunc_f64_u);
       break;
     case "f64.convert_i32_s":
       enc.byte(OP.f64_convert_i32_s);
@@ -1674,6 +1695,35 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.u32(instr.align);
       enc.u32(instr.offset);
       break;
+    case "end":
+      // #1939 — the explicit structured-block terminator (0x0b). Block/loop/if
+      // bodies normally emit their own trailing `end` in the structured
+      // encoders, but a standalone `end` instr is a valid union member and was
+      // previously a silent drop.
+      enc.byte(OP.end);
+      break;
+    case "br_table":
+      // #1939 — `br_table` is declared in the Instr union as `{ op: "br_table" }`
+      // with NO payload (target label vector + default), so there is no correct
+      // encoding for it: emitting opcode 0x0e without its operands would corrupt
+      // every following instruction. No codegen path produces it today. Fail
+      // loud rather than emit a malformed branch; wiring it needs the union to
+      // carry `targets: number[]` + `default: number` first.
+      throw new Error(
+        "encodeInstr: 'br_table' has no payload in the Instr union (needs targets[] + default) — " +
+          "cannot be encoded; no codegen path should emit it yet (#1939)",
+      );
+    // #1939 — fail loud on an op with no encoding case. The ~170
+    // `as unknown as Instr` casts (#1095) bypass the type union, so a
+    // mistyped/missing op string would otherwise be silently omitted from the
+    // binary — the worst failure shape, surfacing far downstream as an opaque
+    // wasm validation error (stack/type mismatch) with no link to the source
+    // op. The `never` binding is a compile-time exhaustiveness check over the
+    // real union; the throw also catches cast-injected strings at runtime.
+    default: {
+      const unknown: never = instr;
+      throw new Error(`encodeInstr: unknown op "${(unknown as { op?: string }).op ?? "<no op>"}"`);
+    }
   }
 }
 

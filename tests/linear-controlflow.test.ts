@@ -238,3 +238,323 @@ describe("linear-controlflow: expression statements", () => {
     expect(e.test()).toBe(2);
   });
 });
+
+// ── #1937: break / continue ──────────────────────────────────────────────
+
+/** Compile with the linear backend, expecting failure; return the errors. */
+async function compileLinearExpectError(source: string) {
+  const result = await compile(source, { target: "linear" });
+  expect(result.success, `expected compile failure but got success\nWAT:\n${result.wat}`).toBe(false);
+  return result.errors;
+}
+
+describe("linear-controlflow: break/continue (#1937)", () => {
+  it("break exits a while(true) loop", async () => {
+    const e = await compileLinear(`
+      export function test(n: number): number {
+        let i: number = 0;
+        while (true) {
+          if (i >= n) break;
+          i = i + 1;
+        }
+        return i;
+      }
+    `);
+    expect(e.test(5)).toBe(5);
+    expect(e.test(0)).toBe(0);
+  });
+
+  it("continue in a while loop re-tests the condition", async () => {
+    const e = await compileLinear(`
+      export function sumOdds(n: number): number {
+        let i: number = 0;
+        let sum: number = 0;
+        while (i < n) {
+          i = i + 1;
+          if (i % 2 === 0) continue;
+          sum = sum + i;
+        }
+        return sum;
+      }
+    `);
+    expect(e.sumOdds(10)).toBe(25); // 1+3+5+7+9
+  });
+
+  it("continue in a for loop still runs the incrementor", async () => {
+    const e = await compileLinear(`
+      export function sumNonMultiplesOf3(n: number): number {
+        let sum: number = 0;
+        for (let i = 0; i < n; i = i + 1) {
+          if (i % 3 === 0) continue;
+          sum = sum + i;
+        }
+        return sum;
+      }
+    `);
+    // 0..9 minus {0,3,6,9} → 1+2+4+5+7+8 = 27
+    expect(e.sumNonMultiplesOf3(10)).toBe(27);
+  });
+
+  it("break in a for loop", async () => {
+    const e = await compileLinear(`
+      export function firstSquareAbove(limit: number): number {
+        let result: number = -1;
+        for (let i = 1; i < 1000; i = i + 1) {
+          if (i * i > limit) {
+            result = i * i;
+            break;
+          }
+        }
+        return result;
+      }
+    `);
+    expect(e.firstSquareAbove(10)).toBe(16);
+    expect(e.firstSquareAbove(0)).toBe(1);
+  });
+
+  it("break/continue bind to the innermost of nested loops", async () => {
+    const e = await compileLinear(`
+      export function test(): number {
+        let count: number = 0;
+        for (let i = 0; i < 4; i = i + 1) {
+          for (let j = 0; j < 4; j = j + 1) {
+            if (j === i) continue;
+            if (j > 2) break;
+            count = count + 1;
+          }
+        }
+        return count;
+      }
+    `);
+    // i=0: j=1,2 → 2; i=1: j=0,2 → 2; i=2: j=0,1 → 2; i=3: j=0,1,2 → 3
+    expect(e.test()).toBe(9);
+  });
+
+  it("continue in a do-while still checks the condition", async () => {
+    const e = await compileLinear(`
+      export function test(n: number): number {
+        let i: number = 0;
+        let evens: number = 0;
+        do {
+          i = i + 1;
+          if (i % 2 === 1) continue;
+          evens = evens + 1;
+        } while (i < n);
+        return evens;
+      }
+    `);
+    expect(e.test(10)).toBe(5);
+  });
+
+  it("break in a do-while", async () => {
+    const e = await compileLinear(`
+      export function test(): number {
+        let i: number = 0;
+        do {
+          i = i + 1;
+          if (i === 3) break;
+        } while (i < 100);
+        return i;
+      }
+    `);
+    expect(e.test()).toBe(3);
+  });
+
+  it("break/continue in for-of over an array", async () => {
+    const e = await compileLinear(`
+      export function test(): number {
+        const arr: number[] = [1, 2, 3, 4, 5, 6];
+        let sum: number = 0;
+        for (const x of arr) {
+          if (x === 2) continue;
+          if (x === 5) break;
+          sum = sum + x;
+        }
+        return sum;
+      }
+    `);
+    expect(e.test()).toBe(8); // 1 + 3 + 4
+  });
+
+  it("break inside switch exits the switch, not an enclosing loop", async () => {
+    const e = await compileLinear(`
+      export function test(n: number): number {
+        let total: number = 0;
+        for (let i = 0; i < n; i = i + 1) {
+          switch (i % 3) {
+            case 0:
+              total = total + 1;
+              break;
+            case 1:
+              total = total + 10;
+              break;
+            default:
+              total = total + 100;
+              break;
+          }
+        }
+        return total;
+      }
+    `);
+    expect(e.test(6)).toBe(222); // two of each arm
+  });
+
+  it("break inside an if inside a switch inside a loop", async () => {
+    const e = await compileLinear(`
+      export function test(): number {
+        let acc: number = 0;
+        for (let i = 0; i < 5; i = i + 1) {
+          switch (i) {
+            case 2: {
+              if (acc > 0) {
+                acc = acc + 100;
+                break;
+              }
+              acc = acc + 1000;
+              break;
+            }
+            default:
+              acc = acc + 1;
+              break;
+          }
+        }
+        return acc;
+      }
+    `);
+    expect(e.test()).toBe(104); // i=0,1: +1+1; i=2: +100; i=3,4: +1+1
+  });
+});
+
+// ── #1937: truthiness ────────────────────────────────────────────────────
+
+describe("linear-controlflow: NaN truthiness (#1937)", () => {
+  it("if (NaN) takes the else branch", async () => {
+    const e = await compileLinear(`
+      export function test(x: number): number {
+        const y: number = x / x; // NaN when x is 0
+        if (y) return 1;
+        return 0;
+      }
+    `);
+    expect(e.test(0)).toBe(0); // 0/0 = NaN → falsy
+    expect(e.test(2)).toBe(1); // 2/2 = 1 → truthy
+  });
+
+  it("while (NaN) never enters the loop", async () => {
+    const e = await compileLinear(`
+      export function test(): number {
+        let guard: number = 0 / 0;
+        let n: number = 0;
+        while (guard) {
+          n = 1;
+          guard = 0;
+        }
+        return n;
+      }
+    `);
+    expect(e.test()).toBe(0);
+  });
+
+  it("negative numbers stay truthy, zero stays falsy", async () => {
+    const e = await compileLinear(`
+      export function test(x: number): number {
+        if (x) return 1;
+        return 0;
+      }
+    `);
+    expect(e.test(-5)).toBe(1);
+    expect(e.test(0.5)).toBe(1);
+    expect(e.test(0)).toBe(0);
+    expect(e.test(-0)).toBe(0);
+  });
+});
+
+// ── #1937: fail-loud dispatchers ─────────────────────────────────────────
+
+describe("linear-controlflow: unsupported constructs fail loud (#1937)", () => {
+  const unsupportedStatements: [name: string, source: string][] = [
+    [
+      "labeled break",
+      `export function test(): number {
+        outer: for (let i = 0; i < 3; i = i + 1) {
+          for (let j = 0; j < 3; j = j + 1) {
+            break outer;
+          }
+        }
+        return 0;
+      }`,
+    ],
+    [
+      "throw",
+      `export function test(x: number): number {
+        if (x < 0) throw new Error("negative");
+        return x;
+      }`,
+    ],
+    [
+      "switch case fall-through from non-empty body",
+      `export function test(n: number): number {
+        let r: number = 0;
+        switch (n) {
+          case 0:
+            r = r + 1;
+          case 1:
+            r = r + 10;
+            break;
+        }
+        return r;
+      }`,
+    ],
+    [
+      "break outside any loop",
+      `export function test(): number {
+        break;
+        return 0;
+      }`,
+    ],
+    [
+      "continue outside any loop",
+      `export function test(): number {
+        continue;
+        return 0;
+      }`,
+    ],
+  ];
+
+  it.each(unsupportedStatements)("%s → success:false with a located message", async (_name, body) => {
+    const errors = await compileLinearExpectError(body);
+    expect(errors.length).toBeGreaterThan(0);
+    // At least one diagnostic must carry a real source position (#1937
+    // threads getLineAndCharacterOfPosition into linear diagnostics).
+    expect(errors.some((e) => e.line > 0)).toBe(true);
+  });
+
+  it("typeof (unsupported expression) fails loud with a located message", async () => {
+    const errors = await compileLinearExpectError(`
+      export function test(x: number): number {
+        if (typeof x === "number") return 1;
+        return 0;
+      }
+    `);
+    expect(errors.some((e) => e.message.includes("Unsupported expression") && e.line > 0)).toBe(true);
+  });
+});
+
+// ── #1937: modulo (was an empty dispatch arm leaving 2 stack values) ─────
+
+describe("linear-controlflow: % operator (#1937)", () => {
+  it("computes the remainder, not the divisor", async () => {
+    const e = await compileLinear(`
+      export function mod(a: number, b: number): number {
+        return a % b;
+      }
+    `);
+    expect(e.mod(10, 3)).toBe(1);
+    expect(e.mod(9, 3)).toBe(0);
+    expect(e.mod(5.5, 2)).toBe(1.5);
+    expect(e.mod(-5, 3)).toBe(-2); // JS %: sign of the dividend
+    expect(e.mod(5, -3)).toBe(2);
+    expect(Number.isNaN(e.mod(5, 0))).toBe(true);
+    expect(Number.isNaN(e.mod(Infinity, 3))).toBe(true);
+  });
+});

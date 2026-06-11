@@ -979,6 +979,12 @@ export function resolveConstantExpression(ctx: CodegenContext, expr: ts.Expressi
  * Returns undefined if the name cannot be statically resolved.
  */
 export function resolvePropertyNameText(ctx: CodegenContext, prop: ts.ObjectLiteralElementLike): string | undefined {
+  // #2010: a shorthand `{ x }` carries its key as `prop.name` (an Identifier).
+  // Treat it like `{ x: x }` so the open-$Object construction path
+  // (compileObjectLiteralAsExternref) does not skip it — previously this returned
+  // undefined for shorthands, so a literal mixing a shorthand with a spread
+  // (`{ x, ...null }`) dropped the shorthand binding entirely.
+  if (ts.isShorthandPropertyAssignment(prop)) return prop.name.text;
   if (!ts.isPropertyAssignment(prop)) return undefined;
   const name = prop.name;
 
@@ -1408,8 +1414,13 @@ export function compileObjectLiteralForStruct(
   }
 
   for (const field of fields) {
-    // First check for an explicit property assignment (identifier, string literal, or computed key)
-    const prop = expr.properties.find((p) => resolvePropertyNameText(ctx, p) === field.name);
+    // First check for an explicit property assignment (identifier, string literal, or computed key).
+    // #2010: resolvePropertyNameText now also matches shorthands; exclude them here so
+    // the dedicated shorthand branch below (which compiles `prop.name` as the value)
+    // keeps handling them — the property-assignment branch can't read a shorthand.
+    const prop = expr.properties.find(
+      (p) => !ts.isShorthandPropertyAssignment(p) && resolvePropertyNameText(ctx, p) === field.name,
+    );
     // Also check for shorthand property assignment ({ x, y } where x/y are identifiers)
     const shorthandProp = !prop
       ? expr.properties.find((p) => ts.isShorthandPropertyAssignment(p) && p.name.text === field.name)

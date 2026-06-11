@@ -138,3 +138,90 @@ functor instances → ctor closure at `new`-site codegen; `_wrapForHost` get
 trap falls back to the ctor's vivified proto and threads `this` via
 `__call_fn_method_N` (#1636-S1). Acorn's `var pp$N = Parser.prototype;
 pp$N.method = fn` aliasing is satisfied by the vivified object's identity.
+
+### Blocker 2 progress — fnctor prototype bridge (WIP, branch issue-1712-proto-bridge)
+
+Implemented (this branch, stacked on issue-1712-acorn-acceptance / PR #1301):
+1. `__extern_get(closure, "prototype")` auto-vivifies an identity-stable JS
+   object in the closure's sidecar (`_getOrVivifyFnPrototype`, runtime.ts) —
+   wired in BOTH resolution regimes (intent `case "extern_get"` AND the
+   by-name builtin chain; they are different handlers).
+2. Synthesized fnctor ctors emit `__register_fnctor_instance(inst, ctor)`
+   (new-super.ts; ensureLateImport + flushLateImportShifts discipline; JS-host
+   only, gated off for standalone/wasi). Instance property misses resolve via
+   `_fnctorProtoLookup` hooks in `_safeGet` + `_wrapForHost.safeGetField`.
+3. `_wrapWasmClosure` is this-aware (dispatches `__call_fn_method_N` when the
+   receiver unwraps to a Wasm struct) and resolves dispatcher exports at CALL
+   time, fixing the start-window wrap no-op. Arity-5 method export added.
+4. **`withImportObject` (#1667) now exposes `__setExports`** — previously the
+   convenience importObject path NEVER wired exports, permanently disabling
+   closure wrapping/__sget_ on it. Harness updated to call it.
+5. Start-window `Object.defineProperties(proto, structDescs)` defers to a
+   `pendingExportsDeferred` queue drained by `setExports`.
+
+**Result: compiled acorn now compiles + validates + instantiates + RUNS** —
+`parse` callable, ASTs produced for all 5 fixtures. Surface: 0 equal /
+5 divergent / 0 errored — the runtime-divergence phase is reachable for the
+first time.
+
+Open items for the next session:
+- Probe C (`Object.defineProperties` accessors at module scope) still loses
+  the accessor: the executing __defineProperties handler did NOT take the
+  deferral branch (dbg3 showed it running eagerly with zero keys). Verify
+  which handler instance executes for intent vs name, and that callbackState
+  there carries `deferToExports`.
+- ~~Root AST divergence: `exports.parse(...)` diffs as null at `$`~~ —
+  ROOT-CAUSED + FIXED (2026-06-10, fable-1712b). Two stacked defects:
+  1. **Capture-struct dispatch exclusion** (`src/codegen/index.ts`): the
+     `__call_fn_<N>` / `__call_fn_method_<N>` dispatchers tested ONE
+     representative base-wrapper struct type for funcref extraction, but
+     capture-carrying closure structs are standalone Wasm types with NO
+     subtype relation to the 1-field base wrapper — `ref.test <base>` fails
+     for them and the dispatcher silently yields `ref.null.extern`. Acorn's
+     prototype methods all capture their fnctor (`Node`, `Parser`, …) so
+     every host-bridge method call returned null. Fixed by per-shape
+     extraction (`buildFuncrefExtraction`, mirrors `__is_closure`'s
+     root-walking). Minimal repro: a proto method whose body merely does
+     `typeof <other-fnctor>` returned null (F3, `.tmp/dbg10.mts`).
+  2. **`__call_fn_1` covered exactly-arity-1 only**, violating the
+     `_maybeWrapCallableUnknownArity` contract (it wraps with the HIGHEST
+     available dispatcher, so fn_1 must invoke arity-0 closures). Fixed by
+     delegating the legacy `emitClosureCallExport`/`...Export1` to the
+     generic `emitClosureCallExportN` (arity ≤ N coverage + #820l argc
+     plumbing + #1896 arg coercion for free).
+  Regression pin: `tests/issue-1712-capture-closure-dispatch.test.ts`.
+  The harness now also routes through `wrapExports` (#1504) so returned
+  node graphs marshal to plain JS for diffing (raw exports are opaque).
+- NEW first triage target after the dispatch fix: all 5 fixtures moved
+  null→**trap "dereferencing a null pointer"** inside compiled `parse`
+  execution. ROOT-CAUSED (not yet fixed): **fnctor instances have TWO
+  irreconcilable struct shapes.**
+  - `compileFnctorNew` (`src/codegen/expressions/new-super.ts:~850`)
+    synthesizes the instance struct from the ctor body's `this.*` writes
+    only (E3: `$8 = {input}`) and registers it as `__fnctor_<name>` /
+    `funcConstructorMap`.
+  - Consumer sites resolve the receiver via the TS checker; in JS mode the
+    checker models `Parser.prototype.parse = fn` as an instance member, so
+    the anonymous-struct fallback in `resolveWasmType`
+    (`src/codegen/index.ts:~8741`, structMap miss because the fnctor
+    registered under `__fnctor_Parser`, not `Parser`) synthesizes a WIDER
+    shape (E3: `$3 = {input, parse}`).
+  - `ref.test (ref $3)` on a `$8` instance always fails → guarded-cast
+    else-arm `ref.null none` → `struct.get $3 1` / `ref.as_non_null` →
+    trap. See `.tmp/e3.wat` `$parse` + `$__closure_1`.
+  - **Attempted fix that did NOT work** (do not repeat naively): resolving
+    fnctor names to the ctor struct inside `resolveWasmType` (consult
+    `funcConstructorMap` before the anonymous fallback). It regressed G4/G5
+    (probe `.tmp/dbg15.mts`) from working→null — `resolveWasmType` feeds
+    params/locals/fields everywhere and the member-call path's
+    static-vs-dynamic split needs to be steered TOGETHER with the type
+    change (when the receiver is the ctor struct, `.method()` must compile
+    to the dynamic host-bridge call, and the checker-shape struct must stop
+    being synthesized at all). Suggest handling in the member-access /
+    call-expression resolution layer (where receiver typeIdx is chosen),
+    not in resolveWasmType alone — or unify by making compileFnctorNew
+    emit the checker shape with prototype-method fields POPULATED from the
+    module-init closures (compile-away-the-prototype strategy; needs the
+    proto-method closure values to be reachable as globals at ctor time).
+- Probes live in `.tmp/repro2.mts` / `.tmp/dbg1.mts`–`.tmp/dbg15.mts`
+  (dbg4–15 are the #1712b dispatch-bisection series).

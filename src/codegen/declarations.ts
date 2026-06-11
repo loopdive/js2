@@ -70,6 +70,7 @@ import { computeElidableTopLevelTdzNames } from "./expressions/identifiers.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { compileExpression, compileStatement } from "./shared.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
+import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 
 /** Accumulated state for the single-pass collector */
 interface UnifiedCollectorState {
@@ -3271,7 +3272,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     for (const decl of list.declarations) {
       if (ts.isIdentifier(decl.name)) {
         const varType = ctx.checker.getTypeAtLocation(decl);
-        const wasmType = resolveWasmType(ctx, varType);
+        // #1914 — `var m = re.exec(s)` under standalone gets the precise
+        // match-vec ref type so indexed reads stay on the static vec path
+        // (externref-widened globals round-trip through __extern_get_idx,
+        // which can't see typed vecs and returns null).
+        const wasmType = inferStandaloneRegExpMatchGlobalType(ctx, decl) ?? resolveWasmType(ctx, varType);
         registerModuleGlobal(decl.name.text, wasmType);
       } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
         registerBindingNames(decl.name);
@@ -3351,7 +3356,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       for (const decl of stmt.declarationList.declarations) {
         if (ts.isIdentifier(decl.name)) {
           const varType = ctx.checker.getTypeAtLocation(decl);
-          const wasmType = resolveWasmType(ctx, varType);
+          // #1914 — `var m = re.exec(s)` under standalone gets the precise
+          // match-vec ref type so indexed reads stay on the static vec path
+          // (externref-widened globals round-trip through __extern_get_idx,
+          // which can't see typed vecs and returns null).
+          const wasmType = inferStandaloneRegExpMatchGlobalType(ctx, decl) ?? resolveWasmType(ctx, varType);
           registerModuleGlobal(decl.name.text, wasmType);
           if (isLetOrConst) {
             ctx.tdzLetConstNames.add(decl.name.text);

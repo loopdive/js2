@@ -47,6 +47,8 @@ matches_test262_path() {
     tests/test262-runner.ts) return 0 ;;
     tests/test262-scope-classification.test.ts) return 0 ;;
     tests/test262-shared.ts) return 0 ;;
+    # Weight maps change shard assignment — full validation on refresh (#1953).
+    tests/test262-slow-tests*.json) return 0 ;;
     # The path matcher itself affects gating logic — treat as relevant so a
     # change to the matcher always re-runs the full suite (fail-safe).
     scripts/test262-paths-match.sh) return 0 ;;
