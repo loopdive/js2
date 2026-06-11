@@ -76,6 +76,43 @@ above is resolved. Root cause (reproduced on main `8ba0a82b6`):
   in the late-import-shift lane, and #1923's emit-time total index validation
   would catch the class at compile time.
 
+## Re-measurement on main @ 3b8013d37 (2026-06-10, post slice-1 + #1923)
+
+Representative-test probe (`.tmp/standalone-audit/probe-file.mts`) results
+after the slice-1 flush guards (fork PR #4) and #1923 validation landed:
+
+| Sub-bucket | Representative | Status on 3b8013d37 |
+| --- | --- | --- |
+| `__obj_find` (146) | class/elements/after-same-line-static-method-…privatename-identifier | **FIXED** (returns 1) |
+| arguments arity (93) | eval-code/direct/async-gen-meth-…arguments-lex-bind… | **FIXED** (returns 1) — slice-1 guards covered it |
+| async-gen `i64` (~230) | async-generator/dstr/obj-ptrn-prop-ary-trailing-comma | **still invalid** — `call[0] expected i64, found extern.convert_any` in `f` |
+| truthiness `if[0]` (~150) | async-generator/dstr/dflt-ary-ptrn-rest-id | **still invalid** — `if[0] expected i32, found call of type externref` in `f` (the addUnionImports guard did NOT cover this; see slice 3) |
+| `__str_flatten` validation flavor (~165) | class/elements/set-access-of-missing-private-setter | **still invalid** until slice 2 (fixed by this PR) |
+| `__str_flatten` null-deref flavor | while/S12.6.2_A4_T4, Array/prototype/indexOf/15.4.4.14-5-23 | **separate bug** — binary instantiates but traps `dereferencing a null pointer` at runtime; not an invalid-Wasm row, needs its own triage |
+| long tail | class/elements/private-{getter,method}-is-not-a-own-property | `C_checkPrivateGetter/Method`: `call[0] expected externref, found local.get (ref null 27)` — arg-type flavor, untriaged |
+| long tail | for-await-of/async-func-dstr-var-async-obj-ptrn-empty | runtime `illegal cast` (instantiates) — not this bucket |
+
+## Root cause — `__str_flatten` sub-bucket (~165 tests) — FIXED (slice 2, this PR)
+
+**Mechanism (instrumented):** two shift regimes overlap. When an
+`ensureLateImport` batch lands, `shiftLateImportIndices` repairs the
+native-string helper map AND the helper bodies (it walks `mod.functions`) —
+but did not advance `nativeStrHelperImportBase`. The next
+`reconcileNativeStrFinalizeShift` computed `added = numImportFuncs - base`
+over the SAME imports and re-applied the delta: `__str_flatten`'s internal
+`call __str_copy_tree` ended one slot high (calling itself, hence the
+`call[0] expected (ref null N), found i32.const` signature — the i32.const
+on the stack was meant for the sibling's later parameter).
+
+**Fix:** `shiftLateImportIndices` and `addStringImports`' inline shift now
+re-base `nativeStrHelperImportBase = numImportFuncs` after repairing the
+helpers — the exact re-base `addUnionImports`' inline shift has done since
+#1677-fast-path. Base stays -1 on the default GC path (host mode hard no-op,
+#618 hazard). Also: `ensureNativeStringHelpers` settles any pending
+late-import batch before baking funcIdx values (same slice-1 guard as
+`ensureObjectRuntime`). Regression test: `tests/issue-1919-strflatten.test.ts`
+(standalone + wasi + host-guard).
+
 ## Why this is the right next split
 
 This bucket is pure compiler bugs — no spec work, no new runtime features.

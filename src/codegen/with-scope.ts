@@ -39,6 +39,15 @@ export interface WithBinding {
   fieldIdx: number;
 }
 
+type WithTargetIntegrity = "plain" | "sealed" | "frozen";
+
+interface WithTargetProof {
+  ok: true;
+  expr: ts.ObjectLiteralExpression;
+  keys: Set<string>;
+  integrity: WithTargetIntegrity;
+}
+
 export function findWithBinding(fctx: FunctionContext, name: string): WithBinding | null {
   const scopes = fctx.withScopes;
   if (!scopes || scopes.length === 0) return null;
@@ -95,7 +104,7 @@ export function compileWithBindingAssignment(
 }
 
 export function compileWithStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.WithStatement): void {
-  const proof = proveObjectLiteralWithTarget(stmt.expression);
+  const proof = proveObjectLiteralWithTarget(fctx, stmt.expression);
   if (!proof.ok) {
     reportWithStatementDiagnostic(ctx, stmt, proof.reason);
     return;
@@ -109,7 +118,7 @@ export function compileWithStatement(ctx: CodegenContext, fctx: FunctionContext,
     return;
   }
 
-  const targetType = compileClosedObjectLiteralTarget(ctx, fctx, stmt.expression as ts.ObjectLiteralExpression);
+  const targetType = compileClosedObjectLiteralTarget(ctx, fctx, proof.expr);
   if (!targetType || (targetType.kind !== "ref" && targetType.kind !== "ref_null")) {
     if (targetType) fctx.body.push({ op: "drop" });
     reportWithStatementDiagnostic(ctx, stmt, "target did not lower to a WasmGC struct with a closed shape");
@@ -147,7 +156,8 @@ export function compileWithStatement(ctx: CodegenContext, fctx: FunctionContext,
       return;
     }
   }
-  const scope = { localIdx, structTypeIdx, fields, blockedNames };
+  const scopeFields = proof.integrity === "frozen" ? fields.map((field) => ({ ...field, mutable: false })) : fields;
+  const scope = { localIdx, structTypeIdx, fields: scopeFields, blockedNames };
   (fctx.withScopes ??= []).push(scope);
   try {
     compileStatement(ctx, fctx, stmt.statement);
@@ -211,9 +221,16 @@ function reportWithStatementDiagnostic(ctx: CodegenContext, stmt: ts.WithStateme
 }
 
 function proveObjectLiteralWithTarget(
+  fctx: FunctionContext,
   expr: ts.Expression,
-): { ok: true; keys: Set<string> } | { ok: false; reason: string } {
+): WithTargetProof | { ok: false; reason: string } {
   if (!ts.isObjectLiteralExpression(expr)) {
+    const builtinIntegrity = unwrapBuiltinObjectIntegrityCall(fctx, expr);
+    if (builtinIntegrity) {
+      const proof = proveObjectLiteralWithTarget(fctx, builtinIntegrity.expr);
+      if (!proof.ok) return proof;
+      return { ...proof, integrity: builtinIntegrity.integrity };
+    }
     return { ok: false, reason: `target ${ts.SyntaxKind[expr.kind]} is not a closed object literal` };
   }
 
@@ -250,7 +267,21 @@ function proveObjectLiteralWithTarget(
     }
     keys.add(name);
   }
-  return { ok: true, keys };
+  return { ok: true, expr, keys, integrity: "plain" };
+}
+
+function unwrapBuiltinObjectIntegrityCall(
+  fctx: FunctionContext,
+  expr: ts.Expression,
+): { expr: ts.Expression; integrity: Exclude<WithTargetIntegrity, "plain"> } | null {
+  if (!ts.isCallExpression(expr) || expr.arguments.length !== 1) return null;
+  const callee = expr.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return null;
+  if (!ts.isIdentifier(callee.expression) || callee.expression.text !== "Object") return null;
+  if (fctx.localMap.has("Object")) return null;
+  if (callee.name.text === "freeze") return { expr: expr.arguments[0]!, integrity: "frozen" };
+  if (callee.name.text === "seal") return { expr: expr.arguments[0]!, integrity: "sealed" };
+  return null;
 }
 
 function staticPropertyName(name: ts.PropertyName): string | undefined {

@@ -36,7 +36,13 @@ import {
   hoistFunctionDeclarations,
   valTypesMatch,
 } from "./shared.js";
-import { emitArgumentsVecBody } from "./statements/nested-declarations.js";
+import {
+  cacheParamDefaultArgc,
+  emitF64ParamSentinelCheck,
+  emitArgumentsVecBody,
+  emitParamDefaultArgMissingCheck,
+  paramDefaultNeedsArgc,
+} from "./statements/nested-declarations.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
@@ -708,6 +714,13 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // For params with constant defaults (#869), the caller already inlined the value,
   // so we skip the check. For expression defaults, check if the caller sent a sentinel.
   const funcOptInfo = ctx.funcOptionalParams.get(func.name);
+  const defaultArgcLocal = decl.parameters.some((param, i) => {
+    if (!param.initializer) return false;
+    const optEntry = funcOptInfo?.find((o) => o.index === i);
+    return !optEntry?.constantDefault && paramDefaultNeedsArgc(params[i]?.type);
+  })
+    ? cacheParamDefaultArgc(ctx, fctx)
+    : undefined;
   for (let i = 0; i < decl.parameters.length; i++) {
     const param = decl.parameters[i]!;
     if (!param.initializer) continue;
@@ -805,21 +818,18 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
         then: thenInstrs,
       });
     } else if (paramType.kind === "i32") {
-      fctx.body.push({ op: "local.get", index: paramIdx });
-      fctx.body.push({ op: "i32.eqz" });
+      emitParamDefaultArgMissingCheck(fctx, defaultArgcLocal!, i);
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
         then: thenInstrs,
       });
     } else if (paramType.kind === "f64") {
-      // Check if the f64 param holds the sentinel sNaN bit pattern (#866).
-      // This distinguishes missing args from explicit NaN/0/any other value.
-      // Sentinel: 0x7FF00000DEADC0DE (emitted by pushParamSentinel).
-      fctx.body.push({ op: "local.get", index: paramIdx });
-      fctx.body.push({ op: "i64.reinterpret_f64" });
-      fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
-      fctx.body.push({ op: "i64.eq" });
+      emitParamDefaultArgMissingCheck(fctx, defaultArgcLocal!, i);
+      // Keep the f64 sNaN sentinel as a fallback for existing callers that
+      // materialize an explicit undefined/missing value.
+      emitF64ParamSentinelCheck(fctx, paramIdx);
+      fctx.body.push({ op: "i32.or" });
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },

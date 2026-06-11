@@ -22,6 +22,8 @@ import type { BackendEmitter } from "./emitter.js";
 import type { IrClassLowering, IrObjectStructLowering, IrVecLowering } from "./handles.js";
 
 export class WasmGcEmitter implements BackendEmitter<Instr[]> {
+  readonly backend = "wasmgc" as const;
+
   // #1584: sink = Instr[]. The factory returns a plain array and the raw escape
   // hatch is a direct `push` — so the emitted `Instr` stream is byte-identical
   // to the pre-#1584 inline emission (the WasmGC path is unchanged).

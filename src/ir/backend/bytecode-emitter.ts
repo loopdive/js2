@@ -369,6 +369,8 @@ function unopToOpcode(op: IrUnop): Opcode {
  * this class only decides which opcode each primitive emits.
  */
 export class BytecodeEmitter implements BackendEmitter<BytecodeSink> {
+  readonly backend = "bytecode" as const;
+
   /** Factory for a child sink — used by `lower.ts` to build `if`-arm buffers. */
   newSink(): BytecodeSink {
     return new BytecodeSink();

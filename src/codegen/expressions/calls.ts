@@ -67,7 +67,12 @@ import { emitArrayIsArrayExternrefPredicate, emitNullCheckThrow, typeErrorThrowI
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
-import { emitSetExtrasArgv, ensureArgcGlobal, ensureExtrasArgvGlobal } from "../statements/nested-declarations.js";
+import {
+  emitSetExtrasArgv,
+  ensureArgcGlobal,
+  ensureExtrasArgvGlobal,
+  maybeSetArgcForKnownCall,
+} from "../statements/nested-declarations.js";
 import { compileNativeStringMethodCall, compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { tryCompileNodeProcessCall } from "../node-process-api.js";
 import {
@@ -116,6 +121,7 @@ import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-sup
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import {
   ensureNativeStringExternBridge,
+  ensureStrToCharVecHelper,
   ensureTextEncodingHelpers,
   stringConstantExternrefInstrs,
 } from "../native-strings.js";
@@ -1298,9 +1304,16 @@ function compileOptionalDirectCall(ctx: CodegenContext, fctx: FunctionContext, e
       compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
     }
     if (paramTypes) {
+      const optInfo = ctx.funcOptionalParams.get(funcName);
       for (let i = expr.arguments.length; i < paramTypes.length; i++) {
-        pushDefaultValue(fctx, paramTypes[i]!, ctx);
+        const opt = optInfo?.find((o) => o.index === i);
+        if (opt) {
+          pushParamSentinel(fctx, paramTypes[i]!, ctx, opt);
+        } else {
+          pushDefaultValue(fctx, paramTypes[i]!, ctx);
+        }
       }
+      maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, paramTypes.length);
     }
     fctx.body.push({ op: "call", funcIdx });
     resolved = true;
@@ -2700,6 +2713,13 @@ function compileCallExpression(
               }
             }
 
+            maybeSetArgcForKnownCall(
+              ctx,
+              fctx,
+              funcName,
+              remainingArgs.length,
+              getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,
+            );
             const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
             fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
 
@@ -2771,6 +2791,13 @@ function compileCallExpression(
                 }
               }
               const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
+              maybeSetArgcForKnownCall(
+                ctx,
+                fctx,
+                funcName,
+                elements.length,
+                getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,
+              );
               fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
               // Use actual Wasm return type for .apply()
               if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
@@ -2818,6 +2845,7 @@ function compileCallExpression(
               }
             }
             const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
+            maybeSetArgcForKnownCall(ctx, fctx, funcName, 0, getFuncParamTypes(ctx, finalFuncIdx)?.length ?? 0);
             fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
             // Use actual Wasm return type for .apply() with no args
             if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
@@ -2883,13 +2911,15 @@ function compileCallExpression(
           //     the borrowed receiver to a native string ($NativeString brand)
           //     and emits the __str_* fast path. The covered method set is the
           //     ones whose native helper round-trips correctly (see below).
-          //   - Object.hasOwnProperty: synthesise the bare call, which already
-          //     has a clean native standalone path (compilePropertyIntrospection
-          //     → __hasOwnProperty). Other Object methods (isPrototypeOf /
-          //     propertyIsEnumerable / valueOf) and Array/Number/Boolean/Function
-          //     have no clean native borrowed path yet → refuse-loud below
-          //     (Array brand arm rides on #6407; isPrototypeOf bare-path leak is
-          //     a separate follow-on). Never a silent-wrong answer.
+          //   - Object.hasOwnProperty/propertyIsEnumerable: synthesise the bare
+          //     call, which already has a clean native standalone path
+          //     (compilePropertyIntrospection → __hasOwnProperty /
+          //     __propertyIsEnumerable) while preserving closed class-struct
+          //     field/method semantics.
+          //   - Object.isPrototypeOf: route directly to the native open-object
+          //     prototype-chain helper. Array/Number/Boolean/Function have no
+          //     clean native borrowed path yet → refuse-loud below (Array brand
+          //     arm rides on #6407). Never a silent-wrong answer.
           if (ctx.standalone && expr.arguments.length >= 1 && !isBuiltinRegExpPrototype) {
             // Native String methods whose __str_* helper + return marshaling
             // round-trip correctly standalone (verified end-to-end). Methods
@@ -2934,12 +2964,39 @@ function compileCallExpression(
               if (strResult !== null) return strResult;
               // Native string path declined (unexpected shape) — fall through
               // to the refuse-loud below rather than the host import.
-            } else if (typeName === "Object" && methodName === "hasOwnProperty") {
-              // Object.prototype.hasOwnProperty.call(o, k) → o.hasOwnProperty(k),
-              // which routes to the native __hasOwnProperty (own-only presence).
+            } else if (
+              typeName === "Object" &&
+              (methodName === "hasOwnProperty" || methodName === "propertyIsEnumerable")
+            ) {
+              // Object.prototype.{hasOwnProperty,propertyIsEnumerable}.call(o, k)
+              // → o.<method>(k), which routes through compilePropertyIntrospection.
               const { prop, call } = synthesizeBorrowedCall();
-              const hasOwnResult = compilePropertyIntrospection(ctx, fctx, prop, call);
-              if (hasOwnResult !== null) return hasOwnResult;
+              const introspectionResult = compilePropertyIntrospection(ctx, fctx, prop, call);
+              if (introspectionResult !== null) return introspectionResult;
+            } else if (typeName === "Object" && methodName === "isPrototypeOf") {
+              const protoIdx = ensureLateImport(
+                ctx,
+                "__isPrototypeOf",
+                [{ kind: "externref" }, { kind: "externref" }],
+                [{ kind: "i32" }],
+              );
+              flushLateImportShifts(ctx, fctx);
+              if (protoIdx !== undefined) {
+                const receiverType = compileExpression(ctx, fctx, expr.arguments[0]!);
+                if (receiverType && receiverType.kind !== "externref") {
+                  coerceType(ctx, fctx, receiverType, { kind: "externref" });
+                }
+                if (expr.arguments[1]) {
+                  const candidateType = compileExpression(ctx, fctx, expr.arguments[1]!);
+                  if (candidateType && candidateType.kind !== "externref") {
+                    coerceType(ctx, fctx, candidateType, { kind: "externref" });
+                  }
+                } else {
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
+                fctx.body.push({ op: "call", funcIdx: protoIdx });
+                return { kind: "i32" };
+              }
             }
 
             // Unsupported (typeName, methodName) under standalone: refuse-loud,
@@ -2948,7 +3005,7 @@ function compileCallExpression(
               typeName === "Array"
                 ? "the Array brand arm rides on #6407 ($Vec element retrieval)"
                 : typeName === "Object"
-                  ? "only Object.prototype.hasOwnProperty.call is wired (isPrototypeOf/propertyIsEnumerable/valueOf are a follow-on)"
+                  ? "only Object.prototype hasOwnProperty/propertyIsEnumerable/isPrototypeOf borrowed calls are wired (valueOf is a follow-on)"
                   : "this prototype's borrowed-method brand arm is not yet native";
             reportError(
               ctx,
@@ -3622,6 +3679,31 @@ function compileCallExpression(
       // `_wrapWasmClosure`. The fast path's `array.copy` would silently
       // drop the mapFn.
       const hasMapFn = expr.arguments.length >= 2;
+      // (#1470) Array.from(string) without a mapFn — the string iterable
+      // yields code points (§23.1.2.1 via §22.1.5.1). In native-strings mode
+      // materialize the char vec in pure Wasm. Without this the string fell
+      // into the host `__array_from` fallback below, which both leaks a JS
+      // host import and (post late-import shift) emitted an invalid module
+      // under --target standalone. Tentatively compile and only commit when
+      // the argument genuinely lowers to a native string ref (#1610 pattern).
+      if (!hasMapFn && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && isStringType(argTsType)) {
+        const bodyLenBefore = fctx.body.length;
+        const t = compileExpression(ctx, fctx, expr.arguments[0]!);
+        if (
+          t &&
+          (t.kind === "ref" || t.kind === "ref_null") &&
+          (t.typeIdx === ctx.anyStrTypeIdx || t.typeIdx === ctx.nativeStrTypeIdx)
+        ) {
+          if (t.kind === "ref_null") {
+            fctx.body.push({ op: "ref.as_non_null" } as Instr);
+          }
+          const { funcIdx: toCharVecIdx, vecTypeIdx: nstrVecTypeIdx } = ensureStrToCharVecHelper(ctx);
+          fctx.body.push({ op: "call", funcIdx: toCharVecIdx });
+          return { kind: "ref", typeIdx: nstrVecTypeIdx };
+        }
+        // Didn't lower as a native string — roll back and use the paths below.
+        fctx.body.length = bodyLenBefore;
+      }
       // Only handle array arguments — create a shallow copy
       if (!hasMapFn && (argWasmType.kind === "ref" || argWasmType.kind === "ref_null")) {
         const arrInfo = resolveArrayInfo(ctx, argTsType);
@@ -4394,8 +4476,10 @@ function compileCallExpression(
             .map((f, idx) => ({ field: f, fieldIdx: idx }))
             .filter((e) => !e.field.name.startsWith("__"));
           const entry = userFields.find((e) => e.field.name === propLiteral);
+          const sidecarDefinedKey =
+            ts.isIdentifier(arg0) && ctx.sidecarDefinedPropertyKeys.has(`${arg0.text}:${propLiteral}`);
 
-          if (entry) {
+          if (entry && !sidecarDefinedKey) {
             // #1629b: Object.defineProperty updates `definedPropertyFlags`
             // (keyed `varName:propName`) but `shapePropFlags` is built AFTER
             // body compilation finishes, so per-variable updates made during
@@ -4547,21 +4631,23 @@ function compileCallExpression(
           // (#1395) Same logic for static methods on the class object —
           // `verifyProperty(C, "m", {...})` lookups need the runtime arm to
           // fire instead of returning `ref.null.extern` here.
-          const methodNames = ctx.classMethodNames.get(structName);
-          const staticMethodNames = ctx.classStaticMethodNames.get(structName);
-          const isMethodLookup =
-            (methodNames && methodNames.includes(propLiteral)) ||
-            (staticMethodNames && staticMethodNames.includes(propLiteral));
-          if (isMethodLookup) {
-            // Skip the fast-path null-return; let the dynamic fallback below
-            // handle the method case via the host import.
-          } else {
-            // Property not found in struct — return undefined
-            // (own property doesn't exist on this shape)
-            const argResult = compileExpression(ctx, fctx, arg0);
-            if (argResult) fctx.body.push({ op: "drop" });
-            fctx.body.push({ op: "ref.null.extern" });
-            return { kind: "externref" };
+          if (!sidecarDefinedKey) {
+            const methodNames = ctx.classMethodNames.get(structName);
+            const staticMethodNames = ctx.classStaticMethodNames.get(structName);
+            const isMethodLookup =
+              (methodNames && methodNames.includes(propLiteral)) ||
+              (staticMethodNames && staticMethodNames.includes(propLiteral));
+            if (isMethodLookup) {
+              // Skip the fast-path null-return; let the dynamic fallback below
+              // handle the method case via the host import.
+            } else {
+              // Property not found in struct — return undefined
+              // (own property doesn't exist on this shape)
+              const argResult = compileExpression(ctx, fctx, arg0);
+              if (argResult) fctx.body.push({ op: "drop" });
+              fctx.body.push({ op: "ref.null.extern" });
+              return { kind: "externref" };
+            }
           }
         }
       }
@@ -5798,9 +5884,7 @@ function compileCallExpression(
             }
           }
           // Set __argc before the call so the callee knows the actual arg count
-          if (calleeReadsArgsEarly) {
-            emitSetArgc(ctx, fctx, expr.arguments.length, staticParamCount);
-          }
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, staticParamCount);
           // Re-lookup funcIdx: argument compilation may trigger addUnionImports
           const finalStaticIdx = ctx.funcMap.get(fullName) ?? funcIdx;
           fctx.body.push({ op: "call", funcIdx: finalStaticIdx });
@@ -6374,9 +6458,7 @@ function compileCallExpression(
             }
           }
           // Set __argc before the call so the callee knows the actual arg count
-          if (calleeReadsArgsStatic) {
-            emitSetArgc(ctx, fctx, expr.arguments.length, paramCount);
-          }
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, paramCount);
           const finalMethodIdx = ctx.funcMap.get(fullName) ?? resolvedStaticIdx;
           fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
           const sig = ctx.checker.getResolvedSignature(expr);
@@ -6457,9 +6539,7 @@ function compileCallExpression(
             }
           }
           // Set __argc before the call so the callee knows the actual arg count
-          if (calleeReadsArgsNg) {
-            emitSetArgc(ctx, fctx, expr.arguments.length, ngParamCount);
-          }
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, ngParamCount);
           const finalMethodIdx = ctx.funcMap.get(fullName) ?? funcIdx;
           fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
           const elseInstrs = fctx.body;
@@ -6522,9 +6602,7 @@ function compileCallExpression(
           }
         }
         // Set __argc before the call so the callee knows the actual arg count
-        if (calleeReadsArgsNn) {
-          emitSetArgc(ctx, fctx, expr.arguments.length, methodParamCount);
-        }
+        maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
         const finalMethodIdx = ctx.funcMap.get(fullName) ?? funcIdx;
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
@@ -6607,9 +6685,7 @@ function compileCallExpression(
               }
             }
             // Set __argc before the call so the callee knows the actual arg count
-            if (calleeReadsArgsSm) {
-              emitSetArgc(ctx, fctx, expr.arguments.length, smMethodParamCount);
-            }
+            maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
             const finalStructMethodIdx = ctx.funcMap.get(fullName) ?? funcIdx;
             fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
             const elseInstrs = fctx.body;
@@ -6668,9 +6744,7 @@ function compileCallExpression(
             }
           }
           // Set __argc before the call so the callee knows the actual arg count
-          if (calleeReadsArgsNns) {
-            emitSetArgc(ctx, fctx, expr.arguments.length, nnMethodParamCount);
-          }
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
           // Re-lookup funcIdx: argument compilation may trigger addUnionImports
           const finalStructMethodIdx = ctx.funcMap.get(fullName) ?? funcIdx;
           fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
@@ -9016,9 +9090,7 @@ function compileCallExpression(
         }
       }
       // Set __argc before the call so the callee knows the actual arg count
-      if (calleeReadsArgsDirect) {
-        emitSetArgc(ctx, fctx, expr.arguments.length, paramCount);
-      }
+      maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, paramCount);
     }
 
     // Re-lookup funcIdx: argument compilation may trigger addUnionImports
@@ -10099,6 +10171,13 @@ function compileCallExpression(
           }
 
           const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
+          maybeSetArgcForKnownCall(
+            ctx,
+            fctx,
+            funcName,
+            allArgs.length,
+            getFuncParamTypes(ctx, finalFuncIdx)?.length ?? allArgs.length,
+          );
           fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
 
           const sig = ctx.checker.getResolvedSignature(expr);
@@ -10697,6 +10776,7 @@ function compileConditionalCallee(
           }
         }
         const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx;
+        maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, ccParamCount);
         fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
         if (callRetType) return callRetType;
         // Try to determine return type from the branch function's signature

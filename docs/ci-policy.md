@@ -32,8 +32,11 @@ case-sensitive and whitespace-sensitive.
 | Check name | Workflow file | What it gates |
 |---|---|---|
 | `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix) |
-| `merge shard reports` | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative conformance gate (replaces the legacy `regression-gate` / rolling-baseline approach). Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
+| `merge shard reports` | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
 | `quality` | `.github/workflows/ci.yml` | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen |
+| `equivalence-gate` | `.github/workflows/ci.yml` | merges the equivalence shards and fails if the shard baseline regresses |
+| `check for test262 regressions` | `.github/workflows/test262-sharded.yml` | full rolling-baseline test262 diff; required so pass→fail regressions cannot merge just because the aggregate hard guards stayed below threshold |
+| `cla-check` | `.github/workflows/cla-check.yml` | self-hosted CLA-acceptance gate (#1660): internal authors and bots are exempt; external humans must have affirmative CLA acceptance recorded |
 
 ### Optional / informational checks (NOT required to merge)
 
@@ -42,11 +45,9 @@ A failure here surfaces in the PR Checks tab but does not block merge.
 
 | Check name | Workflow file | Why it isn't required |
 |---|---|---|
-| `test262 shard 1..16` (16 matrix jobs) | `.github/workflows/test262-sharded.yml` | Individual shard results feed into `merge shard reports`, which is the required check. Individual shard failures are visible for diagnosis but the aggregated signal is what gates. |
+| `test262 js-host/standalone shard 1..57` (114 matrix jobs) | `.github/workflows/test262-sharded.yml` | Individual shard results feed into `merge shard reports`, which is the required check. Individual shard failures are visible for diagnosis but the aggregated signal is what gates. |
 | `differential gate (branch vs main)` | `.github/workflows/test262-differential.yml` | Branch-vs-main HEAD comparison with src-tree-hash caching (#1246). Useful diagnostic signal, but the sharded `merge shard reports` is the authoritative gate. Kept running for visibility into per-PR deltas. |
-| `check for test262 regressions` | `.github/workflows/test262-sharded.yml` | Legacy rolling-baseline regression gate. Produced drift-induced false-positives — see PR #142/#143/#151 retros. Superseded by `merge shard reports`. |
 | `refresh-benchmarks` | `.github/workflows/benchmark-refresh.yml` | Playground benchmark regression gate. Currently informational at the branch-protection level, but the workflow itself fails on regression for PRs (#1525, §6 below). Promote to required once a longer signal window confirms stability. |
-| `cla-check` | `.github/workflows/cla-check.yml` | Self-hosted CLA-acceptance gate (#1660): records affirmative acceptance in `.github/cla/signatures.json`. Internal authors (org members, maintainer, `*[bot]`) are exempt and pass with no signature; external humans must comment the agreement phrase. **Currently informational** — promote to required only after exemption is confirmed in practice (add `"cla-check"` to `REQUIRED_CHECKS` in `scripts/enable-branch-protection.sh` and re-run it). Do NOT promote before confirming internal/bot authors pass, or it would block the merge queue. |
 | `Test262 Canary` | `.github/workflows/test262-canary.yml` | Smoke check on a small slice of test262 — fast feedback, not authoritative. |
 
 ---
@@ -92,7 +93,8 @@ reviewer should require a normal CODEOWNER approval before merging.
 Two test262 workflows currently run on PRs:
 
 - **`test262-sharded.yml` is the authoritative PR gate.** The required
-  check is `merge shard reports`, fed by 16 matrix shards.
+  check is `merge shard reports`, fed by the 57-shard host and standalone
+  matrix.
   - Serial-queue model (#109, see `plan/method/pr-drift-protocol.md`):
     every PR is validated on its own merge_group ref via a `batch=1`
     merge queue, so there is no ALLGREEN-hiding across batched PRs.
@@ -105,10 +107,11 @@ Two test262 workflows currently run on PRs:
     summary) and the `js2wasm-baselines` repo's `test262-current.jsonl`
     (history feed for the trend chart). The `refresh-committed-baseline.yml`
     workflow consumes the sharded artifact to sync the committed JSONL.
-  - The legacy `regression-gate` job (rolling-baseline approach) is still
-    present for visibility but is NOT in the required-checks list. It
-    produced drift-induced false-positives — see PR #142/#143/#151
-    retros.
+  - The `check for test262 regressions` job is also required. It compares
+    the merged PR report against the baseline and catches full pass→fail
+    regressions even when the inline hard guards inside `merge shard reports`
+    do not trip. It always publishes a context: on the intentional no-shards
+    path it exits cleanly without looking for artifacts.
 - **`test262-differential.yml` runs in parallel** as a diagnostic signal
   (#1246). Compares branch tip vs. main HEAD with src-tree-hash caching.
   Useful for triaging "which exact tests flipped on my branch?" but the
@@ -282,6 +285,9 @@ behaviour can be flipped without touching the JS script.
 | `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR. |
 | `merge shard reports` | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the `batch=1` serial merge queue — each PR validated on its own merge_group ref with no ALLGREEN hiding. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
 | `quality` | `ci.yml` | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches. |
+| `equivalence-gate` | `ci.yml` | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged. |
+| `check for test262 regressions` | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds. |
+| `cla-check` | `cla-check.yml` | CLA acceptance for external contributors while preserving internal and bot exemptions. |
 
 The CODEOWNERS file gates **who** can approve. The required checks gate
 **what** must pass. Both must clear for a PR to merge.

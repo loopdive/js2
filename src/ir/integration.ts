@@ -75,7 +75,13 @@ import type { FieldDef, FuncTypeDef, Instr, StructTypeDef, ValType } from "./typ
 
 export interface IrIntegrationReport {
   readonly compiled: readonly string[];
-  readonly errors: readonly { func: string; message: string }[];
+  readonly errors: readonly IrIntegrationError[];
+}
+
+export interface IrIntegrationError {
+  readonly func: string;
+  readonly message: string;
+  readonly kind?: "verify" | "build" | "lower" | "backend-legality";
 }
 
 /**
@@ -120,7 +126,7 @@ export function compileIrPathFunctions(
   }
 
   const compiled: string[] = [];
-  const errors: { func: string; message: string }[] = [];
+  const errors: IrIntegrationError[] = [];
 
   // #1586: one allocation-site registry per module compile. Threaded into the
   // builder (mints ids on value-creating instrs) and every pass (preserve /
@@ -211,7 +217,7 @@ export function compileIrPathFunctions(
       });
       const mainErrors = verifyIrFunction(result.main);
       if (mainErrors.length > 0) {
-        for (const e of mainErrors) errors.push({ func: name, message: e.message });
+        for (const e of mainErrors) errors.push({ func: name, message: e.message, kind: "verify" });
         continue;
       }
       // Slice 3 (#1169c): verify each lifted function before pushing.
@@ -219,7 +225,7 @@ export function compileIrPathFunctions(
       for (const lifted of result.lifted) {
         const liftedErrors = verifyIrFunction(lifted);
         if (liftedErrors.length > 0) {
-          for (const e of liftedErrors) errors.push({ func: lifted.name, message: e.message });
+          for (const e of liftedErrors) errors.push({ func: lifted.name, message: e.message, kind: "verify" });
           anyLiftedFailed = true;
         }
       }
@@ -230,7 +236,7 @@ export function compileIrPathFunctions(
         built.push({ name: lifted.name, fn: lifted, synthesized: true });
       }
     } catch (e) {
-      errors.push({ func: name, message: e instanceof Error ? e.message : String(e) });
+      errors.push({ func: name, message: e instanceof Error ? e.message : String(e), kind: "build" });
     }
   }
 
@@ -308,7 +314,7 @@ export function compileIrPathFunctions(
           });
           const mainErrors = verifyIrFunction(result.main);
           if (mainErrors.length > 0) {
-            for (const e of mainErrors) errors.push({ func: memberName, message: e.message });
+            for (const e of mainErrors) errors.push({ func: memberName, message: e.message, kind: "verify" });
             continue;
           }
           // Class method bodies should not produce lifted closures in Phase B
@@ -318,7 +324,7 @@ export function compileIrPathFunctions(
           for (const lifted of result.lifted) {
             const liftedErrors = verifyIrFunction(lifted);
             if (liftedErrors.length > 0) {
-              for (const e of liftedErrors) errors.push({ func: lifted.name, message: e.message });
+              for (const e of liftedErrors) errors.push({ func: lifted.name, message: e.message, kind: "verify" });
               anyLiftedFailed = true;
             }
           }
@@ -329,7 +335,7 @@ export function compileIrPathFunctions(
             built.push({ name: lifted.name, fn: lifted, synthesized: true });
           }
         } catch (e) {
-          errors.push({ func: memberName, message: e instanceof Error ? e.message : String(e) });
+          errors.push({ func: memberName, message: e instanceof Error ? e.message : String(e), kind: "build" });
         }
       }
     }
@@ -349,7 +355,7 @@ export function compileIrPathFunctions(
     const postErrors = verifyIrFunction(optimized);
     if (postErrors.length > 0) {
       for (const e of postErrors) {
-        errors.push({ func: entry.name, message: `post-hygiene verify: ${e.message}` });
+        errors.push({ func: entry.name, message: `post-hygiene verify: ${e.message}`, kind: "verify" });
       }
       continue;
     }
@@ -390,7 +396,7 @@ export function compileIrPathFunctions(
     const verifyErrors = verifyIrFunction(final);
     if (verifyErrors.length > 0) {
       for (const e of verifyErrors) {
-        errors.push({ func: before.name, message: `post-inline verify: ${e.message}` });
+        errors.push({ func: before.name, message: `post-inline verify: ${e.message}`, kind: "verify" });
       }
       continue;
     }
@@ -443,7 +449,7 @@ export function compileIrPathFunctions(
     const verifyErrors = verifyIrFunction(final);
     if (verifyErrors.length > 0) {
       for (const e of verifyErrors) {
-        errors.push({ func: fn.name, message: `post-mono verify: ${e.message}` });
+        errors.push({ func: fn.name, message: `post-mono verify: ${e.message}`, kind: "verify" });
       }
       continue;
     }
@@ -698,7 +704,11 @@ export function compileIrPathFunctions(
       };
       compiled.push(name);
     } catch (e) {
-      errors.push({ func: name, message: e instanceof Error ? e.message : String(e) });
+      errors.push({
+        func: name,
+        message: e instanceof Error ? e.message : String(e),
+        kind: e instanceof Error && e.message.includes("backend legality failed") ? "backend-legality" : "lower",
+      });
     }
   }
 

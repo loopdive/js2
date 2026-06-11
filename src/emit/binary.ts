@@ -89,7 +89,7 @@ export function computeRecGroups(types: TypeDef[]): Array<[number, number]> {
 /**
  * #1923 — always-on emit-time index validation (the durable safety net for
  * the late-import index-shift class; instances #1809/#1839/#1602/#1886/
- * #1666/#1677/#1915).
+ * #1666/#1677/#2029).
  *
  * The failure mode: an index captured into a JS local before a deferred
  * `flushLateImportShifts`/`addUnionImports`/`addStringImports` shift goes
@@ -97,7 +97,7 @@ export function computeRecGroups(types: TypeDef[]): Array<[number, number]> {
  * into an instruction. Stale-low used to surface as a silently-valid-but-
  * wrong index → `expected externref, found i32` deep inside wasmtime on a
  * random test262 shard; `-1` as the raw encoder's opaque
- * `u32 out of range: -1`. #1915 proved a separate funcref-only walker's
+ * `u32 out of range: -1`. #2029 proved a separate funcref-only walker's
  * coverage was insufficient — its repro's poison was a `global.get -1`, a
  * space that walker never visited.
  *

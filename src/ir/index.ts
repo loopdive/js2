@@ -6,6 +6,7 @@ export * from "./builder.js";
 export * from "./verify.js";
 export * from "./verify-alloc.js";
 export * from "./lower.js";
+export * from "./backend/legality.js";
 export * from "./select.js";
 export * from "./from-ast.js";
 export * from "./integration.js";

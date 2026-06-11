@@ -1,20 +1,23 @@
 ---
 id: 1718
 title: "Iterator sequencing helpers (Iterator.concat / zip / zipKeyed) + Iterator.prototype.flatMap not implemented (101 fails)"
-status: ready
+status: in-review
 created: 2026-05-29
-updated: 2026-05-29
-priority: medium
+updated: 2026-06-07
+priority: high
 feasibility: hard
 task_type: bugfix
 area: codegen
 language_feature: iterator-helpers
 goal: test262-conformance
-sprint: Backlog
+sprint: 61
 es_edition: 2025
 test262_fail: 101
 test262_category: built-ins/Iterator
 related: [1340, 1320]
+claimed_by: codex-developer
+claimed_at: 2026-06-07T10:03:03.373Z
+pr: 1279
 ---
 # #1718 — Iterator sequencing helpers + Iterator.prototype.flatMap (101 fails)
 
@@ -89,14 +92,14 @@ Two-part fix:
 1. **Runtime** (`src/runtime.ts`, `_installIteratorHelperPolyfills`): added an
    `Iterator.prototype.flatMap` polyfill mirroring the existing zip/concat
    helpers (`_makeHelperIterator` + `_getFlattenable`). Implements §27.1.4.x:
-   for each outer value, `mapper(value, counter)` → GetIteratorFlattenable
-   (reject non-object/non-string primitives) → yield every inner value before
-   advancing the outer; closes the outer on abrupt mapper/inner completion.
+   for each outer value, `mapper(value, counter)` →
+   GetIteratorFlattenable(..., reject-primitives) → yield every inner value
+   before advancing the outer; closes the outer on abrupt mapper/inner
+   completion.
 
 Result: the flatMap test262 CE bucket → 0 (was 4); runtime pass 0 → 13/44
-locally. `tests/issue-1718-flatmap.test.ts` (5 cases) green: flatten arrays +
-strings, skip empty inner, and both type-check assertions (flatMap + the wider
-map/filter/take family).
+locally. `tests/issue-1718-flatmap.test.ts` green: flatten arrays, reject
+primitive strings, and skip empty inner values.
 
 The residual `flatMap is not a function` failures are a **prototype-chain
 identity** matter: a *compiled* iterator's proto must resolve to the polyfilled
@@ -165,3 +168,59 @@ broad a blast radius for this localized flatMap slice. The lib was DROPPED from
 this PR; the type-check half is a separate follow-up that must land together
 with the codegen changes to handle the new iterator types (coordinate with the
 #1320 / $ArrayObj iterator-representation work).
+
+
+## Attempt 22 (2026-06-07) — iterator sequencing spec tightening
+
+Localized runtime follow-up in `src/runtime.ts` against the fetched current
+ECMA-262 / Stage 4 iterator sequencing text:
+
+- Added shared `IteratorZip`-style plumbing for `Iterator.zip` and
+  `Iterator.zipKeyed`: `mode` is read with `undefined` defaulting only,
+  longest-mode `padding` is validated only when relevant, strict mismatches now
+  throw `TypeError`, and open iterators are closed on abrupt setup/iteration.
+- Applied `GetIteratorFlattenable(..., reject-primitives)` where the algorithms
+  require it (`zip` inner values, `zipKeyed` property values, and
+  `Iterator.prototype.flatMap` mapper results), so iterable string primitives no
+  longer get flattened by the polyfill.
+- Reworked `Iterator.zipKeyed` to follow `[[OwnPropertyKeys]]` order, include
+  enumerable symbol keys, skip enumerable keys whose value is `undefined`, use
+  keyed padding objects for longest mode, and yield null-prototype result
+  objects.
+- Reworked `Iterator.concat` to fetch each argument's `@@iterator` method once at
+  helper creation, open each iterator lazily from the stored method, reject
+  primitive arguments per `Iterator.concat`, and return fresh helper iterator
+  result objects instead of forwarding the inner iterator result object.
+
+Focused coverage added in `tests/issue-1718.test.ts`; the older flatMap slice
+test was corrected to reject primitive string mapper results. Scoped validation:
+
+- `pnpm exec vitest run tests/issue-1718.test.ts tests/issue-1718-static-arity.test.ts tests/issue-1718-flatmap.test.ts tests/issue-1340.test.ts`
+- `pnpm exec tsc --noEmit --pretty false`
+
+`test262/` is empty in this worktree, so no local test262 shard was run. This
+attempt improves the static helper/polyfill semantics but does not claim the
+remaining compiled-value ↔ host-iterator bridge work tracked through #1320.
+
+
+## Attempt 30 (2026-06-07) — validation and publish refresh
+
+Rechecked the existing implementation on `symphony/1718` after redispatch. No
+source changes were needed: the branch already contains the spec-tightening
+runtime patch and focused #1718 tests from the prior attempt.
+
+Scoped validation:
+
+- `pnpm exec vitest run tests/issue-1718.test.ts tests/issue-1718-static-arity.test.ts tests/issue-1718-flatmap.test.ts tests/issue-1340.test.ts`
+  - 4 files / 47 tests passed.
+- `pnpm exec tsc --noEmit --pretty false`
+  - passed.
+
+PR #1279 is open and ready for review. The branch was resynced with current
+`origin/main`, pushed, and auto-merge was enabled so GitHub can enqueue it as
+soon as required checks pass. The previous Test262 Sharded run failed in
+`merge shard reports` only because the external `loopdive/js2wasm-baselines`
+JSONL was 114 commits behind `origin/main` (threshold 50; see #1668); all
+individual js-host and standalone shards passed, and the standalone guard
+reported net 0. If the stale-baseline guard recurs on the refreshed run, that is
+an external baseline-promotion blocker rather than an iterator helper regression.

@@ -242,6 +242,18 @@ export function shiftLateImportIndices(
       ctx.nativeStrHelpers.set(name, idx + added);
     }
   }
+  // (#1919 slice 2) Re-base the native-string finalize-shift regime. The loop
+  // above plus the mod.functions body walk fully repaired the helpers for the
+  // `added` imports of this batch, so the helpers are now consistent with the
+  // CURRENT import count. Without this, the next
+  // `reconcileNativeStrFinalizeShift` computes `added = numImportFuncs - base`
+  // over the SAME imports and applies the delta a second time — `__str_flatten`'s
+  // internal `call __str_copy_tree` ended one slot high (calling itself), the
+  // ~165-test `__str_flatten call[0]` standalone invalid-Wasm bucket. Mirrors
+  // the re-base addUnionImports' inline shift has done since #1677-fast-path.
+  if (ctx.nativeStrHelperImportBase >= 0) {
+    ctx.nativeStrHelperImportBase = ctx.numImportFuncs;
+  }
   // (#1525b) Trampolines registered via emitObjectMethodAsClosure /
   // emitCachedMethodClosureAccess capture the method's funcIdx and the
   // trampoline's own funcIdx as plain numbers in pendingMethodTrampolines.

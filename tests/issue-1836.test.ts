@@ -185,3 +185,37 @@ describe("#1836 standalone toString(radix) fractional values (§6.1.6.1.20)", ()
     expect(await evalStandalone(`export function test(): number { return (0).toString(2) === "0" ? 1 : 0; }`)).toBe(1);
   });
 });
+
+// Slice: strict ToNumber(String) fallback (§7.1.4 → §7.1.4.1 StringToNumber).
+// `ToNumber` must parse a full StringNumericLiteral, not the parseFloat longest
+// prefix grammar. Previously a dynamic unary + string could reuse parseFloat and
+// turn "12abc" into 12 instead of NaN.
+describe("#1836 standalone strict ToNumber(String) fallback (§7.1.4.1)", () => {
+  it("unary + rejects trailing junk instead of parseFloat-prefixing it", async () => {
+    expect(await evalStandalone(`export function test(): number { var s = "12abc"; return +s; }`)).toBeNaN();
+    expect(await evalStandalone(`export function test(): number { var s = "  12abc  "; return +s; }`)).toBeNaN();
+  });
+
+  it("Number(string variable) rejects trailing junk through the same StringToNumber path", async () => {
+    expect(await evalStandalone(`export function test(): number { var s = "12abc"; return Number(s); }`)).toBeNaN();
+    expect(await evalStandalone(`export function test(): number { var s = "Infinityx"; return Number(s); }`)).toBeNaN();
+  });
+
+  it("keeps ToNumber-only accepted strings distinct from parseFloat", async () => {
+    expect(await evalStandalone(`export function test(): number { var s = ""; return +s; }`)).toBe(0);
+    expect(await evalStandalone(`export function test(): number { var s = "   "; return +s; }`)).toBe(0);
+    expect(await evalStandalone(`export function test(): number { var s = "0x10"; return +s; }`)).toBe(16);
+    expect(await evalStandalone(`export function test(): number { var s = "0o10"; return +s; }`)).toBe(8);
+    expect(await evalStandalone(`export function test(): number { var s = "0b10"; return +s; }`)).toBe(2);
+  });
+
+  it("uses StringToNumber for string arithmetic numeric coercion", async () => {
+    expect(await evalStandalone(`export function test(): number { var s = "12abc"; return s - 0; }`)).toBeNaN();
+    expect(await evalStandalone(`export function test(): number { var s = "0x10"; return s - 0; }`)).toBe(16);
+  });
+
+  it("does not change parseFloat's longest-prefix behavior", async () => {
+    expect(await evalStandalone(`export function test(): number { return parseFloat("12abc"); }`)).toBe(12);
+    expect(await evalStandalone(`export function test(): number { return parseFloat("0x10"); }`)).toBe(0);
+  });
+});

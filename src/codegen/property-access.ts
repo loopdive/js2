@@ -182,6 +182,69 @@ function hasNativeBuiltinConstantHandler(builtinName: string, propName: string):
   return false;
 }
 
+const DESCRIPTOR_FLAG_ACCESSOR = 1 << 4;
+
+function runtimeAccessorDescriptorKey(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  propName: string,
+): string | undefined {
+  if (!ts.isIdentifier(receiver)) return undefined;
+  const key = `${receiver.text}:${propName}`;
+  const flags = ctx.definedPropertyFlags.get(key);
+  if (flags === undefined || (flags & DESCRIPTOR_FLAG_ACCESSOR) === 0) return undefined;
+  return ctx.sidecarDefinedPropertyKeys.has(key) ? key : undefined;
+}
+
+function emitRuntimeDescriptorGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  propName: string,
+  accessNode: ts.Expression,
+): ValType | null {
+  const accessType = ctx.checker.getTypeAtLocation(accessNode);
+  const accessWasm = resolveWasmType(ctx, accessType);
+  const resultType: ValType =
+    accessWasm.kind === "f64" || accessWasm.kind === "i32" ? accessWasm : { kind: "externref" };
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  let unboxIdx: number | undefined;
+  if (resultType.kind === "f64" || resultType.kind === "i32") {
+    unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+  }
+  flushLateImportShifts(ctx, fctx);
+  if (getIdx === undefined) return null;
+
+  const recvType = compileExpression(ctx, fctx, receiver);
+  if (!recvType) return null;
+  if (recvType.kind === "ref_null") {
+    if (!isProvablyNonNull(receiver, ctx.checker)) {
+      emitNullCheckThrow(ctx, fctx, recvType, accessNode);
+    }
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+  } else if (recvType.kind === "ref") {
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+  } else if (recvType.kind !== "externref") {
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
+  }
+
+  addStringConstantGlobal(ctx, propName);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  if (resultType.kind === "f64" && unboxIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: unboxIdx });
+  } else if (resultType.kind === "i32" && unboxIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: unboxIdx });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  }
+  return resultType;
+}
+
 /**
  * Consume an externref value and push the Array.isArray boolean result.
  *
@@ -2702,6 +2765,11 @@ export function compilePropertyAccess(
       }
     }
 
+    if (runtimeAccessorDescriptorKey(ctx, expr.expression, propName) !== undefined) {
+      const runtimeResult = emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr);
+      if (runtimeResult !== null) return runtimeResult;
+    }
+
     // Handle instance method accessed as value (not call): obj.method (#820, #1149)
     // For OBJECT LITERAL struct types, the method's struct field now holds a
     // proper closure-ref (#1118 — `compileObjectLiteralForStruct` calls
@@ -3930,6 +3998,11 @@ export function compileElementAccessBody(
               return resolveWasmType(ctx, propType);
             }
           }
+        }
+
+        if (runtimeAccessorDescriptorKey(ctx, expr.expression, fieldName) !== undefined) {
+          const runtimeResult = emitRuntimeDescriptorGet(ctx, fctx, expr.expression, fieldName, expr);
+          if (runtimeResult !== null) return runtimeResult;
         }
 
         const fieldIdx = typeDef.fields.findIndex((f: { name?: string }) => f.name === fieldName);

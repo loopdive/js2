@@ -332,10 +332,9 @@ describe("#1539 standalone narrowed refusals (Phase 2a)", () => {
   it("refuses dynamic new RegExp(var)", async () => {
     await expectRefused(`export function f(p: string): boolean { return new RegExp(p).test("x"); }`);
   });
-  it("refuses backreference", async () => {
-    // Single backslash in the emitted source: regex literal /(a)\1/.
-    await expectRefused(`export function f(s: string): boolean { return /(a)\\1/.test(s); }`);
-  });
+  // #1912 Phase 2b landed backreferences, word boundaries, and the class
+  // compatibility forms — they are no longer refused (see
+  // tests/issue-1912-regex-phase2b.test.ts for the dual-run coverage).
   it("refuses lookahead", async () => {
     await expectRefused(`export function f(s: string): boolean { return /a(?=b)/.test(s); }`);
   });

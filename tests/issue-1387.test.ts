@@ -58,6 +58,50 @@ describe("#1387 with statement static literal lowering", () => {
     ).toBe(10);
   });
 
+  it("routes Object.freeze literal heads as closed read-only scopes", async () => {
+    expect(
+      await run(`
+        module.exports.run = function () {
+          var outside = 5;
+          var result = 0;
+          with (Object.freeze({ a: 11, b: 13 })) {
+            result = a + b + outside;
+          }
+          return result;
+        };
+      `),
+    ).toBe(29);
+  });
+
+  it("routes Object.seal literal heads as closed writable scopes", async () => {
+    expect(
+      await run(`
+        module.exports.run = function () {
+          var result = 0;
+          with (Object.seal({ a: 2 })) {
+            a = a + 6;
+            result = a;
+          }
+          return result;
+        };
+      `),
+    ).toBe(8);
+  });
+
+  it("keeps Object.freeze literal writes on the residual diagnostic path", async () => {
+    const result = await compileSloppy(`
+      module.exports.run = function () {
+        with (Object.freeze({ a: 1 })) {
+          a = 2;
+        }
+        return 0;
+      };
+    `);
+
+    const msg = result.errors.map((e) => e.message).join("\n");
+    expect(msg).toContain('cannot assign through with binding "a" because the field is immutable');
+  });
+
   it("resolves nested literal with scopes innermost first", async () => {
     expect(
       await run(`

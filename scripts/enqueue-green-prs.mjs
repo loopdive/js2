@@ -20,29 +20,35 @@
 // 2026-05-30/31 (it stuck AWAITING_CHECKS with no `merge_group` dispatched, and
 // only a ~10-min ruleset disable/re-enable reset cleared it). The mechanism
 // built to un-strand PRs became the thing that wedged the queue. So this sweep
-// is now SURGICAL — two guards keep it from poking a forming queue:
+// is now SURGICAL — three guards keep it from poking a forming queue:
 //
 //   1. BACK-OFF WHILE A HEAD IS FORMING — before sweeping, query the merge
 //      queue. If ANY entry is AWAITING_CHECKS (a merge group is mid-formation),
 //      SKIP THE ENTIRE SWEEP this run and let GitHub finish. We only sweep when
 //      no entry is AWAITING_CHECKS (queue idle / stable / empty). This is the
 //      key anti-wedge guard.
-//   2. GRACE WINDOW — only enqueue a PR whose required checks have all been
+//   2. GRACE WINDOW — only enqueue a PR whose checks have all been
 //      green for at least GRACE_MINUTES (default 10). "green since" is the most
-//      recent completion across the PR's required check runs. A PR green for
+//      recent completion across the PR's check runs. A PR green for
 //      less than the window is left for a later cycle. This guarantees the
 //      backstop never races a fresh dev GraphQL enqueue and only catches
 //      genuine strays — devs enqueue immediately, this net is for the rare
 //      strand (queue-drop on main advance, dev exits before enqueuing).
+//   3. ALL-CHECKS GREEN — do not rely on mergeStateStatus alone. GitHub reports
+//      UNSTABLE when required checks are green but optional checks are red; the
+//      merge queue can still accept that. This script rejects PRs with any
+//      failing or pending visible check so advisory CI cannot be ignored by the
+//      bot.
 //
 // Combined with the lowered cron (~30 min) + single-flight concurrency guard in
 // the workflow, this removes the high-frequency serial-queue poking entirely.
 //
 // SAFETY: the merge queue re-runs the REQUIRED checks (cheap gate, merge shard
-// reports, quality — incl. the test262 regression gate) on the merged state
-// before landing, and GitHub branch protection is the hard block. So enqueuing
-// a CLEAN PR cannot land a red PR. Drafts and PRs labelled `hold`/`do-not-merge`
-// /`wip` are skipped so work-in-progress is never force-queued.
+// reports, quality, equivalence-gate, test262 regression gate) on the merged
+// state before landing, and GitHub branch protection is the hard block. The
+// enqueue bot also requires every visible PR check to be pass/skipping before
+// it queues. Drafts and PRs labelled `hold`/`do-not-merge`/`wip` are skipped so
+// work-in-progress is never force-queued.
 //
 // Runs in GitHub Actions (.github/workflows/auto-enqueue.yml) on CI completion
 // + a schedule, and is runnable by hand: `node scripts/enqueue-green-prs.mjs`.
@@ -57,9 +63,11 @@ const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
 const GRACE_MINUTES = Number(process.env.GRACE_MINUTES ?? "10");
 const GRACE_MS = GRACE_MINUTES * 60 * 1000;
 const HOLD_LABELS = new Set(["hold", "do-not-merge", "do not merge", "wip", "blocked"]);
-// mergeStateStatus values we will enqueue. CLEAN = all green. UNSTABLE = mergeable
-// but a NON-required check failed (required are green) — still queue-able.
-const ENQUEUEABLE = new Set(["CLEAN", "UNSTABLE", "HAS_HOOKS"]);
+// mergeStateStatus values we will enqueue. Do NOT include UNSTABLE: that means
+// required checks are green but a non-required check failed, which is exactly
+// the state that allowed red PRs to enter the merge queue.
+const ENQUEUEABLE = new Set(["CLEAN", "HAS_HOOKS"]);
+const PASSING_CHECK_STATES = new Set(["pass", "skipping"]);
 
 const [OWNER, NAME] = REPO.split("/");
 
@@ -68,6 +76,17 @@ const [OWNER, NAME] = REPO.split("/");
 // empty, producing "Expected VAR_SIGN" parse errors. Arrays bypass the shell.
 function gh(args) {
   return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+function ghMaybe(args) {
+  try {
+    return { ok: true, stdout: gh(args), stderr: "" };
+  } catch (e) {
+    return {
+      ok: false,
+      stdout: String(e.stdout || ""),
+      stderr: String(e.stderr || e.message || e),
+    };
+  }
 }
 function graphql(query, vars = {}) {
   const args = ["api", "graphql", "-f", `query=${query}`];
@@ -106,9 +125,9 @@ function openPrs() {
   );
 }
 
-// "green since" = the most-recent completion time across the PR's REQUIRED check
+// "green since" = the most-recent completion time across the PR's check
 // runs. We read the PR's statusCheckRollup contexts (CheckRun.completedAt +
-// StatusContext.createdAt) and take the max. A PR whose latest required check
+// StatusContext.createdAt) and take the max. A PR whose latest check
 // finished < GRACE_MINUTES ago is too fresh to enqueue this cycle. Returns
 // { ageMs, completedAt } or null when no completion timestamp is available
 // (treated as "not yet eligible" — we never enqueue a PR we cannot age).
@@ -127,6 +146,37 @@ function greenSince(prNumber) {
   }
   if (!latest) return null;
   return { ageMs: Date.now() - latest, completedAt: new Date(latest).toISOString() };
+}
+
+function visibleCheckState(prNumber) {
+  const res = ghMaybe(["pr", "checks", String(prNumber), "--repo", REPO]);
+  const output = res.stdout.trim();
+  if (!output) {
+    const msg = (res.stderr || "no check output").split("\n")[0].slice(0, 120);
+    return { failed: [], pending: [], error: msg };
+  }
+
+  const failed = [];
+  const pending = [];
+  let parsed = 0;
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const cols = line.split("\t");
+    if (cols.length < 2) continue;
+    parsed++;
+    const name = cols[0].trim();
+    const state = cols[1].trim();
+    if (PASSING_CHECK_STATES.has(state)) continue;
+    const entry = `${name}: ${state}`;
+    if (state === "pending" || state === "queued" || state === "in_progress") {
+      pending.push(entry);
+    } else {
+      failed.push(entry);
+    }
+  }
+  if (parsed === 0) return { failed: [], pending: [], error: "no parseable checks" };
+
+  return { failed, pending, error: null };
 }
 
 const { queued: inQueue, forming } = mergeQueueSnapshot();
@@ -193,7 +243,20 @@ for (const pr of prs) {
     skipped.push([pr.number, pr.mergeStateStatus]); // BLOCKED/BEHIND/DIRTY/DRAFT/UNKNOWN
     continue;
   }
-  // GUARD 2 — grace window. Only enqueue a PR green-but-unqueued for > GRACE.
+  const checks = visibleCheckState(pr.number);
+  if (checks.error) {
+    skipped.push([pr.number, `checks-unavailable: ${checks.error}`]);
+    continue;
+  }
+  if (checks.failed.length > 0) {
+    skipped.push([pr.number, `failing-checks: ${checks.failed.slice(0, 5).join(", ")}`]);
+    continue;
+  }
+  if (checks.pending.length > 0) {
+    skipped.push([pr.number, `pending-checks: ${checks.pending.slice(0, 5).join(", ")}`]);
+    continue;
+  }
+  // GUARD 3 — grace window. Only enqueue a PR green-but-unqueued for > GRACE.
   // Too-fresh PRs are left for a later cycle so we never race a dev's own
   // GraphQL enqueue; this net only catches genuine strays.
   let green;

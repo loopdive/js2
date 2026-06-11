@@ -10,7 +10,7 @@ task_type: bugfix
 area: codegen
 language_feature: generators, destructuring-params, late-imports
 goal: standalone-mode
-sprint: 60
+sprint: 61
 related: [1890, 1839, 1602, 1886, 1530]
 claimed_by: codex-developer
 claimed_at: 2026-06-06T09:09:55.112Z

@@ -212,6 +212,21 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
     shifted.add(ctx.pendingInitBody);
   }
 
+  // (#1712) Walk all live (allocated but not yet attached to mod.functions)
+  // FunctionContext bodies — same coverage the late FUNC-index shifters gained
+  // in #1384 (addStringImports/addUnionImports walk ctx.liveBodies). Without
+  // this, a lifted/callback closure body that is only reachable via
+  // liveBodies during its emission window keeps pre-shift module-global
+  // indices: compiling acorn left `FUNC_STATEMENT | FUNC_NULLABLE_ID` in
+  // __closure_86 reading the neighbouring global (ref-typed) and produced
+  // invalid Wasm (`f64.trunc[0] … found global.get of type (ref null 1)`).
+  for (const lb of ctx.liveBodies) {
+    if (!shifted.has(lb)) {
+      shiftGlobalIndices(lb);
+      shifted.add(lb);
+    }
+  }
+
   for (const g of ctx.mod.globals) {
     if (g.init) shiftGlobalIndices(g.init);
   }

@@ -99,10 +99,9 @@ jobs:
     # If the gate were also skipped, `test262-shard` and `merge-report` would
     # cascade-skip (via `needs:`), and the required check "merge shard reports"
     # would never be produced, permanently BLOCKING the PR under the strict
-    # required-checks policy. The companion workflow .github/workflows/
-    # test262-pr-stub.yml produces a cheap "merge shard reports" check name
-    # on bot synchronizes so PRs stay mergeable; the real workflow's gate
-    # still firing here keeps "cheap gate (main-ancestor + lint)" honest.
+    # required-checks policy. The real `merge-report` job now runs under
+    # `always()` and handles the explicit bot-sync skip path itself, so no
+    # same-named stub check can mask a failing real test262 run.
     if: |
       github.event_name == 'pull_request' ||
       github.event_name == 'merge_group' ||
@@ -250,10 +249,10 @@ jobs:
   #   base_sha empty /       true (fail-safe)     RUNS (matrix)   runs, real result
   #     diff fails / empty
   #
-  # In ALL three rows the required check "merge shard reports" is produced
-  # green — that is the invariant that keeps the PR mergeable (see the trap
-  # documented in test262-pr-stub.yml). The only thing that varies is whether
-  # the heavy matrix actually executed.
+  # In ALL three rows the required check "merge shard reports" is produced.
+  # It is green only when shards succeeded or the merge_group no-shards skip is
+  # intentional. If shards fail or are skipped unexpectedly, the aggregate job
+  # itself fails so no required-context stub can hide the red shard.
   # =====================================================================
 
   test262-shard:
@@ -460,15 +459,16 @@ jobs:
     #   (b) shards were intentionally skipped on merge_group
     #       because run_shards=='false' (no test262-relevant
     #       change in the queue)                            → trivial PASS
-    # `needs.test262-shard.result` is 'skipped' in case (b), so we cannot
-    # gate solely on it; we OR-in the run_shards=='false' branch. Steps that
-    # touch shard artifacts are themselves guarded by `SHARDS_RAN` so the
-    # skip path short-circuits to a clean exit 0 (see the per-step `if:`).
+    # `needs.test262-shard.result` is 'skipped' in case (b), so the job runs
+    # under `always()` and decides explicitly:
+    #   - shards succeeded                       -> build real merged report
+    #   - merge_group no-shards path             -> trivial PASS
+    #   - github-actions[bot] PR synchronize     -> trivial PASS
+    #   - any other failed/skipped shard result   -> FAIL the required check
+    # Steps that touch shard artifacts are guarded by `SHARDS_RAN`.
     if: |
       always() &&
-      (github.event_name != 'push' || github.actor != 'github-actions[bot]') &&
-      (needs.test262-shard.result == 'success' ||
-       (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false'))
+      (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: merge shard reports
     needs: [changes, test262-shard]
     runs-on: ubuntu-latest
@@ -476,17 +476,28 @@ jobs:
       # 'true' when the heavy matrix actually executed and produced artifacts;
       # 'false' on the merge_group skip path (no test262-relevant change).
       SHARDS_RAN: ${{ needs.test262-shard.result == 'success' && 'true' || 'false' }}
+      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || (github.event_name == 'pull_request' && github.actor == 'github-actions[bot]')) && 'true' || 'false' }}
 
     steps:
-      - name: No-op pass (shards skipped — no test262-relevant changes)
-        if: env.SHARDS_RAN != 'true'
+      - name: Fail if required test262 shards did not succeed
+        if: env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK != 'true'
         run: |
-          echo "→ merge_group queued only non-test262-relevant changes"
-          echo "  (changes.run_shards=='false'); the heavy 114-job target matrix was"
-          echo "  skipped. Reporting 'merge shard reports' green so the required"
-          echo "  check exists and the PR stays mergeable."
-          echo "→ A src/** (or any &test262-paths) change in the queue would"
-          echo "  have run the full matrix and produced a real merged report."
+          echo "::error::test262-shard result was '${{ needs.test262-shard.result }}' for ${{ github.event_name }} by ${{ github.actor }}."
+          echo "::error::The required 'merge shard reports' check must fail when shards fail or are skipped unexpectedly."
+          exit 1
+
+      - name: No-op pass (shards intentionally skipped)
+        if: env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK == 'true'
+        run: |
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            echo "-> merge_group queued only non-test262-relevant changes"
+            echo "   (changes.run_shards=='false'); the heavy 114-job target matrix was"
+            echo "   intentionally skipped. Reporting 'merge shard reports' green."
+          else
+            echo "-> github-actions[bot] refreshed the PR branch; PR-level heavy shards"
+            echo "   are intentionally skipped to avoid an N-PR test262 storm."
+            echo "   The merge queue still runs the full matrix on the merge_group ref."
+          fi
 
       - name: Checkout
         if: env.SHARDS_RAN == 'true'
@@ -554,10 +565,10 @@ jobs:
 
       # #1668 — HARD catastrophic-regression guard. Lives INSIDE the REQUIRED
       # "merge shard reports" check so it blocks the merge queue. The
-      # fine-grained `regression-gate` job below fails on ANY regression but is
-      # advisory / NOT a required check — which is exactly how PR #608/#1666
-      # merged a −3,600-pass test262 harness corruption. This guard is the
-      # belt-and-suspenders that a catastrophe cannot slip past. Threshold is
+      # fine-grained `regression-gate` job below also blocks the merge queue
+      # once branch protection is re-applied, but this inline guard keeps a
+      # catastrophe tied to the authoritative aggregate report as well.
+      # Threshold is
       # deliberately HIGH so baseline drift (#1235, typically <50 tests) never
       # trips it; only a genuine codegen/harness break (hundreds–thousands of
       # pass→fail with changed wasm) fails the build. On the no-shards path
@@ -674,15 +685,18 @@ jobs:
           fi
 
       # #1668 — HARD stale-baseline guard. The catastrophic guard above (and the
-      # advisory regression-gate) are only as trustworthy as the baseline they
+      # full regression gate) are only as trustworthy as the baseline they
       # diff against. The baseline is refreshed per-merge by the promote-baseline
       # job → js2wasm-baselines repo. If that pipeline ever silently breaks, the
-      # baseline falls behind main and the gates go blind to new regressions
-      # (they'd compare against an ancient state). This fails the REQUIRED check
-      # when the baseline's recorded main-sha is too far behind main HEAD.
-      # Normal operation is 0–1 behind; a quiet period is 0 behind (no merges →
-      # no drift), so a large lag specifically means promotion is broken — the
-      # threshold is generous so only genuine breakage trips it.
+      # baseline falls behind relevant main changes and the gates go blind to
+      # new regressions (they'd compare against an ancient state). This fails
+      # the REQUIRED check when the baseline's recorded main-sha is too far
+      # behind main HEAD for test262-relevant source/config paths.
+      #
+      # Important: baseline-refresh commits also advance main, often with
+      # [skip ci], and must not count as drift. Count only commits whose file
+      # list matches scripts/test262-paths-match.sh; that preserves the hard
+      # stale-baseline signal while ignoring generated baseline/doc churn.
       - name: Stale-baseline guard (#1668)
         if: env.SHARDS_RAN == 'true'
         env:
@@ -699,10 +713,23 @@ jobs:
             exit 0
           fi
           git fetch --depth=200 origin main 2>/dev/null || true
-          BEHIND=$(git rev-list --count "${BSHA}..origin/main" 2>/dev/null || echo 999)
-          echo "Baseline main-sha ${BSHA} is ${BEHIND} commit(s) behind origin/main (max ${MAX_BASELINE_COMMITS_BEHIND})."
+          COMMITS=$(git rev-list "${BSHA}..origin/main" 2>/dev/null || true)
+          TOTAL_BEHIND=0
+          BEHIND=0
+          for sha in $COMMITS; do
+            TOTAL_BEHIND=$((TOTAL_BEHIND + 1))
+            CHANGED=$(git diff-tree --no-commit-id --name-only -r "$sha")
+            if [ "$(printf '%s\n' "$CHANGED" | bash scripts/test262-paths-match.sh)" = "true" ]; then
+              BEHIND=$((BEHIND + 1))
+            fi
+          done
+          if [ "$TOTAL_BEHIND" -ge 200 ] && ! git cat-file -e "${BSHA}^{commit}" 2>/dev/null; then
+            echo "::error::could not find baseline main-sha ${BSHA} in fetched history; cannot evaluate stale-baseline guard."
+            exit 1
+          fi
+          echo "Baseline main-sha ${BSHA} is ${BEHIND} test262-relevant commit(s) behind origin/main (${TOTAL_BEHIND} total commits, max ${MAX_BASELINE_COMMITS_BEHIND})."
           if [ "$BEHIND" -gt "$MAX_BASELINE_COMMITS_BEHIND" ]; then
-            echo "::error::STALE BASELINE: the js2wasm-baselines JSONL is ${BEHIND} commits behind main HEAD (baseline main-sha ${BSHA}). The promote-baseline pipeline is likely broken, so the regression gates are blind to new regressions. Fix baseline promotion before merging. See #1668."
+            echo "::error::STALE BASELINE: the js2wasm-baselines JSONL is ${BEHIND} test262-relevant commits behind main HEAD (baseline main-sha ${BSHA}). The promote-baseline pipeline is likely broken, so the regression gates are blind to new regressions. Fix baseline promotion before merging. See #1668."
             exit 1
           fi
 
@@ -717,24 +744,33 @@ jobs:
           if-no-files-found: warn
 
   regression-gate:
-    # Runs after merge-report in all non-bot push contexts (merge_group / manual
-    # push / workflow_dispatch). Compares branch report against baseline.
+    # Runs after merge-report in all gate-relevant contexts and compares the
+    # branch report against the current baseline when shards produced artifacts.
     #
-    # Skips cleanly on the merge_group no-shards path (run_shards=='false'):
-    # there is no merged report to diff, and a non-test262-relevant change
-    # cannot cause a conformance regression by definition. regression-gate is
-    # NOT a required check, so a `skipped` result here is harmless. We also
-    # add `changes` to `needs` and require shards to have actually run so the
-    # download/diff steps never look for an artifact that wasn't produced.
+    # Required-check safety: this job runs under `always()` so the context is
+    # published even when shards were intentionally skipped. If shards failed or
+    # were unexpectedly skipped, `merge shard reports` is already red; this job
+    # no-ops instead of looking for artifacts that do not exist.
     if: |
-      (github.event_name != 'push' || github.actor != 'github-actions[bot]') &&
-      needs.test262-shard.result == 'success'
+      always() &&
+      (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: check for test262 regressions
     needs: [changes, test262-shard, merge-report]
     runs-on: ubuntu-latest
+    env:
+      SHARDS_RAN: ${{ needs.test262-shard.result == 'success' && 'true' || 'false' }}
 
     steps:
+      - name: No-op pass (no merged test262 report to diff)
+        if: env.SHARDS_RAN != 'true'
+        run: |
+          echo "test262 shards did not produce a merged report in this context."
+          echo "test262-shard result: ${{ needs.test262-shard.result }}"
+          echo "merge-report result: ${{ needs.merge-report.result }}"
+          echo "If shards failed unexpectedly, the required 'merge shard reports' check is the blocking signal."
+
       - name: Checkout
+        if: env.SHARDS_RAN == 'true'
         uses: actions/checkout@v5
         with:
           # #1081 — need full history + the test262 submodule SHA so we can
@@ -744,21 +780,24 @@ jobs:
           submodules: recursive
 
       - name: Setup Node
+        if: env.SHARDS_RAN == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: 25
 
       - name: Setup pnpm via Corepack
+        if: env.SHARDS_RAN == 'true'
         run: |
           corepack enable
           corepack prepare pnpm@10.30.2 --activate
 
       - name: Install dependencies
+        if: env.SHARDS_RAN == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Fetch fresh baseline from baselines repo
         id: fetch_baseline
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         run: |
           # Clone the baselines repo to get the current baseline JSONL.
           # This avoids LFS bandwidth on the main repo (all jsonl files are
@@ -791,7 +830,7 @@ jobs:
 
       - name: Load cached baseline for merge-base (#1081)
         id: merge_base_cache
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         run: |
           # #1081 — prefer the hash-indexed run cache for the PR's merge-base
           # over the moving "latest main" pointer fetched above. On a cache HIT
@@ -816,7 +855,7 @@ jobs:
 
       - name: Check baseline staleness (#1235)
         id: staleness
-        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.fetch_baseline.outputs.baseline_ts != '0'
+        if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.fetch_baseline.outputs.baseline_ts != '0'
         run: |
           # If the baselines-repo JSONL hasn't been refreshed since several
           # commits landed on main, the regression-gate's wasm_change count
@@ -843,6 +882,7 @@ jobs:
           fi
 
       - name: Download merged reports
+        if: env.SHARDS_RAN == 'true'
         uses: actions/download-artifact@v7
         with:
           path: merged-reports
@@ -851,6 +891,7 @@ jobs:
 
       - name: Compare against current main baseline
         id: regression_diff
+        if: env.SHARDS_RAN == 'true'
         run: |
           BASELINE="benchmarks/results/test262-current.jsonl"
           if [ ! -f "$BASELINE" ]; then
@@ -887,7 +928,7 @@ jobs:
 
       - name: Upload regressions report
         uses: actions/upload-artifact@v6
-        if: always()
+        if: always() && env.SHARDS_RAN == 'true'
         with:
           retention-days: 1
           name: test262-regressions-report
@@ -895,7 +936,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Fail on regressions
-        if: steps.regression_diff.outputs.regressions == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES')
+        if: env.SHARDS_RAN == 'true' && steps.regression_diff.outputs.regressions == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES')
         run: |
           echo "test262 regressions detected relative to benchmarks/results/test262-current.jsonl"
           cat merged-reports/test262-regressions.txt

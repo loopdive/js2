@@ -11,7 +11,7 @@ import { isHostConstructibleBuiltin } from "./builtin-tags.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import {
   buildDestructureNullThrow,
   destructureParamArray,
@@ -20,10 +20,22 @@ import {
 } from "./destructuring-params.js";
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
-import { cacheStringLiterals, hasAbstractModifier, hasStaticModifier, resolveWasmType } from "./index.js";
+import {
+  cacheStringLiterals,
+  extractConstantDefault,
+  hasAbstractModifier,
+  hasStaticModifier,
+  resolveWasmType,
+} from "./index.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
+import {
+  cacheParamDefaultArgc,
+  emitF64ParamSentinelCheck,
+  emitParamDefaultArgMissingCheck,
+  paramDefaultNeedsArgc,
+} from "./statements/nested-declarations.js";
 import {
   coerceType,
   compileExpression,
@@ -111,6 +123,64 @@ function flattenStaticallyKnownArgs(
     }
   }
   return result;
+}
+
+function emitClassParamDefaultCheck(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  paramIdx: number,
+  paramType: ValType,
+  thenInstrs: Instr[],
+  argIndex: number,
+  argcLocal: number | undefined,
+): void {
+  if (paramType.kind === "externref") {
+    fctx.body.push({ op: "local.get", index: paramIdx });
+    const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+    if (isUndefIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: isUndefIdx });
+    } else {
+      fctx.body.push({ op: "ref.is_null" });
+    }
+  } else if (paramType.kind === "ref_null" || paramType.kind === "ref") {
+    fctx.body.push({ op: "local.get", index: paramIdx });
+    fctx.body.push({ op: "ref.is_null" });
+  } else if (paramType.kind === "i32") {
+    emitParamDefaultArgMissingCheck(fctx, argcLocal!, argIndex);
+  } else if (paramType.kind === "f64") {
+    emitParamDefaultArgMissingCheck(fctx, argcLocal!, argIndex);
+    emitF64ParamSentinelCheck(fctx, paramIdx);
+    fctx.body.push({ op: "i32.or" });
+  } else {
+    return;
+  }
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs });
+}
+
+function registerClassOptionalParams(
+  ctx: CodegenContext,
+  funcName: string,
+  parameters: ts.NodeArray<ts.ParameterDeclaration>,
+  paramTypes: ValType[],
+  paramTypeOffset = 0,
+): void {
+  const optionalParams: OptionalParamInfo[] = [];
+  for (let i = 0; i < parameters.length; i++) {
+    const param = parameters[i]!;
+    if (!param.questionToken && !param.initializer) continue;
+    const type = paramTypes[paramTypeOffset + i];
+    if (!type) continue;
+    const info: OptionalParamInfo = { index: i, type };
+    if (param.initializer) {
+      const cd = extractConstantDefault(param.initializer, type);
+      if (cd) info.constantDefault = cd;
+      else info.hasExpressionDefault = true;
+    }
+    optionalParams.push(info);
+  }
+  if (optionalParams.length > 0) {
+    ctx.funcOptionalParams.set(funcName, optionalParams);
+  }
 }
 
 function unwrapParenthesized(expr: ts.Expression): ts.Expression {
@@ -513,6 +583,9 @@ export function collectClassDeclaration(
   const ctorResults: ValType[] = isExternrefBackedClass
     ? [{ kind: "externref" }]
     : [{ kind: "ref", typeIdx: structTypeIdx }];
+  if (ctor) {
+    registerClassOptionalParams(ctx, ctorName, ctor.parameters, ctorParams);
+  }
   const ctorTypeIdx = addFuncType(ctx, ctorParams, ctorResults, `${className}_new_type`);
   const ctorFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   ctx.funcMap.set(ctorName, ctorFuncIdx);
@@ -573,6 +646,7 @@ export function collectClassDeclaration(
         }
         methodParams.push(wasmType);
       }
+      registerClassOptionalParams(ctx, fullName, member.parameters, methodParams, isStatic ? 0 : 1);
 
       // Detect async methods — unwrap Promise<T> to T for Wasm return type
       // Exclude async generators: they return AsyncGenerator objects, not Promises.
@@ -688,6 +762,7 @@ export function collectClassDeclaration(
         const paramType = ctx.checker.getTypeAtLocation(param);
         setterParams.push(resolveWasmType(ctx, paramType));
       }
+      registerClassOptionalParams(ctx, setterName, member.parameters, setterParams, 1);
 
       const setterTypeIdx = addFuncType(ctx, setterParams, [], `${setterName}_type`);
       const setterFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
@@ -1125,10 +1200,15 @@ function compileClassBodiesInner(
     ctx.currentFunc = fctx;
 
     // Emit default-value initialization for constructor parameters with initializers.
-    // For each param with a default value, check if the caller passed the zero/null
-    // sentinel (meaning the argument was omitted) and if so, compile the initializer
-    // expression and assign it to the param local.
+    // For primitive params, __argc distinguishes an omitted argument from a
+    // legitimate falsy value. Ref/externref params keep their value checks.
     if (ctor) {
+      const defaultArgcLocal = ctor.parameters.some((param, i) => {
+        if (!param.initializer) return false;
+        return paramDefaultNeedsArgc(params[i]?.type);
+      })
+        ? cacheParamDefaultArgc(ctx, fctx)
+        : undefined;
       for (let i = 0; i < ctor.parameters.length; i++) {
         const param = ctor.parameters[i]!;
         if (!param.initializer) continue;
@@ -1172,50 +1252,7 @@ function compileClassBodiesInner(
         const thenInstrs = fctx.body;
         popBody(fctx, savedBody);
 
-        // Emit the null/zero check + conditional assignment.
-        // externref: use `__extern_is_undefined` — callers padding missing args
-        // use `__get_undefined` which returns real JS undefined, so a plain
-        // `ref.is_null` would miss it and skip the default.
-        if (paramType.kind === "externref") {
-          fctx.body.push({ op: "local.get", index: paramIdx });
-          const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-          if (isUndefIdx !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: isUndefIdx });
-          } else {
-            fctx.body.push({ op: "ref.is_null" });
-          }
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: thenInstrs,
-          });
-        } else if (paramType.kind === "ref_null" || paramType.kind === "ref") {
-          fctx.body.push({ op: "local.get", index: paramIdx });
-          fctx.body.push({ op: "ref.is_null" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: thenInstrs,
-          });
-        } else if (paramType.kind === "i32") {
-          fctx.body.push({ op: "local.get", index: paramIdx });
-          fctx.body.push({ op: "i32.eqz" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: thenInstrs,
-          });
-        } else if (paramType.kind === "f64") {
-          // NaN sentinel check: x != x is true iff x is NaN (#787)
-          fctx.body.push({ op: "local.get", index: paramIdx });
-          fctx.body.push({ op: "local.get", index: paramIdx });
-          fctx.body.push({ op: "f64.ne" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: thenInstrs,
-          });
-        }
+        emitClassParamDefaultCheck(ctx, fctx, paramIdx, paramType, thenInstrs, i, defaultArgcLocal);
       }
     }
 
@@ -1535,6 +1572,13 @@ function compileClassBodiesInner(
       ctx.currentFunc = fctx;
 
       // Emit default-value initialization for method parameters with initializers.
+      const defaultArgcLocal = member.parameters.some((param, i) => {
+        if (!param.initializer) return false;
+        const paramLocalIdx = isStatic ? i : i + 1;
+        return paramDefaultNeedsArgc(params[paramLocalIdx]?.type);
+      })
+        ? cacheParamDefaultArgc(ctx, fctx)
+        : undefined;
       for (let pi = 0; pi < member.parameters.length; pi++) {
         const param = member.parameters[pi]!;
         if (!param.initializer) continue;
@@ -1590,48 +1634,7 @@ function compileClassBodiesInner(
         const thenInstrs = fctx.body;
         popBody(fctx, savedBody);
 
-        // Emit the null/zero check + conditional assignment.
-        // externref: see constructor site above for the `__extern_is_undefined` rationale.
-        if (paramType.kind === "externref") {
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-          if (isUndefIdx !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: isUndefIdx });
-          } else {
-            fctx.body.push({ op: "ref.is_null" });
-          }
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: thenInstrs,
-          });
-        } else if (paramType.kind === "ref_null" || paramType.kind === "ref") {
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          fctx.body.push({ op: "ref.is_null" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: thenInstrs,
-          });
-        } else if (paramType.kind === "i32") {
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          fctx.body.push({ op: "i32.eqz" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: thenInstrs,
-          });
-        } else if (paramType.kind === "f64") {
-          // NaN sentinel check: x != x is true iff x is NaN (#787)
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          fctx.body.push({ op: "f64.ne" });
-          fctx.body.push({
-            op: "if",
-            blockType: { kind: "empty" },
-            then: thenInstrs,
-          });
-        }
+        emitClassParamDefaultCheck(ctx, fctx, paramLocalIdx, paramType, thenInstrs, pi, defaultArgcLocal);
       }
 
       // Destructure parameters with binding patterns
@@ -1901,6 +1904,12 @@ function compileClassBodiesInner(
       ctx.currentFunc = fctx;
 
       // Emit default-value initialization for setter parameters with initializers (#377)
+      const defaultArgcLocal = member.parameters.some((param, i) => {
+        if (!param.initializer) return false;
+        return paramDefaultNeedsArgc(params[i + 1]?.type);
+      })
+        ? cacheParamDefaultArgc(ctx, fctx)
+        : undefined;
       for (let pi = 0; pi < member.parameters.length; pi++) {
         const param = member.parameters[pi]!;
         if (!param.initializer) continue;
@@ -1940,32 +1949,7 @@ function compileClassBodiesInner(
         const thenInstrs = fctx.body;
         popBody(fctx, savedBody);
 
-        // Emit the null/zero check + conditional assignment.
-        // externref: see constructor site above for the `__extern_is_undefined` rationale.
-        if (paramType.kind === "externref") {
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-          if (isUndefIdx !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: isUndefIdx });
-          } else {
-            fctx.body.push({ op: "ref.is_null" });
-          }
-          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs });
-        } else if (paramType.kind === "ref_null" || paramType.kind === "ref") {
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          fctx.body.push({ op: "ref.is_null" });
-          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs });
-        } else if (paramType.kind === "i32") {
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          fctx.body.push({ op: "i32.eqz" });
-          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs });
-        } else if (paramType.kind === "f64") {
-          // NaN sentinel check: x != x is true iff x is NaN (#787)
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          fctx.body.push({ op: "local.get", index: paramLocalIdx });
-          fctx.body.push({ op: "f64.ne" });
-          fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs });
-        }
+        emitClassParamDefaultCheck(ctx, fctx, paramLocalIdx, paramType, thenInstrs, pi, defaultArgcLocal);
       }
 
       if (member.body) {

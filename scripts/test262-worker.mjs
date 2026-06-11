@@ -15,6 +15,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile, createIncrementalCompiler } from "./compiler-bundle.mjs";
 import { buildImports } from "./runtime-bundle.mjs";
+import { poisonRecycleReason } from "./test262-poison-error.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -1063,14 +1064,15 @@ process.on("message", async (msg) => {
       );
       return;
     }
+    const errMsg = err?.message ?? String(err);
     sendResult(
       {
         id,
         status: "compile_error",
-        error: err.message || String(err),
+        error: errMsg,
         compileMs: performance.now() - compileStart,
       },
-      err.workerRecycleReason,
+      err?.workerRecycleReason || poisonRecycleReason(errMsg),
     );
     return;
   }
@@ -1085,6 +1087,7 @@ process.on("message", async (msg) => {
       .map((e) => `L${e.line}:${e.column} ${e.message}`)
       .join("; ");
     const errorCodes = result.errors.filter((e) => e.severity === "error" && e.code).map((e) => e.code);
+    const recycleReason = poisonRecycleReason(errMsg);
 
     // Write error to disk cache if paths provided
     if (msg.wasmPath && msg.metaPath) {
@@ -1101,6 +1104,21 @@ process.on("message", async (msg) => {
           }),
         );
       } catch {}
+    }
+
+    if (recycleReason) {
+      sendResult(
+        {
+          id,
+          status: "compile_error",
+          error: errMsg || "unknown",
+          errorCodes,
+          compileMs,
+          ...compileMetadata,
+        },
+        recycleReason,
+      );
+      return;
     }
 
     // Negative parse/early tests: compile error = pass

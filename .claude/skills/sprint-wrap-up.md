@@ -68,19 +68,61 @@ git push origin sprint/N
 
 Then set `end_tag_pushed: true` in the `wrap_checklist` in `plan/issues/sprints/{N}/sprint.md`.
 
-## Step 6: Update sprint doc + mark status closed
+## Step 6: Carry over unfinished issues to the next sprint
 
-Edit `plan/issues/sprints/{N}/sprint.md`:
+Any issue still open (status not `done`/`wont-fix`) when the sprint closes must
+be moved forward, or the dashboard counts a closed sprint as incomplete and the
+work falls off the radar:
+
+```bash
+# Bump every open issue tagged `sprint: N` to the next sprint (N+1)
+for f in $(grep -rl '^sprint: N$' plan/issues/*.md); do
+  grep -qE '^status:\s*(done|wont-fix)\b' "$f" || sed -i 's/^sprint: N$/sprint: M/' "$f"   # N=closing, M=next
+done
+node scripts/sync-sprint-issue-tables.mjs   # refresh the GENERATED_ISSUE_TABLES in every sprint doc
+```
+
+Add a `## Carry-over` section to the closing sprint doc listing the moved issue
+numbers and the phrase "moved into [sprint-M.md]" (this sets the dashboard's
+`explicitCarryOver` flag).
+
+## Step 7: Update sprint doc + mark status closed
+
+Sprint docs are **flat files** (#1616): `plan/issues/sprints/{N}.md` (NOT a
+`{N}/sprint.md` directory). Edit `plan/issues/sprints/{N}.md`:
 - Fill in final test262 numbers
 - Calculate delta from baseline
 - Note any deferred tasks
-- Set `status: closed`
+- Set `status: closed` (and `closed: <date>`)
+- Set the **next** sprint's doc to `status: active` so it becomes the current
+  sprint (the active sprint = highest sprintNumber with `!isClosed && !isPlanning`)
 - Set `status_closed: true` in `wrap_checklist`
 
-## Step 7: Spawn SM for retrospective
+## Step 8: Regenerate + commit the dashboard data (REQUIRED — this is what the statusline reads)
+
+Flipping `status:` in the doc is **not** enough. The statusline and dashboard
+read the committed `website/dashboard/data/sprints.json`, which is a generated
+artifact. If you skip this, a doc-closed/tagged sprint still shows as "active"
+in the statusline (this is the bug that left s59 stuck after it was closed
+2026-06-05):
+
+```bash
+node website/dashboard/build-data.js
+git add website/dashboard/data/sprints.json
+# Verify the active sprint advanced:
+node scripts/statusline-sprint.mjs --porcelain   # should print "M <done> <total>"
+```
+
+`build-data.js` also rewrites `data.js` / `issues.json` / `feature-examples.json`.
+Those are large and regenerated on every push to main by the deploy pipeline, so
+when wrapping mid-flight (open PRs in the queue) commit **only `sprints.json`** to
+avoid conflicts with in-flight issue-status changes; leave the siblings for the
+deploy regen.
+
+## Step 9: Spawn SM for retrospective
 
 Spawn the scrum-master agent to write `plan/log/retrospectives/sprint-{N}.md`. The SM reads:
-- `plan/issues/sprints/{N}/sprint.md` — results, deferred tasks
+- `plan/issues/sprints/{N}.md` — results, deferred tasks
 - `git log sprint-{N}/begin..sprint/{N}` — what landed
 - Previous retro for format reference
 
@@ -88,13 +130,13 @@ The retrospective must exist before the sprint is considered closed. A "record s
 
 After the retro file is written, set `retro_written: true` in `wrap_checklist`.
 
-## Step 8: Update diary
+## Step 10: Update diary
 
 Append entry to `plan/diary.md` with sprint summary (baseline, net tests, key wins, carry-overs).
 
 After appending, set `diary_updated: true` in `wrap_checklist`.
 
-## Step 9: Run test262 error harvest
+## Step 11: Run test262 error harvest
 
 Before closing the sprint, run the `harvest-errors` skill to cluster any new failure patterns that surfaced during the sprint and file issues for them. This keeps the next sprint's backlog populated with concrete, actionable work instead of requiring manual triage.
 
@@ -111,11 +153,11 @@ The harvester:
 - Files new issue files in `plan/issues/` for unaddressed buckets above the threshold (default: >50 occurrences)
 - Reports a summary table
 
-Commit any newly-filed issues before Step 8.
+Commit any newly-filed issues before Step 10.
 
 **Why here and not at sprint kickoff:** after the sprint's merges have landed, the failure distribution has shifted — running harvest at wrap-up captures the *current* gaps, not stale pre-sprint ones. The next sprint's planning session (PO) can then slice the fresh issue list by theme. See memory: `feedback_harvest_at_sprint_end.md`.
 
-## Step 10: Update session memory
+## Step 12: Update session memory
 
 Update `/home/node/.claude/projects/-workspace/memory/project_next_session.md` with:
 - Final git hash
@@ -123,14 +165,20 @@ Update `/home/node/.claude/projects/-workspace/memory/project_next_session.md` w
 - What's still open
 - Key learnings
 
-## Step 11: Commit everything
+## Step 13: Commit everything
+
+Sprint docs are flat files (`{N}.md`), and the regenerated dashboard data must
+ride along or the statusline won't update:
 
 ```bash
-git add plan/issues/sprints/{N}/sprint.md plan/diary.md plan/log/retrospectives/sprint-{N}.md
-git commit -m "chore(sprint-{N}): close sprint — retro, diary entry, status closed. ✓"
+git add plan/issues/sprints/{N}.md plan/issues/sprints/{M}.md \
+        website/dashboard/data/sprints.json \
+        plan/diary.md plan/log/retrospectives/sprint-{N}.md
+# Plus the carried issue files: git add plan/issues/<id>-*.md
+git commit -m "chore(sprint-{N}): close sprint — carry-over to {M}, retro, diary, dashboard data. ✓"
 ```
 
-## Step 12: Push
+## Step 14: Push
 
 ```bash
 git push
