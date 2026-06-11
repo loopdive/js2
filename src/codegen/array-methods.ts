@@ -6625,6 +6625,19 @@ function compileArraySort(
     }
   }
 
+  // #1993 — with no comparator, §23.1.3.30 compares elements by ToString, NOT
+  // numerically. The default Timsort hard-codes numeric `<`, so `[10,9,1,100]`
+  // sorted to "1,9,10,100" instead of the spec "1,10,100,9", and string arrays
+  // weren't ordered at all. Route numeric and string element arrays through the
+  // ToString-comparing insertion sort. Other element kinds keep the numeric
+  // Timsort (their ToString ordering isn't yet modeled).
+  const isStringElem = elemType.kind === "ref" || elemType.kind === "ref_null" || elemType.kind === "externref";
+  if (elemType.kind === "f64" || elemType.kind === "i32" || isStringElem) {
+    const defaultResult = compileArrayDefaultToStringSort(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType);
+    if (defaultResult) return defaultResult;
+    // Fell through (e.g. helpers unavailable) — fall back to numeric Timsort.
+  }
+
   const elemKind = elemType.kind as "i32" | "f64";
   const timsortIdx = ensureTimsortHelper(ctx, vecTypeIdx, arrTypeIdx, elemKind);
 
@@ -6639,6 +6652,187 @@ function compileArraySort(
   fctx.body.push({ op: "call", funcIdx: timsortIdx });
 
   // Return the same vec ref (sort is in-place)
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "ref.as_non_null" });
+  return { kind: "ref_null", typeIdx: vecTypeIdx };
+}
+
+/**
+ * #1993 — default (no-comparator) `Array.prototype.sort` per §23.1.3.30:
+ * elements are compared by ToString, producing lexicographic order
+ * (`[10,9,1,100]` → `[1,10,100,9]`). Emits an in-place stable insertion sort
+ * whose comparison stringifies each element and compares the strings:
+ *   - numeric element → `number_toString` (host: externref; native: native
+ *     string boxed as externref → converted to `$AnyString`);
+ *   - string element → used directly.
+ * String comparison uses `__str_compare` (native) or `string_compare` (host),
+ * both returning i32 sign. Returns the (in-place sorted) vec, or `null` if the
+ * required helpers are unavailable (caller falls back to the numeric Timsort).
+ */
+function compileArrayDefaultToStringSort(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  const isNumeric = elemType.kind === "f64" || elemType.kind === "i32";
+  const native = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0;
+
+  // Comparison-string type + the compare/stringify helpers per backend.
+  let cmpStrType: ValType;
+  let compareIdx: number | undefined;
+  let numToStrIdx: number | undefined;
+  let anyStrTypeIdx = -1;
+  if (native) {
+    ensureNativeStringHelpers(ctx);
+    anyStrTypeIdx = ctx.anyStrTypeIdx;
+    compareIdx = ctx.nativeStrHelpers.get("__str_compare");
+    cmpStrType = { kind: "ref", typeIdx: anyStrTypeIdx };
+    if (isNumeric) {
+      emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+      numToStrIdx = ctx.funcMap.get("number_toString");
+    }
+  } else {
+    compareIdx = ctx.funcMap.get("string_compare");
+    cmpStrType = { kind: "externref" };
+    if (isNumeric) numToStrIdx = ctx.funcMap.get("number_toString");
+  }
+  if (compareIdx === undefined || (isNumeric && numToStrIdx === undefined)) {
+    return null; // helpers not registered — fall back to numeric Timsort
+  }
+
+  const vecTmp = allocLocal(fctx, `__dsort_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__dsort_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__dsort_len_${fctx.locals.length}`, { kind: "i32" });
+  const iTmp = allocLocal(fctx, `__dsort_i_${fctx.locals.length}`, { kind: "i32" });
+  const jTmp = allocLocal(fctx, `__dsort_j_${fctx.locals.length}`, { kind: "i32" });
+  const keyTmp = allocLocal(fctx, `__dsort_key_${fctx.locals.length}`, elemType);
+  const keyStrTmp = allocLocal(fctx, `__dsort_keystr_${fctx.locals.length}`, cmpStrType);
+
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  const getOp: Instr["op"] =
+    elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
+
+  // Stringify an element value (already on the stack as elemType) to cmpStrType.
+  const stringifyTail = (): Instr[] => {
+    if (!isNumeric) {
+      // String element: ensure non-null, and (native) cast NativeString → AnyString.
+      const out: Instr[] = [{ op: "ref.as_non_null" } as Instr];
+      if (native) out.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+      return out;
+    }
+    const out: Instr[] = [];
+    if (elemType.kind !== "f64") out.push({ op: "f64.convert_i32_s" } as Instr);
+    out.push({ op: "call", funcIdx: numToStrIdx! } as Instr);
+    if (native) {
+      out.push({ op: "any.convert_extern" } as Instr);
+      out.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+    }
+    return out;
+  };
+
+  // `string_compare(ToString(data[j]), keyStr) > 0`
+  const compareDataJGtKey: Instr[] = [
+    { op: "local.get", index: dataTmp } as Instr,
+    { op: "local.get", index: jTmp } as Instr,
+    { op: getOp, typeIdx: arrTypeIdx } as Instr,
+    ...stringifyTail(),
+    { op: "local.get", index: keyStrTmp } as Instr,
+    { op: "call", funcIdx: compareIdx } as Instr,
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "i32.gt_s" } as Instr,
+  ];
+
+  // for (i = 1; i < len; i++) { key = data[i]; keyStr = ToString(key); j = i-1;
+  //   while (j >= 0 && cmp(data[j], key) > 0) { data[j+1] = data[j]; j--; }
+  //   data[j+1] = key; }
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.set", index: iTmp });
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [
+      {
+        op: "loop",
+        blockType: { kind: "empty" },
+        body: [
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "local.get", index: lenTmp } as Instr,
+          { op: "i32.ge_s" } as Instr,
+          { op: "br_if", depth: 1 } as Instr,
+
+          { op: "local.get", index: dataTmp } as Instr,
+          { op: "local.get", index: iTmp } as Instr,
+          { op: getOp, typeIdx: arrTypeIdx } as Instr,
+          { op: "local.set", index: keyTmp } as Instr,
+          { op: "local.get", index: keyTmp } as Instr,
+          ...stringifyTail(),
+          { op: "local.set", index: keyStrTmp } as Instr,
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.sub" } as Instr,
+          { op: "local.set", index: jTmp } as Instr,
+
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "i32.const", value: 0 } as Instr,
+                  { op: "i32.lt_s" } as Instr,
+                  { op: "br_if", depth: 1 } as Instr,
+                  ...compareDataJGtKey,
+                  { op: "i32.eqz" } as Instr,
+                  { op: "br_if", depth: 1 } as Instr,
+                  { op: "local.get", index: dataTmp } as Instr,
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "i32.const", value: 1 } as Instr,
+                  { op: "i32.add" } as Instr,
+                  { op: "local.get", index: dataTmp } as Instr,
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: getOp, typeIdx: arrTypeIdx } as Instr,
+                  { op: "array.set", typeIdx: arrTypeIdx } as Instr,
+                  { op: "local.get", index: jTmp } as Instr,
+                  { op: "i32.const", value: 1 } as Instr,
+                  { op: "i32.sub" } as Instr,
+                  { op: "local.set", index: jTmp } as Instr,
+                  { op: "br", depth: 0 } as Instr,
+                ],
+              } as Instr,
+            ],
+          } as Instr,
+
+          { op: "local.get", index: dataTmp } as Instr,
+          { op: "local.get", index: jTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.add" } as Instr,
+          { op: "local.get", index: keyTmp } as Instr,
+          { op: "array.set", typeIdx: arrTypeIdx } as Instr,
+
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.add" } as Instr,
+          { op: "local.set", index: iTmp } as Instr,
+          { op: "br", depth: 0 } as Instr,
+        ],
+      } as Instr,
+    ],
+  } as Instr);
+
   fctx.body.push({ op: "local.get", index: vecTmp });
   fctx.body.push({ op: "ref.as_non_null" });
   return { kind: "ref_null", typeIdx: vecTypeIdx };
