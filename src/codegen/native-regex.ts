@@ -201,12 +201,19 @@ function emitClassMatch(ctx: CodegenContext): number {
  * Signature:
  *   __regex_run(prog: ref array<i32>, classTable: ref array<i32>,
  *               nSlots: i32, strData: ref array<i16>, strOff: i32, strLen: i32,
- *               startIdx: i32, caps: ref array<i32>) -> i32
+ *               startIdx: i32, caps: ref array<i32>,
+ *               entryPc: i32, dir: i32) -> i32
  *
  * `caps` is caller-allocated, length `nSlots`, pre-filled with -1. On a match
  * (1 returned) the slots hold `[g0s,g0e,g1s,g1e,…]`; -1 = unset. This is one
  * anchored attempt at `startIdx`; the start-position scan lives in the
  * higher-level helpers (`__regex_search`).
+ *
+ * #1911: `entryPc` selects the (sub-)program, `dir` the scan direction (+1
+ * forward, -1 for lookbehind sub-programs — consuming ops read the unit at
+ * sp-1 and decrement). LOOKAROUND recursively calls this function on its
+ * sub-program at the current position; the recursion is what makes
+ * lookarounds atomic (no backtrack entries leak into the outer attempt).
  */
 export function ensureRegexRun(ctx: CodegenContext): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_run");
@@ -231,6 +238,8 @@ export function ensureRegexRun(ctx: CodegenContext): number {
       { kind: "i32" }, // strLen
       { kind: "i32" }, // startIdx
       i32ArrRef, // caps
+      { kind: "i32" }, // entryPc (#1911 — 0 for the main program)
+      { kind: "i32" }, // dir (#1911 — +1 forward, -1 lookbehind)
     ],
     [{ kind: "i32" }],
   );
@@ -245,28 +254,31 @@ export function ensureRegexRun(ctx: CodegenContext): number {
     SOFF = 4,
     SLEN = 5,
     START = 6,
-    CAPS = 7;
+    CAPS = 7,
+    ENTRYPC = 8,
+    DIR = 9;
   // locals
-  const PC = 8; // i32 program counter (instruction index)
-  const SP = 9; // i32 string position
-  const STEPS = 10; // i32 step counter
-  const STACK = 11; // ref $__ReFrameArr — backtrack stack
-  const TOP = 12; // i32 stack top (count of live frames)
-  const CAP_USED = 13; // i32 stack capacity
-  const OP = 14; // i32 current opcode
-  const A = 15; // i32 operand a
-  const B = 16; // i32 operand b
-  const FAILED = 17; // i32 fail flag
-  const CH = 18; // i32 current code unit
-  const FRAME = 19; // ref null $__ReFrame — popped/pushed frame
-  const SNAP = 20; // ref array<i32> — caps snapshot
-  const TMPI = 21; // i32 scratch
-  const NEWSTACK = 22; // ref $__ReFrameArr — grown stack
-  const GS = 23; // i32 backref group start (#1912)
-  const GE = 24; // i32 backref group end (#1912)
-  const BLEN = 25; // i32 backref length (#1912)
-  const JJ = 26; // i32 backref compare cursor (#1912)
-  const C1 = 27; // i32 backref left-hand unit (#1912)
+  const PC = 10; // i32 program counter (instruction index)
+  const SP = 11; // i32 string position
+  const STEPS = 12; // i32 step counter
+  const STACK = 13; // ref $__ReFrameArr — backtrack stack
+  const TOP = 14; // i32 stack top (count of live frames)
+  const CAP_USED = 15; // i32 stack capacity
+  const OP = 16; // i32 current opcode
+  const A = 17; // i32 operand a
+  const B = 18; // i32 operand b
+  const FAILED = 19; // i32 fail flag
+  const CH = 20; // i32 current code unit
+  const FRAME = 21; // ref null $__ReFrame — popped/pushed frame
+  const SNAP = 22; // ref array<i32> — caps snapshot
+  const TMPI = 23; // i32 scratch
+  const NEWSTACK = 24; // ref $__ReFrameArr — grown stack
+  const GS = 25; // i32 backref group start (#1912)
+  const GE = 26; // i32 backref group end (#1912)
+  const BLEN = 27; // i32 backref length (#1912)
+  const JJ = 28; // i32 backref compare cursor (#1912)
+  const C1 = 29; // i32 backref left-hand unit (#1912)
+  const INB = 30; // i32 direction-aware in-bounds flag (#1911)
 
   // Helper: read prog[pc*3 + k]
   const readProg = (k: number): Instr[] => [
@@ -306,11 +318,21 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   // The dispatch switch over OP. We emit an if/else chain (op === k) … .
   // Each arm sets PC/SP/CAPS or FAILED. MATCH returns 1 directly.
   const dispatch: Instr[] = [
-    // CHAR / CHARI: compare a code unit.
-    // ch = (sp < slen) ? strData[soff+sp] : -1
-    { op: "local.get", index: SP },
-    { op: "local.get", index: SLEN },
-    { op: "i32.lt_s" },
+    // Direction-aware bounds + unit read (#1911):
+    // inb = dir>0 ? sp<slen : sp>0
+    { op: "local.get", index: DIR },
+    { op: "i32.const", value: 0 },
+    { op: "i32.gt_s" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "local.get", index: SP }, { op: "local.get", index: SLEN }, { op: "i32.lt_s" }],
+      else: [{ op: "local.get", index: SP }, { op: "i32.const", value: 0 }, { op: "i32.gt_s" }],
+    },
+    { op: "local.set", index: INB },
+    // ch = inb ? strData[soff + sp + (dir>0 ? 0 : -1)] : -1
+    // The offset term is (dir-1)>>1: +1 → 0, -1 → -1.
+    { op: "local.get", index: INB },
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
@@ -318,6 +340,12 @@ export function ensureRegexRun(ctx: CodegenContext): number {
         { op: "local.get", index: SDATA },
         { op: "local.get", index: SOFF },
         { op: "local.get", index: SP },
+        { op: "i32.add" },
+        { op: "local.get", index: DIR },
+        { op: "i32.const", value: 1 },
+        { op: "i32.sub" },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shr_s" },
         { op: "i32.add" },
         { op: "array.get_u", typeIdx: strDataIdx },
       ],
@@ -333,10 +361,8 @@ export function ensureRegexRun(ctx: CodegenContext): number {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // matched = sp<slen && ch==a
-        { op: "local.get", index: SP },
-        { op: "local.get", index: SLEN },
-        { op: "i32.lt_s" },
+        // matched = inb && ch==a
+        { op: "local.get", index: INB },
         { op: "local.get", index: CH },
         { op: "local.get", index: A },
         { op: "i32.eq" },
@@ -344,16 +370,7 @@ export function ensureRegexRun(ctx: CodegenContext): number {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: SP },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: SP },
-            { op: "local.get", index: PC },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: PC },
-          ],
+          then: advance1(),
           else: [
             { op: "i32.const", value: 1 },
             { op: "local.set", index: FAILED },
@@ -370,9 +387,7 @@ export function ensureRegexRun(ctx: CodegenContext): number {
           blockType: { kind: "empty" },
           then: [
             // fold ch (A-Z -> a-z) then compare to a
-            { op: "local.get", index: SP },
-            { op: "local.get", index: SLEN },
-            { op: "i32.lt_s" },
+            { op: "local.get", index: INB },
             { op: "local.get", index: CH },
             ...foldCh(),
             { op: "local.get", index: A },
@@ -381,16 +396,7 @@ export function ensureRegexRun(ctx: CodegenContext): number {
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: SP },
-                { op: "i32.const", value: 1 },
-                { op: "i32.add" },
-                { op: "local.set", index: SP },
-                { op: "local.get", index: PC },
-                { op: "i32.const", value: 1 },
-                { op: "i32.add" },
-                { op: "local.set", index: PC },
-              ],
+              then: advance1(),
               else: [
                 { op: "i32.const", value: 1 },
                 { op: "local.set", index: FAILED },
@@ -503,8 +509,18 @@ export function ensureRegexRun(ctx: CodegenContext): number {
                                         op: "if",
                                         blockType: { kind: "empty" },
                                         then: backrefArm(),
-                                        // op == MATCH (the only remaining op): return 1
-                                        else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                        else: [
+                                          { op: "local.get", index: OP },
+                                          { op: "i32.const", value: ReOp.LOOKAROUND },
+                                          { op: "i32.eq" },
+                                          {
+                                            op: "if",
+                                            blockType: { kind: "empty" },
+                                            then: lookaroundArm(),
+                                            // op == MATCH (the only remaining op): return 1
+                                            else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                          },
+                                        ],
                                       },
                                     ],
                                   },
@@ -526,11 +542,9 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   }
 
   function anyArm(): Instr[] {
-    // matched = sp<slen && (a!=0 || !isLineTerminator(ch))
+    // matched = inb && (a!=0 || !isLineTerminator(ch))
     return [
-      { op: "local.get", index: SP },
-      { op: "local.get", index: SLEN },
-      { op: "i32.lt_s" },
+      { op: "local.get", index: INB },
       // (a != 0) | (!isLineTerm(ch))
       { op: "local.get", index: A },
       { op: "i32.const", value: 0 },
@@ -552,11 +566,9 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   }
 
   function classArm(): Instr[] {
-    // matched = sp<slen && class_match(ctab, a, ch, b)
+    // matched = inb && class_match(ctab, a, ch, b)
     return [
-      { op: "local.get", index: SP },
-      { op: "local.get", index: SLEN },
-      { op: "i32.lt_s" },
+      { op: "local.get", index: INB },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "i32" } },
@@ -582,9 +594,10 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   }
 
   function advance1(): Instr[] {
+    // sp += dir (#1911 — backwards in lookbehind sub-programs); pc++
     return [
       { op: "local.get", index: SP },
-      { op: "i32.const", value: 1 },
+      { op: "local.get", index: DIR },
       { op: "i32.add" },
       { op: "local.set", index: SP },
       { op: "local.get", index: PC },
@@ -865,12 +878,28 @@ export function ensureRegexRun(ctx: CodegenContext): number {
           { op: "local.get", index: GS },
           { op: "i32.sub" },
           { op: "local.set", index: BLEN },
-          // if sp + blen > slen: fail
-          { op: "local.get", index: SP },
-          { op: "local.get", index: BLEN },
-          { op: "i32.add" },
-          { op: "local.get", index: SLEN },
+          // out of room? dir>0: sp+blen > slen ; dir<0: sp-blen < 0 (#1911)
+          { op: "local.get", index: DIR },
+          { op: "i32.const", value: 0 },
           { op: "i32.gt_s" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              { op: "local.get", index: SP },
+              { op: "local.get", index: BLEN },
+              { op: "i32.add" },
+              { op: "local.get", index: SLEN },
+              { op: "i32.gt_s" },
+            ],
+            else: [
+              { op: "local.get", index: SP },
+              { op: "local.get", index: BLEN },
+              { op: "i32.sub" },
+              { op: "i32.const", value: 0 },
+              { op: "i32.lt_s" },
+            ],
+          },
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -905,10 +934,21 @@ export function ensureRegexRun(ctx: CodegenContext): number {
                       { op: "array.get_u", typeIdx: strDataIdx },
                       ...foldChIf(),
                       { op: "local.set", index: C1 },
-                      // c2 = fold?(data[soff+sp+j]); mismatch → FAILED=1, break
+                      // c2 = fold?(data[soff+base+j]); mismatch → FAILED=1, break.
+                      // base = sp + ((dir-1)>>1)*blen — sp forward, sp-blen
+                      // backwards (#1911): the captured span is matched against
+                      // the units ENDING at sp, compared left-to-right.
                       { op: "local.get", index: SDATA },
                       { op: "local.get", index: SOFF },
                       { op: "local.get", index: SP },
+                      { op: "i32.add" },
+                      { op: "local.get", index: DIR },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.sub" },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.shr_s" },
+                      { op: "local.get", index: BLEN },
+                      { op: "i32.mul" },
                       { op: "i32.add" },
                       { op: "local.get", index: JJ },
                       { op: "i32.add" },
@@ -935,7 +975,7 @@ export function ensureRegexRun(ctx: CodegenContext): number {
                   },
                 ],
               },
-              // matched: sp += blen; pc++
+              // matched: sp += dir*blen; pc++
               { op: "local.get", index: FAILED },
               { op: "i32.eqz" },
               {
@@ -944,6 +984,8 @@ export function ensureRegexRun(ctx: CodegenContext): number {
                 then: [
                   { op: "local.get", index: SP },
                   { op: "local.get", index: BLEN },
+                  { op: "local.get", index: DIR },
+                  { op: "i32.mul" },
                   { op: "i32.add" },
                   { op: "local.set", index: SP },
                   { op: "local.get", index: PC },
@@ -955,6 +997,62 @@ export function ensureRegexRun(ctx: CodegenContext): number {
             ],
           },
         ],
+      },
+    ];
+  }
+
+  /** LOOKAROUND (#1911): operand a = sub-program entry pc, b = bit0 negated |
+   *  bit1 behind. Mirrors the LOOKAROUND arm in regex/vm.ts: snapshot caps,
+   *  recursively run the sub-program at sp (dir = behind ? -1 : +1, same caps
+   *  array — the Wasm VM mutates in place), then keep the sub's captures only
+   *  on a positive success; every other outcome restores the snapshot. The
+   *  recursion is what makes the assertion atomic. */
+  function lookaroundArm(): Instr[] {
+    return [
+      ...snapshotCaps(SNAP),
+      // ok = __regex_run(prog, ctab, nslots, sdata, soff, slen, sp, caps,
+      //                  subPc=a, dir = (b&2) ? -1 : 1)
+      { op: "local.get", index: PROG },
+      { op: "local.get", index: CTAB },
+      { op: "local.get", index: NSLOTS },
+      { op: "local.get", index: SDATA },
+      { op: "local.get", index: SOFF },
+      { op: "local.get", index: SLEN },
+      { op: "local.get", index: SP },
+      { op: "local.get", index: CAPS },
+      { op: "local.get", index: A },
+      { op: "local.get", index: B },
+      { op: "i32.const", value: 2 },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: -1 }],
+        else: [{ op: "i32.const", value: 1 }],
+      },
+      { op: "call", funcIdx },
+      { op: "local.set", index: TMPI },
+      // matched = ok ^ negated
+      { op: "local.get", index: TMPI },
+      { op: "local.get", index: B },
+      { op: "i32.const", value: 1 },
+      { op: "i32.and" },
+      { op: "i32.xor" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // negated success never keeps sub-captures (§22.2.2.4).
+          { op: "local.get", index: B },
+          { op: "i32.const", value: 1 },
+          { op: "i32.and" },
+          { op: "if", blockType: { kind: "empty" }, then: restoreCaps(SNAP) },
+          { op: "local.get", index: PC },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.set", index: PC },
+        ],
+        else: [...restoreCaps(SNAP), { op: "i32.const", value: 1 }, { op: "local.set", index: FAILED }],
       },
     ];
   }
@@ -993,8 +1091,8 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   }
 
   const body: Instr[] = [
-    // pc = 0; sp = start; steps = 0
-    { op: "i32.const", value: 0 },
+    // pc = entryPc (#1911 — 0 for the main program); sp = start; steps = 0
+    { op: "local.get", index: ENTRYPC },
     { op: "local.set", index: PC },
     { op: "local.get", index: START },
     { op: "local.set", index: SP },
@@ -1098,6 +1196,7 @@ export function ensureRegexRun(ctx: CodegenContext): number {
       { name: "blen", type: { kind: "i32" } },
       { name: "jj", type: { kind: "i32" } },
       { name: "c1", type: { kind: "i32" } },
+      { name: "inb", type: { kind: "i32" } },
     ],
     body,
     exported: false,
@@ -1189,7 +1288,7 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
             { op: "i32.const", value: -1 },
             { op: "local.get", index: NSLOTS },
             { op: "array.fill", typeIdx: i32Arr },
-            // if __regex_run(...) at i: return 1
+            // if __regex_run(... entryPc=0, dir=+1) at i: return 1
             { op: "local.get", index: PROG },
             { op: "local.get", index: CTAB },
             { op: "local.get", index: NSLOTS },
@@ -1198,6 +1297,8 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
             { op: "local.get", index: SLEN },
             { op: "local.get", index: I },
             { op: "local.get", index: CAPS },
+            { op: "i32.const", value: 0 },
+            { op: "i32.const", value: 1 },
             { op: "call", funcIdx: runIdx },
             { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
             // if sticky: break (only the start position is tried)
@@ -1422,14 +1523,73 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
   return funcIdx;
 }
 
+/** Struct name for the match-result vec subtype (#1914). */
+export const REGEXP_MATCH_VEC_STRUCT = "__regexp_match_vec";
+
+/** Field indices of `$__regexp_match_vec` (base vec prefix + result fields). */
+export const MATCH_VEC_FIELD_INDEX = 2;
+export const MATCH_VEC_FIELD_INPUT = 3;
+
 /**
- * Emit `__regex_capture_array(nGroups, subject, caps) -> ref $vec_nstr`
- * (#1539 Phase 2b).
+ * Ensure the `$__regexp_match_vec` struct type (#1914) — the match-result
+ * shape for standalone `exec`/`match`.
+ *
+ * A WasmGC **subtype** of the nullable-native-string vec (`__vec_ref_<anyStr>`,
+ * fields `{length, data}`), extended with the spec result fields of
+ * §22.2.7.2 RegExpBuiltinExec ("index" = match start, "input" = the subject
+ * string). Subtyping (not a sibling struct) is load-bearing: every existing
+ * vec consumer (element access, `.length`, iteration) keeps working on the
+ * result via subsumption, and only `.index`/`.input` property reads need the
+ * subtype's extra fields. Mirrors the `__template_vec_externref` precedent in
+ * registry/types.ts (the base vec is flipped to a non-final root on demand).
+ */
+export function ensureRegexMatchVecType(ctx: CodegenContext): number {
+  const existing = ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT);
+  if (existing !== undefined) return existing;
+
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const nstrElemKey = `ref_${anyStrTypeIdx}`;
+  const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
+  const nstrArrTypeIdx = getOrRegisterArrayType(ctx, nstrElemKey, nstrElemType);
+  const baseVecTypeIdx = getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
+
+  // The base vec must be a non-final root for the subtype to validate.
+  const baseVecDef = ctx.mod.types[baseVecTypeIdx];
+  if (baseVecDef && baseVecDef.kind === "struct" && baseVecDef.superTypeIdx === undefined) {
+    baseVecDef.superTypeIdx = -1;
+  }
+
+  const typeIdx = ctx.mod.types.length;
+  // Field mutability of the inherited prefix must match the supertype exactly
+  // (mutable fields are invariant under WasmGC subtyping).
+  const fields = [
+    { name: "length", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "data", type: { kind: "ref", typeIdx: nstrArrTypeIdx } as ValType, mutable: true },
+    { name: "index", type: { kind: "i32" } as ValType, mutable: false },
+    { name: "input", type: { kind: "ref", typeIdx: anyStrTypeIdx } as ValType, mutable: false },
+  ];
+  ctx.mod.types.push({
+    kind: "struct",
+    name: REGEXP_MATCH_VEC_STRUCT,
+    superTypeIdx: baseVecTypeIdx,
+    fields,
+  });
+  ctx.structMap.set(REGEXP_MATCH_VEC_STRUCT, typeIdx);
+  ctx.typeIdxToStructName.set(typeIdx, REGEXP_MATCH_VEC_STRUCT);
+  ctx.structFields.set(REGEXP_MATCH_VEC_STRUCT, fields);
+  return typeIdx;
+}
+
+/**
+ * Emit `__regex_capture_array(nGroups, subject, caps) -> ref $__regexp_match_vec`
+ * (#1539 Phase 2b, result shape per #1914).
  *
  * Materializes capture slots from a populated caps array as a native string
  * vec: element 0 is the full match, element N is capture N, and unmatched
  * captures are null `(ref null $AnyString)`, which the standalone compiler
- * already treats as `undefined` for native-string values.
+ * already treats as `undefined` for native-string values. The returned struct
+ * is the match-vec subtype carrying `index` (= caps[0], the match start) and
+ * `input` (the flattened subject) per §22.2.7.2 RegExpBuiltinExec.
  */
 export function ensureRegexCaptureArray(ctx: CodegenContext): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_capture_array");
@@ -1444,7 +1604,7 @@ export function ensureRegexCaptureArray(ctx: CodegenContext): number {
   const nstrElemKey = `ref_${anyStrTypeIdx}`;
   const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
   const nstrArrTypeIdx = getOrRegisterArrayType(ctx, nstrElemKey, nstrElemType);
-  const nstrVecTypeIdx = getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
+  const nstrVecTypeIdx = ensureRegexMatchVecType(ctx);
   const nstrVecRef: ValType = { kind: "ref", typeIdx: nstrVecTypeIdx };
 
   const substringIdx = ctx.nativeStrHelpers.get("__str_substring");
@@ -1536,9 +1696,15 @@ export function ensureRegexCaptureArray(ctx: CodegenContext): number {
         },
       ],
     },
+    // struct.new $__regexp_match_vec(length=nGroups, data=RARR,
+    //                                index=caps[0], input=subject)
     { op: "local.get", index: NGROUPS },
     { op: "local.get", index: RARR },
     { op: "ref.as_non_null" },
+    { op: "local.get", index: CAPS },
+    { op: "i32.const", value: 0 },
+    { op: "array.get", typeIdx: i32Arr },
+    { op: "local.get", index: SUBJ },
     { op: "struct.new", typeIdx: nstrVecTypeIdx },
   ];
 
@@ -1769,6 +1935,89 @@ export function ensureRegexSplit(ctx: CodegenContext): number {
       { name: "part", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
       { name: "mstart", type: { kind: "i32" } },
       { name: "mend", type: { kind: "i32" } },
+    ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/**
+ * Emit `__regex_flags_str(flags: i32) -> ref $NativeString` (#1914).
+ *
+ * Builds the `RegExp.prototype.flags` string from the `$NativeRegExp` flags
+ * bitfield per ECMA-262 §22.2.6.4: append one code unit per set flag in the
+ * fixed spec order d, g, i, m, s, u, v, y. The 8-slot i16 buffer is the exact
+ * maximum (one slot per possible flag); `len` counts only appended units.
+ */
+export function ensureRegexFlagsStr(ctx: CodegenContext): number {
+  const existing = ctx.nativeRegexHelpers.get("__regex_flags_str");
+  if (existing !== undefined) return existing;
+
+  const strDataIdx = ctx.nativeStrDataTypeIdx; // array i16
+  const strTypeIdx = ctx.nativeStrTypeIdx; // $NativeString
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+
+  const typeIdx = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "ref", typeIdx: anyStrTypeIdx }]);
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.nativeRegexHelpers.set("__regex_flags_str", funcIdx);
+
+  const FLAGS = 0; // param
+  const BUF = 1; // ref array<i16>
+  const N = 2; // i32 — appended count
+
+  // Spec getter order (§22.2.6.4): hasIndices, global, ignoreCase, multiline,
+  // dotAll, unicode, unicodeSets, sticky. Bit values from regex/bytecode.ts.
+  const SPEC_ORDER: Array<[bit: number, codeUnit: number]> = [
+    [64 /* RE_FLAG_D */, 0x64], // d
+    [1 /* RE_FLAG_G */, 0x67], // g
+    [2 /* RE_FLAG_I */, 0x69], // i
+    [4 /* RE_FLAG_M */, 0x6d], // m
+    [8 /* RE_FLAG_S */, 0x73], // s
+    [16 /* RE_FLAG_U */, 0x75], // u
+    [128 /* RE_FLAG_V */, 0x76], // v
+    [32 /* RE_FLAG_Y */, 0x79], // y
+  ];
+
+  const body: Instr[] = [
+    // buf = array.new_default(8); n = 0
+    { op: "i32.const", value: 8 },
+    { op: "array.new_default", typeIdx: strDataIdx } as Instr,
+    { op: "local.set", index: BUF },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: N },
+  ];
+  for (const [bit, codeUnit] of SPEC_ORDER) {
+    body.push({ op: "local.get", index: FLAGS }, { op: "i32.const", value: bit }, { op: "i32.and" }, {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: BUF },
+        { op: "local.get", index: N },
+        { op: "i32.const", value: codeUnit },
+        { op: "array.set", typeIdx: strDataIdx } as Instr,
+        { op: "local.get", index: N },
+        { op: "i32.const", value: 1 },
+        { op: "i32.add" },
+        { op: "local.set", index: N },
+      ],
+    } as Instr);
+  }
+  // struct.new $NativeString(len=n, off=0, data=buf)
+  body.push(
+    { op: "local.get", index: N },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: BUF },
+    { op: "struct.new", typeIdx: strTypeIdx },
+  );
+
+  ctx.mod.functions.push({
+    name: "__regex_flags_str",
+    typeIdx,
+    locals: [
+      // Non-null ref local, set-before-get like __regex_replace's accumulator.
+      { name: "buf", type: { kind: "ref", typeIdx: strDataIdx } },
+      { name: "n", type: { kind: "i32" } },
     ],
     body,
     exported: false,

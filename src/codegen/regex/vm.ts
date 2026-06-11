@@ -12,6 +12,11 @@
  * entry is `(pc, sp, capsSnapshotMarker)`. To keep captures cheap we snapshot
  * the whole capture array on SPLIT (Phase 2a; a trail-based undo is a 2b
  * optimisation). A bounded step counter guards catastrophic backtracking.
+ *
+ * #1911 — direction support: lookbehind sub-programs run with `dir = -1`,
+ * reading the unit at `sp-1` and decrementing. LOOKAROUND recursively invokes
+ * `runAt` on the sub-program at the current position (atomic — no backtrack
+ * entries leak into the outer attempt).
  */
 import { ReOp } from "./bytecode.js";
 
@@ -65,6 +70,11 @@ function isWordChar(c: number): boolean {
  * capture array on a match (anchored at `startIdx`), or null on no match /
  * step-cap exceeded. This is a single anchored attempt — callers (test/exec/
  * match) drive the start position scan.
+ *
+ * #1911: `entryPc` selects the (sub-)program to run, `dir` the scan direction
+ * (-1 for lookbehind bodies), and `capsIn` seeds the capture state for
+ * recursive lookaround attempts (copy-on-write — the caller's array is never
+ * mutated; adopt the RETURNED array to observe sub-captures).
  */
 export function runAt(
   prog: number[],
@@ -72,11 +82,14 @@ export function runAt(
   nGroups: number,
   input: string,
   startIdx: number,
+  entryPc = 0,
+  dir = 1,
+  capsIn?: Int32Array,
 ): Int32Array | null {
   const nSlots = 2 * nGroups;
-  const initCaps = new Int32Array(nSlots).fill(-1);
+  const initCaps = capsIn !== undefined ? capsIn.slice() : new Int32Array(nSlots).fill(-1);
   const stack: Frame[] = [];
-  let pc = 0;
+  let pc = entryPc;
   let sp = startIdx;
   // Explicit `Int32Array` (not the narrower `Int32Array<ArrayBuffer>` the
   // compiler infers from `new Int32Array(...)`) so reassignment from
@@ -85,6 +98,10 @@ export function runAt(
   let caps: Int32Array = initCaps;
   let steps = 0;
   const len = input.length;
+
+  // Direction-aware unit access: forward reads at sp, backward at sp-1.
+  const inBounds = (): boolean => (dir > 0 ? sp < len : sp > 0);
+  const unit = (): number => input.charCodeAt(dir > 0 ? sp : sp - 1);
 
   for (;;) {
     if (++steps > REGEX_STEP_CAP) return null;
@@ -95,29 +112,29 @@ export function runAt(
 
     switch (op) {
       case ReOp.CHAR: {
-        if (sp < len && input.charCodeAt(sp) === a) {
-          sp++;
+        if (inBounds() && unit() === a) {
+          sp += dir;
           pc++;
         } else failed = true;
         break;
       }
       case ReOp.CHARI: {
-        if (sp < len && asciiFold(input.charCodeAt(sp)) === a) {
-          sp++;
+        if (inBounds() && asciiFold(unit()) === a) {
+          sp += dir;
           pc++;
         } else failed = true;
         break;
       }
       case ReOp.ANY: {
-        if (sp < len && (a !== 0 || !isLineTerminator(input.charCodeAt(sp)))) {
-          sp++;
+        if (inBounds() && (a !== 0 || !isLineTerminator(unit()))) {
+          sp += dir;
           pc++;
         } else failed = true;
         break;
       }
       case ReOp.CLASS: {
-        if (sp < len && classMatch(classTable, a, input.charCodeAt(sp), b !== 0)) {
-          sp++;
+        if (inBounds() && classMatch(classTable, a, unit(), b !== 0)) {
+          sp += dir;
           pc++;
         } else failed = true;
         break;
@@ -157,7 +174,7 @@ export function runAt(
       case ReOp.WBOUND: {
         // a = negated (`\B`). Word boundary: exactly one of the neighbouring
         // code units is a word char (§22.2.2.6); out-of-bounds neighbours are
-        // non-word.
+        // non-word. Position-based — direction-independent.
         const before = sp > 0 ? isWordChar(input.charCodeAt(sp - 1)) : false;
         const after = sp < len ? isWordChar(input.charCodeAt(sp)) : false;
         const boundary = before !== after;
@@ -167,7 +184,9 @@ export function runAt(
       }
       case ReOp.BACKREF: {
         // a = group index, b = case-insensitive. An unset group matches the
-        // empty string (§22.2.2.9 BackreferenceMatcher step 3).
+        // empty string (§22.2.2.9 BackreferenceMatcher step 3). Backwards
+        // (dir=-1) the captured span is matched against the units ENDING at
+        // sp — same left-to-right unit comparison from base = sp - blen.
         const gs = caps[2 * a]!;
         const ge = caps[2 * a + 1]!;
         if (gs < 0 || ge < 0) {
@@ -175,14 +194,15 @@ export function runAt(
           break;
         }
         const blen = ge - gs;
-        if (sp + blen > len) {
+        if (dir > 0 ? sp + blen > len : sp - blen < 0) {
           failed = true;
           break;
         }
+        const base = dir > 0 ? sp : sp - blen;
         let ok = true;
         for (let j = 0; j < blen; j++) {
           let c1 = input.charCodeAt(gs + j);
-          let c2 = input.charCodeAt(sp + j);
+          let c2 = input.charCodeAt(base + j);
           if (b !== 0) {
             c1 = asciiFold(c1);
             c2 = asciiFold(c2);
@@ -193,7 +213,23 @@ export function runAt(
           }
         }
         if (ok) {
-          sp += blen;
+          sp += dir * blen;
+          pc++;
+        } else failed = true;
+        break;
+      }
+      case ReOp.LOOKAROUND: {
+        // a = sub-program entry pc, b = bit0 negated | bit1 behind. A fresh
+        // anchored recursive attempt at sp — atomic, so no backtrack entries
+        // leak. Captures from a successful POSITIVE lookaround persist (adopt
+        // the sub's caps); all other outcomes keep the pre-assertion caps —
+        // the sub ran copy-on-write and never mutated ours (§22.2.2.4).
+        const negated = (b & 1) !== 0;
+        const behind = (b & 2) !== 0;
+        const sub = runAt(prog, classTable, nGroups, input, sp, a, behind ? -1 : 1, caps);
+        const ok = sub !== null;
+        if (negated ? !ok : ok) {
+          if (!negated && sub !== null) caps = sub;
           pc++;
         } else failed = true;
         break;

@@ -69,6 +69,8 @@ import { exportDrainMicrotasksIfRegistered, getDrainFuncIdxForWasiStart } from "
 import { registerAddStringImports, registerAddUnionImports } from "./shared.js";
 import { stackBalance } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
+import { ensureRegexMatchVecType } from "./native-regex.js";
+import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
 import {
@@ -10378,7 +10380,15 @@ function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.SourceFile
               register(`${info.importPrefix}_${memberName}`, sig.params, sig.results);
             }
           } else {
-            const info = resolveExtern(className, memberName, "property");
+            // #1914 — standalone answers RegExp reflection reads natively
+            // (struct fields); never pre-register the env.RegExp_get_* host
+            // import for them, matching the compile-path interception in
+            // property-access.ts. Same set on both sides keeps a non-handled
+            // prop on the (refusing) extern path instead of silently losing
+            // its import.
+            const isStandaloneNativeRegExpProp =
+              ctx.standalone && className === "RegExp" && STANDALONE_REGEXP_REFLECTION_PROPS.has(memberName);
+            const info = isStandaloneNativeRegExpProp ? null : resolveExtern(className, memberName, "property");
             if (info) {
               const propInfo = info.properties.get(memberName)!;
               register(`${info.importPrefix}_get_${memberName}`, [{ kind: "externref" }], [propInfo.type]);
@@ -10397,7 +10407,10 @@ function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.SourceFile
       const objType = ctx.checker.getTypeAtLocation(node.left.expression);
       const className = objType.getSymbol()?.name;
       const propName = node.left.name.text;
-      if (className && !isNativeEncodingClass(className)) {
+      // #1914 — `re.lastIndex = v` is a native struct.set in standalone; do
+      // not pre-register env.RegExp_set_lastIndex.
+      const isStandaloneNativeRegExpWrite = ctx.standalone && className === "RegExp" && propName === "lastIndex";
+      if (className && !isNativeEncodingClass(className) && !isStandaloneNativeRegExpWrite) {
         const info = resolveExtern(className, propName, "property");
         if (info) {
           const propInfo = info.properties.get(propName)!;
@@ -11325,10 +11338,10 @@ function isStaticRegExpExpressionForInference(ctx: CodegenContext, expr: ts.Expr
 
 function nativeStringVecTypeForStandaloneRegExp(ctx: CodegenContext): ValType | null {
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
-  const elemKey = `ref_${ctx.anyStrTypeIdx}`;
-  const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
-  getOrRegisterArrayType(ctx, elemKey, elemType);
-  const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+  // The match result is the match-vec SUBTYPE of the nstr vec (#1914) — the
+  // precise local type keeps `.index`/`.input` reads cast-free while every
+  // base-vec consumer still applies via subsumption.
+  const vecTypeIdx = ensureRegexMatchVecType(ctx);
   return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 

@@ -333,19 +333,13 @@ describe("#1539 standalone narrowed refusals (Phase 2a)", () => {
     await expectRefused(`export function f(p: string): boolean { return new RegExp(p).test("x"); }`);
   });
   // #1912 Phase 2b landed backreferences, word boundaries, and the class
-  // compatibility forms — they are no longer refused (see
-  // tests/issue-1912-regex-phase2b.test.ts for the dual-run coverage).
-  it("refuses lookahead", async () => {
-    await expectRefused(`export function f(s: string): boolean { return /a(?=b)/.test(s); }`);
-  });
-  // #1539 Phase 2c landed the `m` (multiline) and `s` (dotAll) flags — they are
-  // no longer refused (see the dual-run CASES above). The `u`/`v` (code-point)
-  // and `d` (indices) flags remain deferred to Phase 2d.
-  it("refuses unicode flag (u, Phase 2d)", async () => {
+  // compatibility forms; #1911 Phase 2d Slice A landed lookarounds, inline
+  // modifiers, and the `d` flag — none are refused anymore (see
+  // tests/issue-1912-regex-phase2b.test.ts and
+  // tests/issue-1911-regex-phase2d.test.ts for the dual-run coverage). The
+  // `u`/`v` (code-point) flags remain deferred to 2d Slice B.
+  it("refuses unicode flag (u, Phase 2d Slice B)", async () => {
     await expectRefused(`export function f(s: string): boolean { return /^a/u.test(s); }`);
-  });
-  it("refuses indices flag (d, Phase 2d)", async () => {
-    await expectRefused(`export function f(s: string): boolean { return /^a/d.test(s); }`);
   });
   it("refuses RegExp.exec with global lastIndex semantics", async () => {
     await expectRefused(

@@ -47,6 +47,7 @@ import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
+import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
   emitThrowReferenceError,
   emitThrowString,
@@ -1631,6 +1632,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       fctx.body.push({ op: "ref.null.extern" } as Instr);
       return { kind: "externref" };
     }
+  }
+
+  {
+    const temporalResult = compileTemporalNewExpression(ctx, fctx, expr);
+    if (temporalResult !== undefined) return temporalResult;
   }
 
   // (#1103a) `new Map()` in standalone / nativeStrings mode → the WasmGC-native

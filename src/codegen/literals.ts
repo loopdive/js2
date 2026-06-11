@@ -227,10 +227,67 @@ function compileObjectLiteralAsExternref(
         }
       }
     }
-    // PropertyAssignment and ShorthandPropertyAssignment are not handled in this fallback —
-    // mixed spread + named properties should have resolved via ensureStructForType.
-    // If we reach here with named properties, let them be silently skipped.
-    // The fallback is primarily for all-spread patterns like {...null}, {...yield}.
+    // (#1901) Named data properties — `key: value` and shorthand `{ x }`. Build
+    // them onto the $Object via native __extern_set so a downstream string-key
+    // read (`o.x`), method dispatch (`o.m()`), or ToPrimitive (valueOf/toString)
+    // reads them through the $Object the existing native helpers already handle.
+    // This is the construction-time route for an object literal flowing into an
+    // any/externref/object contextual type (#1901 (iii)): the closed-struct path
+    // would build a struct $Object's readers can't match (returns 0 / invalid
+    // Wasm standalone). Methods are stored as their closure value (S2's
+    // __apply_closure invokes them via __call_fn_method_N). Computed keys and
+    // accessors are NOT handled here — those route to the accessor/host paths
+    // upstream (compileObjectLiteralWithAccessors / the struct path) before this.
+    else if (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) {
+      const keyText = resolvePropertyNameText(ctx, prop);
+      if (keyText === undefined) continue; // computed/symbol key — skip (handled upstream)
+      const setIdx = ensureLateImport(
+        ctx,
+        "__extern_set",
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (setIdx === undefined) continue;
+      // value: shorthand `{ x }` reads identifier x; `key: value` compiles the
+      // initializer.
+      const valueExpr = ts.isShorthandPropertyAssignment(prop)
+        ? prop.name
+        : (prop as ts.PropertyAssignment).initializer;
+      // Nested object-literal value (`{x: {y: 5}}`): the inner literal has NO
+      // contextual type, so the any-context gate in compileObjectLiteral would
+      // route it to the closed-struct path — but it is being stored INTO a
+      // `$Object`, so its reads come back through __extern_get and must be a
+      // `$Object` too. Recurse at the construction site (where we KNOW the
+      // destination representation) instead of widening the contextual-type
+      // gate (which mis-fires on struct-consumed literals — the #1897 -45).
+      const valType =
+        ts.isObjectLiteralExpression(valueExpr) &&
+        valueExpr.properties.length > 0 &&
+        valueExpr.properties.every(
+          (p) =>
+            (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) &&
+            resolvePropertyNameText(ctx, p) !== undefined,
+        )
+          ? compileObjectLiteralAsExternref(ctx, fctx, valueExpr)
+          : compileExpression(ctx, fctx, valueExpr);
+      if (valType === null) continue;
+      if (valType.kind !== "externref") {
+        coerceType(ctx, fctx, valType, { kind: "externref" });
+      }
+      const valLocal = allocLocal(fctx, `__objlit_v_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: valLocal });
+      // __extern_set(obj, "<key>", value)
+      fctx.body.push({ op: "local.get", index: objLocal });
+      addStringConstantGlobal(ctx, keyText);
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, keyText));
+      fctx.body.push({ op: "local.get", index: valLocal });
+      fctx.body.push({ op: "call", funcIdx: setIdx });
+    }
+    // MethodDeclaration is not reached here for the any-context route — object
+    // literals with methods take compileObjectLiteralWithAccessors (accessors) or
+    // emitObjectMethodAsClosure on the struct path. A plain method in an
+    // any-context literal falls through (skipped) — covered by S2 follow-on.
   }
 
   fctx.body.push({ op: "local.get", index: objLocal });
@@ -640,6 +697,75 @@ export function compileObjectLiteral(
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" };
       }
+    }
+  }
+
+  // (#1901) Non-empty object literal flowing into an any/unknown/object
+  // contextual type → build it as an open `$Object` at CONSTRUCTION rather than
+  // a closed struct. A closed-struct literal coerced to externref then read by
+  // string key (`function g(o:any){return o.x}` ← `g({x:9})`) returns 0 / emits
+  // invalid Wasm standalone, because (1) the native object runtime is never
+  // emitted for a closed-struct-only program and (2) `__extern_get`'s
+  // `ref.test $Object` can't match a closed struct. Routing to the $Object path
+  // here forces `ensureObjectRuntime` (via `__new_plain_object`) and yields the
+  // $Object every native reader (__extern_get / __extern_method_call /
+  // ToPrimitive valueOf/toString) already handles — unifying #1901 + #124.
+  //
+  // Mirrors the empty-{} any-context check above EXACTLY: only diverts when the
+  // contextual type is genuinely non-specific (any / unknown / `object`) or
+  // absent — a concrete struct type (typed param/var/dstr slot) keeps the
+  // closed-struct fast path (#1472 R2) byte-identical. Accessor / disposal /
+  // computed-symbol-key literals were already diverted to the host path above
+  // (#1239/#1433). Skip parameter defaults (the struct system expects a typed
+  // object for destructuring there), matching the empty-{} branch's exclusion.
+  //
+  // Scoped to `--target standalone` only: the open-object runtime
+  // (`ensureObjectRuntime` / `__new_plain_object` / `__extern_get`) is emitted
+  // as native defined functions exclusively under `ctx.standalone` (see #1472
+  // Phase B + late-imports.ts:308 — WASI still uses the host-import object
+  // machinery, intentionally deferred). Under wasi the $Object builder would
+  // decline (`ensureLateImport` returns undefined for the runtime helpers),
+  // fall through to the struct path, and leave a `ref.test $Object`-incompatible
+  // closed struct + an unsatisfiable `env::__extern_get` read — the exact #1901
+  // failure mode the gc/host R2 fast path avoids. Gating to `ctx.standalone`
+  // keeps wasi byte-identical to main (the wasi extension is a tracked
+  // follow-on; see plan/issues/1901). gc/host mode is untouched (not standalone).
+  if (
+    ctx.standalone &&
+    expr.properties.length > 0 &&
+    !ts.isParameter(expr.parent) &&
+    // only data props / spreads we can build onto a $Object (no accessor /
+    // method / mixed shapes that need the struct or host accessor path).
+    expr.properties.every(
+      (p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isSpreadAssignment(p),
+    ) &&
+    // and no computed/symbol keys (resolvePropertyNameText returns undefined).
+    expr.properties.every((p) => ts.isSpreadAssignment(p) || resolvePropertyNameText(ctx, p) !== undefined)
+  ) {
+    const ctxTypeNonEmpty = ctx.checker.getContextualType(expr);
+    // Require an EXPLICIT any / unknown / `object` contextual type to divert to
+    // the open-`$Object` path. An ABSENT contextual type means TypeScript
+    // infers a concrete *struct* type for the literal — and every downstream
+    // consumer (member reads off the inferred-typed local, destructuring
+    // patterns, numeric coercion) compiles against that struct type. Routing
+    // such a literal to `$Object` makes the consumers null-deref (struct.get on
+    // a `$Object`) or mis-coerce (`(o as any) - 0` → 0 instead of NaN, the
+    // #1806/#1900 contract). This bit the -45 standalone gate (#1897): 116
+    // regressions across language/expressions/object (parenthesized literals,
+    // `var obj = ({var: 42})`) and for-of/for-await-of destructuring sources —
+    // all shapes with NO contextual type whose consumers use the struct path.
+    // The nested-property-value case (`g({x: {y: 5}})` inner `{y: 5}`, also no
+    // contextual type) is handled separately by construction-site recursion in
+    // compileObjectLiteralAsExternref, NOT by this gate.
+    const isAnyContextNonEmpty =
+      !!ctxTypeNonEmpty &&
+      ((ctxTypeNonEmpty.flags & ts.TypeFlags.Any) !== 0 ||
+        (ctxTypeNonEmpty.flags & ts.TypeFlags.Unknown) !== 0 ||
+        (ctxTypeNonEmpty.flags & ts.TypeFlags.NonPrimitive) !== 0);
+    if (isAnyContextNonEmpty) {
+      const objResult = compileObjectLiteralAsExternref(ctx, fctx, expr);
+      if (objResult) return objResult;
+      // fall through to the struct path if the $Object builder declined.
     }
   }
 

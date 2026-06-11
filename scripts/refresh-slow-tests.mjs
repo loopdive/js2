@@ -53,7 +53,12 @@ for (const line of lines) {
   }
   const total = (r.compile_ms || 0) + (r.exec_ms || 0);
   if (total >= threshold && r.file) {
-    map.set(r.file, total);
+    // Clamp to >=1ms: the loader in tests/test262-shared.ts drops 0/negative
+    // values, but a 0ms (skipped/untimed) test still needs an entry so the
+    // weighted shard assignment doesn't fall back to the 250ms default for
+    // it — that fallback is what skewed shard wall times 32s–153s (#1953).
+    // Run with --threshold 0 to emit the full-coverage map.
+    map.set(r.file, Math.max(1, Math.round(total)));
   }
 }
 

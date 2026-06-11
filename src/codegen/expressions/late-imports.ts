@@ -459,6 +459,34 @@ export function flushLateImportShifts(ctx: CodegenContext, fctx: FunctionContext
   ctx.pendingLateImportShift = null;
   if (added <= 0) return;
   shiftLateImportIndices(ctx, fctx, pending.importsBefore, added);
+
+  // #1903 — re-base the native-string helper snapshot after the batch shift.
+  //
+  // `shiftLateImportIndices` just moved EVERY defined-function reference at or
+  // above `importsBefore` by `added` — including the native-string helper
+  // bodies and their `nativeStrHelpers` / `funcMap` map entries. The helpers
+  // are therefore now consistent with the post-batch `numImportFuncs`. But
+  // `ctx.nativeStrHelperImportBase` still records the import count from before
+  // this batch, so a later `reconcileNativeStrFinalizeShift` (the index.ts
+  // finalize passes, or the addUnionImports settle) would compute a non-zero
+  // `added = numImportFuncs - base` and shift the (already-correct) helpers a
+  // SECOND time — the exact double-shift that off-by-ones `__str_flatten`'s
+  // baked `__str_copy_tree` sibling call and emits invalid wasm (observed as
+  // `call[0] expected type (ref null N), found i32.const` on e.g. a private
+  // accessor that throws, or any string op compiled after a body-time import
+  // batch). Re-basing here makes that reconcile a no-op for the drift this
+  // flush already settled.
+  //
+  // Guard `>= 0`: only touch the snapshot when native-string helpers were
+  // actually emitted (the default GC path leaves it -1, untouched). We rebase
+  // unconditionally on helper presence — not just when `base >= importsBefore`
+  // — because helper references in `[base, importsBefore)` sit BELOW the
+  // insertion point and were (correctly) left unmoved by
+  // `shiftLateImportIndices`, so `numImportFuncs` is the right new floor for
+  // them too.
+  if (ctx.nativeStrHelperImportBase >= 0) {
+    ctx.nativeStrHelperImportBase = ctx.numImportFuncs;
+  }
 }
 
 /**

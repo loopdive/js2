@@ -30,6 +30,10 @@ import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js"
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
 import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8-codegen.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import {
+  tryCompileStandaloneRegExpMatchResultRead,
+  tryCompileStandaloneRegExpPropertyRead,
+} from "./regexp-standalone.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
@@ -52,6 +56,7 @@ import { coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 import { tryEmitJsonParseElementAccess, tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
+import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
 
 const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -1334,6 +1339,11 @@ export function compilePropertyAccess(
   const jsonParsePropertyType = tryEmitJsonParsePropertyAccess(ctx, fctx, expr);
   if (jsonParsePropertyType !== undefined) return jsonParsePropertyType;
 
+  {
+    const temporalPropertyType = tryCompileTemporalPropertyAccess(ctx, fctx, expr);
+    if (temporalPropertyType !== undefined) return temporalPropertyType;
+  }
+
   // TextEncoder/TextDecoder read-only Web API properties under no-host
   // targets. These instances are stateless placeholders; preserve receiver
   // evaluation, then return the standard UTF-8/default option values.
@@ -1359,6 +1369,18 @@ export function compilePropertyAccess(
         return { kind: "i32" };
       }
     }
+  }
+
+  // #1914 — standalone RegExp reflection (`re.source`/`.flags`/`.global`/…/
+  // `.lastIndex`) and match-result fields (`m.index`/`m.input`). Must run
+  // BEFORE the extern-class property path, which would otherwise emit an
+  // `env.RegExp_get_*` host import (a standalone purity leak), and before the
+  // generic struct/vec fallbacks, which silently return 0 for `.index`.
+  {
+    const standaloneRegExpRead = tryCompileStandaloneRegExpPropertyRead(ctx, fctx, expr);
+    if (standaloneRegExpRead !== undefined) return standaloneRegExpRead;
+    const standaloneMatchResultRead = tryCompileStandaloneRegExpMatchResultRead(ctx, fctx, expr);
+    if (standaloneMatchResultRead !== undefined) return standaloneMatchResultRead;
   }
 
   // #1780 — `TextEncoder.encodeInto(...).read` / `.written` under no-host
@@ -3928,7 +3950,12 @@ export function compileElementAccessBody(
     const isVecStructAccess =
       typeDef.fields[0]?.name === "length" &&
       typeDef.fields[1]?.name === "data" &&
-      (typeDef.fields.length === 2 || (typeDef.fields.length === 3 && typeDef.fields[2]?.name === "raw"));
+      (typeDef.fields.length === 2 ||
+        (typeDef.fields.length === 3 && typeDef.fields[2]?.name === "raw") ||
+        // #1914 — $__regexp_match_vec: the vec subtype carrying the spec
+        // exec/match result fields. Indexed reads use the same {length, data}
+        // prefix; index/input are property reads, not elements.
+        (typeDef.fields.length === 4 && typeDef.fields[2]?.name === "index" && typeDef.fields[3]?.name === "input"));
 
     if (!isVecStructAccess) {
       // Check if this is a tuple struct (registered in tupleTypeMap)

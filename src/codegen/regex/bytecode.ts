@@ -45,6 +45,15 @@ export enum ReOp {
    *  `groupIdx` (§22.2.2.9 BackreferenceMatcher). An unset group matches the
    *  empty string. `caseInsensitive`=1 compares ASCII-folded units. #1912. */
   BACKREF = 11,
+  /** `[LOOKAROUND, subPc, flags]` — zero-width assertion (§22.2.2.4 Assertion
+   *  `(?=) (?!) (?<=) (?<!)`). Runs the sub-program starting at instruction
+   *  `subPc` as a fresh anchored attempt at the current position via a
+   *  recursive `__regex_run` call (atomic — no backtrack entries leak out).
+   *  `flags` bit 0 = negated, bit 1 = lookbehind (sub-program is compiled
+   *  REVERSED and executed with direction -1). Captures written by a
+   *  successful positive lookaround persist; everything else restores the
+   *  pre-assertion capture state. #1911. */
+  LOOKAROUND = 12,
 }
 
 /** Slots per instruction in the flat program array. */

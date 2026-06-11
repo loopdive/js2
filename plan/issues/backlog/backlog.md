@@ -264,3 +264,61 @@ test262 doesn't cover: ESM, Web/WASI/Node/Deno APIs, Hono/React/Express):
 ### Fable-team findings (2026-06-10)
 
 - [#1915](../1915-gc-host-string-spread-empty-array.md) — gc JS-host mode: `[...str]` / `Array.from(str)` returns an empty array (externref-spread gap; pre-existing, verified independent of #1470's standalone fix) — medium, medium, **backlog**
+
+### Compiler quality & architecture review (2026-06-10)
+
+From [`docs/architecture/compiler-quality-review-2026-06.md`](../../../docs/architecture/compiler-quality-review-2026-06.md)
+(seven-subsystem graded review; every finding file:line-evidenced, two
+probe-verified). Grades: WasmGC codegen C−, IR B−, front-end C+, runtime B,
+linear+emit C+, test/CI B+, optimization C+ — overall **B−**. Already-tracked
+overlaps (#1098/#1172/#1095/#1530/#1850/#1852/#1854/#1855/#1858–#1860) were
+not re-filed; the issues below are net-new.
+
+**Fail-loud / correctness (children of #1858):**
+- [#1937](../1937-linear-backend-fail-loud-break-continue.md) — linear backend: `break`/`continue` never compiled (silent infinite loops); dispatchers need default-arm diagnostics — **critical**, easy, **backlog**
+- [#1941](../1941-differential-testing-optimize-output.md) — differential testing of `--optimize` output (wasm-opt miscompiles currently invisible; 3 reviewers converged) — **critical**, easy, **backlog**
+- [#1939](../1939-encodeinstr-default-throw-funcref-validation.md) — emit: `encodeInstr` silently drops unknown ops; default-throw + un-gate `validateFuncRefs` + round-trip test — high, easy, **backlog**
+- [#1921](../1921-structured-compile-failure-gate.md) — replace the `"Codegen error:"` string-prefix failure gate with structured severity — high, easy, **backlog**
+- [#1938](../1938-linear-number-array-i32-truncation-double-eval.md) — linear: `number[]` i32 truncation (`[1.5]`→`[1]`) + element-assignment RHS double-eval — high, medium, **backlog**
+- [#1918](../1918-stack-balance-strict-mode-fixup-ratchet.md) — stack-balance strict mode + fixup ratchet (lossy `drop; const 0` repairs mask emitter bugs) — high, medium, **backlog**
+- [#1940](../1940-wit-generator-silent-param-drop.md) — WIT generator silently drops unmappable params (arity mismatch) — medium, easy, **backlog**
+
+**Consolidation (divergent copies already shipping bugs):**
+- [#1922](../1922-shared-ir-traversal-while-loop-dce-defect.md) — shared IR traversal module; fixes probe-verified live defect (ordinary `while` loops demote off the IR path) — high, medium, **backlog**
+- [#1917](../1917-single-coercion-engine.md) — one coercion engine (4 matrices disagree: externref→f64 unboxes vs `f64.const 0` by context) — high, medium, **backlog**
+- [#1927](../1927-single-pipeline-driver.md) — one front-end pipeline driver (3 divergent clones; multi-file silently skips early errors/hardened/IR/JSX) — high, medium, **backlog**
+- [#1920](../1920-unify-instruction-walkers-peephole-catchall.md) — one instruction walker; peephole misses `catchAll` bodies (bug); NaN-const + tee fusion — medium, easy, **backlog**
+- [#1919](../1919-transactional-speculative-compile.md) — transactional speculative-compile API (23 probe/rollback sites leak locals/imports/types) — medium, medium, **backlog**
+- [#1934](../1934-decompose-resolveimport-domain-tables.md) — decompose `resolveImport` (5,000-line fn, 188 name checks) into domain tables; unify 3 ToPrimitive walkers; unbundle test262 shim — medium, hard, **backlog**
+- [#1931](../1931-decompose-detect-early-errors-treeshake.md) — decompose `detectEarlyErrors` (3,350-line fn), run on every path; wire or delete dead `treeshake` option — medium, medium, **backlog**
+
+**Gates that don't match documentation:**
+- [#1943](../1943-enforce-ratio-bucket-thresholds-ci.md) — enforce the documented 10%-ratio / 50-per-bucket thresholds in CI (today only net ≥ 0 is enforced) — high, easy, **backlog**
+- [#1942](../1942-compile-time-regression-gate.md) — compile-time regression gate (`pass→compile_timeout` excluded from every gate today) — high, easy, **backlog**
+- [#1923](../1923-meter-ir-post-claim-demotions.md) — meter IR post-claim demotions in the fallback ratchet (build/verify/lower failures invisible to CI) — high, easy, **backlog**
+- [#1945](../1945-test262-oracle-precision.md) — test262 oracle precision (expected error types discarded; undefined-asserts stripped; 71.6% is an upper bound) — medium, medium, **backlog**
+- [#1949](../1949-representative-perf-gate.md) — representative perf gate (4 overfitted micros at 50% tolerance; honest suite ungated) — medium, easy, **backlog**
+- [#1944](../1944-ci-cost-bundle-once-pnpm-cache.md) — CI cost: bundle-once artifact + pnpm cache (~120–170 wasted runner-min/run) — medium, medium, **backlog**
+
+**Type information & performance:**
+- [#1946](../1946-closure-devirtualization-singleton-callees.md) — closure devirtualization for singleton callees (~15-instr dynamic dispatch Binaryen provably can't remove) — high, medium, **backlog**
+- [#1948](../1948-shared-numeric-i32-lattice.md) — shared numeric i32 lattice (3 duplicated matchers; `i-1` f64 round-trip survives -O3) — high, medium, **backlog**
+- [#1947](../1947-end-to-end-gc-ref-typing.md) — end-to-end GC-ref typing; externref at host boundary only (unlocks Binaryen GC passes) — high, hard, **backlog**, needs `/architect-spec`
+- [#1924](../1924-ir-verifier-instruction-type-rules.md) — instruction-level type rules in the IR verifier (operands/branch-arg types/resultType unchecked; extends #1850) — high, medium, **backlog**
+- [#1950](../1950-default-on-optimization-pipeline.md) — default-on optimization (CLI/playground `-O` default; tiny always-on cleanups; **blocked by #1941**) — medium, easy, **backlog**
+
+**Diagnostics & API quality:**
+- [#1928](../1928-source-position-remapping-preparse-rewrites.md) — source-position remapping for pre-parse rewrites (diagnostics report wrong lines whenever a rewrite fires) — high, medium, **backlog**
+- [#1929](../1929-compileerror-file-flatten-chains.md) — `CompileError.file` + flattened TS diagnostic chains — medium, easy, **backlog**
+
+**Runtime hygiene:**
+- [#1932](../1932-version-env-abi.md) — version the env ABI (~200 names, no handshake; regex engine already shows the pattern) — high, easy, **backlog**
+- [#1933](../1933-runtime-multi-instance-isolation-leak.md) — multi-instance isolation (symbol/RegExp state bleed) + `_subclassCtors` instance-retention leak — high, medium, **backlog**
+- [#1935](../1935-retire-undefined-sentinel-protocol.md) — retire the undefined-as-sentinel protocol (`MISS` symbol; getters returning `undefined` misread as absent) — medium, medium, **backlog**
+
+**Strategic (architect-spec first):**
+- [#1916](../1916-symbolic-function-references-codegen.md) — symbolic function references in WasmGC codegen; retire the late-import index-shift machinery (≥7 regressions trace to it) — high, hard, **backlog**, needs `/architect-spec`
+- [#1930](../1930-typeoracle-type-query-boundary.md) — TypeOracle: one type-query boundary (~397 raw checker sites; unblocks TS7; kills suppression heuristics) — high, hard, **backlog**, needs `/architect-spec`
+- [#1936](../1936-async-contract-migration-enable-cps.md) — async contract migration: enable the built-but-disabled CPS lowering via call-site census + await-elision — high, hard, **backlog**, needs `/architect-spec`
+- [#1925](../1925-ir-hygiene-passes-nested-buffers.md) — run IR hygiene passes inside nested buffers, or commit to one control-flow representation (do before #1370/#1373 waves) — medium, hard, **backlog**
+- [#1926](../1926-remove-valtype-typeidx-from-irtype.md) — remove backend `ValType`/`typeIdx` from `IrType` (blocks IR serialization + linear union adoption) — medium, medium, **backlog**

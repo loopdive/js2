@@ -30,6 +30,7 @@ import {
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
+import { ensureNativeStringHelpers } from "./native-strings.js";
 import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from "./expressions/logical-ops.js";
 import { tryStaticToNumber } from "./expressions/misc.js";
 import { addStringImports, addUnionImports, resolveNativeTypeAnnotation, resolveWasmType } from "./index.js";
@@ -1502,6 +1503,58 @@ export function compileBinaryExpression(
         // string, a number externref), we conservatively return 0 for === or
         // 1 for !== — those cases shouldn't conflate identity anyway.
         const otherType = leftIsRef ? rightType : leftType;
+        // (#1914) Mixed externref + native-string-ref strict equality compares
+        // string CONTENT (§7.2.16 "If x is a String"), not identity. This is
+        // the shape of `anyParam === "literal"` (e.g. the test262 runner's
+        // `assert_sameValue_str(actual: any, expected: string)`): the `any`
+        // side is externref, the string side is a `(ref $AnyString)` struct.
+        // The identity bridge below returns false for equal strings from
+        // distinct allocations — every string literal materializes a fresh
+        // struct, so even `"a" === "a"` failed through this path.
+        if (
+          otherType.kind === "externref" &&
+          ctx.nativeStrings &&
+          ctx.anyStrTypeIdx >= 0 &&
+          ((leftIsRef && isStringType(leftTsType)) || (rightIsRef && isStringType(rightTsType)))
+        ) {
+          ensureNativeStringHelpers(ctx);
+          const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+          const strEqIdx = ctx.nativeStrHelpers.get("__str_equals");
+          if (flattenIdx !== undefined && strEqIdx !== undefined) {
+            // Stack: [left, right] → anyref temps.
+            const tmpRightAny = allocTempLocal(fctx, { kind: "anyref" });
+            if (!rightIsRef) fctx.body.push({ op: "any.convert_extern" } as Instr);
+            fctx.body.push({ op: "local.set", index: tmpRightAny });
+            if (!leftIsRef) fctx.body.push({ op: "any.convert_extern" } as Instr);
+            const tmpLeftAny = allocTempLocal(fctx, { kind: "anyref" });
+            fctx.body.push({ op: "local.set", index: tmpLeftAny });
+            // Both sides strings → content equality; otherwise strict
+            // string-vs-non-string is definitively unequal.
+            fctx.body.push({ op: "local.get", index: tmpLeftAny });
+            fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx } as Instr);
+            fctx.body.push({ op: "local.get", index: tmpRightAny });
+            fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx } as Instr);
+            fctx.body.push({ op: "i32.and" } as Instr);
+            fctx.body.push({
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [
+                { op: "local.get", index: tmpLeftAny } as Instr,
+                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+                { op: "call", funcIdx: flattenIdx } as Instr,
+                { op: "local.get", index: tmpRightAny } as Instr,
+                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+                { op: "call", funcIdx: flattenIdx } as Instr,
+                { op: "call", funcIdx: strEqIdx } as Instr,
+              ],
+              else: [{ op: "i32.const", value: 0 } as Instr],
+            } as Instr);
+            releaseTempLocal(fctx, tmpLeftAny);
+            releaseTempLocal(fctx, tmpRightAny);
+            if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
+            return { kind: "i32" };
+          }
+        }
         if (otherType.kind === "externref") {
           const EQ_HEAP_TYPE_BR = -19;
           // Stack: [left, right]. Save right (as anyref), then handle left.
@@ -1852,9 +1905,9 @@ export function compileBinaryExpression(
                     ...(() => {
                       const lAny = allocTempLocal(fctx, { kind: "anyref" });
                       const rAny = allocTempLocal(fctx, { kind: "anyref" });
-                      const seq: Instr[] = [
-                        { op: "local.set", index: rAny },
-                        { op: "local.tee", index: lAny },
+                      // ── eqref identity ── (the final fallback arm)
+                      const identityArm: Instr[] = [
+                        { op: "local.get", index: lAny },
                         { op: "ref.test", typeIdx: EQ_HEAP } as Instr,
                         { op: "local.get", index: rAny },
                         { op: "ref.test", typeIdx: EQ_HEAP } as Instr,
@@ -1872,6 +1925,48 @@ export function compileBinaryExpression(
                           else: [{ op: "i32.const", value: 0 }],
                         } as Instr,
                       ];
+                      const seq: Instr[] = [
+                        { op: "local.set", index: rAny },
+                        { op: "local.set", index: lAny },
+                      ];
+                      // ── string? ── (#1914) Native strings are VALUE-compared
+                      // (§7.2.16 step "If x is a String"). Without this arm,
+                      // every `a === b` over `any`-typed string operands — most
+                      // visibly the test262 harness's `isSameValue` — fell to
+                      // ref.eq identity and returned false for equal strings
+                      // from distinct allocations (literal vs literal included,
+                      // since each string literal materializes a fresh struct).
+                      let stringArmEmitted = false;
+                      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+                        ensureNativeStringHelpers(ctx);
+                        const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+                        const strEqIdx = ctx.nativeStrHelpers.get("__str_equals");
+                        if (flattenIdx !== undefined && strEqIdx !== undefined) {
+                          stringArmEmitted = true;
+                          seq.push(
+                            { op: "local.get", index: lAny },
+                            { op: "ref.test", typeIdx: ctx.anyStrTypeIdx } as Instr,
+                            { op: "local.get", index: rAny },
+                            { op: "ref.test", typeIdx: ctx.anyStrTypeIdx } as Instr,
+                            { op: "i32.and" } as Instr,
+                            {
+                              op: "if",
+                              blockType: { kind: "val", type: { kind: "i32" } },
+                              then: [
+                                { op: "local.get", index: lAny },
+                                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+                                { op: "call", funcIdx: flattenIdx },
+                                { op: "local.get", index: rAny },
+                                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+                                { op: "call", funcIdx: flattenIdx },
+                                { op: "call", funcIdx: strEqIdx },
+                              ],
+                              else: identityArm,
+                            } as Instr,
+                          );
+                        }
+                      }
+                      if (!stringArmEmitted) seq.push(...identityArm);
                       releaseTempLocal(fctx, lAny);
                       releaseTempLocal(fctx, rAny);
                       return seq;

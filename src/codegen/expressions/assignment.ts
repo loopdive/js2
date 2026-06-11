@@ -57,6 +57,7 @@ import {
 } from "./late-imports.js";
 import { emitMappedArgParamSync, emitMappedArgReverseSync } from "./logical-ops.js";
 import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
+import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.js";
 import { resolveEffectiveStructName } from "../property-access.js";
 import {
   compileStringBuilderAppend,
@@ -2178,6 +2179,14 @@ function compilePropertyAssignment(
         return valResult;
       }
     }
+  }
+
+  // #1914 — `re.lastIndex = v` on a standalone RegExp receiver. Must run
+  // BEFORE the extern-class setter path, which would otherwise emit an
+  // `env.RegExp_set_lastIndex` host import (a standalone purity leak).
+  {
+    const standaloneLastIndexWrite = tryCompileStandaloneRegExpLastIndexWrite(ctx, fctx, target, value);
+    if (standaloneLastIndexWrite !== undefined) return standaloneLastIndexWrite;
   }
 
   // Compile-away: if the target object is frozen, emit TypeError throw

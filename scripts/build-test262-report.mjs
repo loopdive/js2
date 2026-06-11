@@ -428,7 +428,7 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
     issues: ["#1472", "#176", "#281", "#1466"],
     label: "Object/property/destructuring semantic mismatches behind the object model",
     match: (record, text) =>
-      pathHas(record, ["built-ins/object", "language/destructuring", "object-"]) ||
+      pathHas(record, ["built-ins/object", "language/destructuring", "language/expressions/object/dstr", "object-"]) ||
       hasAny(text, ["object.", "destructuring", "property"]),
   },
   {

@@ -26,20 +26,28 @@ import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import {
   ensureRegexCaptureArray,
+  ensureRegexFlagsStr,
+  ensureRegexMatchVecType,
   ensureRegexReplace,
   ensureRegexSearch,
   ensureRegexSplit,
   i32ArrayLiteralInstrs,
+  MATCH_VEC_FIELD_INDEX,
+  MATCH_VEC_FIELD_INPUT,
+  REGEXP_MATCH_VEC_STRUCT,
   regexI32ArrayType,
 } from "./native-regex.js";
 import {
   type CompiledRegex,
   parseFlags,
   RegexUnsupportedError,
+  RE_FLAG_D,
   RE_FLAG_G,
   RE_FLAG_I,
   RE_FLAG_M,
   RE_FLAG_S,
+  RE_FLAG_U,
+  RE_FLAG_V,
   RE_FLAG_Y,
 } from "./regex/bytecode.js";
 import { compilePattern, RepeatTooLargeError } from "./regex/compile.js";
@@ -136,9 +144,10 @@ export function hasStandaloneRegExpEngine(state: StandaloneRegExpEngineState): b
 }
 
 const STANDALONE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
-// Supported standalone flags for the current pure-WasmGC VM slice: g/i/y from
-// Phase 2a plus m/s from Phase 2c. u/v/d remain code-point/indices follow-ups.
-const SUPPORTED_STANDALONE_FLAGS = RE_FLAG_G | RE_FLAG_I | RE_FLAG_Y | RE_FLAG_M | RE_FLAG_S;
+// g/i/y from Phase 2a, m/s from 2c, d from 2d Slice A (#1911 — `d` does not
+// change MATCHING semantics; the `.indices` result surface is #1914's lane).
+// u/v stay code-point follow-ups (2d Slice B).
+const SUPPORTED_STANDALONE_FLAGS = RE_FLAG_G | RE_FLAG_I | RE_FLAG_Y | RE_FLAG_M | RE_FLAG_S | RE_FLAG_D;
 
 function reportStandaloneRegExpUnsupported(ctx: CodegenContext, node: ts.Node, detail: string): void {
   reportError(
@@ -413,6 +422,54 @@ const RE_FIELD_NGROUPS = 1;
 const RE_FIELD_PROG = 2;
 const RE_FIELD_CLASS_TABLE = 3;
 const RE_FIELD_SOURCE = 4;
+const RE_FIELD_LASTINDEX = 5;
+
+/**
+ * EscapeRegExpPattern (ECMA-262 §22.2.6.13.1), computed at compile time —
+ * standalone patterns are always static. The escaped form must let
+ * `"/" + escaped + "/" + flags` reparse as an equivalent
+ * RegularExpressionLiteral:
+ * - empty pattern → `"(?:)"` (a bare `//` would lex as a comment);
+ * - unescaped `/` outside a class → `\/` (escaped or in-class occurrences
+ *   already reparse);
+ * - LineTerminators → their escape sequences (they can enter via
+ *   `new RegExp("\n")` and would terminate the literal otherwise).
+ */
+export function escapeRegExpPattern(pattern: string): string {
+  if (pattern === "") return "(?:)";
+  let out = "";
+  let inClass = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]!;
+    if (ch === "\\") {
+      const next = i + 1 < pattern.length ? pattern[i + 1]! : null;
+      if (next === null) {
+        // Trailing lone backslash (compilePattern rejects this earlier).
+        out += ch;
+        continue;
+      }
+      // Escaped pair passes through verbatim, unless the escaped char is a
+      // LineTerminator (e.g. new RegExp("\\\n")), which still needs the
+      // escape-sequence spelling to survive re-lexing.
+      if (next === "\n") out += "\\n";
+      else if (next === "\r") out += "\\r";
+      else if (next === "\u2028") out += "\\u2028";
+      else if (next === "\u2029") out += "\\u2029";
+      else out += ch + next;
+      i++;
+      continue;
+    }
+    if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    if (ch === "/" && !inClass) out += "\\/";
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\u2028") out += "\\u2028";
+    else if (ch === "\u2029") out += "\\u2029";
+    else out += ch;
+  }
+  return out;
+}
 
 function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
   const existing = ctx.structMap.get(STANDALONE_REGEXP_STRUCT_NAME);
@@ -427,6 +484,11 @@ function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
     { name: "prog", type: i32ArrRef, mutable: false },
     { name: "classTable", type: i32ArrRef, mutable: false },
     { name: "source", type: nativeStringType(ctx), mutable: false },
+    // [[LastIndex]] (§22.2.7.1) — a plain writable number property on the
+    // RegExp object. Stored as f64; exec applies ToLength at use time. Only
+    // g/y exec mutates it (#1913); reads/writes route through the #1914
+    // reflection path below.
+    { name: "lastIndex", type: { kind: "f64" } as ValType, mutable: true },
   ];
   ctx.mod.types.push({
     kind: "struct",
@@ -463,9 +525,12 @@ function emitStandaloneRegExpStruct(
   for (const instr of i32ArrayLiteralInstrs(ctx, compiled.prog)) fctx.body.push(instr);
   // field 3: classTable (ref array<i32>)
   for (const instr of i32ArrayLiteralInstrs(ctx, compiled.classTable)) fctx.body.push(instr);
-  // field 4: source string
-  const srcType = compileStringLiteral(ctx, fctx, pattern, node);
+  // field 4: source string — stored in spec form (§22.2.6.13.1
+  // EscapeRegExpPattern) so the `.source` getter is a plain field read.
+  const srcType = compileStringLiteral(ctx, fctx, escapeRegExpPattern(pattern), node);
   if (!srcType) return null;
+  // field 5: lastIndex — fresh RegExp objects start at 0 (§22.2.3.3).
+  fctx.body.push({ op: "f64.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx });
   return { kind: "ref", typeIdx };
 }
@@ -786,11 +851,10 @@ function emitRegexExecArrayCall(
   if (emitted === null) return null;
 
   const captureArrayIdx = ensureRegexCaptureArray(ctx);
-  const nstrVecTypeIdx = ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`);
-  if (nstrVecTypeIdx === undefined) {
-    reportError(ctx, regexpExpr, "Codegen error: standalone RegExp exec missing native string vec type (#1539).");
-    return null;
-  }
+  // The result is the match-vec SUBTYPE of the nstr vec (#1914): same
+  // {length, data} prefix every vec consumer reads, plus index/input fields
+  // for the spec result shape.
+  const nstrVecTypeIdx = ensureRegexMatchVecType(ctx);
 
   fctx.body.push({
     op: "if",
@@ -1182,4 +1246,273 @@ export function tryCompileStandaloneStringSplit(
     return null;
   }
   return { kind: "ref", typeIdx: nstrVecTypeIdx };
+}
+
+// ── #1914: RegExp reflection + match-result shape ─────────────────────
+
+/** Flag-boolean getter → bitfield bit (§22.2.6.5–.12, §22.2.6.18/.19). */
+const REGEXP_FLAG_BOOL_PROPS: Record<string, number> = {
+  hasIndices: RE_FLAG_D,
+  global: RE_FLAG_G,
+  ignoreCase: RE_FLAG_I,
+  multiline: RE_FLAG_M,
+  dotAll: RE_FLAG_S,
+  unicode: RE_FLAG_U,
+  unicodeSets: RE_FLAG_V,
+  sticky: RE_FLAG_Y,
+};
+
+/**
+ * The property names the standalone backend answers natively on RegExp
+ * receivers. The import scan in index.ts consults this set so it never
+ * registers an `env.RegExp_get_*` host import for these reads under
+ * `--target standalone` (the acceptance criterion of #1914: no `env.RegExp_*`
+ * leaks). Keep in sync with {@link tryCompileStandaloneRegExpPropertyRead}.
+ */
+export const STANDALONE_REGEXP_REFLECTION_PROPS: ReadonlySet<string> = new Set([
+  "source",
+  "flags",
+  "lastIndex",
+  ...Object.keys(REGEXP_FLAG_BOOL_PROPS),
+]);
+
+/**
+ * Property READS on standalone RegExp receivers (#1914).
+ *
+ * - `.source` → struct field 4 (stored pre-escaped per §22.2.6.13.1).
+ * - `.flags` → `__regex_flags_str(flags)` building the d-g-i-m-s-u-v-y string
+ *   from the bitfield (§22.2.6.4).
+ * - flag booleans (`.global`, `.ignoreCase`, …) → `(flags & bit) != 0`
+ *   (§22.2.6.5–.12 RegExpHasFlag).
+ * - `.lastIndex` → struct field 5 (f64).
+ *
+ * Returns `undefined` when the receiver/property is not a standalone RegExp
+ * reflection read (caller falls through), `null` after reporting a narrowed
+ * refusal, or the result ValType.
+ */
+export function tryCompileStandaloneRegExpPropertyRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | null | undefined {
+  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  const propName = expr.name.text;
+  if (!STANDALONE_REGEXP_REFLECTION_PROPS.has(propName)) return undefined;
+  const objType = ctx.checker.getTypeAtLocation(expr.expression);
+  const nonNull = objType.getNonNullableType?.() ?? objType;
+  if (!isGlobalRegExpType(nonNull)) return undefined;
+
+  const loaded = loadStandaloneRegExpStruct(ctx, fctx, expr.expression);
+  if (loaded === null) return null;
+  const { regexpLocal, structTypeIdx } = loaded;
+
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  if (propName === "source") {
+    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_SOURCE });
+    return nativeStringType(ctx);
+  }
+  if (propName === "flags") {
+    ensureNativeStringHelpers(ctx);
+    const flagsStrIdx = ensureRegexFlagsStr(ctx);
+    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS });
+    fctx.body.push({ op: "call", funcIdx: flagsStrIdx });
+    return nativeStringType(ctx);
+  }
+  if (propName === "lastIndex") {
+    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
+    return { kind: "f64" };
+  }
+  // Flag boolean getter: (flags & bit) != 0.
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS });
+  fctx.body.push({ op: "i32.const", value: REGEXP_FLAG_BOOL_PROPS[propName]! });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.ne" });
+  return { kind: "i32" };
+}
+
+/**
+ * `re.lastIndex = value` on a standalone RegExp receiver (#1914).
+ *
+ * [[LastIndex]] is a plain writable data property (§22.2.7.1); the struct
+ * stores it as f64. The spec defers coercion to exec's ToLength, so only
+ * numeric writes are accepted here — non-numeric RHS values are a narrowed
+ * refusal rather than a silently mis-modelled store. Leaves the RHS f64 on
+ * the stack (assignment-expression value).
+ */
+export function tryCompileStandaloneRegExpLastIndexWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  value: ts.Expression,
+): ValType | null | undefined {
+  if (!ctx.standalone || ts.isPrivateIdentifier(target.name) || target.name.text !== "lastIndex") {
+    return undefined;
+  }
+  const objType = ctx.checker.getTypeAtLocation(target.expression);
+  const nonNull = objType.getNonNullableType?.() ?? objType;
+  if (!isGlobalRegExpType(nonNull)) return undefined;
+
+  const loaded = loadStandaloneRegExpStruct(ctx, fctx, target.expression);
+  if (loaded === null) return null;
+  const { regexpLocal, structTypeIdx } = loaded;
+
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  const valType = compileExpression(ctx, fctx, value, { kind: "f64" });
+  if (!valType) return null;
+  if (valType.kind === "i32") {
+    fctx.body.push({ op: "f64.convert_i32_s" });
+  } else if (valType.kind !== "f64") {
+    reportStandaloneRegExpUnsupported(ctx, value, "non-numeric lastIndex writes");
+    return null;
+  }
+  const tmp = allocLocal(fctx, `__re_lastindex_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push({ op: "local.tee", index: tmp });
+  fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX } as Instr);
+  fctx.body.push({ op: "local.get", index: tmp });
+  return { kind: "f64" };
+}
+
+/**
+ * `.index` / `.input` reads on standalone exec/match results (#1914).
+ *
+ * The receiver's static TS type (`RegExpExecArray` / `RegExpMatchArray`) is
+ * the routing signal; the runtime value is the `$__regexp_match_vec` subtype
+ * every standalone exec/match constructs (`__regex_capture_array`). Receivers
+ * statically typed as the base nstr vec are `ref.cast` down — construction
+ * provenance guarantees the cast succeeds; a null result traps, matching the
+ * TypeError a member read on `null` must produce.
+ */
+export function tryCompileStandaloneRegExpMatchResultRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | null | undefined {
+  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  const propName = expr.name.text;
+  if (propName !== "index" && propName !== "input") return undefined;
+  const objType = ctx.checker.getTypeAtLocation(expr.expression);
+  const nonNull = objType.getNonNullableType?.() ?? objType;
+  const symName = nonNull.getSymbol()?.name;
+  if (symName !== "RegExpExecArray" && symName !== "RegExpMatchArray") return undefined;
+
+  const recvType = compileExpression(ctx, fctx, expr.expression);
+  if (recvType === null) return null;
+  // The exec/match lowering above registered the struct while compiling the
+  // receiver; absence means the value cannot be a backend match result.
+  const matchVecIdx = ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT);
+  if (matchVecIdx === undefined) {
+    reportStandaloneRegExpUnsupported(
+      ctx,
+      expr.expression,
+      "match-result property reads on values not produced by this standalone backend",
+    );
+    return null;
+  }
+  if (recvType.kind === "externref") {
+    fctx.body.push({ op: "any.convert_extern" } as Instr);
+    fctx.body.push({ op: "ref.cast", typeIdx: matchVecIdx } as Instr);
+  } else if (recvType.kind === "ref" || recvType.kind === "ref_null") {
+    if (recvType.typeIdx !== matchVecIdx) {
+      fctx.body.push({ op: "ref.cast", typeIdx: matchVecIdx } as Instr);
+    } else if (recvType.kind === "ref_null") {
+      fctx.body.push({ op: "ref.as_non_null" } as Instr);
+    }
+  } else {
+    reportStandaloneRegExpUnsupported(
+      ctx,
+      expr.expression,
+      "match-result property reads on values not produced by this standalone backend",
+    );
+    return null;
+  }
+
+  if (propName === "index") {
+    fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_INDEX });
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    return { kind: "f64" };
+  }
+  fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_INPUT });
+  return nativeStringType(ctx);
+}
+
+/**
+ * True when `expr` is a standalone backend exec/match call producing a
+ * `$__regexp_match_vec` (`re.exec(s)` / `s.match(re)` with a backend-created
+ * static RegExp). Mirrors the lowering gates in
+ * {@link tryCompileStandaloneRegExpExec} / {@link tryCompileStandaloneStringMatch}.
+ */
+function isStandaloneMatchResultCall(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const unwrapped = stripStaticWrapper(expr);
+  if (!ts.isCallExpression(unwrapped) || !ts.isPropertyAccessExpression(unwrapped.expression)) return false;
+  const method = unwrapped.expression.name.text;
+  if (method === "exec") {
+    return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.expression.expression);
+  }
+  if (method === "match" && unwrapped.arguments.length === 1) {
+    return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.arguments[0]!);
+  }
+  return false;
+}
+
+/** Is `expr` the `null` / `undefined` literal (fine for a ref_null global)? */
+function isNullishLiteral(expr: ts.Expression): boolean {
+  const unwrapped = stripStaticWrapper(expr);
+  if (unwrapped.kind === ts.SyntaxKind.NullKeyword) return true;
+  return ts.isIdentifier(unwrapped) && unwrapped.text === "undefined";
+}
+
+/**
+ * Module-global type inference for `var m = re.exec(s)` under standalone
+ * (#1914). Without this the global widens to externref and indexed reads
+ * route through the native `__extern_get_idx`, which only recognises the
+ * open-object `$ObjVec` — a typed match-vec read back from externref returns
+ * null and the comparison traps in `__str_flatten` (the
+ * `null_deref __str_flatten` test262 bucket).
+ *
+ * Returns `ref_null $__regexp_match_vec` only when the initializer is a
+ * backend exec/match call AND every other write to the var in the file is
+ * also one (or null/undefined) — any foreign write keeps the externref
+ * widening so the precise global type can never reject a store.
+ */
+export function inferStandaloneRegExpMatchGlobalType(
+  ctx: CodegenContext,
+  decl: ts.VariableDeclaration,
+): ValType | null {
+  if (!ctx.standalone || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
+  if (!decl.initializer || !ts.isIdentifier(decl.name)) return null;
+  if (!isStandaloneMatchResultCall(ctx, decl.initializer)) return null;
+  const sym = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!sym) return null;
+
+  let foreignWrite = false;
+  const visit = (node: ts.Node): void => {
+    if (foreignWrite) return;
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      if (assignmentTargetContainsSymbol(ctx, node.left, sym)) {
+        const isPlainIdentTarget = isSameSymbolIdentifier(ctx, node.left, sym);
+        const rhsOk =
+          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          (isStandaloneMatchResultCall(ctx, node.right) || isNullishLiteral(node.right));
+        if (!isPlainIdentTarget || !rhsOk) foreignWrite = true;
+      }
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      isSameSymbolIdentifier(ctx, node.operand, sym)
+    ) {
+      foreignWrite = true;
+    } else if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer) &&
+      assignmentTargetContainsSymbol(ctx, node.initializer, sym)
+    ) {
+      foreignWrite = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(decl.getSourceFile(), visit);
+  if (foreignWrite) return null;
+
+  return { kind: "ref_null", typeIdx: ensureRegexMatchVecType(ctx) };
 }

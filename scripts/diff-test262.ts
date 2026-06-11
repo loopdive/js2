@@ -85,6 +85,11 @@ Options:
   --all                         Show all transitions (no limit)
   --quiet, -q                   Only show summary counts
   --baseline-meta <report.json> Read baseline_generated_at + baseline_sha to warn on stale baseline
+  --path-filter <patterns>      Restrict the diff to tests whose path contains any of the
+                                pipe-separated substrings (same semantics as TEST262_PATH_FILTER).
+                                Used by #1954 scoped PR-time runs: the candidate JSONL only covers
+                                the scoped subset, so the baseline must be restricted the same way
+                                or every out-of-scope baseline pass counts as a pass→absent regression.
   --help, -h                    Show this help`);
     process.exit(args.includes("--help") || args.includes("-h") ? 0 : 1);
   }
@@ -92,7 +97,7 @@ Options:
   const positional = args.filter((a, i) => {
     if (a.startsWith("--") || a.startsWith("-")) return false;
     const prev = args[i - 1];
-    if (prev === "--baseline-meta") return false;
+    if (prev === "--baseline-meta" || prev === "--path-filter") return false;
     return true;
   });
   const baselinePath = positional[0];
@@ -102,14 +107,44 @@ Options:
   const quiet = args.includes("--quiet") || args.includes("-q");
   const metaIdx = args.indexOf("--baseline-meta");
   const baselineMetaPath = metaIdx >= 0 ? args[metaIdx + 1] : undefined;
+  const filterIdx = args.indexOf("--path-filter");
+  const rawPathFilter = filterIdx >= 0 ? (args[filterIdx + 1] ?? "") : "";
+  const pathFilter = rawPathFilter
+    .split("|")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
 
   const maxShow = showAll ? Infinity : verbose ? 50 : 20;
 
-  run(baselinePath, newPath, maxShow, quiet, baselineMetaPath);
+  run(baselinePath, newPath, maxShow, quiet, baselineMetaPath, pathFilter);
 }
 
-async function run(baselinePath: string, newPath: string, maxShow: number, quiet: boolean, baselineMetaPath?: string) {
-  const [baseline, newer] = await Promise.all([loadJsonl(baselinePath), loadJsonl(newPath)]);
+function applyPathFilter(map: StatusMap, patterns: string[]): StatusMap {
+  if (patterns.length === 0) return map;
+  const filtered: StatusMap = new Map();
+  for (const [file, entry] of map) {
+    if (patterns.some((p) => file.includes(p))) filtered.set(file, entry);
+  }
+  return filtered;
+}
+
+async function run(
+  baselinePath: string,
+  newPath: string,
+  maxShow: number,
+  quiet: boolean,
+  baselineMetaPath?: string,
+  pathFilter: string[] = [],
+) {
+  let [baseline, newer] = await Promise.all([loadJsonl(baselinePath), loadJsonl(newPath)]);
+  if (pathFilter.length > 0) {
+    const before = baseline.size;
+    baseline = applyPathFilter(baseline, pathFilter);
+    newer = applyPathFilter(newer, pathFilter);
+    console.log(
+      `Path filter active (${pathFilter.join(" | ")}): baseline ${before} → ${baseline.size} entries in scope.`,
+    );
+  }
 
   // Collect transitions
   const regressions: {
