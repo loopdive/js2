@@ -8,7 +8,7 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
-import { ensureLateImport } from "./expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { addImport } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterArrayType, getOrRegisterVecType } from "./registry/types.js";
 
@@ -203,6 +203,11 @@ export function flatStringType(ctx: CodegenContext): ValType {
 export function ensureNativeStringHelpers(ctx: CodegenContext): void {
   if (ctx.nativeStrHelpersEmitted) return;
   ctx.nativeStrHelpersEmitted = true;
+  // #2039: settle any deferred ensureLateImport batch before baking funcIdx
+  // values. Registering these helpers mid-batch would bake post-batch indices
+  // that the deferred flush then over-shifts by its delta. Same guard as
+  // ensureObjectRuntime / addUnionImports.
+  flushLateImportShifts(ctx, null);
   // #1677: snapshot the import-function count at the instant the helpers are
   // emitted. Imports added later during the same finalize phase shift these
   // helpers' true indices but NOT their baked-in sibling-call targets;
