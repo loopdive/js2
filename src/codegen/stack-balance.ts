@@ -325,8 +325,7 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
 
   // call: pop params, push results
   if (op === "call") {
-    const funcIdx = (instr as any).funcIdx;
-    const sig = funcSigs.get(funcIdx);
+    const sig = funcSigs.get(sigKey((instr as any).funcIdx));
     if (sig) {
       return -sig.params + sig.results;
     }
@@ -436,7 +435,13 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
 }
 
 interface FuncSigInfo {
-  get(funcIdx: number): { params: number; results: number; resultType?: string } | undefined;
+  /** Keyed by absolute index AND by function name (#1916 symbolic refs). */
+  get(key: number | string): { params: number; results: number; resultType?: string } | undefined;
+}
+
+/** #1916 — map an instruction funcIdx (number or symbolic ref) to a FuncSigInfo key. */
+function sigKey(funcIdx: unknown): number | string {
+  return typeof funcIdx === "number" ? funcIdx : (funcIdx as { name: string }).name;
 }
 
 /**
@@ -615,8 +620,7 @@ function inferLastType(body: Instr[], types: TypeDef[], sigs: FuncSigInfo): stri
 
     // call: check result type -- only trust high-confidence type categories
     if (op === "call") {
-      const funcIdx = (instr as any).funcIdx;
-      const sig = sigs.get(funcIdx);
+      const sig = sigs.get(sigKey((instr as any).funcIdx));
       if (
         sig &&
         sig.resultType &&
@@ -955,7 +959,7 @@ function valTypeCategory(vt: ValType): string | undefined {
 }
 
 function buildFuncSigs(mod: WasmModule): FuncSigInfo {
-  const map = new Map<number, { params: number; results: number; resultType?: string }>();
+  const map = new Map<number | string, { params: number; results: number; resultType?: string }>();
 
   // Imported functions come first
   let idx = 0;
@@ -964,7 +968,9 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
       const ft = resolveFuncType(mod.types, imp.desc.typeIdx);
       if (ft) {
         const resultType = ft.results.length === 1 ? valTypeCategory(ft.results[0]!) : undefined;
-        map.set(idx, { params: ft.params.length, results: ft.results.length, resultType });
+        const sig = { params: ft.params.length, results: ft.results.length, resultType };
+        map.set(idx, sig);
+        map.set(imp.name, sig); // #1916: symbolic-ref lookups resolve by name
       }
       idx++;
     }
@@ -975,7 +981,9 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
     const ft = resolveFuncType(mod.types, func.typeIdx);
     if (ft) {
       const resultType = ft.results.length === 1 ? valTypeCategory(ft.results[0]!) : undefined;
-      map.set(idx, { params: ft.params.length, results: ft.results.length, resultType });
+      const sig = { params: ft.params.length, results: ft.results.length, resultType };
+      map.set(idx, sig);
+      map.set(func.name, sig); // #1916: symbolic-ref lookups resolve by name
     }
     idx++;
   }
@@ -990,7 +998,29 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
 /**
  * Resolve full param types for a function by index.
  */
-function getFullParamTypes(mod: WasmModule, funcIdx: number, numImports: number): ValType[] | null {
+function getFullParamTypes(mod: WasmModule, ref: number | { name: string }, numImports: number): ValType[] | null {
+  // #1916 — symbolic refs resolve by name against the current module layout.
+  let funcIdx: number;
+  if (typeof ref === "number") {
+    funcIdx = ref;
+  } else {
+    funcIdx = -1;
+    let i = 0;
+    for (const imp of mod.imports) {
+      if (imp.desc.kind === "func") {
+        if (imp.name === ref.name) {
+          funcIdx = i;
+          break;
+        }
+        i++;
+      }
+    }
+    if (funcIdx < 0) {
+      const fi = mod.functions.findIndex((f) => f.name === ref.name);
+      if (fi >= 0) funcIdx = numImports + fi;
+      else return null;
+    }
+  }
   if (funcIdx < numImports) {
     let importFuncCount = 0;
     for (const imp of mod.imports) {
@@ -1145,7 +1175,28 @@ function inferInstrType(
   }
 
   if (op === "call") {
-    const funcIdx = (instr as any).funcIdx as number;
+    let funcIdx = (instr as any).funcIdx as number | { name: string };
+    // #1916 — resolve symbolic refs by name against the current layout
+    if (typeof funcIdx !== "number") {
+      const name = funcIdx.name;
+      let i = 0;
+      let resolved = -1;
+      for (const imp of mod.imports) {
+        if (imp.desc.kind === "func") {
+          if (imp.name === name) {
+            resolved = i;
+            break;
+          }
+          i++;
+        }
+      }
+      if (resolved < 0) {
+        const fi = mod.functions.findIndex((f) => f.name === name);
+        if (fi < 0) return null;
+        resolved = numImports + fi;
+      }
+      funcIdx = resolved;
+    }
     const pt = getFullParamTypes(mod, funcIdx, numImports);
     // Need result types, not params
     if (funcIdx < numImports) {
@@ -1556,7 +1607,8 @@ function fixCallArgTypesInBody(
       const ft = resolveFuncType(types, typeIdx);
       expectedParams = ft ? ft.params : null;
     } else {
-      const funcIdx = (callInstr as any).funcIdx as number;
+      // #1916: getFullParamTypes accepts numeric indices and symbolic refs
+      const funcIdx = (callInstr as any).funcIdx as number | { name: string };
       expectedParams = getFullParamTypes(mod, funcIdx, numImports);
     }
     if (!expectedParams || expectedParams.length === 0) continue;
@@ -2186,8 +2238,30 @@ function updateTypeStack(
 
   // call: pop params, push results
   if (op === "call") {
-    const funcIdx = (instr as any).funcIdx as number;
-    const sig = sigs.get(funcIdx);
+    const rawIdx = (instr as any).funcIdx as number | { name: string };
+    const sig = sigs.get(sigKey(rawIdx));
+    // #1916: for the result-type refinement below, resolve a symbolic ref to
+    // its numeric index by name (imports first, then defined functions).
+    let funcIdx: number;
+    if (typeof rawIdx === "number") {
+      funcIdx = rawIdx;
+    } else {
+      funcIdx = -1;
+      let i = 0;
+      for (const imp of mod.imports) {
+        if (imp.desc.kind === "func") {
+          if (imp.name === rawIdx.name) {
+            funcIdx = i;
+            break;
+          }
+          i++;
+        }
+      }
+      if (funcIdx < 0) {
+        const fi = mod.functions.findIndex((f) => f.name === rawIdx.name);
+        if (fi >= 0) funcIdx = numImports + fi;
+      }
+    }
     if (sig) {
       for (let i = 0; i < sig.params; i++) stack.pop();
       if (sig.results > 0) {

@@ -6538,10 +6538,15 @@ export function addStringImports(ctx: CodegenContext): void {
       if (shifted.has(instrs)) return;
       shifted.add(instrs);
       for (const instr of instrs) {
-        if ((instr.op === "call" || instr.op === "return_call") && instr.funcIdx >= importsBefore) {
+        // #1916: symbolic FuncRefs are shift-immune — only numeric indices move.
+        if (
+          (instr.op === "call" || instr.op === "return_call") &&
+          typeof instr.funcIdx === "number" &&
+          instr.funcIdx >= importsBefore
+        ) {
           instr.funcIdx += delta;
         }
-        if (instr.op === "ref.func" && instr.funcIdx >= importsBefore) {
+        if (instr.op === "ref.func" && typeof instr.funcIdx === "number" && instr.funcIdx >= importsBefore) {
           instr.funcIdx += delta;
         }
         const a = instr as any;
@@ -7935,10 +7940,15 @@ export function addUnionImports(ctx: CodegenContext): void {
       if (shifted.has(instrs)) return;
       shifted.add(instrs);
       for (const instr of instrs) {
-        if ((instr.op === "call" || instr.op === "return_call") && instr.funcIdx >= importsBefore) {
+        // #1916: symbolic FuncRefs are shift-immune — only numeric indices move.
+        if (
+          (instr.op === "call" || instr.op === "return_call") &&
+          typeof instr.funcIdx === "number" &&
+          instr.funcIdx >= importsBefore
+        ) {
           instr.funcIdx += delta;
         }
-        if (instr.op === "ref.func" && instr.funcIdx >= importsBefore) {
+        if (instr.op === "ref.func" && typeof instr.funcIdx === "number" && instr.funcIdx >= importsBefore) {
           instr.funcIdx += delta;
         }
         const a = instr as any;
@@ -11569,7 +11579,11 @@ export function cacheStringLiterals(ctx: CodegenContext, fctx: FunctionContext):
 /** Recursively scan instructions to find call instructions targeting string thunks. */
 function collectStringCalls(instrs: Instr[], strFuncIdxSet: Set<number>, found: Set<number>): void {
   for (const instr of instrs) {
-    if ((instr.op === "call" || instr.op === "return_call") && strFuncIdxSet.has(instr.funcIdx)) {
+    if (
+      (instr.op === "call" || instr.op === "return_call") &&
+      typeof instr.funcIdx === "number" && // #1916: refs are resolved at emit, never string thunks here
+      strFuncIdxSet.has(instr.funcIdx)
+    ) {
       found.add(instr.funcIdx);
     }
     // Recurse into nested blocks
@@ -11592,7 +11606,11 @@ function collectStringCalls(instrs: Instr[], strFuncIdxSet: Set<number>, found: 
 function replaceStringCalls(instrs: Instr[], cacheMap: Map<number, number>): void {
   for (let i = 0; i < instrs.length; i++) {
     const instr = instrs[i]!;
-    if ((instr.op === "call" || instr.op === "return_call") && cacheMap.has(instr.funcIdx)) {
+    if (
+      (instr.op === "call" || instr.op === "return_call") &&
+      typeof instr.funcIdx === "number" && // #1916: refs are resolved at emit, never string thunks here
+      cacheMap.has(instr.funcIdx)
+    ) {
       // Replace in-place: swap the call with a local.get
       const localIdx = cacheMap.get(instr.funcIdx)!;
       (instrs as any)[i] = { op: "local.get", index: localIdx };

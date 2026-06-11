@@ -166,6 +166,7 @@ export function createCodegenContext(
     anonStructHash: new Map(),
     funcTypeCache: new Map(),
     pendingLateImportShift: null,
+    funcRefInterns: new Map(),
     protoGlobals: new Map(),
     classMethodNames: new Map(),
     classMethodsCsvGlobal: new Map(),

@@ -10,8 +10,9 @@
  *   - getWasmFuncReturnType: get the actual Wasm return type of a function
  */
 import { ts } from "../../ts-api.js";
+import { resolveFuncIdx } from "../registry/imports.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
-import type { Instr, ValType } from "../../ir/types.js";
+import type { FuncIdx, Instr, ValType } from "../../ir/types.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -312,7 +313,8 @@ export function isEffectivelyVoidReturn(ctx: CodegenContext, retType: ts.Type, f
  * Get parameter types of a Wasm function by its index.
  * Handles both imported functions (index < numImportFuncs) and local functions.
  */
-export function getFuncParamTypes(ctx: CodegenContext, funcIdx: number): ValType[] | undefined {
+export function getFuncParamTypes(ctx: CodegenContext, ref: FuncIdx): ValType[] | undefined {
+  const funcIdx = resolveFuncIdx(ctx, ref); // #1916: accept symbolic refs
   if (funcIdx < ctx.numImportFuncs) {
     let importFuncCount = 0;
     for (const imp of ctx.mod.imports) {
@@ -341,7 +343,8 @@ export function getFuncParamTypes(ctx: CodegenContext, funcIdx: number): ValType
  * the actual function type in the module. This is the ground truth for whether
  * a `call` instruction pushes a value onto the stack.
  */
-export function wasmFuncReturnsVoid(ctx: CodegenContext, funcIdx: number): boolean {
+export function wasmFuncReturnsVoid(ctx: CodegenContext, ref: FuncIdx): boolean {
+  const funcIdx = resolveFuncIdx(ctx, ref); // #1916: accept symbolic refs
   if (funcIdx < ctx.numImportFuncs) {
     let importFuncCount = 0;
     for (const imp of ctx.mod.imports) {
@@ -376,7 +379,8 @@ export function wasmFuncTypeReturnsVoid(ctx: CodegenContext, typeIdx: number): b
  * Use this instead of resolveWasmType(retType) at call sites to avoid mismatches
  * when TS type says 'any' (→ externref) but the Wasm function returns f64/i32.
  */
-export function getWasmFuncReturnType(ctx: CodegenContext, funcIdx: number): ValType | undefined {
+export function getWasmFuncReturnType(ctx: CodegenContext, ref: FuncIdx): ValType | undefined {
+  const funcIdx = resolveFuncIdx(ctx, ref); // #1916: accept symbolic refs
   if (funcIdx < ctx.numImportFuncs) {
     let importFuncCount = 0;
     for (const imp of ctx.mod.imports) {

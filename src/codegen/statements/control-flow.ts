@@ -3,6 +3,7 @@
  * Control flow statement lowering: return, if, switch, break, continue, labeled.
  */
 import { ts } from "../../ts-api.js";
+import { resolveFuncIdx } from "../registry/imports.js";
 import { isStringType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -218,8 +219,9 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
   const lastInstr = fctx.body[fctx.body.length - 1];
   const resetBeforeReturn = emitLinearU8ArenaResetBeforeReturn(ctx, fctx);
   if (!resetBeforeReturn && lastInstr && lastInstr.op === "call") {
-    const calleeIdx = (lastInstr as any).funcIdx as number;
-    if (canTailCall(ctx, fctx, calleeIdx)) {
+    // #1916: resolve symbolic refs; -1 (unregistered) simply skips the tail-call opt
+    const calleeIdx = resolveFuncIdx(ctx, (lastInstr as any).funcIdx);
+    if (calleeIdx >= 0 && canTailCall(ctx, fctx, calleeIdx)) {
       (lastInstr as any).op = "return_call";
       return; // return_call implicitly returns — no need for explicit return
     }

@@ -9,7 +9,7 @@
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { reportErrorNoNode } from "../context/errors.js";
-import { addImport } from "../registry/imports.js";
+import { addImport, funcRef } from "../registry/imports.js";
 import { addFuncType } from "../registry/types.js";
 import { addUnionImportsViaRegistry } from "../shared.js";
 import { ensureObjectRuntime, OBJECT_RUNTIME_HELPER_NAMES } from "../object-runtime.js";
@@ -517,8 +517,13 @@ export function ensureGetUndefined(ctx: CodegenContext): number | undefined {
 export function emitUndefined(ctx: CodegenContext, fctx: FunctionContext): void {
   const funcIdx = ensureGetUndefined(ctx);
   if (funcIdx !== undefined) {
+    // The flush still runs: it repairs OTHER, previously-baked numeric refs
+    // for the import this call just added. But the call itself is emitted as
+    // a symbolic FuncRef (#1916, first migrated producer): it resolves to a
+    // concrete index at emit time and can never go stale across later
+    // shifts — the failure mode behind #329/#1384/#1525b.
     flushLateImportShifts(ctx, fctx);
-    fctx.body.push({ op: "call", funcIdx });
+    fctx.body.push({ op: "call", funcIdx: funcRef(ctx, "__get_undefined") });
   } else {
     fctx.body.push({ op: "ref.null.extern" });
   }

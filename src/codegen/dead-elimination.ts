@@ -15,14 +15,27 @@ import { walkInstructions } from "./walk-instructions.js";
 
 // --- Reference collection ---
 
-function collectRefsFromBody(body: Instr[], usedFuncs: Set<number>, usedTypes: Set<number>): void {
+function collectRefsFromBody(
+  body: Instr[],
+  usedFuncs: Set<number>,
+  usedTypes: Set<number>,
+  usedFuncNames: Set<string>,
+): void {
   for (const instr of body) {
     switch (instr.op) {
       case "call":
-        usedFuncs.add(instr.funcIdx);
+      case "return_call":
+        // #1916: symbolic refs are tracked by name (usedFuncNames) — names
+        // survive compaction, so refs need marking but never remapping.
+        // return_call matters: the tail-call pass (control-flow.ts) rewrites a
+        // trailing `call` in place, so a symbolic ref can arrive here under
+        // either op.
+        if (typeof instr.funcIdx === "number") usedFuncs.add(instr.funcIdx);
+        else usedFuncNames.add(instr.funcIdx.name);
         break;
       case "ref.func":
-        usedFuncs.add(instr.funcIdx);
+        if (typeof instr.funcIdx === "number") usedFuncs.add(instr.funcIdx);
+        else usedFuncNames.add(instr.funcIdx.name);
         break;
       case "call_indirect":
         usedTypes.add(instr.typeIdx);
@@ -62,18 +75,18 @@ function collectRefsFromBody(body: Instr[], usedFuncs: Set<number>, usedTypes: S
       case "block":
       case "loop":
         collectBlockTypeRefs(instr.blockType, usedTypes);
-        collectRefsFromBody(instr.body, usedFuncs, usedTypes);
+        collectRefsFromBody(instr.body, usedFuncs, usedTypes, usedFuncNames);
         break;
       case "if":
         collectBlockTypeRefs(instr.blockType, usedTypes);
-        collectRefsFromBody(instr.then, usedFuncs, usedTypes);
-        if (instr.else) collectRefsFromBody(instr.else, usedFuncs, usedTypes);
+        collectRefsFromBody(instr.then, usedFuncs, usedTypes, usedFuncNames);
+        if (instr.else) collectRefsFromBody(instr.else, usedFuncs, usedTypes, usedFuncNames);
         break;
       case "try":
         collectBlockTypeRefs(instr.blockType, usedTypes);
-        collectRefsFromBody(instr.body, usedFuncs, usedTypes);
-        for (const c of instr.catches) collectRefsFromBody(c.body, usedFuncs, usedTypes);
-        if (instr.catchAll) collectRefsFromBody(instr.catchAll, usedFuncs, usedTypes);
+        collectRefsFromBody(instr.body, usedFuncs, usedTypes, usedFuncNames);
+        for (const c of instr.catches) collectRefsFromBody(c.body, usedFuncs, usedTypes, usedFuncNames);
+        if (instr.catchAll) collectRefsFromBody(instr.catchAll, usedFuncs, usedTypes, usedFuncNames);
         break;
       default: {
         // Catch-all for instructions whose op carries type/func indices we may
@@ -81,6 +94,10 @@ function collectRefsFromBody(body: Instr[], usedFuncs: Set<number>, usedTypes: S
         const a = instr as any;
         if (typeof a.typeIdx === "number") usedTypes.add(a.typeIdx);
         if (typeof a.funcIdx === "number") usedFuncs.add(a.funcIdx);
+        // #1916: symbolic refs on any future funcIdx-carrying op stay live by name
+        else if (a.funcIdx && typeof a.funcIdx === "object" && typeof a.funcIdx.name === "string") {
+          usedFuncNames.add(a.funcIdx.name);
+        }
         if (typeof a.dstTypeIdx === "number") usedTypes.add(a.dstTypeIdx);
         if (typeof a.srcTypeIdx === "number") usedTypes.add(a.srcTypeIdx);
         // Handle blockType on custom instructions
@@ -222,6 +239,10 @@ export function eliminateDeadImports(mod: WasmModule): void {
   const numImpF = mod.imports.filter((i) => i.desc.kind === "func").length;
   const usedF = new Set<number>();
   const usedT = new Set<number>();
+  // #1916 — symbolic FuncRefs mark their target by NAME; resolved to an index
+  // below (after the scans) so the named import/function survives elimination.
+  // Refs need no remapping: names are unaffected by index compaction.
+  const usedFN = new Set<string>();
 
   // All local (non-import) functions are always reachable
   for (let i = 0; i < mod.functions.length; i++) {
@@ -230,21 +251,21 @@ export function eliminateDeadImports(mod: WasmModule): void {
 
   // Scan function bodies
   for (const func of mod.functions) {
-    collectRefsFromBody(func.body, usedF, usedT);
+    collectRefsFromBody(func.body, usedF, usedT, usedFN);
     usedT.add(func.typeIdx);
     for (const l of func.locals) collectRefsFromValType(l.type, usedT);
   }
 
   // Scan global init expressions
   for (const g of mod.globals) {
-    collectRefsFromBody(g.init, usedF, usedT);
+    collectRefsFromBody(g.init, usedF, usedT, usedFN);
     collectRefsFromValType(g.type, usedT);
   }
 
   // Scan element segments
   for (const el of mod.elements) {
     for (const fi of el.funcIndices) usedF.add(fi);
-    collectRefsFromBody(el.offset, usedF, usedT);
+    collectRefsFromBody(el.offset, usedF, usedT, usedFN);
   }
 
   // Scan exports
@@ -265,6 +286,18 @@ export function eliminateDeadImports(mod: WasmModule): void {
   for (const imp of mod.imports) {
     if (imp.desc.kind === "tag") usedT.add(imp.desc.typeIdx);
     if (imp.desc.kind === "global") collectRefsFromValType(imp.desc.type, usedT);
+  }
+
+  // #1916 — resolve name-marked (symbolic-ref) targets to indices
+  if (usedFN.size > 0) {
+    let idx = 0;
+    for (const imp of mod.imports) {
+      if (imp.desc.kind === "func") {
+        if (usedFN.has(imp.name)) usedF.add(idx);
+        idx++;
+      }
+    }
+    // Defined functions are already all in usedF (local funcs always reachable).
   }
 
   // --- Phase 2: Determine dead function imports ---

@@ -10,6 +10,7 @@
  */
 
 import type { FuncTypeDef, Instr, ValType, WasmFunction, WasmModule } from "../ir/types.js";
+import { resolveFuncIdx } from "./registry/imports.js";
 import type { CodegenContext } from "./context/types.js";
 
 /**
@@ -933,8 +934,9 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
     for (let j = 0; j < instrs.length; j++) {
       const instr = instrs[j]!;
       if (instr.op !== "return_call" && instr.op !== "call") continue;
-      const funcIdx = (instr as any).funcIdx;
-      if (funcIdx === undefined) continue;
+      // #1916: resolve symbolic refs to the current numeric index via funcMap
+      const funcIdx = (instr as any).funcIdx === undefined ? undefined : resolveFuncIdx(ctx, (instr as any).funcIdx);
+      if (funcIdx === undefined || funcIdx < 0) continue;
 
       // Get the target function's param types
       const totalImports = ctx.mod.imports.filter((imp: any) => imp.desc?.kind === "func").length;
@@ -1002,8 +1004,9 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
         }
         // call consumes M args and produces 1 value — skip its args
         if (argInstr.op === "call" || argInstr.op === "return_call") {
-          const callFuncIdx = (argInstr as any).funcIdx;
-          if (callFuncIdx !== undefined) {
+          const callFuncIdx =
+            (argInstr as any).funcIdx === undefined ? undefined : resolveFuncIdx(ctx, (argInstr as any).funcIdx);
+          if (callFuncIdx !== undefined && callFuncIdx >= 0) {
             const callTotalImports = ctx.mod.imports.filter((imp: any) => imp.desc?.kind === "func").length;
             let callTargetTypeIdx: number | undefined;
             if (callFuncIdx < callTotalImports) {

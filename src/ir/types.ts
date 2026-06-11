@@ -1,4 +1,33 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+/**
+ * #1916 — symbolic function reference.
+ *
+ * A `call`/`return_call`/`ref.func` may target a function by NAME instead of
+ * by absolute index. Names live in the `ctx.funcMap` namespace (imports and
+ * defined functions share it; uniqueness is enforced by Map identity).
+ * Symbolic refs are resolved to concrete indices exactly once, by
+ * `resolveFuncRefsInModule` (src/ir/resolve-func-refs.ts) at the top of each
+ * emitter — after every import is final — which makes the late-import
+ * index-shift walkers (`shiftLateImportIndices` & co.) irrelevant for any
+ * migrated call site: the shifters' `typeof funcIdx === "number"` guards
+ * skip object refs without modification. Mirrors the middle-end IR's
+ * `IrFuncRef` (src/ir/nodes.ts), which proved the design.
+ */
+export interface FuncRef {
+  readonly kind: "funcref";
+  /** Unique function name (same namespace as `ctx.funcMap`). */
+  readonly name: string;
+}
+
+/** A function reference in an instruction: concrete index or symbolic name. */
+export type FuncIdx = number | FuncRef;
+
+/** Narrow a FuncIdx to the symbolic case. */
+export function isFuncRef(ref: FuncIdx): ref is FuncRef {
+  return typeof ref === "object" && ref !== null && ref.kind === "funcref";
+}
+
 export interface ExternClassMeta {
   importPrefix: string;
   namespacePath: string[];
@@ -236,8 +265,8 @@ type InstrBase =
   | { op: "br_table" }
   | { op: "return" }
   | { op: "end" }
-  | { op: "call"; funcIdx: number }
-  | { op: "return_call"; funcIdx: number }
+  | { op: "call"; funcIdx: FuncIdx }
+  | { op: "return_call"; funcIdx: FuncIdx }
   | { op: "call_indirect"; typeIdx: number; tableIdx: number }
   | { op: "drop" }
   | { op: "select" }
@@ -266,7 +295,7 @@ type InstrBase =
   | { op: "ref.cast_null"; typeIdx: number }
   | { op: "ref.test"; typeIdx: number }
   | { op: "ref.eq" }
-  | { op: "ref.func"; funcIdx: number }
+  | { op: "ref.func"; funcIdx: FuncIdx }
   | { op: "call_ref"; typeIdx: number }
   | { op: "return_call_ref"; typeIdx: number }
   | { op: "memory.size" }

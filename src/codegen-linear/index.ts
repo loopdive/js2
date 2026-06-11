@@ -4460,10 +4460,11 @@ function fixupFuncIndices(ctx: LinearContext): void {
   function patchInstrs(instrs: Instr[]): void {
     for (const instr of instrs) {
       if (instr.op === "call") {
-        const mapped = oldToNew.get(instr.funcIdx);
+        // funcIdx is always numeric in the linear backend (#1916 FuncRefs are GC-backend only)
+        const mapped = typeof instr.funcIdx === "number" ? oldToNew.get(instr.funcIdx) : undefined;
         if (mapped !== undefined) instr.funcIdx = mapped;
       } else if (instr.op === "ref.func") {
-        const mapped = oldToNew.get(instr.funcIdx);
+        const mapped = typeof instr.funcIdx === "number" ? oldToNew.get(instr.funcIdx) : undefined;
         if (mapped !== undefined) instr.funcIdx = mapped;
       } else if (instr.op === "block" || instr.op === "loop") {
         patchInstrs(instr.body);

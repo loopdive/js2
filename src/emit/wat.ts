@@ -10,6 +10,7 @@ import type {
   WasmFunction,
   WasmModule,
 } from "../ir/types.js";
+import { resolveFuncRefsInModule } from "../ir/resolve-func-refs.js";
 
 /**
  * Compute the set of type indices that can be inlined into their sole
@@ -105,6 +106,8 @@ export function escapeWatString(s: string): string {
 
 /** Emit a WAT text representation of the IR module */
 export function emitWat(mod: WasmModule): string {
+  // #1916 — resolve symbolic function refs before formatting (idempotent).
+  resolveFuncRefsInModule(mod);
   const lines: string[] = [];
   const indent = (depth: number) => "  ".repeat(depth);
   const inlineableTypes = computeInlineableTypes(mod);

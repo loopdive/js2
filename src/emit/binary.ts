@@ -12,6 +12,7 @@ import type {
   WasmFunction,
   WasmModule,
 } from "../ir/types.js";
+import { resolveFuncRefsInModule } from "../ir/resolve-func-refs.js";
 import { WasmEncoder } from "./encoder.js";
 import { GC, OP, SECTION, SIMD, TYPE } from "./opcodes.js";
 
@@ -163,6 +164,10 @@ export function emitBinary(mod: WasmModule): Uint8Array {
 
 /** Emit a Wasm binary and collect source map entries */
 export function emitBinaryWithSourceMap(mod: WasmModule): EmitResult {
+  // #1916 — resolve symbolic function refs (FuncRef) to concrete indices now
+  // that the import list is final. Idempotent; throws on unresolved names.
+  resolveFuncRefsInModule(mod);
+
   const enc = new WasmEncoder();
   const sourceMapEntries: SourceMapEntry[] = [];
 
@@ -776,11 +781,12 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       break;
     case "call":
       enc.byte(OP.call);
-      enc.u32(instr.funcIdx);
+      // #1916: symbolic refs were resolved by resolveFuncRefsInModule at emit start
+      enc.u32(instr.funcIdx as number);
       break;
     case "return_call":
       enc.byte(OP.return_call);
-      enc.u32(instr.funcIdx);
+      enc.u32(instr.funcIdx as number);
       break;
     case "call_indirect":
       enc.byte(OP.call_indirect);
@@ -1163,7 +1169,7 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       break;
     case "ref.func":
       enc.byte(OP.ref_func);
-      enc.u32(instr.funcIdx);
+      enc.u32(instr.funcIdx as number);
       break;
     case "call_ref":
       enc.byte(OP.call_ref);

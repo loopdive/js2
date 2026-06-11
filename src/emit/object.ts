@@ -11,6 +11,7 @@
  */
 
 import type { Instr, WasmFunction, WasmModule } from "../ir/types.js";
+import { resolveFuncRefsInModule } from "../ir/resolve-func-refs.js";
 import {
   encodeBlockType,
   encodeExport,
@@ -42,6 +43,8 @@ export interface SymbolInfo {
 
 /** Emit a relocatable Wasm object file (.o) from an IR module */
 export function emitObject(mod: WasmModule): Uint8Array {
+  // #1916 — resolve symbolic function refs before relocation/symtab layout.
+  resolveFuncRefsInModule(mod);
   // Pre-compute import counts
   const numImportFuncs = mod.imports.filter((i) => i.desc.kind === "func").length;
   const numImportGlobals = mod.imports.filter((i) => i.desc.kind === "global").length;
@@ -458,7 +461,8 @@ function encodeInstrWithReloc(
       break;
     case "call": {
       enc.byte(OP.call);
-      const symIdx = funcIdxToSymIdx.get(instr.funcIdx);
+      // #1916: symbolic refs were resolved by resolveFuncRefsInModule at emit start
+      const symIdx = funcIdxToSymIdx.get(instr.funcIdx as number);
       if (symIdx !== undefined) {
         relocs.push({
           type: RELOC.R_WASM_FUNCTION_INDEX_LEB,
@@ -466,7 +470,7 @@ function encodeInstrWithReloc(
           symbolIndex: symIdx,
         });
       }
-      enc.u32(instr.funcIdx);
+      enc.u32(instr.funcIdx as number);
       break;
     }
     case "call_indirect": {
@@ -852,7 +856,8 @@ function encodeInstrWithReloc(
       break;
     case "ref.func": {
       enc.byte(OP.ref_func);
-      const symIdx = funcIdxToSymIdx.get(instr.funcIdx);
+      // #1916: symbolic refs were resolved by resolveFuncRefsInModule at emit start
+      const symIdx = funcIdxToSymIdx.get(instr.funcIdx as number);
       if (symIdx !== undefined) {
         relocs.push({
           type: RELOC.R_WASM_FUNCTION_INDEX_LEB,
@@ -860,7 +865,7 @@ function encodeInstrWithReloc(
           symbolIndex: symIdx,
         });
       }
-      enc.u32(instr.funcIdx);
+      enc.u32(instr.funcIdx as number);
       break;
     }
     case "call_ref": {

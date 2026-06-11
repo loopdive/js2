@@ -5,7 +5,8 @@
  * This module owns low-level Wasm import registration plus the global-index
  * fixups required when late import globals are inserted during codegen.
  */
-import type { Import, Instr, TagDef } from "../../ir/types.js";
+import type { FuncIdx, FuncRef, Import, Instr, TagDef } from "../../ir/types.js";
+import { isFuncRef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { buildStrictHostImportError, isHostImportAllowed } from "../host-import-allowlist.js";
 import { addFuncType } from "./types.js";
@@ -31,6 +32,39 @@ import { addFuncType } from "./types.js";
  * If they ARE requested under strict mode, the gate rejects them with a
  * dedicated error pointing the user at the nativeStrings option.
  */
+/**
+ * #1916 — intern a symbolic function reference for `name`.
+ *
+ * Returns the one canonical `FuncRef` object per name so identity-based
+ * dedup (Set<Instr[]> walkers, `===` comparisons) keeps working. Emit a call
+ * as `{ op: "call", funcIdx: funcRef(ctx, name) }` instead of baking the
+ * numeric index: the ref is resolved to a concrete index exactly once, at
+ * emit time (`resolveFuncRefsInModule`), so late-added imports can never
+ * leave it stale and `shiftLateImportIndices` & co. skip it entirely
+ * (their `typeof funcIdx === "number"` guards).
+ */
+export function funcRef(ctx: CodegenContext, name: string): FuncRef {
+  let ref = ctx.funcRefInterns.get(name);
+  if (ref === undefined) {
+    ref = { kind: "funcref", name };
+    ctx.funcRefInterns.set(name, ref);
+  }
+  return ref;
+}
+
+/**
+ * #1916 — resolve a `FuncIdx` to the CURRENT numeric index, for mid-compile
+ * readers (signature lookups, void-call detection, …). For symbolic refs
+ * this consults `ctx.funcMap`, which the legacy shift machinery keeps
+ * current during the migration; numbers pass through. Returns -1 for a ref
+ * whose name is not (yet) registered — matching the funcMap-miss convention
+ * the numeric paths already handle.
+ */
+export function resolveFuncIdx(ctx: CodegenContext, ref: FuncIdx): number {
+  if (isFuncRef(ref)) return ctx.funcMap.get(ref.name) ?? -1;
+  return ref;
+}
+
 export function addImport(ctx: CodegenContext, module: string, name: string, desc: Import["desc"]): void {
   if (ctx.strictNoHostImports) {
     const decision = isHostImportAllowed(module, name);

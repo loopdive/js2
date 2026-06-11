@@ -7,7 +7,7 @@
  * to reference context/state shapes.
  */
 import { ts } from "../../ts-api.js";
-import type { FieldDef, Instr, LocalDef, SourcePos, ValType, WasmModule } from "../../ir/types.js";
+import type { FuncRef, FieldDef, Instr, LocalDef, SourcePos, ValType, WasmModule } from "../../ir/types.js";
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 
@@ -948,6 +948,12 @@ export interface CodegenContext {
   anonStructHash: Map<string, string>;
   /** Pending late import shift state */
   pendingLateImportShift: { importsBefore: number } | null;
+  /** #1916 — interned symbolic function refs (one canonical object per name,
+   *  so Set-based dedup in instruction walkers keeps working). Producers call
+   *  `funcRef(ctx, name)` (registry/imports.ts) instead of baking a numeric
+   *  funcIdx; refs are resolved to concrete indices once, at emit time, by
+   *  `resolveFuncRefsInModule` — making them immune to late-import shifts. */
+  funcRefInterns: Map<string, FuncRef>;
   /** Map from class name → global index of the prototype externref singleton */
   protoGlobals: Map<string, number>;
   /** Map from class name → own method names (instance methods, for prototype allowlist; see #1047) */
