@@ -1,10 +1,11 @@
 ---
 id: 1910
 title: "standalone ToPrimitive residual bucket after #1900/#1525b"
-status: in-review
+status: done
 sprint: 61
 created: 2026-06-07
-updated: 2026-06-07
+updated: 2026-06-10
+completed: 2026-06-10
 priority: critical
 feasibility: hard
 reasoning_effort: high

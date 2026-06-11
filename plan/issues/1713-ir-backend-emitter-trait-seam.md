@@ -170,7 +170,7 @@ Every site below currently does `out.push({ op: "<gc-op>", … })` inline. The
 | `struct.get` (vec length) | 1204, 1313 | 2 | `vec.len`, `forof.vec` | **`emitVecLen(vecHandle)`** |
 | `struct.get` (vec data) | 1216, 1318 | 2 | `vec.get`, `forof.vec` | **`emitVecDataPtr(vecHandle)`** |
 | `struct.get` (anyStr) | 1613 | 1 | string-len native | (string group — already behind `emitStringLen`) |
-| `struct.get` (Promise) | 1884, 1900, 1914, 1918 | 4 | `await` | (async group — defer) |
+| `struct.get` (Promise) | 1884, 1900, 1914, 2038 | 4 | `await` | (async group — defer) |
 | `struct.set` (object) | 1029 | 1 | `object.set` | `emitFieldSet(objHandle, name)` |
 | `struct.set` (refcell) | 1127 | 1 | `refcell.set` | `emitRefCellSet(cell)` |
 | `struct.set` (class) | 1167 | 1 | `class.setField` | `emitFieldSet(clsHandle, name)` |

@@ -3,9 +3,11 @@ id: 1888
 title: "standalone open-any method dispatch + built-ins-as-static-globals (prototype vtable)"
 status: ready
 created: 2026-06-05
+updated: 2026-06-10
 priority: high
 feasibility: hard
 reasoning_effort: high
+model: fable
 task_type: feat
 area: codegen, runtime
 language_feature: objects, prototype chain, method dispatch, built-ins

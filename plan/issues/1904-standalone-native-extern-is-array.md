@@ -1,11 +1,12 @@
 ---
 id: 1904
 title: "standalone: native __extern_is_array predicate for Array.isArray over Wasm carriers"
-status: in-review
+status: done
 pr: 1294
 sprint: 61
 created: 2026-06-07
-updated: 2026-06-07
+updated: 2026-06-10
+completed: 2026-06-10
 priority: critical
 feasibility: medium
 reasoning_effort: high
