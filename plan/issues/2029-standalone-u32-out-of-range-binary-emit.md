@@ -1,10 +1,11 @@
 ---
 id: 2029
 title: "standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests)"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
+completed: 2026-06-11
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -134,3 +135,58 @@ sentinel check — the Object.create / Iterator.prototype / DisposableStack
 clusters in this bucket are likely the same pattern. `grep -n
 "stringGlobalMap.get" src/codegen/` and check each use site emits
 `global.get` only for `idx >= 0`.
+
+## Implementation notes (2026-06-11, sd-fable-emit — branch issue-1915-stringglobal-sentinel)
+
+**Why the standalone no-op never fired:** `ensureLateImport` follows a
+register-anyway contract — for any name not in `UNION_NATIVE_HELPER_NAMES`,
+`OBJECT_RUNTIME_HELPER_NAMES`, or the `STANDALONE_REFUSED_IMPORT` list it
+adds the `env` import and returns a defined funcIdx even under standalone.
+`__set_subclass_proto` is in none of those lists, so the documented
+"standalone: no-op" early-return (`setProtoIdx === undefined`) was dead code,
+and codegen fell through to the sentinel `global.get -1`.
+
+**Which consumers actually produce the emit bucket:** compiler.ts returns
+`success: false` BEFORE emit when any queued error starts with
+"Codegen error:" (compiler.ts:731). So consumers behind *refused* imports
+(`__extern_*` Phase A names, `__defineProperty_desc`, …) never reach the
+encoder — the producers are exactly the sites behind (a) natively-routed
+helpers (`__extern_get/set`, `__object_create`, `__defineProperty_value`,
+`__extern_method_call`, …) and (b) silently-leaked imports
+(`__set_subclass_proto`, `__tag_user_class`, `__get_globalThis`,
+`__promise_subclass_ctor`, `__instanceof`, `__throw_reference_error`, …).
+
+**Fix:** every nativeStrings-reachable `stringGlobalMap.get` consumer now
+routes string materialization through `stringConstantExternrefInstrs`
+(native-strings.ts:167) — byte-identical `global.get` in JS-host mode,
+inline NativeString + `extern.convert_any` under nativeStrings. In addition
+`emitSetSubclassProto` and the `__tag_user_class` ctor tagging are gated on
+`noJsHost(ctx)` BEFORE `ensureLateImport`, so the unsatisfiable env imports
+no longer leak into standalone modules at all. Files: class-bodies,
+object-ops, binary-ops, literals, statements/loops, expressions/{assignment,
+identifiers,calls,new-super,extern}, index.ts ($sfnames CSV), array-methods
+(join default separator). Host-mode-only arms in string-ops.ts (concat
+"undefined"/"null", throw helper) were intentionally left as raw global.get —
+they sit behind `ctx.nativeStrings` early branches and can't see the sentinel.
+
+**Validated on the merged base (post 180-commit upstream sync):**
+- minimal repro `class MyArr extends Uint8Array {}` compiles standalone; the
+  module's only env import is `console_log_bool` (no proto/tag/new leak).
+- cluster probe (6 subclass-builtins, 8 Object/create, 6 Iterator/prototype,
+  6 DisposableStack, 4 for-await-of, 3 Array/prototype/flat samples via
+  wrapTest + target standalone): zero `u32 out of range` / `global index out
+  of range` signatures remain. Tests now compile or refuse loudly with the
+  named #1472/#1907 errors.
+
+## Residuals (out of #2029 scope, tracked elsewhere)
+
+- **`function index out of range — undefined at function 'g'`** on
+  `built-ins/Iterator/prototype/drop/limit-{greater-than-total,tonumber}.js`
+  (harness-wrapped generators + iterator helpers): a *function*-index
+  stale-capture, the #1919 residual-signature family / #1984/#1985
+  structural fix — not a stringGlobalMap consumer.
+- **`__str_flatten` stale funcIdx** (Wasm validation: "call[1] expected type
+  (ref null 5), found i32.const"): the subclass-builtins repro now emits but
+  the binary fails validation on this known #1919 signature. The #2029 test
+  asserts compile success + no leaked imports via the import manifest and
+  cites #1919 for the validation gap.
