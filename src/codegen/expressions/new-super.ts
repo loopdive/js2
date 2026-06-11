@@ -1015,31 +1015,20 @@ function compileNewFunctionDeclaration(
   // Bind `this` to the struct
   ctorFctx.localMap.set("this", selfLocal);
 
-  // Compile the function body
-  const savedFunc = ctx.currentFunc;
-  if (savedFunc) ctx.parentBodiesStack.push(savedFunc.body);
-  if (savedFunc) ctx.funcStack.push(savedFunc);
-  ctx.currentFunc = ctorFctx;
-  for (const stmt of body.statements) {
-    compileStatement(ctx, ctorFctx, stmt);
-  }
-  if (savedFunc) ctx.funcStack.pop();
-  if (savedFunc) ctx.parentBodiesStack.pop();
-  ctx.currentFunc = savedFunc;
-
-  // Attach the live body array to the registered function FIRST: the
-  // late-import registration below can shift function indices, and the shift
-  // walkers reach this body only through ctx.mod.functions (#1712 — same
-  // orphan-buffer class as the compileIfStatement then-branch fix).
-  ctorFunc.locals = ctorFctx.locals;
-  ctorFunc.body = ctorFctx.body;
-
   // (#1712) Register the instance → constructor-closure link with the JS
   // host so instance property misses resolve through the closure's vivified
   // `.prototype` object (acorn's `Parser.prototype.m = fn; new Parser().m()`
-  // pattern). JS-host mode only — standalone/WASI construction stays pure
-  // Wasm; the native equivalent rides on the #1888 open-object runtime in a
-  // later dogfood lap.
+  // pattern). Emitted in the ctor PROLOGUE — before the user body compiles —
+  // because acorn-style ctors call prototype methods on `this` inside the
+  // ctor itself (`this.context = this.initialContext()`); an end-of-ctor
+  // registration left those in-ctor dispatches unresolvable. JS-host mode
+  // only — standalone/WASI construction stays pure Wasm; the native
+  // equivalent rides on the #1888 open-object runtime in a later dogfood lap.
+  // Buffer-reach note: the flush below walks ctx.currentFunc (still the
+  // OUTER call-site fctx here) plus ctorFctx.body explicitly; once the body
+  // compile switches ctx.currentFunc to ctorFctx, later shifts reach these
+  // prologue instrs through currentFunc.body, and after attachment through
+  // ctx.mod.functions.
   if (!ctx.standalone && !ctx.wasi) {
     const ctorGlobalIdx = ctx.moduleGlobals.get(funcName) ?? ctx.funcClosureGlobals.get(funcName);
     if (ctorGlobalIdx !== undefined) {
@@ -1061,6 +1050,31 @@ function compileNewFunctionDeclaration(
       }
     }
   }
+
+  // Compile the function body
+  const savedFunc = ctx.currentFunc;
+  if (savedFunc) ctx.parentBodiesStack.push(savedFunc.body);
+  if (savedFunc) ctx.funcStack.push(savedFunc);
+  ctx.currentFunc = ctorFctx;
+  for (const stmt of body.statements) {
+    compileStatement(ctx, ctorFctx, stmt);
+  }
+  if (savedFunc) ctx.funcStack.pop();
+  if (savedFunc) ctx.parentBodiesStack.pop();
+  ctx.currentFunc = savedFunc;
+
+  // Attach the live body array to the registered function FIRST: the
+  // late-import registration below can shift function indices, and the shift
+  // walkers reach this body only through ctx.mod.functions (#1712 — same
+  // orphan-buffer class as the compileIfStatement then-branch fix).
+  ctorFunc.locals = ctorFctx.locals;
+  ctorFunc.body = ctorFctx.body;
+
+  // (#1712) The instance → constructor-closure registration
+  // (__register_fnctor_instance) is emitted in the ctor PROLOGUE above —
+  // before the user body — so in-ctor prototype-method calls on `this`
+  // (`this.context = this.initialContext()`) already resolve through the
+  // vivified prototype.
 
   // Return the struct instance
   ctorFctx.body.push({ op: "local.get", index: selfLocal });

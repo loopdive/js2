@@ -225,3 +225,57 @@ Open items for the next session:
     proto-method closure values to be reachable as globals at ctor time).
 - Probes live in `.tmp/repro2.mts` / `.tmp/dbg1.mts`–`.tmp/dbg15.mts`
   (dbg4–15 are the #1712b dispatch-bisection series).
+
+### Dynamic-dispatch slice 2026-06-11 (fable-1712c, branch issue-1712-dyn-dispatch)
+
+After the merge with main (#1320 closure-bridge reconcile), the live blocker
+chain shifted: all 5 fixtures failed `parse is not a function` BEFORE reaching
+the two-shape trap. Bisection (`.tmp/dbg17.mts`–`.tmp/dbg22.mts`) pinned and
+fixed FOUR stacked root causes (regression pin:
+`tests/issue-1712-dynamic-dispatch.test.ts`):
+
+1. **Static methods on fnctors unreachable** (`src/runtime.ts`,
+   `__extern_method_call`): a CALLABLE closure-struct receiver is wrapped by
+   `_wrapWasmClosureUnknownArity` into a bare JS function bridge with no view
+   of sidecar statics, so `Parser.parse(input)` threw. Fix: not-a-function arm
+   resolves through `_safeGet` on the RAW struct (sidecar → accessors →
+   vivified prototype) and applies with the raw closure struct as receiver —
+   which also makes `new this(…)` inside the static body see the ctor.
+2. **Non-closure-shaped callee trapped** (`src/codegen/expressions/calls.ts`,
+   `__callable_param_` dispatch ~8447): externref callee guard-cast against
+   ONE wrapper-struct shape; non-null mismatch (acorn's `var hasOwn =
+   Object.hasOwn || fn` → host builtin in a JS var) fell into `struct.get`
+   of null → "dereferencing a null pointer" inside `getOptions`. Fix: a
+   host-callable fallback arm — `if (cast-null && raw-non-null)` route
+   through `__call_function(callee, undefined, argsArray)` (JS-host only,
+   i64/v128 params bail). Buffers parked in `fctx.savedBodies` while
+   detached (blocker-1 shifter discipline).
+3. **`__call_function` arg marshaling** (`src/runtime.ts`): passed raw WasmGC
+   structs to host callees (`Object.hasOwn(struct, "a")` → false) and wrapped
+   closure callees at arity 0 (dropped args). Fix: `__extern_method_call`-style
+   wrapHostValue marshaling + `_maybeWrapCallableUnknownArity` + return
+   `_unwrapForHost`.
+4. **In-ctor prototype calls on `this`** (`src/codegen/expressions/new-super.ts`):
+   `__register_fnctor_instance` was emitted at the END of the synthesized
+   ctor, so acorn's `this.context = this.initialContext()` (inside the ctor)
+   missed the vivified prototype. Fix: moved to the ctor PROLOGUE (buffer-reach
+   note in the code comment).
+
+Verified: acorn's compiled `parse` now executes `getOptions` →
+`new this(…)` → `initialContext` correctly. Targeted suites
+(fn-constructor, prototype-chain, bind-call, illegal-cast-closures, …):
+identical pass/fail with and without the changes (19 pre-existing fails on
+the branch tip, 0 new).
+
+**NEXT blocker (root-caused, not fixed): host-side vec mutation.** The chain
+now stops at acorn's `enterScope`: `this.scopeStack.push(new Scope(flags))` →
+`push is not a function`. `this.scopeStack = []` compiles to a WasmGC vec
+struct stored in the ctor-shape field; dynamic dispatch hands the vec struct
+to `__extern_method_call`, but `_wrapForHost` has NO array facade and the
+host cannot grow a WasmGC array. Recommended fix direction (mirrors the
+existing `__vec_len`/`__vec_get`/`__vec_set_byte` precedent,
+`src/codegen/index.ts:3530+`): emit generic Wasm-side mutator exports
+(`__vec_push`, `__vec_pop`, `__vec_set`) with per-vec-type ref.test dispatch
+chains (grow = alloc new $arr + struct.set, fields are mutable), then route
+array methods on vec receivers there from `__extern_method_call`. The
+two-shape struct issue (previous section) remains relevant after that.
