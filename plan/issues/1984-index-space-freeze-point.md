@@ -1,6 +1,6 @@
 ---
 id: 1984
-title: "freeze-point discipline: indexSpaceFrozen flag — late addImport/ensureLateImport after final flush throws at the producer (#1923 Option 3)"
+title: "freeze-point discipline: indexSpaceFrozen flag — late addImport/ensureLateImport after final flush throws at the producer (#2043 Option 3)"
 status: ready
 sprint: Backlog
 created: 2026-06-10
@@ -12,23 +12,23 @@ task_type: refactor
 area: codegen
 language_feature: compiler-internals
 goal: compiler-correctness
-parent: 1923
-related: [1923, 2029, 1809, 1839, 1677]
-origin: "Child slice of #1923 (ratified Implementation Plan, Option 3). Emit-time range validation (landed) catches out-of-range indices at the symptom site; this catches the PRODUCER that mutates the import space after it should be final."
+parent: 2043
+related: [2043, 2029, 1809, 1839, 1677]
+origin: "Child slice of #2043 (ratified Implementation Plan, Option 3). Emit-time range validation (landed) catches out-of-range indices at the symptom site; this catches the PRODUCER that mutates the import space after it should be final."
 ---
 
 # #1984 — Index-space freeze-point discipline
 
 ## Problem
 
-The #1923 emit-time validation names the *symptom* location (which function
+The #2043 emit-time validation names the *symptom* location (which function
 held the poisoned index). The producer — the code path that called
 `addImport`/`ensureLateImport` after every already-emitted index was final —
 is still found by reading codegen. A freeze-point makes the producer
 self-identify: once the module's index spaces are declared final, any further
 mutation throws **at the mutating call site** with its own stack.
 
-## Implementation sketch (from the #1923 ratified plan)
+## Implementation sketch (from the #2043 ratified plan)
 
 - Add `ctx.indexSpaceFrozen: boolean` (default false) to `CodegenContext`.
 - Set it in `generateModule` / `generateMultiModule` immediately after the

@@ -6510,7 +6510,7 @@ export function addStringImports(ctx: CodegenContext): void {
         ctx.nativeStrHelpers.set(name, idx + delta);
       }
     }
-    // (#1919 slice 2) Re-base so reconcileNativeStrFinalizeShift doesn't apply
+    // (#2039 slice 2) Re-base so reconcileNativeStrFinalizeShift doesn't apply
     // the same `delta` a second time — this inline shift already repaired the
     // helper bodies and the map. Matches addUnionImports (#1677-fast-path) and
     // shiftLateImportIndices.
@@ -7694,7 +7694,7 @@ export function addUnionImports(ctx: CodegenContext): void {
   if (ctx.hasUnionImports) return;
   ctx.hasUnionImports = true;
 
-  // #1919: settle any deferred ensureLateImport batch before this pass bakes
+  // #2039: settle any deferred ensureLateImport batch before this pass bakes
   // or shifts funcIdx values. Under wasi/standalone the native-helper
   // registration below computes indices from the post-batch `numImportFuncs`;
   // in host mode the internal shift below uses its own `importsBefore`. Either

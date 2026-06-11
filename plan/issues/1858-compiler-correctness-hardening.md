@@ -62,7 +62,7 @@ to `instantiate`, be hit by a test, *and* exceed 199 siblings before anyone noti
 | C6 | **`try/finally` else-branch branch depths never bumped** — `bumpOuterBranchDepths` reads `(instr as any).elseBody`; the IR `if` field is `else` → wrong jump target / validation failure | `statements/exceptions.ts:55` (field is `else` per `ir/types.ts:224`) | NOVEL, PROVEN |
 | C7 | **Standalone enumerates object keys in hash order** (host = spec/insertion order) → `JSON.stringify`/`for-in`/`Object.keys`/`entries`/`values`/`assign` reorder by `--target` | `object-runtime.ts:1099-1102` vs `runtime.ts:5573` | NOVEL, PROVEN (comment admits it) |
 | C8 | **`(x >>> 0)` sign-extends** in the i32 fast path → negative for high-bit values (breaks the canonical ToUint32 idiom) | `binary-ops.ts:1247-1252,1330`; correct path at `:2548` | filed **#1817**, LIKELY |
-| C9 | `resolveImport` **default → no-op**; standalone **`isFrozen`/`isSealed` wrong** (one bit, ignores descriptors + empty-object rule) | `runtime.ts:9266`; `object-runtime.ts:1943-1945,1963-2001` | NOVEL, PROVEN |
+| C9 | `resolveImport` **default → no-op**; standalone **`isFrozen`/`isSealed` wrong** (one bit, ignores descriptors + empty-object rule) | `runtime.ts:9266`; `object-runtime.ts:2063-2065,1963-2001` | NOVEL, PROVEN |
 | C10 | **CI lets up to 199 real miscompiles merge green per PR**; **no fuzzing / property / generative differential testing**; negative tests never check error *type* | `test262-sharded.yml:566`, `tests/test262-runner.ts:2541-2625` | NOVEL, PROVEN |
 
 ## HIGH findings

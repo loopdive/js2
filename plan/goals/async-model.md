@@ -94,7 +94,7 @@ promise infrastructure.
 | **1027** | Missing __make_getter_callback late-import in PR #43 accessor paths | 40 | done | high |
 | **1034** | Compile prettier to Wasm — parser + AST + printer stress test; self-format smoke test | 41 | done | high |
 | **1035** | WASI hello-world: compile console.log + node:fs write to a standalone native executable | 45 | done | high |
-| **1042** | async/await state-machine lowering (AwaitExpression is currently a no-op) | 58 | ready | high |
+| **1042** | async/await state-machine lowering (AwaitExpression is currently a no-op) | 58 | in-progress | high |
 | **1044** | Node builtin modules as host imports (NODE_HOST_IMPORT_MODULES, node: prefix normalization) | 45 | ready | high |
 | **1089** | codegen: support dynamic import() expressions — 429 test262 tests skipped | Backlog | ready | medium |
 | **1093** | Systematic ECMAScript spec conformance audit — review compiled semantics against tc39.es/ecma262 | 45 | ready | high |

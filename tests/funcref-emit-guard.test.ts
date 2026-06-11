@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * Serializer-time index guard (late-import index-shift safety net, #1923).
+ * Serializer-time index guard (late-import index-shift safety net, #2043).
  *
  * The recurring late-registration index-shift class
  * (#1809/#1839/#1602/#1886/#1666/#1677/#2029) produces an index that is either
@@ -10,7 +10,7 @@
  * valid-but-wrong index that wasmtime later rejected with
  * "expected externref, found i32" on a random test262 shard.
  *
- * `validateModuleIndices` is ALWAYS-ON since #1923 (escape hatch:
+ * `validateModuleIndices` is ALWAYS-ON since #2043 (escape hatch:
  * JS2WASM_SKIP_INDEX_VALIDATION=1) and turns that whole class into a named,
  * pinpointed codegen error at emit time. These tests pin:
  *   1. a valid module emits unchanged (validation is read-only);
@@ -50,7 +50,7 @@ function minimalModule(bodyOverride?: Instr[]): WasmModule {
   } as unknown as WasmModule;
 }
 
-describe("serializer index guard (always-on, #1923)", () => {
+describe("serializer index guard (always-on, #2043)", () => {
   afterEach(() => {
     process.env.JS2WASM_SKIP_INDEX_VALIDATION = "";
   });

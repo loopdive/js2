@@ -3964,35 +3964,37 @@ function emitLogicalAssignmentPattern(
     // the parallel pattern in `compileLogicalAssignment` that uses
     // `__extern_is_undefined` for variable-scope `??=`. Compose the
     // two checks via `i32.or` so the then-arm fires for both.
+    //
+    // GetValue must run exactly once (§13.15.2): tee the fetched value into
+    // a temp and reuse it on the keep path so accessor getters fire once.
     emitGet();
-    const tmpForUndef = varType.kind === "externref" ? allocTempLocal(fctx, varType) : -1;
-    if (varType.kind === "externref") {
-      fctx.body.push({ op: "local.tee", index: tmpForUndef });
-    }
+    const tmpKeep = allocTempLocal(fctx, varType);
+    fctx.body.push({ op: "local.tee", index: tmpKeep });
     fctx.body.push({ op: "ref.is_null" });
     if (varType.kind === "externref") {
       const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       flushLateImportShifts(ctx, fctx);
       if (undefIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: tmpForUndef });
+        fctx.body.push({ op: "local.get", index: tmpKeep });
         fctx.body.push({ op: "call", funcIdx: undefIdx });
         fctx.body.push({ op: "i32.or" });
       }
-      releaseTempLocal(fctx, tmpForUndef);
     }
 
     const savedBody = pushBody(fctx);
     const rhsResult = compileExpression(ctx, fctx, rhs, varType);
     if (!rhsResult) {
       fctx.body = savedBody;
+      releaseTempLocal(fctx, tmpKeep);
       return null;
     }
     emitSet();
     const thenInstrs = fctx.body;
 
     fctx.body = [];
-    emitGet();
+    fctx.body.push({ op: "local.get", index: tmpKeep });
     const elseInstrs = fctx.body;
+    releaseTempLocal(fctx, tmpKeep);
 
     fctx.body = savedBody;
     fctx.body.push({
@@ -4003,21 +4005,26 @@ function emitLogicalAssignmentPattern(
     });
   } else if (op === ts.SyntaxKind.BarBarEqualsToken) {
     // target ||= rhs  →  if (target is truthy) { keep } else { target = rhs }
+    // GetValue once (§13.15.2): tee the fetched value, reuse on the keep path.
     emitGet();
+    const tmpKeep = allocTempLocal(fctx, varType);
+    fctx.body.push({ op: "local.tee", index: tmpKeep });
     ensureI32Condition(fctx, varType, ctx);
 
     const savedBody = pushBody(fctx);
-    emitGet();
+    fctx.body.push({ op: "local.get", index: tmpKeep });
     const thenInstrs = fctx.body;
 
     fctx.body = [];
     const rhsResult = compileExpression(ctx, fctx, rhs, varType);
     if (!rhsResult) {
       fctx.body = savedBody;
+      releaseTempLocal(fctx, tmpKeep);
       return null;
     }
     emitSet();
     const elseInstrs = fctx.body;
+    releaseTempLocal(fctx, tmpKeep);
 
     fctx.body = savedBody;
     fctx.body.push({
@@ -4028,21 +4035,26 @@ function emitLogicalAssignmentPattern(
     });
   } else {
     // target &&= rhs  →  if (target is truthy) { target = rhs } else { keep }
+    // GetValue once (§13.15.2): tee the fetched value, reuse on the keep path.
     emitGet();
+    const tmpKeep = allocTempLocal(fctx, varType);
+    fctx.body.push({ op: "local.tee", index: tmpKeep });
     ensureI32Condition(fctx, varType, ctx);
 
     const savedBody = pushBody(fctx);
     const rhsResult = compileExpression(ctx, fctx, rhs, varType);
     if (!rhsResult) {
       fctx.body = savedBody;
+      releaseTempLocal(fctx, tmpKeep);
       return null;
     }
     emitSet();
     const thenInstrs = fctx.body;
 
     fctx.body = [];
-    emitGet();
+    fctx.body.push({ op: "local.get", index: tmpKeep });
     const elseInstrs = fctx.body;
+    releaseTempLocal(fctx, tmpKeep);
 
     fctx.body = savedBody;
     fctx.body.push({

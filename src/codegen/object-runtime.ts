@@ -134,14 +134,14 @@ export interface ObjectRuntimeTypes {
  * delta to every funcIdx >= its importsBefore — including the indices this
  * function is about to bake with the post-batch `numImportFuncs` — leaving
  * funcMap and every internal sibling call one regime too high while the
- * function itself sits lower (#1919: `__obj_find` calling `__new_plain_object`
+ * function itself sits lower (#2039: `__obj_find` calling `__new_plain_object`
  * instead of `__obj_hash`, 146 invalid-Wasm test262 binaries). So we end any
  * pending batch first; registration then happens in a clean, final regime.
  */
 export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   if (ctx.objectRuntimeTypes) return ctx.objectRuntimeTypes;
 
-  // #1919: settle any deferred late-import shift before baking funcIdx values.
+  // #2039: settle any deferred late-import shift before baking funcIdx values.
   flushLateImportShifts(ctx, null);
 
   // Dependencies: native string helpers (flatten + equals) and the string type

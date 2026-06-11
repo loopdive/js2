@@ -213,7 +213,7 @@ time**, i.e. the destructuring binding loop hangs.
 | `built-ins/Array/prototype/forEach/S15.4.4.18_A2.js` | 736 | 20 | pass |
 | `built-ins/Array/prototype/reduce/15.4.4.21-2-13.js` | 603 | 42 | pass |
 | `built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-1.js` | 491 | 3 | pass |
-| `built-ins/Array/prototype/splice/S15.4.4.12_A1.1_T6.js` | 1923 | 4 | fail (real bug, not hang) |
+| `built-ins/Array/prototype/splice/S15.4.4.12_A1.1_T6.js` | 2043 | 4 | fail (real bug, not hang) |
 | `built-ins/Function/prototype/call/S15.3.4.4_A13.js` | 472 | 3 | pass |
 | `built-ins/RegExp/unicodeSets/generated/character-class-escape-union-character-class-escape.js` | 438 | 1 | pass |
 | `language/statements/for-of/dstr/array-empty-iter-close-err.js` | 401 | 2 | fail (real bug, not hang) |

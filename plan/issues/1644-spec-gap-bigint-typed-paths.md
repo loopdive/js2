@@ -1,9 +1,9 @@
 ---
 id: 1644
 title: "spec gap: BigInt typed-path eager f64 assumptions (47 test262 fails, 4 illegal_cast + 13 runtime)"
-status: in-review
+status: done
 created: 2026-05-08
-updated: 2026-06-06
+updated: 2026-06-11
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -17,6 +17,7 @@ parent: 1328
 pr: 1249
 claimed_by: codex-developer
 claimed_at: 2026-06-06T09:10:20.967Z
+completed: 2026-06-06
 ---
 # #1350 — BigInt: typed paths assume f64 too eagerly
 
