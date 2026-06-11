@@ -1539,7 +1539,7 @@ function assert_notSameValue_bool(actual: any, expected: boolean): void {
   if (needsCompareArray) {
     p += `
 
-function compareArray(a: number[], b: number[]): number {
+function compareArray(a: any[], b: any[]): number {
   if (a.length !== b.length) return 0;
   for (let i: number = 0; i < a.length; i++) {
     if (a[i] !== b[i]) return 0;
@@ -1551,7 +1551,7 @@ function compareArray(a: number[], b: number[]): number {
   if (needsAssertCompareArray) {
     p += `
 
-function assert_compareArray(actual: number[], expected: number[]): void {
+function assert_compareArray(actual: any[], expected: any[]): void {
   __assert_count = __assert_count + 1;
   if (actual.length !== expected.length) { if (!__fail) __fail = __assert_count; return; }
   for (let i: number = 0; i < actual.length; i++) {

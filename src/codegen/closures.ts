@@ -80,6 +80,53 @@ function isFunctionScopeBoundary(node: ts.Node): boolean {
   );
 }
 
+function isSymbolIteratorExpression(expr: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Symbol" &&
+    expr.name.text === "iterator"
+  );
+}
+
+function isAssignedToSymbolIterator(fn: ts.ArrowFunction | ts.FunctionExpression): boolean {
+  let current: ts.Node | undefined = fn.parent;
+  while (current && !ts.isSourceFile(current)) {
+    if (
+      ts.isBinaryExpression(current) &&
+      current.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isElementAccessExpression(current.left) &&
+      isSymbolIteratorExpression(current.left.argumentExpression)
+    ) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function inferExplicitClosureReturnType(
+  ctx: CodegenContext,
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+): ValType | null {
+  if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) {
+    return resolveWasmType(ctx, ctx.checker.getTypeAtLocation(fn.body));
+  }
+  let inferred: ValType | null = null;
+  const visit = (node: ts.Node): void => {
+    if (node !== fn && (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isFunctionDeclaration(node))) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression && inferred === null) {
+      inferred = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(node.expression));
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return inferred;
+}
+
 /**
  * Collect names that are LOCALLY DECLARED inside a function-like node's scope.
  * Used to compute the shadow set for free-variable analysis.
@@ -1335,6 +1382,9 @@ export function compileArrowAsClosure(
       closureReturnType = resolveWasmType(ctx, retType);
     }
   }
+  if (closureReturnType === null && isAssignedToSymbolIterator(arrow)) {
+    closureReturnType = inferExplicitClosureReturnType(ctx, arrow);
+  }
 
   // (#585) Check the contextual type (e.g., a parameter type like `() => void`).
   // If the contextual type expects a void-returning callable but the closure's
@@ -1346,7 +1396,7 @@ export function compileArrowAsClosure(
       const ctxCallSigs = ctxType.getCallSignatures?.();
       if (ctxCallSigs && ctxCallSigs.length > 0) {
         const ctxRetType = ctx.checker.getReturnTypeOfSignature(ctxCallSigs[0]!);
-        if (isVoidType(ctxRetType)) {
+        if (isVoidType(ctxRetType) && !isAssignedToSymbolIterator(arrow)) {
           closureReturnType = null;
         }
       }
@@ -3005,12 +3055,16 @@ export function getOrCreateFuncRefWrapperTypes(
   const closureName = `__fn_wrap_${ctx.closureCounter++}`;
   const structFields = [{ name: "func", type: { kind: "funcref" as const }, mutable: false }];
   const structTypeIdx = ctx.mod.types.length;
+  const rootWrapperTypeIdx = (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx;
   ctx.mod.types.push({
     kind: "struct",
     name: `${closureName}_struct`,
     fields: structFields,
-    superTypeIdx: -1, // non-final, no parent — allows subtypes
+    superTypeIdx: rootWrapperTypeIdx ?? -1, // first wrapper is the root; later signatures subtype it
   });
+  if (rootWrapperTypeIdx === undefined) {
+    (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx = structTypeIdx;
+  }
 
   // Create the lifted function type: (ref $struct, ...userParams) -> results
   const liftedParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }, ...userParams];

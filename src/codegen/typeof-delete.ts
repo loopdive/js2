@@ -469,11 +469,29 @@ export function compileInstanceOf(
   // Resolve the right operand class name (supports identifiers, expressions, class expressions)
   const className = resolveInstanceOfClassName(ctx, expr.right);
   if (className === undefined) {
-    // Cannot resolve the class — emit false (i32.const 0) as a graceful fallback
-    // We still need to compile the left operand for side effects, then drop it
-    const leftType = compileExpression(ctx, fctx, expr.left);
-    if (leftType) {
-      fctx.body.push({ op: "drop" });
+    const dynIdx = ensureLateImport(
+      ctx,
+      "__instanceof_dyn",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (dynIdx !== undefined) {
+      const leftType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
+      if (leftType && leftType.kind !== "externref") {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+      if (leftType === null) fctx.body.push({ op: "ref.null.extern" });
+
+      const rightType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
+      if (rightType && rightType.kind !== "externref") {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+      if (rightType === null) fctx.body.push({ op: "ref.null.extern" });
+
+      const finalDynIdx = ctx.funcMap.get("__instanceof_dyn") ?? dynIdx;
+      fctx.body.push({ op: "call", funcIdx: finalDynIdx });
+      return { kind: "i32" };
     }
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };

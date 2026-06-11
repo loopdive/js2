@@ -31,12 +31,17 @@
  *     `-` literal (`[\d-z]` = `\d ∪ {-} ∪ {z}`), never a range
  *   - Annex B legacy octal escapes (`\0`…`\377`) and `\cX` control escapes
  *
- * Still refused (each cites the phase that adds it):
- *   - lookahead/lookbehind `(?=) (?!) (?<=) (?<!)` → 2d
- *   - Unicode property escapes `\p{…}` / `\P{…}`   → 2d
- *   - the `u`/`v` flags' code-point semantics      → 2c/2d (parse still UTF-16)
+ * Added in 2d Slice A (#1911):
+ *   - lookahead/lookbehind `(?=) (?!) (?<=) (?<!)` — compiled to recursive
+ *     sub-programs; quantified lookarounds (Annex B QuantifiableAssertion)
+ *     rewrite to their zero-width-idempotent equivalent
+ *   - inline modifier groups `(?ims-ims:…)` (regexp-modifiers proposal)
+ *
+ * Still refused (each cites the phase/slice that adds it):
+ *   - Unicode property escapes `\p{…}` / `\P{…}`   → 2d Slice B
+ *   - the `u`/`v` flags' code-point semantics      → 2d Slice B (parse stays UTF-16)
  */
-import { RegexUnsupportedError } from "./bytecode.js";
+import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RegexUnsupportedError } from "./bytecode.js";
 
 export type ReNode =
   | { kind: "char"; code: number }
@@ -46,6 +51,9 @@ export type ReNode =
   | { kind: "eol" }
   | { kind: "wordBoundary"; negated: boolean }
   | { kind: "backref"; index: number }
+  | { kind: "lookaround"; node: ReNode; negated: boolean; behind: boolean }
+  // Inline modifier group `(?ims-ims:…)`: add/remove are RE_FLAG_I|M|S masks.
+  | { kind: "modGroup"; add: number; remove: number; node: ReNode }
   | { kind: "concat"; parts: ReNode[] }
   | { kind: "alt"; options: ReNode[] }
   | { kind: "star"; node: ReNode; greedy: boolean }
@@ -220,6 +228,14 @@ class Parser {
     if (c === "*" || c === "+" || c === "?") {
       this.next();
       const greedy = this.consumeLazy();
+      // Annex B QuantifiableAssertion: a quantified lookaround is legal in
+      // non-u mode. A lookaround is zero-width and deterministic at a fixed
+      // position, so `X*`/`X{n,m}` collapse to `X?` (or `X` when min ≥ 1) —
+      // rewriting avoids a zero-progress SPLIT loop in the VM. #1911.
+      if (atom.kind === "lookaround") {
+        if (c === "+") return atom;
+        return { kind: "opt", node: atom, greedy };
+      }
       if (c === "*") return { kind: "star", node: atom, greedy };
       if (c === "+") return { kind: "plus", node: atom, greedy };
       return { kind: "opt", node: atom, greedy };
@@ -232,6 +248,12 @@ class Parser {
           throw new RegexUnsupportedError(`nothing to repeat at index ${saved}`);
         }
         const greedy = this.consumeLazy();
+        if (atom.kind === "lookaround") {
+          // Zero-width idempotence (see above): {0,0} → ε, {0,…} → opt,
+          // {n≥1,…} → atom.
+          if (bounds[1] === 0) return { kind: "concat", parts: [] };
+          return bounds[0] >= 1 ? atom : { kind: "opt", node: atom, greedy };
+        }
         return { kind: "repeat", node: atom, min: bounds[0], max: bounds[1], greedy };
       }
       // Not a valid quantifier — treat `{` as a literal (Annex B). Rewind.
@@ -299,6 +321,8 @@ class Parser {
     this.next(); // consume "("
     let capIndex = -1;
     let name: string | null = null;
+    let lookaround: { negated: boolean; behind: boolean } | null = null;
+    let modifiers: { add: number; remove: number } | null = null;
     if (this.peek() === "?") {
       this.next();
       const t = this.peek();
@@ -308,23 +332,33 @@ class Parser {
         this.next();
         const after = this.peek();
         if (after === "=" || after === "!") {
-          throw new RegexUnsupportedError("lookbehind (?<= / ?<!) — #1539 Phase 2d");
-        }
-        // named capture (?<name>…)
-        name = "";
-        while (this.peek() !== ">" && !this.eof()) name += this.next();
-        if (this.peek() !== ">") throw new RegexUnsupportedError("unterminated group name");
-        this.next();
-        capIndex = ++this.numCaptures;
-        // The pre-scan kept the FIRST index for each name; a different index
-        // here means the pattern re-declares the name — ES2025 duplicate
-        // named groups stay outside the subset until the alternative-scoped
-        // semantics land.
-        if (this.groupNames.get(name) !== capIndex) {
-          throw new RegexUnsupportedError(`duplicate capture group name '${name}'`);
+          // lookbehind (?<= / ?<! — #1911
+          this.next();
+          lookaround = { negated: after === "!", behind: true };
+        } else {
+          // named capture (?<name>…)
+          name = "";
+          while (this.peek() !== ">" && !this.eof()) name += this.next();
+          if (this.peek() !== ">") throw new RegexUnsupportedError("unterminated group name");
+          this.next();
+          capIndex = ++this.numCaptures;
+          // The pre-scan kept the FIRST index for each name; a different index
+          // here means the pattern re-declares the name — ES2025 duplicate
+          // named groups stay outside the subset until the alternative-scoped
+          // semantics land.
+          if (this.groupNames.get(name) !== capIndex) {
+            throw new RegexUnsupportedError(`duplicate capture group name '${name}'`);
+          }
         }
       } else if (t === "=" || t === "!") {
-        throw new RegexUnsupportedError("lookahead (?= / ?!) — #1539 Phase 2d");
+        // lookahead (?= / ?! — #1911
+        this.next();
+        lookaround = { negated: t === "!", behind: false };
+      } else if (t !== undefined && (t === "-" || t === "i" || t === "m" || t === "s")) {
+        // Inline modifier group `(?ims-ims:…)` (regexp-modifiers). Only i/m/s
+        // are valid; duplicates, letters on both sides, and an empty modifier
+        // pair are real SyntaxErrors (the `new RegExp` host oracle confirms).
+        modifiers = this.parseModifiers();
       } else {
         throw new RegexUnsupportedError(`unsupported group form '(?${t ?? ""}' — #1539 Phase 2d`);
       }
@@ -334,7 +368,44 @@ class Parser {
     const inner = this.parseAlternation();
     if (this.peek() !== ")") throw new RegexUnsupportedError("unterminated group");
     this.next();
+    if (lookaround !== null) {
+      return { kind: "lookaround", node: inner, negated: lookaround.negated, behind: lookaround.behind };
+    }
+    if (modifiers !== null) {
+      return { kind: "modGroup", add: modifiers.add, remove: modifiers.remove, node: inner };
+    }
     return { kind: "group", node: inner, capIndex, name };
+  }
+
+  /** Parse `ims-ims:` after `(?` (regexp-modifiers proposal). The cursor sits
+   *  on the first modifier letter or `-`. Returns add/remove flag masks; the
+   *  trailing `:` is consumed. */
+  private parseModifiers(): { add: number; remove: number } {
+    const flagBit = (ch: string): number => {
+      if (ch === "i") return RE_FLAG_I;
+      if (ch === "m") return RE_FLAG_M;
+      if (ch === "s") return RE_FLAG_S;
+      throw new RegexUnsupportedError(`invalid regexp modifier '${ch}'`);
+    };
+    let add = 0;
+    let remove = 0;
+    while (this.peek() !== undefined && this.peek() !== "-" && this.peek() !== ":") {
+      const bit = flagBit(this.next());
+      if ((add & bit) !== 0) throw new RegexUnsupportedError("duplicate regexp modifier");
+      add |= bit;
+    }
+    if (this.peek() === "-") {
+      this.next();
+      while (this.peek() !== undefined && this.peek() !== ":") {
+        const bit = flagBit(this.next());
+        if (((add | remove) & bit) !== 0) throw new RegexUnsupportedError("duplicate regexp modifier");
+        remove |= bit;
+      }
+    }
+    if (this.peek() !== ":") throw new RegexUnsupportedError("unterminated regexp modifier group");
+    this.next();
+    if (add === 0 && remove === 0) throw new RegexUnsupportedError("empty regexp modifier group");
+    return { add, remove };
   }
 
   private parseEscapeAtom(): ReNode {

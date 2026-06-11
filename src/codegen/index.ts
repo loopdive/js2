@@ -2427,7 +2427,6 @@ function emitClosureCallExport(ctx: CodegenContext): void {
   // Phase 1: collect unique zero-arg funcref types and find representative base wrapper.
   // Dedup by funcTypeIdx — concrete subtypes share funcTypeIdx with their base wrapper,
   // so one dispatch arm handles all closures with the same funcref signature.
-  let baseWrapperIdx: number | undefined;
   const seenFuncTypeIdx = new Set<number>();
   const entries: { funcTypeIdx: number; returnType: ValType | null; selfTypeIdx: number }[] = [];
 
@@ -2436,14 +2435,6 @@ function emitClosureCallExport(ctx: CodegenContext): void {
 
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
-
-    // Find a representative base wrapper (superTypeIdx === -1, no parent struct)
-    // for the initial ref.test + ref.cast + struct.get 0.
-    // After V8 isorecursive canonicalization, all base wrappers with one funcref
-    // field collapse to the same type, so any base wrapper typeIdx works.
-    if (typeDef.superTypeIdx === -1 && baseWrapperIdx === undefined) {
-      baseWrapperIdx = typeIdx;
-    }
 
     // Deduplicate by funcref type: concrete subtypes share funcTypeIdx with the
     // base wrapper — only one dispatch arm needed per unique funcref type.
@@ -2464,37 +2455,27 @@ function emitClosureCallExport(ctx: CodegenContext): void {
 
   if (entries.length === 0) return;
 
-  // If no base wrapper found (all are concrete subtypes), use first struct type.
-  if (baseWrapperIdx === undefined) {
-    for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-      if (info.paramTypes.length === 0) {
-        baseWrapperIdx = typeIdx;
-        break;
-      }
-    }
-  }
-  if (baseWrapperIdx === undefined) return;
-
   // Ensure __box_number is available for boxing numeric (f64/i32/i64) results.
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
 
   const exportFuncTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_fn_0_type");
   const funcIdx = ctx.numImportFuncs + mod.functions.length;
-  const bwIdx = baseWrapperIdx; // final for closures
 
   // Body:
   //   local 0: externref (param)
   //   local 1: anyref (__any)
-  //   local 2: (ref null $baseWrapper) (__struct) — after initial struct test+cast
-  //   local 3: funcref (__funcref) — extracted from field 0
+  //   local 2: funcref (__funcref) — extracted from field 0
   const body: Instr[] = [];
   body.push({ op: "local.get", index: 0 });
   body.push({ op: "any.convert_extern" } as Instr);
   body.push({ op: "local.set", index: 1 } as Instr);
 
-  // Phase 2: build funcref-type dispatch chain (innermost = last entry, outermost = first)
-  let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" } as Instr];
+  // Phase 2: build wrapper+funcref dispatch chain. A module can contain
+  // multiple no-capture wrapper structs with the same single-funcref layout but
+  // different lifted function signatures (for example `() => void` and
+  // `() => object`). Test each wrapper type before extracting its funcref.
+  let dispatch: Instr[] = [{ op: "ref.null.extern" } as Instr];
 
   for (const entry of entries) {
     const callBody: Instr[] = [
@@ -2504,7 +2485,7 @@ function emitClosureCallExport(ctx: CodegenContext): void {
       { op: "local.get", index: 1 } as Instr,
       { op: "ref.cast", typeIdx: entry.selfTypeIdx } as Instr,
       // Funcref arg: cast to specific func type (safe since ref.test passed)
-      { op: "local.get", index: 3 } as Instr,
+      { op: "local.get", index: 2 } as Instr,
       { op: "ref.cast", typeIdx: entry.funcTypeIdx } as Instr,
       { op: "call_ref", typeIdx: entry.funcTypeIdx } as Instr,
     ];
@@ -2543,46 +2524,40 @@ function emitClosureCallExport(ctx: CodegenContext): void {
       callBody.push({ op: "ref.null.extern" } as Instr);
     }
 
-    funcrefDispatch = [
-      { op: "local.get", index: 3 } as Instr,
+    const extractAndCall: Instr[] = [
+      { op: "local.get", index: 1 } as Instr,
+      { op: "ref.cast", typeIdx: entry.selfTypeIdx } as Instr,
+      { op: "struct.get", typeIdx: entry.selfTypeIdx, fieldIdx: 0 } as Instr,
+      { op: "local.set", index: 2 } as Instr,
+      { op: "local.get", index: 2 } as Instr,
       { op: "ref.test", typeIdx: entry.funcTypeIdx } as Instr,
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
         then: callBody,
-        else: funcrefDispatch,
+        else: [{ op: "ref.null.extern" } as Instr],
+      } as Instr,
+    ];
+
+    dispatch = [
+      { op: "local.get", index: 1 } as Instr,
+      { op: "ref.test", typeIdx: entry.selfTypeIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: extractAndCall,
+        else: dispatch,
       } as Instr,
     ];
   }
 
-  // Outer: if the value is a closure struct, extract funcref and dispatch.
-  // ref.test uses the representative base wrapper; concrete subtypes (with captures)
-  // also pass since they're subtypes of the base wrapper.
-  const structExtractAndDispatch: Instr[] = [
-    // Cast to base wrapper, tee to local 2, struct.get 0 → funcref, store in local 3
-    { op: "local.get", index: 1 } as Instr,
-    { op: "ref.cast", typeIdx: bwIdx } as Instr,
-    { op: "local.tee", index: 2 } as Instr,
-    { op: "struct.get", typeIdx: bwIdx, fieldIdx: 0 } as Instr,
-    { op: "local.set", index: 3 } as Instr,
-    ...funcrefDispatch,
-  ];
-
-  body.push({ op: "local.get", index: 1 } as Instr);
-  body.push({ op: "ref.test", typeIdx: bwIdx } as Instr);
-  body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    then: structExtractAndDispatch,
-    else: [{ op: "ref.null.extern" } as Instr],
-  } as Instr);
+  body.push(...dispatch);
 
   mod.functions.push({
     name: "__call_fn_0",
     typeIdx: exportFuncTypeIdx,
     locals: [
       { name: "__any", type: { kind: "anyref" } },
-      { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
       { name: "__funcref", type: { kind: "funcref" } },
     ],
     body,

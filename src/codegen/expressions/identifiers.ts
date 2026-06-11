@@ -1019,6 +1019,46 @@ function emitConstantInstanceOf(
   return { kind: "i32" };
 }
 
+function identifierHasSourceDeclaration(ctx: CodegenContext, id: ts.Identifier): boolean {
+  const symbol = ctx.checker.getSymbolAtLocation(id);
+  const declarations = symbol?.declarations ?? [];
+  return declarations.some((decl) => !decl.getSourceFile().isDeclarationFile);
+}
+
+function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
+  const instanceofIdx = ensureLateImport(
+    ctx,
+    "__instanceof_dyn",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+
+  const leftType = compileExpression(ctx, fctx, expr.left);
+  if (!leftType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (leftType.kind !== "externref") {
+    coerceType(ctx, fctx, leftType, { kind: "externref" });
+  }
+
+  const rightType = compileExpression(ctx, fctx, expr.right);
+  if (!rightType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (rightType.kind !== "externref") {
+    coerceType(ctx, fctx, rightType, { kind: "externref" });
+  }
+
+  if (instanceofIdx === undefined) {
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+
+  fctx.body.push({ op: "call", funcIdx: instanceofIdx });
+  return { kind: "i32" };
+}
+
 /**
  * Compile `expr instanceof RHS` using a host import when the RHS class is not
  * in our struct system (e.g., TypeError, Array, Function, Promise). (#738)
@@ -1046,11 +1086,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   }
 
   if (!ctorName) {
-    // Cannot resolve constructor name — compile both sides, emit false
-    const leftType = compileExpression(ctx, fctx, expr.left);
-    if (leftType) fctx.body.push({ op: "drop" });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    return { kind: "i32" };
+    return emitDynamicInstanceOf(ctx, fctx, expr);
   }
 
   // Static fast-path: try compile-time evaluation against the built-in
@@ -1058,6 +1094,10 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   const staticResult = tryStaticInstanceOf(ctx, expr, ctorName);
   if (staticResult !== undefined) {
     return emitConstantInstanceOf(ctx, fctx, expr, staticResult);
+  }
+
+  if (ts.isIdentifier(expr.right) && !isBuiltinTypeName(ctorName) && identifierHasSourceDeclaration(ctx, expr.right)) {
+    return emitDynamicInstanceOf(ctx, fctx, expr);
   }
 
   // #1473 — no JS host: `e instanceof TypeError` (and other Error subtypes)

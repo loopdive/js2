@@ -89,6 +89,7 @@ import {
   ensureDateDaysFromCivilHelper,
   wasiAllocStringData,
 } from "./builtins.js";
+import { tryCompileTemporalMethodCall, tryCompileTemporalStaticCall } from "../temporal-native.js";
 import {
   compileCallableElementAccessCall,
   compileCallablePropertyCall,
@@ -5706,6 +5707,11 @@ function compileCallExpression(
       return { kind: "f64" };
     }
 
+    {
+      const temporalStaticResult = tryCompileTemporalStaticCall(ctx, fctx, propAccess, expr);
+      if (temporalStaticResult !== undefined) return temporalStaticResult;
+    }
+
     // Handle Date.now() and Date.UTC() — pure Wasm static methods
     if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Date") {
       const method = propAccess.name.text;
@@ -5956,6 +5962,11 @@ function compileCallExpression(
     // Handle Date instance method calls BEFORE extern class dispatch,
     // because Date is declared in lib.d.ts (so isExternalDeclaredClass returns true)
     // but we implement it natively as a WasmGC struct.
+    {
+      const temporalResult = tryCompileTemporalMethodCall(ctx, fctx, propAccess, expr);
+      if (temporalResult !== undefined) return temporalResult;
+    }
+
     {
       const dateResult = compileDateMethodCall(ctx, fctx, propAccess, expr, receiverType);
       if (dateResult !== undefined) return dateResult;

@@ -36,6 +36,7 @@ import {
   type CompiledRegex,
   parseFlags,
   RegexUnsupportedError,
+  RE_FLAG_D,
   RE_FLAG_G,
   RE_FLAG_I,
   RE_FLAG_M,
@@ -136,9 +137,10 @@ export function hasStandaloneRegExpEngine(state: StandaloneRegExpEngineState): b
 }
 
 const STANDALONE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
-// Supported standalone flags for the current pure-WasmGC VM slice: g/i/y from
-// Phase 2a plus m/s from Phase 2c. u/v/d remain code-point/indices follow-ups.
-const SUPPORTED_STANDALONE_FLAGS = RE_FLAG_G | RE_FLAG_I | RE_FLAG_Y | RE_FLAG_M | RE_FLAG_S;
+// g/i/y from Phase 2a, m/s from 2c, d from 2d Slice A (#1911 — `d` does not
+// change MATCHING semantics; the `.indices` result surface is #1914's lane).
+// u/v stay code-point follow-ups (2d Slice B).
+const SUPPORTED_STANDALONE_FLAGS = RE_FLAG_G | RE_FLAG_I | RE_FLAG_Y | RE_FLAG_M | RE_FLAG_S | RE_FLAG_D;
 
 function reportStandaloneRegExpUnsupported(ctx: CodegenContext, node: ts.Node, detail: string): void {
   reportError(

@@ -357,6 +357,44 @@ matters only where noted**; (b)-path slices are the high-value core.
 - Tests: `const C = Array; C.isArray([])`; `Object.keys` read as a value
   then applied; refuse path for an unsupported built-in prop.
 
+#### S6-b residual map + tight-first-slice (sd-s2 recon, 2026-06-05) — BANKED, build after #124
+
+The wrappable surface is gated by whether the method's **call-impl already
+exists natively** (you can only box a `$Closure` value around a helper that can
+actually run). Probed each static method as a DIRECT call under `--target
+standalone`:
+
+- **Wrappable now** (native call-impl exists → box as `$Closure` value):
+  `Array.isArray`, `JSON.stringify`, `String.fromCharCode`, `Math.*`
+  (max/min/abs/…), `Number.*` (isInteger/…). These are the **first-slice set**.
+- **Refuses even when called** (S6-b CANNOT wrap; leave refusing, fail-loud):
+  `Reflect.has` + the rest of Reflect (#1472 Phase-blocked).
+- **Call-OK but returns wrong value — NOT S6-b, separate finding** (see below):
+  `Object.keys({a:1}).length`→0 (should be 1), `Object.assign({},{a:1}).a`→0.
+  These are `$Object` **enumeration / own-prop** gaps, independent of dispatch.
+
+**First slice (tight, fail-loud):** build the D4 registry machinery + the
+compile-time reference scan, materialize ONLY the wrappable set above, and emit
+`Codegen error: <Name>.<prop> not yet available in standalone (#1888)` for
+everything else (Reflect, Object.keys-as-value, any prop whose call-impl
+refuses). Every gap stays a clean refuse — NEVER invalid Wasm. Later slices add
+methods as their native call-impls land. Symbol well-knowns: only register them
+once a real native Symbol-value emitter exists (the i32-symbol-id does not
+compose as a JS value — see S6-c note; keep refusing until then).
+
+**Per-name guardrail (same as S6-c):** for every (Name, prop) the reference scan
+materializes, confirm the underlying native call-impl actually emits a value
+under standalone before wrapping — a wrapped-but-non-emitting helper would turn a
+clean refuse into a stack-underflow / invalid Wasm.
+
+#### Sibling finding (SEPARATE issue, not S6-b, not #124)
+
+`Object.keys(o).length` → 0 and `Object.assign({},{src}).prop` → 0 under
+standalone: the `$Object` **enumeration count / own-prop materialization** is
+wrong (likely in `__object_keys` / `__object_assign` struct ops — possibly shares
+root with the #1901 `$Object` read gap). It is NOT a dispatch problem. File as
+its own finding/issue; do not fold into S6-b.
+
 ### Slice 7 — `Object.setPrototypeOf` dual-mode (small, independent)
 - `calls.ts` ~L3857 currently stubs `setPrototypeOf` (drops proto) in ALL
   modes. Make it a dual-mode call-site change: standalone writes

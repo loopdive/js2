@@ -39,9 +39,9 @@ on:
         default: true
         type: boolean
       compiler_pool_size:
-        description: "Compiler workers per shard runner"
+        description: "Compiler workers per shard runner (default 3 — public-repo ubuntu-latest has 4 vCPUs: 1 for the vitest main process + 3 forks)"
         required: false
-        default: "2"
+        default: "3"
         type: string
       force_baseline_refresh:
         description: "Force promote merged report to baseline regardless of regressions. Requires confirm_force=YES."
@@ -108,11 +108,15 @@ jobs:
       (github.event_name == 'push' && github.actor != 'github-actions[bot]')
     timeout-minutes: 10
     steps:
+      # Shallow, submodule-free checkout: typecheck (tsc) and lint (biome)
+      # only read TS/JS sources — neither executes code that touches the
+      # test262 corpus, and the explicit base-ancestry check was removed
+      # (see the step below), so full history is not needed either. The old
+      # fetch-depth:0 + submodules:recursive checkout took ~30s of this job.
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          submodules: recursive
-          fetch-depth: 0
+          fetch-depth: 1
       - name: Skip explicit base-ancestry check (handled by simulated merge / queue)
         run: |
           # See ci.yml for full reasoning. The simulated PR-merge HEAD and the
@@ -178,7 +182,13 @@ jobs:
     outputs:
       run_shards: ${{ steps.detect.outputs.run_shards }}
     steps:
+      # The checkout (full history, ~20-25s) is only needed for the
+      # merge_group base..head diff below. On pull_request/push/dispatch the
+      # detect step exits immediately with run_shards=true, and since every
+      # shard job `needs:` this job, an unconditional checkout here delayed
+      # the start of the whole 114-job matrix by ~25s on every PR run.
       - name: Checkout
+        if: github.event_name == 'merge_group'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -367,7 +377,13 @@ jobs:
             result_prefix: test262-standalone
 
     env:
-      COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '2' }}
+      # 3 compiler forks + the vitest main process ≈ 4 busy procs on the
+      # 4-vCPU public-repo runner. The old default of 2 left ~1.5 cores idle
+      # during the compile-bound bulk of each shard (~96s → ~70s expected).
+      # compile_timeout contention flakes are absorbed by the #1589 serial
+      # retry (10/shard) and excluded from regression counts by diff-test262.
+      # Dispatch input allows dropping back to 2 if flake rates spike.
+      COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '3' }}
       TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
@@ -393,26 +409,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache test262 incremental cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            .test262-cache
-            benchmarks/results/test262-cache.json
-          # vitest.config.ts is part of the hash so any change to concurrency,
-          # timeouts, or pool config busts the cache and forces a clean run
-          # instead of replaying stale `compile_timeout` results (issue #1171).
-          key: test262-cache-v2-${{ matrix.target.result_prefix }}-${{ hashFiles('src/**/*.ts', 'scripts/test262-worker.mjs', 'scripts/compiler-fork-worker.mjs', 'vitest.config.ts') }}-chunk-${{ matrix.chunk }}
-          # #1521 — Cross-PR cache sharing. The first restore-keys line restores
-          # any cache for the same src+worker+config hash but a different chunk;
-          # the second line falls back to ANY recent cache (different src). Cache
-          # entries written by a different compiler bundle carry a stale
-          # `bundle_hash` field and are re-compiled on read (see
-          # scripts/test262-worker.mjs + scripts/precompile-tests.ts).
-          restore-keys: |
-            test262-cache-v2-${{ matrix.target.result_prefix }}-${{ hashFiles('src/**/*.ts', 'scripts/test262-worker.mjs', 'scripts/compiler-fork-worker.mjs', 'vitest.config.ts') }}-
-            test262-cache-v2-${{ matrix.target.result_prefix }}-
-            test262-cache-v2-
+      # NOTE: there is deliberately NO actions/cache step for .test262-cache
+      # here. The on-disk wasm/meta result cache is DISABLED in the runner —
+      # tests/test262-shared.ts passes empty wasmPath/metaPath to the fork
+      # pool ("Cache disabled — stale cache entries caused false baselines"),
+      # so the workers never read or write it. The old cache step only added
+      # restore/save + double hashFiles('src/**') overhead to every one of
+      # the 114 matrix jobs and churned the repo's Actions cache quota with
+      # empty entries. If the disk cache is ever re-enabled in
+      # tests/test262-shared.ts, re-add the cache step together with it.
 
       - name: Build compiler bundles
         run: |
@@ -579,7 +584,12 @@ jobs:
         env:
           CATASTROPHIC_REGRESSION_THRESHOLD: "200"
         run: |
-          git clone --depth=1 https://github.com/loopdive/js2wasm-baselines.git /tmp/cat-baselines 2>/dev/null || true
+          # Sparse + blob-filtered clone: the baselines repo carries a large
+          # runs/ history (~500 MB cap), so a plain --depth=1 clone took
+          # ~100s. Materializing only the two baseline JSONLs takes ~2-5s.
+          { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/cat-baselines \
+            && git -C /tmp/cat-baselines sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl \
+            && git -C /tmp/cat-baselines checkout main; } 2>/dev/null || true
           if [ ! -f /tmp/cat-baselines/test262-current.jsonl ]; then
             echo "::warning::No baseline JSONL available — skipping catastrophic guard (first seed)."
             exit 0
@@ -643,10 +653,12 @@ jobs:
           STANDALONE_REGRESSION_TOLERANCE: "15"
         run: |
           # Reuse the baselines clone from the catastrophic guard above (same
-          # job, same runner). Re-clone defensively if that step was skipped
-          # or the clone failed.
+          # job, same runner). Re-clone defensively (sparse + blob-filtered,
+          # see that step) if it was skipped or the clone failed.
           if [ ! -d /tmp/cat-baselines ]; then
-            git clone --depth=1 https://github.com/loopdive/js2wasm-baselines.git /tmp/cat-baselines 2>/dev/null || true
+            { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/cat-baselines \
+              && git -C /tmp/cat-baselines sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl \
+              && git -C /tmp/cat-baselines checkout main; } 2>/dev/null || true
           fi
           if [ ! -f /tmp/cat-baselines/test262-standalone-current.jsonl ]; then
             echo "::warning::No standalone baseline JSONL available — skipping standalone guard (first seed)."
@@ -712,7 +724,10 @@ jobs:
             echo "::warning::could not parse baseline main-sha from commit subject — skipping stale-baseline guard."
             exit 0
           fi
-          git fetch --depth=200 origin main 2>/dev/null || true
+          # blob:none — the drift count below only needs commits + trees
+          # (rev-list + diff-tree --name-only), so don't download 200 commits
+          # worth of blobs into this depth-1 checkout (~30s saved).
+          git fetch --depth=200 --filter=blob:none origin main 2>/dev/null || true
           COMMITS=$(git rev-list "${BSHA}..origin/main" 2>/dev/null || true)
           TOTAL_BEHIND=0
           BEHIND=0
@@ -755,7 +770,11 @@ jobs:
       always() &&
       (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: check for test262 regressions
-    needs: [changes, test262-shard, merge-report]
+    # Deliberately does NOT need merge-report: this job only consumes the
+    # concatenation of the per-shard host JSONLs, which it builds itself from
+    # the shard artifacts below. Running in parallel with merge-report (instead
+    # of serially after it) cuts ~3 min off every run's tail.
+    needs: [changes, test262-shard]
     runs-on: ubuntu-latest
     env:
       SHARDS_RAN: ${{ needs.test262-shard.result == 'success' && 'true' || 'false' }}
@@ -764,20 +783,20 @@ jobs:
       - name: No-op pass (no merged test262 report to diff)
         if: env.SHARDS_RAN != 'true'
         run: |
-          echo "test262 shards did not produce a merged report in this context."
+          echo "test262 shards did not produce shard artifacts in this context."
           echo "test262-shard result: ${{ needs.test262-shard.result }}"
-          echo "merge-report result: ${{ needs.merge-report.result }}"
           echo "If shards failed unexpectedly, the required 'merge shard reports' check is the blocking signal."
 
       - name: Checkout
         if: env.SHARDS_RAN == 'true'
         uses: actions/checkout@v5
         with:
-          # #1081 — need full history + the test262 submodule SHA so we can
-          # resolve the PR's merge-base and read the current test262 version
-          # for the hash-indexed cache lookup below.
+          # #1081 — need full history so we can resolve the PR's merge-base
+          # for the hash-indexed cache lookup below. The test262 submodule is
+          # NOT checked out: `git submodule status` reads the gitlink from the
+          # superproject tree and works on an uninitialized submodule (it just
+          # prints a leading '-', which the version extraction strips).
           fetch-depth: 0
-          submodules: recursive
 
       - name: Setup Node
         if: env.SHARDS_RAN == 'true'
@@ -804,7 +823,13 @@ jobs:
           # now stored in loopdive/js2wasm-baselines, not LFS-tracked here).
           # Use depth=2 so we can read the most recent commit's timestamp for
           # the #1235 staleness warning.
-          git clone --depth=2 https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines 2>/dev/null || true
+          # Sparse + blob-filtered: the repo's runs/ history made a plain
+          # clone take ~100s; materializing just the host baseline JSONL takes
+          # ~2-5s. The #1081 merge-base step below sparse-checkout-adds its
+          # runs/<sha> entry on demand from the same clone.
+          { git clone --depth=2 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines \
+            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /test262-current.jsonl \
+            && git -C /tmp/js2wasm-baselines checkout main; } 2>/dev/null || true
           if [ -f /tmp/js2wasm-baselines/test262-current.jsonl ]; then
             mkdir -p benchmarks/results
             cp /tmp/js2wasm-baselines/test262-current.jsonl benchmarks/results/test262-current.jsonl
@@ -838,14 +863,20 @@ jobs:
           # merge-base's exact results, so the regression diff attributes only
           # the PR's own commits. On a MISS it leaves the latest-main baseline
           # in place and warns. Never fails the build.
-          if [ ! -d /tmp/js2wasm-baselines/runs ]; then
-            echo "::warning::#1081 baselines clone has no runs/ dir yet — using latest-main baseline."
+          if [ ! -d /tmp/js2wasm-baselines/.git ]; then
+            echo "::warning::#1081 baselines clone missing — using latest-main baseline."
             echo "cache=miss" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           MERGE_BASE=$(git merge-base origin/main HEAD 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || echo "")
           TEST262_VERSION=$(git submodule status test262 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo "")
           echo "Merge-base: ${MERGE_BASE:-<unknown>}; test262 version: ${TEST262_VERSION:-<unknown>}"
+          # The clone above is sparse + blob-filtered; materialize only this
+          # merge-base's run-cache entry. A pattern that matches nothing in
+          # the tree is a silent no-op, and the resolver then reports a miss.
+          if [ -n "$MERGE_BASE" ]; then
+            git -C /tmp/js2wasm-baselines sparse-checkout add "/runs/${MERGE_BASE}.jsonl" "/runs/${MERGE_BASE}.json" 2>/dev/null || true
+          fi
           node scripts/resolve-merge-base-baseline.mjs \
             --baselines-dir /tmp/js2wasm-baselines \
             --merge-base "$MERGE_BASE" \
@@ -881,13 +912,24 @@ jobs:
             echo "stale_minutes=$DIFF_M" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Download merged reports
+      # Build the merged host JSONL directly from the per-shard artifacts
+      # (same concatenation merge-report performs) instead of downloading
+      # merge-report's merged artifact — that artifact only exists after
+      # merge-report finishes, which would serialize this job behind it.
+      - name: Download shard artifacts
         if: env.SHARDS_RAN == 'true'
         uses: actions/download-artifact@v7
         with:
-          path: merged-reports
-          pattern: test262-merged-report
-          merge-multiple: true
+          path: shard-artifacts
+          pattern: test262-js-host-shard-*
+          merge-multiple: false
+
+      - name: Merge JS-host test262 JSONL results
+        if: env.SHARDS_RAN == 'true'
+        run: |
+          mkdir -p merged-reports
+          find shard-artifacts/test262-js-host-shard-* -name 'test262-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-results-merged.jsonl
+          test -s merged-reports/test262-results-merged.jsonl
 
       - name: Compare against current main baseline
         id: regression_diff

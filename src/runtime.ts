@@ -512,6 +512,7 @@ const _wasmStructAccessors = new WeakMap<object, Map<string | symbol, { get?: Fu
  * when the method is missing.
  */
 let _iteratorHelpersInstalled = false;
+const _intrinsicStringIterator = String.prototype[Symbol.iterator];
 function _installIteratorHelperPolyfills(): void {
   if (_iteratorHelpersInstalled) return;
   _iteratorHelpersInstalled = true;
@@ -579,15 +580,24 @@ function _installIteratorHelperPolyfills(): void {
   }
 
   // ES2025 GetIteratorFlattenable — accepts an iterable OR a raw iterator.
-  function _getFlattenable(obj: any, rejectPrimitives = false): any {
+  // `Iterator.from` uses iterate-string-primitives; iterator helper flattening
+  // (e.g. flatMap) uses reject-primitives.
+  function _getFlattenable(obj: any, primitiveHandling: "iterate-string-primitives" | "reject-primitives"): any {
     if (obj == null) {
       throw new TypeError("Iterator helper: argument is null or undefined");
     }
-    if (rejectPrimitives && !_isObject(obj)) {
-      throw new TypeError("Iterator helper: argument is not an object");
+    const primitive = typeof obj !== "object" && typeof obj !== "function";
+    if (primitive) {
+      if (primitiveHandling === "reject-primitives" || typeof obj !== "string") {
+        throw new TypeError("Iterator helper: argument is not iterable");
+      }
     }
     let it: any;
-    const sym = obj[Symbol.iterator];
+    const stringLike = typeof obj === "string" || obj instanceof String;
+    let sym = primitive ? Reflect.get(Object(obj), Symbol.iterator, obj) : obj[Symbol.iterator];
+    if (typeof sym !== "function" && stringLike && typeof _intrinsicStringIterator === "function") {
+      sym = _intrinsicStringIterator;
+    }
     if (typeof sym === "function") {
       it = sym.call(obj);
     } else if (typeof obj.next === "function") {
@@ -738,11 +748,12 @@ function _installIteratorHelperPolyfills(): void {
     );
   }
 
-  if (typeof I.from !== "function") {
-    _installStaticHelper(I, "from", 1, function from(iterable: any) {
-      return _getFlattenable(iterable);
-    });
-  }
+  // (#1320) Always route Iterator.from through the bridge implementation. Host
+  // natives cannot call compiled accessor closures installed on primitive
+  // prototypes reliably after the Wasm closure crosses externref.
+  _installStaticHelper(I, "from", 1, function from(iterable: any) {
+    return _getFlattenable(iterable, "iterate-string-primitives");
+  });
 
   if (typeof Iproto.map !== "function") {
     _installBuiltinMethod(Iproto, "map", 1, function (this: any, mapper: any) {
@@ -1024,7 +1035,7 @@ function _installIteratorHelperPolyfills(): void {
           const next = _iteratorStepValue(inputIter);
           if (next.done) break;
           try {
-            iters.push(_getFlattenable(next.value, true));
+            iters.push(_getFlattenable(next.value, "reject-primitives"));
           } catch (e) {
             _closeIterator(inputIter);
             _closeIterators(iters);
@@ -1086,7 +1097,7 @@ function _installIteratorHelperPolyfills(): void {
             const value = iterables[key];
             if (value !== undefined) {
               keys.push(key);
-              iters.push(_getFlattenable(value, true));
+              iters.push(_getFlattenable(value, "reject-primitives"));
             }
           }
         }
@@ -1249,7 +1260,7 @@ function _installIteratorHelperPolyfills(): void {
                 }
                 counter++;
                 try {
-                  inner = _getFlattenable(mapped, true);
+                  inner = _getFlattenable(mapped, "reject-primitives");
                 } catch (e) {
                   done = true;
                   try {
@@ -1580,6 +1591,8 @@ function _isConcatSpreadable(
   return v !== undefined && v !== null && !!v;
 }
 
+const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: number }>();
+const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
 
@@ -1608,7 +1621,9 @@ function _hostEqComparableValue(v: any): any {
  *
  * Arity matches the number of JS args the host will pass; the JS wrapper
  * forwards exactly that count to `__call_fn_N`. Args beyond `arity` are
- * dropped, matching JS's "extra args ignored" semantics.
+ * dropped, matching JS's "extra args ignored" semantics. If the wrapper is
+ * invoked as a method, prefer `__call_fn_method_N` so prototype-installed
+ * methods such as `Number.prototype[Symbol.iterator]` observe the receiver.
  */
 function _wrapWasmClosure(
   closure: any,
@@ -1620,6 +1635,7 @@ function _wrapWasmClosure(
   if (!exports) return null;
   const callFn = exports[`__call_fn_${arity}`];
   if (typeof callFn !== "function") return null;
+  const methodCallFn = exports[`__call_fn_method_${arity}`];
   let byArity: Map<number, Function> | undefined;
   if (_canBeWeakKey(closure)) {
     byArity = _wasmClosureWrapperCache.get(closure as object);
@@ -1630,22 +1646,76 @@ function _wrapWasmClosure(
   // for as long as the JS Function is reachable from the host. JS Function
   // identity is preserved across multiple invocations (host may capture a
   // reference, e.g. callbacks stored on plain objects).
-  const wrapper = function wasmClosureBridge(...args: any[]): any {
+  const wrapped = function wasmClosureBridge(this: any, ...args: any[]): any {
     // Pad with undefined to exactly `arity` positional args. Extra args
     // dropped (JS spec for fewer/more args than declared params).
     const padded: any[] = [];
     for (let i = 0; i < arity; i++) padded.push(args[i]);
+    if (typeof methodCallFn === "function" && this !== undefined && this !== globalThis) {
+      return methodCallFn(this, closure, ...padded);
+    }
     return callFn(closure, ...padded);
   };
+  _wasmClosureWrapperSource.set(wrapped, { closure, arity });
   if (_canBeWeakKey(closure)) {
     if (!byArity) {
       byArity = new Map();
       _wasmClosureWrapperCache.set(closure as object, byArity);
     }
-    byArity.set(arity, wrapper);
-    _wasmClosureWrapperTargets.set(wrapper, closure as object);
+    byArity.set(arity, wrapped);
+    _wasmClosureWrapperTargets.set(wrapped, closure as object);
   }
-  return wrapper;
+  return wrapped;
+}
+
+function _wrapWasmClosureUnknownArity(
+  closure: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): ((...args: any[]) => any) | null {
+  if (closure != null && typeof closure === "object") {
+    const cached = _wasmClosureDynamicWrapperCache.get(closure);
+    if (cached) return cached as (...args: any[]) => any;
+  }
+  if (!callbackState) return null;
+  const exports = callbackState.getExports();
+  if (!exports) return null;
+  const available: number[] = [];
+  for (let arity = 0; arity <= 4; arity++) {
+    if (typeof exports[`__call_fn_${arity}`] === "function") available.push(arity);
+  }
+  if (available.length === 0) return null;
+  const maxArity = available[available.length - 1]!;
+  const wrapped = function wasmClosureDynamicBridge(this: any, ...args: any[]): any {
+    let arity = Math.min(args.length, maxArity);
+    while (arity > 0 && typeof exports[`__call_fn_${arity}`] !== "function") arity--;
+    const callFn = exports[`__call_fn_${arity}`];
+    if (typeof callFn !== "function") return undefined;
+    const padded: any[] = [];
+    for (let i = 0; i < arity; i++) padded.push(args[i]);
+    const methodCallFn = exports[`__call_fn_method_${arity}`];
+    if (typeof methodCallFn === "function" && this !== undefined && this !== globalThis) {
+      return methodCallFn(this, closure, ...padded);
+    }
+    return callFn(closure, ...padded);
+  };
+  try {
+    if (wrapped.prototype && closure != null) {
+      Object.defineProperty(wrapped.prototype, "constructor", {
+        value: closure,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    }
+  } catch {
+    /* best-effort constructor identity for function-expression wrappers */
+  }
+  _wasmClosureWrapperSource.set(wrapped, { closure, arity: -1 });
+  if (closure != null && typeof closure === "object") {
+    _wasmClosureDynamicWrapperCache.set(closure, wrapped);
+    _wasmClosureWrapperTargets.set(wrapped, closure);
+  }
+  return wrapped;
 }
 
 /**
@@ -1720,13 +1790,7 @@ function _maybeWrapCallableUnknownArity(
   } catch {
     return val;
   }
-  for (let arity = 4; arity >= 0; arity--) {
-    if (typeof exports[`__call_fn_${arity}`] === "function") {
-      const wrapped = _wrapWasmClosure(val, arity, callbackState);
-      if (wrapped) return wrapped;
-    }
-  }
-  return val;
+  return _wrapWasmClosureUnknownArity(val, callbackState) ?? val;
 }
 
 /**
@@ -1905,17 +1969,16 @@ function _materializeIterable(
 
 /**
  * (#1320) Drain a plain JS object whose own `[Symbol.iterator]` is a compiled
- * **Wasm closure struct** (typeof "object", not a JS function). Native
- * `Array.from` / `Iterator.from` reject such an object with
- * `items[Symbol.iterator] … must be a function`, because V8 sees a non-callable
- * iterator method. We invoke the closure (and its returned iterator's `.next`,
- * which is typically also a Wasm closure) through the `__call_fn_0` export and
- * collect the yielded values into a real JS array.
+ * Wasm closure. Depending on the assignment path, the property may hold either
+ * the raw closure struct or a JS wrapper produced by `_wrapWasmClosure`. Native
+ * `Array.from` / `Iterator.from` cannot drive the raw Wasm iterator/result
+ * structs, so we invoke the closure-backed protocol manually and collect the
+ * yielded values into a real JS array.
  *
  * Returns `null` when this path does not apply — caller falls back to native
  * `Array.from`:
  *   - the value has no own/inherited `@@iterator`, OR
- *   - the `@@iterator` is already a real JS function (native path is correct), OR
+ *   - the `@@iterator` is already a real non-Wasm-wrapper JS function, OR
  *   - the closure-call export is unavailable.
  *
  * Throws from the user's `@@iterator()` / `.next()` propagate unchanged (a
@@ -1932,20 +1995,34 @@ function _drainWasmClosureIterable(
   } catch {
     return null;
   }
-  // Only handle the broken case: an @@iterator that exists but is a Wasm
-  // closure struct (non-function object). Real JS functions / generators take
-  // the native path.
-  if (iterFn == null || typeof iterFn === "function" || !_isWasmStruct(iterFn)) return null;
+  const iterWrapper = typeof iterFn === "function" ? _wasmClosureWrapperSource.get(iterFn) : undefined;
+  const iterIsRawClosure = iterFn != null && typeof iterFn === "object" && _isWasmStruct(iterFn);
+  // Only handle the broken case: an @@iterator that came from a Wasm closure.
+  // Real JS functions / generators take the native path.
+  if (iterFn == null || (!iterWrapper && !iterIsRawClosure)) return null;
   const exports = callbackState?.getExports();
   const callFn0 = exports?.["__call_fn_0"];
-  if (typeof callFn0 !== "function") return null;
-  const iteratorObj = callFn0(iterFn);
+  if (iterIsRawClosure && typeof callFn0 !== "function") return null;
+  let iteratorObj = iterWrapper ? iterFn.call(obj) : callFn0!(iterFn);
+  if ((iteratorObj == null || typeof iteratorObj !== "object") && iterWrapper && typeof callFn0 === "function") {
+    try {
+      const fallbackIterator = callFn0(iterWrapper.closure);
+      if (fallbackIterator != null && typeof fallbackIterator === "object") iteratorObj = fallbackIterator;
+    } catch {
+      // Preserve the native failure path below when the fallback also fails.
+    }
+  }
   if (iteratorObj == null || typeof iteratorObj !== "object") return null;
   const out: any[] = [];
   const MAX_ITER = 1 << 16;
   let iterCount = 0;
   const resolveProp = (target: any, key: string): any => {
-    const direct = target?.[key];
+    let direct: any;
+    try {
+      direct = target?.[key];
+    } catch {
+      direct = undefined;
+    }
     if (direct !== undefined) return direct;
     const safe = _safeGet(target, key);
     if (safe !== undefined) return safe;
@@ -1959,6 +2036,7 @@ function _drainWasmClosureIterable(
     if (typeof nextFn === "function") {
       result = nextFn.call(iteratorObj);
     } else if (nextFn != null && typeof nextFn === "object" && _isWasmStruct(nextFn)) {
+      if (typeof callFn0 !== "function") return null;
       result = callFn0(nextFn);
     } else {
       break;
@@ -4597,6 +4675,516 @@ function _formatDate(ts: bigint, mode: number): string {
   }
 }
 
+function _temporalTrunc(v: any): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.trunc(n);
+}
+
+function _temporalPad(n: number, width: number): string {
+  return String(Math.abs(Math.trunc(n))).padStart(width, "0");
+}
+
+function _temporalYearString(yearRaw: any): string {
+  const year = _temporalTrunc(yearRaw);
+  if (year >= 0 && year <= 9999) return _temporalPad(year, 4);
+  return (year < 0 ? "-" : "+") + _temporalPad(year, 6);
+}
+
+function _temporalPlainDateToString(year: any, month: any, day: any): string {
+  return `${_temporalYearString(year)}-${_temporalPad(_temporalTrunc(month), 2)}-${_temporalPad(_temporalTrunc(day), 2)}`;
+}
+
+function _temporalPlainDateMonthCode(month: any): string {
+  return `M${_temporalPad(_temporalTrunc(month), 2)}`;
+}
+
+function _temporalPlainTimeToString(
+  hour: any,
+  minute: any,
+  second: any,
+  millisecond: any,
+  microsecond: any,
+  nanosecond: any,
+): string {
+  const base = `${_temporalPad(_temporalTrunc(hour), 2)}:${_temporalPad(_temporalTrunc(minute), 2)}:${_temporalPad(
+    _temporalTrunc(second),
+    2,
+  )}`;
+  const fraction =
+    _temporalPad(_temporalTrunc(millisecond), 3) +
+    _temporalPad(_temporalTrunc(microsecond), 3) +
+    _temporalPad(_temporalTrunc(nanosecond), 3);
+  const trimmed = fraction.replace(/0+$/, "");
+  return trimmed.length > 0 ? `${base}.${trimmed}` : base;
+}
+
+// ---- Temporal ISO 8601 / RFC 9557 strict string parsing (#661 / PR #1274) ----
+//
+// Spec-first implementation of the string grammar from tc39/proposal-temporal:
+//   - "RFC 9557 / ISO 8601 grammar" (sec-temporal-iso8601grammar), incl. the
+//     early errors: DateYear "-000000" is a Syntax Error; IsValidDate rejects
+//     impossible month/day combos and Feb 29 in non-leap years.
+//   - ParseISODateTime (sec-temporal-parseisodatetime): annotation handling —
+//     a second `u-ca` calendar annotation throws RangeError when either has
+//     the `!` critical flag; any unknown annotation key with the critical
+//     flag throws RangeError; TimeSecond 60 is clamped to 59.
+//   - ParseTemporalDurationString (sec-temporal-parsetemporaldurationstring):
+//     fractions only on the smallest present time unit, 1-9 digits, period
+//     or comma; fractional hours/minutes/seconds balance into smaller units;
+//     magnitudes are floored before the sign factor is applied.
+//   - IsValidDuration (sec-temporal-isvalidduration): mixed signs are
+//     invalid; |years|/|months|/|weeks| must be < 2^32; the normalized
+//     nanosecond total must be < 10^9 * 2^53 (computed exactly via BigInt
+//     per the spec NOTE about 64-bit float imprecision).
+//
+// Grammar fragments (sec-temporal-iso8601grammar). Each of the date, time,
+// and offset parts may independently use basic (no separators) or extended
+// (mandatory separators) format.
+const _tYearSrc = "(\\d{4}|[+-]\\d{6})";
+const _tMonthSrc = "(0[1-9]|1[0-2])";
+const _tDaySrc = "(0[1-9]|[12]\\d|3[01])";
+const _tHourSrc = "([01]\\d|2[0-3])";
+const _tMinuteSrc = "([0-5]\\d)";
+const _tSecondSrc = "([0-5]\\d|60)";
+const _tFracSrc = "(?:[.,](\\d{1,9}))";
+const _tDateExtSrc = `${_tYearSrc}-${_tMonthSrc}-${_tDaySrc}`;
+const _tDateBasicSrc = `${_tYearSrc}${_tMonthSrc}${_tDaySrc}`;
+const _tTimeExtSrc = `${_tHourSrc}(?::${_tMinuteSrc}(?::${_tSecondSrc}${_tFracSrc}?)?)?`;
+const _tTimeBasicSrc = `${_tHourSrc}(?:${_tMinuteSrc}(?:${_tSecondSrc}${_tFracSrc}?)?)?`;
+// UTCOffset[+SubMinutePrecision] — parsed for validity, value ignored.
+const _tOffsetSrc =
+  "[+-](?:[01]\\d|2[0-3])(?::[0-5]\\d(?::[0-5]\\d(?:[.,]\\d{1,9})?)?|[0-5]\\d(?:[0-5]\\d(?:[.,]\\d{1,9})?)?)?";
+// TimeZoneAnnotation ::: `[` `!`? (UTCOffset[~SubMinutePrecision] | TimeZoneIANAName) `]`
+const _tTzAnnotationRe = new RegExp(
+  "^\\[!?(?:[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?|[A-Za-z._][A-Za-z._0-9+-]*(?:\\/[A-Za-z._][A-Za-z._0-9+-]*)*)\\]$",
+);
+// Annotation ::: `[` `!`? AnnotationKey `=` AnnotationValue `]`
+const _tAnnotationRe = /^\[(!?)([a-z_][a-z0-9_-]*)=([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\]$/;
+const _tBracketSplitRe = /\[[^\]]*\]/g;
+
+/**
+ * Validate the bracketed suffix of an ISO string per the grammar
+ * `TimeZoneAnnotation? Annotations?` and the ParseISODateTime annotation
+ * rules (duplicate critical u-ca, unknown critical key). Throws RangeError.
+ */
+function _temporalValidateBrackets(suffix: string): void {
+  if (suffix.length === 0) return;
+  const brackets = suffix.match(_tBracketSplitRe) ?? [];
+  if (brackets.join("") !== suffix) throw new RangeError("invalid annotation syntax in Temporal string");
+  let calendar: string | undefined;
+  let calendarWasCritical = false;
+  for (let i = 0; i < brackets.length; i++) {
+    const bracket = brackets[i]!;
+    if (i === 0 && _tTzAnnotationRe.test(bracket) && !_tAnnotationRe.test(bracket)) {
+      continue; // single leading TimeZoneAnnotation
+    }
+    const annotation = _tAnnotationRe.exec(bracket);
+    if (!annotation) throw new RangeError("invalid annotation in Temporal string");
+    const critical = annotation[1] === "!";
+    const key = annotation[2]!;
+    if (key === "u-ca") {
+      if (calendar === undefined) {
+        calendar = annotation[3]!;
+        calendarWasCritical = critical;
+      } else if (critical || calendarWasCritical) {
+        throw new RangeError("duplicate critical calendar annotation in Temporal string");
+      }
+    } else if (critical) {
+      throw new RangeError(`unknown critical annotation key "${key}" in Temporal string`);
+    }
+  }
+  // CanonicalizeCalendar / CalendarFromIdentifier: an unrecognized calendar
+  // type is a RangeError. Recognized set = CLDR/BCP 47 calendar types used
+  // by test262 (ASCII case-insensitive).
+  if (calendar !== undefined && !_temporalKnownCalendars.has(calendar.toLowerCase())) {
+    throw new RangeError(`unknown calendar "${calendar}" in Temporal string`);
+  }
+}
+
+const _temporalKnownCalendars = new Set([
+  "iso8601",
+  "buddhist",
+  "chinese",
+  "coptic",
+  "dangi",
+  "ethioaa",
+  "ethiopic",
+  "ethiopic-amete-alem",
+  "gregory",
+  "hebrew",
+  "indian",
+  "islamic",
+  "islamic-civil",
+  "islamic-rgsa",
+  "islamic-tbla",
+  "islamic-umalqura",
+  "islamicc",
+  "japanese",
+  "persian",
+  "roc",
+]);
+
+/** IsValidDate (sec-temporal-iso8601grammar-static-semantics-isvaliddate). */
+function _temporalCheckDateValid(yearText: string, year: number, month: number, day: number): void {
+  if (yearText === "-000000") throw new RangeError("Temporal year -000000 is not allowed");
+  if (day === 31 && (month === 2 || month === 4 || month === 6 || month === 9 || month === 11)) {
+    throw new RangeError("invalid day of month in Temporal string");
+  }
+  if (month === 2 && day === 30) throw new RangeError("invalid day of month in Temporal string");
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  if (month === 2 && day === 29 && !leap) throw new RangeError("invalid day of month in Temporal string");
+}
+
+/** ParseISODateTime fraction handling: 1-9 digits padded to ms/us/ns. */
+function _temporalFractionParts(frac: string | undefined): [number, number, number] {
+  const padded = (frac ?? "").padEnd(9, "0");
+  return [Number(padded.slice(0, 3) || "0"), Number(padded.slice(3, 6) || "0"), Number(padded.slice(6, 9) || "0")];
+}
+
+const _tPlainDateRe = new RegExp(
+  `^(?:${_tDateExtSrc}|${_tDateBasicSrc})(?:[Tt ](?:${_tTimeExtSrc}|${_tTimeBasicSrc})(${_tOffsetSrc}|[Zz])?)?`,
+);
+
+/**
+ * ToTemporalDate(string) → ParseISODateTime with TemporalDateTimeString[~Zoned]
+ * (sec-temporal-totemporaldate / sec-temporal-parseisodatetime). The [~Zoned]
+ * goal has no UTCDesignator alternative, so a `Z`/`z` suffix is a RangeError.
+ */
+/**
+ * ToTemporalDate / ToTemporalTime / ToTemporalDuration accept only Objects
+ * (property bags, handled at compile time) or Strings here; any other
+ * primitive is a TypeError before parsing (e.g. PlainDate.from(19761118)).
+ * Dynamic (non-literal) object bags are not supported by the minimal native
+ * lowering — they also throw here, as they did before strict parsing.
+ */
+function _temporalRequireString(item: any, what: string): string {
+  if (typeof item !== "string") {
+    throw new TypeError(`${what} must be a string or property bag, not ${typeof item}`);
+  }
+  return item;
+}
+
+function _temporalParsePlainDate(item: any): [number, number, number] {
+  const text = _temporalRequireString(item, "Temporal.PlainDate argument");
+  const bracketStart = text.indexOf("[");
+  const core = bracketStart < 0 ? text : text.slice(0, bracketStart);
+  const suffix = bracketStart < 0 ? "" : text.slice(bracketStart);
+  const match = _tPlainDateRe.exec(core);
+  if (!match || match[0] !== core) throw new RangeError("invalid Temporal.PlainDate string");
+  const yearText = match[1] ?? match[4]!;
+  // Groups: date-ext 1-3, date-basic 4-6, time-ext 7-10, time-basic 11-14, offset/Z 15.
+  const offsetOrZ = match[15];
+  if (offsetOrZ === "Z" || offsetOrZ === "z") {
+    throw new RangeError("UTC designator Z is not valid for Temporal.PlainDate");
+  }
+  _temporalValidateBrackets(suffix);
+  const year = Number(yearText);
+  const month = Number(match[2] ?? match[5]!);
+  const day = Number(match[3] ?? match[6]!);
+  _temporalCheckDateValid(yearText, year, month, day);
+  // ISODateTimeWithinLimits / ISODateWithinLimits: the representable
+  // PlainDate range is -271821-04-19 .. +275760-09-13 (epoch ±10^8 days).
+  if (
+    year < -271821 ||
+    year > 275760 ||
+    (year === -271821 && (month < 4 || (month === 4 && day < 19))) ||
+    (year === 275760 && (month > 9 || (month === 9 && day > 13)))
+  ) {
+    throw new RangeError("Temporal.PlainDate is outside the representable range");
+  }
+  return [year, month, day];
+}
+
+function _temporalPlainDateFromStringField(item: any, field: any): number {
+  return _temporalParsePlainDate(item)[_temporalTrunc(field)] ?? 0;
+}
+
+const _tPlainTimeDateTimeRe = new RegExp(
+  `^(?:${_tDateExtSrc}|${_tDateBasicSrc})[Tt ](?:${_tTimeExtSrc}|${_tTimeBasicSrc})(${_tOffsetSrc}|[Zz])?$`,
+);
+const _tPlainTimeOnlyRe = new RegExp(`^([Tt])?(?:${_tTimeExtSrc}|${_tTimeBasicSrc})(${_tOffsetSrc}|[Zz])?$`);
+// Early errors for AnnotatedTime without a TimeDesignator: the source text
+// must not also parse as DateSpecMonthDay or DateSpecYearMonth.
+const _tMonthDayAmbiguityRe = /^(?:--)?(?:0[1-9]|1[0-2])-?(?:0[1-9]|[12]\d|3[01])$/;
+const _tYearMonthAmbiguityRe = /^(?:\d{4}|[+-]\d{6})-?(?:0[1-9]|1[0-2])$/;
+
+/**
+ * ToTemporalTime(string) → ParseTemporalTimeString with
+ * TemporalTimeString ::: AnnotatedTime | AnnotatedDateTime[~Zoned, +TimeRequired]
+ * (sec-temporal-iso8601grammar). Z is rejected ([~Z] / [~Zoned]); a
+ * date-only string is rejected (+TimeRequired); TimeSecond 60 clamps to 59
+ * (ParseISODateTime).
+ */
+function _temporalParsePlainTime(item: any): [number, number, number, number, number, number] {
+  const text = _temporalRequireString(item, "Temporal.PlainTime argument");
+  const bracketStart = text.indexOf("[");
+  const core = bracketStart < 0 ? text : text.slice(0, bracketStart);
+  const suffix = bracketStart < 0 ? "" : text.slice(bracketStart);
+  _temporalValidateBrackets(suffix);
+
+  let hour: string | undefined;
+  let minute: string | undefined;
+  let second: string | undefined;
+  let frac: string | undefined;
+  let offsetOrZ: string | undefined;
+
+  const dt = _tPlainTimeDateTimeRe.exec(core);
+  if (dt) {
+    const yearText = dt[1] ?? dt[4]!;
+    _temporalCheckDateValid(yearText, Number(yearText), Number(dt[2] ?? dt[5]!), Number(dt[3] ?? dt[6]!));
+    hour = dt[7] ?? dt[11];
+    minute = dt[8] ?? dt[12];
+    second = dt[9] ?? dt[13];
+    frac = dt[10] ?? dt[14];
+    offsetOrZ = dt[15];
+  } else {
+    const t = _tPlainTimeOnlyRe.exec(core);
+    if (!t) throw new RangeError("invalid Temporal.PlainTime string");
+    const designator = t[1];
+    hour = t[2] ?? t[6];
+    minute = t[3] ?? t[7];
+    second = t[4] ?? t[8];
+    frac = t[5] ?? t[9];
+    offsetOrZ = t[10];
+    if (!designator) {
+      const timeAndOffset = core;
+      if (_tMonthDayAmbiguityRe.test(timeAndOffset) || _tYearMonthAmbiguityRe.test(timeAndOffset)) {
+        throw new RangeError("ambiguous Temporal.PlainTime string");
+      }
+    }
+  }
+  if (offsetOrZ === "Z" || offsetOrZ === "z") {
+    throw new RangeError("UTC designator Z is not valid for Temporal.PlainTime");
+  }
+  let secondNum = second === undefined ? 0 : Number(second);
+  if (secondNum === 60) secondNum = 59;
+  const [ms, us, ns] = _temporalFractionParts(frac);
+  return [Number(hour ?? "0"), minute === undefined ? 0 : Number(minute), secondNum, ms, us, ns];
+}
+
+function _temporalPlainTimeFromStringField(item: any, field: any): number {
+  return _temporalParsePlainTime(item)[_temporalTrunc(field)] ?? 0;
+}
+
+/** IsValidDuration (sec-temporal-isvalidduration). */
+function _temporalIsValidDuration(values: readonly number[]): boolean {
+  let sign = 0;
+  for (const v of values) {
+    if (!Number.isFinite(v)) return false;
+    if (v < 0) {
+      if (sign > 0) return false;
+      sign = -1;
+    } else if (v > 0) {
+      if (sign < 0) return false;
+      sign = 1;
+    }
+  }
+  const TWO_32 = 4294967296;
+  if (Math.abs(values[0]!) >= TWO_32 || Math.abs(values[1]!) >= TWO_32 || Math.abs(values[2]!) >= TWO_32) {
+    return false;
+  }
+  // Normalized nanoseconds, computed exactly with BigInt per the spec NOTE.
+  try {
+    const big = (n: number): bigint => BigInt(n);
+    const total =
+      big(values[3]!) * 86400000000000n +
+      big(values[4]!) * 3600000000000n +
+      big(values[5]!) * 60000000000n +
+      big(values[6]!) * 1000000000n +
+      big(values[7]!) * 1000000n +
+      big(values[8]!) * 1000n +
+      big(values[9]!);
+    const limit = 1000000000n * 9007199254740992n; // 10^9 * 2^53
+    const abs = total < 0n ? -total : total;
+    if (abs >= limit) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+const _tDurationRe =
+  /^([+-])?[Pp](?:(\d+)[Yy])?(?:(\d+)[Mm])?(?:(\d+)[Ww])?(?:(\d+)[Dd])?(?:([Tt])(?:(\d+)(?:[.,](\d{1,9}))?[Hh])?(?:(\d+)(?:[.,](\d{1,9}))?[Mm])?(?:(\d+)(?:[.,](\d{1,9}))?[Ss])?)?$/;
+
+/**
+ * ParseTemporalDurationString (sec-temporal-parsetemporaldurationstring).
+ * The grammar requires at least one unit, a time unit after `T`, and allows
+ * a fraction only on the smallest (last) present time unit. Fractional
+ * hours/minutes/seconds balance into smaller units; magnitudes are floored
+ * before the sign factor. The result must satisfy IsValidDuration.
+ */
+function _temporalParseDuration(item: any): number[] {
+  const text = _temporalRequireString(item, "Temporal.Duration argument");
+  const match = _tDurationRe.exec(text);
+  if (!match) throw new RangeError("invalid Temporal.Duration string");
+  const [, signText, years, months, weeks, days, timeDesignator, hours, fHours, minutes, fMinutes, seconds, fSeconds] =
+    match;
+  const hasDatePart = years !== undefined || months !== undefined || weeks !== undefined || days !== undefined;
+  const hasTimePart = hours !== undefined || minutes !== undefined || seconds !== undefined;
+  if (!hasDatePart && !hasTimePart) throw new RangeError("invalid Temporal.Duration string");
+  if (timeDesignator !== undefined && !hasTimePart) throw new RangeError("invalid Temporal.Duration string");
+  // Grammar: DurationHoursPart with a fraction admits no minutes/seconds;
+  // DurationMinutesPart with a fraction admits no seconds.
+  if (fHours !== undefined && (minutes !== undefined || seconds !== undefined)) {
+    throw new RangeError("invalid Temporal.Duration string: fraction is only allowed on the smallest unit");
+  }
+  if (fMinutes !== undefined && seconds !== undefined) {
+    throw new RangeError("invalid Temporal.Duration string: fraction is only allowed on the smallest unit");
+  }
+  const toInt = (digits: string | undefined): number => (digits === undefined || digits === "" ? 0 : Number(digits));
+  const yearsMV = toInt(years);
+  const monthsMV = toInt(months);
+  const weeksMV = toInt(weeks);
+  const daysMV = toInt(days);
+  const hoursMV = toInt(hours);
+  // The spec computes the fractional balancing with exact mathematical
+  // values. Equivalent here: convert the single fractional part to an exact
+  // integer count of nanoseconds (the division is exact because 10^scale
+  // with scale <= 9 divides unit * 10^11), then distribute by integer
+  // division — this matches floor(minutesMV), remainder(...)*60, etc.
+  const exactFracNs = (digits: string, unitNs: bigint): number =>
+    Number((BigInt(digits) * unitNs) / 10n ** BigInt(digits.length));
+  let minutesMV = toInt(minutes);
+  let secondsMV = seconds !== undefined ? toInt(seconds) : 0;
+  let remNs = 0;
+  if (fHours !== undefined) {
+    let fracNs = exactFracNs(fHours, 3600000000000n);
+    minutesMV = Math.floor(fracNs / 60000000000);
+    fracNs %= 60000000000;
+    secondsMV = Math.floor(fracNs / 1000000000);
+    remNs = fracNs % 1000000000;
+  } else if (fMinutes !== undefined) {
+    const fracNs = exactFracNs(fMinutes, 60000000000n);
+    secondsMV = Math.floor(fracNs / 1000000000);
+    remNs = fracNs % 1000000000;
+  } else if (fSeconds !== undefined) {
+    remNs = exactFracNs(fSeconds, 1000000000n);
+  }
+  const millisecondsMV = Math.floor(remNs / 1000000);
+  const microsecondsMV = Math.floor((remNs % 1000000) / 1000);
+  const nanosecondsMV = remNs % 1000;
+  const factor = signText === "-" ? -1 : 1;
+  const values = [
+    yearsMV * factor,
+    monthsMV * factor,
+    weeksMV * factor,
+    daysMV * factor,
+    hoursMV * factor,
+    minutesMV * factor,
+    secondsMV * factor,
+    millisecondsMV * factor,
+    microsecondsMV * factor,
+    nanosecondsMV * factor,
+  ];
+  if (!_temporalIsValidDuration(values)) throw new RangeError("Temporal.Duration out of range");
+  return values;
+}
+
+function _temporalDurationFromStringField(item: any, field: any): number {
+  return _temporalParseDuration(item)[_temporalTrunc(field)] ?? 0;
+}
+
+function _temporalDurationSign(...fields: any[]): number {
+  for (const field of fields) {
+    const n = Number(field);
+    if (n > 0) return 1;
+    if (n < 0) return -1;
+  }
+  return 0;
+}
+
+function _temporalDurationToString(...fieldsRaw: any[]): string {
+  const fields = fieldsRaw.map(_temporalTrunc);
+  const sign = _temporalDurationSign(...fields) < 0 ? "-" : "";
+  const abs = fields.map((field) => Math.abs(field));
+  const [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] = abs;
+  let result = `${sign}P`;
+  if (years) result += `${years}Y`;
+  if (months) result += `${months}M`;
+  if (weeks) result += `${weeks}W`;
+  if (days) result += `${days}D`;
+  const fraction =
+    _temporalPad(milliseconds ?? 0, 3) + _temporalPad(microseconds ?? 0, 3) + _temporalPad(nanoseconds ?? 0, 3);
+  const fractionTrimmed = fraction.replace(/0+$/, "");
+  const secondPart = fractionTrimmed.length > 0 ? `${seconds ?? 0}.${fractionTrimmed}` : `${seconds ?? 0}`;
+  const hasTime = !!hours || !!minutes || !!seconds || fractionTrimmed.length > 0;
+  if (hasTime) {
+    result += "T";
+    if (hours) result += `${hours}H`;
+    if (minutes) result += `${minutes}M`;
+    if (seconds || fractionTrimmed.length > 0) result += `${secondPart}S`;
+  }
+  return result === `${sign}P` ? `${sign}PT0S` : result;
+}
+
+function _temporalDateFromParts(year: number, month: number, day: number): Date {
+  const d = new Date(0);
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCFullYear(year, month - 1, day);
+  return d;
+}
+
+function _temporalDaysInMonth(year: number, month: number): number {
+  return _temporalDateFromParts(year, month + 1, 0).getUTCDate();
+}
+
+function _temporalPlainDateAddField(
+  yearRaw: any,
+  monthRaw: any,
+  dayRaw: any,
+  yearsRaw: any,
+  monthsRaw: any,
+  weeksRaw: any,
+  daysRaw: any,
+  signRaw: any,
+  fieldRaw: any,
+): number {
+  const sign = _temporalTrunc(signRaw) < 0 ? -1 : 1;
+  let year = _temporalTrunc(yearRaw) + sign * _temporalTrunc(yearsRaw);
+  let month = _temporalTrunc(monthRaw) + sign * _temporalTrunc(monthsRaw);
+  year += Math.floor((month - 1) / 12);
+  month = ((((month - 1) % 12) + 12) % 12) + 1;
+  const constrainedDay = Math.min(_temporalTrunc(dayRaw), _temporalDaysInMonth(year, month));
+  const date = _temporalDateFromParts(
+    year,
+    month,
+    constrainedDay + sign * (_temporalTrunc(daysRaw) + 7 * _temporalTrunc(weeksRaw)),
+  );
+  const field = _temporalTrunc(fieldRaw);
+  if (field === 0) return date.getUTCFullYear();
+  if (field === 1) return date.getUTCMonth() + 1;
+  return date.getUTCDate();
+}
+
+function _temporalPlainTimeAddField(...args: any[]): number {
+  const [hour, minute, second, millisecond, microsecond, nanosecond, dh, dm, ds, dms, dus, dns, signRaw, fieldRaw] =
+    args.map(_temporalTrunc);
+  const sign = signRaw < 0 ? -1 : 1;
+  const dayNs = 86_400_000_000_000;
+  let total =
+    hour * 3_600_000_000_000 +
+    minute * 60_000_000_000 +
+    second * 1_000_000_000 +
+    millisecond * 1_000_000 +
+    microsecond * 1_000 +
+    nanosecond;
+  total +=
+    sign * (dh * 3_600_000_000_000 + dm * 60_000_000_000 + ds * 1_000_000_000 + dms * 1_000_000 + dus * 1_000 + dns);
+  total = ((total % dayNs) + dayNs) % dayNs;
+  const hourOut = Math.floor(total / 3_600_000_000_000);
+  total %= 3_600_000_000_000;
+  const minuteOut = Math.floor(total / 60_000_000_000);
+  total %= 60_000_000_000;
+  const secondOut = Math.floor(total / 1_000_000_000);
+  total %= 1_000_000_000;
+  const millisecondOut = Math.floor(total / 1_000_000);
+  total %= 1_000_000;
+  const microsecondOut = Math.floor(total / 1_000);
+  const nanosecondOut = total % 1_000;
+  return [hourOut, minuteOut, secondOut, millisecondOut, microsecondOut, nanosecondOut][_temporalTrunc(fieldRaw)] ?? 0;
+}
+
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -5594,6 +6182,16 @@ assert._isSameValue = isSameValue;
       if (name === "__date_format") {
         return (ts: bigint, mode: number): string => _formatDate(ts, mode);
       }
+      if (name === "__temporal_plain_date_to_string") return _temporalPlainDateToString;
+      if (name === "__temporal_plain_date_month_code") return _temporalPlainDateMonthCode;
+      if (name === "__temporal_plain_date_from_string_field") return _temporalPlainDateFromStringField;
+      if (name === "__temporal_plain_date_add_field") return _temporalPlainDateAddField;
+      if (name === "__temporal_plain_time_to_string") return _temporalPlainTimeToString;
+      if (name === "__temporal_plain_time_from_string_field") return _temporalPlainTimeFromStringField;
+      if (name === "__temporal_plain_time_add_field") return _temporalPlainTimeAddField;
+      if (name === "__temporal_duration_to_string") return _temporalDurationToString;
+      if (name === "__temporal_duration_from_string_field") return _temporalDurationFromStringField;
+      if (name === "__temporal_duration_sign") return _temporalDurationSign;
       if (name === "__extern_toLocaleString")
         return (v: any) => {
           if (v == null) return String(v);
@@ -6738,8 +7336,13 @@ assert._isSameValue = isSameValue;
           // callable JS functions, so JS ToPrimitive / Array built-ins can
           // invoke poisoned valueOf/toString and let errors propagate.
           const exports = callbackState?.getExports();
-          const wrappedObj = _isWasmStruct(obj) ? _wrapForHost(obj, exports) : obj;
-          const wrappedArgs = (args ?? []).map((a) => (_isWasmStruct(a) ? _wrapForHost(a, exports) : a));
+          const wrapHostValue = (v: any): any => {
+            if (!_isWasmStruct(v)) return v;
+            const callable = _maybeWrapCallableUnknownArity(v, callbackState);
+            return callable !== v ? callable : _wrapForHost(v, exports);
+          };
+          const wrappedObj = wrapHostValue(obj);
+          const wrappedArgs = (args ?? []).map(wrapHostValue);
           // (#1382) Wrap a Wasm-closure callback arg into a JS Function
           // before the native engine dispatches. Looks up the same slot
           // table as `__proto_method_call` so Array.prototype.map.call
@@ -6792,6 +7395,17 @@ assert._isSameValue = isSameValue;
             }
           }
           const fn = wrappedObj[method];
+          // (#1320) Some chained `Array.from.call(C, items)` shapes lower as a
+          // generic `method="from"` dispatch on `Array`. Drain Wasm-closure
+          // iterables before the native Array.from performs GetMethod(items,
+          // @@iterator), while preserving the native receiver.
+          if (method === "from" && fn === Array.from && wrappedArgs.length > 0) {
+            const callArgs = wrappedArgs.slice();
+            const drained = _drainWasmClosureIterable(callArgs[0], callbackState);
+            if (drained !== null) callArgs[0] = drained;
+            const ret = (Array.from as (...xs: any[]) => any).apply(wrappedObj, callArgs);
+            return ret === wrappedObj ? obj : _unwrapForHost(ret);
+          }
           if (typeof fn !== "function") {
             // (#837) Map/WeakMap upsert proposal polyfill — Node 25 / V8
             // currently don't ship `getOrInsert` / `getOrInsertComputed`
@@ -8882,6 +9496,17 @@ assert._isSameValue = isSameValue;
           // never reach this branch as wasm structs.
           if (ctorName === "Object" && v != null && _isWasmStruct(v)) {
             return 1;
+          }
+          return 0;
+        };
+      if (name === "__instanceof_dyn")
+        return (v: any, ctor: any) => {
+          try {
+            const wrappedCtor = _maybeWrapCallableUnknownArity(ctor, callbackState);
+            if (typeof wrappedCtor === "function") return v instanceof wrappedCtor ? 1 : 0;
+            if (typeof ctor === "function") return v instanceof ctor ? 1 : 0;
+          } catch {
+            return 0;
           }
           return 0;
         };

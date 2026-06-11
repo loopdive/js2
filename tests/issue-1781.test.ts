@@ -78,14 +78,26 @@ describe("#1781 standalone test262 artifact root-cause map", () => {
         scope_official: true,
         strict: "both",
       },
+      {
+        file: "test/language/expressions/object/dstr/meth-obj-ptrn-list-err.js",
+        category: "language/expressions",
+        status: "compile_error",
+        error: "L34:12 unexpected undefined AST node in compileExpression",
+        error_category: "other",
+        error_signature: "other:L#:## unexpected undefined AST node in compileExpression",
+        reached_test: false,
+        scope: "standard",
+        scope_official: true,
+        strict: "both",
+      },
     ]);
 
     const report = buildReport(input, output, ["--max-unclassified-root-causes", "0"]);
 
     expect(report.mode.target).toBe("standalone");
-    expect(report.summary.total).toBe(4);
-    expect(report.root_cause_map.total_non_pass_non_skip).toBe(3);
-    expect(report.root_cause_map.classified).toBe(3);
+    expect(report.summary.total).toBe(5);
+    expect(report.root_cause_map.total_non_pass_non_skip).toBe(4);
+    expect(report.root_cause_map.classified).toBe(4);
     expect(report.root_cause_map.unclassified.count).toBe(0);
 
     const byId = new Map(report.root_cause_map.buckets.map((bucket: any) => [bucket.id, bucket]));
@@ -96,6 +108,9 @@ describe("#1781 standalone test262 artifact root-cause map", () => {
     );
     expect(byId.get("standalone-dynamic-object-property").sample_signatures).toContain(
       "other:L#:## Codegen error: Proxy not supported in standalone mode (## Phase C).",
+    );
+    expect(byId.get("object-property-semantics").sample_files).toContain(
+      "test/language/expressions/object/dstr/meth-obj-ptrn-list-err.js",
     );
   });
 

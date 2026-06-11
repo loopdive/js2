@@ -52,6 +52,7 @@ import { coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 import { tryEmitJsonParseElementAccess, tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
+import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
 
 const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -1333,6 +1334,11 @@ export function compilePropertyAccess(
 
   const jsonParsePropertyType = tryEmitJsonParsePropertyAccess(ctx, fctx, expr);
   if (jsonParsePropertyType !== undefined) return jsonParsePropertyType;
+
+  {
+    const temporalPropertyType = tryCompileTemporalPropertyAccess(ctx, fctx, expr);
+    if (temporalPropertyType !== undefined) return temporalPropertyType;
+  }
 
   // TextEncoder/TextDecoder read-only Web API properties under no-host
   // targets. These instances are stateless placeholders; preserve receiver
