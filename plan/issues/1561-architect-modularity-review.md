@@ -613,8 +613,8 @@ Each subsection covers one file, with: **role, function inventory, proposed spli
 | 1283–1765 | `.call` / `.apply` | Reflection |
 | 1766–1856 | `Number.isNaN`, `Number.isInteger` | Number static |
 | 1858–1876 | `Array.isArray` | Array static |
-| 1877–1937 | `String.fromCharCode/fromCodePoint` | String static |
-| 1938–2079 | `Array.from`, `Array.of` | Array static |
+| 1877–2057 | `String.fromCharCode/fromCodePoint` | String static |
+| 2058–2079 | `Array.from`, `Array.of` | Array static |
 | 2080–2545 | `Object.{keys/values/entries/freeze/seal/preventExtensions/isFrozen/…/setPrototypeOf/getPrototypeOf/create}` | Object static **(huge)** |
 | 2545–3061 | `Object.{defineProperty/defineProperties/getOwnPropertyDescriptor/getOwnPropertyNames/getOwnPropertySymbols/hasOwn/is/assign/fromEntries/getOwnPropertyDescriptors/groupBy/Proxy.revocable}` | Object static (more) |
 | 3089–3345 | `Symbol.for/keyFor`, `ArrayBuffer.isView` | Symbol/ArrayBuffer static |
@@ -644,8 +644,8 @@ Each subsection covers one file, with: **role, function inventory, proposed spli
 | `calls/coercion-methods.ts` | 350 | lines 4917–5173 (`toString`/`valueOf`/`toLocaleString`) | low |
 | `calls/class-method-dispatch.ts` | 1,100 | lines 3912–4916 (user-class methods) | medium (touches `funcMap`, `classParentMap`) |
 | `calls/reflection.ts` | 500 | lines 1283–1765 (`.call`, `.apply`) | low |
-| `calls/number-array-string-statics.ts` | 350 | lines 1766–1937 (`Number.*`, `Array.isArray`, `String.from*`) | low |
-| `calls/array-of-from.ts` | 250 | lines 1938–2079 (`Array.from`, `Array.of`) | low |
+| `calls/number-array-string-statics.ts` | 350 | lines 1766–2057 (`Number.*`, `Array.isArray`, `String.from*`) | low |
+| `calls/array-of-from.ts` | 250 | lines 2058–2079 (`Array.from`, `Array.of`) | low |
 | `calls/symbol-arraybuffer.ts` | 300 | lines 3089–3345 (`Symbol.*`, `ArrayBuffer.isView`) | low |
 | `calls/eval.ts` | 350 | lines 548–667, 1023–1088 (eval classification + emit) | low |
 | `calls/dynamic-import.ts` | 80 | lines 1103–1148 | low |
@@ -1131,7 +1131,7 @@ This is essentially a 2,850-LoC "scan every AST and register every host import y
 | 1727 | `isAccessorDescriptor` | helper |
 | 1748 | `collectPropsFromStatements` | prop collector |
 | 1894 | `applyShapeInference` | shape merge |
-| 1946 | `collectDeclarations` | top entry |
+| 2066 | `collectDeclarations` | top entry |
 | 2924 | `collectInterface` | interface |
 | 2957 | `resolveStructFieldTypes` | finalize struct types |
 | 3012 | `collectObjectType` | object-type registration |
@@ -1231,7 +1231,7 @@ This is essentially a 2,850-LoC "scan every AST and register every host import y
 | 1704 | `collectBindingNames` | helper |
 | 1719 | `compileForOfStatement` (export) | for-of dispatcher |
 | 1746 | `compileForOfString` | string |
-| 1918, 1946 | `compileForOfArrayTentative`, `compileForOfArray` | array |
+| 2038, 2066 | `compileForOfArrayTentative`, `compileForOfArray` | array |
 | 2168 | `compileForOfIteratorAssignDestructuring` | iterator + assign-destructure |
 | 2404 | `compileForOfDirectIterator` | direct iterator |
 | 2676 | `findStructFieldsByTypeIdx` | helper |

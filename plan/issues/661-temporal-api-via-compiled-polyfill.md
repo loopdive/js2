@@ -1,10 +1,10 @@
 ---
 id: 661
 title: "Temporal API via compiled polyfill or minimal implementation"
-status: in-review
+status: done
 pr: 1274
 created: 2026-03-20
-updated: 2026-06-07
+updated: 2026-06-11
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -20,11 +20,12 @@ files:
       - "Temporal namespace with PlainDate/PlainTime/Duration classes"
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:10:20.796Z
+completed: 2026-06-10
 ---
 
 # #661 — Temporal API via compiled polyfill or minimal implementation
 
-## Status: in review
+## Status: done
 
 1,128 Temporal tests fail (currently skipped by safety filter). Rather than implementing the spec from scratch, try compiling the existing JS polyfill.
 

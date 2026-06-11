@@ -1,9 +1,9 @@
 ---
 id: 1470
 title: "host-independence: eliminate JS host string ops for standalone Wasm"
-status: in-review
+status: done
 created: 2026-05-20
-updated: 2026-06-07
+updated: 2026-06-11
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -17,6 +17,7 @@ related: []
 pr: 1283
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:02:25.296Z
+completed: 2026-06-11
 ---
 # #1470 — Eliminate JS host string ops for standalone Wasm
 

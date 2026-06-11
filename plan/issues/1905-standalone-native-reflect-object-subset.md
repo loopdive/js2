@@ -1,10 +1,11 @@
 ---
 id: 1905
 title: "standalone: native Reflect.get/set/has/deleteProperty over $Object"
-status: in-review
+status: done
 sprint: 61
 created: 2026-06-07
-updated: 2026-06-07
+updated: 2026-06-10
+completed: 2026-06-10
 priority: critical
 feasibility: medium
 reasoning_effort: high

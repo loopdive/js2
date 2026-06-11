@@ -62,3 +62,28 @@ copy-pasted ≥6 times within type-coercion.ts alone (1026-1048, 1067-1089,
 
 Compiler quality review 2026-06. Related: #1918 (fixup ratchet), #1858
 (fail-loud umbrella).
+
+## Amendment (2026-06-11, analysis program)
+
+Two corpus-driven changes to this spec (full detail:
+plan/log/analysis-2026-06/03-coercion-engine-spec.md and
+05-structure-review.md §2a):
+
+1. **The engine API must carry a `staticJsType?` hint.** The June corpus
+   proved that dispatching on Wasm ValType alone mis-classifies values —
+   the #2072 investigation showed booleans (i32) boxing as numbers,
+   undefined/null (externref) as strings, native strings (eqref) as
+   objects. A ValType-only engine reproduces that disease. Every entry
+   point (`emitToString`, `emitToPrimitive`, `emitLooseEq`, …) takes the
+   source expression's static TS classification when resolvable.
+2. **The site inventory is larger than this issue assumed.** Report 03
+   catalogued 37 sites: 13 ToString (the §7.1.17 matrix hand-rolled 7× —
+   incl. template spans string-ops.ts:272-285, join elemToStr
+   array-methods.ts:4543, standalone emitArrayJoin :4487+,
+   $__any_to_string native-strings.ts:5417), 11 ToNumber/ToPrimitive,
+   8 equality, 5 ToBoolean (incl. buildTruthyCheck, #2085). Migration
+   order and the per-site bug map live in report 03 §3.
+
+Sequencing: Step 0 (ValType table) is dependency-safe now; Steps 1+ land
+AFTER the type-aware boxing P0 (#2072/#2080) so the engine consumes
+correct tags. Drift gate: #2108.

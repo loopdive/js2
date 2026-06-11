@@ -28,7 +28,7 @@ eliminating the externref roundtrip.
 | **558** | Performance: add hash-based function type deduplication | 0 | done | medium |
 | **574** | Worker crashed -- 180 tests lost to worker process crashes | 21 | done | medium |
 | **598** | Typed export signatures: avoid externref at module boundary | 0 | done | high |
-| **685** | Interprocedural type flow: track return types across call sites | Backlog | ready | medium |
+| **685** | Interprocedural type flow: track return types across call sites | Backlog | done | medium |
 | **686** | Closure capture type preservation | 15 | done | medium |
 | **693** | Safe compilation speed optimizations | 22 | done | medium |
 | **743** | Whole-program type flow analysis | Backlog | ready | critical |
@@ -58,8 +58,8 @@ eliminating the externref roundtrip.
 | **1210** | labs/benchmarks: js2wasm string-hash Wasmtime lane hits 20s timeout — WasmGC i16-array GC pressure | 46 | done | high |
 | **1231** | perf: struct field type inference — eliminate boxing in object properties | 47 | done | high |
 | **1238** | IR Phase 4 Slice 13b — pseudo-ExternClassInfo registration for String + Array | 47 | done | high |
-| **1261** | eval tiering: classify eval sites into 5 tiers at compile time | Backlog | backlog | high |
-| **1262** | eval tier 2: compile eval(\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"static string\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\") as regular code at compile time | Backlog | wont-fix | medium |
+| **1261** | eval tiering: classify eval sites into 5 tiers at compile time | Backlog | done | high |
+| **1262** | eval tier 2: compile eval(\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"static string\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\") as regular code at compile time | Backlog | wont-fix | medium |
 | **1263** | eval tier 3: indirect eval (0,eval)(...) — no local boxing, global scope only | Backlog | backlog | medium |
 | **1264** | eval tier 4: strict-mode direct eval — optimistic unboxed locals + shadow scope deopt | Backlog | backlog | high |
 | **1266** | compiler flag --no-eval-scope-write: TypeError instead of shadow scope deopt | Backlog | backlog | medium |
@@ -69,6 +69,18 @@ eliminating the externref roundtrip.
 | **1580** | string-hash benchmark: wasm-validator pre-existing bug + uncompetitive hot runtime | 58 | done | high |
 | **1744** | string-builder build-loop perf: close the remaining gap on StarlingMonkey / the JS lane | 57 | done | medium |
 | **1746** | string-hash: reach (and beat) warm-V8 via AOT analysis — i32 path, const-eval, presize, SIMD, loop fusion/unroll | 57 | done | medium |
+| **1799** | Generalize TypedArray storage to packed WasmGC lanes | Backlog | ready | medium |
+| **1863** | Uint8Array large-buffer ops are slow (~7-8 s per 64 MiB) vs AssemblyScript/Javy/qjs | Backlog | backlog | medium |
+| **1867** | Native Messaging binary/Uint8Array path — revive streaming byte-chunk host if Chrome ships binary NM (crbug 732457) | Backlog | backlog | low |
+| **1886** | Linear-backed Uint8Array for WASI I/O buffers (escape analysis) — avoid GC↔linear copies, beat AssemblyScript on memory | 61 | done | medium |
+| **1895** | Minimal .wat repro: WasmGC i8 array.copy vs element-loop vs linear memory.copy throughput (wasmtime vs Node/V8) | Backlog | ready | medium |
+| **1925** | Run IR hygiene passes inside nested buffers — or commit to one control-flow representation | Backlog | backlog | medium |
+| **1946** | Closure devirtualization — statically-known callees pay ~15-instruction dynamic dispatch that Binaryen cannot remove | Backlog | backlog | high |
+| **1947** | End-to-end GC-ref typing — stop externref laundering inside the module; convert at the host boundary only | Backlog | backlog | high |
+| **1948** | Shared numeric lattice — replace three duplicated syntactic i32-safety matchers; stop i32↔f64 ping-pong | Backlog | backlog | high |
+| **1949** | Representative perf gate — 4 overfitted micros at 50% tolerance gate nothing; the honest suite is ungated | Backlog | backlog | medium |
+| **1950** | Default-on optimization — default builds ship unoptimized; add -O default where Binaryen is present plus tiny always-on cleanups | Backlog | backlog | medium |
+| **2083** | per-module exported host-glue suite (__call_fn_*, __sget_*, __vec_*) dominates small-binary size and is unstrippable by wasm-opt | 61 | ready | medium |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

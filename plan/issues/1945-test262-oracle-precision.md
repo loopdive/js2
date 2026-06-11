@@ -63,3 +63,22 @@ honesty, not regression — coordinate messaging with the PO):
 
 Compiler quality review 2026-06. Related: #1853 (stability bucket), PO
 coordination required (headline number will move).
+
+## Amendment (2026-06-11, analysis program)
+
+Concrete two-step plan folded in from
+plan/log/analysis-2026-06/06-test-infrastructure-plan.md §3 (the June
+corpus has 10+ error-model bugs — trap where catchable TypeError/
+RangeError is required — that this oracle currently cannot see):
+
+- **Step 1 (~30 runner lines, flag-gated):** traps must FAIL
+  runtime-negative tests — tests/test262-runner.ts:3247-3251 currently
+  passes ANY throw/trap as a negative success; additionally prefix-match
+  `meta.negative.type` against the error identity via the existing
+  `extractWasmExceptionMessage`. Gate behind the oracle_version protocol
+  (#2096); default-flip + re-baseline scheduled sprint 63.
+- **Step 2:** typed in-module assert shim (assert.throws already fails on
+  traps since traps escape the shim) — constructor-name assertion for
+  positive tests that catch.
+
+This oracle is the detector for the shared throwJsError work (#2102).

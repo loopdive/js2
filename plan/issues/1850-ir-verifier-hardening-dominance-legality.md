@@ -1,11 +1,11 @@
 ---
 id: 1850
 title: "Harden the IR verifier into a hard between-pass contract (cross-block dominance + per-backend legality + fail-CI)"
-status: in-review
+status: done
 pr: 1276
 sprint: 61
 created: 2026-06-04
-updated: 2026-06-07
+updated: 2026-06-11
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -16,6 +16,7 @@ goal: correctness
 related: [1844, 1798, 1131, 1376, 1530]
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:28:20.444Z
+completed: 2026-06-08
 ---
 # #1850 — Harden the IR verifier into a hard between-pass contract
 
