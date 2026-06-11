@@ -69,11 +69,15 @@ import { exportDrainMicrotasksIfRegistered, getDrainFuncIdxForWasiStart } from "
 import { registerAddStringImports, registerAddUnionImports } from "./shared.js";
 import { stackBalance } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
+import { ensureRegexMatchVecType } from "./native-regex.js";
+import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
 import {
   emitWrapperValueOfFunctions,
+  ensureAnyFromExternHelper,
   ensureAnyHelpers,
+  ensureAnyToExternHelper,
   ensureAnyValueType,
   ensureWrapperTypes,
   isAnyValue,
@@ -117,7 +121,9 @@ export {
   destructureParamArray,
   destructureParamObject,
   destructureParamObjectExternref,
+  ensureAnyFromExternHelper,
   ensureAnyHelpers,
+  ensureAnyToExternHelper,
   ensureAnyValueType,
   ensureNativeStringExternBridge,
   ensureNativeStringHelpers,
@@ -1492,6 +1498,12 @@ export function generateModule(
     // are refused-loud in `__apply_closure`.
     emitClosureMethodCallExportN(ctx, 3);
     emitClosureMethodCallExportN(ctx, 4);
+    // (#1712) Arity 5 for the fnctor prototype bridge: acorn-style prototype
+    // methods (e.g. `Parser.prototype.parseFunction(node, statement,
+    // allowExpressionBody, isAsync, forInit)`) are dispatched from the host
+    // with a receiver via `wasmClosureBridge` → `__call_fn_method_5`. No-op
+    // when no arity-5 closure exists.
+    emitClosureMethodCallExportN(ctx, 5);
 
     // (#1719 CPR read-drive) Fill the reserved `__drive_proto_iterator` driver
     // body now that `__call_fn_method_0` is registered. No-op when no read-drive
@@ -2398,370 +2410,29 @@ function emitToPrimitiveMethodExport(ctx: CodegenContext): void {
 
 /**
  * Emit __call_fn_0 export (#851): call a zero-arg WasmGC closure from JS.
- * Takes an externref (the closure struct) and returns externref (the result).
- * This enables calling dynamically-assigned closures (e.g. iterable[Symbol.iterator])
- * from the JS runtime when the closure is stored as a WasmGC struct in the sidecar.
- *
- * Strategy: dispatch by FUNCREF TYPE, not struct type.
- *
- * Problem with struct-type dispatch: V8's isorecursive canonicalization merges all
- * base wrapper struct types that have one field (funcref) into the same Wasm type.
- * So `ref.test $baseWrapperA` also passes for closures of base wrapper B, causing
- * `ref.cast $funcTypeA` on a funcref of type B to trap with "illegal cast".
- *
- * Solution: use ONE representative struct type for `ref.test` + `struct.get 0` to
- * extract the funcref, then dispatch on funcref type (which remains distinct per
- * closure signature even after struct canonicalization). Concrete subtype closures
- * (with captures) share the same funcref type as their base wrapper, so they're
- * covered automatically.
- *
- * Locals layout:
- *   0 = externref param
- *   1 = anyref (__any) — the converted externref
- *   2 = (ref null $baseWrapper) (__struct) — cast struct for field access and self arg
- *   3 = funcref (__funcref) — extracted funcref for type dispatch
+ * (#1712) Thin alias over the generic N-arg emitter, which carries the
+ * per-shape funcref extraction (capture-struct coverage), the #820l
+ * argc/extras plumbing, and the #1896 arg coercion. The historical
+ * hand-rolled body tested only one representative base-wrapper struct type,
+ * which silently excluded capture-carrying closures from dispatch (their
+ * struct types have no Wasm subtype relation to the 1-field base wrapper).
  */
 function emitClosureCallExport(ctx: CodegenContext): void {
-  const mod = ctx.mod;
-
-  // Phase 1: collect unique zero-arg funcref types and find representative base wrapper.
-  // Dedup by funcTypeIdx — concrete subtypes share funcTypeIdx with their base wrapper,
-  // so one dispatch arm handles all closures with the same funcref signature.
-  const seenFuncTypeIdx = new Set<number>();
-  const entries: { funcTypeIdx: number; returnType: ValType | null; selfTypeIdx: number }[] = [];
-
-  for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.paramTypes.length !== 0) continue;
-
-    const typeDef = mod.types[typeIdx];
-    if (!typeDef || typeDef.kind !== "struct") continue;
-
-    // Deduplicate by funcref type: concrete subtypes share funcTypeIdx with the
-    // base wrapper — only one dispatch arm needed per unique funcref type.
-    if (!seenFuncTypeIdx.has(info.funcTypeIdx)) {
-      seenFuncTypeIdx.add(info.funcTypeIdx);
-      // Look up the self param type from the funcref type definition.
-      // The lifted func type has (ref $selfStructType, ...params) → result.
-      // We must pass (ref $selfStructType) as the self arg for call_ref to validate.
-      const funcTypeDef = mod.types[info.funcTypeIdx];
-      const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
-      const selfTypeIdx =
-        selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
-          ? (selfParam as { typeIdx: number }).typeIdx
-          : typeIdx; // fallback: use struct typeIdx
-      entries.push({ funcTypeIdx: info.funcTypeIdx, returnType: info.returnType, selfTypeIdx });
-    }
-  }
-
-  if (entries.length === 0) return;
-
-  // Ensure __box_number is available for boxing numeric (f64/i32/i64) results.
-  addUnionImports(ctx);
-  const boxNumberIdx = ctx.funcMap.get("__box_number");
-
-  const exportFuncTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_fn_0_type");
-  const funcIdx = ctx.numImportFuncs + mod.functions.length;
-
-  // Body:
-  //   local 0: externref (param)
-  //   local 1: anyref (__any)
-  //   local 2: funcref (__funcref) — extracted from field 0
-  const body: Instr[] = [];
-  body.push({ op: "local.get", index: 0 });
-  body.push({ op: "any.convert_extern" } as Instr);
-  body.push({ op: "local.set", index: 1 } as Instr);
-
-  // Phase 2: build wrapper+funcref dispatch chain. A module can contain
-  // multiple no-capture wrapper structs with the same single-funcref layout but
-  // different lifted function signatures (for example `() => void` and
-  // `() => object`). Test each wrapper type before extracting its funcref.
-  let dispatch: Instr[] = [{ op: "ref.null.extern" } as Instr];
-
-  for (const entry of entries) {
-    const callBody: Instr[] = [
-      // Self arg: cast from anyref (local 1) to the specific base wrapper type for this
-      // funcref. Each funcref's first param is (ref $specificBaseWrapper). Using local 1
-      // (anyref) and casting to the exact expected type satisfies the Wasm validator.
-      { op: "local.get", index: 1 } as Instr,
-      { op: "ref.cast", typeIdx: entry.selfTypeIdx } as Instr,
-      // Funcref arg: cast to specific func type (safe since ref.test passed)
-      { op: "local.get", index: 2 } as Instr,
-      { op: "ref.cast", typeIdx: entry.funcTypeIdx } as Instr,
-      { op: "call_ref", typeIdx: entry.funcTypeIdx } as Instr,
-    ];
-
-    // Coerce result to externref
-    if (entry.returnType) {
-      if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
-        callBody.push({ op: "extern.convert_any" } as Instr);
-      } else if (entry.returnType.kind === "f64") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
-        } else {
-          callBody.push({ op: "drop" } as Instr);
-          callBody.push({ op: "ref.null.extern" } as Instr);
-        }
-      } else if (entry.returnType.kind === "i32") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "f64.convert_i32_s" } as Instr);
-          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
-        } else {
-          callBody.push({ op: "drop" } as Instr);
-          callBody.push({ op: "ref.null.extern" } as Instr);
-        }
-      } else if (entry.returnType.kind === "i64") {
-        // i64 (BigInt) — convert to f64 then box, or drop and return null
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "f64.convert_i64_s" } as Instr);
-          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
-        } else {
-          callBody.push({ op: "drop" } as Instr);
-          callBody.push({ op: "ref.null.extern" } as Instr);
-        }
-      }
-      // externref: no conversion needed
-    } else {
-      callBody.push({ op: "ref.null.extern" } as Instr);
-    }
-
-    const extractAndCall: Instr[] = [
-      { op: "local.get", index: 1 } as Instr,
-      { op: "ref.cast", typeIdx: entry.selfTypeIdx } as Instr,
-      { op: "struct.get", typeIdx: entry.selfTypeIdx, fieldIdx: 0 } as Instr,
-      { op: "local.set", index: 2 } as Instr,
-      { op: "local.get", index: 2 } as Instr,
-      { op: "ref.test", typeIdx: entry.funcTypeIdx } as Instr,
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: callBody,
-        else: [{ op: "ref.null.extern" } as Instr],
-      } as Instr,
-    ];
-
-    dispatch = [
-      { op: "local.get", index: 1 } as Instr,
-      { op: "ref.test", typeIdx: entry.selfTypeIdx } as Instr,
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: extractAndCall,
-        else: dispatch,
-      } as Instr,
-    ];
-  }
-
-  body.push(...dispatch);
-
-  mod.functions.push({
-    name: "__call_fn_0",
-    typeIdx: exportFuncTypeIdx,
-    locals: [
-      { name: "__any", type: { kind: "anyref" } },
-      { name: "__funcref", type: { kind: "funcref" } },
-    ],
-    body,
-    exported: true,
-  } as WasmFunction);
-
-  mod.exports.push({
-    name: "__call_fn_0",
-    desc: { kind: "func", index: funcIdx },
-  });
+  emitClosureCallExportN(ctx, 0);
 }
 
 /**
  * Emit __call_fn_1 export (#1090): call a one-arg WasmGC closure from JS.
- * Takes (externref closure, externref arg) and returns externref.
- * Needed for Symbol.toPrimitive closures which take a hint argument.
- * Same dispatch strategy as __call_fn_0 but for arity 1.
+ * (#1712) Thin alias over the generic N-arg emitter. Besides the per-shape
+ * funcref extraction fix, this widens coverage from exactly-arity-1 to
+ * arity <= 1, matching the documented `_maybeWrapCallableUnknownArity`
+ * contract ("the __call_fn_N dispatcher iterates closures of arity <= N"):
+ * the runtime wraps property-stored closures with the HIGHEST available
+ * dispatcher, so __call_fn_1 must be able to invoke a zero-arg closure
+ * (extra args dropped, #820l argc/extras plumbing included).
  */
 function emitClosureCallExport1(ctx: CodegenContext): void {
-  const mod = ctx.mod;
-
-  let baseWrapperIdx: number | undefined;
-  const seenFuncTypeIdx = new Set<number>();
-  const entries: { funcTypeIdx: number; returnType: ValType | null; selfTypeIdx: number }[] = [];
-
-  for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.paramTypes.length !== 1) continue;
-
-    const typeDef = mod.types[typeIdx];
-    if (!typeDef || typeDef.kind !== "struct") continue;
-
-    if (typeDef.superTypeIdx === -1 && baseWrapperIdx === undefined) {
-      baseWrapperIdx = typeIdx;
-    }
-
-    if (!seenFuncTypeIdx.has(info.funcTypeIdx)) {
-      seenFuncTypeIdx.add(info.funcTypeIdx);
-      const funcTypeDef = mod.types[info.funcTypeIdx];
-      const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
-      const selfTypeIdx =
-        selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
-          ? (selfParam as { typeIdx: number }).typeIdx
-          : typeIdx;
-      entries.push({ funcTypeIdx: info.funcTypeIdx, returnType: info.returnType, selfTypeIdx });
-    }
-  }
-
-  if (entries.length === 0) return;
-
-  // If no base wrapper found, try any 0-arg base wrapper (V8 canonicalizes
-  // all single-funcref base wrappers to the same type regardless of arity)
-  if (baseWrapperIdx === undefined) {
-    for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-      const typeDef = mod.types[typeIdx];
-      if (typeDef && typeDef.kind === "struct" && typeDef.superTypeIdx === -1) {
-        baseWrapperIdx = typeIdx;
-        break;
-      }
-    }
-  }
-  if (baseWrapperIdx === undefined) {
-    for (const [typeIdx] of ctx.closureInfoByTypeIdx) {
-      if (ctx.closureInfoByTypeIdx.get(typeIdx)!.paramTypes.length === 1) {
-        baseWrapperIdx = typeIdx;
-        break;
-      }
-    }
-  }
-  if (baseWrapperIdx === undefined) return;
-
-  addUnionImports(ctx);
-  const boxNumberIdx = ctx.funcMap.get("__box_number");
-
-  // __call_fn_1(closure: externref, arg: externref) → externref
-  const exportFuncTypeIdx = addFuncType(
-    ctx,
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-    "$call_fn_1_type",
-  );
-  const funcIdx = ctx.numImportFuncs + mod.functions.length;
-  const bwIdx = baseWrapperIdx;
-
-  // Locals: 0=closure externref, 1=arg externref, 2=anyref, 3=struct ref, 4=funcref
-  const body: Instr[] = [];
-  body.push({ op: "local.get", index: 0 });
-  body.push({ op: "any.convert_extern" } as Instr);
-  body.push({ op: "local.set", index: 2 } as Instr);
-
-  let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" } as Instr];
-
-  for (const entry of entries) {
-    // The funcref type for 1-arg closures is: (ref $self, param_type) → return_type
-    // We need to convert the externref arg to the expected param type.
-    // Most commonly it's externref (for hint strings), f64, or i32.
-    const funcTypeDef = mod.types[entry.funcTypeIdx];
-    const paramType =
-      funcTypeDef?.kind === "func" && funcTypeDef.params.length >= 2 ? funcTypeDef.params[1] : undefined;
-
-    const argConversion: Instr[] = [{ op: "local.get", index: 1 } as Instr];
-    if (paramType) {
-      if (paramType.kind === "f64") {
-        // externref → f64: unbox
-        const unboxIdx = ctx.funcMap.get("__unbox_number");
-        if (unboxIdx !== undefined) {
-          argConversion.push({ op: "call", funcIdx: unboxIdx } as Instr);
-        }
-      } else if (paramType.kind === "i32") {
-        const unboxIdx = ctx.funcMap.get("__unbox_number");
-        if (unboxIdx !== undefined) {
-          argConversion.push({ op: "call", funcIdx: unboxIdx } as Instr);
-          argConversion.push({ op: "i32.trunc_f64_s" });
-        }
-      }
-      // externref → externref: no conversion
-    }
-
-    const callBody: Instr[] = [
-      { op: "local.get", index: 2 } as Instr,
-      { op: "ref.cast", typeIdx: entry.selfTypeIdx } as Instr,
-      ...argConversion,
-      { op: "local.get", index: 4 } as Instr,
-      { op: "ref.cast", typeIdx: entry.funcTypeIdx } as Instr,
-      { op: "call_ref", typeIdx: entry.funcTypeIdx } as Instr,
-    ];
-
-    // Coerce result to externref
-    if (entry.returnType) {
-      if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
-        callBody.push({ op: "extern.convert_any" } as Instr);
-      } else if (entry.returnType.kind === "f64") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
-        } else {
-          callBody.push({ op: "drop" } as Instr);
-          callBody.push({ op: "ref.null.extern" } as Instr);
-        }
-      } else if (entry.returnType.kind === "i32") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "f64.convert_i32_s" } as Instr);
-          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
-        } else {
-          callBody.push({ op: "drop" } as Instr);
-          callBody.push({ op: "ref.null.extern" } as Instr);
-        }
-      } else if (entry.returnType.kind === "i64") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "f64.convert_i64_s" } as Instr);
-          callBody.push({ op: "call", funcIdx: boxNumberIdx } as Instr);
-        } else {
-          callBody.push({ op: "drop" } as Instr);
-          callBody.push({ op: "ref.null.extern" } as Instr);
-        }
-      }
-    } else {
-      callBody.push({ op: "ref.null.extern" } as Instr);
-    }
-
-    funcrefDispatch = [
-      { op: "local.get", index: 4 } as Instr,
-      { op: "ref.test", typeIdx: entry.funcTypeIdx } as Instr,
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: callBody,
-        else: funcrefDispatch,
-      } as Instr,
-    ];
-  }
-
-  const structExtractAndDispatch: Instr[] = [
-    { op: "local.get", index: 2 } as Instr,
-    { op: "ref.cast", typeIdx: bwIdx } as Instr,
-    { op: "local.tee", index: 3 } as Instr,
-    { op: "struct.get", typeIdx: bwIdx, fieldIdx: 0 } as Instr,
-    { op: "local.set", index: 4 } as Instr,
-    ...funcrefDispatch,
-  ];
-
-  body.push({ op: "local.get", index: 2 } as Instr);
-  body.push({ op: "ref.test", typeIdx: bwIdx } as Instr);
-  body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    then: structExtractAndDispatch,
-    else: [{ op: "ref.null.extern" } as Instr],
-  } as Instr);
-
-  mod.functions.push({
-    name: "__call_fn_1",
-    typeIdx: exportFuncTypeIdx,
-    locals: [
-      { name: "__any", type: { kind: "anyref" } },
-      { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
-      { name: "__funcref", type: { kind: "funcref" } },
-    ],
-    body,
-    exported: true,
-  } as WasmFunction);
-
-  mod.exports.push({
-    name: "__call_fn_1",
-    desc: { kind: "func", index: funcIdx },
-  });
+  emitClosureCallExportN(ctx, 1);
 }
 
 /**
@@ -2875,7 +2546,9 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   //   structLocal = (ref null $baseWrapper) for the cast struct
   //   funcLocal   = funcref extracted from struct field 0
   const anyLocal = arity + 1;
-  const structLocal = arity + 2;
+  // arity + 2 is the declared-but-now-unused `__struct` slot (kept so the
+  // local layout and funcLocal index stay stable after the #1712 per-shape
+  // extraction removed the single representative struct cast).
   const funcLocal = arity + 3;
 
   let baseWrapperIdx: number | undefined;
@@ -3048,7 +2721,14 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
 
     // Coerce result to externref.
     if (entry.returnType) {
-      if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
+      if ((ctx.standalone || ctx.wasi) && isAnyValue(entry.returnType, ctx)) {
+        const anyToExternIdx = ensureAnyToExternHelper(ctx);
+        if (anyToExternIdx !== undefined) {
+          callBody.push({ op: "call", funcIdx: anyToExternIdx } as Instr);
+        } else {
+          callBody.push({ op: "extern.convert_any" } as Instr);
+        }
+      } else if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
         callBody.push({ op: "extern.convert_any" } as Instr);
       } else if (entry.returnType.kind === "f64") {
         if (boxNumberIdx !== undefined) {
@@ -3090,23 +2770,19 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     ];
   }
 
-  const structExtractAndDispatch: Instr[] = [
-    { op: "local.get", index: anyLocal } as Instr,
-    { op: "ref.cast", typeIdx: bwIdx } as Instr,
-    { op: "local.tee", index: structLocal } as Instr,
-    { op: "struct.get", typeIdx: bwIdx, fieldIdx: 0 } as Instr,
-    { op: "local.set", index: funcLocal } as Instr,
-    ...funcrefDispatch,
-  ];
-
-  body.push({ op: "local.get", index: anyLocal } as Instr);
-  body.push({ op: "ref.test", typeIdx: bwIdx } as Instr);
-  body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    then: structExtractAndDispatch,
-    else: [{ op: "ref.null.extern" } as Instr],
-  } as Instr);
+  // (#1712) Funcref extraction must succeed for EVERY closure struct shape in
+  // the dispatch entries. Capture-carrying closures are emitted as standalone
+  // struct types (compiler-side superTypeIdx === -1, no Wasm subtype relation
+  // to the 1-field base wrapper), so the previous single
+  // `ref.test <representative base>` excluded them and the dispatcher silently
+  // returned null for any capturing closure — acorn's prototype methods all
+  // capture their fnctor, which made every compiled `parse()` come back null.
+  // Mirror `__is_closure` (collectClosureBaseWrapperTypeIdxs): chain a
+  // `ref.test` per distinct self-struct shape, extracting field 0 (funcref)
+  // from whichever matches. `funcLocal` stays null when nothing matches and
+  // the funcref dispatch below falls through to `ref.null.extern` as before.
+  body.push(...buildFuncrefExtraction(entries, anyLocal, funcLocal));
+  body.push(...funcrefDispatch);
 
   mod.functions.push({
     name: exportName,
@@ -3124,6 +2800,39 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     name: exportName,
     desc: { kind: "func", index: funcIdx },
   });
+}
+
+/**
+ * (#1712) Build the funcref-extraction preamble shared by the
+ * `__call_fn_<arity>` / `__call_fn_method_<arity>` dispatchers: for each
+ * distinct closure self-struct shape among the dispatch entries, test the
+ * anyref against the shape and, on match, store its field-0 funcref into
+ * `funcLocal`. Every lifted closure struct has field 0 = funcref by
+ * construction, so a value matching several canonically-equal shapes just
+ * re-extracts the same funcref. Non-closure inputs match nothing and leave
+ * `funcLocal` as null funcref (the dispatch chain's `ref.test`s all fail on
+ * null and yield the `ref.null.extern` fallthrough).
+ */
+function buildFuncrefExtraction(entries: { selfTypeIdx: number }[], anyLocal: number, funcLocal: number): Instr[] {
+  const out: Instr[] = [];
+  const seenShape = new Set<number>();
+  for (const entry of entries) {
+    if (seenShape.has(entry.selfTypeIdx)) continue;
+    seenShape.add(entry.selfTypeIdx);
+    out.push({ op: "local.get", index: anyLocal } as Instr);
+    out.push({ op: "ref.test", typeIdx: entry.selfTypeIdx } as Instr);
+    out.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: anyLocal } as Instr,
+        { op: "ref.cast", typeIdx: entry.selfTypeIdx } as Instr,
+        { op: "struct.get", typeIdx: entry.selfTypeIdx, fieldIdx: 0 } as Instr,
+        { op: "local.set", index: funcLocal } as Instr,
+      ],
+    } as Instr);
+  }
+  return out;
 }
 
 /**
@@ -3154,7 +2863,8 @@ function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number): void 
   //   prevThis    = externref save slot for nested invocations
   const totalParams = arity + 2; // thisVal + closure + N user args
   const anyLocal = totalParams;
-  const structLocal = totalParams + 1;
+  // totalParams + 1 is the declared-but-now-unused `__struct` slot (see the
+  // #1712 per-shape extraction note in emitClosureCallExportN).
   const funcLocal = totalParams + 2;
   const prevThisLocal = totalParams + 3;
 
@@ -3282,7 +2992,14 @@ function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number): void 
     ];
 
     if (entry.returnType) {
-      if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
+      if ((ctx.standalone || ctx.wasi) && isAnyValue(entry.returnType, ctx)) {
+        const anyToExternIdx = ensureAnyToExternHelper(ctx);
+        if (anyToExternIdx !== undefined) {
+          callBody.push({ op: "call", funcIdx: anyToExternIdx } as Instr);
+        } else {
+          callBody.push({ op: "extern.convert_any" } as Instr);
+        }
+      } else if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
         callBody.push({ op: "extern.convert_any" } as Instr);
       } else if (entry.returnType.kind === "f64") {
         if (boxNumberIdx !== undefined) {
@@ -3324,24 +3041,15 @@ function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number): void 
     ];
   }
 
-  const structExtractAndDispatch: Instr[] = [
-    { op: "local.get", index: anyLocal } as Instr,
-    { op: "ref.cast", typeIdx: bwIdx } as Instr,
-    { op: "local.tee", index: structLocal } as Instr,
-    { op: "struct.get", typeIdx: bwIdx, fieldIdx: 0 } as Instr,
-    { op: "local.set", index: funcLocal } as Instr,
-    ...funcrefDispatch,
-  ];
-
-  // Result of the if-block stays on the stack as externref.
-  body.push({ op: "local.get", index: anyLocal } as Instr);
-  body.push({ op: "ref.test", typeIdx: bwIdx } as Instr);
-  body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    then: structExtractAndDispatch,
-    else: [{ op: "ref.null.extern" } as Instr],
-  } as Instr);
+  // (#1712) Per-shape funcref extraction — same rationale as
+  // `emitClosureCallExportN` / `buildFuncrefExtraction`: capture-carrying
+  // closure structs have no Wasm subtype relation to the 1-field base
+  // wrapper, so a single representative `ref.test` excluded them and every
+  // capturing prototype method dispatched to null. The funcref dispatch
+  // below leaves its externref result on the stack (null fallthrough when
+  // `funcLocal` stayed null because no shape matched).
+  body.push(...buildFuncrefExtraction(entries, anyLocal, funcLocal));
+  body.push(...funcrefDispatch);
 
   // Restore __current_this. The result value remains on the stack as the
   // function's return value — we tee it through a local so we can restore
@@ -5451,11 +5159,10 @@ export function ensureLinearU8AllocHelper(ctx: CodegenContext): number {
  * `[object]` placeholder in emitWasiValueToStdout, corrupting the stream.
  *
  * Strategy: flatten any AnyString (FlatString / ConsString / Utf8String) to a
- * NativeString via the existing __str_flatten helper, then copy the low byte
- * of each i16 code unit into linear memory and issue a single fd_write. The
- * round-trip is byte-exact for ASCII / Latin-1 content (the Native Messaging
- * JSON case). Non-Latin-1 code points are truncated to their low byte —
- * acceptable for the protocol use-case.
+ * NativeString via the existing __str_flatten helper, then encode the WTF-16
+ * code units as UTF-8 bytes directly into linear memory before issuing
+ * fd_write. This keeps WASI string output on the pure-Wasm path (#1470) without
+ * routing through the JS-host `__str_to_mem` / `TextEncoder` bridge.
  *
  * Param 0 is typed `ref NativeString` so callers can hand us a value compiled
  * as `{ kind: "ref", typeIdx: ctx.nativeStrTypeIdx }` directly; __str_flatten
@@ -5491,18 +5198,148 @@ export function ensureWasiWriteAnyStringHelper(ctx: CodegenContext, useStderr: b
   // response in the Native Messaging host (#1723).
   const anyStrTypeIdx = ctx.anyStrTypeIdx >= 0 ? ctx.anyStrTypeIdx : strTypeIdx;
 
-  // param: s(0); locals: flat(1), len(2), off(3), data(4), i(5), needPages(6)
+  // param: s(0); locals: flat(1), len(2), off(3), data(4), i(5), o(6),
+  // needPages(7), cu(8), cp(9), lo(10)
   const S = 0;
   const FLAT = 1;
   const LEN = 2;
   const OFF = 3;
   const DATA = 4;
   const I = 5;
-  const NEED_PAGES = 6;
+  const O = 6;
+  const NEED_PAGES = 7;
+  const CU = 8;
+  const CP = 9;
+  const LO = 10;
 
   const funcTypeIdx = addFuncType(ctx, [{ kind: "ref", typeIdx: anyStrTypeIdx }], []);
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   ctx.funcMap.set(helperName, funcIdx);
+
+  const storeByte = (offsetFromO: number, value: Instr[]): Instr[] => [
+    { op: "i32.const", value: WASI_WRITE_SCRATCH_START } as Instr,
+    { op: "local.get", index: O } as Instr,
+    ...(offsetFromO === 0
+      ? []
+      : ([{ op: "i32.const", value: offsetFromO } as Instr, { op: "i32.add" } as Instr] as Instr[])),
+    { op: "i32.add" } as Instr,
+    ...value,
+    { op: "i32.store8", align: 0, offset: 0 } as Instr,
+  ];
+
+  const advanceOutput = (n: number): Instr[] => [
+    { op: "local.get", index: O } as Instr,
+    { op: "i32.const", value: n } as Instr,
+    { op: "i32.add" } as Instr,
+    { op: "local.set", index: O } as Instr,
+  ];
+
+  const encodeCurrentCodePoint: Instr[] = [
+    { op: "local.get", index: CP } as Instr,
+    { op: "i32.const", value: 0x80 } as Instr,
+    { op: "i32.lt_u" } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [storeByte(0, [{ op: "local.get", index: CP } as Instr]), ...advanceOutput(1)].flat(),
+      else: [
+        { op: "local.get", index: CP } as Instr,
+        { op: "i32.const", value: 0x800 } as Instr,
+        { op: "i32.lt_u" } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...storeByte(0, [
+              { op: "local.get", index: CP } as Instr,
+              { op: "i32.const", value: 6 } as Instr,
+              { op: "i32.shr_u" } as Instr,
+              { op: "i32.const", value: 0xc0 } as Instr,
+              { op: "i32.or" } as Instr,
+            ]),
+            ...storeByte(1, [
+              { op: "local.get", index: CP } as Instr,
+              { op: "i32.const", value: 0x3f } as Instr,
+              { op: "i32.and" } as Instr,
+              { op: "i32.const", value: 0x80 } as Instr,
+              { op: "i32.or" } as Instr,
+            ]),
+            ...advanceOutput(2),
+          ],
+          else: [
+            { op: "local.get", index: CP } as Instr,
+            { op: "i32.const", value: 0x10000 } as Instr,
+            { op: "i32.lt_u" } as Instr,
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                ...storeByte(0, [
+                  { op: "local.get", index: CP } as Instr,
+                  { op: "i32.const", value: 12 } as Instr,
+                  { op: "i32.shr_u" } as Instr,
+                  { op: "i32.const", value: 0xe0 } as Instr,
+                  { op: "i32.or" } as Instr,
+                ]),
+                ...storeByte(1, [
+                  { op: "local.get", index: CP } as Instr,
+                  { op: "i32.const", value: 6 } as Instr,
+                  { op: "i32.shr_u" } as Instr,
+                  { op: "i32.const", value: 0x3f } as Instr,
+                  { op: "i32.and" } as Instr,
+                  { op: "i32.const", value: 0x80 } as Instr,
+                  { op: "i32.or" } as Instr,
+                ]),
+                ...storeByte(2, [
+                  { op: "local.get", index: CP } as Instr,
+                  { op: "i32.const", value: 0x3f } as Instr,
+                  { op: "i32.and" } as Instr,
+                  { op: "i32.const", value: 0x80 } as Instr,
+                  { op: "i32.or" } as Instr,
+                ]),
+                ...advanceOutput(3),
+              ],
+              else: [
+                ...storeByte(0, [
+                  { op: "local.get", index: CP } as Instr,
+                  { op: "i32.const", value: 18 } as Instr,
+                  { op: "i32.shr_u" } as Instr,
+                  { op: "i32.const", value: 0xf0 } as Instr,
+                  { op: "i32.or" } as Instr,
+                ]),
+                ...storeByte(1, [
+                  { op: "local.get", index: CP } as Instr,
+                  { op: "i32.const", value: 12 } as Instr,
+                  { op: "i32.shr_u" } as Instr,
+                  { op: "i32.const", value: 0x3f } as Instr,
+                  { op: "i32.and" } as Instr,
+                  { op: "i32.const", value: 0x80 } as Instr,
+                  { op: "i32.or" } as Instr,
+                ]),
+                ...storeByte(2, [
+                  { op: "local.get", index: CP } as Instr,
+                  { op: "i32.const", value: 6 } as Instr,
+                  { op: "i32.shr_u" } as Instr,
+                  { op: "i32.const", value: 0x3f } as Instr,
+                  { op: "i32.and" } as Instr,
+                  { op: "i32.const", value: 0x80 } as Instr,
+                  { op: "i32.or" } as Instr,
+                ]),
+                ...storeByte(3, [
+                  { op: "local.get", index: CP } as Instr,
+                  { op: "i32.const", value: 0x3f } as Instr,
+                  { op: "i32.and" } as Instr,
+                  { op: "i32.const", value: 0x80 } as Instr,
+                  { op: "i32.or" } as Instr,
+                ]),
+                ...advanceOutput(4),
+              ],
+            } as Instr,
+          ],
+        } as Instr,
+      ],
+    } as Instr,
+  ];
 
   const body: Instr[] = [
     // flat = __str_flatten(s)
@@ -5515,19 +5352,19 @@ export function ensureWasiWriteAnyStringHelper(ctx: CodegenContext, useStderr: b
     { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 } as Instr,
     { op: "local.set", index: LEN } as Instr,
 
-    // #1723: grow linear memory if the staging buffer
-    // [WASI_WRITE_SCRATCH_START .. WASI_WRITE_SCRATCH_START+len) would overflow
-    // the current memory size. The module reserves only 3 pages by default, so
-    // a ~1 MiB response (the Native Messaging large-message case) writes far
-    // past page 2 and traps "memory access out of bounds" without this guard.
+    // #1723/#1470: grow linear memory if the staging buffer could overflow.
+    // UTF-8/WTF-8 needs at most 3 bytes per UTF-16 code unit: BMP scalars and
+    // lone surrogates are 1..3 bytes, while a surrogate pair is 4 bytes across
+    // two code units. The final fd_write length is the actual output cursor O.
     //
-    //   neededPages = ceil((WASI_WRITE_SCRATCH_START + len) / 65536)
-    //   if (memory.size < neededPages) memory.grow(neededPages - memory.size)
+    //   neededPages = ceil((WASI_WRITE_SCRATCH_START + len*3) / 65536)
     //
     // ceil(x / 65536) == (x + 65535) >> 16. We `i32.shr_u` so a large length
     // near 2^31 still computes a non-negative page count.
     { op: "i32.const", value: WASI_WRITE_SCRATCH_START } as Instr,
     { op: "local.get", index: LEN } as Instr,
+    { op: "i32.const", value: 3 } as Instr,
+    { op: "i32.mul" } as Instr,
     { op: "i32.add" } as Instr,
     { op: "i32.const", value: 65535 } as Instr,
     { op: "i32.add" } as Instr,
@@ -5563,8 +5400,11 @@ export function ensureWasiWriteAnyStringHelper(ctx: CodegenContext, useStderr: b
     // i = 0
     { op: "i32.const", value: 0 } as Instr,
     { op: "local.set", index: I } as Instr,
+    // o = 0 (UTF-8 byte cursor)
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "local.set", index: O } as Instr,
 
-    // while (i < len) mem[SCRATCH+i] = (u8) data[off+i]; i++
+    // while (i < len) decode one WTF-16 code point and encode it as UTF-8.
     {
       op: "block",
       blockType: { kind: "empty" },
@@ -5578,26 +5418,76 @@ export function ensureWasiWriteAnyStringHelper(ctx: CodegenContext, useStderr: b
             { op: "i32.ge_s" } as Instr,
             { op: "br_if", depth: 1 } as Instr,
 
-            // address = SCRATCH_START + i
-            { op: "i32.const", value: WASI_WRITE_SCRATCH_START } as Instr,
-            { op: "local.get", index: I } as Instr,
-            { op: "i32.add" } as Instr,
-
-            // value = data[off + i] (i16, unsigned) — low byte kept by i32.store8
+            // cu = data[off + i]; cp = cu; i++
             { op: "local.get", index: DATA } as Instr,
             { op: "local.get", index: OFF } as Instr,
             { op: "local.get", index: I } as Instr,
             { op: "i32.add" } as Instr,
             { op: "array.get_u", typeIdx: strDataTypeIdx } as Instr,
-
-            { op: "i32.store8", align: 0, offset: 0 },
-
-            // i++
+            { op: "local.set", index: CU } as Instr,
+            { op: "local.get", index: CU } as Instr,
+            { op: "local.set", index: CP } as Instr,
             { op: "local.get", index: I } as Instr,
             { op: "i32.const", value: 1 } as Instr,
             { op: "i32.add" } as Instr,
             { op: "local.set", index: I } as Instr,
 
+            // If cu is a high surrogate and the next code unit is a low
+            // surrogate, combine them into one scalar and consume the low unit.
+            { op: "local.get", index: CU } as Instr,
+            { op: "i32.const", value: 0xd800 } as Instr,
+            { op: "i32.ge_u" } as Instr,
+            { op: "local.get", index: CU } as Instr,
+            { op: "i32.const", value: 0xdbff } as Instr,
+            { op: "i32.le_u" } as Instr,
+            { op: "i32.and" } as Instr,
+            { op: "local.get", index: I } as Instr,
+            { op: "local.get", index: LEN } as Instr,
+            { op: "i32.lt_s" } as Instr,
+            { op: "i32.and" } as Instr,
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: DATA } as Instr,
+                { op: "local.get", index: OFF } as Instr,
+                { op: "local.get", index: I } as Instr,
+                { op: "i32.add" } as Instr,
+                { op: "array.get_u", typeIdx: strDataTypeIdx } as Instr,
+                { op: "local.set", index: LO } as Instr,
+                { op: "local.get", index: LO } as Instr,
+                { op: "i32.const", value: 0xdc00 } as Instr,
+                { op: "i32.ge_u" } as Instr,
+                { op: "local.get", index: LO } as Instr,
+                { op: "i32.const", value: 0xdfff } as Instr,
+                { op: "i32.le_u" } as Instr,
+                { op: "i32.and" } as Instr,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: 0x10000 } as Instr,
+                    { op: "local.get", index: CU } as Instr,
+                    { op: "i32.const", value: 0xd800 } as Instr,
+                    { op: "i32.sub" } as Instr,
+                    { op: "i32.const", value: 10 } as Instr,
+                    { op: "i32.shl" } as Instr,
+                    { op: "i32.add" } as Instr,
+                    { op: "local.get", index: LO } as Instr,
+                    { op: "i32.const", value: 0xdc00 } as Instr,
+                    { op: "i32.sub" } as Instr,
+                    { op: "i32.add" } as Instr,
+                    { op: "local.set", index: CP } as Instr,
+                    { op: "local.get", index: I } as Instr,
+                    { op: "i32.const", value: 1 } as Instr,
+                    { op: "i32.add" } as Instr,
+                    { op: "local.set", index: I } as Instr,
+                  ],
+                } as Instr,
+              ],
+            } as Instr,
+
+            ...encodeCurrentCodePoint,
             { op: "br", depth: 0 } as Instr,
           ],
         },
@@ -5608,9 +5498,9 @@ export function ensureWasiWriteAnyStringHelper(ctx: CodegenContext, useStderr: b
     { op: "i32.const", value: 0 } as Instr,
     { op: "i32.const", value: WASI_WRITE_SCRATCH_START } as Instr,
     { op: "i32.store", align: 2, offset: 0 } as Instr,
-    // iovec.buf_len = len at memory[4]
+    // iovec.buf_len = actual UTF-8 byte length at memory[4]
     { op: "i32.const", value: 4 } as Instr,
-    { op: "local.get", index: LEN } as Instr,
+    { op: "local.get", index: O } as Instr,
     { op: "i32.store", align: 2, offset: 0 } as Instr,
     // fd_write(fd, iovs=0, iovs_len=1, nwritten=8)
     { op: "i32.const", value: fd } as Instr,
@@ -5630,7 +5520,11 @@ export function ensureWasiWriteAnyStringHelper(ctx: CodegenContext, useStderr: b
       { name: "off", type: { kind: "i32" } },
       { name: "data", type: { kind: "ref", typeIdx: strDataTypeIdx } },
       { name: "i", type: { kind: "i32" } },
+      { name: "o", type: { kind: "i32" } },
       { name: "needPages", type: { kind: "i32" } },
+      { name: "cu", type: { kind: "i32" } },
+      { name: "cp", type: { kind: "i32" } },
+      { name: "lo", type: { kind: "i32" } },
     ],
     body,
     exported: false,
@@ -8115,6 +8009,9 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
     name: "$BigInt",
     fields: [{ name: "value", type: { kind: "i64", bigint: true }, mutable: false }],
   });
+  ctx.nativeBoxNumberTypeIdx = boxNumStructIdx;
+  ctx.nativeBoxBooleanTypeIdx = boxBoolStructIdx;
+  ctx.nativeBigIntTypeIdx = bigIntStructIdx;
 
   // 2. Pre-compute func types — addFuncType de-dupes by signature so
   //    repeated calls return the same typeIdx.
@@ -10377,7 +10274,15 @@ function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.SourceFile
               register(`${info.importPrefix}_${memberName}`, sig.params, sig.results);
             }
           } else {
-            const info = resolveExtern(className, memberName, "property");
+            // #1914 — standalone answers RegExp reflection reads natively
+            // (struct fields); never pre-register the env.RegExp_get_* host
+            // import for them, matching the compile-path interception in
+            // property-access.ts. Same set on both sides keeps a non-handled
+            // prop on the (refusing) extern path instead of silently losing
+            // its import.
+            const isStandaloneNativeRegExpProp =
+              ctx.standalone && className === "RegExp" && STANDALONE_REGEXP_REFLECTION_PROPS.has(memberName);
+            const info = isStandaloneNativeRegExpProp ? null : resolveExtern(className, memberName, "property");
             if (info) {
               const propInfo = info.properties.get(memberName)!;
               register(`${info.importPrefix}_get_${memberName}`, [{ kind: "externref" }], [propInfo.type]);
@@ -10396,7 +10301,10 @@ function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.SourceFile
       const objType = ctx.checker.getTypeAtLocation(node.left.expression);
       const className = objType.getSymbol()?.name;
       const propName = node.left.name.text;
-      if (className && !isNativeEncodingClass(className)) {
+      // #1914 — `re.lastIndex = v` is a native struct.set in standalone; do
+      // not pre-register env.RegExp_set_lastIndex.
+      const isStandaloneNativeRegExpWrite = ctx.standalone && className === "RegExp" && propName === "lastIndex";
+      if (className && !isNativeEncodingClass(className) && !isStandaloneNativeRegExpWrite) {
         const info = resolveExtern(className, propName, "property");
         if (info) {
           const propInfo = info.properties.get(propName)!;
@@ -11324,10 +11232,10 @@ function isStaticRegExpExpressionForInference(ctx: CodegenContext, expr: ts.Expr
 
 function nativeStringVecTypeForStandaloneRegExp(ctx: CodegenContext): ValType | null {
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
-  const elemKey = `ref_${ctx.anyStrTypeIdx}`;
-  const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
-  getOrRegisterArrayType(ctx, elemKey, elemType);
-  const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+  // The match result is the match-vec SUBTYPE of the nstr vec (#1914) — the
+  // precise local type keeps `.index`/`.input` reads cast-free while every
+  // base-vec consumer still applies via subsumption.
+  const vecTypeIdx = ensureRegexMatchVecType(ctx);
   return { kind: "ref_null", typeIdx: vecTypeIdx };
 }
 

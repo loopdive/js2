@@ -42,6 +42,10 @@ function load(rel: string): Summary {
   }
 }
 
+// The optimize lane (#1941) is NOT gated here — it has a dedicated
+// `scripts/diff-test-optimize-gate.ts` that diffs the optimized lane against
+// the unoptimized lane directly (no frozen baseline to drift). This gate
+// stays purely the V8-oracle baseline delta for the unoptimized lane.
 const baseline = load("benchmarks/results/diff-test-baseline.json");
 const current = load("benchmarks/results/diff-test.json");
 

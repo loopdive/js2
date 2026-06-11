@@ -49,6 +49,27 @@ jobs:
           path: benchmarks/results/diff-test.json
           if-no-files-found: error
 
+      # #1941 — optimize lane. Re-run the SAME corpus with `optimize: true`
+      # (Binaryen wasm-opt -O3 post-pass). Catches wasm-opt miscompiles, which
+      # no gate executed before. Runs after the unoptimized lane so both
+      # reports exist for the differential gate below.
+      - name: Run differential harness (optimize lane)
+        env:
+          DIFF_TEST_OPTIMIZE: "1"
+        run: npx tsx scripts/diff-test.ts
+        # Same as the unopt lane: non-zero on any corpus non-match is expected;
+        # the merge gate compares the two lanes' deltas, not absolute pass rate.
+        continue-on-error: true
+
+      - name: Upload diff-test optimize report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          retention-days: 1
+          name: diff-test-optimize-report
+          path: benchmarks/results/diff-test-optimize.json
+          if-no-files-found: error
+
       - name: Run triage (informational)
         if: always()
         run: npx tsx scripts/diff-triage.ts > diff-triage.md || true
@@ -67,6 +88,16 @@ jobs:
       - name: Delta gate (PR + merge queue)
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: npx tsx scripts/diff-test-gate.ts
+
+      # #1941 — optimize differential gate. Fails the merge candidate if
+      # `--optimize` changes ANY corpus program's observable outcome vs the
+      # unoptimized lane (e.g. wasm-opt produces an invalid binary, or a
+      # passing program flips to a runtime error). Self-maintaining: it diffs
+      # the two lanes' per-file outcomes, so there is no frozen baseline to
+      # drift.
+      - name: Optimize differential gate (PR + merge queue)
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: npx tsx scripts/diff-test-optimize-gate.ts
 
       # On merge to main, refresh the committed baseline so the next PR
       # compares against the latest known-good state.

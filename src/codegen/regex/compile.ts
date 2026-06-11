@@ -24,6 +24,7 @@
  */
 import { INSTR_WIDTH, ReOp, RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, type CompiledRegex } from "./bytecode.js";
 import { parsePattern, type ParsedRegex, type ReNode } from "./parse.js";
+import { cpRangesToNode, dotCpRanges } from "./unicode.js";
 
 /** Bounded repetition expansion guard — `{n,m}` with large m is rewritten to
  *  repeated atoms, so cap the expansion to keep programs small. */
@@ -111,6 +112,11 @@ class Emitter {
         // `dotAll`=1 under the `s` flag (`.` matches line terminators too);
         // otherwise 0 (the VM excludes \n \r U+2028 U+2029).
         this.emit(ReOp.ANY, this.dotAll ? 1 : 0);
+        return;
+      case "udot":
+        // u/v-mode `.` — one CODE POINT. Desugared here (not at parse) so the
+        // modifier-scoped dotAll state applies. #1911 Slice B.
+        this.compileNode(cpRangesToNode(dotCpRanges(this.dotAll)));
         return;
       case "class": {
         const ranges = this.caseInsensitive ? foldClassRangesAscii(node.ranges) : node.ranges;
@@ -406,5 +412,5 @@ export function compileParsed(parsed: ParsedRegex, flags: number): CompiledRegex
 /** Convenience: parse + compile in one step. Throws RegexUnsupportedError /
  *  RepeatTooLargeError for out-of-subset patterns. */
 export function compilePattern(pattern: string, flags: number): CompiledRegex {
-  return compileParsed(parsePattern(pattern), flags);
+  return compileParsed(parsePattern(pattern, flags), flags);
 }

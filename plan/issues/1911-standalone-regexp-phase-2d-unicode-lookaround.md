@@ -1,11 +1,12 @@
 ---
 id: 1911
 title: "standalone RegExp Phase 2d: u/v/d flags, Unicode escapes, lookaround, modifiers"
-status: in-progress
+status: done
 sprint: 61
 model: fable
 created: 2026-06-07
 updated: 2026-06-10
+completed: 2026-06-10
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -82,16 +83,38 @@ Landed (stacked on #1912 / PR #1300):
 - **`d` flag accepted** — no matching-semantics change; the `.indices` result
   surface belongs to #1914 (fable-rx-surface).
 
-## Remaining — Slice B (u/v code-point semantics)
+## Implementation Notes — Slice B (fable-rx-engine, 2026-06-10)
 
-- `u` flag: `\u{…}` escapes, astral code points via surrogate-pair
-  desugaring (regexpu-style alternation), code-point `.`, Unicode case
-  folding for `i`.
-- `\p{…}`/`\P{…}` property escapes — planned approach: expand to plain
-  range lists at COMPILE TIME by enumerating code points against the host
-  `RegExp` (the compiler runs on Node; no runtime tables, no host imports),
-  then astral-desugar. Cache per (class, flags).
-- `v` flag (UnicodeSets): same host-enumeration approach for char-class
-  semantics; `\q{…}` string disjunctions stay refused.
-- Negative u/v syntax tests already pass via the #1912 host-oracle runtime
-  SyntaxError lowering at `new RegExp(...)` sites.
+Landed as planned (stacked on Slice A / PR #1308): u/v code-point semantics
+via COMPILE-TIME host enumeration (`src/codegen/regex/unicode.ts`):
+
+- Class-like atoms (`[...]`, `\p{…}`/`\P{…}`, shorthands, ui single chars)
+  resolve into exact code-point range sets by scanning the class source with
+  `g`+`u`/`v` flags over a one-time string of every non-surrogate code point
+  (~10-300ms per unique class, cached; the 2048 lone surrogates probed
+  individually). The host is V8 — full property tables and Canonicalize
+  folding for free (Kelvin sign, σ/ς/Σ, \w ui ſ/K, v-mode set operations,
+  class negation incl. lone surrogates). Host participates only at COMPILE
+  time; the module stays pure Wasm.
+- Range sets desugar regexpu-style into the unit-level VM AST: BMP class +
+  astral surrogate-pair alternations + lone-surrogate arms guarded by the
+  Slice A lookarounds (`lead(?!trail)` / `(?<!lead)trail`). One code point
+  per match, so quantifiers iterate by code point.
+- Parser u/v mode: `\u{…}`, `\uHHHH` escape-pair combining, literal astral
+  pairs as one atom, strict DecimalEscape, modifier-scoped `i` threading
+  into enumeration, compile-time `udot` (modifier-scoped dotAll).
+- u/v literals host-pre-validate (invalid → compile refusal); ctor sites
+  already lower to runtime SyntaxError (#1912).
+
+Fail-loud residuals (documented refusals, NOT silent wrongness):
+
+- `\b`/`\B` under u+i (VM IsWordChar is ASCII; ui adds ſ/K).
+- Backreferences under u+i (VM folds ASCII; spec needs Canonicalize).
+- `\q{…}` string disjunctions in v mode (match strings, not code points).
+- Pre-existing 2a engine residual: star/plus with empty-matching bodies
+  backtrack to the step cap (needs an empty-progress check op).
+
+Validation: tests/regex-bytecode.test.ts + tests/issue-1911-regex-phase2d.test.ts
+Slice B sections (astral dot/classes, property escapes, Kelvin/sigma folds,
+v-mode subtraction, lone surrogates, literal-refusal + ctor-SyntaxError
+probes); full scoped regex suite 645 tests green.
