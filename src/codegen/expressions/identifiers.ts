@@ -115,7 +115,7 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
     addStringConstantGlobal(ctx, msg);
-    // (#1915) Sentinel-safe message materialization — under nativeStrings the
+    // (#2029) Sentinel-safe message materialization — under nativeStrings the
     // map stores -1 and a raw `global.get` would fail emit validation.
     then = [
       ...stringConstantExternrefInstrs(ctx, msg),
@@ -433,7 +433,7 @@ export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, n
   flushLateImportShifts(ctx, fctx);
   if (throwRefErrIdx !== undefined) {
     addStringConstantGlobal(ctx, msg);
-    // (#1915) Sentinel-safe message materialization (host + --nativeStrings).
+    // (#2029) Sentinel-safe message materialization (host + --nativeStrings).
     fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
     fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
     fctx.body.push({ op: "unreachable" });
@@ -695,7 +695,7 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
       addStringConstantGlobal(ctx, name);
-      // (#1915) Sentinel-safe key materialization — under nativeStrings the
+      // (#2029) Sentinel-safe key materialization — under nativeStrings the
       // map stores -1 and a raw `global.get` would fail emit validation.
       fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
       fctx.body.push({ op: "call", funcIdx: getIdx });
@@ -795,7 +795,7 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     flushLateImportShifts(ctx, fctx);
     if (throwRefErrIdx !== undefined) {
       addStringConstantGlobal(ctx, msg);
-      // (#1915) Sentinel-safe message materialization (host + --nativeStrings).
+      // (#2029) Sentinel-safe message materialization (host + --nativeStrings).
       fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
       fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
       fctx.body.push({ op: "unreachable" });
@@ -1147,7 +1147,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
 
   // Push constructor name as a string constant
   addStringConstantGlobal(ctx, ctorName);
-  // (#1915) Sentinel-safe name materialization — under nativeStrings the
+  // (#2029) Sentinel-safe name materialization — under nativeStrings the
   // map stores -1 and a raw `global.get` would fail emit validation.
   fctx.body.push(...stringConstantExternrefInstrs(ctx, ctorName));
 

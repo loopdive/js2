@@ -1713,6 +1713,32 @@ export function coerceType(
   // ref (struct) → f64: JS ToNumber semantics — check @@toPrimitive("number") first, then valueOf
   // Re-entrancy guard: prevent infinite recursion when valueOf itself returns a struct.
   if ((from.kind === "ref" || from.kind === "ref_null") && to.kind === "f64") {
+    const typeIdx = (from as { typeIdx: number }).typeIdx;
+    if (
+      ctx.nativeStrings &&
+      (typeIdx === ctx.anyStrTypeIdx || (ctx.nativeStrTypeIdx >= 0 && typeIdx === ctx.nativeStrTypeIdx))
+    ) {
+      let strToNumberIdx = ctx.funcMap.get("__str_to_number");
+      if (strToNumberIdx === undefined) {
+        addUnionImports(ctx);
+        strToNumberIdx = ctx.funcMap.get("__str_to_number");
+      }
+      if (strToNumberIdx !== undefined) {
+        fctx.body.push({ op: "extern.convert_any" });
+        fctx.body.push({ op: "call", funcIdx: strToNumberIdx });
+        return;
+      }
+      addUnionImports(ctx);
+      const unboxIdx = ctx.funcMap.get("__unbox_number");
+      if (unboxIdx !== undefined) {
+        fctx.body.push({ op: "extern.convert_any" });
+        fctx.body.push({ op: "call", funcIdx: unboxIdx });
+        return;
+      }
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "f64.const", value: NaN });
+      return;
+    }
     const wasInsideValueOf = (ctx as any).__insideValueOfCoercion ?? false;
     if (wasInsideValueOf) {
       // Already inside a valueOf coercion — don't recurse, return NaN
@@ -1726,7 +1752,6 @@ export function coerceType(
     const cleanup = () => {
       (ctx as any).__insideValueOfCoercion = wasInsideValueOf;
     };
-    const typeIdx = (from as { typeIdx: number }).typeIdx;
     const name = ctx.typeIdxToStructName.get(typeIdx);
     if (name !== undefined) {
       // Check for [Symbol.toPrimitive] method first — takes precedence over valueOf

@@ -11,7 +11,7 @@ task_type: feature
 area: codegen, type-coercion, standalone
 language_feature: to-primitive, symbol-toprimitive, abstract-operations
 goal: standalone-mode
-sprint: 60
+sprint: 61
 parent: 1806
 related: [1806, 1525b, 1472, 850, 1253, 1716]
 needs_arch_spec: true

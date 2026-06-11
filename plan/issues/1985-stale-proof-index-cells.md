@@ -1,5 +1,5 @@
 ---
-id: 1956
+id: 1985
 title: "stale-proof index cells: shift-walker-updated { idx } handles for captured func indices (#1923 Option 2b, incremental)"
 status: ready
 sprint: Backlog
@@ -14,11 +14,11 @@ area: codegen
 language_feature: compiler-internals
 goal: compiler-correctness
 parent: 1923
-related: [1923, 1955, 1809, 1839, 1677, 618]
+related: [1923, 1984, 1809, 1839, 1677, 618]
 origin: "Child slice of #1923 (ratified Implementation Plan, Option 2b). Range validation (landed) cannot see IN-RANGE stale indices — captured before a +delta shift, still pointing at a real-but-wrong slot (the wasmtime 'expected externref, found i32' flavor). Cells make the capture itself shift-proof."
 ---
 
-# #1956 — Stale-proof index cells (incremental Option 2b)
+# #1985 — Stale-proof index cells (incremental Option 2b)
 
 ## Problem
 
@@ -46,7 +46,7 @@ after the last shift — remains the end-state for NEW emission paths, but a
 wholesale migration is explicitly rejected: the #618 revert (−3,931 tests
 from an eager `fixupModuleFuncIndices` inside `addImport`) showed big-bang
 shift-regime changes are the riskiest change shape in this codebase. With
-#1923's emit validation and #1955's freeze-point landed, every remaining
+#1923's emit validation and #1984's freeze-point landed, every remaining
 instance is a *located compile error*, so cells can migrate site-by-site at
 low risk.
 

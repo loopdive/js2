@@ -106,6 +106,18 @@ function pathHas(record, patterns) {
   return hasAny(path, patterns);
 }
 
+function isSameValueValidatorFailure(record, text) {
+  const isWasmValidatorFailure =
+    record.error_category === "wasm_compile" || hasAny(text, ["invalid wasm binary", "compiling function"]);
+  if (!isWasmValidatorFailure) return false;
+
+  return hasAny(text, [
+    /compiling function [^"\n]*"issamevalue" failed/,
+    /(^|[^a-z0-9_])issamevalue([^a-z0-9_]|$).*expected type/,
+    /(^|[^a-z0-9_])issamevalue([^a-z0-9_]|$).*type mismatch/,
+  ]);
+}
+
 function isStandaloneRegExpRecord(record, text) {
   return (
     record.host_import_leak_class === "regexp" ||
@@ -310,9 +322,9 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
   },
   {
     id: "issamevalue-invalid-wasm",
-    issues: ["#1776"],
+    issues: ["#1908", "#1776", "#1807"],
     label: "Residual standalone isSameValue invalid-Wasm validator failures",
-    match: (record, text) => hasAny(text, ["issamevalue", "samevalue"]),
+    match: (record, text) => isSameValueValidatorFailure(record, text),
   },
   {
     id: "standalone-dynamic-object-property",

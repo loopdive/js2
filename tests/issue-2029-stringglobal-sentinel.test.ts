@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #1915 — standalone `Binary emit error: u32 out of range: -1` bucket.
+ * #2029 — standalone `Binary emit error: u32 out of range: -1` bucket.
  *
  * Under `--target standalone` (nativeStrings auto-on), `addStringConstantGlobal`
  * stores the documented -1 sentinel in `ctx.stringGlobalMap` instead of adding
@@ -26,7 +26,7 @@ function firstError(r: { errors?: { message: string }[] }): string {
   return r.errors?.[0]?.message ?? "";
 }
 
-describe("#1915 standalone emit — stringGlobalMap -1 sentinel producers", () => {
+describe("#2029 standalone emit — stringGlobalMap -1 sentinel producers", () => {
   it("builtin subclass (extends Uint8Array) compiles — the minimal repro", async () => {
     const r = await compileStandalone(`
       class MyArr extends Uint8Array {}
@@ -56,7 +56,7 @@ describe("#1915 standalone emit — stringGlobalMap -1 sentinel producers", () =
   });
 
   it("never emits the raw u32-out-of-range / index-out-of-range emit error", async () => {
-    // Shapes drawn from the four bucket clusters (#1915): builtin subclassing,
+    // Shapes drawn from the four bucket clusters (#2029): builtin subclassing,
     // object-literal methods via the extern path, for-in over a typed object,
     // and number RangeError message strings.
     const sources = [

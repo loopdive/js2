@@ -1,16 +1,19 @@
 ---
 id: 1818
 title: "i32/boolean parameter default fires on a legitimate 0 / false argument"
-status: ready
+status: in-review
 escalation: architect-spec-written
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-07
+pr: 1275
 priority: high
 feasibility: hard
 task_type: bugfix
 area: codegen
 goal: correctness
 sprint: 61
+claimed_by: codex-developer
+claimed_at: 2026-06-07T10:03:41.716Z
 ---
 # #1818 — i32/boolean parameter default fires on `0` / `false`
 
@@ -392,3 +395,77 @@ end
   `calls.ts` — check the merge queue for in-flight PRs on these (the param/dstr
   family #1529/#1543/#1553 area). Coordinate ordering with tech lead.
 
+## Implementation (2026-06-07, codex-developer)
+
+Implemented Slices 1 and 2 of the architect plan.
+
+PR: https://github.com/loopdive/js2/pull/1275
+
+- Added a cached `__argc` local for default-parameter prologues and reused it
+  when building `arguments`, so initializer calls cannot clobber the call-site
+  arity before either consumer reads it.
+- Set `__argc` at internal call sites for callees with optional/defaulted
+  params, not only for callees that read `arguments`.
+- Replaced i32/boolean value-sentinel checks with an omitted-argument check
+  based on cached arity across declarations, nested functions, arrows, class
+  constructors, methods, setters, `new`, and `super` call paths.
+- Switched inline f64 checks to the explicit sNaN sentinel and ORed them with
+  omitted-argument arity, preserving explicit `NaN` while defaulting omitted
+  f64 arguments.
+- Registered class constructor/method/setter optional-param metadata so their
+  direct call sites know to send `__argc`.
+
+Validation:
+
+- `pnpm exec prettier --check src/codegen/context/types.ts src/codegen/statements/nested-declarations.ts src/codegen/function-body.ts src/codegen/closures.ts src/codegen/class-bodies.ts src/codegen/expressions/calls.ts src/codegen/expressions/new-super.ts tests/issue-1818.test.ts`
+  passed.
+- `git diff --check` passed.
+- `pnpm test tests/issue-1818.test.ts` passed: 5 tests.
+- `pnpm test tests/default-params.test.ts tests/issue-1025-param-default-null.test.ts tests/issue-1224.test.ts tests/issue-1818.test.ts`
+  passed: 26 tests across 4 files.
+- `TEST262_PATH_FILTER='language/statements/function/dflt-params-arg-val-not-undefined.js|language/expressions/arrow-function/dflt-params-arg-val-not-undefined.js|language/expressions/function/dflt-params-arg-val-not-undefined.js|language/statements/function/dflt-params-arg-val-undefined.js' TEST262_REPORTER=dot pnpm run test:262 -- --official-scope-only`
+  ran the scoped official paths after initializing the shallow `test262`
+  submodule. The run completed but those broader conformance files remain
+  failing: the three `not-undefined` forms stop at the empty-string assertion,
+  and the `undefined` form stops at explicit-`undefined` defaulting. The focused
+  Slices 1/2 i32/boolean/f64 regressions are covered by `tests/issue-1818.test.ts`;
+  the remaining official-file failures need the broader representation work
+  described by Slice 3 / follow-up default-parameter conformance work.
+
+## Refresh (2026-06-07, codex-developer attempt 30)
+
+PR #1275 was open and ready, but the sharded standalone guard reported 21
+`dflt-params-trailing-comma` method/class regressions. The common pattern was an
+explicit `undefined` f64 argument in a defaulted parameter slot; the stricter
+sNaN default check preserved explicit `NaN` correctly, but generic
+`compileExpression(..., expected f64)` still emitted an ordinary NaN for literal
+`undefined`.
+
+Adjusted numeric-context `undefined`/`void` lowering to emit the existing f64
+sNaN default sentinel. This keeps arithmetic behavior as NaN while allowing
+default-param receive checks to distinguish explicit `undefined` from explicit
+`NaN`.
+
+Additional validation:
+
+- `pnpm test tests/issue-1818.test.ts` passed: 6 tests.
+- `pnpm exec prettier --check src/codegen/expressions.ts src/codegen/literals.ts tests/issue-1818.test.ts`
+  passed.
+- `git diff --check` passed.
+- `TEST262_PATH_FILTER='language/expressions/class/method/dflt-params-trailing-comma.js|language/statements/class/method/dflt-params-trailing-comma.js|language/expressions/object/method-definition/meth-dflt-params-trailing-comma.js' TEST262_REPORTER=dot pnpm run test:262 -- --official-scope-only`
+  completed with a 3/3 pass report for the selected paths. Vitest still printed
+  `No test suite found` diagnostics for empty generated local shards, but the
+  runner exited 0 and wrote `3 pass / 3 total`.
+
+Post-merge validation after merging `origin/main` at `28c668ab4`:
+
+- `pnpm test tests/issue-1818.test.ts` passed: 6 tests.
+- `pnpm test tests/default-params.test.ts tests/issue-1025-param-default-null.test.ts tests/issue-1224.test.ts tests/issue-1818.test.ts`
+  passed: 27 tests across 4 files.
+- `pnpm exec prettier --check src/codegen/context/types.ts src/codegen/statements/nested-declarations.ts src/codegen/function-body.ts src/codegen/closures.ts src/codegen/class-bodies.ts src/codegen/expressions/calls.ts src/codegen/expressions/new-super.ts src/codegen/expressions.ts src/codegen/literals.ts tests/issue-1818.test.ts`
+  passed.
+- `git diff --check` passed.
+- `TEST262_TARGET=standalone TEST262_PATH_FILTER='language/expressions/class/method/dflt-params-trailing-comma.js|language/statements/class/method/dflt-params-trailing-comma.js|language/expressions/object/method-definition/meth-dflt-params-trailing-comma.js' TEST262_REPORTER=dot pnpm run test:262 -- --official-scope-only`
+  completed with a 3/3 pass report for representative standalone method/class
+  forms from the CI regression cluster. The runner still printed empty-shard
+  `No test suite found` diagnostics, but exited 0 and wrote `3 pass / 3 total`.

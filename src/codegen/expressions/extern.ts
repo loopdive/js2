@@ -147,7 +147,7 @@ export function emitLazyProtoGet(ctx: CodegenContext, fctx: FunctionContext, cla
     const methodsCsv = methodNames.join(",");
     addStringConstantGlobal(ctx, methodsCsv);
     csvGlobalIdx = ctx.stringGlobalMap.get(methodsCsv);
-    // (#1915) `< 0` is the nativeStrings sentinel — leave the cache empty so
+    // (#2029) `< 0` is the nativeStrings sentinel — leave the cache empty so
     // the `global.get` consumer below is skipped instead of emitting index -1.
     if (csvGlobalIdx !== undefined && csvGlobalIdx >= 0) {
       ctx.classMethodsCsvGlobal.set(className, csvGlobalIdx);
@@ -248,7 +248,7 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
     const staticMethodsCsv = staticMethodNames.join(",");
     addStringConstantGlobal(ctx, staticMethodsCsv);
     csvGlobalIdx = ctx.stringGlobalMap.get(staticMethodsCsv);
-    // (#1915) `< 0` is the nativeStrings sentinel — see emitLazyProtoGet above.
+    // (#2029) `< 0` is the nativeStrings sentinel — see emitLazyProtoGet above.
     if (csvGlobalIdx !== undefined && csvGlobalIdx >= 0) {
       ctx.classStaticMethodsCsvGlobal.set(className, csvGlobalIdx);
     } else {

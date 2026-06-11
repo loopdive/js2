@@ -1,5 +1,5 @@
 ---
-id: 1915
+id: 2029
 title: "standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests)"
 status: ready
 sprint: Backlog
@@ -20,7 +20,7 @@ es_edition: multi
 origin: "2026-06-10 standalone-vs-host baseline diff (test262-standalone-current.jsonl, run 10.6.2026 00:56): 497 host-pass tests emit `u32 out of range: -1`/`undefined` under --target standalone."
 ---
 
-# #1915 — standalone: `Binary emit error: u32 out of range: -1` bucket
+# #2029 — standalone: `Binary emit error: u32 out of range: -1` bucket
 
 ## Problem
 

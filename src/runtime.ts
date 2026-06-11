@@ -544,10 +544,47 @@ function _installIteratorHelperPolyfills(): void {
     }
   }
 
+  function _isObject(value: any): boolean {
+    return (typeof value === "object" && value !== null) || typeof value === "function";
+  }
+
+  function _getIteratorDirect(iter: any): any {
+    if (!_isObject(iter)) {
+      throw new TypeError("Iterator helper: iterator is not an object");
+    }
+    if (typeof iter.next !== "function") {
+      throw new TypeError("Iterator helper: iterator has no next()");
+    }
+    return iter;
+  }
+
+  function _getIterator(iterable: any): any {
+    if (!_isObject(iterable)) {
+      throw new TypeError("Iterator helper: argument is not iterable");
+    }
+    const method = iterable[Symbol.iterator];
+    if (typeof method !== "function") {
+      throw new TypeError("Iterator helper: argument is not iterable");
+    }
+    return _getIteratorDirect(method.call(iterable));
+  }
+
+  function _iteratorStepValue(iter: any): { done: true; value?: undefined } | { done: false; value: any } {
+    const result = iter.next();
+    if (!_isObject(result)) {
+      throw new TypeError("Iterator result is not an object");
+    }
+    if (result.done) return { done: true };
+    return { value: result.value, done: false };
+  }
+
   // ES2025 GetIteratorFlattenable — accepts an iterable OR a raw iterator.
-  function _getFlattenable(obj: any): any {
+  function _getFlattenable(obj: any, rejectPrimitives = false): any {
     if (obj == null) {
       throw new TypeError("Iterator helper: argument is null or undefined");
+    }
+    if (rejectPrimitives && !_isObject(obj)) {
+      throw new TypeError("Iterator helper: argument is not an object");
     }
     let it: any;
     const sym = obj[Symbol.iterator];
@@ -558,10 +595,7 @@ function _installIteratorHelperPolyfills(): void {
     } else {
       throw new TypeError("Iterator helper: argument is not iterable");
     }
-    if (it == null || typeof it.next !== "function") {
-      throw new TypeError("Iterator helper: iterator has no next()");
-    }
-    return it;
+    return _getIteratorDirect(it);
   }
 
   // ES2025 GetOptionsObject (iterator-sequencing / joint-iteration proposal):
@@ -595,6 +629,113 @@ function _installIteratorHelperPolyfills(): void {
     try {
       iter?.return?.();
     } catch {}
+  }
+
+  function _closeIterators(iters: any[], open?: boolean[], except = -1): void {
+    for (let i = 0; i < iters.length; i++) {
+      if (i === except) continue;
+      if (open && !open[i]) continue;
+      if (open) open[i] = false;
+      _closeIterator(iters[i]);
+    }
+  }
+
+  function _readZipOptions(options: any): { mode: "shortest" | "longest" | "strict"; paddingOption: any } {
+    options = _getOptionsObject(options);
+    let mode = options.mode;
+    if (mode === undefined) mode = "shortest";
+    if (mode !== "shortest" && mode !== "longest" && mode !== "strict") {
+      throw new TypeError("Iterator.zip: invalid mode " + String(mode));
+    }
+    let paddingOption: any = undefined;
+    if (mode === "longest") {
+      paddingOption = options.padding;
+      if (paddingOption !== undefined && !_isObject(paddingOption)) {
+        throw new TypeError("Iterator.zip: padding must be an object");
+      }
+    }
+    return { mode, paddingOption };
+  }
+
+  function _makeIteratorZip(
+    iters: any[],
+    mode: "shortest" | "longest" | "strict",
+    padding: any[],
+    finishResults: (results: any[]) => any,
+  ): any {
+    const open = iters.map(() => true);
+    let exhausted = false;
+
+    return _makeHelperIterator(
+      function next() {
+        if (exhausted || iters.length === 0) return { value: undefined, done: true };
+        const results: any[] = [];
+        for (let i = 0; i < iters.length; i++) {
+          let result: any;
+          if (!open[i]) {
+            result = padding[i];
+          } else {
+            let step: { done: true; value?: undefined } | { done: false; value: any };
+            try {
+              step = _iteratorStepValue(iters[i]);
+            } catch (e) {
+              exhausted = true;
+              open[i] = false;
+              _closeIterators(iters, open);
+              throw e;
+            }
+
+            if (step.done) {
+              open[i] = false;
+              if (mode === "shortest") {
+                exhausted = true;
+                _closeIterators(iters, open);
+                return { value: undefined, done: true };
+              }
+              if (mode === "strict") {
+                exhausted = true;
+                if (i !== 0) {
+                  _closeIterators(iters, open);
+                  throw new TypeError("Iterator.zip strict mode: length mismatch");
+                }
+                for (let k = 1; k < iters.length; k++) {
+                  let openStep: { done: true; value?: undefined } | { done: false; value: any };
+                  try {
+                    openStep = _iteratorStepValue(iters[k]);
+                  } catch (e) {
+                    open[k] = false;
+                    _closeIterators(iters, open);
+                    throw e;
+                  }
+                  if (openStep.done) {
+                    open[k] = false;
+                  } else {
+                    _closeIterators(iters, open);
+                    throw new TypeError("Iterator.zip strict mode: length mismatch");
+                  }
+                }
+                return { value: undefined, done: true };
+              }
+
+              if (!open.some(Boolean)) {
+                exhausted = true;
+                return { value: undefined, done: true };
+              }
+              result = padding[i];
+            } else {
+              result = step.value;
+            }
+          }
+          results.push(result);
+        }
+        return { value: finishResults(results), done: false };
+      },
+      function returnFn() {
+        exhausted = true;
+        _closeIterators(iters, open);
+        return { value: undefined, done: true };
+      },
+    );
   }
 
   if (typeof I.from !== "function") {
@@ -871,146 +1012,135 @@ function _installIteratorHelperPolyfills(): void {
 
   if (typeof I.zip !== "function") {
     _installStaticHelper(I, "zip", 1, function zip(iterables: any, options?: any) {
-      if (iterables == null) {
-        throw new TypeError("Iterator.zip: iterables required");
+      if (!_isObject(iterables)) {
+        throw new TypeError("Iterator.zip: iterables must be an object");
       }
-      options = _getOptionsObject(options);
-      const mode: string = options.mode || "shortest";
-      if (mode !== "shortest" && mode !== "longest" && mode !== "strict") {
-        throw new TypeError("Iterator.zip: invalid mode " + String(mode));
-      }
-      const padding: any[] = options && options.padding ? Array.from(options.padding) : [];
+      const { mode, paddingOption } = _readZipOptions(options);
       const iters: any[] = [];
-      // Open all iterators eagerly; on failure, close already-opened ones.
+      let inputIter: any;
       try {
-        for (const iterable of iterables) {
-          iters.push(_getFlattenable(iterable));
+        inputIter = _getIterator(iterables);
+        for (;;) {
+          const next = _iteratorStepValue(inputIter);
+          if (next.done) break;
+          try {
+            iters.push(_getFlattenable(next.value, true));
+          } catch (e) {
+            _closeIterator(inputIter);
+            _closeIterators(iters);
+            throw e;
+          }
         }
       } catch (e) {
-        for (const it of iters) {
-          try {
-            it.return?.();
-          } catch {}
-        }
+        _closeIterators(iters);
         throw e;
       }
-      const closed: boolean[] = iters.map(() => false);
-      let exhausted = false;
 
-      function closeAllExcept(except: number): void {
-        for (let i = 0; i < iters.length; i++) {
-          if (i !== except && !closed[i]) {
-            closed[i] = true;
-            try {
-              iters[i].return?.();
-            } catch {}
+      const padding: any[] = [];
+      if (mode === "longest") {
+        if (paddingOption === undefined) {
+          for (let i = 0; i < iters.length; i++) padding.push(undefined);
+        } else {
+          let paddingIter: any;
+          try {
+            paddingIter = _getIterator(paddingOption);
+            let usingIterator = true;
+            for (let i = 0; i < iters.length; i++) {
+              if (usingIterator) {
+                const next = _iteratorStepValue(paddingIter);
+                if (next.done) {
+                  usingIterator = false;
+                } else {
+                  padding.push(next.value);
+                  continue;
+                }
+              }
+              padding.push(undefined);
+            }
+            if (usingIterator) {
+              paddingIter.return?.();
+            }
+          } catch (e) {
+            _closeIterators(iters);
+            throw e;
           }
         }
       }
 
-      return _makeHelperIterator(
-        function next() {
-          if (exhausted || iters.length === 0) return { value: undefined, done: true };
-          const tuple: any[] = new Array(iters.length);
-          let liveCount = 0;
-          for (let i = 0; i < iters.length; i++) {
-            if (closed[i]) {
-              tuple[i] = padding[i];
-              continue;
-            }
-            let r: any;
-            try {
-              r = iters[i].next();
-            } catch (e) {
-              exhausted = true;
-              closeAllExcept(i);
-              throw e;
-            }
-            if (r && r.done) {
-              closed[i] = true;
-              if (mode === "shortest") {
-                exhausted = true;
-                closeAllExcept(i);
-                return { value: undefined, done: true };
-              }
-              if (mode === "strict") {
-                // Strict: every other iterator must also be done.
-                for (let j = 0; j < iters.length; j++) {
-                  if (j === i || closed[j]) continue;
-                  let r2: any;
-                  try {
-                    r2 = iters[j].next();
-                  } catch (e) {
-                    closeAllExcept(-1);
-                    throw e;
-                  }
-                  if (r2 && !r2.done) {
-                    closeAllExcept(-1);
-                    throw new RangeError("Iterator.zip strict mode: length mismatch");
-                  }
-                  closed[j] = true;
-                }
-                exhausted = true;
-                return { value: undefined, done: true };
-              }
-              tuple[i] = padding[i];
-            } else {
-              tuple[i] = r.value;
-              liveCount++;
-            }
-          }
-          if (mode === "longest" && liveCount === 0) {
-            exhausted = true;
-            return { value: undefined, done: true };
-          }
-          return { value: tuple, done: false };
-        },
-        function returnFn() {
-          exhausted = true;
-          closeAllExcept(-1);
-          return { value: undefined, done: true };
-        },
-      );
+      return _makeIteratorZip(iters, mode, padding, (results) => results.slice());
     });
   }
 
   if (typeof I.zipKeyed !== "function") {
     _installStaticHelper(I, "zipKeyed", 1, function zipKeyed(iterables: any, options?: any) {
-      if (iterables == null || typeof iterables !== "object") {
+      if (!_isObject(iterables)) {
         throw new TypeError("Iterator.zipKeyed: iterables must be an object");
       }
-      const keys = Object.keys(iterables);
-      const iterArr: any[] = keys.map((k) => iterables[k]);
-      const zipped = (I as any).zip(iterArr, options);
-      return _makeHelperIterator(
-        function next() {
-          const r = zipped.next();
-          if (r.done) return { value: undefined, done: true };
-          const out: any = {};
-          for (let i = 0; i < keys.length; i++) out[keys[i]!] = r.value[i];
-          return { value: out, done: false };
-        },
-        function returnFn() {
+      const { mode, paddingOption } = _readZipOptions(options);
+      const keys: PropertyKey[] = [];
+      const iters: any[] = [];
+      try {
+        for (const key of Reflect.ownKeys(iterables)) {
+          const desc = Object.getOwnPropertyDescriptor(iterables, key);
+          if (desc && desc.enumerable) {
+            const value = iterables[key];
+            if (value !== undefined) {
+              keys.push(key);
+              iters.push(_getFlattenable(value, true));
+            }
+          }
+        }
+      } catch (e) {
+        _closeIterators(iters);
+        throw e;
+      }
+
+      const padding: any[] = [];
+      if (mode === "longest") {
+        if (paddingOption === undefined) {
+          for (let i = 0; i < iters.length; i++) padding.push(undefined);
+        } else {
           try {
-            zipped.return?.();
-          } catch {}
-          return { value: undefined, done: true };
-        },
-      );
+            for (const key of keys) {
+              padding.push(paddingOption[key]);
+            }
+          } catch (e) {
+            _closeIterators(iters);
+            throw e;
+          }
+        }
+      }
+
+      return _makeIteratorZip(iters, mode, padding, (results) => {
+        const out: any = Object.create(null);
+        for (let i = 0; i < keys.length; i++) {
+          Object.defineProperty(out, keys[i]!, {
+            value: results[i],
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        }
+        return out;
+      });
     });
   }
 
   if (typeof I.concat !== "function") {
     _installStaticHelper(I, "concat", 0, function concat(...iterables: any[]) {
-      // Eagerly validate the iterable-ness of each argument; open lazily.
+      const records: { iterable: any; method: any }[] = [];
       for (const iterable of iterables) {
-        if (iterable == null) {
-          throw new TypeError("Iterator.concat: argument is null or undefined");
+        if (!_isObject(iterable)) {
+          throw new TypeError("Iterator.concat: argument is not an object");
         }
-        const sym = iterable[Symbol.iterator];
-        if (typeof sym !== "function" && typeof iterable.next !== "function") {
+        const method = iterable[Symbol.iterator];
+        if (method === undefined) {
           throw new TypeError("Iterator.concat: argument is not iterable");
         }
+        if (typeof method !== "function") {
+          throw new TypeError("Iterator.concat: argument is not iterable");
+        }
+        records.push({ iterable, method });
       }
       let idx = 0;
       let current: any = null;
@@ -1018,22 +1148,28 @@ function _installIteratorHelperPolyfills(): void {
         function next() {
           while (true) {
             if (current == null) {
-              if (idx >= iterables.length) return { value: undefined, done: true };
-              current = _getFlattenable(iterables[idx++]);
+              if (idx >= records.length) return { value: undefined, done: true };
+              const record = records[idx++]!;
+              current = _getIteratorDirect(record.method.call(record.iterable));
             }
             let r: any;
             try {
               r = current.next();
             } catch (e) {
               current = null;
-              idx = iterables.length;
+              idx = records.length;
               throw e;
             }
-            if (r && r.done) {
+            if (!_isObject(r)) {
+              current = null;
+              idx = records.length;
+              throw new TypeError("Iterator result is not an object");
+            }
+            if (r.done) {
               current = null;
               continue;
             }
-            return r;
+            return { value: r.value, done: false };
           }
         },
         function returnFn() {
@@ -1112,21 +1248,8 @@ function _installIteratorHelperPolyfills(): void {
                   throw e;
                 }
                 counter++;
-                // GetIteratorFlattenable(mapped, reject-primitives): a primitive
-                // (incl. strings? — no, strings ARE iterable and accepted) — but
-                // a non-object non-string primitive rejects.
-                if (
-                  mapped == null ||
-                  (typeof mapped !== "object" && typeof mapped !== "string" && typeof mapped !== "function")
-                ) {
-                  done = true;
-                  try {
-                    outer.return?.();
-                  } catch {}
-                  throw new TypeError("Iterator.prototype.flatMap: mapper result is not an object");
-                }
                 try {
-                  inner = _getFlattenable(mapped);
+                  inner = _getFlattenable(mapped, true);
                 } catch (e) {
                   done = true;
                   try {
@@ -1257,8 +1380,15 @@ function _validatePropertyDescriptor(
   prop: string | symbol,
   desc: PropertyDescriptor,
   existingValue?: any,
+  existingDesc?: PropertyDescriptor,
 ): number {
   const existing = descs.get(_normalizeDescKey(prop));
+  const hasValue = Object.prototype.hasOwnProperty.call(desc, "value");
+  const hasWritable = Object.prototype.hasOwnProperty.call(desc, "writable");
+  const hasEnumerable = Object.prototype.hasOwnProperty.call(desc, "enumerable");
+  const hasConfigurable = Object.prototype.hasOwnProperty.call(desc, "configurable");
+  const hasGet = Object.prototype.hasOwnProperty.call(desc, "get");
+  const hasSet = Object.prototype.hasOwnProperty.call(desc, "set");
 
   // Compute new flags. ECMA-262 §10.1.6.3 ValidateAndApplyPropertyDescriptor:
   // a *redefine* keeps every attribute the descriptor omits — only fields
@@ -1277,14 +1407,14 @@ function _validatePropertyDescriptor(
       newFlags &= ~bit;
     }
   };
-  applyFlag(desc.writable !== undefined, desc.writable, _SC_WRITABLE);
-  applyFlag(desc.enumerable !== undefined, desc.enumerable, _SC_ENUMERABLE);
-  applyFlag(desc.configurable !== undefined, desc.configurable, _SC_CONFIGURABLE);
+  applyFlag(hasWritable, desc.writable, _SC_WRITABLE);
+  applyFlag(hasEnumerable, desc.enumerable, _SC_ENUMERABLE);
+  applyFlag(hasConfigurable, desc.configurable, _SC_CONFIGURABLE);
   // Data<->accessor kind: explicit get/set ⇒ accessor; explicit value/writable
   // ⇒ data; otherwise keep the existing kind (or default data on first def).
-  if (desc.get !== undefined || desc.set !== undefined) {
+  if (hasGet || hasSet) {
     newFlags |= _SC_ACCESSOR;
-  } else if (desc.value !== undefined || desc.writable !== undefined) {
+  } else if (hasValue || hasWritable) {
     newFlags &= ~_SC_ACCESSOR;
   } else if (existing === undefined) {
     newFlags &= ~_SC_ACCESSOR;
@@ -1299,7 +1429,7 @@ function _validatePropertyDescriptor(
   if (desc.configurable === true) {
     throw new TypeError("Cannot redefine property: " + String(prop));
   }
-  if (desc.enumerable !== undefined) {
+  if (hasEnumerable) {
     const wasEnumerable = !!(existing & _SC_ENUMERABLE);
     if (desc.enumerable !== wasEnumerable) {
       throw new TypeError("Cannot redefine property: " + String(prop));
@@ -1307,12 +1437,20 @@ function _validatePropertyDescriptor(
   }
   // Cannot change data<->accessor on non-configurable
   const wasAccessor = !!(existing & _SC_ACCESSOR);
-  const isAccessor = desc.get !== undefined || desc.set !== undefined;
+  const isAccessor = hasGet || hasSet;
   if (isAccessor && !wasAccessor) {
     throw new TypeError("Cannot redefine property: " + String(prop));
   }
-  if (!isAccessor && wasAccessor && (desc.value !== undefined || desc.writable !== undefined)) {
+  if (!isAccessor && wasAccessor && (hasValue || hasWritable)) {
     throw new TypeError("Cannot redefine property: " + String(prop));
+  }
+  if (wasAccessor && isAccessor) {
+    if (hasGet && !Object.is(desc.get, existingDesc?.get)) {
+      throw new TypeError("Cannot redefine property: " + String(prop));
+    }
+    if (hasSet && !Object.is(desc.set, existingDesc?.set)) {
+      throw new TypeError("Cannot redefine property: " + String(prop));
+    }
   }
   // Data property: writable checks
   if (!wasAccessor && !isAccessor) {
@@ -1323,7 +1461,7 @@ function _validatePropertyDescriptor(
       }
       // ES spec 9.1.6.3: can set value only if SameValue(desc.value, existing.value).
       // Use Object.is for SameValue semantics (distinguishes +0/-0, NaN===NaN).
-      if (desc.value !== undefined && !Object.is(desc.value, existingValue)) {
+      if (hasValue && !Object.is(desc.value, existingValue)) {
         throw new TypeError("Cannot redefine property: " + String(prop));
       }
     }
@@ -1339,6 +1477,7 @@ function _toPropertyDescriptorValidate(
   rawDesc: any,
   getField: (o: any, f: string) => any,
   wrapCallable?: (v: any, arity: number) => any,
+  hasField?: (o: any, f: string) => boolean,
 ): PropertyDescriptor {
   // Primitive rawDesc (number/string/boolean/symbol/bigint) violates
   // ECMA-262 10.1 step 1 — throw TypeError. We intentionally allow null/undefined
@@ -1352,12 +1491,22 @@ function _toPropertyDescriptorValidate(
   }
   const desc: PropertyDescriptor = {};
   if (rawDesc == null) return desc;
-  const val = getField(rawDesc, "value");
-  const wr = getField(rawDesc, "writable");
-  const en = getField(rawDesc, "enumerable");
-  const conf = getField(rawDesc, "configurable");
-  let getFn = getField(rawDesc, "get");
-  let setFn = getField(rawDesc, "set");
+  const has = (field: string): boolean => {
+    if (hasField) return hasField(rawDesc, field);
+    return field in Object(rawDesc);
+  };
+  const hasEnumerable = has("enumerable");
+  const hasConfigurable = has("configurable");
+  const hasValue = has("value");
+  const hasWritable = has("writable");
+  const hasGet = has("get");
+  const hasSet = has("set");
+  const val = hasValue ? getField(rawDesc, "value") : undefined;
+  const wr = hasWritable ? getField(rawDesc, "writable") : undefined;
+  const en = hasEnumerable ? getField(rawDesc, "enumerable") : undefined;
+  const conf = hasConfigurable ? getField(rawDesc, "configurable") : undefined;
+  let getFn = hasGet ? getField(rawDesc, "get") : undefined;
+  let setFn = hasSet ? getField(rawDesc, "set") : undefined;
   // (#1629a) When the source descriptor is a WasmGC struct, `get`/`set` arrive
   // as Wasm-closure structs (not JS callables). Wrap them into JS Functions so
   // the spec-mandated `typeof === "function"` checks below pass and so that the
@@ -1366,29 +1515,23 @@ function _toPropertyDescriptorValidate(
     if (getFn != null && typeof getFn !== "function") getFn = wrapCallable(getFn, 0);
     if (setFn != null && typeof setFn !== "function") setFn = wrapCallable(setFn, 1);
   }
-  // Treat null getter/setter as "field absent" — reading a WasmGC struct field
-  // whose accessor source read out to null (no value stored) is functionally
-  // identical to the field being missing. The spec only throws for present
-  // non-callable values, and our caller path uses null as the "unset" sentinel.
-  const hasGet = getFn !== undefined && getFn !== null;
-  const hasSet = setFn !== undefined && setFn !== null;
-  const hasData = val !== undefined || wr !== undefined;
+  const hasData = hasValue || hasWritable;
   const hasAccessor = hasGet || hasSet;
   if (hasData && hasAccessor) {
     throw new TypeError(
       "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
     );
   }
-  if (hasGet && typeof getFn !== "function") {
+  if (hasGet && getFn !== undefined && typeof getFn !== "function") {
     throw new TypeError("TypeError: Getter must be a function: " + String(getFn));
   }
-  if (hasSet && typeof setFn !== "function") {
+  if (hasSet && setFn !== undefined && typeof setFn !== "function") {
     throw new TypeError("TypeError: Setter must be a function: " + String(setFn));
   }
-  if (val !== undefined) desc.value = val;
-  if (wr !== undefined) desc.writable = !!wr;
-  if (en !== undefined) desc.enumerable = !!en;
-  if (conf !== undefined) desc.configurable = !!conf;
+  if (hasValue) desc.value = val;
+  if (hasWritable) desc.writable = !!wr;
+  if (hasEnumerable) desc.enumerable = !!en;
+  if (hasConfigurable) desc.configurable = !!conf;
   if (hasGet) desc.get = getFn;
   if (hasSet) desc.set = setFn;
   return desc;
@@ -1437,6 +1580,16 @@ function _isConcatSpreadable(
   return v !== undefined && v !== null && !!v;
 }
 
+const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
+const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+
+function _hostEqComparableValue(v: any): any {
+  if (typeof v === "function") {
+    return _wasmClosureWrapperTargets.get(v as Function) ?? v;
+  }
+  return v;
+}
+
 /**
  * (#1382) Wrap a Wasm closure struct in a JS Function so it can be called
  * from JS host code (e.g. `Array.from(iter, mapFn)` where mapFn is a Wasm
@@ -1467,17 +1620,32 @@ function _wrapWasmClosure(
   if (!exports) return null;
   const callFn = exports[`__call_fn_${arity}`];
   if (typeof callFn !== "function") return null;
+  let byArity: Map<number, Function> | undefined;
+  if (_canBeWeakKey(closure)) {
+    byArity = _wasmClosureWrapperCache.get(closure as object);
+    const cached = byArity?.get(arity);
+    if (cached) return cached as (...args: any[]) => any;
+  }
   // Closure parameter is captured by reference; the wrapper holds it alive
   // for as long as the JS Function is reachable from the host. JS Function
   // identity is preserved across multiple invocations (host may capture a
   // reference, e.g. callbacks stored on plain objects).
-  return function wasmClosureBridge(...args: any[]): any {
+  const wrapper = function wasmClosureBridge(...args: any[]): any {
     // Pad with undefined to exactly `arity` positional args. Extra args
     // dropped (JS spec for fewer/more args than declared params).
     const padded: any[] = [];
     for (let i = 0; i < arity; i++) padded.push(args[i]);
     return callFn(closure, ...padded);
   };
+  if (_canBeWeakKey(closure)) {
+    if (!byArity) {
+      byArity = new Map();
+      _wasmClosureWrapperCache.set(closure as object, byArity);
+    }
+    byArity.set(arity, wrapper);
+    _wasmClosureWrapperTargets.set(wrapper, closure as object);
+  }
+  return wrapper;
 }
 
 /**
@@ -1487,13 +1655,11 @@ function _wrapWasmClosure(
  * check that the per-host-import call sites need before handing the value
  * to the native engine. Returns the value unchanged when it's already
  * JS-callable, null/undefined (caller-side TypeError is correct), or any
- * non-struct value. Returns a freshly-allocated JS Function bridging into
+ * non-struct value. Returns a cached JS Function bridging into
  * `__call_fn_<arity>` for Wasm closure structs.
  *
- * The returned wrapper is **fresh per call** — callers must not rely on
- * identity (`p.then(cb) === p.then(cb)` is not preserved). This matches
- * how `__array_from` mapFn wrapping already behaves and is benign in spec
- * terms (no protocol observes callback identity across host roundtrips).
+ * The wrapper is cached per (closure, arity), which preserves accessor
+ * descriptor identity for `Object.getOwnPropertyDescriptor(...).get`.
  */
 function _maybeWrapCallable(
   val: any,
@@ -1502,6 +1668,20 @@ function _maybeWrapCallable(
 ): any {
   if (val == null) return val;
   if (typeof val === "function") return val;
+  if (typeof val === "object" && callbackState) {
+    const exports = callbackState.getExports();
+    const isClosureFn = exports?.__is_closure as ((v: any) => number) | undefined;
+    if (typeof isClosureFn === "function") {
+      try {
+        if (isClosureFn(val) === 1) {
+          const wrapped = _wrapWasmClosure(val, arity, callbackState);
+          return wrapped ?? val;
+        }
+      } catch {
+        // Fall through to the older opaque-struct heuristic below.
+      }
+    }
+  }
   if (!_isWasmStruct(val)) return val;
   const wrapped = _wrapWasmClosure(val, arity, callbackState);
   return wrapped ?? val;
@@ -3509,9 +3689,11 @@ function _readOwnDescriptor(
 ): PropertyDescriptor | undefined {
   // 1. Sidecar (dynamically added / defineProperty'd props).
   const sc = _wasmStructProps.get(obj);
-  if (sc && prop in sc) {
-    const descs = _wasmPropDescs.get(obj);
-    const flags = descs?.get(_normalizeDescKey(prop)) ?? _SC_WRITABLE | _SC_ENUMERABLE | _SC_CONFIGURABLE | _SC_DEFINED;
+  const descs = _wasmPropDescs.get(obj);
+  const flagsFromTable = descs?.get(_normalizeDescKey(prop));
+  const hasSidecarValue = !!sc && prop in sc;
+  if (hasSidecarValue || flagsFromTable !== undefined) {
+    const flags = flagsFromTable ?? _SC_WRITABLE | _SC_ENUMERABLE | _SC_CONFIGURABLE | _SC_DEFINED;
     if (flags & _SC_ACCESSOR) {
       if (typeof prop === "symbol") {
         const accessor = _wasmStructAccessors.get(obj)?.get(prop) as
@@ -3531,8 +3713,19 @@ function _readOwnDescriptor(
         configurable: !!(flags & _SC_CONFIGURABLE),
       };
     }
+    let value = hasSidecarValue ? (sc as any)[prop as any] : undefined;
+    if (!hasSidecarValue && typeof prop === "string") {
+      const getter = exports?.[`__sget_${prop}`];
+      if (typeof getter === "function") {
+        try {
+          value = getter(obj);
+        } catch {
+          value = undefined;
+        }
+      }
+    }
     return {
-      value: (sc as any)[prop as any],
+      value,
       writable: !!(flags & _SC_WRITABLE),
       enumerable: !!(flags & _SC_ENUMERABLE),
       configurable: !!(flags & _SC_CONFIGURABLE),
@@ -3575,6 +3768,22 @@ function _readOwnDescriptor(
     };
   }
   return undefined; // not an own property
+}
+
+function _wasmStructPropertyIsEnumerable(obj: any, key: any, exports: Record<string, Function> | undefined): number {
+  const prop = typeof key === "symbol" ? key : String(key);
+  const tomb = _wasmStructDeletedKeys.get(obj);
+  if (tomb && tomb.has(prop)) return 0;
+
+  const descs = _wasmPropDescs.get(obj);
+  const flags = descs?.get(_normalizeDescKey(prop));
+  if (flags !== undefined) return flags & _SC_ENUMERABLE ? 1 : 0;
+
+  const sc = _wasmStructProps.get(obj);
+  if (sc && prop in sc) return 1;
+
+  const desc = _readOwnDescriptor(obj, prop, exports);
+  return desc?.enumerable ? 1 : 0;
 }
 
 /**
@@ -3883,7 +4092,13 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       const nKey = _normalizeDescKey(key);
       const sDescs = _getSidecarDescs(obj);
       const existingVal = _sidecarGet(obj, key);
-      const newFlags = _validatePropertyDescriptor(sDescs, nKey, descriptor, existingVal);
+      // (#1629) Pass the current descriptor so the same-getter/setter identity
+      // exception (§10.1.6.3) can recognise an idempotent redefine of a
+      // non-configurable accessor through the proxy. Omitting it made
+      // `Object.is(desc.get, undefined)` always false → spurious "Cannot
+      // redefine property" when redefining with the SAME getter/setter.
+      const existingDesc = _readOwnDescriptor(obj, nKey, exports);
+      const newFlags = _validatePropertyDescriptor(sDescs, nKey, descriptor, existingVal, existingDesc);
       sDescs.set(nKey, newFlags);
       if (descriptor.value !== undefined) _sidecarSet(obj, key, descriptor.value);
       if (descriptor.get !== undefined || descriptor.set !== undefined) {
@@ -5129,10 +5344,28 @@ assert._isSameValue = isSameValue;
       }
       if (name === "__extern_get")
         return (obj: any, key: any) => {
+          if (obj != null && typeof obj === "object") {
+            try {
+              if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) return obj[key];
+            } catch {
+              /* fall through to the generic path */
+            }
+          }
           const val = _safeGet(obj, key, callbackState);
           if (val !== undefined) return val;
           // Try struct getter exports as fallback for WasmGC opaque fields
-          if (typeof key === "string") {
+          if (obj == null || typeof obj !== "object") return undefined;
+          try {
+            if (Object.getPrototypeOf(obj) !== null) return undefined;
+          } catch {
+            return undefined;
+          }
+          if (_isWasmStruct(obj)) {
+            const sc = _wasmStructProps.get(obj);
+            const descs = _wasmPropDescs.get(obj);
+            if ((sc && key in sc) || descs?.has(_normalizeDescKey(key))) return undefined;
+          }
+          if (_isWasmStruct(obj) && typeof key === "string") {
             const exports = callbackState?.getExports();
             const getter = exports?.[`__sget_${key}`];
             if (typeof getter === "function") return getter(obj);
@@ -5980,6 +6213,8 @@ assert._isSameValue = isSameValue;
           // never reach the sidecar). Mirrors the reader in __defineProperties.
           const getField = (o: any, f: string): any => {
             if (!_isWasmStruct(o)) return o[f];
+            const sc = _wasmStructProps.get(o);
+            if (sc && f in sc) return sc[f];
             // _safeGet fires struct accessor getters (__get_<f>) and the
             // sidecar; fall back to the compiled module's __sget_<field>
             // export for typed struct fields that never reach the sidecar.
@@ -5989,6 +6224,21 @@ assert._isSameValue = isSameValue;
               if (typeof g === "function") v = g(o);
             }
             return v;
+          };
+          const hasField = (o: any, f: string): boolean => {
+            if (!_isWasmStruct(o)) return f in Object(o);
+            const sc = _wasmStructProps.get(o);
+            if (sc && f in sc) return true;
+            // (#1629) Presence MUST consult the struct's real shape, not a probe
+            // through `__sget_${f}`. A `__sget_*` getter is module-global (one per
+            // field NAME across all struct types) and DOES NOT trap on a struct
+            // that lacks the field — it falls through to ref.null/0. So a try/catch
+            // probe returns `true` for every ubiquitous descriptor name (value/get
+            // /set/writable) on any struct, producing spurious ToPropertyDescriptor
+            // data⇄accessor conflicts. `__struct_field_names(o)` returns the field
+            // names of THIS instance's concrete type — the precise membership test.
+            const names = _getStructFieldNames(o, callbackState?.getExports());
+            return names !== null && names.includes(f);
           };
           // (#1629a) When the descriptor is a WasmGC struct, its get/set fields
           // are Wasm-closure structs, not JS callables. Wrap them so the spec
@@ -6006,18 +6256,51 @@ assert._isSameValue = isSameValue;
           // Object.defineProperty sees it as null-proto/no-keys and drops every
           // attribute. Materialize a plain descriptor via getField first.
           if (!_isWasmStruct(obj)) {
-            const d2 = _toPropertyDescriptorValidate(desc, getField, wrap);
+            const d2 = _toPropertyDescriptorValidate(desc, getField, wrap, hasField);
             Object.defineProperty(obj, key, d2);
             return obj;
           }
           // WasmGC struct obj: apply via sidecar
-          const d = _toPropertyDescriptorValidate(desc, getField, wrap);
+          const d = _toPropertyDescriptorValidate(desc, getField, wrap, hasField);
           const sDescs = _getSidecarDescs(obj);
           const nKey = _normalizeDescKey(key);
+          const existingDesc = _readOwnDescriptor(obj, nKey, callbackState?.getExports());
           const existingVal = _sidecarGet(obj, key);
-          const newFlags = _validatePropertyDescriptor(sDescs, nKey, d, existingVal);
+          const newFlags = _validatePropertyDescriptor(sDescs, nKey, d, existingVal, existingDesc);
           sDescs.set(nKey, newFlags);
-          if (d.value !== undefined) _sidecarSet(obj, key, d.value);
+          const hasValue = Object.prototype.hasOwnProperty.call(d, "value");
+          const hasGet = Object.prototype.hasOwnProperty.call(d, "get");
+          const hasSet = Object.prototype.hasOwnProperty.call(d, "set");
+          if (hasValue) _sidecarSet(obj, key, d.value);
+          else if (!(newFlags & _SC_ACCESSOR) && existingDesc === undefined) _sidecarSet(obj, key, undefined);
+          if (hasGet || hasSet) {
+            const sc = _wasmStructProps.get(obj) ?? {};
+            _wasmStructProps.set(obj, sc);
+            if (typeof key === "symbol") {
+              let accMap = _wasmStructAccessors.get(obj);
+              if (!accMap) {
+                accMap = new Map();
+                _wasmStructAccessors.set(obj, accMap);
+              }
+              const prev = accMap.get(key) ?? {};
+              accMap.set(key, {
+                get: hasGet ? d.get : prev.get,
+                set: hasSet ? d.set : prev.set,
+              });
+              _sidecarSet(obj, key, undefined);
+            } else {
+              if (key in sc && typeof sc[key] !== "function") delete sc[key];
+              if (hasGet) {
+                if (d.get === undefined) delete sc[`__get_${key}`];
+                else sc[`__get_${key}`] = d.get;
+              }
+              if (hasSet) {
+                if (d.set === undefined) delete sc[`__set_${key}`];
+                else sc[`__set_${key}`] = d.set;
+              }
+              if (!(key in sc)) sc[key] = undefined;
+            }
+          }
           return obj;
         };
       if (name === "__defineProperty_value")
@@ -6042,10 +6325,12 @@ assert._isSameValue = isSameValue;
                 // Pass existing sidecar value for SameValue check on non-writable props.
                 const sDescs = _getSidecarDescs(obj);
                 const nProp = _normalizeDescKey(prop);
+                const existingDesc = _readOwnDescriptor(obj, nProp, callbackState?.getExports());
                 const existingVal = _sidecarGet(obj, prop);
-                const newFlags = _validatePropertyDescriptor(sDescs, nProp, desc, existingVal);
+                const newFlags = _validatePropertyDescriptor(sDescs, nProp, desc, existingVal, existingDesc);
                 sDescs.set(nProp, newFlags);
-                if (desc.value !== undefined) _sidecarSet(obj, prop, desc.value);
+                if (Object.prototype.hasOwnProperty.call(desc, "value")) _sidecarSet(obj, prop, desc.value);
+                else if (!(newFlags & _SC_ACCESSOR) && existingDesc === undefined) _sidecarSet(obj, prop, undefined);
               } else {
                 // Spec-mandated TypeError (non-configurable redefinition on real JS objects)
                 throw e;
@@ -6091,7 +6376,8 @@ assert._isSameValue = isSameValue;
                 // WasmGC struct — store accessor in sidecar
                 const sDescs = _getSidecarDescs(obj);
                 const nProp = _normalizeDescKey(prop);
-                const newFlags = _validatePropertyDescriptor(sDescs, nProp, desc, undefined);
+                const existingDesc = _readOwnDescriptor(obj, nProp, callbackState?.getExports());
+                const newFlags = _validatePropertyDescriptor(sDescs, nProp, desc, undefined, existingDesc);
                 sDescs.set(nProp, newFlags);
                 const sc = _wasmStructProps.get(obj) ?? {};
                 _wasmStructProps.set(obj, sc);
@@ -6169,6 +6455,8 @@ assert._isSameValue = isSameValue;
           // spans both per §20.1.2.3 / [[OwnPropertyKeys]]).
           const getField = (o: any, field: string | symbol): any => {
             if (!_isWasmStruct(o)) return o[field];
+            const sc = _wasmStructProps.get(o);
+            if (sc && field in sc) return sc[field];
             let v = _sidecarGet(o, field);
             if (v === undefined && typeof field === "string") {
               const exps = callbackState?.getExports();
@@ -6176,6 +6464,18 @@ assert._isSameValue = isSameValue;
               if (typeof g === "function") v = g(o);
             }
             return v;
+          };
+          const hasField = (o: any, field: string | symbol): boolean => {
+            if (!_isWasmStruct(o)) return field in Object(o);
+            const sc = _wasmStructProps.get(o);
+            if (sc && field in sc) return true;
+            if (typeof field !== "string") return false;
+            // (#1629) See the matching probe in __defineProperty_desc: `__sget_*`
+            // getters are global per field-name and don't trap on a struct missing
+            // the field, so a try/catch probe falsely reports presence. Use the
+            // concrete struct shape via __struct_field_names instead.
+            const names = _getStructFieldNames(o, callbackState?.getExports());
+            return names !== null && names.includes(field);
           };
           // (#1629 S2) When a per-property descriptor is itself a WasmGC struct,
           // its `get`/`set` fields arrive as Wasm-closure structs, not JS
@@ -6201,7 +6501,7 @@ assert._isSameValue = isSameValue;
             const gathered: { key: string | symbol; desc: PropertyDescriptor }[] = [];
             for (const key of keys) {
               const rawDesc = getField(descsObj, key as string);
-              gathered.push({ key, desc: _toPropertyDescriptorValidate(rawDesc, getField, wrap) });
+              gathered.push({ key, desc: _toPropertyDescriptorValidate(rawDesc, getField, wrap, hasField) });
             }
             // Pass 2 — apply each (DefinePropertyOrThrow). Validation against an
             // existing non-configurable property may still throw here, matching
@@ -6209,10 +6509,13 @@ assert._isSameValue = isSameValue;
             for (const { key, desc } of gathered) {
               if (isObjWasm) {
                 const nKey = _normalizeDescKey(key as string);
+                const existingDesc2 = _readOwnDescriptor(obj, nKey, callbackState?.getExports());
                 const existingVal2 = _sidecarGet(obj, key as string);
-                const newFlags = _validatePropertyDescriptor(sDescs!, nKey, desc, existingVal2);
+                const newFlags = _validatePropertyDescriptor(sDescs!, nKey, desc, existingVal2, existingDesc2);
                 sDescs!.set(nKey, newFlags);
-                if (desc.value !== undefined) _sidecarSet(obj, key as string, desc.value);
+                if (Object.prototype.hasOwnProperty.call(desc, "value")) _sidecarSet(obj, key as string, desc.value);
+                else if (!(newFlags & _SC_ACCESSOR) && existingDesc2 === undefined)
+                  _sidecarSet(obj, key as string, undefined);
               } else {
                 Object.defineProperty(obj, key, desc);
               }
@@ -6232,15 +6535,17 @@ assert._isSameValue = isSameValue;
                 const validated: { key: string | symbol; desc: PropertyDescriptor }[] = [];
                 for (const key of keys) {
                   const rawDesc = getField(descsObj, key as string);
-                  const desc = _toPropertyDescriptorValidate(rawDesc, getField, wrap);
+                  const desc = _toPropertyDescriptorValidate(rawDesc, getField, wrap, hasField);
                   validated.push({ key: key as string, desc });
                 }
                 for (const { key, desc } of validated) {
                   const nKey = _normalizeDescKey(key);
+                  const existingDesc2 = _readOwnDescriptor(obj, nKey, callbackState?.getExports());
                   const existingVal2 = _sidecarGet(obj, key);
-                  const newFlags = _validatePropertyDescriptor(sDescs, nKey, desc, existingVal2);
+                  const newFlags = _validatePropertyDescriptor(sDescs, nKey, desc, existingVal2, existingDesc2);
                   sDescs.set(nKey, newFlags);
-                  if (desc.value !== undefined) _sidecarSet(obj, key, desc.value);
+                  if (Object.prototype.hasOwnProperty.call(desc, "value")) _sidecarSet(obj, key, desc.value);
+                  else if (!(newFlags & _SC_ACCESSOR) && existingDesc2 === undefined) _sidecarSet(obj, key, undefined);
                 }
               } else {
                 // Spec-mandated TypeError on real JS objects
@@ -7472,21 +7777,7 @@ assert._isSameValue = isSameValue;
       if (name === "Object_propertyIsEnumerable")
         return (obj: any, key: any) => {
           if (_isWasmStruct(obj)) {
-            const descs = _wasmPropDescs.get(obj);
-            if (descs) {
-              const flags = descs.get(String(key));
-              if (flags !== undefined) return flags & _SC_ENUMERABLE ? 1 : 0;
-            }
-            const sc = _wasmStructProps.get(obj);
-            if (sc && String(key) in sc) return 1;
-            // #1047 — registered class prototype: only allowlisted methods
-            const protoMethods = _prototypeMethodNames.get(obj);
-            if (protoMethods !== undefined) {
-              return protoMethods.includes(String(key)) ? 1 : 0;
-            }
-            const exports = callbackState?.getExports();
-            const fieldNames = _getStructFieldNames(obj, exports) ?? [];
-            return fieldNames.includes(String(key)) ? 1 : 0;
+            return _wasmStructPropertyIsEnumerable(obj, key, callbackState?.getExports());
           }
           return Object.prototype.propertyIsEnumerable.call(obj, key) ? 1 : 0;
         };
@@ -7613,7 +7904,13 @@ assert._isSameValue = isSameValue;
           // #1047 — registered class prototype: only allowlisted methods qualify
           const protoMethods = _prototypeMethodNames.get(obj);
           if (protoMethods !== undefined) {
-            return protoMethods.includes(String(key)) ? 1 : 0;
+            const prop = String(key);
+            return protoMethods.includes(prop) && !_isDeletedClassProp(obj, prop) ? 1 : 0;
+          }
+          const staticMethods = _staticMethodNames.get(obj);
+          if (staticMethods !== undefined) {
+            const prop = String(key);
+            return staticMethods.includes(prop) && !_isDeletedClassProp(obj, prop) ? 1 : 0;
           }
           // Check struct field names via exported helpers
           const exports = callbackState?.getExports();
@@ -7632,26 +7929,7 @@ assert._isSameValue = isSameValue;
             }
           }
           // (#1334) Deleted property — not own, hence not enumerable.
-          const tomb = _wasmStructDeletedKeys.get(obj);
-          if (tomb && tomb.has(typeof key === "symbol" ? key : String(key))) return 0;
-          // WasmGC struct: check sidecar descriptor flags
-          const descs = _wasmPropDescs.get(obj);
-          if (descs) {
-            const flags = descs.get(String(key));
-            if (flags !== undefined) return flags & _SC_ENUMERABLE ? 1 : 0;
-          }
-          // Sidecar props without explicit descriptor are enumerable
-          const sc = _wasmStructProps.get(obj);
-          if (sc && String(key) in sc) return 1;
-          // #1047 — registered class prototype: only allowlisted methods
-          const protoMethods = _prototypeMethodNames.get(obj);
-          if (protoMethods !== undefined) {
-            return protoMethods.includes(String(key)) ? 1 : 0;
-          }
-          // Check struct field names (always enumerable)
-          const exports = callbackState?.getExports();
-          const fieldNames = _getStructFieldNames(obj, exports) ?? [];
-          return fieldNames.includes(String(key)) ? 1 : 0;
+          return _wasmStructPropertyIsEnumerable(obj, key, callbackState?.getExports());
         };
       // for-in key enumeration: returns a JS array of enumerable string keys
       if (name === "__for_in_keys")
@@ -8978,6 +9256,13 @@ assert._isSameValue = isSameValue;
       return (v: any) => (v ? 1 : 0);
     case "extern_get":
       return (obj: any, key: any) => {
+        if (obj != null && typeof obj === "object") {
+          try {
+            if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) return obj[key];
+          } catch {
+            /* fall through to the generic path */
+          }
+        }
         const val = _safeGet(obj, key, callbackState);
         if (val !== undefined) {
           // (#779c) Sandbox-aware constructor identity. When a
@@ -8995,6 +9280,15 @@ assert._isSameValue = isSameValue;
           }
           return val;
         }
+        if (obj == null || typeof obj !== "object") return undefined;
+        try {
+          if (Object.getPrototypeOf(obj) !== null) return undefined;
+        } catch {
+          return undefined;
+        }
+        const sc = _wasmStructProps.get(obj);
+        const descs = _wasmPropDescs.get(obj);
+        if ((sc && key in sc) || descs?.has(_normalizeDescKey(key))) return undefined;
         if (typeof key === "string") {
           const exports = callbackState?.getExports();
           const getter = exports?.[`__sget_${key}`];
@@ -9036,7 +9330,7 @@ assert._isSameValue = isSameValue;
     case "host_eq":
       // #1065 — strict equality for two externref operands that the GC path
       // could not compare via ref.eq (e.g. host functions like `Array === Array`).
-      return (a: any, b: any) => (a === b ? 1 : 0);
+      return (a: any, b: any) => (_hostEqComparableValue(a) === _hostEqComparableValue(b) ? 1 : 0);
     case "host_loose_eq":
       // #1134 — loose equality for two externref operands (§7.2.15).
       // Handles null == undefined → true and other JS coercion rules.

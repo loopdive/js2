@@ -603,7 +603,7 @@ function compileDestructuringAssignment(
 
           const tmpVal = allocLocal(fctx, `__destruct_val_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.get", index: rhsTmp });
-          // (#1915) Sentinel-safe key materialization — under nativeStrings the
+          // (#2029) Sentinel-safe key materialization — under nativeStrings the
           // map stores -1 and a raw `global.get` would fail emit validation.
           fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
           fctx.body.push({ op: "call", funcIdx: getIdx });
@@ -1014,7 +1014,7 @@ function compileDestructuringAssignment(
           // Convert struct ref to externref
           fctx.body.push({ op: "local.get", index: tmpLocal });
           fctx.body.push({ op: "extern.convert_any" } as Instr);
-          // (#1915) Sentinel-safe key materialization — under nativeStrings the
+          // (#2029) Sentinel-safe key materialization — under nativeStrings the
           // map stores -1 and a raw `global.get` would fail emit validation.
           fctx.body.push(...stringConstantExternrefInstrs(ctx, excludedStr));
           fctx.body.push({ op: "call", funcIdx: restObjIdx });

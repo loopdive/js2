@@ -43,39 +43,6 @@ validator signature (function × first mismatch):
 (Counts from the standalone-vs-host gap diff; signatures normalized over
 function name + mismatch instruction.)
 
-## Attribution: the ~230-row i64 bucket is NOT BigInt (from #1924, 2026-06-10)
-
-The `call[0] expected type i64, found extern.convert_any` signature is **ruled
-out as the BigInt-brand representation surface** — the "NB" in the table row
-above is resolved. Root cause (reproduced on main `8ba0a82b6`):
-
-- The failing instruction is the **destructuring null/undefined TypeError
-  throw** emitted by `buildDestructureNullThrow`
-  (`src/codegen/destructuring-params.ts:247-252`) in the function's param
-  prologue. Its baked `call` index to the in-module `__new_TypeError` is
-  **stale by exactly one slot** and lands on the adjacent
-  `__box_bigint(i64)→externref` — the i64 in the validator message is the
-  bystander's signature, not an async-gen/BigInt ABI.
-- Mechanism: **late-import index shift missing detached instruction arrays**
-  (#1923 / #1109 / #1384 class). Instrumented trace: the throw bakes
-  `call 49` at `numImportFuncs=14`; four late imports follow
-  (`__array_from_iter_n`, `__get_undefined` during the same param
-  destructure; `Promise_resolve`, `Promise_reject` later); the baked call
-  receives only 3 of the 4 `flushLateImportShifts` +1 repairs (ends at 52,
-  `__new_TypeError` ends at 53).
-- Minimal repro (standalone target): a **nested** `async function*` (or plain
-  `async function`) with a destructured parameter —
-  `export function test() { async function* f({ x: [y], }) {} f({x:[45]}).next(); return 1; }`.
-  Top-level async generators refuse loudly (#680); nested ones slip past the
-  gate. The non-generator variant fails with `expected i32` — different
-  bystander, same mechanism — and likely shares roots with the ~150-row
-  `if[0] expected i32` row above (same nested-async destructure window).
-- Full evidence and trace in
-  `plan/issues/1924-bigint-i64-brand-valtype-decision.md` (§ #1919
-  attribution). No #1644 BigInt slice gates or fixes this bucket; fix lives
-  in the late-import-shift lane, and #1923's emit-time total index validation
-  would catch the class at compile time.
-
 ## Why this is the right next split
 
 This bucket is pure compiler bugs — no spec work, no new runtime features.

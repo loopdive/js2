@@ -1233,9 +1233,10 @@ describe("#1888 Slice 2 — standalone open-any method dispatch", () => {
  *
  * Covered now: the String brand arm (synthesised → compileNativeStringMethodCall
  * → native __str_* over a $NativeString-branded receiver) and the
- * Object.prototype.hasOwnProperty arm (→ native __hasOwnProperty). Everything
- * else (Array — rides on #6407; Object isPrototypeOf/propertyIsEnumerable/valueOf
- * — a separate follow-on) refuses-loud with a #1888 cite, never silent-wrong.
+ * Object.prototype hasOwnProperty/propertyIsEnumerable arms (→ native own-property
+ * helpers) plus Object.prototype.isPrototypeOf (→ native prototype-chain helper).
+ * Everything else (Array — rides on #6407; Object valueOf — a separate follow-on)
+ * refuses-loud with a #1888 cite, never silent-wrong.
  *
  * String-returning methods are asserted via a numeric projection (`.length` /
  * `charCodeAt`) since a $NativeString export return is opaque to the bare
@@ -1321,13 +1322,22 @@ describe("#1888 Slice 3 — standalone Type.prototype.<m>.call borrowed dispatch
     expect(joined).toMatch(/#6407/);
   });
 
-  it("Object.prototype.isPrototypeOf.call refuses-loud (deferred follow-on, not silent-wrong)", async () => {
+  it("Object.prototype.isPrototypeOf.call routes native (prototype-chain helper)", async () => {
     const r = await compile(
-      `export function run(): number { const p: any = {}; const o: any = {}; return Object.prototype.isPrototypeOf.call(p, o) ? 1 : 0; }`,
+      `export function run(): number {
+        const p: any = {};
+        const o: any = {};
+        Object.setPrototypeOf(o, p);
+        return Object.prototype.isPrototypeOf.call(p, o) ? 1 : 0;
+      }`,
       STD,
     );
-    expect(r.success).toBe(false);
-    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/#1888 Slice 3\/4/);
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(r.imports.some((i) => i.module === "env" && i.name === "__proto_method_call")).toBe(false);
+    assertNoHostObjectImports(r.imports);
+    expect(WebAssembly.validate(r.binary)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as NumExports).run()).toBe(1);
   });
 
   it("default target (gc) still uses the host __proto_method_call bridge (dual-mode unchanged)", async () => {

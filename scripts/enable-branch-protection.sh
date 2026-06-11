@@ -18,19 +18,19 @@
 # script, not by editing settings manually.
 #
 # Notes:
-#   - GitHub's "branch protection" surface has two APIs:
-#       (a) Legacy /repos/:owner/:repo/branches/:branch/protection  (PUT)
-#       (b) Newer /repos/:owner/:repo/rulesets                       (POST/PUT)
-#     We use (a) because it's still fully supported, accepts a single PUT,
-#     and matches what existing js2wasm tooling references.
+#   - GitHub's live protection for this repo is a repository ruleset, not the
+#     legacy branch-protection endpoint. This script fetches the current ruleset
+#     and preserves merge-queue parameters, conditions, enforcement, and bypass
+#     actors while replacing only the required-check list.
 #   - Required-check names below MUST match the GitHub job names exactly.
 #     Update `docs/ci-policy.md` and this file together when adding checks.
 #
 set -euo pipefail
 
 REPO_OWNER="${REPO_OWNER:-loopdive}"
-REPO_NAME="${REPO_NAME:-js2wasm}"
+REPO_NAME="${REPO_NAME:-js2}"
 BRANCH="${BRANCH:-main}"
+RULESET_ID="${RULESET_ID:-16700772}"
 
 DRY_RUN=0
 for arg in "$@"; do
@@ -62,57 +62,63 @@ done
 # the merged standalone JSONL is built in that job; the guard step diffs it
 # against the standalone baseline and fails the (required) check on a
 # net-negative standalone regression beyond tolerance. So gating standalone
-# needed NO new entry here and NO branch-protection re-apply — it rides the
+# needed NO separate entry here and NO ruleset re-apply — it rides the
 # `merge shard reports` context. See docs/ci-policy.md §3.
 # -----------------------------------------------------------------------------
 REQUIRED_CHECKS=(
   "cheap gate (main-ancestor + lint)"    # test262-sharded.yml — fast pre-flight reject
   "merge shard reports"                  # test262-sharded.yml — authoritative test262 gate (host + standalone, #1897)
   "quality"                              # ci.yml — lint, format, typecheck, IR budget
+  "equivalence-gate"                     # ci.yml — merged equivalence shard gate
+  "check for test262 regressions"        # test262-sharded.yml — full rolling-baseline regression diff
+  "cla-check"                            # cla-check.yml — external contributor CLA acceptance
 )
 
-# Build the JSON payload. We use printf into a heredoc-style buffer rather
-# than a real heredoc so the embedded JSON is straightforward to read.
+# Build the JSON payload from the live ruleset. Ruleset PUT is replace-style,
+# so preserve everything unrelated to required status checks.
 #
-# Schema reference (legacy protection API):
-#   https://docs.github.com/en/rest/branches/branch-protection#update-branch-protection
+# Schema reference:
+#   https://docs.github.com/en/rest/repos/rules#update-a-repository-ruleset
 build_payload() {
-  local contexts_json
+  local contexts_json current
   contexts_json=$(printf '%s\n' "${REQUIRED_CHECKS[@]}" | jq -R . | jq -s .)
+  current="$(gh api "${API_PATH}")"
 
-  jq -n \
+  if ! jq -e '.rules[]? | select(.type == "required_status_checks")' >/dev/null <<<"${current}"; then
+    echo "Ruleset ${RULESET_ID} has no required_status_checks rule; refusing to rewrite it." >&2
+    exit 1
+  fi
+
+  jq \
     --argjson contexts "$contexts_json" \
-    '{
-      required_status_checks: {
-        strict: true,
-        contexts: $contexts
-      },
-      enforce_admins: true,
-      required_pull_request_reviews: {
-        required_approving_review_count: 1,
-        dismiss_stale_reviews: true,
-        require_code_owner_reviews: true,
-        require_last_push_approval: false
-      },
-      restrictions: null,
-      required_linear_history: false,
-      allow_force_pushes: false,
-      allow_deletions: false,
-      block_creations: false,
-      required_conversation_resolution: true,
-      lock_branch: false,
-      allow_fork_syncing: false
-    }'
+    '
+      .rules |= map(
+        if .type == "required_status_checks" then
+          .parameters.strict_required_status_checks_policy = true
+          | .parameters.required_status_checks = ($contexts | map({context: .}))
+        else
+          .
+        end
+      )
+      | {
+          name,
+          target,
+          enforcement,
+          conditions,
+          rules,
+          bypass_actors
+        }
+    ' <<<"${current}"
 }
 
+API_PATH="/repos/${REPO_OWNER}/${REPO_NAME}/rulesets/${RULESET_ID}"
 PAYLOAD="$(build_payload)"
 
-API_PATH="/repos/${REPO_OWNER}/${REPO_NAME}/branches/${BRANCH}/protection"
-
-echo "Branch-protection target:"
-echo "  repo:   ${REPO_OWNER}/${REPO_NAME}"
-echo "  branch: ${BRANCH}"
-echo "  API:    PUT ${API_PATH}"
+echo "Ruleset target:"
+echo "  repo:    ${REPO_OWNER}/${REPO_NAME}"
+echo "  branch:  ${BRANCH}"
+echo "  ruleset: ${RULESET_ID}"
+echo "  API:     PUT ${API_PATH}"
 echo ""
 echo "Required status checks (must match GitHub check names exactly):"
 for check in "${REQUIRED_CHECKS[@]}"; do
@@ -143,7 +149,7 @@ echo "${PAYLOAD}" | gh api -X PUT "${API_PATH}" \
   --input -
 
 echo ""
-echo "Branch protection updated on ${REPO_OWNER}/${REPO_NAME}@${BRANCH}."
+echo "Ruleset ${RULESET_ID} updated on ${REPO_OWNER}/${REPO_NAME}@${BRANCH}."
 echo ""
 echo "Verify with:"
-echo "  gh api '${API_PATH}' | jq '.required_status_checks.contexts, .enforce_admins, .allow_force_pushes'"
+echo "  gh api '${API_PATH}' | jq '.rules[] | select(.type == \"required_status_checks\").parameters.required_status_checks'"

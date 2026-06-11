@@ -3,7 +3,7 @@ id: 1897
 slug: ci-standalone-regression-gate
 title: "Gate merges on standalone test262 regression"
 status: in-review
-sprint: 60
+sprint: 61
 goal: standalone-mode
 area: ci
 priority: high

@@ -79,6 +79,8 @@ function notImplemented(method: string): never {
  * Only the three vec methods are implemented; the rest fail loudly.
  */
 export class LinearEmitter implements BackendEmitter<Instr[]> {
+  readonly backend = "linear" as const;
+
   // #1584: sink = Instr[], same as WasmGc (the linear backend also lowers to
   // the shared `Instr` union). Factory + raw escape hatch are array ops.
   newSink(): Instr[] {

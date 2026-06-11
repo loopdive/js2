@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen+runtime
 language_feature: bigint
 goal: spec-completeness
-sprint: 60
+sprint: 61
 renumbered_from: 1350
 parent: 1328
 pr: 1249
@@ -537,23 +537,3 @@ Residual Slice E work after this PR:
 - Native standalone dynamic string parser for non-literal `BigInt(string)` inputs.
 - Native standalone `BigInt.prototype.toString(radix)` helper parity with Slice D
   host imports.
-
-## Re-ratification + residual slice re-size (#1924, 2026-06-10)
-
-The i64-bigint-brand decision was re-ratified as option (a) against main
-`8ba0a82b6` in `plan/issues/1924-bigint-i64-brand-valtype-decision.md`
-(`## Implementation Plan`), with a fresh consultation-site inventory and
-constraint matrix. Open residual slices, re-sized there and claimable
-independently:
-
-- **E2′** — native dynamic `BigInt(string)` parse (standalone) — replaces the
-  `__bigint_ctor` SyntaxError stub (`src/codegen/index.ts:8412`).
-- **E3′** — native standalone `toString(radix)` parity
-  (`src/codegen/expressions/calls.ts:6823-6831` is host-import-only).
-- **F** — migrate `compileBinaryOp` BigInt dispatch from TS-checker types
-  (`binary-ops.ts:955`) to the `InnerResult` brand (low priority).
-
-E4 (`===` value-compare for branded bigint) is DONE on main
-(`binary-ops.ts:1777-1850`, dynamic strict-eq bigint arm via `__to_bigint` +
-`i64.eq`). The #1919 async-gen `i64` bucket once suspected to sit on this
-boundary is ruled out — it is the late-import index-shift class; see #1924.

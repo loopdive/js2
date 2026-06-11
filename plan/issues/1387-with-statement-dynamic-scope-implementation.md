@@ -1,9 +1,9 @@
 ---
 id: 1387
 title: "feat: implement `with` statement — architect exploration of dynamic-scope compilation strategies"
-status: in-progress
+status: in-review
 created: 2026-05-08
-updated: 2026-06-03
+updated: 2026-06-07
 priority: high
 feasibility: medium  # Tier 1 (IR-proven static routing) is medium and dispatchable; Tier 2 (dynamic fallback) is hard and overlaps the object-representation ceiling — slice & ship Tier 1 first.
 reasoning_effort: max
@@ -14,7 +14,8 @@ goal: spec-completeness
 sprint: 61
 owner: Hooke
 claimed_by: codex-developer
-claimed_at: 2026-06-02T22:34:54.398Z
+claimed_at: 2026-06-07T10:09:57.864Z
+pr: 1272
 ---
 # #1387 — `with` statement: architect exploration
 
@@ -505,3 +506,61 @@ Validation:
 - `pnpm test:262 --include language/statements/with` — failed before running tests:
   the current worktree's `test262/` directory does not contain `test262/test`, while
   `/workspace/test262/test` exists. No test262 conformance result was produced.
+
+## Implementation note — 2026-06-07 Object.freeze/Object.seal provenance slice
+
+This slice extends the Tier-1 static path to two more closed-shape provenance
+forms called out in the architecture plan:
+
+- `with (Object.freeze({ ... })) { ... }` now unwraps the direct builtin
+  integrity call when the argument is a simple object literal, compiles the
+  literal once, and routes bare identifier reads through the existing
+  `withScopes` stack.
+- Frozen literal fields are treated as read-only in the `with` binding view, so
+  writes stay on the residual diagnostic path instead of silently mutating the
+  compiled struct.
+- `with (Object.seal({ ... })) { ... }` uses the same closed literal proof while
+  keeping data fields writable, matching sealed data-property semantics for this
+  narrow static slice.
+- Calls are only unwrapped for direct single-argument `Object.freeze`/`Object.seal`
+  heads where `Object` is not a local binding. Opaque targets, extra arguments,
+  and dynamic/static `@@unscopables` remain deferred to the existing diagnostic
+  path.
+
+Focused coverage:
+
+- `tests/issue-1387.test.ts` now covers frozen literal reads, sealed literal
+  writes, and frozen-field assignment diagnostics.
+
+Validation:
+
+- `pnpm exec tsc --noEmit` — passed.
+- `node node_modules/vitest/dist/cli.js run tests/issue-1387.test.ts tests/issue-1387-with-diagnostic.test.ts tests/error-reporting.test.ts`
+  — 3 files passed, 19 tests passed.
+- `TEST262_PATH_FILTER=language/statements/with pnpm test:262` — completed the
+  scoped with-statement slice and left the broader conformance slice red: 20
+  pass / 181 total (9 fail, 152 compile errors, 0 skip). The residual failures
+  are the expected post-slice dynamic cases, including opaque `with` targets,
+  proxy/env and `@@unscopables` binding checks, strict `Function` parse
+  coverage, and abrupt-completion cases. Artifacts:
+  `benchmarks/results/test262-report-20260607-072647.json` and
+  `benchmarks/results/test262-results-20260607-072647.jsonl`.
+
+## Publication note — 2026-06-07 PR auto-merge enabled
+
+PR #1272 is open and ready for review against `main`. The branch was refreshed
+with current `origin/main` by merge commit `8658a7bd5` before publication.
+
+The first refreshed CI run passed the #1387 implementation checks through
+typecheck/lint, equivalence shards, and the sharded test262 catastrophic and
+standalone regression guards. That run then failed the external stale-baseline
+guard in `Test262 Sharded / merge shard reports`: `js2wasm-baselines` pointed
+at baseline main SHA
+`ff02d201152dc8777d3e8151ed05dddd47d75ecf`, which the job reports as 114
+commits behind current `origin/main` (threshold: 50). This blocks merge-queue
+entry for #1272 independently of the `with` slice; see #1668 in the CI message.
+
+After recording this, commit `564bc4bb7` was pushed and GitHub accepted
+auto-merge for PR #1272 at 2026-06-07T10:18:18Z. The issue remains
+`in-review`; the PR will merge if the new queued checks pass, or stay blocked
+if the stale-baseline guard repeats.

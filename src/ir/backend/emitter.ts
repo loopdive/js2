@@ -42,6 +42,7 @@
 // bytecode (`number[]`); #1715 generalises the sink to reach a stack-VM. That
 // generalisation is the #1715 deliverable, not a Phase-1 blocker.
 
+import type { IrBackendKind } from "./legality.js";
 import type { IrBinop, IrInstr, IrType, IrUnop } from "../nodes.js";
 import type { BlockType, Instr } from "../types.js";
 import type {
@@ -79,6 +80,9 @@ type VecLayout = IrVecLowering | LinearVecLowering;
  *    (§2a), its sites move from `pushRaw` to a typed primitive.
  */
 export interface BackendEmitter<S = Instr[]> {
+  /** Backend identity used by the IR legality verifier at the emit boundary. */
+  readonly backend: IrBackendKind;
+
   /** Create a fresh empty sink (for `if`-arm buffers built by lower.ts). */
   newSink(): S;
   /** Raw-`Instr` escape hatch for op families not yet routed through the trait. */

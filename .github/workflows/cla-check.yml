@@ -64,7 +64,7 @@ jobs:
       - name: Non-PR event — post passing cla-check status (CLA enforced at PR time)
         if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # On merge_group (and any non-PR event) there is no PR author to gate —
           # CLA acceptance was already enforced at PR submission. The job's own
@@ -99,9 +99,9 @@ jobs:
           # Exposed so the gate module's own fetch()-based org-membership check
           # has a token. github-script also injects an authenticated `github`
           # Octokit, but the gate module calls the REST API directly.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           script: |
             const gate = await import(`${process.env.GITHUB_WORKSPACE}/.github/cla/cla-gate.mjs`);
             const fs = require("node:fs");

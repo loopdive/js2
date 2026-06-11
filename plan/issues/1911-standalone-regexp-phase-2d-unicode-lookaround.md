@@ -3,6 +3,7 @@ id: 1911
 title: "standalone RegExp Phase 2d: u/v/d flags, Unicode escapes, lookaround, modifiers"
 status: ready
 sprint: 61
+model: fable
 created: 2026-06-07
 updated: 2026-06-07
 priority: critical

@@ -3,11 +3,11 @@
  * #1923 — always-on total emit-time index validation.
  *
  * Pins that EVERY index space the encoder writes is range-checked, so the
- * late-import index-shift class (#1809/#1839/#1602/#1886/#1666/#1677/#1915)
+ * late-import index-shift class (#1809/#1839/#1602/#1886/#1666/#1677/#2029)
  * surfaces as a named, located codegen error instead of the raw encoder's
  * `u32 out of range: -1` — or worse, a silently valid-but-wrong binary.
  *
- * #1915's diagnostic finding motivated the extension: the old funcref-only
+ * #2029's diagnostic finding motivated the extension: the old funcref-only
  * walker did NOT fire on `class A extends Uint8Array {}` under standalone,
  * because the poison there is a `global.get -1`, not a funcIdx.
  */
@@ -69,14 +69,14 @@ describe("#1923 validateModuleIndices covers every index space", () => {
     expect(() => emitBinary(testModule())).not.toThrow();
   });
 
-  it("global.get -1 (the #1915 poison shape) — named error with function location", () => {
+  it("global.get -1 (the #2029 poison shape) — named error with function location", () => {
     const mod = testModule((m) => {
       body(m).unshift({ op: "global.get", index: -1 } as Instr, { op: "drop" } as Instr);
     });
     expect(() => emitBinary(mod)).toThrow(/global index out of range.*-1.*function 'main'.*#1923/s);
   });
 
-  it("global.get inside an if/else arm is walked (where #1915's poison hid)", () => {
+  it("global.get inside an if/else arm is walked (where #2029's poison hid)", () => {
     const mod = testModule((m) => {
       body(m).unshift(
         { op: "i32.const", value: 1 } as Instr,
@@ -217,11 +217,11 @@ describe("#1923 validateModuleIndices covers every index space", () => {
   });
 });
 
-describe("#1923 end-to-end: the #1915 repro produces a named, located error", () => {
+describe("#1923 end-to-end: the #2029 repro produces a named, located error", () => {
   it("class A extends Uint8Array under standalone names the poisoned index space", async () => {
     const src = `class MyArr extends Uint8Array {}\nconst a = new MyArr();\nconsole.log(a instanceof MyArr);\n`;
     const r = await compile(src, { fileName: "repro-1915.ts", target: "standalone" });
-    // Until the #1915 producer is fixed this compile fails — but it must fail
+    // Until the #2029 producer is fixed this compile fails — but it must fail
     // with the NAMED index-space error, never the raw encoder RangeError.
     if (!r.success) {
       const msgs = r.errors.map((e: { message: string }) => e.message).join("\n");

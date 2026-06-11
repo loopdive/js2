@@ -716,7 +716,7 @@ export function compileBinaryExpression(
           fctx.body.push({ op: "i32.const", value: 0 });
           for (const fieldName of structFieldNames) {
             // Load the key and the field name string, compare.
-            // (#1915) `>= 0` skips the nativeStrings -1 sentinel — this path
+            // (#2029) `>= 0` skips the nativeStrings -1 sentinel — this path
             // is only live when a host string-equality import exists (eqFunc),
             // so the skip never fires in practice; it hardens the emit
             // invariant. The key load sits INSIDE the guard so a skipped field

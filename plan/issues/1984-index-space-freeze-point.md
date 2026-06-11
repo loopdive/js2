@@ -1,5 +1,5 @@
 ---
-id: 1955
+id: 1984
 title: "freeze-point discipline: indexSpaceFrozen flag — late addImport/ensureLateImport after final flush throws at the producer (#1923 Option 3)"
 status: ready
 sprint: Backlog
@@ -13,11 +13,11 @@ area: codegen
 language_feature: compiler-internals
 goal: compiler-correctness
 parent: 1923
-related: [1923, 1915, 1809, 1839, 1677]
+related: [1923, 2029, 1809, 1839, 1677]
 origin: "Child slice of #1923 (ratified Implementation Plan, Option 3). Emit-time range validation (landed) catches out-of-range indices at the symptom site; this catches the PRODUCER that mutates the import space after it should be final."
 ---
 
-# #1955 — Index-space freeze-point discipline
+# #1984 — Index-space freeze-point discipline
 
 ## Problem
 
@@ -39,7 +39,7 @@ mutation throws **at the mutating call site** with its own stack.
 - `addImport` (`src/codegen/registry/imports.ts`) and `ensureLateImport`
   (`src/codegen/expressions/late-imports.ts`) throw a named codegen error
   when called with the flag set:
-  `"Codegen error: import space frozen (#1955): '<name>' added after finalize — this producer must register its import before the freeze point or refuse loudly"`.
+  `"Codegen error: import space frozen (#1984): '<name>' added after finalize — this producer must register its import before the freeze point or refuse loudly"`.
 - An explicit `unfreezeForTest()` escape is NOT provided; tests construct
   contexts before finalize like production does.
 

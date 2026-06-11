@@ -1210,7 +1210,7 @@ function compileForOfDestructuring(
               addStringConstantGlobal(ctx, excludedStr);
               fctx.body.push({ op: "local.get", index: elemLocal });
               fctx.body.push({ op: "extern.convert_any" } as Instr);
-              // (#1915) Sentinel-safe key materialization — under nativeStrings
+              // (#2029) Sentinel-safe key materialization — under nativeStrings
               // the map stores -1 and a raw `global.get` would fail emit validation.
               fctx.body.push(...stringConstantExternrefInstrs(ctx, excludedStr));
               fctx.body.push({ op: "call", funcIdx: restObjIdx });
@@ -2155,7 +2155,7 @@ function compileForOfAssignDestructuringExternref(
       if (ts.isPropertyAccessExpression(targetEl)) {
         const propName = targetEl.name.text;
         addStringConstantGlobal(ctx, propName);
-        // (#1915) Sentinel-safe key materialization — under nativeStrings the
+        // (#2029) Sentinel-safe key materialization — under nativeStrings the
         // map stores -1 and a raw `global.get` would fail emit validation.
         fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
       } else {
@@ -2457,20 +2457,20 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   // The IR path (#1183) sidesteps this by walking
   // `ctx.mod.functions[i].name` at lowering time. Mirroring that here
   // for the legacy path:
-  let charAtIdx: number | undefined;
+  let flattenIdx: number | undefined;
+  let substringIdx: number | undefined;
   for (let i = 0; i < ctx.mod.functions.length; i++) {
-    if (ctx.mod.functions[i]!.name === "__str_charAt") {
-      charAtIdx = ctx.numImportFuncs + i;
-      break;
-    }
+    const name = ctx.mod.functions[i]!.name;
+    if (name === "__str_flatten") flattenIdx = ctx.numImportFuncs + i;
+    else if (name === "__str_substring") substringIdx = ctx.numImportFuncs + i;
+    if (flattenIdx !== undefined && substringIdx !== undefined) break;
   }
-  if (charAtIdx === undefined) {
-    reportError(ctx, stmt, "for-of on string: __str_charAt helper not available");
+  if (flattenIdx === undefined || substringIdx === undefined) {
+    reportError(ctx, stmt, "for-of on string: __str_flatten/__str_substring helpers not available");
     return;
   }
 
   const strType = nativeStringType(ctx);
-  const anyStrTypeIdx = ctx.anyStrTypeIdx;
 
   // Compile the iterable expression (string ref)
   const bodyLenBefore = fctx.body.length;
@@ -2488,13 +2488,42 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   // Mark position for null guard wrapping
   const strNullGuardStart = fctx.body.length;
 
-  // Extract length from string (field 0 of AnyString struct)
+  // (#1470) Flatten ONCE up front and cache len/off/data: the loop reads raw
+  // code units to detect surrogate pairs (§22.1.5.1 — the String iterator
+  // yields code points, so a well-formed pair is one 2-code-unit element).
+  const flatLocal = allocLocal(fctx, `__forof_flat_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: ctx.nativeStrTypeIdx,
+  });
+  fctx.body.push({ op: "local.get", index: strLocal });
+  fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  fctx.body.push({ op: "local.set", index: flatLocal });
+
   const lenLocal = allocLocal(fctx, `__forof_len_${fctx.locals.length}`, {
     kind: "i32",
   });
-  fctx.body.push({ op: "local.get", index: strLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenLocal });
+
+  const offLocal = allocLocal(fctx, `__forof_off_${fctx.locals.length}`, {
+    kind: "i32",
+  });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: offLocal });
+
+  const dataLocal = allocLocal(fctx, `__forof_data_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: ctx.nativeStrDataTypeIdx,
+  });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 });
+  fctx.body.push({ op: "local.set", index: dataLocal });
+
+  const takeLocal = allocLocal(fctx, `__forof_take_${fctx.locals.length}`, {
+    kind: "i32",
+  });
 
   // Allocate counter local (i32)
   const iLocal = allocLocal(fctx, `__forof_i_${fctx.locals.length}`, {
@@ -2543,10 +2572,61 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   fctx.body.push({ op: "i32.ge_s" });
   fctx.body.push({ op: "br_if", depth: 1 }); // break
 
-  // Get character: c = charAt(str, i)
-  fctx.body.push({ op: "local.get", index: strLocal });
+  // take = 1; if data[off+i] is a high surrogate followed by a low surrogate,
+  // take = 2 (the pair is one code point — §22.1.5.1).
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.set", index: takeLocal });
+  // (data[off + i] & 0xFC00) == 0xD800 && i + 1 < len
+  fctx.body.push({ op: "local.get", index: dataLocal });
+  fctx.body.push({ op: "local.get", index: offLocal });
   fctx.body.push({ op: "local.get", index: iLocal });
-  fctx.body.push({ op: "call", funcIdx: charAtIdx });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx });
+  fctx.body.push({ op: "i32.const", value: 0xfc00 });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "i32.const", value: 0xd800 });
+  fctx.body.push({ op: "i32.eq" });
+  fctx.body.push({ op: "local.get", index: iLocal });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.get", index: lenLocal });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      // (data[off + i + 1] & 0xFC00) == 0xDC00 → take = 2
+      { op: "local.get", index: dataLocal },
+      { op: "local.get", index: offLocal },
+      { op: "local.get", index: iLocal },
+      { op: "i32.add" },
+      { op: "i32.const", value: 1 },
+      { op: "i32.add" },
+      { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+      { op: "i32.const", value: 0xfc00 },
+      { op: "i32.and" },
+      { op: "i32.const", value: 0xdc00 },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "i32.const", value: 2 },
+          { op: "local.set", index: takeLocal },
+        ],
+      } as Instr,
+    ],
+  } as Instr);
+
+  // Get element: c = __str_substring(flat, i, i + take)
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "ref.as_non_null" } as Instr);
+  fctx.body.push({ op: "local.get", index: iLocal });
+  fctx.body.push({ op: "local.get", index: iLocal });
+  fctx.body.push({ op: "local.get", index: takeLocal });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "call", funcIdx: substringIdx });
   fctx.body.push({ op: "local.set", index: elemLocal });
 
   // Compile body — save/restore block-scoped shadows for let/const (#817).
@@ -2560,9 +2640,9 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
     compileStatement(ctx, fctx, stmt.statement);
   }
 
-  // Increment i
+  // Advance by the consumed code-unit count (1, or 2 for a surrogate pair)
   fctx.body.push({ op: "local.get", index: iLocal });
-  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.get", index: takeLocal });
   fctx.body.push({ op: "i32.add" });
   fctx.body.push({ op: "local.set", index: iLocal });
 
@@ -3242,7 +3322,7 @@ function compileForOfIteratorAssignDestructuring(
 
       // Emit: __extern_get(elem, "propName") -> externref
       fctx.body.push({ op: "local.get", index: elemLocal });
-      // (#1915) Sentinel-safe key materialization — under nativeStrings the
+      // (#2029) Sentinel-safe key materialization — under nativeStrings the
       // map stores -1 and a raw `global.get` would fail emit validation.
       fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
       fctx.body.push({ op: "call", funcIdx: getIdx });
@@ -3324,7 +3404,7 @@ function compileForOfIteratorAssignDestructuring(
         if (ts.isPropertyAccessExpression(targetElIter)) {
           const propName = targetElIter.name.text;
           addStringConstantGlobal(ctx, propName);
-          // (#1915) Sentinel-safe key materialization.
+          // (#2029) Sentinel-safe key materialization.
           fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         } else {
           const keyType = compileExpression(ctx, fctx, targetElIter.argumentExpression, { kind: "externref" });
@@ -4193,7 +4273,7 @@ function emitForInMemberTargetWrite(
   if (ts.isPropertyAccessExpression(target)) {
     const propName = target.name.text;
     addStringConstantGlobal(ctx, propName);
-    // (#1915) Sentinel-safe key materialization.
+    // (#2029) Sentinel-safe key materialization.
     fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
   } else {
     const keyType = compileExpression(ctx, fctx, target.argumentExpression, {
@@ -4282,7 +4362,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     const props = exprType.getProperties();
     if (props.length === 0) return;
     for (const prop of props) {
-      // (#1915) This fallback runs precisely when the host for-in imports are
+      // (#2029) This fallback runs precisely when the host for-in imports are
       // absent (standalone/wasi), where nativeStrings stores the -1 sentinel —
       // a raw `global.get` of the map value failed emit-time index validation.
       // Materialize inline under nativeStrings; keep the registered-global

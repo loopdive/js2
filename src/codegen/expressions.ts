@@ -476,7 +476,12 @@ function compileExpressionBody(
       ts.isOmittedExpression(inner);
     if (isNull || isUndefined) {
       if (expectedType.kind === "f64") {
-        fctx.body.push({ op: "f64.const", value: isNull ? 0 : NaN });
+        if (isNull) {
+          fctx.body.push({ op: "f64.const", value: 0 });
+        } else {
+          fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+          fctx.body.push({ op: "f64.reinterpret_i64" });
+        }
         return { kind: "f64" };
       }
       if (expectedType.kind === "i32") {
@@ -500,7 +505,8 @@ function compileExpressionBody(
         }
       }
       if (expectedType.kind === "f64") {
-        fctx.body.push({ op: "f64.const", value: NaN });
+        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+        fctx.body.push({ op: "f64.reinterpret_i64" });
         return { kind: "f64" };
       }
       fctx.body.push({ op: "i32.const", value: 0 });

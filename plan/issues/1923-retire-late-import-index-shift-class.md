@@ -14,8 +14,8 @@ task_type: refactor
 area: codegen, emit
 language_feature: compiler-internals
 goal: standalone-mode
-related: [1809, 1839, 1602, 1886, 1666, 1677, 1915, 1919]
-origin: "2026-06-10 standalone gap review: the index-shift class has recurred ≥6 times (#1809, #1839, #1602, #1886, #1666, #1677) and is back again as #1915 (497 tests) — each fix was a point patch; this issue is the structural fix that ends the class."
+related: [1809, 1839, 1602, 1886, 1666, 1677, 2029, 1919]
+origin: "2026-06-10 standalone gap review: the index-shift class has recurred ≥6 times (#1809, #1839, #1602, #1886, #1666, #1677) and is back again as #2029 (497 tests) — each fix was a point patch; this issue is the structural fix that ends the class."
 ---
 
 # #1923 — Retire the late-import index-shift bug class structurally
@@ -39,7 +39,7 @@ History of point fixes, each closing one instance and leaving the class open:
 | #1839 | `addStringImports` shift omitted `pendingInitBody` / `nativeStrHelpers` / `startFuncIdx` |
 | #1602 / #1886 | earlier instances of the same capture-then-shift pattern |
 | #1666 / #1677 | `--target wasi` native-helper func-index shifts (`__str_flatten` / `__str_to_extern`) |
-| **#1915** | **current**: 497 standalone tests, `u32 out of range: -1` — and the env-gated `validateFuncRefs` guard does NOT catch it, so the poisoned index is outside the walked funcref locations (type/global/export/element) |
+| **#2029** | **current**: 497 standalone tests, `u32 out of range: -1` — and the env-gated `validateFuncRefs` guard does NOT catch it, so the poisoned index is outside the walked funcref locations (type/global/export/element) |
 
 The pattern recurs because the design invites it: raw integer indices are
 copied freely while the index space is still mutable, and nothing structurally
@@ -56,7 +56,7 @@ Evaluate and ratify one (or a layered combination) of:
    type indices (`call_ref`/`struct.*`/`array.*`/block types/`ref null <t>`),
    global indices, table/element/export/start entries, and exception tags.
    Cost is a single linear walk per emit; it converts every future instance
-   into a named, located codegen error at compile time (#1915 proves the
+   into a named, located codegen error at compile time (#2029 proves the
    current walker's coverage is insufficient).
 2. **Stale-proof references.** Replace raw captured `funcIdx: number` with a
    handle that survives shifts — either (a) symbolic references (name or
@@ -90,7 +90,7 @@ instance again. This is decision work, not instance work.
 - Emit-time validation covers all index spaces and is always-on (or the
   ratified equivalent), with measured emit-time overhead < 5% on the
   playground-examples corpus.
-- #1915's repro (`class A extends Uint8Array {}` under `--target standalone`)
+- #2029's repro (`class A extends Uint8Array {}` under `--target standalone`)
   produces a named, located codegen error (or compiles correctly) — never the
   raw encoder RangeError.
 - A regression test that simulates a stale captured index and asserts the
@@ -115,7 +115,7 @@ serialization funnels through `encodeValType`, every instruction immediate
 through `encodeInstr`, every import/export/supertype/block-type through its
 single encode helper — a future emission site cannot dodge the guard,
 whereas a separate walker must be remembered and extended (exactly how
-`validateFuncRefs` missed #1915's `global.get -1`).
+`validateFuncRefs` missed #2029's `global.get -1`).
 
 **What landed (`src/emit/binary.ts`):**
 
@@ -148,7 +148,7 @@ whereas a separate walker must be remembered and extended (exactly how
   the 10 `imported-string-constants` failures are pre-existing on main
   (#1677 note, `__box_number requires a callable`).
 
-**Diagnostic yield for #1915 (producers identified, NOT fixed here):** the
+**Diagnostic yield for #2029 (producers identified, NOT fixed here):** the
 repro's poison is a **`global.get -1` in `MyArr_new`**, baked by
 `emitSetSubclassProto` (`src/codegen/class-bodies.ts:232-250`): under
 standalone/nativeStrings, `addStringConstantGlobal`
@@ -157,7 +157,7 @@ in `stringGlobalMap` ("materialize inline at use sites"), and
 `emitSetSubclassProto` checks only `undefined`, not the -1 sentinel, before
 emitting `global.get`. Any other unchecked `stringGlobalMap.get` consumer is
 suspect for the same bucket (Object.create / Iterator.prototype /
-DisposableStack clusters) — that is task `fix(#1915)`.
+DisposableStack clusters) — that is task `fix(#2029)`.
 
 ### Why options 2/3 are still needed (residual risk)
 
@@ -165,18 +165,18 @@ Range checks cannot see an **in-range stale** index (captured before a
 +delta shift, still pointing at a real-but-wrong slot — the wasmtime
 "expected externref, found i32" flavor). Two child slices close that:
 
-- **#1955 (Option 3, freeze-point discipline)** — small, next.
+- **#1984 (Option 3, freeze-point discipline)** — small, next.
   `ctx.indexSpaceFrozen` set after the last legitimate flush in
   `generateModule`/`generateMultiModule` finalize; `addImport`/
   `ensureLateImport` throw at the *producer* call site afterwards. Converts
   "wrong index emitted later" into "illegal import added HERE".
-- **#1956 (Option 2(b), stale-proof index cells)** — incremental.
+- **#1985 (Option 2(b), stale-proof index cells)** — incremental.
   Replace raw captured `funcIdx: number` with a shared `{ idx }` cell the
   shift walker updates in place, starting with the recurring offenders:
   `pendingMethodTrampolines.methodFuncIdx` (#1809), `nativeStrHelpers`
   (#1839/#1677), late-import bridge captures. Option 2(a) (fully symbolic
   references resolved at emit) remains the end-state for NEW emission paths
-  but is not worth a big-bang migration: with #1923 + #1955 landed, every
+  but is not worth a big-bang migration: with #1923 + #1984 landed, every
   instance is a located compile error instead of silent corruption, so the
   cells can migrate site-by-site at low risk (the #618 lesson: big-bang
   shift-regime changes regress thousands of tests).
@@ -185,7 +185,7 @@ Range checks cannot see an **in-range stale** index (captured before a
 
 1. **This PR** — inline always-on validation + named errors + regression
    tests (`tests/issue-1923.test.ts`, `tests/funcref-emit-guard.test.ts`).
-2. **#1955** freeze-point (cheap; catches producers at the cause site).
-3. **fix(#1915)** producer fixes using the new named errors (497 tests).
-4. **#1956** index cells for the three recurring capture sites, then
+2. **#1984** freeze-point (cheap; catches producers at the cause site).
+3. **fix(#2029)** producer fixes using the new named errors (497 tests).
+4. **#1985** index cells for the three recurring capture sites, then
    opportunistically as sites are touched.

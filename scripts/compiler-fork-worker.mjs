@@ -8,6 +8,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { compile, createIncrementalCompiler } from "./compiler-bundle.mjs";
+import { isPoisonCompileError } from "./test262-poison-error.mjs";
 
 let compileCount = 0;
 const GC_INTERVAL = 25;
@@ -26,8 +27,6 @@ const RECREATE_INTERVAL = 500;
 // worker, all of which compile cleanly on a fresh run. Force an early recreate
 // whenever such an error is observed so the bad state cannot cascade across the
 // remainder of the batch.
-const POISON_ERROR_RE =
-  /Binary emit error|offset is out of bounds|out of memory|Array buffer allocation failed|Maximum call stack size exceeded|Invalid (?:typed )?array length/i;
 let forceRecreate = false;
 
 let incrementalCompiler = null;
@@ -76,7 +75,7 @@ process.on("message", async (msg) => {
         // #1808: an emit-class error result means the compiler/heap may be in a
         // degraded state — schedule an immediate recreate so it cannot poison
         // the rest of this worker's batch.
-        if (POISON_ERROR_RE.test(errMsg)) forceRecreate = true;
+        if (isPoisonCompileError(errMsg)) forceRecreate = true;
 
         // Write error to disk if cachePath provided
         if (msg.wasmPath && msg.metaPath) {
@@ -126,7 +125,7 @@ process.on("message", async (msg) => {
       const errStr = err && err.message ? err.message : String(err);
       // #1808: a thrown emit/allocation-class error likely corrupted shared
       // state — recreate before the next file.
-      if (POISON_ERROR_RE.test(errStr)) forceRecreate = true;
+      if (isPoisonCompileError(errStr)) forceRecreate = true;
       process.send({
         id: msg.id,
         ok: false,

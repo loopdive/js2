@@ -1,10 +1,11 @@
 ---
 id: 1850
 title: "Harden the IR verifier into a hard between-pass contract (cross-block dominance + per-backend legality + fail-CI)"
-status: in-progress
+status: in-review
+pr: 1276
 sprint: 61
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-07
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -13,6 +14,8 @@ area: ir
 language_feature: compiler-internals
 goal: correctness
 related: [1844, 1798, 1131, 1376, 1530]
+claimed_by: codex-developer
+claimed_at: 2026-06-07T10:28:20.444Z
 ---
 # #1850 — Harden the IR verifier into a hard between-pass contract
 
@@ -57,14 +60,19 @@ verifier or into the `IrType` (see #1851/R2).
 - [x] Nested if/try/loop buffer recursion lands (absorbs **#1844**). *(Already
       landed in #1844 — `nestedBuffers`/`forEachInstrDeep` in `verify.ts`; the
       new dominance pass reuses that traversal for the def-block map.)*
-- [ ] A **per-backend legality pass** runs at the emit boundary for each
+- [x] A **per-backend legality pass** runs at the emit boundary for each
       `BackendEmitter` (WasmGC / linear / bytecode), rejecting IR that uses
       ops/types not legal for that target with a clear, localized error.
-      *(Deferred — separate follow-up slice; spans all three emitters.)*
-- [ ] In test/CI builds, a verifier failure on a **claimed** function fails
+      *(Slice 2 — `verifyIrBackendLegality` runs from `lowerIrFunctionBody`,
+      keyed by `BackendEmitter.backend`; WasmGC accepts current IR, bytecode
+      rejects unsupported stack-VM ops/types, and linear rejects whole-function
+      IR lowering until it has a full-function contract.)*
+- [x] In test/CI builds, a verifier failure on a **claimed** function fails
       the build (lands in the hard-error stability bucket of #1853), rather
-      than silently demoting. *(Deferred — depends on #1853 / R6; separate
-      slice.)*
+      than silently demoting. *(Slice 2 — IR integration errors are classified;
+      verifier failures are formatted as severity-`error` diagnostics with a
+      `Codegen error:` prefix under `JS2WASM_IR_VERIFY_HARD`, `CI`,
+      `NODE_ENV=test`, or `VITEST`.)*
 - [x] Equivalence + test262 suites stay green; no new fallback-budget growth.
       *(Full IR test directory: zero new failures vs. main; multi-block
       experimentalIR compiles verify clean — no spurious demotions.)*
@@ -103,7 +111,35 @@ This PR lands **AC#1**, the headline Phase-2 TODO, in `src/ir/verify.ts`:
 - Multi-block `experimentalIR` compiles (`if/return`, `if/else`, `for`-loop sum)
   all succeed — no function is spuriously demoted by the new check.
 
-### Follow-up slices (remaining ACs, separate PRs)
+## Resolution — Slice 2: backend legality + hard verifier fallback (AC#3/#4)
 
-- Per-backend legality pass at each `BackendEmitter` emit boundary.
-- Fail-CI on verifier failure of a *claimed* function (ties to #1853 / R6).
+This PR completes the remaining hard-contract pieces:
+
+- **Backend identity on `BackendEmitter`** — each emitter now reports
+  `wasmgc`, `linear`, or `bytecode`, giving the lowerer an explicit target for
+  legality checks.
+- **`verifyIrBackendLegality(func, backend)`** — validates function signatures,
+  slots, block args, instruction result/embedded types, and nested instruction
+  buffers against the selected backend. The bytecode subset is kept aligned with
+  the current `BytecodeEmitter`; linear whole-function lowering is rejected
+  loudly until that backend grows a full-function contract; WasmGC remains the
+  permissive baseline.
+- **Emit-boundary enforcement** — `lowerIrFunctionBody` runs the legality pass
+  before lowering and throws a localized `ir/lower: <backend> backend legality
+  failed...` error with a short sample of findings.
+- **Hard verifier fallback in test/CI** — IR integration now tags build,
+  verify, lower, and backend-legality failures; `generateModule` promotes
+  verifier failures on claimed IR functions to severity-`error` diagnostics in
+  test/CI builds while leaving ordinary build-shape fallbacks as warnings.
+
+### Slice 2 validation
+
+- `pnpm exec vitest run tests/issue-1850.test.ts` — 10 tests passed.
+- `pnpm exec vitest run tests/ir-bytecode-proof.test.ts` — 23 tests passed.
+- `pnpm exec tsc --noEmit --pretty false` — passed.
+- Attempt 30 refresh after merging current `origin/main`: tightened the focused
+  successor-defined-value dominance test, then reran the same scoped validation
+  successfully (`issue-1850`, `ir-bytecode-proof`, `tsc --noEmit`).
+- Accidental broad `pnpm test -- tests/issue-1850.test.ts` expanded beyond the
+  scoped file, hit unrelated existing suite failures, and eventually exited
+  with Node OOM; not used as acceptance validation.

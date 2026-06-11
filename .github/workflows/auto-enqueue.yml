@@ -5,9 +5,9 @@ name: Auto-enqueue green PRs
 # by the time anyone acts is never queued; the merge queue also drops a PR when
 # main advances under it. This workflow enqueues open, non-draft, mergeable PRs
 # that aren't already in the queue. The merge queue re-runs the required checks
-# on the merged state before landing, so this can never merge a red PR (branch
-# protection stays the hard gate). Drafts and PRs labelled hold/do-not-merge/wip
-# are skipped.
+# on the merged state before landing, and the script also refuses to enqueue
+# PRs with any visible failing/pending check. Drafts and PRs labelled
+# hold/do-not-merge/wip are skipped.
 #
 # SERIAL-QUEUE INTERACTION (#1758): the merge queue is SERIAL
 # (max_entries_to_build=1). An unconditional, high-frequency enqueue sweep races
@@ -15,12 +15,14 @@ name: Auto-enqueue green PRs
 # is mid-formation wedged the queue twice on 2026-05-30/31 (stuck
 # AWAITING_CHECKS, no merge_group dispatched; only a ~10-min ruleset
 # disable/re-enable reset cleared it). So the sweep is now SURGICAL. The script
-# (scripts/enqueue-green-prs.mjs) applies two guards:
+# (scripts/enqueue-green-prs.mjs) applies three guards:
 #   1. BACK-OFF — if ANY queue entry is AWAITING_CHECKS (a head is forming), it
 #      skips the entire sweep and lets GitHub finish.
-#   2. GRACE WINDOW — it only enqueues a PR whose required checks have been green
-#      for >= GRACE_MINUTES (default 10), so it never races a fresh dev enqueue
-#      and only catches genuine strays.
+#   2. ALL-CHECKS GREEN — it rejects UNSTABLE PRs and any PR whose `gh pr
+#      checks` table contains a non-pass/non-skipping row.
+#   3. GRACE WINDOW — it only enqueues a PR whose checks have been green for
+#      >= GRACE_MINUTES (default 10), so it never races a fresh dev enqueue and
+#      only catches genuine strays.
 # This workflow reinforces that with a LOWERED cron (~30 min; the
 # workflow_run trigger covers the responsive case) and a single-flight
 # concurrency guard so two sweeps never overlap.

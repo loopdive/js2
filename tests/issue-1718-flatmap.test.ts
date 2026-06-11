@@ -15,8 +15,9 @@
  *   - `src/checker/index.ts`: add `lib.esnext.iterator.d.ts` to the lib set.
  *   - `src/runtime.ts`: add an `Iterator.prototype.flatMap` polyfill mirroring
  *     the existing zip/concat helpers (`_makeHelperIterator` + `_getFlattenable`),
- *     implementing §27.1.4.x: mapper(value, counter) → GetIteratorFlattenable →
- *     yield each inner value before advancing the outer.
+ *     implementing §27.1.4.x: mapper(value, counter) →
+ *     GetIteratorFlattenable(..., reject-primitives) → yield each inner value
+ *     before advancing the outer.
  *
  * The runtime polyfill is unit-tested here against the same algorithm installed
  * on the host's `Iterator.prototype` (the polyfill body is exercised on hosts
@@ -35,6 +36,7 @@ function flatMapImpl<T>(outer: Iterator<T>, mapper: (v: T, i: number) => Iterabl
   let inner: any = null;
   let done = false;
   const getFlat = (m: any): any => {
+    if (m == null || (typeof m !== "object" && typeof m !== "function")) throw new TypeError("not object");
     const s = m?.[Symbol.iterator];
     if (typeof s === "function") return s.call(m);
     if (typeof m?.next === "function") return m;
@@ -74,10 +76,9 @@ describe("#1718 S1 — Iterator.prototype.flatMap", () => {
     expect(out).toEqual([1, 10, 2, 20, 3, 30]);
   });
 
-  it("flattens string results (strings are iterable)", () => {
-    const out: unknown[] = [];
-    for (const x of flatMapImpl(["ab", "cd"].values(), (s) => s as unknown as Iterable<unknown>)) out.push(x);
-    expect(out).toEqual(["a", "b", "c", "d"]);
+  it("rejects primitive string results", () => {
+    const iter = flatMapImpl(["ab"].values(), (s) => s as unknown as Iterable<unknown>);
+    expect(() => iter.next()).toThrow(TypeError);
   });
 
   it("empty inner iterables are skipped", () => {

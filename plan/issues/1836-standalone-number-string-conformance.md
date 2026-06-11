@@ -1,16 +1,20 @@
 ---
 id: 1836
 title: "Standalone Number<->String conformance gaps (0o/0b, toFixed 1e21, exponential, fractional radix, whitespace, ToNumber) (residual #1335)"
-status: in-progress
+status: in-review
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-07
 priority: high
 feasibility: medium
 task_type: bugfix
 area: codegen
 goal: correctness
 sprint: 61
+model: fable
 parent: 1335
+pr: 1280
+claimed_by: codex-developer
+claimed_at: 2026-06-07T10:19:57.814Z
 ---
 # #1836 — standalone Number↔String conformance gaps
 
@@ -80,15 +84,14 @@ reverse with no further reversal. A leading `0` is emitted when `intPart == 0`
 `(10.5).toString(16)` → `"a.8"`, negatives handled; integer radix output
 unchanged. The `MAX_SAFE_INTEGER` guard now bounds only the integer part.
 
-### Residual defects (not in this PR — track as follow-up slices)
+### Historical residuals (closed by later slices)
 - `(1e-7).toString()`→`"0"`, `(1e21).toString()` lacks `e` — exponential
-  Number→String formatting, `number-format-native.ts:470`. §6.1.6.1.20. Larger;
-  separate slice. (`(1e21).toString()` now renders the full 22-digit integer via
-  the integer path — still not the spec `"1e+21"`, but no longer `"0"`.)
+  Number→String formatting, `number-format-native.ts:470`. §6.1.6.1.20. Closed by
+  the exponential Number→String slice below.
 - `+"12abc"` ToNumber(String) — still returns 12 not NaN on current main (the
   earlier "appears fixed" note is stale). `type-coercion.ts:1748` falls back to
-  parseFloat instead of a strict StringToNumber (which rejects trailing
-  non-numeric). Separate slice.
+  parseFloat instead of a strict StringToNumber (which rejects trailing non-numeric).
+  Closed by the strict ToNumber(String) slice below.
 
 ### Slice — DONE: exponential Number→String in toString() (§6.1.6.1.20)
 `emitToString` (`number_toString`, `src/codegen/number-format-native.ts`) gained
@@ -113,3 +116,35 @@ Residual: bit-perfect shortest-round-trip (Grisu/Ryū) for 16-17-digit extremes 
 double-range boundaries (max-double `1.797…e308`, denormals ~`1e-308`) — these print a
 last-digit-rounded approximation, not the V8 shortest string. That is #1335 Phase 2.
 
+### Slice — DONE: strict ToNumber(String) fallback (§7.1.4 → §7.1.4.1)
+Dynamic native string refs now route through the pure-Wasm `__str_to_number`
+StringToNumber helper before generic object/valueOf coercion. `coerceType`
+recognises `$AnyString`/`$NativeString` refs and calls `__str_to_number` directly;
+the declaration collector pre-emits the helper for unary `+string` and string
+arithmetic under native strings. String arithmetic also reuses `coerceType(...,
+f64, "number")` instead of hand-calling `parseFloat`, so all numeric string
+coercion sites use the full-string StringNumericLiteral grammar while global
+`parseFloat` keeps its longest-prefix behavior.
+- `+"12abc"` / `+"  12abc  "` → NaN (was 0/parseFloat-like fallback)
+- `+"0x10"` / `+"0o10"` / `+"0b10"` → 16 / 8 / 2
+- `""` and all-whitespace strings under unary `+` → 0
+- `"12abc" - 0` → NaN; `"0x10" - 0` → 16
+- `parseFloat("12abc")` remains 12; `parseFloat("0x10")` remains 0
+
+Validation:
+- `pnpm exec vitest run tests/issue-1836.test.ts` — 25 passed
+- `pnpm exec vitest run tests/issue-1836-exp.test.ts tests/issue-1335-standalone.test.ts tests/issue-49-number-format-nonfinite.test.ts` — 22 passed
+- `pnpm exec biome lint src/codegen/type-coercion.ts src/codegen/declarations.ts src/codegen/string-ops.ts tests/issue-1836.test.ts --diagnostic-level=error`
+
+### Attempt 30 refresh (2026-06-07)
+Revalidated the focused #1836 coverage and adjacent formatter regressions after
+PR #1280 had gone behind `origin/main`. Merged `origin/main` into
+`symphony/1836` before republishing; no additional #1836 code changes were needed.
+
+Validation:
+- `pnpm exec vitest run tests/issue-1836.test.ts` — 25 passed
+- `pnpm exec vitest run tests/issue-1836-exp.test.ts tests/issue-1335-standalone.test.ts tests/issue-49-number-format-nonfinite.test.ts` — 22 passed
+- `pnpm exec biome lint src/codegen/type-coercion.ts src/codegen/declarations.ts src/codegen/string-ops.ts tests/issue-1836.test.ts --diagnostic-level=error`
+
+No open #1836 residual remains. The documented shortest-round-trip formatter
+limitation stays a separate #1335 Phase 2 follow-up.
