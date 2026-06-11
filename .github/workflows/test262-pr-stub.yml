@@ -1,31 +1,23 @@
 name: Test262 PR stub
 
-# PR-level companion to test262-sharded.yml. Produces the two required check
-# names — "cheap gate (main-ancestor + lint)" and "merge shard reports" — on
-# EVERY pull_request event, cheaply.
+# PR-level companion to test262-sharded.yml. This workflow is informational
+# only: it must NOT publish any required branch-protection check name.
 #
-# Why this exists (the over-filter bug, see PR #496):
+# Historical context (the over-filter bug, see PR #496):
 #   test262-sharded.yml skips its heavy `test262-shard` matrix when the
 #   pull_request synchronize was triggered by github-actions[bot] (i.e.
 #   auto-refresh-prs doing 'Merge branch main into <branch>'). That's correct
-#   — we don't want N PR-level test262 storms every time main moves.
+#   — we don't want N PR-level test262 storms every time main moves. The real
+#   `merge-report` job now handles that explicit bot-sync skip path itself.
 #
-#   However, `merge-report` has `needs: [test262-shard]`. When the shard job
-#   is skipped, `merge-report` also skips (GitHub's `needs:` semantics treat
-#   skipped as not-success). The required check "merge shard reports" is then
-#   never produced, and under strict-required-checks the PR is permanently
-#   BLOCKED with `mergeStateStatus: BLOCKED, checks_summary: []`.
+# Why this no longer stubs required names:
+#   A same-named check from this cheap workflow can mask a failing real check.
+#   That is how a red `test262 standalone shard` could still leave the required
+#   `merge shard reports` context looking green. Required contexts must have one
+#   authoritative producer; for test262, that producer is test262-sharded.yml.
 #
-#   This stub workflow fires on ALL pull_request events (no paths filter, no
-#   actor filter). It produces "merge shard reports" trivially so the required
-#   check exists. For dev synchronizes, the real test262-sharded.yml ALSO
-#   produces "merge shard reports" with a real result — GitHub picks the most
-#   recent run of a given check name, so the real result wins (it lands later
-#   in the run). For bot synchronizes, only this stub produces it → PR stays
-#   mergeable.
-#
-#   The merge_group event still runs the full 57-shard per-target test262 on the temp
-#   merge-with-main branch, so regressions are gated at queue time.
+# The merge_group event still runs the full 57-shard per-target test262 on the
+# temp merge-with-main branch when test262-relevant files changed.
 
 on:
   pull_request:
@@ -40,7 +32,7 @@ concurrency:
 
 jobs:
   gate:
-    name: cheap gate (main-ancestor + lint)
+    name: test262 PR stub gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -63,18 +55,14 @@ jobs:
           if grep -q '"lint"' package.json; then pnpm run lint 2>&1 | tail -50; fi
 
   merge-report:
-    name: merge shard reports
+    name: test262 PR stub merge placeholder
     runs-on: ubuntu-latest
     needs: [gate]
     steps:
       - name: Stub-pass (real 57-shard per-target test262 runs in merge_group)
         run: |
-          echo "→ PR-level stub — does not run test262."
-          echo "→ For dev synchronizes, test262-sharded.yml's merge-report job"
-          echo "  produces the real 'merge shard reports' check result (latest"
-          echo "  run wins under required-check evaluation)."
-          echo "→ For bot synchronizes (auto-refresh-prs), only this stub fires,"
-          echo "  keeping the PR mergeable without paying for a 50-shard storm."
-          echo "→ The merge queue (merge_group event) runs full 50-shard test262"
-          echo "  on the temp merge-with-main branch — that gate validates the"
-          echo "  actual merge."
+          echo "→ PR-level informational stub — does not run test262."
+          echo "→ This workflow intentionally avoids required check names."
+          echo "→ test262-sharded.yml owns 'cheap gate (main-ancestor + lint)'"
+          echo "  and 'merge shard reports' so failing real checks cannot be"
+          echo "  hidden by a same-named stub."

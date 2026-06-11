@@ -8,7 +8,7 @@ priority: high
 feasibility: medium
 reasoning_effort: high
 goal: iterator-protocol
-sprint: 60
+sprint: 61
 depends_on: [680]
 required_by: [735]
 files:

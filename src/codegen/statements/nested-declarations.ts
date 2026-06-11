@@ -860,8 +860,8 @@ export function hoistFunctionDeclarations(
 
 /**
  * Emit default-value initialization for parameters with initializers.
- * For each param with a default value, check if the caller passed the sentinel
- * (0 for f64/i32, ref.null for ref types) and if so compile the initializer.
+ * For each param with a default value, check if the caller omitted it and if
+ * so compile the initializer.
  * @param paramOffset - number of prepended params (captures) before the user params
  */
 function emitDefaultParamInit(
@@ -871,6 +871,12 @@ function emitDefaultParamInit(
   paramTypes: ValType[],
   paramOffset: number,
 ): void {
+  const defaultArgcLocal = stmt.parameters.some((param, i) => {
+    if (!param.initializer) return false;
+    return paramDefaultNeedsArgc(paramTypes[i]);
+  })
+    ? cacheParamDefaultArgc(ctx, liftedFctx)
+    : undefined;
   for (let i = 0; i < stmt.parameters.length; i++) {
     const param = stmt.parameters[i]!;
     if (!param.initializer) continue;
@@ -930,21 +936,16 @@ function emitDefaultParamInit(
         then: thenInstrs,
       });
     } else if (paramType.kind === "i32") {
-      liftedFctx.body.push({ op: "local.get", index: paramIdx });
-      liftedFctx.body.push({ op: "i32.eqz" });
+      emitParamDefaultArgMissingCheck(liftedFctx, defaultArgcLocal!, i);
       liftedFctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
         then: thenInstrs,
       });
     } else if (paramType.kind === "f64") {
-      // Check if the f64 param holds the sentinel sNaN bit pattern (#866).
-      // This distinguishes missing args from explicit NaN/0/any other value.
-      // Sentinel: 0x7FF00000DEADC0DE (emitted by pushDefaultValue).
-      liftedFctx.body.push({ op: "local.get", index: paramIdx });
-      liftedFctx.body.push({ op: "i64.reinterpret_f64" });
-      liftedFctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
-      liftedFctx.body.push({ op: "i64.eq" });
+      emitParamDefaultArgMissingCheck(liftedFctx, defaultArgcLocal!, i);
+      emitF64ParamSentinelCheck(liftedFctx, paramIdx);
+      liftedFctx.body.push({ op: "i32.or" });
       liftedFctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
@@ -1029,6 +1030,57 @@ export function ensureArgcGlobal(ctx: CodegenContext): number {
   });
   ctx.argcGlobalIdx = globalIdx;
   return globalIdx;
+}
+
+/**
+ * Cache the call-site argument count once at function entry for parameter
+ * default checks. The raw -1 sentinel is preserved in the local; callers use
+ * that to mean "unknown host/module-init caller".
+ */
+export function cacheParamDefaultArgc(ctx: CodegenContext, fctx: FunctionContext): number {
+  if (fctx.argcCachedLocal !== undefined) return fctx.argcCachedLocal;
+  const argcGlobalIdx = ensureArgcGlobal(ctx);
+  const argcLocal = allocLocal(fctx, "__argc_default", { kind: "i32" });
+  fctx.body.push({ op: "global.get", index: argcGlobalIdx } as Instr);
+  fctx.body.push({ op: "local.set", index: argcLocal } as Instr);
+  fctx.body.push({ op: "i32.const", value: -1 } as Instr);
+  fctx.body.push({ op: "global.set", index: argcGlobalIdx } as Instr);
+  fctx.argcCachedLocal = argcLocal;
+  return argcLocal;
+}
+
+export function paramDefaultNeedsArgc(type: ValType | undefined): boolean {
+  return type?.kind === "i32" || type?.kind === "f64";
+}
+
+export function emitParamDefaultArgMissingCheck(fctx: FunctionContext, argcLocal: number, argIndex: number): void {
+  fctx.body.push({ op: "local.get", index: argcLocal } as Instr);
+  fctx.body.push({ op: "i32.const", value: -1 } as Instr);
+  fctx.body.push({ op: "i32.ne" } as Instr);
+  fctx.body.push({ op: "local.get", index: argcLocal } as Instr);
+  fctx.body.push({ op: "i32.const", value: argIndex } as Instr);
+  fctx.body.push({ op: "i32.le_s" } as Instr);
+  fctx.body.push({ op: "i32.and" } as Instr);
+}
+
+export function emitF64ParamSentinelCheck(fctx: FunctionContext, paramIdx: number): void {
+  fctx.body.push({ op: "local.get", index: paramIdx });
+  fctx.body.push({ op: "i64.reinterpret_f64" });
+  fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+  fctx.body.push({ op: "i64.eq" });
+}
+
+export function maybeSetArgcForKnownCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  funcName: string,
+  actualArgCount: number,
+  paramCount: number,
+): void {
+  if (!ctx.funcUsesArguments.has(funcName) && !ctx.funcOptionalParams.has(funcName)) return;
+  const argcGlobalIdx = ensureArgcGlobal(ctx);
+  fctx.body.push({ op: "i32.const", value: Math.min(actualArgCount, paramCount) } as Instr);
+  fctx.body.push({ op: "global.set", index: argcGlobalIdx } as Instr);
 }
 
 /**
@@ -1136,11 +1188,14 @@ export function emitArgumentsVecBody(
   const totalLenLocal = allocLocal(fctx, "__args_total_len", { kind: "i32" });
   const argcLocal = allocLocal(fctx, "__argc_local", { kind: "i32" });
 
-  // Read the actual call-site argument count from __argc global.
-  // This was set by the caller before the call instruction.
-  // If __argc is -1 (sentinel = not set, e.g. called from module init),
-  // fall back to numArgs (formal param count) for backwards compatibility.
-  fctx.body.push({ op: "global.get", index: argcGlobalIdx } as Instr);
+  // Read the actual call-site argument count. Parameter-default prologues cache
+  // and clear __argc before initializer expressions can make nested calls; when
+  // present, reuse that local so `arguments` observes the same call.
+  if (fctx.argcCachedLocal !== undefined) {
+    fctx.body.push({ op: "local.get", index: fctx.argcCachedLocal } as Instr);
+  } else {
+    fctx.body.push({ op: "global.get", index: argcGlobalIdx } as Instr);
+  }
   fctx.body.push({ op: "local.tee", index: argcLocal });
   fctx.body.push({ op: "i32.const", value: -1 } as Instr);
   fctx.body.push({ op: "i32.eq" } as Instr);
@@ -1150,9 +1205,11 @@ export function emitArgumentsVecBody(
     then: [{ op: "i32.const", value: numArgs } as Instr, { op: "local.set", index: argcLocal } as Instr],
     else: [],
   } as Instr);
-  // Clear __argc so nested calls don't see stale data.
-  fctx.body.push({ op: "i32.const", value: -1 } as Instr);
-  fctx.body.push({ op: "global.set", index: argcGlobalIdx } as Instr);
+  if (fctx.argcCachedLocal === undefined) {
+    // Clear __argc so nested calls don't see stale data.
+    fctx.body.push({ op: "i32.const", value: -1 } as Instr);
+    fctx.body.push({ op: "global.set", index: argcGlobalIdx } as Instr);
+  }
 
   // Consume the extras global: read it and immediately clear so nested calls
   // don't see stale data.

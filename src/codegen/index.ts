@@ -17,7 +17,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
-import { compileIrPathFunctions } from "../ir/integration.js";
+import { compileIrPathFunctions, type IrIntegrationError } from "../ir/integration.js";
 import { irVal, type IrType } from "../ir/nodes.js";
 import { buildTypeMap, type LatticeType } from "../ir/propagate.js";
 import { planIrCompilation, type IrFallbackReason } from "../ir/select.js";
@@ -920,6 +920,26 @@ function isStrictIrBuildError(message: string): boolean {
   return false;
 }
 
+function truthyEnv(v: string | undefined): boolean {
+  return v === "1" || v === "true";
+}
+
+export function irVerifierHardFailureEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return truthyEnv(env.JS2WASM_IR_VERIFY_HARD) || truthyEnv(env.CI) || env.NODE_ENV === "test" || truthyEnv(env.VITEST);
+}
+
+export function formatIrPathFallbackDiagnostic(err: IrIntegrationError): {
+  readonly message: string;
+  readonly severity: "error" | "warning";
+} {
+  const body = `IR path failed for ${err.func}: ${err.message} [IR-FALLBACK]`;
+  const hard = isStrictIrBuildError(err.message) || (err.kind === "verify" && irVerifierHardFailureEnabled());
+  return {
+    message: hard ? `Codegen error: ${body}` : body,
+    severity: hard ? "error" : "warning",
+  };
+}
+
 /** Compile a typed AST into a WasmModule IR */
 export function generateModule(
   ast: TypedAST,
@@ -1280,14 +1300,11 @@ export function generateModule(
         classMembers: selection.classMembers,
       };
       const report = compileIrPathFunctions(ctx, ast.sourceFile, safeSelection, overrideMap, classShapes);
-      // Slice 12 (#1169o) — IR-path failures are NOT compile errors. The
-      // legacy path has already produced a working `body` for every
-      // function before `compileIrPathFunctions` runs; an IR throw here
-      // is a "we tried to optimise this function via IR, it didn't fit
-      // the IR's claim shape, falling back to legacy" event. Emitting
-      // these as severity-"error" diagnostics flips test262 tests to
-      // `compile_error` even though the resulting Wasm is identical to
-      // a non-experimentalIR build (the legacy body is preserved).
+      // Slice 12 (#1169o) — most IR-path failures are NOT compile errors. The
+      // legacy path has already produced a working `body` for every function
+      // before `compileIrPathFunctions` runs; an ordinary IR throw here is a
+      // "we tried to optimise this function via IR, it didn't fit the IR's
+      // claim shape, falling back to legacy" event.
       //
       // Emit as severity-"warning" so they remain visible to the
       // bridge tests (#1181's `irErrors` filter still sees them) but
@@ -1305,19 +1322,18 @@ export function generateModule(
       // class. This is the per-kind scoping hook the long-term retire
       // plan wires through (see plan/log/ir-adoption.md).
       for (const err of report.errors) {
-        const isStrict = isStrictIrBuildError(err.message);
+        const diag = formatIrPathFallbackDiagnostic(err);
         // #1858 C4: keep the leading "IR path failed for …" text intact — many
         // bridge tests filter on `e.message.startsWith("IR path failed")` — but
         // append a concise, greppable `[IR-FALLBACK]` tag so a regression in the
         // fallback rate is visible in logs/CI even when the diagnostic is
-        // demoted to severity-"warning". Message-only: this does NOT change
-        // codegen or promote the fallback to an error (that ratchet is owned by
-        // STRICT_IR_BUILD_ERRORS / #1530).
+        // demoted to severity-"warning". #1850 promotes verifier failures in
+        // test/CI builds by prefixing the same diagnostic with `Codegen error:`.
         ctx.errors.push({
-          message: `IR path failed for ${err.func}: ${err.message} [IR-FALLBACK]`,
+          message: diag.message,
           line: 0,
           column: 0,
-          severity: isStrict ? "error" : "warning",
+          severity: diag.severity,
         });
       }
       // #1169q telemetry — when JS2WASM_LOG_IR_FALLBACKS=1, log a one-line

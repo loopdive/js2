@@ -98,6 +98,14 @@ class Emitter {
         // line terminator, not only at the end of input.
         this.emit(ReOp.EOL, this.multiline ? 1 : 0);
         return;
+      case "wordBoundary":
+        // operand a = negated (`\B`). #1912.
+        this.emit(ReOp.WBOUND, node.negated ? 1 : 0);
+        return;
+      case "backref":
+        // operand a = group index, b = case-insensitive comparison. #1912.
+        this.emit(ReOp.BACKREF, node.index, this.caseInsensitive ? 1 : 0);
+        return;
       case "concat":
         for (const part of node.parts) this.compileNode(part);
         return;

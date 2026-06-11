@@ -3,6 +3,7 @@ id: 1914
 title: "standalone RegExp native-engine reflection, constructor, prototype, and result-shape gaps"
 status: ready
 sprint: 61
+model: fable
 created: 2026-06-07
 updated: 2026-06-07
 priority: critical

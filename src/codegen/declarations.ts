@@ -493,7 +493,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   ) {
     const operandType = ctx.checker.getTypeAtLocation(node.operand);
     if (operandType.flags & ts.TypeFlags.StringLike) {
-      state.parseNeeded.add("parseFloat");
+      state.parseNeeded.add(ctx.nativeStrings ? "__str_to_number" : "parseFloat");
     }
   }
   if (
@@ -534,7 +534,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         const leftType = ctx.checker.getTypeAtLocation(node.left);
         const rightType = ctx.checker.getTypeAtLocation(node.right);
         if (isStringType(leftType) || isStringType(rightType)) {
-          state.parseNeeded.add("parseFloat");
+          state.parseNeeded.add(ctx.nativeStrings ? "__str_to_number" : "parseFloat");
         }
       } catch {
         // Type resolution may fail
@@ -2045,6 +2045,7 @@ export function collectPropsFromStatements(
               }
             }
             extraProps.push({ name: propName, type: wasmType });
+            ctx.widenedDefinePropertyKeys.add(`${varName}:${propName}`);
           }
         }
       }
@@ -2080,6 +2081,7 @@ export function collectPropsFromStatements(
                   }
                 }
                 extraProps.push({ name: propName, type: wasmType });
+                ctx.widenedDefinePropertyKeys.add(`${varName}:${propName}`);
               }
             }
           }

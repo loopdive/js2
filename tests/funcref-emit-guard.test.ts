@@ -3,7 +3,7 @@
  * Serializer-time index guard (late-import index-shift safety net, #1923).
  *
  * The recurring late-registration index-shift class
- * (#1809/#1839/#1602/#1886/#1666/#1677/#1915) produces an index that is either
+ * (#1809/#1839/#1602/#1886/#1666/#1677/#2029) produces an index that is either
  * out of range (a failed map lookup baked as `-1`) or stale-low (captured
  * before a deferred shift). Both used to surface only as an opaque
  * `u32 out of range: -1` at the raw encoder, or as a silently

@@ -102,21 +102,68 @@ describe("#1539 capture groups", () => {
   });
 });
 
-describe("#1539 narrowed refusals (Phase 2a)", () => {
+describe("#1539 narrowed refusals (Phase 2d residue after #1912)", () => {
   const refused = [
-    "\\1", // backref
-    "\\k<x>", // named backref
     "(?=ab)", // lookahead
     "(?!ab)", // neg lookahead
     "(?<=ab)", // lookbehind
     "\\p{L}", // unicode property
-    "\\bword", // word boundary
+    "\\b*", // quantified assertion — real SyntaxError, never a VM spin
+    "[b-a]", // class range out of order — real SyntaxError
+    "a**", // nothing to repeat — real SyntaxError
   ];
   for (const p of refused) {
     it(`refuses ${JSON.stringify(p)}`, () => {
       expect(() => compilePattern(p, 0)).toThrow(RegexUnsupportedError);
     });
   }
+});
+
+// #1912 Phase 2b — word boundaries, backrefs, class compatibility. Same
+// dual-run shape as the 2a corpus: our pipeline must agree with the native
+// engine on the first-match span.
+const CORPUS_2B: Array<{ p: string; f: string; inputs: string[] }> = [
+  { p: "\\bcat\\b", f: "", inputs: ["the cat sat", "concatenate", "cat", "a cat.", ""] },
+  { p: "\\Bcat", f: "", inputs: ["concatenate", "the cat", "scat"] },
+  { p: "\\b\\w+\\b", f: "", inputs: ["hello world", " x ", "", "_a1"] },
+  { p: "\\B\\B", f: "", inputs: ["ab", "a", ""] },
+  { p: "(a+)\\1", f: "", inputs: ["aa", "aaaa", "a", "baab"] },
+  { p: "(ab|cd)e\\1", f: "", inputs: ["abeab", "cdecd", "abecd"] },
+  { p: "(a)?b\\1", f: "", inputs: ["b", "ab a", "aba"] }, // unset group matches empty
+  { p: "(?<x>\\d+)-\\k<x>", f: "", inputs: ["12-12", "12-13", "7-7"] },
+  { p: "\\1(a)", f: "", inputs: ["a", "aa"] }, // forward ref: unset → empty
+  { p: "(A)\\1", f: "i", inputs: ["aa", "aA", "Ab"] }, // ci backref compare
+  { p: "(\\w+)\\s\\1", f: "", inputs: ["go go", "go stop", "aa aa"] },
+  { p: "[\\D]+", f: "", inputs: ["abc123", "123"] }, // negated shorthand in class
+  { p: "[\\W]", f: "", inputs: ["a_b", "a b", "ab"] },
+  { p: "[\\S]+", f: "", inputs: ["  x  ", "   "] },
+  { p: "[^\\D]", f: "", inputs: ["abc1", "abc"] }, // double negation = \d
+  { p: "[\\d-z]+", f: "", inputs: ["a-9z", "qrs", "-", "/"] }, // Annex B literal hyphen
+  { p: "[a-\\d]+", f: "", inputs: ["a-9", "b", "5", "c"] },
+  { p: "\\05", f: "", inputs: ["\x05", "5"] }, // legacy octal
+  { p: "(a)\\2", f: "", inputs: ["a\x02", "aa"] }, // out-of-range decimal → octal
+  { p: "\\cA", f: "", inputs: ["\x01", "cA"] }, // control escape
+  { p: "\\8", f: "", inputs: ["8", "x"] }, // identity escape
+  { p: "\\k<x>", f: "", inputs: ["k<x>", "kx"] }, // \k identity without named groups
+  { p: "[\\b]", f: "", inputs: ["\b", "b"] }, // backspace inside class
+];
+
+describe("#1912 Phase 2b pipeline vs native RegExp", () => {
+  for (const { p, f, inputs } of CORPUS_2B) {
+    for (const input of inputs) {
+      it(`/${p}/${f} on ${JSON.stringify(input)}`, () => {
+        expect(ourMatch(p, f, input)).toEqual(nativeMatch(p, f, input));
+      });
+    }
+  }
+
+  it("backref capture slots populate like native", () => {
+    const c = compilePattern("(?<x>a+)b\\k<x>", 0);
+    const m = search(c.prog, c.classTable, c.nGroups, "xaabaay", 0, false);
+    expect(m).not.toBeNull();
+    expect([m![0], m![1]]).toEqual([1, 6]); // aabaa
+    expect([m![2], m![3]]).toEqual([1, 3]); // aa
+  });
 });
 
 describe("#1539 flag parsing", () => {

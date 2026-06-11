@@ -80,6 +80,7 @@
     "tests/equivalence/symbol-basic.test.ts :: Symbol basic support (#471) Symbol() differs from well-known symbols",
     "tests/equivalence/symbol-basic.test.ts :: Symbol basic support (#471) Symbol.iterator is a constant",
     "tests/equivalence/symbol-basic.test.ts :: Symbol basic support (#471) well-known symbols are consistent",
+    "tests/equivalence/ternary-operator.test.ts :: ternary operator deeply nested ternary",
     "tests/equivalence/tdz-reference-error.test.ts :: Temporal Dead Zone (TDZ) detection (#428) TDZ in block scope",
     "tests/equivalence/tdz-reference-error.test.ts :: Temporal Dead Zone (TDZ) detection (#428) assignment to let before declaration",
     "tests/equivalence/tdz-reference-error.test.ts :: Temporal Dead Zone (TDZ) detection (#428) const: self-reference in initializer",

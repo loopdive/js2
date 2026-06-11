@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen
 language_feature: to-primitive, abstract-operations
 goal: spec-completeness
-sprint: 60
+sprint: 61
 related: [1525, 1602, 1669, 1130, 983, 1253]
 test262_fail: 142
 claimed_by: codex-developer

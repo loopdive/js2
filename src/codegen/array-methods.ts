@@ -836,20 +836,18 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...gatedBody([
-                ...loadElem,
-                ...callClosure,
-                ...toTruthy,
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: elemTmp } as Instr,
-                    { op: "local.set", index: resTmp } as Instr,
-                    { op: "br", depth: 3 } as Instr,
-                  ],
-                } as Instr,
-              ]),
+              ...loadElem,
+              ...callClosure,
+              ...toTruthy,
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: elemTmp } as Instr,
+                  { op: "local.set", index: resTmp } as Instr,
+                  { op: "br", depth: 2 } as Instr,
+                ],
+              } as Instr,
               ...incrI,
             ],
           } as Instr,
@@ -872,21 +870,19 @@ export function compileArrayLikePrototypeCall(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...gatedBody([
-                ...loadElem,
-                ...callClosure,
-                ...toTruthy,
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: iTmp } as Instr,
-                    { op: "f64.convert_i32_s" },
-                    { op: "local.set", index: resTmp } as Instr,
-                    { op: "br", depth: 3 } as Instr,
-                  ],
-                } as Instr,
-              ]),
+              ...loadElem,
+              ...callClosure,
+              ...toTruthy,
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: iTmp } as Instr,
+                  { op: "f64.convert_i32_s" },
+                  { op: "local.set", index: resTmp } as Instr,
+                  { op: "br", depth: 2 } as Instr,
+                ],
+              } as Instr,
               ...incrI,
             ],
           } as Instr,
@@ -938,15 +934,19 @@ export function compileArrayLikePrototypeCall(
 
     case "map": {
       const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-      const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-      if (arrNewIdx === undefined || arrPushIdx === undefined) return undefined;
+      const arrSetIdx = ensureLateImport(
+        ctx,
+        "__extern_set",
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [],
+      );
+      // Used both for numeric callback results and for array index / length keys.
+      const mapBoxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+      if (arrNewIdx === undefined || arrSetIdx === undefined || mapBoxIdx === undefined) return undefined;
       flushLateImportShifts(ctx, fctx);
       const resultTmp = allocLocal(fctx, `__ali_mp_res_${fctx.locals.length}`, { kind: "externref" });
       const mappedTmp = allocLocal(fctx, `__ali_mp_mapped_${fctx.locals.length}`, { kind: "externref" });
       // Convert map result to externref
-      const mapBoxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-      if (mapBoxIdx === undefined) return undefined;
-      flushLateImportShifts(ctx, fctx);
       const mapReturnToExternref: Instr[] =
         closureInfo.returnType === null
           ? // Void callback leaves nothing on the stack; push null so local.set
@@ -961,6 +961,15 @@ export function compileArrayLikePrototypeCall(
                 : []; // externref: already right type
       fctx.body.push({ op: "call", funcIdx: arrNewIdx });
       fctx.body.push({ op: "local.set", index: resultTmp });
+      addStringConstantGlobal(ctx, "length");
+      fctx.body.push(
+        { op: "local.get", index: resultTmp },
+        ...stringConstantExternrefInstrs(ctx, "length"),
+        { op: "local.get", index: lenTmp },
+        { op: "f64.convert_i32_s" },
+        { op: "call", funcIdx: mapBoxIdx },
+        { op: "call", funcIdx: arrSetIdx },
+      );
       fctx.body.push({
         op: "block",
         blockType: { kind: "empty" },
@@ -976,8 +985,11 @@ export function compileArrayLikePrototypeCall(
                 ...mapReturnToExternref,
                 { op: "local.set", index: mappedTmp } as Instr,
                 { op: "local.get", index: resultTmp } as Instr,
+                { op: "local.get", index: iTmp } as Instr,
+                { op: "f64.convert_i32_s" },
+                { op: "call", funcIdx: mapBoxIdx } as Instr,
                 { op: "local.get", index: mappedTmp } as Instr,
-                { op: "call", funcIdx: arrPushIdx } as Instr,
+                { op: "call", funcIdx: arrSetIdx } as Instr,
               ]),
               ...incrI,
             ],

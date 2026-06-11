@@ -262,6 +262,11 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   const SNAP = 20; // ref array<i32> — caps snapshot
   const TMPI = 21; // i32 scratch
   const NEWSTACK = 22; // ref $__ReFrameArr — grown stack
+  const GS = 23; // i32 backref group start (#1912)
+  const GE = 24; // i32 backref group end (#1912)
+  const BLEN = 25; // i32 backref length (#1912)
+  const JJ = 26; // i32 backref compare cursor (#1912)
+  const C1 = 27; // i32 backref left-hand unit (#1912)
 
   // Helper: read prog[pc*3 + k]
   const readProg = (k: number): Instr[] => [
@@ -482,8 +487,28 @@ export function ensureRegexRun(ctx: CodegenContext): number {
                                 op: "if",
                                 blockType: { kind: "empty" },
                                 then: anchorArm(/*eol*/ true),
-                                // op == MATCH (the only remaining op): return 1
-                                else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                else: [
+                                  { op: "local.get", index: OP },
+                                  { op: "i32.const", value: ReOp.WBOUND },
+                                  { op: "i32.eq" },
+                                  {
+                                    op: "if",
+                                    blockType: { kind: "empty" },
+                                    then: wboundArm(),
+                                    else: [
+                                      { op: "local.get", index: OP },
+                                      { op: "i32.const", value: ReOp.BACKREF },
+                                      { op: "i32.eq" },
+                                      {
+                                        op: "if",
+                                        blockType: { kind: "empty" },
+                                        then: backrefArm(),
+                                        // op == MATCH (the only remaining op): return 1
+                                        else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                      },
+                                    ],
+                                  },
+                                ],
                               },
                             ],
                           },
@@ -697,6 +722,243 @@ export function ensureRegexRun(ctx: CodegenContext): number {
     ];
   }
 
+  /** Push i32 1/0: is the unit in `local` a word char (`[0-9A-Za-z_]`,
+   *  §22.2.2.6 IsWordChar)? An out-of-bounds sentinel (-1) is non-word. */
+  function isWordInstrs(local: number): Instr[] {
+    return [
+      { op: "local.get", index: local },
+      { op: "i32.const", value: 0x30 },
+      { op: "i32.ge_s" },
+      { op: "local.get", index: local },
+      { op: "i32.const", value: 0x39 },
+      { op: "i32.le_s" },
+      { op: "i32.and" },
+      { op: "local.get", index: local },
+      { op: "i32.const", value: 0x41 },
+      { op: "i32.ge_s" },
+      { op: "local.get", index: local },
+      { op: "i32.const", value: 0x5a },
+      { op: "i32.le_s" },
+      { op: "i32.and" },
+      { op: "i32.or" },
+      { op: "local.get", index: local },
+      { op: "i32.const", value: 0x61 },
+      { op: "i32.ge_s" },
+      { op: "local.get", index: local },
+      { op: "i32.const", value: 0x7a },
+      { op: "i32.le_s" },
+      { op: "i32.and" },
+      { op: "i32.or" },
+      { op: "local.get", index: local },
+      { op: "i32.const", value: 0x5f },
+      { op: "i32.eq" },
+      { op: "i32.or" },
+    ];
+  }
+
+  /** WBOUND (#1912): operand a = negated (`\B`). Mirrors the WBOUND arm in
+   *  regex/vm.ts. CH already holds the "after" unit ((sp<slen) ? data[soff+sp]
+   *  : -1, computed at dispatch entry); the "before" unit is loaded into TMPI.
+   *  matched = (isWord(before) != isWord(after)) ^ negated. */
+  function wboundArm(): Instr[] {
+    return [
+      // TMPI = sp>0 ? data[soff+sp-1] : -1
+      { op: "local.get", index: SP },
+      { op: "i32.const", value: 0 },
+      { op: "i32.gt_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: SDATA },
+          { op: "local.get", index: SOFF },
+          { op: "local.get", index: SP },
+          { op: "i32.add" },
+          { op: "i32.const", value: 1 },
+          { op: "i32.sub" },
+          { op: "array.get_u", typeIdx: strDataIdx },
+        ],
+        else: [{ op: "i32.const", value: -1 }],
+      },
+      { op: "local.set", index: TMPI },
+      ...isWordInstrs(TMPI),
+      ...isWordInstrs(CH),
+      { op: "i32.ne" },
+      { op: "local.get", index: A },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ne" },
+      { op: "i32.xor" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: PC },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.set", index: PC },
+        ],
+        else: [
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: FAILED },
+        ],
+      },
+    ];
+  }
+
+  /** Conditionally ASCII-fold the i32 on the stack when the ci operand (local
+   *  B) is non-zero. `foldCh` re-stages through TMPI, so staging here first is
+   *  safe. Used by the BACKREF compare loop. */
+  function foldChIf(): Instr[] {
+    return [
+      { op: "local.set", index: TMPI },
+      { op: "local.get", index: B },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "local.get", index: TMPI }, ...foldCh()],
+        else: [{ op: "local.get", index: TMPI }],
+      },
+    ];
+  }
+
+  /** BACKREF (#1912): operand a = group index, b = case-insensitive. Mirrors
+   *  the BACKREF arm in regex/vm.ts: an unset group matches empty (§22.2.2.9
+   *  step 3); otherwise the captured span is compared unit-by-unit at sp.
+   *  FAILED doubles as the mismatch flag for the compare loop. */
+  function backrefArm(): Instr[] {
+    return [
+      // gs = caps[2a]; ge = caps[2a+1]
+      { op: "local.get", index: CAPS },
+      { op: "local.get", index: A },
+      { op: "i32.const", value: 2 },
+      { op: "i32.mul" },
+      { op: "array.get", typeIdx: i32Arr },
+      { op: "local.set", index: GS },
+      { op: "local.get", index: CAPS },
+      { op: "local.get", index: A },
+      { op: "i32.const", value: 2 },
+      { op: "i32.mul" },
+      { op: "i32.const", value: 1 },
+      { op: "i32.add" },
+      { op: "array.get", typeIdx: i32Arr },
+      { op: "local.set", index: GE },
+      // unset group (either slot -1) matches empty: pc++
+      { op: "local.get", index: GS },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      { op: "local.get", index: GE },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      { op: "i32.or" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: PC },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.set", index: PC },
+        ],
+        else: [
+          // blen = ge - gs
+          { op: "local.get", index: GE },
+          { op: "local.get", index: GS },
+          { op: "i32.sub" },
+          { op: "local.set", index: BLEN },
+          // if sp + blen > slen: fail
+          { op: "local.get", index: SP },
+          { op: "local.get", index: BLEN },
+          { op: "i32.add" },
+          { op: "local.get", index: SLEN },
+          { op: "i32.gt_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "i32.const", value: 1 },
+              { op: "local.set", index: FAILED },
+            ],
+            else: [
+              // j = 0; unit-by-unit compare
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: JJ },
+              {
+                op: "block",
+                blockType: { kind: "empty" },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      // if j >= blen: break (all units matched)
+                      { op: "local.get", index: JJ },
+                      { op: "local.get", index: BLEN },
+                      { op: "i32.ge_s" },
+                      { op: "br_if", depth: 1 },
+                      // c1 = fold?(data[soff+gs+j])
+                      { op: "local.get", index: SDATA },
+                      { op: "local.get", index: SOFF },
+                      { op: "local.get", index: GS },
+                      { op: "i32.add" },
+                      { op: "local.get", index: JJ },
+                      { op: "i32.add" },
+                      { op: "array.get_u", typeIdx: strDataIdx },
+                      ...foldChIf(),
+                      { op: "local.set", index: C1 },
+                      // c2 = fold?(data[soff+sp+j]); mismatch → FAILED=1, break
+                      { op: "local.get", index: SDATA },
+                      { op: "local.get", index: SOFF },
+                      { op: "local.get", index: SP },
+                      { op: "i32.add" },
+                      { op: "local.get", index: JJ },
+                      { op: "i32.add" },
+                      { op: "array.get_u", typeIdx: strDataIdx },
+                      ...foldChIf(),
+                      { op: "local.get", index: C1 },
+                      { op: "i32.ne" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "i32.const", value: 1 },
+                          { op: "local.set", index: FAILED },
+                          { op: "br", depth: 2 },
+                        ],
+                      },
+                      // j++
+                      { op: "local.get", index: JJ },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: JJ },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
+                ],
+              },
+              // matched: sp += blen; pc++
+              { op: "local.get", index: FAILED },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: SP },
+                  { op: "local.get", index: BLEN },
+                  { op: "i32.add" },
+                  { op: "local.set", index: SP },
+                  { op: "local.get", index: PC },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.add" },
+                  { op: "local.set", index: PC },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
   // Grow STACK if TOP == CAP_USED: double capacity, array.copy old -> new.
   function growStackIfFull(): Instr[] {
     return [
@@ -831,6 +1093,11 @@ export function ensureRegexRun(ctx: CodegenContext): number {
       { name: "snap", type: i32ArrRef },
       { name: "tmpi", type: { kind: "i32" } },
       { name: "newstack", type: frameArrRef },
+      { name: "gs", type: { kind: "i32" } },
+      { name: "ge", type: { kind: "i32" } },
+      { name: "blen", type: { kind: "i32" } },
+      { name: "jj", type: { kind: "i32" } },
+      { name: "c1", type: { kind: "i32" } },
     ],
     body,
     exported: false,

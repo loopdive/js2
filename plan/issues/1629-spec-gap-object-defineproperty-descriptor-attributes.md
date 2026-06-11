@@ -1,9 +1,9 @@
 ---
 id: 1629
 title: "spec gap: Object.defineProperty — descriptor attribute fidelity (664 test262 fails, biggest single bucket)"
-status: ready
+status: in-review
 created: 2026-05-08
-updated: 2026-05-30
+updated: 2026-06-07
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -11,10 +11,13 @@ task_type: feature
 area: codegen, runtime
 language_feature: object
 goal: spec-completeness
-sprint: Backlog
+sprint: 61
+pr: 1281
 renumbered_from: 1335
 parent: 1328
 related: [1629a, 1629b, 1629c, 1630, 1631, 1130, 1364b]
+claimed_by: codex-developer
+claimed_at: 2026-06-07T10:02:45.369Z
 ---
 > **UNIFIED DESCRIPTOR-MODEL SPEC (architect, 2026-05-29).** The single
 > coherent implementation plan for the whole Object property-descriptor
@@ -199,6 +202,66 @@ arg0 is an identifier, falling back to the shape table. Tests:
 overrides + default preservation, all green). Does not address
 sub-clusters #1629a (dynamic descriptor) or #1629c (Array/Function
 exotic) — those remain open.
+
+## Attempt 22 (2026-06-07, codex-developer)
+
+Focused implementation landed for descriptor-field presence when the field's
+value is explicitly `undefined`. The previous runtime used `!== undefined` as
+both a value test and a descriptor-field presence test, which made
+`{ value: undefined }`, `{ get: undefined }`, and variable-held descriptor
+objects indistinguishable from omitted fields after lowering through WasmGC
+descriptor structs.
+
+Changes:
+- Codegen routes inline/dynamic descriptor structs with explicit `undefined`
+  descriptor fields through `__defineProperty_desc`, annotating the lowered
+  descriptor object with sidecar entries for those present fields.
+- Runtime `ToPropertyDescriptor` materialization now uses HasProperty-style
+  presence checks before reading descriptor values, so present `undefined`
+  fields remain present.
+- Runtime descriptor validation now uses field-presence bits, preserving the
+  data/accessor conflict and non-configurable accessor SameValue invariants
+  when `get`, `set`, or `value` are explicitly `undefined`.
+- `Object.getOwnPropertyDescriptor` fast paths defer to the runtime descriptor
+  table for properties known to have been defined through the sidecar path.
+- `extern_get` no longer falls through ordinary JS descriptor-object properties
+  whose value is `undefined` to Wasm struct field getters.
+
+Focused validation:
+- `pnpm exec vitest run tests/issue-1629.test.ts` — 5/5 pass.
+- `pnpm exec vitest run tests/issue-1629.test.ts tests/issue-1629*.test.ts`
+  — 42/42 pass.
+- Scoped test262 samples around `Object.defineProperty` descriptor coalescing
+  and invariants were rerun. The targeted `undefined` descriptor field behavior
+  is fixed by the local tests, but representative test262 samples still expose
+  downstream gaps outside this slice: widened-field `verifyProperty` coverage,
+  array exotic length RangeError behavior, and accessor closure identity
+  read-back.
+
+## Attempt 30 (2026-06-07, codex-developer)
+
+Focused follow-up for accessor descriptor fidelity:
+
+- `Object.defineProperty` now treats `get: identifierRef` / `set: identifierRef`
+  descriptors as accessor descriptors when the receiver key is an existing
+  struct field. Those descriptors route through the runtime descriptor sidecar
+  instead of being recorded as flag-only data descriptors.
+- Compiled dot/bracket reads for locals with accessor-backed descriptor entries
+  consult the runtime descriptor model before falling back to `struct.get`, so
+  statically typed fields redefined through accessor-reference descriptors
+  invoke the getter per ECMA-262 §10.1.8.1.
+- Wasm closure callable wrappers are cached per closure/arity and `__host_eq`
+  canonicalizes cached wrappers to their underlying closure. This preserves
+  accessor identity for `Object.getOwnPropertyDescriptor(o, k).get === getter`,
+  matching the descriptor read-back expected after §20.1.2.4 DefinePropertyOrThrow.
+
+Focused validation:
+
+- `pnpm exec vitest run tests/issue-1629.test.ts` — 8/8 pass.
+- `pnpm exec vitest run tests/issue-1629.test.ts tests/issue-1629*.test.ts`
+  — 45/45 pass.
+- `TEST262_WORKERS=2 TEST262_REPORTER=dot TEST262_LOCAL_SHARD_GLOB='tests/test262-local-shard[1-3].test.ts' TEST262_PATH_FILTER='built-ins/Object/defineProperty/15.2.3.6-4-10.js|built-ins/Object/defineProperty/15.2.3.6-4-11.js|built-ins/Object/defineProperty/15.2.3.6-3-1.js' pnpm run test:262`
+  — 3/3 pass.
 
 ---
 

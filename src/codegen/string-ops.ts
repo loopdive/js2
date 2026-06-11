@@ -13,7 +13,7 @@ import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowTypeError, getFuncParamTypes, noJsHost } from "./expressions/helpers.js";
-import { addStringImports, addUnionImports, flatStringType, nativeStringType, resolveWasmType } from "./index.js";
+import { addStringImports, flatStringType, nativeStringType, resolveWasmType } from "./index.js";
 import {
   ensureAnyToStringHelper,
   ensureNativeStringExternBridge,
@@ -1174,6 +1174,19 @@ function compileBatchedConcat(ctx: CodegenContext, fctx: FunctionContext, operan
   return { kind: "externref" };
 }
 
+function coerceCompiledValueToNumber(ctx: CodegenContext, fctx: FunctionContext, valueType: ValType | null): void {
+  if (!valueType) {
+    fctx.body.push({ op: "f64.const", value: NaN });
+    return;
+  }
+  if (valueType.kind === "f64") return;
+  if (valueType.kind === "i32") {
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    return;
+  }
+  coerceType(ctx, fctx, valueType, { kind: "f64" }, "number");
+}
+
 export function compileStringBinaryOp(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1287,67 +1300,9 @@ export function compileStringBinaryOp(
         // Arithmetic/bitwise operators on strings: coerce both operands to f64 via ToNumber
         // This matches JS semantics: "5" - "2" === 3, "6" * "7" === 42
         const leftType = compileExpression(ctx, fctx, expr.left);
-        // Convert to f64 based on actual result type
-        if (leftType && leftType.kind === "f64") {
-          // Already f64 — no conversion needed
-        } else if (leftType && leftType.kind === "i32") {
-          fctx.body.push({ op: "f64.convert_i32_s" });
-        } else if (leftType && (leftType.kind === "ref" || leftType.kind === "ref_null")) {
-          // Native string ref → externref → f64
-          fctx.body.push({ op: "extern.convert_any" });
-          const pfIdx1 = ctx.funcMap.get("parseFloat");
-          if (pfIdx1 !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: pfIdx1 });
-          } else {
-            addUnionImports(ctx);
-            fctx.body.push({
-              op: "call",
-              funcIdx: ctx.funcMap.get("__unbox_number")!,
-            });
-          }
-        } else {
-          // externref or other — parseFloat/unbox
-          const pfIdx1 = ctx.funcMap.get("parseFloat");
-          if (pfIdx1 !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: pfIdx1 });
-          } else {
-            addUnionImports(ctx);
-            fctx.body.push({
-              op: "call",
-              funcIdx: ctx.funcMap.get("__unbox_number")!,
-            });
-          }
-        }
+        coerceCompiledValueToNumber(ctx, fctx, leftType);
         const rightType = compileExpression(ctx, fctx, expr.right);
-        // Convert to f64 based on actual result type
-        if (rightType && rightType.kind === "f64") {
-          // Already f64 — no conversion needed
-        } else if (rightType && rightType.kind === "i32") {
-          fctx.body.push({ op: "f64.convert_i32_s" });
-        } else if (rightType && (rightType.kind === "ref" || rightType.kind === "ref_null")) {
-          fctx.body.push({ op: "extern.convert_any" });
-          const pfIdx2 = ctx.funcMap.get("parseFloat");
-          if (pfIdx2 !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: pfIdx2 });
-          } else {
-            addUnionImports(ctx);
-            fctx.body.push({
-              op: "call",
-              funcIdx: ctx.funcMap.get("__unbox_number")!,
-            });
-          }
-        } else {
-          const pfIdx2 = ctx.funcMap.get("parseFloat");
-          if (pfIdx2 !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: pfIdx2 });
-          } else {
-            addUnionImports(ctx);
-            fctx.body.push({
-              op: "call",
-              funcIdx: ctx.funcMap.get("__unbox_number")!,
-            });
-          }
-        }
+        coerceCompiledValueToNumber(ctx, fctx, rightType);
         return compileNumericBinaryOp(ctx, fctx, op, expr);
       }
     }
@@ -1403,42 +1358,10 @@ export function compileStringBinaryOp(
   if (isArithmeticOrBitwise) {
     // Compile left operand and convert to f64
     const leftArithType = compileExpression(ctx, fctx, expr.left);
-    if (leftArithType && leftArithType.kind === "f64") {
-      // Already f64 — no conversion needed
-    } else if (leftArithType && leftArithType.kind === "i32") {
-      fctx.body.push({ op: "f64.convert_i32_s" });
-    } else {
-      // externref (string) — convert to number via parseFloat
-      const pfIdx = ctx.funcMap.get("parseFloat");
-      if (pfIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: pfIdx });
-      } else {
-        addUnionImports(ctx);
-        fctx.body.push({
-          op: "call",
-          funcIdx: ctx.funcMap.get("__unbox_number")!,
-        });
-      }
-    }
+    coerceCompiledValueToNumber(ctx, fctx, leftArithType);
     // Compile right operand and convert to f64
     const rightArithType = compileExpression(ctx, fctx, expr.right);
-    if (rightArithType && rightArithType.kind === "f64") {
-      // Already f64 — no conversion needed
-    } else if (rightArithType && rightArithType.kind === "i32") {
-      fctx.body.push({ op: "f64.convert_i32_s" });
-    } else {
-      // externref (string) — convert to number via parseFloat
-      const pfIdx2 = ctx.funcMap.get("parseFloat");
-      if (pfIdx2 !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: pfIdx2 });
-      } else {
-        addUnionImports(ctx);
-        fctx.body.push({
-          op: "call",
-          funcIdx: ctx.funcMap.get("__unbox_number")!,
-        });
-      }
-    }
+    coerceCompiledValueToNumber(ctx, fctx, rightArithType);
     return compileNumericBinaryOp(ctx, fctx, op, expr);
   }
 
@@ -2188,13 +2111,49 @@ export function compileNativeStringMethodCall(
   }
 
   // toLowerCase, toUpperCase: native helpers
-  if (method === "toLowerCase" || method === "toUpperCase") {
+  if (
+    method === "toLowerCase" ||
+    method === "toUpperCase" ||
+    method === "toLocaleLowerCase" ||
+    method === "toLocaleUpperCase"
+  ) {
+    // (#1470) toLocale{Lower,Upper}Case without ECMA-402 falls back to the
+    // default case conversion (§22.1.3.27/§22.1.3.29 note this is the same as
+    // toLowerCase/toUpperCase except for locale-sensitive mappings, which a
+    // standalone module has no ICU tables for). Previously these fell through
+    // to "Unknown string method" and got demoted to a numeric-zero stub.
     compileExpression(ctx, fctx, propAccess.expression);
     emitFlatten();
-    const helperName = `__str_${method}`;
+    // Locale arguments are still evaluated, in order, for side effects.
+    for (const arg of expr.arguments) {
+      const argType = compileExpression(ctx, fctx, arg);
+      if (argType) fctx.body.push({ op: "drop" });
+    }
+    const helperName = `__str_${method.replace("Locale", "")}`;
     const funcIdx = ctx.nativeStrHelpers.get(helperName)!;
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);
+  }
+
+  // (#1470) localeCompare — §22.1.3.12 only requires an implementation-
+  // defined CONSISTENT total order when ECMA-402 is absent; we use UTF-16
+  // code-unit order via the native __str_compare helper (the same order the
+  // relational operators use). Previously this fell through to "Unknown
+  // string method" and got demoted to an always-0 stub, which violates the
+  // consistency requirement (every pair compared "equal"). The locales /
+  // options arguments are evaluated for side effects and ignored.
+  if (method === "localeCompare") {
+    compileExpression(ctx, fctx, propAccess.expression);
+    const thatLocal = compileStringValueToLocal(expr.arguments[0], "undefined", "__lc_that");
+    for (let ai = 1; ai < expr.arguments.length; ai++) {
+      const argType = compileExpression(ctx, fctx, expr.arguments[ai]!);
+      if (argType) fctx.body.push({ op: "drop" });
+    }
+    fctx.body.push({ op: "local.get", index: thatLocal });
+    const funcIdx = ctx.nativeStrHelpers.get("__str_compare")!;
+    fctx.body.push({ op: "call", funcIdx });
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    return { kind: "f64" };
   }
 
   // For replace/replaceAll/split with non-string args (RegExp or custom objects

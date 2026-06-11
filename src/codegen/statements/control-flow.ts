@@ -506,6 +506,19 @@ export function compileIfStatement(ctx: CodegenContext, fctx: FunctionContext, s
   let elseInstrs: Instr[] | undefined;
   let typeofNarrowResultElse: { originalLocalIdx: number; narrowedLocalIdx: number } | null = null;
   if (stmt.elseStatement) {
+    // (#1712) Park the completed then-branch buffer in savedBodies for the
+    // whole else-compilation window. The raw `fctx.body = []` swap below
+    // would otherwise leave `thenInstrs` reachable only through this local
+    // variable — invisible to every late-import index shifter
+    // (addStringImports / addUnionImports / fixupModuleGlobalIndices). A
+    // string constant first registered inside the else branch (e.g. a
+    // property null-throw message) then shifts all module-global indices
+    // while the then-branch's already-emitted `global.get`s stay stale by
+    // one. Compiling acorn hit exactly this: `FUNC_STATEMENT |
+    // FUNC_NULLABLE_ID` inside a then branch read the neighbouring
+    // (ref-typed) global and produced invalid Wasm. Mirrors the #779d fix
+    // for destructuring branch buffers.
+    fctx.savedBodies.push(thenInstrs);
     fctx.body = [];
 
     // Apply typeof narrowing for else branch
@@ -526,6 +539,9 @@ export function compileIfStatement(ctx: CodegenContext, fctx: FunctionContext, s
     if (typeofNarrowResultElse) {
       fctx.localMap.set(typeofNarrowing!.varName, typeofNarrowResultElse.originalLocalIdx);
     }
+
+    // (#1712) Unpark the then-branch buffer (LIFO — must precede popBody).
+    fctx.savedBodies.pop();
   }
 
   popBody(fctx, savedBody);

@@ -10,7 +10,7 @@ feasibility: medium
 task_type: bugfix
 area: codegen
 goal: correctness
-sprint: 60
+sprint: 61
 claimed_by: codex-developer
 claimed_at: 2026-06-06T18:07:20.508Z
 ---

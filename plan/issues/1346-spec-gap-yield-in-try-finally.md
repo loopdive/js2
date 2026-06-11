@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen
 language_feature: generators
 goal: spec-completeness
-sprint: 60
+sprint: 61
 parent: 1328
 related: [1665, 1042, 1620, 1320]
 claimed_by: codex-developer

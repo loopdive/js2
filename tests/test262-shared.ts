@@ -15,6 +15,7 @@ import { dirname, join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { availableParallelism } from "os";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
+import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
 import { findNthAssert } from "./test262-assert-locator.js";
 import {
   buildNegativeCompileSource,
@@ -176,6 +177,7 @@ let pool: CompilerPool | null = null;
 const MAX_RETRIES_PER_SHARD = 10;
 const RETRY_TIMEOUT_MS = 10_000;
 let retriesUsed = 0;
+let poisonRetriesUsed = 0;
 // Mutex (serial Promise chain) — only one retry runs at a time so retries
 // are truly isolated from each other on the fork pool.
 let retryMutex: Promise<void> = Promise.resolve();
@@ -519,6 +521,9 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
     if (retriesUsed > 0) {
       console.log(`Compile-timeout retries (#1589): ${retriesUsed}/${MAX_RETRIES_PER_SHARD} used`);
     }
+    if (poisonRetriesUsed > 0) {
+      console.log(`Poison-error retries (#1862): ${poisonRetriesUsed} used`);
+    }
   });
 
   for (const [category, files] of byCategory) {
@@ -791,6 +796,72 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             }
 
             if (r.status === "compile_error" || r.status === "compile_timeout") {
+              // #1862 — a poison-class compile_error from the unified worker
+              // is a contaminated verdict. The worker requests a recycle
+              // before the pool dispatches more work; retry this file once in
+              // a clean fork and record only the clean retry result.
+              if (r.status === "compile_error" && isPoisonCompileError(r.error)) {
+                poisonRetriesUsed++;
+                const retry = await runRetrySerial(() =>
+                  pool!.runTest(
+                    compileSource,
+                    {
+                      isNegative: isNegative || false,
+                      isRuntimeNegative: isRuntimeNegative || false,
+                      expectedErrorType: meta.negative?.type,
+                      wasmPath,
+                      metaPath,
+                      label: relPath + " [poison retry]",
+                      target: TEST262_TARGET,
+                    },
+                    RETRY_TIMEOUT_MS,
+                  ),
+                );
+                const retryTiming = { compileMs: retry.compileMs, execMs: retry.execMs };
+                const retryInfo = { retried: true, retryCount: 1 };
+
+                if (retry.status === "pass") {
+                  recordResult(
+                    relPath,
+                    category,
+                    "pass",
+                    undefined,
+                    retryTiming,
+                    scopeInfo,
+                    retryInfo,
+                    metadataFromWorkerResult(retry, true),
+                  );
+                  return;
+                }
+                if (retry.status === "fail") {
+                  const error = retry.error ? adjustErrorLines(retry.error, lineAdjustOffset) : "fail after retry";
+                  recordResult(
+                    relPath,
+                    category,
+                    "fail",
+                    error,
+                    retryTiming,
+                    scopeInfo,
+                    retryInfo,
+                    metadataFromWorkerResult(retry, true),
+                  );
+                  return;
+                }
+
+                const retryError = retry.error ? adjustErrorLines(retry.error, lineAdjustOffset) : retry.status;
+                recordResult(
+                  relPath,
+                  category,
+                  retry.status,
+                  retryError,
+                  retryTiming,
+                  scopeInfo,
+                  retryInfo,
+                  metadataFromWorkerResult(retry, false),
+                );
+                return;
+              }
+
               // #1589 — auto-retry compile_timeout in isolation. Most CI
               // timeouts are fork-pool contention flakes that pass in <300 ms
               // when not competing with siblings. Retry once with a tighter

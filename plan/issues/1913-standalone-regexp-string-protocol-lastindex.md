@@ -3,6 +3,7 @@ id: 1913
 title: "standalone RegExp string protocol, matchAll, split/replace, and lastIndex residuals"
 status: ready
 sprint: 61
+model: fable
 created: 2026-06-07
 updated: 2026-06-07
 priority: critical
