@@ -36,6 +36,7 @@ import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error
 import { allocLocal } from "../context/locals.js";
 import { emitThrowReferenceError, noJsHost } from "./helpers.js";
 import { emitWithBindingGet, findWithBinding } from "../with-scope.js";
+import { emitBuiltinNamespaceObject, isSupportedBuiltinNamespace } from "../builtin-static-globals.js";
 
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
@@ -571,6 +572,14 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
       return { kind: "ref", typeIdx: (mType as any).typeIdx };
     }
     return mType;
+  }
+
+  // Standalone built-in namespace values (Array/Object) materialize as lazy
+  // open-object singletons before ambient lib declarations can route them to
+  // host globals.
+  if (ctx.standalone && isSupportedBuiltinNamespace(name)) {
+    const builtinObject = emitBuiltinNamespaceObject(ctx, fctx, name);
+    if (builtinObject) return builtinObject;
   }
 
   // Check declared globals (e.g. document, window)

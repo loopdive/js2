@@ -1,6 +1,6 @@
 {
   "comment": "Recorded CLA acceptances. Appended by .github/workflows/cla-check.yml when an external contributor comments the exact agreement phrase on their PR. Each entry: {login, name, pr, commit_sha, cla_version, signed_at}. Do not hand-edit signatures; the workflow is the source of truth. See CONTRIBUTING.md.",
-  "cla_version": "sha256:56fa61fcd8de",
+  "cla_version": "sha256:acaf2182ce49",
   "signatures": [
     {
       "login": "guest271314",
@@ -9,6 +9,15 @@
       "commit_sha": "e517fb90da542fb7c95b1002ec7784cacdfc2776",
       "cla_version": "sha256:56fa61fcd8de",
       "signed_at": "2026-05-28T01:01:09Z"
+    },
+    {
+      "login": "guest271314",
+      "name": "guest271314",
+      "pr": 589,
+      "commit_sha": "e517fb90da542fb7c95b1002ec7784cacdfc2776",
+      "cla_version": "sha256:acaf2182ce49",
+      "signed_at": "2026-05-28T01:01:09Z",
+      "note": "Owner-authorized backfill (2026-06-10): CLA.md edit fd76c5bfc (2026-05-31) changed the text hash after this contributor signed; the owner deemed the edit non-substantive to the license grant and re-recorded the 2026-05-28 acceptance from PR #589 against the current CLA version."
     }
   ]
 }

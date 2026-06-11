@@ -95,9 +95,21 @@ Two test262 workflows currently run on PRs:
 - **`test262-sharded.yml` is the authoritative PR gate.** The required
   check is `merge shard reports`, fed by the 57-shard host and standalone
   matrix.
-  - Serial-queue model (#109, see `plan/method/pr-drift-protocol.md`):
-    every PR is validated on its own merge_group ref via a `batch=1`
-    merge queue, so there is no ALLGREEN-hiding across batched PRs.
+  - Queue model (#109 → #1956, see `plan/method/pr-drift-protocol.md`):
+    every PR is validated on its own merge_group ref. Historically this was
+    pinned to a `batch=1` serial queue because the regression gate diffed
+    each group against the *main baseline*, where the cumulative diff of a
+    multi-entry queue window lets one PR's improvement mask another's
+    regression (ALLGREEN hiding). #1956 retires that constraint: each
+    merge_group run publishes its merged JSONLs keyed by the group head SHA,
+    and the next group's regression-gate diffs against its **exact
+    predecessor group** (the group head's first parent), isolating each PR's
+    own delta. With per-PR attribution restored, the queue runs with
+    `max_entries_to_build: 5` / `max_entries_to_merge: 5`
+    (`min_entries_to_merge` stays 1 — single multi-PR groups would collapse
+    per-PR runs and reintroduce intra-group masking). Fallback order when a
+    predecessor artifact is unavailable: #1081 runs/<merge-base> cache, then
+    latest-main baseline — i.e. exactly the pre-#1956 behavior.
   - Path filter restricts the matrix to PRs that touch source / test /
     config files. Docs-only PRs skip the full matrix.
   - The `cheap gate (main-ancestor + lint)` job in the same workflow is
@@ -283,7 +295,7 @@ behaviour can be flipped without touching the JS script.
 | Required check | Workflow | What it protects against |
 |---|---|---|
 | `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR. |
-| `merge shard reports` | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the `batch=1` serial merge queue — each PR validated on its own merge_group ref with no ALLGREEN hiding. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
+| `merge shard reports` | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
 | `quality` | `ci.yml` | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches. |
 | `equivalence-gate` | `ci.yml` | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged. |
 | `check for test262 regressions` | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds. |

@@ -1,26 +1,26 @@
-# Chrome Native Messaging host, compiled by js2wasm to standalone WASI
+# Native Messaging host, compiled by js2wasm to standalone WASI
 
-Chrome's [Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
+[Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
 protocol lets a browser extension talk to a native binary on the user's
 machine. The browser launches the host process and exchanges messages over the
 process's **stdin** and **stdout**, framing each message as a **4-byte
 little-endian length prefix** followed by a **UTF-8 JSON body**.
 
 This is a natural fit for `--target wasi`: compile a TypeScript host to a single
-`.wasm`, run it under `wasmtime`/`wasmer`, and point Chrome at a thin wrapper
+`.wasm`, run it under `wasmtime`/`wasmer`, and point the browser at a thin wrapper
 script. This directory contains:
 
 ```
 examples/native-messaging/
   nm_js2wasm.ts          ← the TypeScript host (compiled with --target wasi)
   README.md        ← this file
-  nm_js2wasm.json  ← Chrome native-host manifest template
+  nm_js2wasm.json  ← Native host manifest template
   manifest.json    ← Web extension manifest
-  nm_js2wasm.sh    ← wasmtime/wasmer wrapper Chrome invokes
+  nm_js2wasm.sh    ← wasmtime/wasmer wrapper the browser invokes
   background.js    ← MV3 Web extension background `ServiceWorker` script
 ```
 
-## Status: a working drop-in Chrome host
+## Status: a working drop-in host
 
 This host now exercises the **full** Native Messaging loop under `--target
 wasi`: read the framed JSON message off stdin (fd=0), route debug to stderr
@@ -44,7 +44,7 @@ binary length prefix, then the body bytes — mirroring the Node.js host API use
 by the reference hosts (`nm_assemblyscript.ts`, `nm_javy.js`, `nm_qjs_wasi.js`).
 Request bodies larger than 1 MiB can be streamed into the host as successive
 <=1 MiB Native Messaging frames, and each frame is echoed independently. It is
-a drop-in Chrome host for byte-exact request/response framing; the only
+a drop-in host for byte-exact request/response framing; the only
 external dependency is a WASI preview1 runtime to launch it (see "Run it"
 below).
 The host also accepts the reported single-frame 64 MiB JSON string shape and
@@ -146,7 +146,7 @@ printf '\x0d\x00\x00\x00{"ping":true}' | ./examples/native-messaging/nm_js2wasm.
 
 You'll see the host's stderr diagnostic (received-length + decoded body
 length) and its stdout response, framed with the binary 4-byte LE length
-prefix followed by the JSON body — exactly the bytes Chrome expects.
+prefix followed by the JSON body — exactly the bytes browsers expect.
 
 For an automated byte-exact check (build + run under wasmtime, asserting the
 stdout frame and a clean stderr), run [`smoke-test.sh`](./smoke-test.sh) —
@@ -197,13 +197,13 @@ the compiled module's linear memory below a 512 MiB cap.
 > drive it against js2wasm's own `buildWasiPolyfill()` for a JS-side
 > round-trip.
 
-## Wire it into Chrome
+## Wire it into the browser
 
 1. **Build** `out/nm_js2wasm.wasm` (above) and make sure `nm_js2wasm.sh` is executable
    (`chmod +x nm_js2wasm.sh`).
 
 2. **Edit `nm_js2wasm.json`**:
-   - `path` → the **absolute** path to `nm_js2wasm.sh` (Chrome requires an absolute
+   - `path` → the **absolute** path to `nm_js2wasm.sh` (browsers require an absolute
      path and does not set a predictable working directory), and make sure the file is
      set to executable.
    - `allowed_origins` → `chrome-extension://YOUR_EXTENSION_ID/` for the
@@ -238,7 +238,7 @@ the compiled module's linear memory below a 512 MiB cap.
    port.postMessage({ ping: true });
    ```
 
-   Chrome handles the 4-byte length framing on its side; the host sees the
+   The browser handles the 4-byte length framing on its side; the host sees the
    raw bytes on stdin and produces correctly framed bytes on stdout via
    `process.stdout.write` (a `Uint8Array` prefix + the JSON body).
 

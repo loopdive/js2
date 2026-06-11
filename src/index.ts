@@ -315,6 +315,23 @@ function withImportObject(result: CompileResult): CompileResult {
         "wasm:js-string": built["wasm:js-string"],
         string_constants: built.string_constants,
       } as unknown as WebAssembly.Imports;
+      // (#1712) Expose the runtime's exports hook. Without it, the host
+      // runtime's `callbackState.getExports()` is permanently undefined on
+      // this convenience path, silently disabling every exports-backed
+      // capability (closure wrapping via __call_fn_N/__call_fn_method_N,
+      // __sget_* struct reads, __is_closure gating). Callers wire it after
+      // instantiation:
+      //   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
+      //   (r.importObject as any).__setExports?.(instance.exports);
+      // Non-enumerable so WebAssembly.instantiate's import resolution (which
+      // only reads the module-declared namespaces) never sees it.
+      if (built.setExports) {
+        Object.defineProperty(cached, "__setExports", {
+          value: built.setExports,
+          enumerable: false,
+          configurable: true,
+        });
+      }
       return cached;
     },
   });

@@ -1404,15 +1404,217 @@ function postCompileCleanup() {
   return cleanup;
 }
 
+// ── Realm-contamination canary (#1957) ─────────────────────────────────
+// Tests share this process's JS realm, but test262's contract is a fresh
+// realm per test: many tests deliberately mutate intrinsics
+// (Array.prototype.length, JSON, Iterator.prototype.next, String.prototype …)
+// through the compiled wasm's host imports. Those mutations previously leaked
+// into every later test in the fork — and into the TS compiler itself, which
+// runs in the same realm ("wasm exception during compile (poisoned
+// built-in)", #1862). Which victims got hit was a function of shard
+// assignment, so the baseline carried arbitrary contaminated entries and any
+// shard-weight change redistributed them (blocked #1953 with deterministic
+// net −1 flips).
+//
+// Strategy: BEHAVIORAL detection, targeted reset. After every result we diff
+// a broad intrinsic surface (constructors + prototypes + iterator/generator
+// prototypes + Math/JSON/Reflect/globalThis own descriptors) against a
+// snapshot taken at worker startup. Only when actual drift is detected does
+// the worker request a recycle via the existing pool protocol — the
+// contaminating test keeps its own (valid) verdict, and the NEXT test gets a
+// pristine process. Clean tests pay only the diff (~1ms); no per-test realm
+// or process churn.
+//
+// Lazy runtime installs: the runtime intentionally installs helpers onto
+// some intrinsics on first use (e.g. iterator helpers, generator
+// prototypes — see _iteratorHelpersInstalled in src/runtime.ts). Those are
+// NOT contamination. They are absorbed in two ways: surfaces the runtime
+// owns are listed in REALM_CANARY_IGNORE, and in `recycle` mode the first
+// post-drift snapshot re-baselines so a one-time install never causes a
+// recycle loop.
+//
+// Modes (TEST262_REALM_CANARY): "" (off) | "log" (report drift to stderr,
+// re-baseline, never recycle — measurement mode) | "recycle" (request a
+// worker recycle on drift outside the ignore list).
+const REALM_CANARY_MODE = process.env.TEST262_REALM_CANARY || "";
+
+// Surfaces the runtime intentionally installs onto / mutates as part of
+// normal operation. Label prefixes. Extend ONLY with evidence from `log`
+// mode runs — every entry here is a hole in the canary.
+const REALM_CANARY_IGNORE = [
+  // Legacy RegExp statics (annexB) — written by EVERY regexp match as normal
+  // engine behavior, not contamination. Measured in log mode 2026-06-11:
+  // they flip on the first regexp-using test and would otherwise cause a
+  // recycle storm. Residual hole: the few annexB legacy-statics tests can
+  // still contaminate each other — accepted.
+  "RegExp.input",
+  "RegExp.$",
+  "RegExp.lastMatch",
+  "RegExp.lastParen",
+  "RegExp.leftContext",
+  "RegExp.rightContext",
+  "RegExp.multiline",
+  // Node internals lazily install symbol-keyed globals on first use
+  // (observed: Symbol(undici.globalDispatcher.1) on first fetch-adjacent
+  // path). Symbol-keyed globalThis additions are Node plumbing, not test262
+  // contamination — a fresh worker would just re-install them and recycle
+  // forever.
+  "globalThis.Symbol(",
+];
+
+function realmCanaryIgnored(label) {
+  return REALM_CANARY_IGNORE.some((p) => label.startsWith(p));
+}
+
+function collectIntrinsicSurface() {
+  const roots = new Map();
+  const add = (label, obj) => {
+    if (obj && (typeof obj === "object" || typeof obj === "function") && !roots.has(label)) {
+      roots.set(label, obj);
+    }
+  };
+  const ctors = [
+    Array, Object, String, Number, Boolean, Function, RegExp, Date, Symbol, Promise,
+    Map, Set, WeakMap, WeakSet, Error, TypeError, RangeError, SyntaxError,
+    ReferenceError, EvalError, URIError, ArrayBuffer, DataView, Int8Array,
+    Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array,
+    Uint32Array, Float32Array, Float64Array, BigInt, BigInt64Array, BigUint64Array,
+  ];
+  for (const c of ctors) {
+    add(c.name, c);
+    add(`${c.name}.prototype`, c.prototype);
+  }
+  add("Math", Math);
+  add("JSON", JSON);
+  add("Reflect", Reflect);
+  add("globalThis", globalThis);
+  try {
+    const arrIter = Object.getPrototypeOf([][Symbol.iterator]());
+    add("%ArrayIteratorPrototype%", arrIter);
+    add("%IteratorPrototype%", Object.getPrototypeOf(arrIter));
+    add("%StringIteratorPrototype%", Object.getPrototypeOf(""[Symbol.iterator]()));
+    add("%MapIteratorPrototype%", Object.getPrototypeOf(new Map()[Symbol.iterator]()));
+    add("%SetIteratorPrototype%", Object.getPrototypeOf(new Set()[Symbol.iterator]()));
+    const genFn = function* () {};
+    add("%GeneratorFunctionPrototype%", Object.getPrototypeOf(genFn));
+    add("%GeneratorPrototype%", genFn.prototype ? Object.getPrototypeOf(genFn()) : undefined);
+    const asyncGenFn = async function* () {};
+    add("%AsyncGeneratorFunctionPrototype%", Object.getPrototypeOf(asyncGenFn));
+    add("%TypedArrayPrototype%", Object.getPrototypeOf(Uint8Array.prototype));
+  } catch {
+    // best-effort — a missing exotic prototype shrinks coverage, never breaks
+  }
+  return roots;
+}
+
+function describeOwnSurface(obj) {
+  const out = new Map();
+  for (const key of Reflect.ownKeys(obj)) {
+    let d;
+    try {
+      d = Object.getOwnPropertyDescriptor(obj, key);
+    } catch {
+      continue;
+    }
+    if (!d) continue;
+    out.set(key, { v: d.value, g: d.get, s: d.set, w: d.writable, e: d.enumerable, c: d.configurable });
+  }
+  return out;
+}
+
+function snapshotRealmSurface() {
+  const snap = new Map();
+  for (const [label, obj] of collectIntrinsicSurface()) {
+    try {
+      snap.set(label, {
+        obj,
+        props: describeOwnSurface(obj),
+        ext: Object.isExtensible(obj),
+        proto: Object.getPrototypeOf(obj),
+      });
+    } catch {
+      // skip unreadable root
+    }
+  }
+  return snap;
+}
+
+const REALM_CANARY_MAX_DRIFT = 24;
+
+function diffRealmSurface(snap) {
+  const drift = [];
+  for (const [label, entry] of snap) {
+    if (drift.length >= REALM_CANARY_MAX_DRIFT) break;
+    const { obj, props, ext, proto } = entry;
+    let curProps;
+    try {
+      curProps = describeOwnSurface(obj);
+      if (Object.isExtensible(obj) !== ext) drift.push(`${label}:[[Extensible]]`);
+      if (Object.getPrototypeOf(obj) !== proto) drift.push(`${label}:[[Prototype]]`);
+    } catch {
+      drift.push(`${label}:unreadable`);
+      continue;
+    }
+    for (const [key, sig] of props) {
+      const cur = curProps.get(key);
+      if (!cur) {
+        drift.push(`${label}.${String(key)}:deleted`);
+        continue;
+      }
+      if (
+        !Object.is(cur.v, sig.v) ||
+        !Object.is(cur.g, sig.g) ||
+        !Object.is(cur.s, sig.s) ||
+        cur.w !== sig.w ||
+        cur.e !== sig.e ||
+        cur.c !== sig.c
+      ) {
+        drift.push(`${label}.${String(key)}:changed`);
+      }
+    }
+    for (const key of curProps.keys()) {
+      if (!props.has(key)) drift.push(`${label}.${String(key)}:added`);
+    }
+  }
+  return drift;
+}
+
+let realmCanarySnapshot = REALM_CANARY_MODE ? snapshotRealmSurface() : null;
+let realmCanaryChecks = 0;
+let realmCanaryCheckMsTotal = 0;
+
+function realmDriftRecycleReason(payload) {
+  if (!realmCanarySnapshot) return undefined;
+  const t0 = performance.now();
+  const drift = diffRealmSurface(realmCanarySnapshot).filter((d) => !realmCanaryIgnored(d));
+  realmCanaryCheckMsTotal += performance.now() - t0;
+  realmCanaryChecks++;
+  if (REALM_CANARY_MODE === "log" && realmCanaryChecks % 200 === 0) {
+    console.error(
+      `[realm-canary] ${realmCanaryChecks} checks, avg ${(realmCanaryCheckMsTotal / realmCanaryChecks).toFixed(2)}ms`,
+    );
+  }
+  if (drift.length === 0) return undefined;
+  const summary = drift.slice(0, 8).join(", ") + (drift.length > 8 ? ` (+${drift.length - 8} more)` : "");
+  console.error(`[realm-canary] drift after test#${payload?.id ?? "?"}: ${summary}`);
+  // Re-baseline either way: in log mode so each event reports its own delta;
+  // in recycle mode as a guard — if the pool ever ignores the recycle flag,
+  // a one-time install must not become a recycle-per-test loop.
+  realmCanarySnapshot = snapshotRealmSurface();
+  if (REALM_CANARY_MODE === "recycle") return `realm drift (#1957): ${drift[0]}`;
+  return undefined;
+}
+
 function sendResult(payload, forceRecycleReason) {
   const cleanup = postCompileCleanup();
-  const recycle = Boolean(forceRecycleReason || cleanup.recycle);
+  const driftReason = realmDriftRecycleReason(payload);
+  const recycle = Boolean(forceRecycleReason || driftReason || cleanup.recycle);
   process.send(
     recycle
       ? {
           ...payload,
           recycle: true,
-          recycleReason: forceRecycleReason || cleanup.reason,
+          recycleReason: forceRecycleReason || driftReason || cleanup.reason,
         }
       : payload,
   );

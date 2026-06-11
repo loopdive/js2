@@ -1,10 +1,11 @@
 ---
 id: 1937
 title: "Linear backend: break/continue are never compiled (silent infinite loops); dispatchers need default-arm diagnostics"
-status: backlog
-sprint: Backlog
+status: done
+sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
+completed: 2026-06-11
 priority: critical
 feasibility: easy
 reasoning_effort: medium
@@ -62,6 +63,62 @@ don't handle, because neither has a default arm:
 - Every unsupported construct yields `success: false` with a located message
   (table-driven test over a list of unsupported snippets).
 - `if (NaN)` takes the else branch (test).
+
+## Implementation notes (resolved 2026-06-11)
+
+All in `src/codegen-linear/index.ts`.
+
+**break/continue (`compileBreakContinue` / statement dispatcher).** The depth
+stacks already existed but were never read. Each loop lowering pushes the
+target label's *interior block depth* onto `breakStack` / `continueStack`; a
+`break`/`continue` then emits `br (fctx.blockDepth - target - 1)`. Every
+`if`/`block`/`loop`/case-arm increments `fctx.blockDepth` around the
+statements it compiles, so the relative `br` depth stays correct no matter how
+deeply the statement is nested.
+
+**continue must run the loop's "tail" (incrementor / condition re-test).** A
+naive `continue → br loop-head` skips the for-incrementor (infinite loop on the
+continued iteration) and the do-while condition re-test. Fix: the loop body is
+compiled into an **inner `block`**, so `continue` is `br` out of that inner
+block — control then falls through to the incrementor/condition that sits
+*after* the inner block but *inside* the loop. Loop nesting is therefore
+`block(+1) loop(+2) inner(+3)`; for-of-Map reuses the existing
+`if (hash != 0)` then-arm as the continue target (exiting it falls through to
+the index bump). Verified: `for(...){if(x)continue;}` and
+`do{if(x)continue;}while(...)` terminate and advance correctly.
+
+**switch.** Wrapped the whole cascade-of-`if`s in one `block` that is the
+`break` target (pushed onto `breakStack` only — `continue` passes straight
+through to the enclosing loop). C-style fall-through out of a *non-empty* case
+body cannot be expressed by this cascade (the next case re-tests its condition
+instead of running), so `statementTerminates` checks the last statement and a
+non-terminating non-empty body is a **hard error** rather than a silent skip.
+
+**NaN truthiness (`emitTruthyCoercion`).** `f64.ne 0` alone made `if (NaN)`
+truthy. Per §7.1.2 ToBoolean a Number is false for +0/-0/NaN, so truthiness is
+`f64.abs(x) > 0` — abs folds -0 to 0 and `NaN > 0` is false, covering all
+three falsy values with no scratch local or operand re-evaluation.
+
+**`%` operator (`compileBinaryExpression`).** The `PercentToken` switch arm
+was EMPTY: `a % b` compiled both operands and no operator — the expression's
+"result" was just `b` and the leftover `a` corrupted stack arity (found via
+the new break/continue tests using `i % 2`). Wasm has no `f64.rem`; lowered
+as `a - trunc(a/b) * b` via temp locals (JS sign-of-dividend semantics; known
+divergence: `b = ±Infinity` yields NaN instead of `a`). The binary-operator
+default arm now also drops both operands and pushes a placeholder alongside
+its located diagnostic, so unknown operators fail loud with balanced arity.
+
+**fail-loud default arms.** Both `compileStatement` and `compileExpression`
+gained `else` arms that push a located `ctx.errors` entry (the #1868 success
+gate then bails with `success:false`). `throw` and labeled break/continue get
+named diagnostics instead of a silent `unreachable`/mis-target. Positions come
+from `nodeLoc(node)` (`getLineAndCharacterOfPosition`). Type-only statements
+(`type`/`interface`/`debugger`/`;`) and type-only expressions
+(`as`/`satisfies`/`<T>x`) are erased without a diagnostic.
+
+Tests: `tests/linear-break-continue.test.ts` (new — Map/array for-of + a
+table-driven fail-loud sweep) and `tests/linear-controlflow.test.ts`
+(extended). No regressions across the existing linear suites.
 
 ## Source
 
