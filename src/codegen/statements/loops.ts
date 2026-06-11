@@ -26,6 +26,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType } from "../registry/types.js";
 import {
@@ -1207,14 +1208,13 @@ function compileForOfDestructuring(
             if (restObjIdx !== undefined) {
               const excludedStr = excludedKeys.join(",");
               addStringConstantGlobal(ctx, excludedStr);
-              const excludedStrIdx = ctx.stringGlobalMap.get(excludedStr);
-              if (excludedStrIdx !== undefined) {
-                fctx.body.push({ op: "local.get", index: elemLocal });
-                fctx.body.push({ op: "extern.convert_any" } as Instr);
-                fctx.body.push({ op: "global.get", index: excludedStrIdx });
-                fctx.body.push({ op: "call", funcIdx: restObjIdx });
-                fctx.body.push({ op: "local.set", index: restIdx });
-              }
+              fctx.body.push({ op: "local.get", index: elemLocal });
+              fctx.body.push({ op: "extern.convert_any" } as Instr);
+              // (#1915) Sentinel-safe key materialization — under nativeStrings
+              // the map stores -1 and a raw `global.get` would fail emit validation.
+              fctx.body.push(...stringConstantExternrefInstrs(ctx, excludedStr));
+              fctx.body.push({ op: "call", funcIdx: restObjIdx });
+              fctx.body.push({ op: "local.set", index: restIdx });
             }
           }
           continue;
@@ -2155,13 +2155,9 @@ function compileForOfAssignDestructuringExternref(
       if (ts.isPropertyAccessExpression(targetEl)) {
         const propName = targetEl.name.text;
         addStringConstantGlobal(ctx, propName);
-        const keyGlobalIdx = ctx.stringGlobalMap.get(propName);
-        if (keyGlobalIdx !== undefined) {
-          fctx.body.push({ op: "global.get", index: keyGlobalIdx } as Instr);
-        } else {
-          // Fallback: skip — string-pool registration should cover all literal names
-          continue;
-        }
+        // (#1915) Sentinel-safe key materialization — under nativeStrings the
+        // map stores -1 and a raw `global.get` would fail emit validation.
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
       } else {
         // ElementAccessExpression
         const keyType = compileExpression(ctx, fctx, targetEl.argumentExpression, { kind: "externref" });
@@ -3239,8 +3235,6 @@ function compileForOfIteratorAssignDestructuring(
 
       // Register string constant for property name
       addStringConstantGlobal(ctx, propName);
-      const strGlobalIdx = ctx.stringGlobalMap.get(propName);
-      if (strGlobalIdx === undefined) continue;
 
       // Refresh getIdx in case addStringConstantGlobal shifted indices
       getIdx = ctx.funcMap.get("__extern_get");
@@ -3248,7 +3242,9 @@ function compileForOfIteratorAssignDestructuring(
 
       // Emit: __extern_get(elem, "propName") -> externref
       fctx.body.push({ op: "local.get", index: elemLocal });
-      fctx.body.push({ op: "global.get", index: strGlobalIdx });
+      // (#1915) Sentinel-safe key materialization — under nativeStrings the
+      // map stores -1 and a raw `global.get` would fail emit validation.
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
       fctx.body.push({ op: "call", funcIdx: getIdx });
 
       // Coerce externref to target local's type and set
@@ -3328,9 +3324,8 @@ function compileForOfIteratorAssignDestructuring(
         if (ts.isPropertyAccessExpression(targetElIter)) {
           const propName = targetElIter.name.text;
           addStringConstantGlobal(ctx, propName);
-          const keyGlobalIdx = ctx.stringGlobalMap.get(propName);
-          if (keyGlobalIdx === undefined) continue;
-          fctx.body.push({ op: "global.get", index: keyGlobalIdx } as Instr);
+          // (#1915) Sentinel-safe key materialization.
+          fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         } else {
           const keyType = compileExpression(ctx, fctx, targetElIter.argumentExpression, { kind: "externref" });
           if (keyType && keyType.kind !== "externref") {
@@ -4198,9 +4193,8 @@ function emitForInMemberTargetWrite(
   if (ts.isPropertyAccessExpression(target)) {
     const propName = target.name.text;
     addStringConstantGlobal(ctx, propName);
-    const keyGlobalIdx = ctx.stringGlobalMap.get(propName);
-    if (keyGlobalIdx === undefined) return;
-    fctx.body.push({ op: "global.get", index: keyGlobalIdx } as Instr);
+    // (#1915) Sentinel-safe key materialization.
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
   } else {
     const keyType = compileExpression(ctx, fctx, target.argumentExpression, {
       kind: "externref",
@@ -4288,9 +4282,16 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     const props = exprType.getProperties();
     if (props.length === 0) return;
     for (const prop of props) {
-      const globalIdx = ctx.stringGlobalMap.get(prop.name);
-      if (globalIdx === undefined) continue;
-      fctx.body.push({ op: "global.get", index: globalIdx });
+      // (#1915) This fallback runs precisely when the host for-in imports are
+      // absent (standalone/wasi), where nativeStrings stores the -1 sentinel —
+      // a raw `global.get` of the map value failed emit-time index validation.
+      // Materialize inline under nativeStrings; keep the registered-global
+      // requirement for the (unusual) JS-host arrival here.
+      if (!ctx.nativeStrings) {
+        const globalIdx = ctx.stringGlobalMap.get(prop.name);
+        if (globalIdx === undefined) continue;
+      }
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, prop.name));
       fctx.body.push({ op: "local.set", index: keyLocal });
       compileStatement(ctx, fctx, stmt.statement);
     }

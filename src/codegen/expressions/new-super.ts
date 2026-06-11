@@ -218,12 +218,11 @@ function emitSuperExternMethodCall(
   // __extern_method_call(receiver, methodName, args)
   fctx.body.push({ op: "local.get", index: recvLocal });
   addStringConstantGlobal(ctx, methodName);
-  const strIdx = ctx.stringGlobalMap.get(methodName);
-  if (strIdx !== undefined) {
-    fctx.body.push({ op: "global.get", index: strIdx } as Instr);
-  } else {
-    compileStringLiteral(ctx, fctx, methodName);
-  }
+  // (#1915) Sentinel-safe name materialization — under nativeStrings the map
+  // stores -1 and a raw `global.get` would fail emit validation. The helper
+  // also keeps the externref arg type (compileStringLiteral would push a GC
+  // string ref in nativeStrings mode).
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
   fctx.body.push({ op: "local.get", index: argsLocal });
   const finalMcIdx = ctx.funcMap.get("__extern_method_call") ?? methodCallIdx;
   fctx.body.push({ op: "call", funcIdx: finalMcIdx });

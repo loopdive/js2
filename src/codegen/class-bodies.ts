@@ -18,7 +18,8 @@ import {
   destructureParamObject,
   isNullOrUndefinedLiteral,
 } from "./destructuring-params.js";
-import { emitThrowReferenceError } from "./expressions/helpers.js";
+import { emitThrowReferenceError, noJsHost } from "./expressions/helpers.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { cacheStringLiterals, hasAbstractModifier, hasStaticModifier, resolveWasmType } from "./index.js";
 import { emitUndefined } from "./expressions/late-imports.js";
@@ -216,6 +217,14 @@ function emitSetSubclassProto(
   subName: string,
   parentName: string,
 ): void {
+  // (#1915) The documented standalone no-op must trigger BEFORE ensureLateImport:
+  // the register-anyway contract in ensureLateImport always returns a defined
+  // funcIdx (`__set_subclass_proto` is in no refusal/native-routing list), so
+  // the `setProtoIdx === undefined` check below never fires under
+  // --target standalone/wasi. Falling through used to (a) leak an unsatisfiable
+  // `env::__set_subclass_proto` import and (b) bake the nativeStrings -1
+  // stringGlobalMap sentinel into `global.get` — the u32-out-of-range emit bucket.
+  if (noJsHost(ctx)) return;
   const setProtoIdx = ensureLateImport(
     ctx,
     "__set_subclass_proto",
@@ -229,12 +238,6 @@ function emitSetSubclassProto(
   }
   addStringConstantGlobal(ctx, subName);
   addStringConstantGlobal(ctx, parentName);
-  const subNameGlobal = ctx.stringGlobalMap.get(subName);
-  const parentNameGlobal = ctx.stringGlobalMap.get(parentName);
-  if (subNameGlobal === undefined || parentNameGlobal === undefined) {
-    // String pool not available (very unusual) — skip silently.
-    return;
-  }
   // Skip when the instance is null (e.g. standalone `__new_<Parent>` fallback);
   // calling Object.setPrototypeOf on null/undefined throws in JS, which we
   // do not want here. Use ref.is_null + if/else (avoids leaving stack imbalanced).
@@ -246,8 +249,11 @@ function emitSetSubclassProto(
     then: [],
     else: [
       { op: "local.get", index: selfLocal },
-      { op: "global.get", index: subNameGlobal },
-      { op: "global.get", index: parentNameGlobal },
+      // Sentinel-safe in both string backends: `global.get` of the host
+      // string-constant global, or an inline NativeString + extern.convert_any
+      // under --nativeStrings (#1915).
+      ...stringConstantExternrefInstrs(ctx, subName),
+      ...stringConstantExternrefInstrs(ctx, parentName),
       { op: "call", funcIdx: setProtoIdx },
       { op: "local.set", index: selfLocal },
     ],
@@ -1391,7 +1397,11 @@ function compileClassBodiesInner(
     // `instance instanceof Sub` by walking the registered tag chain. The
     // direct user-class parent (or null when the direct parent is a builtin)
     // is registered idempotently on first call.
-    if (isExternrefBacked) {
+    // (#1915) Tagging only serves the `__instanceof` JS-host import; under
+    // --target standalone/wasi neither import can be satisfied, and the
+    // register-anyway contract in ensureLateImport would leak an unsatisfiable
+    // `env::__tag_user_class` import into the module. Skip entirely.
+    if (isExternrefBacked && !noJsHost(ctx)) {
       const builtinParent = ctx.classBuiltinParentMap.get(className);
       // Direct user-class parent: classParentMap[className] is set to the
       // immediate parent name; if it equals the builtin parent, the user

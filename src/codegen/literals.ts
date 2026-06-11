@@ -397,10 +397,10 @@ function compileObjectLiteralWithAccessors(
       } else {
         if (propName === undefined) continue;
         addStringConstantGlobal(ctx, propName);
-        const keyGlobal = ctx.stringGlobalMap.get(propName);
-        if (keyGlobal === undefined) continue;
         fctx.body.push({ op: "local.get", index: objLocal });
-        fctx.body.push({ op: "global.get", index: keyGlobal });
+        // (#1915) Sentinel-safe key materialization — under nativeStrings the
+        // map stores -1 and a raw `global.get` would fail emit validation.
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
       }
       // Compile value and coerce to externref.
       let valType: ValType | null;
@@ -459,10 +459,9 @@ function compileObjectLiteralWithAccessors(
       }
       if (methodName === undefined) continue;
       addStringConstantGlobal(ctx, methodName);
-      const keyGlobal = ctx.stringGlobalMap.get(methodName);
-      if (keyGlobal === undefined) continue;
       fctx.body.push({ op: "local.get", index: objLocal });
-      fctx.body.push({ op: "global.get", index: keyGlobal });
+      // (#1915) Sentinel-safe key materialization (see data-property arm above).
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
       const ok = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
       if (!ok) {
         fctx.body.push({ op: "ref.null.extern" });

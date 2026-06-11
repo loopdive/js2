@@ -2096,15 +2096,15 @@ function emitStructFieldNamesExport(
 
   if (structFieldNameMap.size === 0) return;
 
-  // Register comma-separated field name strings as string constants
-  const typeIdxToGlobalIdx = new Map<number, number>();
+  // Register comma-separated field name strings as string constants.
+  // (#1915) Track the csv STRING per type (not the global index) — under
+  // nativeStrings the map stores the -1 sentinel and the string must be
+  // materialized inline at the use site below.
+  const typeIdxToCsv = new Map<number, string>();
   for (const [typeIdx, names] of structFieldNameMap) {
     const csv = names.join(",");
     addStringConstantGlobal(ctx, csv);
-    const globalIdx = ctx.stringGlobalMap.get(csv);
-    if (globalIdx !== undefined) {
-      typeIdxToGlobalIdx.set(typeIdx, globalIdx);
-    }
+    typeIdxToCsv.set(typeIdx, csv);
   }
 
   // Build the function body: chain of ref.test / if-else returning the right string
@@ -2119,11 +2119,13 @@ function emitStructFieldNamesExport(
 
   // Build nested if-else chain
   let fallback: Instr[] = [{ op: "ref.null.extern" } as Instr];
-  const typeEntries = [...typeIdxToGlobalIdx.entries()];
+  const typeEntries = [...typeIdxToCsv.entries()];
 
   for (let i = typeEntries.length - 1; i >= 0; i--) {
-    const [typeIdx, globalIdx] = typeEntries[i]!;
-    const thenBranch: Instr[] = [{ op: "global.get", index: globalIdx } as Instr];
+    const [typeIdx, csv] = typeEntries[i]!;
+    // (#1915) Sentinel-safe materialization (inline NativeString under
+    // nativeStrings, `global.get` of the host constant otherwise).
+    const thenBranch: Instr[] = [...stringConstantExternrefInstrs(ctx, csv)];
 
     const ifInstr: Instr = {
       op: "if",

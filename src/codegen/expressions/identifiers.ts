@@ -35,6 +35,7 @@ import { BUILTIN_TYPE_TAGS, isBuiltinSubtype, isBuiltinTypeName } from "../built
 import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error-types.js";
 import { allocLocal } from "../context/locals.js";
 import { emitThrowReferenceError, noJsHost } from "./helpers.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitWithBindingGet, findWithBinding } from "../with-scope.js";
 
 /**
@@ -114,9 +115,10 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
     addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
+    // (#1915) Sentinel-safe message materialization — under nativeStrings the
+    // map stores -1 and a raw `global.get` would fail emit validation.
     then = [
-      { op: "global.get", index: strIdx } as Instr,
+      ...stringConstantExternrefInstrs(ctx, msg),
       { op: "call", funcIdx: throwRefErrIdx } as Instr,
       { op: "unreachable" },
     ];
@@ -431,8 +433,8 @@ export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, n
   flushLateImportShifts(ctx, fctx);
   if (throwRefErrIdx !== undefined) {
     addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+    // (#1915) Sentinel-safe message materialization (host + --nativeStrings).
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
     fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
     fctx.body.push({ op: "unreachable" });
     return;
@@ -693,12 +695,9 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
       addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
-      if (strGlobalIdx !== undefined) {
-        fctx.body.push({ op: "global.get", index: strGlobalIdx } as Instr);
-      } else {
-        fctx.body.push({ op: "ref.null.extern" });
-      }
+      // (#1915) Sentinel-safe key materialization — under nativeStrings the
+      // map stores -1 and a raw `global.get` would fail emit validation.
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
       fctx.body.push({ op: "call", funcIdx: getIdx });
       return { kind: "externref" };
     }
@@ -796,8 +795,8 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     flushLateImportShifts(ctx, fctx);
     if (throwRefErrIdx !== undefined) {
       addStringConstantGlobal(ctx, msg);
-      const strIdx = ctx.stringGlobalMap.get(msg)!;
-      fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+      // (#1915) Sentinel-safe message materialization (host + --nativeStrings).
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
       fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
       fctx.body.push({ op: "unreachable" });
     } else {
@@ -1148,12 +1147,9 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
 
   // Push constructor name as a string constant
   addStringConstantGlobal(ctx, ctorName);
-  const strGlobalIdx = ctx.stringGlobalMap.get(ctorName);
-  if (strGlobalIdx !== undefined) {
-    fctx.body.push({ op: "global.get", index: strGlobalIdx });
-  } else {
-    fctx.body.push({ op: "ref.null.extern" });
-  }
+  // (#1915) Sentinel-safe name materialization — under nativeStrings the
+  // map stores -1 and a raw `global.get` would fail emit validation.
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, ctorName));
 
   // Call __instanceof(value, ctorName) -> i32
   fctx.body.push({ op: "call", funcIdx: instanceofIdx });

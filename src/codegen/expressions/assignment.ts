@@ -27,6 +27,7 @@ import {
 } from "../index.js";
 import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitNullGuardedStructGet, isProvablyNonNull, isSafeBoundsEliminated } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
@@ -599,12 +600,12 @@ function compileDestructuringAssignment(
 
           // Read prop value: tmp = __extern_get(rhs, "name")
           addStringConstantGlobal(ctx, name);
-          const strGlobalIdx = ctx.stringGlobalMap.get(name);
-          if (strGlobalIdx === undefined) continue;
 
           const tmpVal = allocLocal(fctx, `__destruct_val_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.get", index: rhsTmp });
-          fctx.body.push({ op: "global.get", index: strGlobalIdx });
+          // (#1915) Sentinel-safe key materialization — under nativeStrings the
+          // map stores -1 and a raw `global.get` would fail emit validation.
+          fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
           fctx.body.push({ op: "call", funcIdx: getIdx });
           fctx.body.push({ op: "local.set", index: tmpVal });
 
@@ -1010,15 +1011,14 @@ function compileDestructuringAssignment(
         if (restObjIdx !== undefined) {
           const excludedStr = excludedKeys.join(",");
           addStringConstantGlobal(ctx, excludedStr);
-          const excludedStrIdx = ctx.stringGlobalMap.get(excludedStr);
-          if (excludedStrIdx !== undefined) {
-            // Convert struct ref to externref
-            fctx.body.push({ op: "local.get", index: tmpLocal });
-            fctx.body.push({ op: "extern.convert_any" } as Instr);
-            fctx.body.push({ op: "global.get", index: excludedStrIdx });
-            fctx.body.push({ op: "call", funcIdx: restObjIdx });
-            fctx.body.push({ op: "local.set", index: restIdx });
-          }
+          // Convert struct ref to externref
+          fctx.body.push({ op: "local.get", index: tmpLocal });
+          fctx.body.push({ op: "extern.convert_any" } as Instr);
+          // (#1915) Sentinel-safe key materialization — under nativeStrings the
+          // map stores -1 and a raw `global.get` would fail emit validation.
+          fctx.body.push(...stringConstantExternrefInstrs(ctx, excludedStr));
+          fctx.body.push({ op: "call", funcIdx: restObjIdx });
+          fctx.body.push({ op: "local.set", index: restIdx });
         }
       }
     }

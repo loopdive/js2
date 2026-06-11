@@ -4520,13 +4520,10 @@ function compileArrayJoin(
   if (callExpr.arguments.length >= 1) {
     compileExpression(ctx, fctx, callExpr.arguments[0]!);
   } else {
-    // Default separator "," -- check if registered as string constant global
-    const commaGlobalIdx = ctx.stringGlobalMap.get(",");
-    if (commaGlobalIdx !== undefined) {
-      fctx.body.push({ op: "global.get", index: commaGlobalIdx });
-    } else {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
+    // Default separator "," — (#1915) sentinel-safe: inline NativeString under
+    // nativeStrings; in JS-host mode, `global.get` when registered, else
+    // ref.null.extern (the helper preserves both legacy behaviours).
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, ","));
   }
   fctx.body.push({ op: "local.set", index: sepTmp });
 

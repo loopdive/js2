@@ -715,10 +715,15 @@ export function compileBinaryExpression(
           // Start with false (0)
           fctx.body.push({ op: "i32.const", value: 0 });
           for (const fieldName of structFieldNames) {
-            // Load the key and the field name string, compare
-            fctx.body.push({ op: "local.get", index: keyLocal });
+            // Load the key and the field name string, compare.
+            // (#1915) `>= 0` skips the nativeStrings -1 sentinel — this path
+            // is only live when a host string-equality import exists (eqFunc),
+            // so the skip never fires in practice; it hardens the emit
+            // invariant. The key load sits INSIDE the guard so a skipped field
+            // cannot leave a dangling operand on the stack.
             const strGlobal = ctx.stringGlobalMap.get(fieldName);
-            if (strGlobal !== undefined) {
+            if (strGlobal !== undefined && strGlobal >= 0) {
+              fctx.body.push({ op: "local.get", index: keyLocal });
               fctx.body.push({ op: "global.get", index: strGlobal });
               fctx.body.push({ op: "call", funcIdx: eqFunc });
               fctx.body.push({ op: "i32.or" }); // OR with accumulated result

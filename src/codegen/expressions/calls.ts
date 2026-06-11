@@ -982,12 +982,11 @@ function resolvePromiseSubclassThisArg(ctx: CodegenContext, fctx: FunctionContex
   // same host-string mechanism as extern method dispatch so it works in both
   // string backends.
   addStringConstantGlobal(ctx, resolved);
-  const nameIdx = ctx.stringGlobalMap.get(resolved);
-  if (nameIdx !== undefined) {
-    fctx.body.push({ op: "global.get", index: nameIdx } as Instr);
-  } else {
-    compileStringLiteral(ctx, fctx, resolved);
-  }
+  // (#1915) Sentinel-safe name materialization — under nativeStrings the map
+  // stores -1 and a raw `global.get` would fail emit validation. The helper
+  // also keeps the externref arg type (compileStringLiteral would push a GC
+  // string ref in nativeStrings mode).
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, resolved));
   fctx.body.push({ op: "call", funcIdx });
   return true;
 }
@@ -4219,12 +4218,9 @@ function compileCallExpression(
               fctx.body.push({ op: "local.get", index: objLocal });
               // prop name as string constant
               addStringConstantGlobal(ctx, propName);
-              const strGlobalIdx = ctx.stringGlobalMap.get(propName);
-              if (strGlobalIdx !== undefined) {
-                fctx.body.push({ op: "global.get", index: strGlobalIdx } as Instr);
-              } else {
-                fctx.body.push({ op: "ref.null.extern" });
-              }
+              // (#1915) Sentinel-safe key materialization — under nativeStrings
+              // the map stores -1 and a raw `global.get` would fail emit validation.
+              fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
               // value (or null for accessor descriptors)
               if (valueExpr) {
                 const vt = compileExpression(ctx, fctx, valueExpr);
@@ -4285,12 +4281,8 @@ function compileCallExpression(
             if (dpDescIdx !== undefined) {
               fctx.body.push({ op: "local.get", index: objLocal });
               addStringConstantGlobal(ctx, propName);
-              const strGlobalIdx = ctx.stringGlobalMap.get(propName);
-              if (strGlobalIdx !== undefined) {
-                fctx.body.push({ op: "global.get", index: strGlobalIdx } as Instr);
-              } else {
-                fctx.body.push({ op: "ref.null.extern" });
-              }
+              // (#1915) Sentinel-safe key materialization.
+              fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
               const descValType = compileExpression(ctx, fctx, prop.initializer);
               if (!descValType) {
                 fctx.body.push({ op: "ref.null.extern" });
@@ -4581,12 +4573,10 @@ function compileCallExpression(
       if (arg0IsBuiltin && getBuiltinFuncIdx !== undefined) {
         const builtinName = (arg0 as ts.Identifier).text;
         addStringConstantGlobal(ctx, builtinName);
-        const strIdx = ctx.stringGlobalMap.get(builtinName);
-        if (strIdx !== undefined) {
-          fctx.body.push({ op: "global.get", index: strIdx } as Instr);
-        } else {
-          compileStringLiteral(ctx, fctx, builtinName);
-        }
+        // (#1915) Sentinel-safe name materialization (keeps the externref arg
+        // type — compileStringLiteral would push a GC string ref in
+        // nativeStrings mode).
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, builtinName));
         fctx.body.push({ op: "call", funcIdx: getBuiltinFuncIdx });
         objType = { kind: "externref" };
       } else {
@@ -7146,23 +7136,23 @@ function compileCallExpression(
               ? "TypeError: Cannot convert a BigInt value to a number"
               : "TypeError: Cannot convert a Symbol value to a number";
             addStringConstantGlobal(ctx, msg);
-            const strIdx = ctx.stringGlobalMap.get(msg)!;
             // #1473 — no JS host: throw a TypeError INSTANCE via the in-module
             // constructor (no `__throw_type_error` host import).
             if (noJsHost(ctx)) {
               emitThrowTypeError(ctx, fctx, msg);
               fctx.body.push({ op: "unreachable" } as Instr);
             } else {
+              // (#1915) Sentinel-safe message materialization (host + --nativeStrings).
               const throwIdx = ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
               if (throwIdx !== undefined) {
                 flushLateImportShifts(ctx, fctx);
                 const throwFuncIdx = ctx.funcMap.get("__throw_type_error")!;
-                fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+                fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
                 fctx.body.push({ op: "call", funcIdx: throwFuncIdx } as Instr);
                 fctx.body.push({ op: "unreachable" } as Instr);
               } else {
                 const tagIdx = ensureExnTag(ctx);
-                fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+                fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
                 fctx.body.push({ op: "throw", tagIdx } as Instr);
               }
             }
@@ -7359,8 +7349,9 @@ function compileCallExpression(
         const captured = ctx.funcSourceText.get(propAccess.expression.text);
         if (captured) {
           addStringConstantGlobal(ctx, captured);
-          const idx = ctx.stringGlobalMap.get(captured)!;
-          fctx.body.push({ op: "global.get", index: idx });
+          // (#1915) Sentinel-safe materialization — under nativeStrings the
+          // map stores -1 and a raw `global.get` would fail emit validation.
+          fctx.body.push(...stringConstantExternrefInstrs(ctx, captured));
           return { kind: "externref" };
         }
       }
@@ -7412,13 +7403,13 @@ function compileCallExpression(
           if (captured) toStrStr = captured;
         }
         addStringConstantGlobal(ctx, toStrStr);
-        const idx = ctx.stringGlobalMap.get(toStrStr)!;
-        fctx.body.push({ op: "global.get", index: idx });
+        // (#1915) Sentinel-safe materialization.
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, toStrStr));
       } else {
         const str = isArray ? "[object Array]" : "[object Object]";
         addStringConstantGlobal(ctx, str);
-        const idx = ctx.stringGlobalMap.get(str)!;
-        fctx.body.push({ op: "global.get", index: idx });
+        // (#1915) Sentinel-safe materialization.
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, str));
       }
       return { kind: "externref" };
     }
@@ -9863,12 +9854,12 @@ function compileCallExpression(
           {
             const rangeErrMsg = "RangeError: toString() radix must be between 2 and 36";
             addStringConstantGlobal(ctx, rangeErrMsg);
-            const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
             const tagIdx = ensureExnTag(ctx);
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+              // (#1915) Sentinel-safe message materialization.
+              then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
               else: [],
             });
           }
@@ -9894,12 +9885,12 @@ function compileCallExpression(
           {
             const rangeErrMsg = "RangeError: toFixed() digits argument must be between 0 and 100";
             addStringConstantGlobal(ctx, rangeErrMsg);
-            const strIdx = ctx.stringGlobalMap.get(rangeErrMsg)!;
             const tagIdx = ensureExnTag(ctx);
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: [{ op: "global.get", index: strIdx } as Instr, { op: "throw", tagIdx } as Instr],
+              // (#1915) Sentinel-safe message materialization.
+              then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx } as Instr],
               else: [],
             });
           }
