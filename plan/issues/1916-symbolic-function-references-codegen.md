@@ -74,3 +74,17 @@ Compiler quality review 2026-06
 section. Related: #1677 (unified two shift regimes; this removes the regime),
 #1899 (funcIdx authority contract). Needs an architect spec before dev
 dispatch (`/architect-spec`).
+
+## Amendment (2026-06-11, analysis program)
+
+Symbolic references as specced fix index-shift fragility but keep
+NAME-keyed identity: `IrFuncRef { name }` is still a string (report 05
+§3), so the collision class survives the migration — `${Class}_${method}`
+colliding with a user `function A_m()` (#1983), `${name}_valueOf`
+last-literal-wins dispatch (#1989, now specced onto typed refs), and the
+`__sget_<name>` family. Requirement added: handles must be
+**collision-free FuncIds derived from the declaration site /
+ts.Symbol**, with names demoted to debug metadata. The instance-side twin
+($shape, #2009) covers struct identity; this issue owns function/registry
+identity. Full analysis: plan/log/analysis-2026-06/05-structure-review.md
+§3.

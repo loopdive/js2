@@ -1,9 +1,10 @@
 ---
 id: 1832
 title: "compileNewFunctionExpression captures outer var shadowed by a destructured param"
-status: in-review
+status: done
 created: 2026-06-04
-updated: 2026-06-07
+updated: 2026-06-10
+completed: 2026-06-10
 priority: medium
 feasibility: low
 task_type: bugfix

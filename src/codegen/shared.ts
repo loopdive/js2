@@ -212,7 +212,7 @@ type EnsureLateImportFn = (
   resultTypes: ValType[],
 ) => number | undefined;
 
-type FlushLateImportShiftsFn = (ctx: CodegenContext, fctx: FunctionContext) => void;
+type FlushLateImportShiftsFn = (ctx: CodegenContext, fctx: FunctionContext | null) => void;
 
 let _ensureLateImport: EnsureLateImportFn = () => {
   throw new Error("ensureLateImport not yet registered");
@@ -239,7 +239,7 @@ export function ensureLateImport(
   return _ensureLateImport(ctx, name, paramTypes, resultTypes);
 }
 
-export function flushLateImportShifts(ctx: CodegenContext, fctx: FunctionContext): void {
+export function flushLateImportShifts(ctx: CodegenContext, fctx: FunctionContext | null): void {
   _flushLateImportShifts(ctx, fctx);
 }
 

@@ -4,10 +4,11 @@ title: "standalone open-any method dispatch + built-ins-as-static-globals (proto
 status: in-review
 pr: 1273
 created: 2026-06-05
-updated: 2026-06-07
+updated: 2026-06-10
 priority: high
 feasibility: hard
 reasoning_effort: high
+model: fable
 task_type: feat
 area: codegen, runtime
 language_feature: objects, prototype chain, method dispatch, built-ins
