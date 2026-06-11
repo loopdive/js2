@@ -337,10 +337,9 @@ describe("#1539 standalone narrowed refusals (Phase 2a)", () => {
   // modifiers, and the `d` flag — none are refused anymore (see
   // tests/issue-1912-regex-phase2b.test.ts and
   // tests/issue-1911-regex-phase2d.test.ts for the dual-run coverage). The
-  // `u`/`v` (code-point) flags remain deferred to 2d Slice B.
-  it("refuses unicode flag (u, Phase 2d Slice B)", async () => {
-    await expectRefused(`export function f(s: string): boolean { return /^a/u.test(s); }`);
-  });
+  // #1911 Slice B landed the `u`/`v` (code-point) flags via compile-time host
+  // enumeration — no flag refusals remain (see
+  // tests/issue-1911-regex-phase2d.test.ts).
   it("refuses RegExp.exec with global lastIndex semantics", async () => {
     await expectRefused(
       `export function f(s: string): number { const m = /a/g.exec(s); return m === null ? -1 : m.length; }`,

@@ -35,7 +35,17 @@ import { buildImports, instantiateWasm } from "../src/runtime.ts";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 const CORPUS_DIR = resolve(ROOT, "tests/differential/corpus");
-const OUTPUT_PATH = resolve(ROOT, "benchmarks/results/diff-test.json");
+
+// #1941 — optimize lane. When DIFF_TEST_OPTIMIZE=1, every corpus program is
+// compiled with `{ optimize: true }` (Binaryen wasm-opt post-pass) and its
+// output is compared against the SAME V8 oracle. This catches wasm-opt
+// miscompiles, which no other gate executed before. The lane writes to a
+// separate report + baseline so the optimize delta is gated independently.
+const OPTIMIZE = process.env.DIFF_TEST_OPTIMIZE === "1";
+const OUTPUT_PATH = resolve(
+  ROOT,
+  OPTIMIZE ? "benchmarks/results/diff-test-optimize.json" : "benchmarks/results/diff-test.json",
+);
 
 interface FileResult {
   /** Relative path inside the corpus dir, e.g. "numeric/add.js" */
@@ -130,7 +140,7 @@ async function runJs2wasm(
   } catch (e: unknown) {
     return { stdout: "", error: `read failed: ${(e as Error).message}`, ms: Date.now() - t0, outcome: "runtime_error" };
   }
-  const r = await compile(source, { fileName: file });
+  const r = await compile(source, OPTIMIZE ? { fileName: file, optimize: true } : { fileName: file });
   if (!r.success) {
     return {
       stdout: "",
@@ -225,7 +235,9 @@ async function main(): Promise<void> {
     console.error(`No corpus files found in ${CORPUS_DIR}. Aborting.`);
     process.exit(2);
   }
-  console.log(`Differential test: ${files.length} programs in ${relative(ROOT, CORPUS_DIR)}`);
+  console.log(
+    `Differential test${OPTIMIZE ? " [optimize lane: -O3]" : ""}: ${files.length} programs in ${relative(ROOT, CORPUS_DIR)}`,
+  );
 
   const results: FileResult[] = [];
   // Serial execution; the harness completes well under the 10-minute budget

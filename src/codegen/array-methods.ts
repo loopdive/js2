@@ -27,7 +27,12 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import {
+  ensureNativeStringHelpers,
+  nativeStringLiteralInstrs,
+  stringConstantExternrefInstrs,
+} from "./native-strings.js";
+import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureTimsortHelper } from "./timsort.js";
 import { coerceType, coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 
@@ -2385,6 +2390,7 @@ const ARRAY_METHODS = new Set([
   "push",
   "pop",
   "shift",
+  "unshift",
   "indexOf",
   "includes",
   "slice",
@@ -2536,7 +2542,22 @@ export function compileArrayMethodCall(
   // getReceiverLocalIdx succeeds and mutating methods can write back.
   let moduleGlobalIdx: number | undefined;
   let savedLocal: number | undefined;
-  const MUTATING = new Set(["push", "pop", "shift", "reverse", "splice", "fill", "copyWithin", "sort", "set"]);
+  // #1966: `unshift` mutates in place (prepends + shifts), so its mutated vec
+  // must be written back to the receiver — include it here. The `to*`
+  // variants (toSorted/toReversed/toSpliced/with) and slice/concat/map/filter
+  // are NON-mutating (they return a new array) and are deliberately excluded.
+  const MUTATING = new Set([
+    "push",
+    "pop",
+    "shift",
+    "unshift",
+    "reverse",
+    "splice",
+    "fill",
+    "copyWithin",
+    "sort",
+    "set",
+  ]);
   if (ts.isIdentifier(propAccess.expression)) {
     const name = propAccess.expression.text;
     const gIdx = ctx.moduleGlobals.get(name);
@@ -2571,6 +2592,9 @@ export function compileArrayMethodCall(
       break;
     case "shift":
       result = compileArrayShift(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, expectedType);
+      break;
+    case "unshift":
+      result = compileArrayUnshift(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "slice":
       result = compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
@@ -4150,6 +4174,150 @@ function compileArrayShift(
 }
 
 /**
+ * arr.unshift(...items) -> O(n) in-place: grow if needed, shift existing
+ * elements right by argCount, write items into [0..argCount), bump length.
+ * Returns the new length. The mirror of shift; §23.1.3.34.
+ *
+ * #1966: previously `unshift` was not in ARRAY_METHODS at all, so it fell
+ * through to the host-import generic path which never wrote the mutation back
+ * to the WasmGC vec — a silent no-op (host) / corruption (standalone). This is
+ * the native lowering.
+ */
+function compileArrayUnshift(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  // 0-arg unshift: no-op, return current length.
+  if (callExpr.arguments.length === 0) {
+    const vecTmp0 = allocLocal(fctx, `__arr_unsft_vec_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: vecTypeIdx,
+    });
+    compileExpression(ctx, fctx, propAccess.expression);
+    fctx.body.push({ op: "local.tee", index: vecTmp0 });
+    emitReceiverNullGuard(ctx, fctx, vecTmp0, propAccess.expression);
+    fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+    if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+    return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+  }
+
+  const argCount = callExpr.arguments.length;
+  const vecTmp = allocLocal(fctx, `__arr_unsft_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__arr_unsft_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__arr_unsft_len_${fctx.locals.length}`, { kind: "i32" });
+  const newCapTmp = allocLocal(fctx, `__arr_unsft_ncap_${fctx.locals.length}`, { kind: "i32" });
+  const newDataTmp = allocLocal(fctx, `__arr_unsft_ndata_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: arrTypeIdx,
+  });
+
+  // Compile receiver -> vec ref
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
+
+  // Get length
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+
+  // Get data array
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // Capacity check: len + argCount > capacity? If so, allocate a new buffer and
+  // copy the existing elements directly into their shifted destination
+  // (data[0..len] -> newData[argCount..argCount+len]); otherwise array.copy
+  // in place (overlapping copy is memmove-correct).
+  fctx.body.push({ op: "local.get", index: dataTmp });
+  fctx.body.push({ op: "array.len" });
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "i32.const", value: argCount });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "i32.lt_s" }); // capacity < len + argCount
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      // newCap = max((len + argCount) * 2, 4)
+      { op: "local.get", index: lenTmp } as Instr,
+      { op: "i32.const", value: argCount } as Instr,
+      { op: "i32.add" } as Instr,
+      { op: "i32.const", value: 1 } as Instr,
+      { op: "i32.shl" } as Instr,
+      { op: "i32.const", value: 4 } as Instr,
+      { op: "local.get", index: lenTmp } as Instr,
+      { op: "i32.const", value: argCount } as Instr,
+      { op: "i32.add" } as Instr,
+      { op: "i32.const", value: 1 } as Instr,
+      { op: "i32.shl" } as Instr,
+      { op: "i32.const", value: 4 } as Instr,
+      { op: "i32.gt_s" } as Instr,
+      { op: "select" } as Instr,
+      { op: "local.set", index: newCapTmp } as Instr,
+
+      // newData = array.new_default(newCap)
+      { op: "local.get", index: newCapTmp } as Instr,
+      { op: "array.new_default", typeIdx: arrTypeIdx } as Instr,
+      { op: "local.set", index: newDataTmp } as Instr,
+
+      // newData[argCount .. argCount+len] = data[0..len]
+      { op: "local.get", index: newDataTmp } as Instr,
+      { op: "i32.const", value: argCount } as Instr,
+      { op: "local.get", index: dataTmp } as Instr,
+      { op: "i32.const", value: 0 } as Instr,
+      { op: "local.get", index: lenTmp } as Instr,
+      { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx } as Instr,
+
+      // Update vec struct data field + local pointer
+      { op: "local.get", index: vecTmp } as Instr,
+      { op: "local.get", index: newDataTmp } as Instr,
+      { op: "ref.as_non_null" } as Instr,
+      { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 } as Instr,
+      { op: "local.get", index: newDataTmp } as Instr,
+      { op: "local.set", index: dataTmp } as Instr,
+    ],
+    else: [
+      // In-place right shift: data[argCount .. argCount+len] = data[0..len].
+      // array.copy is memmove-safe for overlapping ranges.
+      { op: "local.get", index: dataTmp } as Instr,
+      { op: "i32.const", value: argCount } as Instr,
+      { op: "local.get", index: dataTmp } as Instr,
+      { op: "i32.const", value: 0 } as Instr,
+      { op: "local.get", index: lenTmp } as Instr,
+      { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx } as Instr,
+    ],
+  } as Instr);
+
+  // Write the new elements into data[0..argCount) (compile-time unrolled).
+  for (let i = 0; i < argCount; i++) {
+    fctx.body.push({ op: "local.get", index: dataTmp });
+    fctx.body.push({ op: "i32.const", value: i });
+    compileExpression(ctx, fctx, callExpr.arguments[i]!, elemType);
+    fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
+  }
+
+  // Update length: vec.length = len + argCount
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "i32.const", value: argCount });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 });
+
+  // Return new length (i32 in fast mode, f64 otherwise).
+  fctx.body.push({ op: "local.get", index: lenTmp });
+  fctx.body.push({ op: "i32.const", value: argCount });
+  fctx.body.push({ op: "i32.add" });
+  if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+}
+
+/**
  * arr.slice(start?, end?) -> create new vec struct with sliced data.
  */
 /**
@@ -4484,6 +4652,178 @@ function compileArrayJoinExtern(
 }
 
 /**
+ * True when `expr` is a call to a higher-order array method that allocates a
+ * callback closure (`map`/`filter`/`flatMap`/`forEach`/`reduce`/…). The native
+ * join path re-compiles its receiver via the dispatcher probe, and closure
+ * registration is not idempotent, so such receivers must not route through it
+ * (see #2074/#2075). Conservative: any of these method names on a call.
+ */
+function receiverIsClosureProducingArrayCall(expr: ts.Expression): boolean {
+  if (!ts.isCallExpression(expr)) return false;
+  if (!ts.isPropertyAccessExpression(expr.expression)) return false;
+  const m = expr.expression.name.text;
+  return (
+    m === "map" ||
+    m === "filter" ||
+    m === "flatMap" ||
+    m === "forEach" ||
+    m === "reduce" ||
+    m === "reduceRight" ||
+    m === "find" ||
+    m === "findIndex" ||
+    m === "sort"
+  );
+}
+
+/**
+ * #2074 — native-strings (standalone / WASI) `arr.join(sep?)`.
+ *
+ * The default join path concatenates via the wasm:js-string `concat` builtin
+ * and `number_toString`-as-externref, both unavailable (or wrong) under native
+ * strings: string elements are `(ref $NativeString)` values, not externref, so
+ * the host-concat loop null-derefs / illegal-casts, and the separator default
+ * came from a host string-constant global. Here we build the result entirely
+ * from native string helpers:
+ *   - element → `(ref $AnyString)`: string elements pass through (NativeString
+ *     is a subtype of AnyString); numeric elements go via `number_toString`
+ *     (which returns a native string boxed as externref → convert back).
+ *   - concatenation via `__str_concat`; separator materialized as a native
+ *     string literal (arg, or the spec default ",").
+ * Returns externref (the joined native string, converted for the caller).
+ */
+function compileArrayJoinNative(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  ensureNativeStringHelpers(ctx);
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const strConcatIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (strConcatIdx === undefined || anyStrTypeIdx < 0) {
+    reportError(ctx, callExpr, "join requires native string helpers (__str_concat)");
+    return null;
+  }
+
+  const isNumeric =
+    elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "i8" || elemType.kind === "i16";
+  let numToStrIdx: number | undefined;
+  if (isNumeric) {
+    emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+    numToStrIdx = ctx.funcMap.get("number_toString");
+    if (numToStrIdx === undefined) {
+      reportError(ctx, callExpr, "join of a numeric array requires number_toString");
+      return null;
+    }
+  }
+
+  const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
+  const vecTmp = allocLocal(fctx, `__njoin_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__njoin_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__njoin_len_${fctx.locals.length}`, { kind: "i32" });
+  const iTmp = allocLocal(fctx, `__njoin_i_${fctx.locals.length}`, { kind: "i32" });
+  const resultTmp = allocLocal(fctx, `__njoin_res_${fctx.locals.length}`, strRef);
+  const sepTmp = allocLocal(fctx, `__njoin_sep_${fctx.locals.length}`, strRef);
+
+  // Receiver vec → length + data array.
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+  fctx.body.push({ op: "local.get", index: vecTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // Separator: explicit arg (coerced to a native string) or the spec default ",".
+  if (callExpr.arguments.length >= 1) {
+    const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "externref" });
+    if (argType === null) {
+      // void/undefined arg → default ","
+      fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
+    } else {
+      // The native string value arrives as externref; convert to ref $AnyString.
+      fctx.body.push({ op: "any.convert_extern" } as Instr);
+      fctx.body.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+    }
+  } else {
+    fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
+  }
+  fctx.body.push({ op: "local.set", index: sepTmp });
+
+  // result = "" (empty native string)
+  fctx.body.push(...nativeStringLiteralInstrs(ctx, ""));
+  fctx.body.push({ op: "local.set", index: resultTmp });
+
+  const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
+
+  // Element → ref $AnyString.
+  const elemToStr: Instr[] = [
+    { op: "local.get", index: dataTmp } as Instr,
+    { op: "local.get", index: iTmp } as Instr,
+    { op: getOp, typeIdx: arrTypeIdx } as Instr,
+  ];
+  if (isNumeric && numToStrIdx !== undefined) {
+    if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" } as Instr);
+    elemToStr.push({ op: "call", funcIdx: numToStrIdx } as Instr);
+    // number_toString returns the native string boxed as externref.
+    elemToStr.push({ op: "any.convert_extern" } as Instr);
+    elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+  } else {
+    // String element: a (ref null $NativeString) — non-null cast up to $AnyString.
+    elemToStr.push({ op: "ref.as_non_null" } as Instr);
+  }
+
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: iTmp });
+
+  const loopBody: Instr[] = [
+    { op: "local.get", index: iTmp },
+    { op: "local.get", index: lenTmp },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+
+    // result = (i == 0) ? elem : __str_concat(__str_concat(result, sep), elem)
+    { op: "local.get", index: iTmp },
+    { op: "i32.const", value: 0 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...elemToStr, { op: "local.set", index: resultTmp } as Instr],
+      else: [
+        { op: "local.get", index: resultTmp } as Instr,
+        { op: "local.get", index: sepTmp } as Instr,
+        { op: "call", funcIdx: strConcatIdx } as Instr,
+        ...elemToStr,
+        { op: "call", funcIdx: strConcatIdx } as Instr,
+        { op: "local.set", index: resultTmp } as Instr,
+      ],
+    } as Instr,
+
+    { op: "local.get", index: iTmp },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: iTmp },
+    { op: "br", depth: 0 },
+  ];
+
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody } as Instr],
+  });
+
+  // Return the joined native string as externref for the caller.
+  fctx.body.push({ op: "local.get", index: resultTmp });
+  fctx.body.push({ op: "extern.convert_any" } as Instr);
+  return { kind: "externref" };
+}
+
+/**
  * arr.join(sep?) -> convert elements to strings and concatenate.
  * Receiver is a vec struct.
  */
@@ -4496,6 +4836,22 @@ function compileArrayJoin(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
+  // #2074 — in native-strings mode (standalone / WASI) there is no
+  // wasm:js-string `concat`; the host-concat element loop below null-derefs /
+  // illegal-casts on native-string element arrays and emits imports the
+  // standalone target cannot satisfy. Route through the native vec join.
+  //
+  // #2075 follow-up — a receiver that is itself a *closure-producing* array
+  // method call (`.map(fn).join(...)`, `.filter(fn).join(...)`) is excluded:
+  // the receiver probe in compileArrayMethodCall re-compiles such receivers and
+  // the closure registration is not idempotent, so routing them here produces
+  // an invalid module. Those keep their prior behavior until the probe is made
+  // closure-safe; the non-closure collateral shapes (slice/spread/concat/
+  // push-pop/sort/shift/reverse/length-trunc) all go native correctly.
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && !receiverIsClosureProducingArrayCall(propAccess.expression)) {
+    return compileArrayJoinNative(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+  }
+
   // #1286: dispatch to compileArrayJoinExtern when the receiver evaluates to
   // externref at runtime is handled in compileArrayMethodCall via the
   // `receiverIsExternref` flag set by the probe. By the time we get here, the

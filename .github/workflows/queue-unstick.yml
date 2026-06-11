@@ -1,0 +1,48 @@
+name: Unstick merge queue
+
+# WHY: GitHub's merge queue has a recurring silent-wedge failure mode (3×
+# on 2026-06-10/11, 2× on 2026-05-30/31): the head entry sits AWAITING_CHECKS,
+# the synthetic gh-readonly-queue branch exists, but the merge_group workflow
+# runs are never created — webhooks silently don't fire. Nothing self-heals
+# for ~3h (entry timeout), and the next head often wedges the same way; the
+# 2026-06-10 overnight occurrence blocked all merges for 4 hours.
+#
+# This workflow runs scripts/unstick-merge-queue.mjs every 15 minutes. The
+# script is SURGICAL (see #1758 — poking a forming queue is what wedged it in
+# May): it only acts when the head has been AWAITING_CHECKS for >= 12 min with
+# ZERO merge_group runs created since its enqueue, and the only mutation is a
+# dequeue + re-enqueue of that head, which forces GitHub to rebuild the merge
+# group and reliably re-fires the webhooks.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: queue-unstick
+  cancel-in-progress: false
+
+jobs:
+  unstick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/unstick-merge-queue.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Detect and nudge a wedged queue head
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_ENQUEUE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/unstick-merge-queue.mjs

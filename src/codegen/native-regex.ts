@@ -1523,14 +1523,73 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
   return funcIdx;
 }
 
+/** Struct name for the match-result vec subtype (#1914). */
+export const REGEXP_MATCH_VEC_STRUCT = "__regexp_match_vec";
+
+/** Field indices of `$__regexp_match_vec` (base vec prefix + result fields). */
+export const MATCH_VEC_FIELD_INDEX = 2;
+export const MATCH_VEC_FIELD_INPUT = 3;
+
 /**
- * Emit `__regex_capture_array(nGroups, subject, caps) -> ref $vec_nstr`
- * (#1539 Phase 2b).
+ * Ensure the `$__regexp_match_vec` struct type (#1914) — the match-result
+ * shape for standalone `exec`/`match`.
+ *
+ * A WasmGC **subtype** of the nullable-native-string vec (`__vec_ref_<anyStr>`,
+ * fields `{length, data}`), extended with the spec result fields of
+ * §22.2.7.2 RegExpBuiltinExec ("index" = match start, "input" = the subject
+ * string). Subtyping (not a sibling struct) is load-bearing: every existing
+ * vec consumer (element access, `.length`, iteration) keeps working on the
+ * result via subsumption, and only `.index`/`.input` property reads need the
+ * subtype's extra fields. Mirrors the `__template_vec_externref` precedent in
+ * registry/types.ts (the base vec is flipped to a non-final root on demand).
+ */
+export function ensureRegexMatchVecType(ctx: CodegenContext): number {
+  const existing = ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT);
+  if (existing !== undefined) return existing;
+
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const nstrElemKey = `ref_${anyStrTypeIdx}`;
+  const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
+  const nstrArrTypeIdx = getOrRegisterArrayType(ctx, nstrElemKey, nstrElemType);
+  const baseVecTypeIdx = getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
+
+  // The base vec must be a non-final root for the subtype to validate.
+  const baseVecDef = ctx.mod.types[baseVecTypeIdx];
+  if (baseVecDef && baseVecDef.kind === "struct" && baseVecDef.superTypeIdx === undefined) {
+    baseVecDef.superTypeIdx = -1;
+  }
+
+  const typeIdx = ctx.mod.types.length;
+  // Field mutability of the inherited prefix must match the supertype exactly
+  // (mutable fields are invariant under WasmGC subtyping).
+  const fields = [
+    { name: "length", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "data", type: { kind: "ref", typeIdx: nstrArrTypeIdx } as ValType, mutable: true },
+    { name: "index", type: { kind: "i32" } as ValType, mutable: false },
+    { name: "input", type: { kind: "ref", typeIdx: anyStrTypeIdx } as ValType, mutable: false },
+  ];
+  ctx.mod.types.push({
+    kind: "struct",
+    name: REGEXP_MATCH_VEC_STRUCT,
+    superTypeIdx: baseVecTypeIdx,
+    fields,
+  });
+  ctx.structMap.set(REGEXP_MATCH_VEC_STRUCT, typeIdx);
+  ctx.typeIdxToStructName.set(typeIdx, REGEXP_MATCH_VEC_STRUCT);
+  ctx.structFields.set(REGEXP_MATCH_VEC_STRUCT, fields);
+  return typeIdx;
+}
+
+/**
+ * Emit `__regex_capture_array(nGroups, subject, caps) -> ref $__regexp_match_vec`
+ * (#1539 Phase 2b, result shape per #1914).
  *
  * Materializes capture slots from a populated caps array as a native string
  * vec: element 0 is the full match, element N is capture N, and unmatched
  * captures are null `(ref null $AnyString)`, which the standalone compiler
- * already treats as `undefined` for native-string values.
+ * already treats as `undefined` for native-string values. The returned struct
+ * is the match-vec subtype carrying `index` (= caps[0], the match start) and
+ * `input` (the flattened subject) per §22.2.7.2 RegExpBuiltinExec.
  */
 export function ensureRegexCaptureArray(ctx: CodegenContext): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_capture_array");
@@ -1545,7 +1604,7 @@ export function ensureRegexCaptureArray(ctx: CodegenContext): number {
   const nstrElemKey = `ref_${anyStrTypeIdx}`;
   const nstrElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
   const nstrArrTypeIdx = getOrRegisterArrayType(ctx, nstrElemKey, nstrElemType);
-  const nstrVecTypeIdx = getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
+  const nstrVecTypeIdx = ensureRegexMatchVecType(ctx);
   const nstrVecRef: ValType = { kind: "ref", typeIdx: nstrVecTypeIdx };
 
   const substringIdx = ctx.nativeStrHelpers.get("__str_substring");
@@ -1637,9 +1696,15 @@ export function ensureRegexCaptureArray(ctx: CodegenContext): number {
         },
       ],
     },
+    // struct.new $__regexp_match_vec(length=nGroups, data=RARR,
+    //                                index=caps[0], input=subject)
     { op: "local.get", index: NGROUPS },
     { op: "local.get", index: RARR },
     { op: "ref.as_non_null" },
+    { op: "local.get", index: CAPS },
+    { op: "i32.const", value: 0 },
+    { op: "array.get", typeIdx: i32Arr },
+    { op: "local.get", index: SUBJ },
     { op: "struct.new", typeIdx: nstrVecTypeIdx },
   ];
 
@@ -1870,6 +1935,89 @@ export function ensureRegexSplit(ctx: CodegenContext): number {
       { name: "part", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
       { name: "mstart", type: { kind: "i32" } },
       { name: "mend", type: { kind: "i32" } },
+    ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/**
+ * Emit `__regex_flags_str(flags: i32) -> ref $NativeString` (#1914).
+ *
+ * Builds the `RegExp.prototype.flags` string from the `$NativeRegExp` flags
+ * bitfield per ECMA-262 §22.2.6.4: append one code unit per set flag in the
+ * fixed spec order d, g, i, m, s, u, v, y. The 8-slot i16 buffer is the exact
+ * maximum (one slot per possible flag); `len` counts only appended units.
+ */
+export function ensureRegexFlagsStr(ctx: CodegenContext): number {
+  const existing = ctx.nativeRegexHelpers.get("__regex_flags_str");
+  if (existing !== undefined) return existing;
+
+  const strDataIdx = ctx.nativeStrDataTypeIdx; // array i16
+  const strTypeIdx = ctx.nativeStrTypeIdx; // $NativeString
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+
+  const typeIdx = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "ref", typeIdx: anyStrTypeIdx }]);
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.nativeRegexHelpers.set("__regex_flags_str", funcIdx);
+
+  const FLAGS = 0; // param
+  const BUF = 1; // ref array<i16>
+  const N = 2; // i32 — appended count
+
+  // Spec getter order (§22.2.6.4): hasIndices, global, ignoreCase, multiline,
+  // dotAll, unicode, unicodeSets, sticky. Bit values from regex/bytecode.ts.
+  const SPEC_ORDER: Array<[bit: number, codeUnit: number]> = [
+    [64 /* RE_FLAG_D */, 0x64], // d
+    [1 /* RE_FLAG_G */, 0x67], // g
+    [2 /* RE_FLAG_I */, 0x69], // i
+    [4 /* RE_FLAG_M */, 0x6d], // m
+    [8 /* RE_FLAG_S */, 0x73], // s
+    [16 /* RE_FLAG_U */, 0x75], // u
+    [128 /* RE_FLAG_V */, 0x76], // v
+    [32 /* RE_FLAG_Y */, 0x79], // y
+  ];
+
+  const body: Instr[] = [
+    // buf = array.new_default(8); n = 0
+    { op: "i32.const", value: 8 },
+    { op: "array.new_default", typeIdx: strDataIdx } as Instr,
+    { op: "local.set", index: BUF },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: N },
+  ];
+  for (const [bit, codeUnit] of SPEC_ORDER) {
+    body.push({ op: "local.get", index: FLAGS }, { op: "i32.const", value: bit }, { op: "i32.and" }, {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: BUF },
+        { op: "local.get", index: N },
+        { op: "i32.const", value: codeUnit },
+        { op: "array.set", typeIdx: strDataIdx } as Instr,
+        { op: "local.get", index: N },
+        { op: "i32.const", value: 1 },
+        { op: "i32.add" },
+        { op: "local.set", index: N },
+      ],
+    } as Instr);
+  }
+  // struct.new $NativeString(len=n, off=0, data=buf)
+  body.push(
+    { op: "local.get", index: N },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: BUF },
+    { op: "struct.new", typeIdx: strTypeIdx },
+  );
+
+  ctx.mod.functions.push({
+    name: "__regex_flags_str",
+    typeIdx,
+    locals: [
+      // Non-null ref local, set-before-get like __regex_replace's accumulator.
+      { name: "buf", type: { kind: "ref", typeIdx: strDataIdx } },
+      { name: "n", type: { kind: "i32" } },
     ],
     body,
     exported: false,

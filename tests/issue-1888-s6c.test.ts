@@ -69,6 +69,17 @@ describe("#1888 S6-c — Math/Number constants reach native f64.const under stan
     );
   });
 
+  it("S6 follow-up: genuine Builtin.method value-read (Array.isArray) is now native", async () => {
+    const r = await compile(`export function run(): number { const f: any = Array.isArray; return f([1]) ? 1 : 0; }`, {
+      target: "standalone",
+    });
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    assertNoHostObjectImports(r.imports);
+    expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as NumExports).run()).toBe(1);
+  });
+
   it("guardrail: unsupported Builtin.method value-read still refuses-loud (S6-b lever)", async () => {
     const r = await compile(`export function run(): number { const f: any = Math.max; return f(1, 2); }`, {
       target: "standalone",

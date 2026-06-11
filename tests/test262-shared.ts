@@ -484,9 +484,19 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
   }
 
   beforeAll(() => {
+    // #1957 — realm-contamination canary, default ON. Workers diff a broad
+    // intrinsic surface after every test (~0.2ms) and request a recycle when
+    // a test actually mutated shared realm state, so the next test gets a
+    // pristine process instead of someone else's Array.prototype/JSON/
+    // Iterator mutations (the order-dependent flip class that also poisoned
+    // the in-realm TS compiler, #1862). Forks inherit this env. Set
+    // TEST262_REALM_CANARY="" to disable, or "log" for measurement mode.
+    if (!("TEST262_REALM_CANARY" in process.env)) {
+      process.env.TEST262_REALM_CANARY = "recycle";
+    }
     pool = new CompilerPool(POOL_SIZE, "unified");
     console.log(
-      `Chunk ${chunkIndex + 1}/${totalChunks}: ${myTests.length} tests, est ${Math.round(chunk.weightMs / 1000)}s, ${POOL_SIZE} unified fork workers`,
+      `Chunk ${chunkIndex + 1}/${totalChunks}: ${myTests.length} tests, est ${Math.round(chunk.weightMs / 1000)}s, ${POOL_SIZE} unified fork workers (realm canary: ${process.env.TEST262_REALM_CANARY || "off"})`,
     );
   }, 30_000);
 
@@ -795,12 +805,21 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               return;
             }
 
-            if (r.status === "compile_error" || r.status === "compile_timeout") {
+            if (
+              r.status === "compile_error" ||
+              r.status === "compile_timeout" ||
+              (r.status === "fail" && isPoisonCompileError(r.error))
+            ) {
               // #1862 — a poison-class compile_error from the unified worker
               // is a contaminated verdict. The worker requests a recycle
               // before the pool dispatches more work; retry this file once in
               // a clean fork and record only the clean retry result.
-              if (r.status === "compile_error" && isPoisonCompileError(r.error)) {
+              // #1957 — the same poison signature can arrive with
+              // status="fail" ("wasm exception during compile (poisoned
+              // built-in)" is sent as fail, not compile_error), which used to
+              // bypass this retry entirely. Both statuses are contaminated
+              // verdicts; retry both.
+              if ((r.status === "compile_error" || r.status === "fail") && isPoisonCompileError(r.error)) {
                 poisonRetriesUsed++;
                 const retry = await runRetrySerial(() =>
                   pool!.runTest(

@@ -41,7 +41,8 @@
  *   - Unicode property escapes `\p{…}` / `\P{…}`   → 2d Slice B
  *   - the `u`/`v` flags' code-point semantics      → 2d Slice B (parse stays UTF-16)
  */
-import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RegexUnsupportedError } from "./bytecode.js";
+import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RE_FLAG_U, RE_FLAG_V, RegexUnsupportedError } from "./bytecode.js";
+import { codePointSource, cpRangesToNode, enumerateClassRanges } from "./unicode.js";
 
 export type ReNode =
   | { kind: "char"; code: number }
@@ -54,6 +55,8 @@ export type ReNode =
   | { kind: "lookaround"; node: ReNode; negated: boolean; behind: boolean }
   // Inline modifier group `(?ims-ims:…)`: add/remove are RE_FLAG_I|M|S masks.
   | { kind: "modGroup"; add: number; remove: number; node: ReNode }
+  // `.` under u/v — desugared at COMPILE time (dotAll is modifier-scoped). #1911 Slice B.
+  | { kind: "udot" }
   | { kind: "concat"; parts: ReNode[] }
   | { kind: "alt"; options: ReNode[] }
   | { kind: "star"; node: ReNode; greedy: boolean }
@@ -168,11 +171,83 @@ class Parser {
   private readonly totalCaptures: number;
   /** Name → group index over the whole pattern (pre-scanned, forward refs ok). */
   readonly groupNames: Map<string, number>;
+  /** Code-point mode (`u` or `v`). #1911 Slice B. */
+  private readonly unicode: boolean;
+  /** UnicodeSets mode (`v`) — affects class-source extraction (nesting). */
+  private readonly vMode: boolean;
+  /** Effective `i` state at the current syntactic position (modifier-scoped) —
+   *  drives host enumeration flags for code-point atoms in u/v mode. */
+  private iState: boolean;
 
-  constructor(private readonly src: string) {
+  constructor(
+    private readonly src: string,
+    flags = 0,
+  ) {
     const scan = scanGroups(src);
     this.totalCaptures = scan.count;
     this.groupNames = scan.names;
+    this.unicode = (flags & (RE_FLAG_U | RE_FLAG_V)) !== 0;
+    this.vMode = (flags & RE_FLAG_V) !== 0;
+    this.iState = (flags & RE_FLAG_I) !== 0;
+  }
+
+  /** Host-enumeration flag string for the current position. */
+  private enumFlags(): string {
+    return (this.vMode ? "v" : "u") + (this.iState ? "i" : "");
+  }
+
+  /** Lower a single code point atom in u/v mode. Case-insensitive atoms are
+   *  enumerated through the host (spec Canonicalize — Kelvin sign and friends);
+   *  otherwise BMP → CHAR, astral → lead+trail concat. */
+  private uChar(cp: number): ReNode {
+    if (this.iState) {
+      return cpRangesToNode(enumerateClassRanges(codePointSource(cp), this.enumFlags()));
+    }
+    if (cp > 0xffff) {
+      const lead = 0xd800 + ((cp - 0x10000) >> 10);
+      const trail = 0xdc00 + ((cp - 0x10000) & 0x3ff);
+      return {
+        kind: "concat",
+        parts: [
+          { kind: "char", code: lead },
+          { kind: "char", code: trail },
+        ],
+      };
+    }
+    return { kind: "char", code: cp };
+  }
+
+  /** Enumerate a class-like source fragment under the current flags and lower
+   *  it to the unit-level AST. */
+  private uEnum(source: string): ReNode {
+    return cpRangesToNode(enumerateClassRanges(source, this.enumFlags()));
+  }
+
+  /** Extract the raw `[...]` class source starting at the current `[`. In v
+   *  mode classes nest (`[[a]&&[b]]`); in u mode the first unescaped `]`
+   *  closes (`[` is a literal inside a u-mode class). The cursor advances past
+   *  the closing bracket. */
+  private extractClassSource(): string {
+    const start = this.pos;
+    this.pos++; // consume the opening "["
+    let depth = 1;
+    while (this.pos < this.src.length) {
+      const c = this.src[this.pos]!;
+      if (c === "\\") {
+        this.pos += 2;
+        continue;
+      }
+      if (this.vMode && c === "[") depth++;
+      if (c === "]") {
+        depth--;
+        if (!this.vMode || depth === 0) {
+          this.pos++;
+          return this.src.slice(start, this.pos);
+        }
+      }
+      this.pos++;
+    }
+    throw new RegexUnsupportedError("unterminated character class");
   }
 
   private peek(): string | undefined {
@@ -295,10 +370,18 @@ class Parser {
     const c = this.peek();
     if (c === undefined) throw new RegexUnsupportedError("unexpected end of pattern");
     if (c === "(") return this.parseGroup();
-    if (c === "[") return this.parseClass();
+    if (c === "[") {
+      // u/v mode: hand the raw class source to the host enumerator — it
+      // resolves negation, properties, set operations, and case folding
+      // exactly; the result desugars to unit-level nodes. #1911 Slice B.
+      if (this.unicode) return this.uEnum(this.extractClassSource());
+      return this.parseClass();
+    }
     if (c === ".") {
       this.next();
-      return { kind: "any" };
+      // u/v: `.` matches one CODE POINT — desugared at compile time, where the
+      // (modifier-scoped) dotAll state lives.
+      return this.unicode ? { kind: "udot" } : { kind: "any" };
     }
     if (c === "^") {
       this.next();
@@ -312,7 +395,13 @@ class Parser {
     if (c === "*" || c === "+" || c === "?") {
       throw new RegexUnsupportedError(`nothing to repeat at index ${this.pos}`);
     }
-    // ordinary literal code unit
+    // ordinary literal — in u/v mode read a full code point (surrogate pairs
+    // in the source are ONE atom: quantifiers wrap the whole pair).
+    if (this.unicode) {
+      const cp = this.src.codePointAt(this.pos)!;
+      this.pos += cp > 0xffff ? 2 : 1;
+      return this.uChar(cp);
+    }
     this.next();
     return { kind: "char", code: c.charCodeAt(0) };
   }
@@ -365,7 +454,17 @@ class Parser {
     } else {
       capIndex = ++this.numCaptures;
     }
+    // Scope the parse-time `i` state over a modifier group's body — in u/v
+    // mode the host enumeration of code-point atoms happens DURING parse, so
+    // it must see the modifier-effective flags (the emitter still scopes the
+    // unit-level i/m/s state at compile time). #1911 Slice B.
+    const savedI = this.iState;
+    if (modifiers !== null) {
+      if (modifiers.add & RE_FLAG_I) this.iState = true;
+      if (modifiers.remove & RE_FLAG_I) this.iState = false;
+    }
     const inner = this.parseAlternation();
+    this.iState = savedI;
     if (this.peek() !== ")") throw new RegexUnsupportedError("unterminated group");
     this.next();
     if (lookaround !== null) {
@@ -412,38 +511,28 @@ class Parser {
     this.next(); // consume "\"
     const e = this.peek();
     if (e === undefined) throw new RegexUnsupportedError("trailing escape");
-    // Class shorthands as standalone atoms.
-    if (e === "d") {
+    // Class shorthands as standalone atoms. In u/v mode the negated forms
+    // must consume a full CODE POINT (e.g. /\D/u consumes a whole astral
+    // pair) and `\w`/`\W` fold differently under `i` (ſ, K) — route them
+    // through the host enumerator. #1911 Slice B.
+    if (e === "d" || e === "D" || e === "w" || e === "W" || e === "s" || e === "S") {
       this.next();
-      return { kind: "class", ranges: DIGIT, negated: false };
-    }
-    if (e === "D") {
-      this.next();
-      return { kind: "class", ranges: DIGIT, negated: true };
-    }
-    if (e === "w") {
-      this.next();
-      return { kind: "class", ranges: WORD, negated: false };
-    }
-    if (e === "W") {
-      this.next();
-      return { kind: "class", ranges: WORD, negated: true };
-    }
-    if (e === "s") {
-      this.next();
-      return { kind: "class", ranges: SPACE, negated: false };
-    }
-    if (e === "S") {
-      this.next();
+      if (this.unicode) return this.uEnum(`\\${e}`);
+      if (e === "d") return { kind: "class", ranges: DIGIT, negated: false };
+      if (e === "D") return { kind: "class", ranges: DIGIT, negated: true };
+      if (e === "w") return { kind: "class", ranges: WORD, negated: false };
+      if (e === "W") return { kind: "class", ranges: WORD, negated: true };
+      if (e === "s") return { kind: "class", ranges: SPACE, negated: false };
       return { kind: "class", ranges: SPACE, negated: true };
     }
-    if (e === "b") {
+    if (e === "b" || e === "B") {
+      // §22.2.2.6: under u+i, IsWordChar adds U+017F/U+212A — the VM's ASCII
+      // word check would be silently wrong, so refuse that combination.
+      if (this.unicode && this.iState) {
+        throw new RegexUnsupportedError(`\\${e} with the u+i Unicode word characters — #1911 Slice B residual`);
+      }
       this.next();
-      return { kind: "wordBoundary", negated: false };
-    }
-    if (e === "B") {
-      this.next();
-      return { kind: "wordBoundary", negated: true };
+      return { kind: "wordBoundary", negated: e === "B" };
     }
     if (e >= "1" && e <= "9") {
       // DecimalEscape (§22.2.1): a backreference when the decimal value does
@@ -455,7 +544,12 @@ class Parser {
       while (this.peek() !== undefined && this.peek()! >= "0" && this.peek()! <= "9") digits += this.next();
       const value = parseInt(digits, 10);
       if (value >= 1 && value <= this.totalCaptures) {
-        return { kind: "backref", index: value };
+        return this.backrefNode(value);
+      }
+      // u/v mode has no legacy octal/identity fallback (§22.2.1 strict
+      // DecimalEscape) — an out-of-range value is a real SyntaxError.
+      if (this.unicode) {
+        throw new RegexUnsupportedError(`invalid decimal escape \\${digits} in u/v mode`);
       }
       this.pos = saved;
       if (e >= "8") {
@@ -465,9 +559,10 @@ class Parser {
       return { kind: "char", code: this.parseLegacyOctal() };
     }
     if (e === "k") {
-      // \k<name> — named backreference. Annex B: when the pattern declares NO
-      // named groups, `\k` is an identity escape for `k`.
+      // \k<name> — named backreference. Annex B (non-u only): when the
+      // pattern declares NO named groups, `\k` is an identity escape for `k`.
       if (this.groupNames.size === 0) {
+        if (this.unicode) throw new RegexUnsupportedError("\\k without a named group in u/v mode");
         this.next();
         return { kind: "char", code: 0x6b };
       }
@@ -482,12 +577,86 @@ class Parser {
       if (idx === undefined) {
         throw new RegexUnsupportedError(`\\k<${name}> references an undeclared group`);
       }
-      return { kind: "backref", index: idx };
+      return this.backrefNode(idx);
     }
     if (e === "p" || e === "P") {
+      // u/v: property escapes resolve through the host enumerator. Non-u
+      // `\p` stays a narrowed refusal (Annex B treats it as identity — rare).
+      if (this.unicode) {
+        return this.uEnum(this.extractPropertyEscapeSource());
+      }
       throw new RegexUnsupportedError(`Unicode property escape \\${e}{…} — #1539 Phase 2d`);
     }
+    if (this.unicode) return this.parseUnicodeEscapeTail();
     return { kind: "char", code: this.parseEscapedCodeUnit() };
+  }
+
+  /** Backreference node with the u+i guard: the VM compares ASCII-folded
+   *  units, but u+i requires spec Canonicalize (full simple folding) — refuse
+   *  rather than match wrongly. */
+  private backrefNode(index: number): ReNode {
+    if (this.unicode && this.iState) {
+      throw new RegexUnsupportedError("backreference under u+i Canonicalize folding — #1911 Slice B residual");
+    }
+    return { kind: "backref", index };
+  }
+
+  /** Extract `\p{…}` / `\P{…}` source for host enumeration. The cursor sits ON
+   *  the `p`/`P` (the backslash is consumed). */
+  private extractPropertyEscapeSource(): string {
+    const letter = this.next(); // p or P
+    if (this.peek() !== "{") throw new RegexUnsupportedError(`\\${letter} must be followed by {…} in u/v mode`);
+    let body = "";
+    this.next();
+    while (this.peek() !== undefined && this.peek() !== "}") body += this.next();
+    if (this.peek() !== "}") throw new RegexUnsupportedError(`unterminated \\${letter}{…}`);
+    this.next();
+    return `\\${letter}{${body}}`;
+  }
+
+  /** u/v-mode escape tail for character-valued escapes: `\u{…}` code points,
+   *  `\uHHHH` (lead+trail escape pairs combine into ONE code point atom per
+   *  §22.2.2.7.3), and the unit-valued escapes shared with non-u mode — all
+   *  routed through {@link uChar} so `i` folding applies. */
+  private parseUnicodeEscapeTail(): ReNode {
+    if (this.peek() === "u") {
+      this.next();
+      if (this.peek() === "{") {
+        this.next();
+        let hex = "";
+        while (this.peek() !== undefined && this.peek() !== "}") hex += this.next();
+        if (this.peek() !== "}" || !/^[0-9a-fA-F]+$/.test(hex)) {
+          throw new RegexUnsupportedError("bad \\u{…} escape");
+        }
+        this.next();
+        const cp = parseInt(hex, 16);
+        if (cp > 0x10ffff) throw new RegexUnsupportedError("\\u{…} out of code-point range");
+        return this.uChar(cp);
+      }
+      const readHex4 = (): number => {
+        const hex = this.next() + this.next() + this.next() + this.next();
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) throw new RegexUnsupportedError("bad \\u escape");
+        return parseInt(hex, 16);
+      };
+      const lead = readHex4();
+      // A lead-surrogate escape immediately followed by a trail-surrogate
+      // escape is a single code point in u/v mode.
+      if (lead >= 0xd800 && lead <= 0xdbff && this.src.startsWith("\\u", this.pos)) {
+        const saved = this.pos;
+        this.pos += 2;
+        try {
+          const trail = readHex4();
+          if (trail >= 0xdc00 && trail <= 0xdfff) {
+            return this.uChar(0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00));
+          }
+        } catch {
+          // not a 4-hex escape — fall through to the lone lead
+        }
+        this.pos = saved;
+      }
+      return this.uChar(lead);
+    }
+    return this.uChar(this.parseEscapedCodeUnit());
   }
 
   /** Annex B LegacyOctalEscapeSequence: 1-3 octal digits, value ≤ 0o377. The
@@ -654,8 +823,8 @@ class Parser {
   }
 }
 
-export function parsePattern(pattern: string): ParsedRegex {
-  const p = new Parser(pattern);
+export function parsePattern(pattern: string, flags = 0): ParsedRegex {
+  const p = new Parser(pattern, flags);
   const root = p.parse();
   return { root, numCaptures: p.numCaptures, groupNames: p.groupNames };
 }

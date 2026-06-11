@@ -25,6 +25,10 @@ on:
       - "tests/test262-runner.ts"
       - "tests/test262-scope-classification.test.ts"
       - "tests/test262-shared.ts"
+      # Weight maps change shard ASSIGNMENT (which tests share a fork/chunk),
+      # so a refresh must be validated by the full matrix even though it
+      # cannot change individual results (#1953).
+      - "tests/test262-slow-tests*.json"
   push:
     branches: [main]
     paths: *test262-paths
@@ -181,7 +185,35 @@ jobs:
       (github.event_name == 'push' && github.actor != 'github-actions[bot]')
     outputs:
       run_shards: ${{ steps.detect.outputs.run_shards }}
+      # #1954 — opt-in PR scope directive (empty for all other events and for
+      # PRs without a directive). Consumed by the shard matrix (as
+      # TEST262_PATH_FILTER) and by every diff-based gate (as --path-filter)
+      # so a scoped candidate JSONL is never diffed against the full baseline.
+      test262_scope: ${{ steps.scope.outputs.scope }}
     steps:
+      # #1954 — resolve the opt-in `test262-scope:` directive from the PR
+      # body. pull_request only: merge_group/push/dispatch ALWAYS validate the
+      # full corpus, so a scoped PR can never merge an out-of-scope regression
+      # — the queue catches it and bounces the PR. The body is passed via env
+      # (never interpolated into the script) so a malicious body cannot inject
+      # shell. The directive value is pipe-separated path substrings, e.g.:
+      #   test262-scope: built-ins/RegExp|language/statements/for-of
+      - name: Resolve PR test262 scope (#1954)
+        id: scope
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          SCOPE=$(printf '%s' "$PR_BODY" | tr -d '\r' \
+            | grep -iE '^[[:space:]]*test262-scope:' | head -1 \
+            | sed -E 's/^[[:space:]]*[Tt]est262-[Ss]cope:[[:space:]]*//' || true)
+          if [ -n "$SCOPE" ]; then
+            echo "PR-scoped test262 run (#1954): '$SCOPE'"
+            echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+          else
+            echo "No test262-scope directive in PR body — full run."
+            echo "scope=" >> "$GITHUB_OUTPUT"
+          fi
       # The checkout (full history, ~20-25s) is only needed for the
       # merge_group base..head diff below. On pull_request/push/dispatch the
       # detect step exits immediately with run_shards=true, and since every
@@ -388,6 +420,10 @@ jobs:
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
+      # #1954 — empty (= run everything) unless the PR body opts into a scope.
+      # Applied in runTest262Chunk BEFORE source read/compile, so out-of-scope
+      # tests cost nothing. Only ever non-empty on pull_request events.
+      TEST262_PATH_FILTER: ${{ needs.changes.outputs.test262_scope }}
 
     steps:
       - name: Checkout
@@ -583,6 +619,11 @@ jobs:
         if: env.SHARDS_RAN == 'true'
         env:
           CATASTROPHIC_REGRESSION_THRESHOLD: "200"
+          # #1954 — on a scoped PR run the merged JSONL only covers the scope;
+          # restrict the baseline the same way or every out-of-scope baseline
+          # pass counts as a pass→absent "regression". Empty on merge_group/
+          # push/dispatch (always full corpus there).
+          TEST262_SCOPE: ${{ needs.changes.outputs.test262_scope }}
         run: |
           # Sparse + blob-filtered clone: the baselines repo carries a large
           # runs/ history (~500 MB cap), so a plain --depth=1 clone took
@@ -596,7 +637,8 @@ jobs:
           fi
           set +e
           npx tsx scripts/diff-test262.ts /tmp/cat-baselines/test262-current.jsonl \
-            merged-reports/test262-results-merged.jsonl --quiet > /tmp/cat-diff.txt 2>&1
+            merged-reports/test262-results-merged.jsonl --quiet \
+            ${TEST262_SCOPE:+--path-filter "$TEST262_SCOPE"} > /tmp/cat-diff.txt 2>&1
           diff_exit=$?
           set -e
           if [ "$diff_exit" -gt 1 ]; then
@@ -651,6 +693,8 @@ jobs:
         if: env.SHARDS_RAN == 'true'
         env:
           STANDALONE_REGRESSION_TOLERANCE: "15"
+          # #1954 — see the catastrophic guard above.
+          TEST262_SCOPE: ${{ needs.changes.outputs.test262_scope }}
         run: |
           # Reuse the baselines clone from the catastrophic guard above (same
           # job, same runner). Re-clone defensively (sparse + blob-filtered,
@@ -670,7 +714,8 @@ jobs:
           fi
           set +e
           npx tsx scripts/diff-test262.ts /tmp/cat-baselines/test262-standalone-current.jsonl \
-            merged-reports/test262-standalone-results-merged.jsonl --quiet > /tmp/standalone-diff.txt 2>&1
+            merged-reports/test262-standalone-results-merged.jsonl --quiet \
+            ${TEST262_SCOPE:+--path-filter "$TEST262_SCOPE"} > /tmp/standalone-diff.txt 2>&1
           diff_exit=$?
           set -e
           if [ "$diff_exit" -gt 1 ]; then
@@ -693,6 +738,63 @@ jobs:
             echo "::error::STANDALONE test262 regression: net ${NET} (improvements ${IMP} − regressions ${REG}) is below the −${STANDALONE_REGRESSION_TOLERANCE} tolerance. The standalone lane regressed against the current baseline floor and this blocks the merge queue. compile_timeout flake is already excluded; this is a real standalone conformance drop. See #1897."
             echo "----- standalone regression report (first 60 lines) -----"
             head -60 /tmp/standalone-diff.txt
+            exit 1
+          fi
+
+      # #1942 — compile-time regression guard. `pass → compile_timeout` is
+      # excluded from every regression gate above (it's runner-load flake —
+      # see #1192), which leaves compile-perf regressions invisible: a PR that
+      # pathologically slows compilation (exponential type inference, O(n²)
+      # pass) converts passes to timeouts and trips no gate. Two cheap signals
+      # — both already EMITTED by diff-test262.ts (#1942) into the catastrophic
+      # guard's /tmp/cat-diff.txt — gate that surface:
+      #   1. count: pass→compile_timeout above COMPILE_TIMEOUT_THRESHOLD
+      #      (N=25, calibrated above the observed contention-flake floor; the
+      #      #1589 serial retry already absorbs most CT flake, and the
+      #      test262-canary separates non-determinism).
+      #   2. aggregate: sum(compile_ms) over the shared both-compiled set, fail
+      #      when it rises > AGG_COMPILE_TIME_PCT_THRESHOLD (20%). Immune to
+      #      single-test flake and set churn — it measures the same population
+      #      on both sides, so a 20% jump is a real systemic slowdown.
+      # Reuses /tmp/cat-diff.txt from the catastrophic guard (same job, same
+      # merged report) so this adds no extra diff run.
+      - name: Compile-time regression guard (#1942)
+        if: env.SHARDS_RAN == 'true'
+        env:
+          COMPILE_TIMEOUT_THRESHOLD: "25"
+          AGG_COMPILE_TIME_PCT_THRESHOLD: "20"
+        run: |
+          if [ ! -f /tmp/cat-diff.txt ]; then
+            echo "::warning::No /tmp/cat-diff.txt (catastrophic guard skipped — first seed?) — skipping compile-time guard."
+            exit 0
+          fi
+          # pass→compile_timeout count (already split out by diff-test262.ts).
+          CT=$(grep -oE 'Compile timeouts \(pass → compile_timeout\): [0-9]+' /tmp/cat-diff.txt | grep -oE '[0-9]+' | head -1)
+          CT="${CT:-0}"
+          # Aggregate compile-time delta percentage (signed, one decimal).
+          # Line shape: "=== Aggregate compile time (shared N tests): baseline Xms → current Yms (Δ +Z.Z%) ==="
+          AGG_LINE=$(grep -F 'Aggregate compile time (shared' /tmp/cat-diff.txt | head -1)
+          AGG_PCT=$(echo "$AGG_LINE" | grep -oE 'Δ [+-]?[0-9]+\.[0-9]+%' | grep -oE '[-]?[0-9]+\.[0-9]+' | head -1)
+          AGG_PCT="${AGG_PCT:-0.0}"
+          echo "Compile-time guard: pass→compile_timeout=${CT} (threshold ${COMPILE_TIMEOUT_THRESHOLD}); aggregate compile-time Δ=${AGG_PCT}% (threshold +${AGG_COMPILE_TIME_PCT_THRESHOLD}%)."
+          echo "  ${AGG_LINE}"
+          fail=0
+          if [ "$CT" -gt "$COMPILE_TIMEOUT_THRESHOLD" ]; then
+            echo "::error::COMPILE-TIME regression: ${CT} tests went pass→compile_timeout, exceeding the ${COMPILE_TIMEOUT_THRESHOLD} flake threshold. A spike this large is a real compile-perf regression (compilation got slow enough to cross the 30s per-test timeout), not runner-load noise. See #1942."
+            fail=1
+          fi
+          # Integer-compare the percentage (floor): strip the fractional part
+          # for the shell -gt comparison, so +20.x stays under a 20% threshold
+          # and only +21%+ trips.
+          AGG_INT=$(echo "$AGG_PCT" | grep -oE '^-?[0-9]+')
+          AGG_INT="${AGG_INT:-0}"
+          if [ "$AGG_INT" -gt "$AGG_COMPILE_TIME_PCT_THRESHOLD" ]; then
+            echo "::error::COMPILE-TIME regression: aggregate compile time rose ${AGG_PCT}% over the shared both-compiled test set, exceeding the +${AGG_COMPILE_TIME_PCT_THRESHOLD}% threshold. This is a systemic compilation slowdown (the same tests take materially longer to compile). See #1942."
+            fail=1
+          fi
+          if [ "$fail" -ne 0 ]; then
+            echo "----- compile-time signals (from /tmp/cat-diff.txt) -----"
+            grep -E 'Compile timeouts|Aggregate compile time' /tmp/cat-diff.txt || true
             exit 1
           fi
 
@@ -758,6 +860,25 @@ jobs:
             merged-reports/**
           if-no-files-found: warn
 
+      # #1956 — publish this group's merged JSONLs keyed by the GROUP HEAD
+      # SHA. The merge queue builds groups incrementally, so the NEXT queued
+      # group's head commit has THIS group's head as its first parent — its
+      # regression-gate can therefore download this artifact and diff against
+      # its exact predecessor, isolating only its own PR's delta (no cross-PR
+      # drift, no ALLGREEN masking once the queue batches >1). 3-day
+      # retention comfortably covers queue lifetimes; an expired/missing
+      # artifact just falls back to the runs-cache / latest-main baseline.
+      - name: Publish group results for predecessor diffing (#1956)
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'merge_group'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 3
+          name: test262-group-${{ github.event.merge_group.head_sha }}
+          path: |
+            merged-reports/test262-results-merged.jsonl
+            merged-reports/test262-standalone-results-merged.jsonl
+          if-no-files-found: warn
+
   regression-gate:
     # Runs after merge-report in all gate-relevant contexts and compares the
     # branch report against the current baseline when shards produced artifacts.
@@ -776,6 +897,13 @@ jobs:
     # of serially after it) cuts ~3 min off every run's tail.
     needs: [changes, test262-shard]
     runs-on: ubuntu-latest
+    # actions:read — the #1956 predecessor-group baseline is an artifact from
+    # ANOTHER workflow run, downloaded via the artifacts API. The workflow's
+    # top-level `permissions: contents: write` would otherwise leave actions
+    # at `none` for this job.
+    permissions:
+      contents: read
+      actions: read
     env:
       SHARDS_RAN: ${{ needs.test262-shard.result == 'success' && 'true' || 'false' }}
 
@@ -884,6 +1012,57 @@ jobs:
             --dest benchmarks/results/test262-current.jsonl || \
             echo "::warning::#1081 merge-base resolution errored (non-fatal); keeping latest-main baseline."
 
+      # #1956 — exact predecessor-group baseline for merge_group runs. The
+      # queue builds groups incrementally: this group's head is a merge
+      # commit whose FIRST PARENT is the predecessor group's head (or the
+      # main tip when this PR is the queue head). If a recent merge_group run
+      # published `test262-group-<HEAD^1>` (see merge-report), diffing
+      # against it isolates ONLY this PR's delta — no cross-PR drift and no
+      # ALLGREEN masking inside multi-entry queue windows, which is the
+      # precondition for raising the queue's batch size past 1 (see
+      # docs/ci-policy.md). Resolution order, last writer wins:
+      #   a. predecessor-group artifact (this step — strongest)
+      #   b. #1081 runs/<merge-base> cache (previous step)
+      #   c. latest-main baseline (fetch step, default)
+      # Every failure mode falls through to (b)/(c) with a log line; this
+      # step never fails the build.
+      - name: Resolve predecessor-group baseline (#1956)
+        id: pred_group
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          PRED=$(git rev-parse HEAD^1 2>/dev/null || echo "")
+          if [ -z "$PRED" ]; then
+            echo "pred_path=none" >> "$GITHUB_OUTPUT"
+            echo "No first parent resolvable — keeping baseline from (b)/(c)."
+            exit 0
+          fi
+          ART_NAME="test262-group-${PRED}"
+          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=1" --jq '.artifacts[0].id // empty' 2>/dev/null || echo "")
+          if [ -z "$ART_ID" ]; then
+            echo "pred_path=miss" >> "$GITHUB_OUTPUT"
+            echo "Predecessor artifact ${ART_NAME} not found (queue head, expired, or non-incremental rebuild) — keeping baseline from (b)/(c)."
+            exit 0
+          fi
+          mkdir -p /tmp/pred-group
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > /tmp/pred-group/art.zip 2>/dev/null; then
+            echo "pred_path=download-failed" >> "$GITHUB_OUTPUT"
+            echo "::warning::#1956 predecessor artifact download failed — keeping baseline from (b)/(c)."
+            exit 0
+          fi
+          unzip -o /tmp/pred-group/art.zip -d /tmp/pred-group >/dev/null 2>&1 || true
+          if [ -s /tmp/pred-group/test262-results-merged.jsonl ]; then
+            mkdir -p benchmarks/results
+            cp /tmp/pred-group/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
+            echo "pred_path=hit" >> "$GITHUB_OUTPUT"
+            echo "Using predecessor-group baseline ${ART_NAME} (path a): this diff isolates only this PR's delta."
+          else
+            echo "pred_path=empty" >> "$GITHUB_OUTPUT"
+            echo "::warning::#1956 predecessor artifact missing host JSONL — keeping baseline from (b)/(c)."
+          fi
+
       - name: Check baseline staleness (#1235)
         id: staleness
         if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.fetch_baseline.outputs.baseline_ts != '0'
@@ -934,6 +1113,10 @@ jobs:
       - name: Compare against current main baseline
         id: regression_diff
         if: env.SHARDS_RAN == 'true'
+        env:
+          # #1954 — scoped PR runs: restrict the baseline to the scope or
+          # every out-of-scope baseline pass reads as a pass→absent regression.
+          TEST262_SCOPE: ${{ needs.changes.outputs.test262_scope }}
         run: |
           BASELINE="benchmarks/results/test262-current.jsonl"
           if [ ! -f "$BASELINE" ]; then
@@ -954,6 +1137,7 @@ jobs:
           fi
           set +e
           npx tsx scripts/diff-test262.ts "$BASELINE" merged-reports/test262-results-merged.jsonl --quiet $META_ARGS \
+            ${TEST262_SCOPE:+--path-filter "$TEST262_SCOPE"} \
             > merged-reports/test262-regressions.txt
           exit_code=$?
           set -e
@@ -1258,8 +1442,31 @@ jobs:
       - name: Commit refreshed summary JSON to main repo
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
+          # #1951 — DEFER this commit while the merge queue is non-empty. Any
+          # push to main (even [skip ci]) makes GitHub rebuild EVERY queued
+          # merge group: each rebuild costs a full 114-job validation per
+          # queued PR plus ~10 min of added queue latency (observed 2026-06-10:
+          # PR #1283 validated 3× because baseline pushes kept landing under
+          # it). The baselines-REPO push above is unaffected — it doesn't move
+          # main and the regression gates need it fresh per merge. The deferred
+          # summary lands via the next promote run that sees an empty queue, or
+          # via the hourly baseline-summary-sync.yml fallback (6h staleness
+          # floor). Fail-open: if the queue query errors, keep the old
+          # always-push behavior rather than silently freezing the summary.
+          OWNER="${GITHUB_REPOSITORY%/*}"; NAME="${GITHUB_REPOSITORY#*/}"
+          QUEUE_LEN=$(gh api graphql \
+            -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){mergeQueue{entries(first:1){totalCount}}}}' \
+            -f owner="$OWNER" -f name="$NAME" \
+            --jq '.data.repository.mergeQueue.entries.totalCount' 2>/dev/null || echo "")
+          if [ -n "$QUEUE_LEN" ] && [ "$QUEUE_LEN" -gt 0 ] 2>/dev/null; then
+            echo "Merge queue has ${QUEUE_LEN} entrie(s) — deferring main-repo baseline summary commit (#1951)."
+            echo "It will land via the next promote on an empty queue or the hourly baseline-summary-sync."
+            exit 0
+          fi
+          echo "Merge queue empty (len='${QUEUE_LEN:-unknown}') — proceeding with main-repo summary commit."
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # --- Set up the SSH deploy key for the main-repo push so it bypasses

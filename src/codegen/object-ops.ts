@@ -3342,7 +3342,7 @@ export function compilePropertyIntrospection(
         fctx.body.push({ op: "ref.null.extern" });
       }
       fctx.body.push({ op: "call", funcIdx: hopIdx });
-      return { kind: "i32" };
+      return { kind: "i32", boolean: true };
     }
   }
 
@@ -3454,7 +3454,7 @@ export function compilePropertyIntrospection(
       fctx.body.push({ op: "drop" });
     }
     fctx.body.push({ op: "i32.const", value: 0 });
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   // Try to resolve the key at compile time
@@ -3527,7 +3527,7 @@ export function compilePropertyIntrospection(
           coerceType(ctx, fctx, argType, { kind: "externref" });
         }
         fctx.body.push({ op: "call", funcIdx: hopIdx });
-        return { kind: "i32" };
+        return { kind: "i32", boolean: true };
       }
     }
 
@@ -3559,7 +3559,7 @@ export function compilePropertyIntrospection(
       fctx.body.push({ op: "drop" });
     }
     fctx.body.push({ op: "i32.const", value: result });
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   // Dynamic key: runtime string comparison against known field names
@@ -3607,7 +3607,7 @@ export function compilePropertyIntrospection(
             fctx.body.push({ op: "i32.or" });
           }
         }
-        return { kind: "i32" };
+        return { kind: "i32", boolean: true };
       }
     }
   }
@@ -3622,5 +3622,5 @@ export function compilePropertyIntrospection(
     fctx.body.push({ op: "drop" });
   }
   fctx.body.push({ op: "i32.const", value: 0 });
-  return { kind: "i32" };
+  return { kind: "i32", boolean: true };
 }

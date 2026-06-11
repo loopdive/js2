@@ -134,6 +134,33 @@ function isBrowserLikeRuntime(): boolean {
 }
 
 /**
+ * Validate optimizer output before trusting it (#1941).
+ *
+ * `WebAssembly.validate` is available in every runtime that can host a
+ * compiled module (Node, browsers, Deno, Bun). We use it as a fail-loud
+ * gate on whatever the optimizer hands back: if the bytes don't validate,
+ * the optimization MISCOMPILED the module and we must NOT ship it. Returns
+ * `true` when validation can't be performed (no `WebAssembly` global — an
+ * exotic embedding); in that case we conservatively trust the optimizer,
+ * because refusing to optimize everywhere `WebAssembly` is absent would be
+ * worse than the status quo.
+ */
+function optimizedBinaryValidates(binary: Uint8Array): boolean {
+  const WA = (globalThis as { WebAssembly?: { validate?: (b: BufferSource) => boolean } }).WebAssembly;
+  if (!WA || typeof WA.validate !== "function") return true;
+  try {
+    // Cast to BufferSource: under TS 5.7+ the typed-array generic types this
+    // as `Uint8Array<ArrayBufferLike>`, which the lib.dom `validate` overload
+    // (param: BufferSource) doesn't structurally accept without the widening.
+    return WA.validate(binary as unknown as BufferSource);
+  } catch {
+    // A throw from validate means the bytes are structurally broken — treat
+    // as invalid rather than letting a malformed binary through.
+    return false;
+  }
+}
+
+/**
  * Optimize a Wasm binary using Binaryen.
  *
  * This is the only public optimizer entry point (#1763). The previous
@@ -145,6 +172,20 @@ function isBrowserLikeRuntime(): boolean {
  * bundlers embed it in standalone artifacts; the system `wasm-opt` CLI
  * fallback still uses the dynamic node-builtin shim that bundlers
  * intentionally cannot statically resolve.
+ *
+ * Backend preference + correctness gate (#1941):
+ *   1. Try the **system / bundled `wasm-opt` CLI first**, then the in-process
+ *      binaryen module as a fallback (the reverse of the pre-#1941 order).
+ *      The binaryen-123 JS module emits a stale GC ref-type encoding
+ *      (`0x62` legacy non-null ref) for our closure-dispatch trampolines
+ *      that V8 and wasmtime reject, while the bundled native CLI emits the
+ *      correct `0x64` encoding. The CLI is the trustworthy backend; the
+ *      module is the no-CLI fallback (e.g. browser playgrounds).
+ *   2. **Validate every optimizer result** with `WebAssembly.validate`. If
+ *      the optimized bytes don't validate, the pass miscompiled the module:
+ *      discard them, return the ORIGINAL binary, and emit a fail-loud
+ *      warning. We never ship a binary that doesn't validate, regardless of
+ *      which backend produced it or which binaryen version is installed.
  */
 export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeOptions = {}): Promise<OptimizeResult> {
   const level = options.level ?? 3;
@@ -152,21 +193,52 @@ export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeO
   const referenceTypes = options.referenceTypes !== false;
   const exceptionHandling = options.exceptionHandling !== false;
 
+  // The original binary is presumed valid (it came straight from codegen and
+  // is validated by every caller's test harness). If it doesn't validate we
+  // still hand it back unchanged — optimization can only make things worse,
+  // not fix a pre-existing codegen bug, and a broken-input warning would be
+  // noise. The optimize gate below only judges the optimizer's *delta*.
+
+  // 1. System / bundled wasm-opt CLI — the correct backend (#1941).
+  try {
+    const result = optimizeWithSystemBinary(binary, level, gc, referenceTypes, exceptionHandling);
+    if (result && result.optimized) {
+      if (optimizedBinaryValidates(result.binary)) return result;
+      // CLI produced an invalid binary — do not ship it. Fall through to the
+      // module backend in case a different encoder produces valid output.
+    } else if (result) {
+      // CLI resolved but reported a wasm-opt error (warning, optimized:false)
+      // — surface it; don't silently fall through to the module path, which
+      // would mask a real "we emitted something wasm-opt rejects" signal.
+      return result;
+    }
+  } catch {
+    // Fall through to the in-process module backend.
+  }
+
+  // 2. In-process binaryen module — fallback for environments with no CLI
+  //    (browser playgrounds, stripped installs).
   try {
     const binaryen = await getBinaryenModule();
     if (binaryen) {
       const result = optimizeWithBinaryenModule(binaryen, binary, level, gc, referenceTypes, exceptionHandling);
+      if (result && result.optimized) {
+        if (optimizedBinaryValidates(result.binary)) return result;
+        // Module miscompiled (the #1941 case). Discard — return the original
+        // binary with a fail-loud warning so the miscompile is visible and we
+        // never emit a module that doesn't validate.
+        return {
+          binary,
+          optimized: false,
+          warning:
+            "wasm-opt produced an invalid binary (it failed WebAssembly.validate); shipping unoptimized output instead. " +
+            "This is a known binaryen-JS-module encoder bug for WasmGC ref types (#1941) — installing a native wasm-opt on PATH avoids it.",
+        };
+      }
       if (result) return result;
     }
   } catch {
-    // Fall through to sync system-binary fallback in Node.js
-  }
-
-  try {
-    const result = optimizeWithSystemBinary(binary, level, gc, referenceTypes, exceptionHandling);
-    if (result) return result;
-  } catch {
-    // Fall through to warning
+    // Fall through to warning.
   }
 
   return {
