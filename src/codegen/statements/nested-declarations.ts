@@ -446,9 +446,14 @@ export function compileNestedFunctionDeclaration(
       liftedFctx.body.push({ op: "ref.null.extern" });
       liftedFctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
-      const bodyInstrs: Instr[] = [];
-      const outerBody = liftedFctx.body;
-      liftedFctx.body = bodyInstrs;
+      // #1919 (async-gen index-skew): use pushBody — NOT a raw body swap — so the
+      // prologue (param defaults / destructure guards with already-baked call
+      // indices) stays registered in savedBodies and visible to
+      // shiftLateImportIndices while the generator body compiles. With a raw
+      // swap, a late import ensured inside the body (e.g. __get_undefined)
+      // shifted every defined function but missed the detached prologue,
+      // leaving its baked calls one slot low (invalid Wasm at instantiate).
+      const savedGenBody = pushBody(liftedFctx);
 
       liftedFctx.generatorReturnDepth = 0;
       liftedFctx.blockDepth++;
@@ -464,7 +469,8 @@ export function compileNestedFunctionDeclaration(
       for (let i = 0; i < liftedFctx.continueStack.length; i++) liftedFctx.continueStack[i]!--;
       liftedFctx.generatorReturnDepth = undefined;
 
-      liftedFctx.body = outerBody;
+      const bodyInstrs = liftedFctx.body;
+      popBody(liftedFctx, savedGenBody);
 
       // Wrap generator body block in try/catch to capture exceptions as pending throw
       const tagIdx = ensureExnTag(ctx);
@@ -690,9 +696,14 @@ export function compileNestedFunctionDeclaration(
       liftedFctx.body.push({ op: "ref.null.extern" });
       liftedFctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
-      const bodyInstrs: Instr[] = [];
-      const outerBody = liftedFctx.body;
-      liftedFctx.body = bodyInstrs;
+      // #1919 (async-gen index-skew): use pushBody — NOT a raw body swap — so the
+      // prologue (param defaults / destructure guards with already-baked call
+      // indices) stays registered in savedBodies and visible to
+      // shiftLateImportIndices while the generator body compiles. With a raw
+      // swap, a late import ensured inside the body (e.g. __get_undefined)
+      // shifted every defined function but missed the detached prologue,
+      // leaving its baked calls one slot low (invalid Wasm at instantiate).
+      const savedGenBody = pushBody(liftedFctx);
 
       liftedFctx.generatorReturnDepth = 0;
       liftedFctx.blockDepth++;
@@ -708,7 +719,8 @@ export function compileNestedFunctionDeclaration(
       for (let i = 0; i < liftedFctx.continueStack.length; i++) liftedFctx.continueStack[i]!--;
       liftedFctx.generatorReturnDepth = undefined;
 
-      liftedFctx.body = outerBody;
+      const bodyInstrs = liftedFctx.body;
+      popBody(liftedFctx, savedGenBody);
 
       // Wrap generator body block in try/catch to capture exceptions as pending throw
       const tagIdx = ensureExnTag(ctx);

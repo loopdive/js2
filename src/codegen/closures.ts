@@ -17,7 +17,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
-import { pushBody } from "./context/bodies.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
@@ -2134,9 +2134,14 @@ export function compileArrowAsClosure(
     liftedFctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
     // Wrap body in a block so return can br out
-    const bodyInstrs: Instr[] = [];
-    const outerBody = liftedFctx.body;
-    liftedFctx.body = bodyInstrs;
+    // #1919 (async-gen index-skew): use pushBody — NOT a raw body swap — so the
+    // prologue (param defaults / destructure guards with already-baked call
+    // indices) stays registered in savedBodies and visible to
+    // shiftLateImportIndices while the generator body compiles. With a raw
+    // swap, a late import ensured inside the body (e.g. __get_undefined)
+    // shifted every defined function but missed the detached prologue,
+    // leaving its baked calls one slot low (invalid Wasm at instantiate).
+    const savedGenBody = pushBody(liftedFctx);
 
     liftedFctx.generatorReturnDepth = 0;
     liftedFctx.blockDepth++;
@@ -2152,7 +2157,8 @@ export function compileArrowAsClosure(
     for (let i = 0; i < liftedFctx.continueStack.length; i++) liftedFctx.continueStack[i]!--;
     liftedFctx.generatorReturnDepth = undefined;
 
-    liftedFctx.body = outerBody;
+    const bodyInstrs = liftedFctx.body;
+    popBody(liftedFctx, savedGenBody);
 
     // Wrap generator body block in try/catch to capture exceptions as pending throw
     const tagIdx = ensureExnTag(ctx);

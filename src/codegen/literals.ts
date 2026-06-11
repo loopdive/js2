@@ -1846,9 +1846,14 @@ export function compileObjectLiteralForStruct(
         methodFctx.body.push({ op: "ref.null.extern" });
         methodFctx.body.push({ op: "local.set", index: pendingThrowLocal });
 
-        const bodyInstrs: Instr[] = [];
-        const outerBody = methodFctx.body;
-        methodFctx.body = bodyInstrs;
+        // #1919 (async-gen index-skew): use pushBody — NOT a raw body swap — so the
+        // prologue (param defaults / destructure guards with already-baked call
+        // indices) stays registered in savedBodies and visible to
+        // shiftLateImportIndices while the generator body compiles. With a raw
+        // swap, a late import ensured inside the body (e.g. __get_undefined)
+        // shifted every defined function but missed the detached prologue,
+        // leaving its baked calls one slot low (invalid Wasm at instantiate).
+        const savedGenBody = pushBody(methodFctx);
 
         methodFctx.generatorReturnDepth = 0;
         methodFctx.blockDepth++;
@@ -1864,7 +1869,8 @@ export function compileObjectLiteralForStruct(
         for (let i = 0; i < methodFctx.continueStack.length; i++) methodFctx.continueStack[i]!--;
         methodFctx.generatorReturnDepth = undefined;
 
-        methodFctx.body = outerBody;
+        const bodyInstrs = methodFctx.body;
+        popBody(methodFctx, savedGenBody);
 
         // Wrap generator body block in try/catch to capture exceptions as pending throw
         const tagIdx = ensureExnTag(ctx);
