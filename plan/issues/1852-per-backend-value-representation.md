@@ -4,10 +4,11 @@ title: "Make dynamic-value representation explicitly per-backend (typed refs / i
 status: backlog
 sprint: Backlog
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-10
 priority: medium
 feasibility: hard
 reasoning_effort: high
+model: fable
 task_type: feature
 area: ir
 language_feature: compiler-internals

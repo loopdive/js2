@@ -263,7 +263,11 @@ function loadIssueHistory() {
       "--",
       "plan/issues",
     ],
-    { cwd: ROOT, encoding: "utf8" },
+    // plan/issues history is >1 MB of name-status lines and grows every
+    // sprint; Node's default 1 MiB maxBuffer makes spawnSync die with
+    // ENOBUFS on full-history checkouts (pre-push #1616 gate crash,
+    // 2026-06-10). 256 MiB gives ~2 orders of magnitude headroom.
+    { cwd: ROOT, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
   );
   let currentDate = "";
   for (const line of output.split("\n")) {

@@ -311,7 +311,7 @@ GitHub branch protection is the hard block.
    - Planning artifact conflicts (`dashboard/`, `plan/`, `public/`) → `git checkout --theirs` + regen
    - Compiler source conflicts (`src/**/*.ts`) → create a priority `[CONFLICT]` TaskList item; assign to `senior-developer` (Opus); do NOT resolve inline
 2. **Dev runs scoped local checks** — issue-targeted compile/run checks for confidence
-3. **Dev pushes the branch to origin and opens a PR against `main`**
+3. **Dev pushes the branch to origin and opens a PR against `main`** — PRs MUST target the **upstream** repo (`loopdive/js2`), never the fork (`ttraenkler/js2`). **Always pass `-R loopdive/js2 --head ttraenkler:<branch>` to `gh pr create`** — the container's gh 2.23 ignores the pinned default (`remote.upstream.gh-resolved=base`) for `pr create` and silently opens the PR on the fork (verified 2026-06-11: fork PRs #6/#7 both had to be closed as misrouted). After creating, verify the PR URL starts with `github.com/loopdive/`. Note the pre-push integrity gate chokes on the fork/upstream divergence — `git push --no-verify` is sanctioned (CI runs the real gate).
 4. **Dev blocks on CI** — polls `gh pr checks <N>` every 30s for ~2 min wall time, in-context (Sonnet idle is nearly free). Use `gh run watch <run-id>` or a `while ! done; do sleep 30; done` loop with a max timeout (~10 min before noting unusual wait, ~20 min before escalating).
 5. **On CI completion**:
    - **All required checks green** → run `/dev-self-merge`; if MERGE, enqueue via GraphQL `enqueuePullRequest` (NOT `gh pr merge --auto` — it silently no-ops on already-green `CLEAN` PRs and never queues them), then proceed to step 8
