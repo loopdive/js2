@@ -163,7 +163,13 @@ shifters' problem. The two index.ts inline loops (6541/7938) need the same
 (keep a `-Idx` shim for stragglers); migrate its ~150 consumers
 (`ensureGetUndefined`, `ensureExternIsUndefinedImport`, type-coercion
 helpers, …). After this, `flushLateImportShifts` calls ratchet out;
-`pendingLateImportShift` deleted.
+`pendingLateImportShift` deleted. Includes the three sites added by the
+#1712 fnctor stack (per fable-1712c, 2026-06-11): calls.ts host-callable
+fallback (`__js_array_new`/`__js_array_push`/`__call_function`, ~8500),
+`emitWrapperDynamicMethodCall` args support, and new-super.ts
+ctor-prologue `__register_fnctor_instance` — two of which park detached
+buffers in `fctx.savedBodies` purely for the shifters; that parking is
+deletable once those sites are symbolic.
 
 **S3 — defined-function call sites.** The ~667 `ctx.funcMap.get(name)` →
 `{op:"call", funcIdx}` producers move to `funcRef(ctx, name)`, family by
