@@ -21,6 +21,35 @@ import {
 import { emitLinearU8ArenaReset } from "../linear-uint8-arena.js";
 import { adjustRethrowDepth } from "./shared.js";
 
+/**
+ * (#2061) Compute the extra nesting depth between a finally-inline site and the
+ * try frame at which the finally body was pre-compiled.
+ *
+ * The finally body is lowered once with break/continue depths bumped by exactly
+ * +1 (the try frame). When a return/break/continue that triggers the inline is
+ * nested DEEPER than the try frame (inside an `if`/`switch`/inner-`try` within
+ * the try block), every label op descended since try entry has bumped all outer
+ * break/continue stack entries by +1, uniformly. So the delta is simply
+ * `current outer-label depth − baseline outer-label depth`, read from any outer
+ * entry. Returns 0 when the inline site is at the try frame itself, or when no
+ * outer label exists to measure against (e.g. a finally containing only
+ * `return`, whose clone has no outer-targeting branches to retarget).
+ */
+function finallyInlineDelta(
+  fctx: FunctionContext,
+  entry: { breakDepthBaseline: number[]; continueDepthBaseline: number[] },
+): number {
+  for (let i = entry.breakDepthBaseline.length - 1; i >= 0; i--) {
+    const cur = fctx.breakStack[i];
+    if (cur !== undefined) return cur - entry.breakDepthBaseline[i]!;
+  }
+  for (let i = entry.continueDepthBaseline.length - 1; i >= 0; i--) {
+    const cur = fctx.continueStack[i];
+    if (cur !== undefined) return cur - entry.continueDepthBaseline[i]!;
+  }
+  return 0;
+}
+
 function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: number): boolean {
   let calleeTypeIdx: number | undefined;
   if (calleeIdx < ctx.numImportFuncs) {
@@ -191,9 +220,12 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
       retTmpIdx = allocLocal(fctx, `__finally_ret_${fctx.locals.length}`, fctx.returnType);
       fctx.body.push({ op: "local.set", index: retTmpIdx });
     }
-    // Inline ALL pending finally blocks from innermost to outermost
+    // Inline ALL pending finally blocks from innermost to outermost. Each
+    // clone's outer-targeting branches must be retargeted for the extra nesting
+    // between this return site and that try frame (#2061).
     for (let i = fctx.finallyStack!.length - 1; i >= 0; i--) {
-      fctx.body.push(...fctx.finallyStack![i]!.cloneFinally());
+      const entry = fctx.finallyStack![i]!;
+      fctx.body.push(...entry.cloneFinallyAtDepth(finallyInlineDelta(fctx, entry)));
     }
     emitLinearU8ArenaReset(ctx, fctx, fctx.linearU8ArenaMarkLocalIdx);
     // Restore return value and emit return
@@ -881,7 +913,9 @@ export function compileBreakStatement(_ctx: CodegenContext, fctx: FunctionContex
     for (let i = fctx.finallyStack.length - 1; i >= 0; i--) {
       const entry = fctx.finallyStack[i]!;
       if (breakIdx < entry.breakStackLen) {
-        fctx.body.push(...entry.cloneFinally());
+        // Retarget the clone's outer branches for the extra nesting between
+        // this break site and the try frame (#2061).
+        fctx.body.push(...entry.cloneFinallyAtDepth(finallyInlineDelta(fctx, entry)));
       }
     }
   }
@@ -911,7 +945,9 @@ export function compileContinueStatement(
     for (let i = fctx.finallyStack.length - 1; i >= 0; i--) {
       const entry = fctx.finallyStack[i]!;
       if (contIdx < entry.continueStackLen) {
-        fctx.body.push(...entry.cloneFinally());
+        // Retarget the clone's outer branches for the extra nesting between
+        // this continue site and the try frame (#2061).
+        fctx.body.push(...entry.cloneFinallyAtDepth(finallyInlineDelta(fctx, entry)));
       }
     }
   }
