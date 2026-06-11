@@ -51,7 +51,7 @@ iterate code points (surrogate-pair aware — coordinate with #1964), push
 1-code-point native strings into the result vec; check whether
 destructuring/`Array.from` share this path and cover them too. Also: a
 silently-`continue`d unknown spread source should be a compile error, not an
-empty fill (same hazard class as #1934).
+empty fill (same hazard class as #2054).
 
 ## Acceptance criteria
 

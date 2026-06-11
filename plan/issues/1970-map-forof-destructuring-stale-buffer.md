@@ -12,7 +12,7 @@ task_type: bugfix
 area: codegen
 language_feature: destructuring
 goal: iterator-protocol
-related: [1258, 1146, 859, 1847, 1945]
+related: [1258, 1146, 859, 1847, 2065]
 origin: "2026-06-10 deep-audit sweep (objects agent): verified miscompile on main, WAT-proofed"
 ---
 

@@ -87,7 +87,7 @@ export function computeRecGroups(types: TypeDef[]): Array<[number, number]> {
 }
 
 /**
- * #1923 — always-on emit-time index validation (the durable safety net for
+ * #2043 — always-on emit-time index validation (the durable safety net for
  * the late-import index-shift class; instances #1809/#1839/#1602/#1886/
  * #1666/#1677/#2029).
  *
@@ -126,7 +126,7 @@ export function computeRecGroups(types: TypeDef[]): Array<[number, number]> {
  * Pure read-only validation — when it does not throw, the emitted bytes are
  * identical to an unvalidated emit. Sound by construction: every in-range
  * index is accepted, so it cannot reject a module the encoder would have
- * serialized into a structurally valid binary. Always-on since #1923; set
+ * serialized into a structurally valid binary. Always-on since #2043; set
  * JS2WASM_SKIP_INDEX_VALIDATION=1 to bypass (escape hatch only).
  */
 interface EmitValidationCtx {
@@ -152,76 +152,6 @@ interface EmitValidationCtx {
 }
 
 let valCtx: EmitValidationCtx | null = null;
-
-/**
- * Validate that every function reference (`call` / `return_call` / `ref.func`)
- * in the module targets a real function slot `[0, numImportFuncs + funcs)`.
- *
- * This is the durable safety net for the late-import function-index-shift class
- * (#1809/#1839/#1602/#1886/@@toPrimitive/`__str_flatten`): a `funcIdx` captured
- * into a JS local before a deferred `flushLateImportShifts`/`addUnionImports`
- * shift goes stale-low (off-by-`delta`), and a failed `funcMap.get` baked into a
- * `call` lands as `-1`. The first used to surface as a silently-valid-but-wrong
- * index → `expected externref, found i32` deep inside wasmtime on a random
- * test262 shard; the second as the raw encoder's opaque `u32 out of range: -1`.
- * Both are now a single named, pinpointed codegen error at emit time.
- *
- * Walks defined-function bodies, global initializers, element-segment offsets,
- * and `declaredFuncRefs`. Pure read-only validation; throws on the first bad ref.
- */
-function validateFuncRefs(mod: WasmModule, numImportFuncs: number): void {
-  const maxFuncIdx = numImportFuncs + mod.functions.length; // exclusive upper bound
-
-  const check = (funcIdx: number, where: string): void => {
-    if (!Number.isInteger(funcIdx) || funcIdx < 0 || funcIdx >= maxFuncIdx) {
-      throw new RangeError(
-        `Codegen error: function reference out of range — funcIdx ${funcIdx} ` +
-          `(valid: [0, ${maxFuncIdx})) at ${where}. This is the late-import ` +
-          `function-index-shift class: a captured funcIdx went stale across a ` +
-          `deferred shift, or a funcMap lookup failed and baked -1. Re-resolve ` +
-          `the funcIdx by name AFTER the last ensureLateImport/flushLateImportShifts.`,
-      );
-    }
-  };
-
-  const seen = new WeakSet<object>();
-  const walk = (instrs: Instr[] | undefined, where: string): void => {
-    if (!instrs || seen.has(instrs)) return;
-    seen.add(instrs);
-    for (const instr of instrs) {
-      const a = instr as {
-        op: string;
-        funcIdx?: number;
-        body?: Instr[];
-        then?: Instr[];
-        else?: Instr[];
-        catches?: { body?: Instr[] }[];
-        catchAll?: Instr[];
-      };
-      if ((a.op === "call" || a.op === "return_call" || a.op === "ref.func") && typeof a.funcIdx === "number") {
-        check(a.funcIdx, where);
-      }
-      if (Array.isArray(a.body)) walk(a.body, where);
-      if (Array.isArray(a.then)) walk(a.then, where);
-      if (Array.isArray(a.else)) walk(a.else, where);
-      if (Array.isArray(a.catches)) for (const c of a.catches) walk(c.body, where);
-      if (Array.isArray(a.catchAll)) walk(a.catchAll, where);
-    }
-  };
-
-  for (const f of mod.functions) {
-    walk(f.body, `function '${(f as { name?: string }).name ?? "?"}'`);
-  }
-  for (const g of mod.globals) walk(g.init, `global '${(g as { name?: string }).name ?? "?"}' init`);
-  for (const elem of mod.elements) {
-    walk(elem.offset, "element-segment offset");
-    if (elem.funcIndices) {
-      for (const fi of elem.funcIndices) check(fi, "element-segment function list");
-    }
-  }
-  for (const fi of mod.declaredFuncRefs) check(fi, "declared func ref");
-  if (mod.startFuncIdx !== undefined) check(mod.startFuncIdx, "start function");
-}
 
 function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
   let numImportFuncs = 0;
@@ -261,7 +191,7 @@ function failIndex(space: string, value: unknown, max: number): never {
   throw new RangeError(
     `Codegen error: ${space} index out of range — ${String(value)} ` +
       `(valid: [0, ${max})) at ${valCtx ? valCtx.where : "?"}. This is the late-import index-shift ` +
-      `class (#1923): a captured index went stale across a deferred ` +
+      `class (#2043): a captured index went stale across a deferred ` +
       `flushLateImportShifts/addUnionImports/addStringImports shift, or a map ` +
       `lookup failed and baked -1/undefined. Re-resolve the index by name ` +
       `AFTER the last shift, or make the producer refuse loudly.`,
@@ -327,7 +257,7 @@ export function emitBinary(mod: WasmModule): Uint8Array {
 /**
  * Emit a Wasm binary and collect source map entries.
  *
- * Arms the #1923 always-on index validation (see `EmitValidationCtx` above)
+ * Arms the #2043 always-on index validation (see `EmitValidationCtx` above)
  * for the duration of this emit and disarms it in a finally, so the encode
  * helpers run unchecked for other callers (the relocatable object emitter).
  * JS2WASM_SKIP_INDEX_VALIDATION=1 is an escape hatch only.
@@ -350,37 +280,6 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
   enc.bytes([0x01, 0x00, 0x00, 0x00]); // version 1
 
   const numImportFuncs = mod.imports.filter((i) => i.desc.kind === "func").length;
-
-  // Pre-emit guard: every `call`/`return_call`/`ref.func` funcIdx must point at a
-  // real function slot. Catches the recurring late-import index-shift class
-  // (#1809/#1839/#1602/#1886/@@toPrimitive) — a funcIdx captured into a JS local
-  // before a deferred shift goes stale-low or, on a failed funcMap lookup, lands
-  // as -1. Both used to surface only as an opaque `u32 out of range: -1` at the
-  // raw encoder, or (worse) as a silently valid-but-wrong index that became
-  // "expected externref, found i32" inside wasmtime on a test262 shard. This
-  // turns the whole class into a named, pinpointed codegen error at emit time.
-  //
-  // Opt-in (env-gated) so the default compile path is byte-for-byte unchanged —
-  // a diagnostic CI/devs enable, never a behaviour change that could false-fire
-  // on a long-tail construct. A pure range check is sound: any in-range index is
-  // accepted, so it cannot reject a valid module; it only converts the two
-  // already-broken outcomes above into an actionable message. Validated as a
-  // no-op across the issue-16xx/17xx/18xx + WASI corpus (0 fires).
-  // #1939 — run the funcref range-check by default everywhere except a
-  // production build. It is a pure in-range check (cannot reject a valid
-  // module; only turns the recurring stale-funcIdx bug class — #1891/#1899 —
-  // into a named emit-time error instead of an opaque wasmtime type mismatch),
-  // and it is a per-emit linear scan (negligible). Explicitly forced on in
-  // vitest/CI; `JS2WASM_VALIDATE_FUNCREFS` still force-enables, and a
-  // production build (`NODE_ENV=production`) opts out for byte-identical output.
-  const validateFuncRefsEnabled =
-    !!process.env.JS2WASM_VALIDATE_FUNCREFS ||
-    !!process.env.VITEST ||
-    !!process.env.CI ||
-    process.env.NODE_ENV !== "production";
-  if (validateFuncRefsEnabled) {
-    validateFuncRefs(mod, numImportFuncs);
-  }
 
   // Type section
   if (mod.types.length > 0) {

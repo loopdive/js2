@@ -1,10 +1,10 @@
 ---
 id: 1906
 title: "standalone: native Object.defineProperties over $Object descriptors"
-status: in-review
+status: done
 sprint: 61
 created: 2026-06-07
-updated: 2026-06-07
+updated: 2026-06-11
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -19,6 +19,7 @@ test262_count: 748
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:51:59.654Z
 pr: 1264
+completed: 2026-06-08
 ---
 # #1906 — Standalone native `Object.defineProperties`
 

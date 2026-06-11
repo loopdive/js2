@@ -12,7 +12,7 @@ task_type: refactor
 area: codegen
 language_feature: compiler-internals
 goal: core-semantics
-related: [1955, 1968, 1998, 2074, 2075]
+related: [2122, 1968, 1998, 2074, 2075]
 origin: "2026-06-11 analysis program (report 05 §2c); stub 08-A3"
 ---
 
@@ -22,7 +22,7 @@ origin: "2026-06-11 analysis program (report 05 §2c); stub 08-A3"
 
 Each builtin re-implements element access and coercion for each
 representation (host vec / native string / standalone any). join alone
-bred 4 issues (#1968, #1998, #2074, #2075); fromCharCode bred #1955 with
+bred 4 issues (#1968, #1998, #2074, #2075); fromCharCode bred #2122 (ex-#1955) with
 the single-arg bug copied independently into each of its 4 paths.
 
 ## Root cause

@@ -12,7 +12,7 @@ task_type: bugfix
 area: codegen
 language_feature: arithmetic
 goal: core-semantics
-related: [1936, 1858]
+related: [2056, 1858]
 origin: "2026-06-10 deep-audit sweep (optimizer agent): verified on main, target linear"
 ---
 
@@ -35,7 +35,7 @@ and the module still validates.
 ## Fix direction
 
 Spill operands to locals and emit a correct f64 remainder — mirror the GC
-backend's remainder helper (and inherit #1936's fmod-correctness work rather
+backend's remainder helper (and inherit #2056's fmod-correctness work rather
 than duplicating the naive `a - trunc(a/b)*b` formula).
 
 ## Acceptance criteria

@@ -1,5 +1,6 @@
 ---
-id: 1952
+id: 2119
+renumbered_from: 1952
 title: "module code (always strict) gets a mapped arguments object: parameter writes leak into arguments[i]"
 status: ready
 sprint: 61
@@ -16,7 +17,7 @@ related: [779, 1511, 833, 849]
 origin: "2026-06-10 deep-audit sweep (closures agent): verified miscompile on main"
 ---
 
-# #1952 — module strictness ignored by `isStrictFunction`: arguments aliasing in strict code
+# #2119 — module strictness ignored by `isStrictFunction`: arguments aliasing in strict code
 
 ## Problem
 

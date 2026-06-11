@@ -1,10 +1,10 @@
 ---
 id: 1818
 title: "i32/boolean parameter default fires on a legitimate 0 / false argument"
-status: in-review
+status: done
 escalation: architect-spec-written
 created: 2026-06-04
-updated: 2026-06-07
+updated: 2026-06-11
 pr: 1275
 priority: high
 feasibility: hard
@@ -14,6 +14,7 @@ goal: correctness
 sprint: 61
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:03:41.716Z
+completed: 2026-06-08
 ---
 # #1818 — i32/boolean parameter default fires on `0` / `false`
 

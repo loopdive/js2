@@ -65,3 +65,15 @@ shape?) before they're dev-dispatchable; that triage is one sitting of work.
 
 Each item grepped during the audit; all covering issues are `done`, none have
 open follow-ups.
+
+## Addendum (2026-06-11 iterators-agent sweep)
+
+Additional trigger for the static-`in` family (item 5): object-rest
+destructuring — `const { e, ...rest } = { e: 3, f: 4 }; "e" in rest` →
+wasm `true`, node `false`. Rest *contents* are correct (`rest.e` →
+undefined, `Object.keys(rest)` → `["f"]`); `in` is resolved at compile
+time against the source object's struct shape
+(`src/codegen/binary-ops.ts:484-560`), so any runtime-shaped object
+(rest objects, post-delete objects) answers wrong. See also #1991
+(prototype-chain misses, the false-negative mirror of this
+false-positive).

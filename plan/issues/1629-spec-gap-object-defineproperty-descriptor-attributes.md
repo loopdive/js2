@@ -1,9 +1,9 @@
 ---
 id: 1629
 title: "spec gap: Object.defineProperty — descriptor attribute fidelity (664 test262 fails, biggest single bucket)"
-status: in-review
+status: done
 created: 2026-05-08
-updated: 2026-06-07
+updated: 2026-06-11
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -18,6 +18,7 @@ parent: 1328
 related: [1629a, 1629b, 1629c, 1630, 1631, 1130, 1364b]
 claimed_by: codex-developer
 claimed_at: 2026-06-07T10:02:45.369Z
+completed: 2026-06-10
 ---
 > **UNIFIED DESCRIPTOR-MODEL SPEC (architect, 2026-05-29).** The single
 > coherent implementation plan for the whole Object property-descriptor

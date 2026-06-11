@@ -9,10 +9,10 @@ clean; #1832 fix correct (test-only PR); the rest produced these follow-ups.
 Also backfilled `status: done` on the 7 merged-but-in-review issues
 (#1832, #1886, #1904, #1905, #1907, #1909, #1910).
 
-- [#1925](../1925-linear-uint8-soundness-holes.md) — linear Uint8Array silent-corruption holes: name-keyed scope-blind buffer registry, no bounds checks on linear element access; + escape-analysis demotion gaps that fail valid WASI programs (#1886 follow-up) — critical, medium, **ready (backlog)**.
-- [#1926](../1926-standalone-reflect-spec-gaps.md) — standalone Reflect: receiver arg silently dropped (wrong `this` for accessors), deleteProperty deletes frozen props and returns true, no ToPropertyKey (#1905 follow-up) — high, medium, **ready (backlog)**.
-- [#1927](../1927-unify-standalone-isarray-predicate.md) — unify standalone Array.isArray: live #1907 snapshot predicate diverges from direct calls; #1904's native finalize-filled helper is dead code; both misclassify ArrayBuffer/TypedArray carriers — high, medium, **ready (backlog)**.
-- [#1928](../1928-post-merge-issue-status-automation.md) — process: automate merged-PR ⇒ `status: done` flip; stale in-review issues caused 17/24 doc-churn PRs and merge-queue thrash in sprint 61 — medium, easy, **ready (backlog)**.
+- [#2045](../2045-linear-uint8-soundness-holes.md) — linear Uint8Array silent-corruption holes: name-keyed scope-blind buffer registry, no bounds checks on linear element access; + escape-analysis demotion gaps that fail valid WASI programs (#1886 follow-up) — critical, medium, **ready (backlog)**.
+- [#2046](../2046-standalone-reflect-spec-gaps.md) — standalone Reflect: receiver arg silently dropped (wrong `this` for accessors), deleteProperty deletes frozen props and returns true, no ToPropertyKey (#1905 follow-up) — high, medium, **ready (backlog)**.
+- [#2047](../2047-unify-standalone-isarray-predicate.md) — unify standalone Array.isArray: live #1907 snapshot predicate diverges from direct calls; #1904's native finalize-filled helper is dead code; both misclassify ArrayBuffer/TypedArray carriers — high, medium, **ready (backlog)**.
+- [#2048](../2048-post-merge-issue-status-automation.md) — process: automate merged-PR ⇒ `status: done` flip; stale in-review issues caused 17/24 doc-churn PRs and merge-queue thrash in sprint 61 — medium, easy, **ready (backlog)**.
 
 ## Standalone 38%→71% gap review (2026-06-10)
 
@@ -28,13 +28,13 @@ eval ~180 (#1066). New issues for the unowned remainder (all repro-confirmed on
 main @ 936d1ac51):
 
 - [#2029](../2029-standalone-u32-out-of-range-binary-emit.md) — `Binary emit error: u32 out of range: -1` on builtin subclassing / await-using / Object.create / Iterator.prototype (497 tests; minimal repro `class A extends Uint8Array {}`) — critical, medium, **ready (backlog)**.
-- [#1916](../1916-standalone-array-generics-arraylike-invalid-wasm.md) — Array.prototype generics over array-like receivers: invalid Wasm + null-deref + silently wrong results instead of loud refusal (~500 tests) — high, medium, **ready (backlog)**.
-- [#1917](../1917-standalone-fn-name-destructuring-defaults.md) — NamedEvaluation `.name` wrong for destructuring-default-bound functions (683 tests) — high, medium, **ready (backlog)**.
-- [#1918](../1918-standalone-iterator-next-illegal-cast-async-dstr.md) — `illegal cast` in `__iterator_next` / async destructuring & `yield*` (~470 tests) — high, medium, **ready (backlog)**.
-- [#1919](../1919-standalone-invalid-wasm-residual-bucket.md) — invalid-Wasm residual bucket post-#1623/#1666/#1677, split by validator signature (async-gen i64 ABI, `__obj_find` externref key, `__str_flatten`, arguments arity; ~1,135 tests) — critical, hard, **ready (backlog)**.
-- [#1920](../1920-standalone-generator-dstr-runtime-semantics.md) — generator/destructuring runtime semantics: rest-pattern aliasing, lazy defaults, private generator methods (~1,750 tests) — critical, hard, **ready (backlog)**.
-- [#1921](../1921-standalone-temporal-null-deref-bucket.md) — Temporal compiles then traps with opaque null deref; needs fail-loud refusal + classifier bucket (544 tests) — medium, medium, **ready (backlog)**.
-- [#1922](../1922-standalone-defineproperty-descriptor-semantics.md) — defineProperty/defineProperties: `__obj_insert` illegal cast + ValidateAndApply descriptor semantics (~340 tests) — high, medium, **ready (backlog)**.
+- [#2036](../2036-standalone-array-generics-arraylike-invalid-wasm.md) — Array.prototype generics over array-like receivers: invalid Wasm + null-deref + silently wrong results instead of loud refusal (~500 tests) — high, medium, **ready (backlog)**.
+- [#2037](../2037-standalone-fn-name-destructuring-defaults.md) — NamedEvaluation `.name` wrong for destructuring-default-bound functions (683 tests) — high, medium, **ready (backlog)**.
+- [#2038](../2038-standalone-iterator-next-illegal-cast-async-dstr.md) — `illegal cast` in `__iterator_next` / async destructuring & `yield*` (~470 tests) — high, medium, **ready (backlog)**.
+- [#2039](../2039-standalone-invalid-wasm-residual-bucket.md) — invalid-Wasm residual bucket post-#1623/#1666/#1677, split by validator signature (async-gen i64 ABI, `__obj_find` externref key, `__str_flatten`, arguments arity; ~1,135 tests) — critical, hard, **ready (backlog)**.
+- [#2040](../2040-standalone-generator-dstr-runtime-semantics.md) — generator/destructuring runtime semantics: rest-pattern aliasing, lazy defaults, private generator methods (~1,750 tests) — critical, hard, **ready (backlog)**.
+- [#2041](../2041-standalone-temporal-null-deref-bucket.md) — Temporal compiles then traps with opaque null deref; needs fail-loud refusal + classifier bucket (544 tests) — medium, medium, **ready (backlog)**.
+- [#2042](../2042-standalone-defineproperty-descriptor-semantics.md) — defineProperty/defineProperties: `__obj_insert` illegal cast + ValidateAndApply descriptor semantics (~340 tests) — high, medium, **ready (backlog)**.
 
 Unfiled smaller residuals (classified, for later splitting): DataView abrupt/OOB
 closures ~204, String.prototype runtime ~180, Set.prototype ~124, Number/Date
@@ -46,10 +46,10 @@ after those land.
 `model: fable` frontmatter marks issues whose spec/decision work should run on
 Claude Fable 5 (spawn the architect/senior-dev with `model: "fable"`); the
 implementation slices they produce stay Opus-tier. Annotated: #1888, #2029,
-#1919, #1851, #1852, plus two new decision issues:
+#2039, #1851, #1852, plus two new decision issues:
 
-- [#1923](../1923-retire-late-import-index-shift-class.md) — retire the late-import function-index-shift bug class structurally (always-on total emit-time index validation + stale-proof func references); 6th+ recurrence as #2029 — high, hard, **ready (backlog)**.
-- [#1924](../1924-bigint-i64-brand-valtype-decision.md) — architect decision: BigInt i64-bigint-brand ValType vs TS-type-driven boxing; gates #1644 slices, must attribute the #1919 i64/extern.convert_any bucket — high, hard, **ready (backlog)**.
+- [#2043](../2043-retire-late-import-index-shift-class.md) — retire the late-import function-index-shift bug class structurally (always-on total emit-time index validation + stale-proof func references); 6th+ recurrence as #2029 — high, hard, **ready (backlog)**.
+- [#2044](../2044-bigint-i64-brand-valtype-decision.md) — architect decision: BigInt i64-bigint-brand ValType vs TS-type-driven boxing; gates #1644 slices, must attribute the #2039 i64/extern.convert_any bucket — high, hard, **ready (backlog)**.
 
 ## RegExp residual split (2026-06-07)
 

@@ -12,7 +12,7 @@ task_type: bugfix
 area: runtime
 language_feature: array-methods
 goal: crash-free
-related: [1925, 1856, 46]
+related: [2045, 1856, 46]
 origin: "2026-06-10 deep-audit sweep (optimizer agent): verified on main, target linear"
 ---
 
@@ -60,6 +60,6 @@ undefined-sentinel for `idx >= len`.
 
 ## Dupe check
 
-#1925 is the **GC/WASI codegen's** linear-uint8 fast path
+#2045 is the **GC/WASI codegen's** linear-uint8 fast path
 (`src/codegen/linear-uint8-*.ts`) — different subsystem. #1856 (allocator
 modes), #46 (backend creation) don't mention bounds/growth. Unfiled.

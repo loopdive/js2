@@ -574,12 +574,12 @@ Apply mechanically:
 | Helper                        | Replaces import                              | Call sites                              |
 | ----------------------------- | -------------------------------------------- | --------------------------------------- |
 | `emitExternGet`               | `__extern_get`                               | `object-ops.ts:155, 1115, 1343, 2039`   |
-| `emitExternSet`               | `__extern_set`                               | `object-ops.ts:161, 1371, 1947, 1993`   |
+| `emitExternSet`               | `__extern_set`                               | `object-ops.ts:161, 1371, 2067, 1993`   |
 | `emitExternGetIdx`            | `__extern_get_idx`                           | `type-coercion.ts:357`                  |
 | `emitExternLen`               | `__extern_length`                            | `object-ops.ts:2108`                    |
 | `emitNewPlainObject`          | `__new_plain_object`                         | `literals.ts:139, 227, 458`             |
 | `emitHasOwn`                  | `__hasOwnProperty`/`__propertyIsEnumerable`  | `object-ops.ts:2396, 2574`              |
-| `emitObjectKeys/Values/Entries` | `__object_keys`/etc.                       | `object-ops.ts:1947, 1993`              |
+| `emitObjectKeys/Values/Entries` | `__object_keys`/etc.                       | `object-ops.ts:2067, 1993`              |
 | `emitForInKeys`               | `__for_in_keys`                              | `statements/loops.ts` (new path)        |
 | `emitDeleteProperty`          | `__delete_property`                          | `typeof-delete.ts:782`                  |
 | `emitDefineProperty*`         | `__defineProperty_*`                         | `object-ops.ts:1115, 1343`              |

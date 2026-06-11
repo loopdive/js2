@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #1923 — always-on total emit-time index validation.
+ * #2043 — always-on total emit-time index validation.
  *
  * Pins that EVERY index space the encoder writes is range-checked, so the
  * late-import index-shift class (#1809/#1839/#1602/#1886/#1666/#1677/#2029)
@@ -64,7 +64,7 @@ function testModule(mutate?: (mod: WasmModule) => void): WasmModule {
 
 const body = (mod: WasmModule): Instr[] => mod.functions[0]!.body;
 
-describe("#1923 validateModuleIndices covers every index space", () => {
+describe("#2043 validateModuleIndices covers every index space", () => {
   it("baseline module is valid", () => {
     expect(() => emitBinary(testModule())).not.toThrow();
   });
@@ -73,7 +73,7 @@ describe("#1923 validateModuleIndices covers every index space", () => {
     const mod = testModule((m) => {
       body(m).unshift({ op: "global.get", index: -1 } as Instr, { op: "drop" } as Instr);
     });
-    expect(() => emitBinary(mod)).toThrow(/global index out of range.*-1.*function 'main'.*#1923/s);
+    expect(() => emitBinary(mod)).toThrow(/global index out of range.*-1.*function 'main'.*#2043/s);
   });
 
   it("global.get inside an if/else arm is walked (where #2029's poison hid)", () => {
@@ -188,7 +188,7 @@ describe("#1923 validateModuleIndices covers every index space", () => {
   });
 
   it("simulated stale captured index: a funcIdx captured before a +2 import shift", () => {
-    // The canonical #1923 shape: codegen captured helper's index (2) into a JS
+    // The canonical #2043 shape: codegen captured helper's index (2) into a JS
     // local, then two late imports were prepended WITHOUT the body being
     // shifted. The baked call now points where helper used to be… but here we
     // simulate the failed-lookup flavor that lands past the end instead.
@@ -217,7 +217,7 @@ describe("#1923 validateModuleIndices covers every index space", () => {
   });
 });
 
-describe("#1923 end-to-end: the #2029 repro produces a named, located error", () => {
+describe("#2043 end-to-end: the #2029 repro produces a named, located error", () => {
   it("class A extends Uint8Array under standalone names the poisoned index space", async () => {
     const src = `class MyArr extends Uint8Array {}\nconst a = new MyArr();\nconsole.log(a instanceof MyArr);\n`;
     const r = await compile(src, { fileName: "repro-1915.ts", target: "standalone" });
@@ -226,7 +226,7 @@ describe("#1923 end-to-end: the #2029 repro produces a named, located error", ()
     if (!r.success) {
       const msgs = r.errors.map((e: { message: string }) => e.message).join("\n");
       expect(msgs).toMatch(/index out of range/);
-      expect(msgs).toMatch(/#1923/);
+      expect(msgs).toMatch(/#2043/);
       expect(msgs).not.toMatch(/u32 out of range/);
     }
   });
