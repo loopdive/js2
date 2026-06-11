@@ -1,0 +1,86 @@
+# #1952 — Cancel in-flight merge_group CI runs whose queue ref no longer
+# exists.
+#
+# When the merge queue rebuilds a group (main advanced, a PR ahead was
+# dequeued), the old gh-readonly-queue/main/pr-N-<sha> ref dies — but its
+# in-flight workflow runs keep burning to completion (observed 2026-06-10:
+# two obsoleted 114-job test262 matrices ran to green for dead refs,
+# ~6 runner-hours wasted in one churn event). The workflow-level
+# `concurrency` cannot help: the group key includes the ref, and a rebuilt
+# group is a DIFFERENT ref, so nothing ever cancels the orphan.
+#
+# This sweeper lists queued/in-progress runs triggered by merge_group (all
+# workflows, not just test262 — ci.yml's quality job burns too) and cancels
+# any whose head_branch ref is gone. Liveness check via `git ls-remote`
+# (public repo, no auth, no URL-encoding pitfalls with slashes in ref names).
+# Fail-safe: any ambiguity (ls-remote error, non-queue branch name) counts as
+# "alive" — a live group's run is never cancelled.
+name: Merge-group sweeper (#1952)
+
+on:
+  push:
+    # The moment groups rebuild is right after main moves. Note [skip ci]
+    # pushes (baseline summaries) do NOT fire this trigger — those churn
+    # events are caught by the schedule below. This trigger catches the
+    # non-skip-ci movers: admin/hotfix merges and revert pushes (e.g. the
+    # #1311 admin merge rebuilt 5 queued groups at once).
+    branches: [main]
+  schedule:
+    - cron: "*/15 * * * *" # backstop: [skip ci] pushes + dequeue-driven rebuilds
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: merge-group-sweeper
+  cancel-in-progress: true # only the newest sweep matters
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel runs for dead queue refs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # Collect candidate runs FIRST, then snapshot live refs. Order
+          # matters: a group created between the two steps shows up in the
+          # ref snapshot (alive), while a run collected before its ref died
+          # is correctly cancelled. The reverse order could cancel a freshly
+          # created group's run whose ref postdates the snapshot.
+          CANDIDATES=""
+          for status in queued in_progress; do
+            BATCH=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?event=merge_group&status=${status}&per_page=100" \
+              --jq '.workflow_runs[] | "\(.id)\t\(.head_branch)\t\(.name)"' 2>/dev/null || true)
+            [ -n "$BATCH" ] && CANDIDATES="${CANDIDATES}${BATCH}"$'\n'
+          done
+          if [ -z "$(printf '%s' "$CANDIDATES" | tr -d '[:space:]')" ]; then
+            echo "No queued/in-progress merge_group runs — nothing to sweep."
+            exit 0
+          fi
+          LIVE_REFS=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" 'refs/heads/gh-readonly-queue/*' 2>/dev/null | awk '{print $2}' | sed 's|^refs/heads/||') || {
+            echo "::warning::ls-remote failed — skipping sweep (fail-safe: cancel nothing)."
+            exit 0
+          }
+          echo "Live queue refs:"
+          printf '%s\n' "$LIVE_REFS" | sed 's/^/  /'
+          CANCELLED=0
+          while IFS=$'\t' read -r id branch name; do
+            [ -z "${id:-}" ] && continue
+            case "$branch" in
+              gh-readonly-queue/*) ;;
+              *) continue ;; # never touch non-queue runs
+            esac
+            if printf '%s\n' "$LIVE_REFS" | grep -qxF "$branch"; then
+              echo "alive: $branch ($name, run $id)"
+            else
+              echo "DEAD ref: $branch — cancelling '$name' run $id"
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/cancel" >/dev/null 2>&1 || true
+              CANCELLED=$((CANCELLED + 1))
+            fi
+          done <<< "$CANDIDATES"
+          echo "Sweep done — cancelled ${CANCELLED} run(s) for dead queue refs."

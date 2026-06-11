@@ -927,6 +927,10 @@ export interface CodegenContext {
   wrapperNumberTypeIdx: number;
   wrapperStringTypeIdx: number;
   wrapperBooleanTypeIdx: number;
+  /** Native union-helper carrier type indices, present under WASI/standalone. */
+  nativeBoxNumberTypeIdx: number;
+  nativeBoxBooleanTypeIdx: number;
+  nativeBigIntTypeIdx: number;
   /** Cache for function reference wrappers: signature key → ClosureInfo */
   funcRefWrapperCache: Map<string, ClosureInfo>;
   /** Pending module-init body (not yet in mod.functions) that needs global index fixup */
@@ -960,6 +964,9 @@ export interface CodegenContext {
   classStaticMethodNames: Map<string, string[]>;
   /** Map from class name → global idx of the static-method-name CSV string constant (#1395) */
   classStaticMethodsCsvGlobal: Map<string, number>;
+  /** #1888 S6 — lazily materialized built-in namespace singleton globals
+   *  (Array/Object static method surface under standalone). */
+  builtinObjectGlobals: Map<string, number>;
   /** (#1394) Map from `${className}_${methodName}` → global idx of the cached
    *  externref singleton closure for the method. Lazily allocated on first
    *  property-access of `C.prototype.<method>` or `instance.<method>` (as

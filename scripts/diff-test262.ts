@@ -29,6 +29,14 @@ interface TestResult {
    * that are pure CI runner noise.
    */
   wasm_sha?: string | null;
+  /**
+   * Wall-clock compile time in ms (rounded), recorded per-test in the JSONL
+   * (`tests/test262-shared.ts` `recordResult`). Present only when a binary was
+   * actually produced (pass / fail / runtime). #1942 sums this over the shared
+   * both-compiled set to gate aggregate compile-time regressions, which the
+   * per-test `compile_timeout` exclusion otherwise hides.
+   */
+  compile_ms?: number;
 }
 
 type StatusMap = Map<string, TestResult>;
@@ -85,6 +93,11 @@ Options:
   --all                         Show all transitions (no limit)
   --quiet, -q                   Only show summary counts
   --baseline-meta <report.json> Read baseline_generated_at + baseline_sha to warn on stale baseline
+  --path-filter <patterns>      Restrict the diff to tests whose path contains any of the
+                                pipe-separated substrings (same semantics as TEST262_PATH_FILTER).
+                                Used by #1954 scoped PR-time runs: the candidate JSONL only covers
+                                the scoped subset, so the baseline must be restricted the same way
+                                or every out-of-scope baseline pass counts as a pass→absent regression.
   --help, -h                    Show this help`);
     process.exit(args.includes("--help") || args.includes("-h") ? 0 : 1);
   }
@@ -92,7 +105,7 @@ Options:
   const positional = args.filter((a, i) => {
     if (a.startsWith("--") || a.startsWith("-")) return false;
     const prev = args[i - 1];
-    if (prev === "--baseline-meta") return false;
+    if (prev === "--baseline-meta" || prev === "--path-filter") return false;
     return true;
   });
   const baselinePath = positional[0];
@@ -102,14 +115,44 @@ Options:
   const quiet = args.includes("--quiet") || args.includes("-q");
   const metaIdx = args.indexOf("--baseline-meta");
   const baselineMetaPath = metaIdx >= 0 ? args[metaIdx + 1] : undefined;
+  const filterIdx = args.indexOf("--path-filter");
+  const rawPathFilter = filterIdx >= 0 ? (args[filterIdx + 1] ?? "") : "";
+  const pathFilter = rawPathFilter
+    .split("|")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
 
   const maxShow = showAll ? Infinity : verbose ? 50 : 20;
 
-  run(baselinePath, newPath, maxShow, quiet, baselineMetaPath);
+  run(baselinePath, newPath, maxShow, quiet, baselineMetaPath, pathFilter);
 }
 
-async function run(baselinePath: string, newPath: string, maxShow: number, quiet: boolean, baselineMetaPath?: string) {
-  const [baseline, newer] = await Promise.all([loadJsonl(baselinePath), loadJsonl(newPath)]);
+function applyPathFilter(map: StatusMap, patterns: string[]): StatusMap {
+  if (patterns.length === 0) return map;
+  const filtered: StatusMap = new Map();
+  for (const [file, entry] of map) {
+    if (patterns.some((p) => file.includes(p))) filtered.set(file, entry);
+  }
+  return filtered;
+}
+
+async function run(
+  baselinePath: string,
+  newPath: string,
+  maxShow: number,
+  quiet: boolean,
+  baselineMetaPath?: string,
+  pathFilter: string[] = [],
+) {
+  let [baseline, newer] = await Promise.all([loadJsonl(baselinePath), loadJsonl(newPath)]);
+  if (pathFilter.length > 0) {
+    const before = baseline.size;
+    baseline = applyPathFilter(baseline, pathFilter);
+    newer = applyPathFilter(newer, pathFilter);
+    console.log(
+      `Path filter active (${pathFilter.join(" | ")}): baseline ${before} → ${baseline.size} entries in scope.`,
+    );
+  }
 
   // Collect transitions
   const regressions: {
@@ -231,6 +274,40 @@ async function run(baselinePath: string, newPath: string, maxShow: number, quiet
   const regressionsReal = regressions.length - regressionsCT;
   console.log(`=== Compile timeouts (pass → compile_timeout): ${regressionsCT} ===`);
   console.log(`=== Regressions excluding compile_timeout: ${regressionsReal} ===`);
+
+  // #1942: compile-time regression signals. `pass → compile_timeout` is
+  // excluded from every regression gate (it's runner-load flake — see the
+  // #1192 split above), which leaves a blind spot: a PR that pathologically
+  // slows compilation (exponential type inference, accidental O(n²) pass)
+  // converts passes to timeouts invisibly. Two cheap signals, both from data
+  // already in the JSONL (`compile_ms`), gate that surface. We only EMIT them
+  // here (grep-able lines); the workflow guard (#1942, test262-sharded.yml)
+  // reads these lines and applies the thresholds, mirroring the #1897
+  // standalone guard's "explicit threshold in YAML" style.
+  //
+  // (1) Aggregate compile time over the SHARED both-compiled set: files
+  //     present in BOTH baseline and current whose status carries a binary
+  //     (`compile_ms` present on both). Restricting to the intersection makes
+  //     the sum immune to set-membership churn (added/removed tests, skips)
+  //     and to single-test timeout flake — it measures the same population on
+  //     both sides, so a >X% rise is a real systemic slowdown.
+  let aggBaseMs = 0;
+  let aggCurMs = 0;
+  let aggShared = 0;
+  for (const [file, base] of baseline) {
+    const cur = newer.get(file);
+    if (!cur) continue;
+    if (typeof base.compile_ms !== "number" || typeof cur.compile_ms !== "number") continue;
+    aggBaseMs += base.compile_ms;
+    aggCurMs += cur.compile_ms;
+    aggShared += 1;
+  }
+  const aggPct = aggBaseMs > 0 ? ((aggCurMs - aggBaseMs) / aggBaseMs) * 100 : 0;
+  // Round to whole ms for the sums and one decimal for the percentage so the
+  // workflow's `grep -oE '[0-9.-]+'` parses deterministically.
+  console.log(
+    `=== Aggregate compile time (shared ${aggShared} tests): baseline ${Math.round(aggBaseMs)}ms → current ${Math.round(aggCurMs)}ms (Δ ${aggPct >= 0 ? "+" : ""}${aggPct.toFixed(1)}%) ===`,
+  );
 
   // #1222: filter regressions where the compiled Wasm binary is byte-identical
   // on both base and PR. A test that compiles to the same bytes cannot have

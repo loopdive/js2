@@ -1,14 +1,14 @@
-// Chrome Native Messaging host, compiled to standalone WASI by js2wasm.
+// Native Messaging host, compiled to standalone WASI by js2wasm.
 //
 //   npx js2wasm examples/native-messaging/nm_js2wasm.ts --target wasi -o out
 //
-// Chrome's Native Messaging protocol frames each message as a 4-byte
+// Native Messaging protocol frames each message as a 4-byte
 // little-endian length prefix followed by a UTF-8 **JSON** body, exchanged over
 // the host process's stdin (fd=0) and stdout (fd=1). See:
 //   https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
 //
-// Two hard protocol constraints drive the response shape:
-//   1. Chrome deserializes EVERY host->extension message as JSON, so each frame
+// Two hard browser constraints drive the response shape:
+//   1. Browser deserializes EVERY host->extension message as JSON, so each frame
 //      we write must be a complete, valid JSON value — not an arbitrary byte
 //      slice. (A non-JSON frame is rejected with "The sender sent an invalid
 //      JSON message; message ignored.")
@@ -42,7 +42,7 @@ declare const process: {
   stderr: { write(chunk: Uint8Array | string): void };
 };
 
-// Largest body Chrome accepts in one host->extension message, and the size of
+// Largest body browser Native Messaging implementation accepts in one host->extension message, and the size of
 // the single scratch buffer the whole stream flows through.
 const FRAME_CHUNK = 1024 * 1024;
 const MAX_RUN = FRAME_CHUNK - 2; // leave room for the framing `[` and `]`
@@ -78,7 +78,7 @@ function readAt(buf: Uint8Array, start: number, n: number): boolean {
   return true;
 }
 
-// Decode the little-endian uint32 length Chrome wrote as the first 4 bytes.
+// Decode the little-endian uint32 length browser wrote as the first 4 bytes.
 /** @param {Uint8Array} header @returns {number} */
 function decodeLength(header: Uint8Array): number {
   return header[0] + header[1] * 256 + header[2] * 65536 + header[3] * 16777216;
@@ -115,7 +115,7 @@ function emitRun(src: Uint8Array, start: number, runLen: number): void {
 
 export function main(): void {
   // Long-lived port loop: read framed JSON messages off stdin until EOF and
-  // echo each one back as valid JSON within Chrome's 1 MiB per-message cap.
+  // echo each one back as valid JSON within the browser 1 MiB per-message cap.
   const header = new Uint8Array(4);
   const one = new Uint8Array(1);
   const buf = new Uint8Array(FRAME_CHUNK); // reused read/window buffer

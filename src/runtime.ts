@@ -48,6 +48,79 @@ function _getNodeRequire(): ((id: string) => any) | undefined {
 const _wasmStructProps = new WeakMap<object, Record<string | symbol, any>>();
 
 /**
+ * (#1712) Function-style-constructor prototype bridge.
+ *
+ * `var Parser = function Parser() {…}; new Parser()` compiles construction
+ * away to a synthesized struct ctor (`__fnctor_Parser_new`) — the host never
+ * sees it. But acorn-style code then does `Parser.prototype.m = fn`,
+ * `Object.defineProperties(Parser.prototype, …)` and calls `m` on instances,
+ * which DOES route through the host (`__extern_get` / `__extern_method_call`).
+ * Two pieces make that work in JS-host mode:
+ *  - `_fnctorInstanceCtor` links each constructed instance struct to its
+ *    constructor closure struct (registered by the synthesized ctor via the
+ *    `__register_fnctor_instance` import).
+ *  - reading `.prototype` off a closure struct auto-vivifies a real JS object
+ *    in the closure's sidecar (`_getOrVivifyFnPrototype`), so prototype-method
+ *    writes / defineProperties / `var pp = P.prototype` aliasing all hit one
+ *    identity-stable object.
+ * Instance property misses then fall through to the ctor's vivified prototype
+ * (`_fnctorProtoLookup`). Standalone/WASI is intentionally NOT covered here —
+ * the #1712 acceptance is JS-host-first; the native equivalent rides on the
+ * #1888 open-object runtime in a later lap.
+ */
+const _fnctorInstanceCtor = new WeakMap<object, object>();
+
+/** (#1712) Resolve a property through the instance's fnctor prototype chain. */
+function _fnctorProtoLookup(obj: any, key: any): PropertyDescriptor | undefined {
+  if (!_canBeWeakKey(obj)) return undefined;
+  const ctor = _fnctorInstanceCtor.get(obj);
+  if (ctor == null) return undefined;
+  const proto = _sidecarGet(ctor, "prototype");
+  if (proto == null || typeof proto !== "object") return undefined;
+  let cur: any = proto;
+  let guard = 0;
+  while (cur != null && typeof cur === "object" && guard++ < 16) {
+    const desc = Object.getOwnPropertyDescriptor(cur, key);
+    if (desc) return desc;
+    cur = Object.getPrototypeOf(cur);
+    if (cur === Object.prototype) break;
+  }
+  return undefined;
+}
+
+/**
+ * (#1712) Read or auto-vivify the `.prototype` object of a Wasm closure
+ * struct. Only closures (per the `__is_closure` export) vivify; everything
+ * else returns undefined so plain structs keep `obj.prototype === undefined`.
+ */
+function _getOrVivifyFnPrototype(
+  obj: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): any {
+  if (!_isWasmStruct(obj)) return undefined;
+  const existing = _sidecarGet(obj, "prototype");
+  if (existing !== undefined) return existing;
+  // Gate on `__is_closure` when exports are reachable. During the module
+  // START function (where acorn's `Parser.prototype.m = fn` writes run)
+  // `getExports()` is still undefined — WebAssembly.instantiate has not
+  // returned yet — so fall back to the struct-only heuristic there. Post-
+  // instantiation reads (e.g. test262 `({}).prototype === undefined`
+  // checks) always have exports and keep the precise gate.
+  const exports = callbackState?.getExports();
+  const isClosureFn = exports?.__is_closure as ((v: any) => number) | undefined;
+  if (typeof isClosureFn === "function") {
+    try {
+      if (isClosureFn(obj) !== 1) return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const proto: Record<string | symbol, any> = {};
+  _sidecarSet(obj, "prototype", proto);
+  return proto;
+}
+
+/**
  * (#1516) Per-generator-instance state: `{buf, index, pendingThrow}`.
  *
  * Storing state in a WeakMap (keyed by the generator instance) instead of as
@@ -1330,6 +1403,25 @@ const _wasmNonExtensibleObjs = new WeakSet<object>();
 const _userClassTags = new WeakMap<object, string>();
 const _userClassParents = new Map<string, string | null>();
 
+// (#1991) Object.prototype's own enumerable+non-enumerable data/accessor keys.
+// `key in obj` walks to Object.prototype (§13.10.1 → §7.3.12), so every object
+// value has these regardless of own properties — used by `__extern_has` to
+// answer e.g. `"toString" in ({} as any)` for opaque WasmGC-struct receivers.
+const _OBJECT_PROTO_KEYS: ReadonlySet<string> = new Set([
+  "constructor",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
+  "toString",
+  "valueOf",
+  "__proto__",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+]);
+
 /**
  * DataView subview metadata (#1064).
  *
@@ -1631,11 +1723,17 @@ function _wrapWasmClosure(
   callbackState?: { getExports: () => Record<string, Function> | undefined },
 ): ((...args: any[]) => any) | null {
   if (!callbackState) return null;
-  const exports = callbackState.getExports();
-  if (!exports) return null;
-  const callFn = exports[`__call_fn_${arity}`];
-  if (typeof callFn !== "function") return null;
-  const methodCallFn = exports[`__call_fn_method_${arity}`];
+  // (#1712) Resolve the dispatcher exports at CALL time, not wrap time. The
+  // module START function (where acorn-style `Object.defineProperties(
+  // P.prototype, accessors)` runs) executes before WebAssembly.instantiate
+  // returns, so `getExports()` is still undefined while the wrap happens —
+  // an eager lookup silently dropped the wrapper and the accessor with it.
+  // `callbackState` is a stable live object; by the time the wrapper is
+  // actually invoked (post-instantiation), the exports are wired.
+  if (callbackState.getExports() !== undefined) {
+    const eager = callbackState.getExports()!;
+    if (typeof eager[`__call_fn_${arity}`] !== "function") return null;
+  }
   let byArity: Map<number, Function> | undefined;
   if (_canBeWeakKey(closure)) {
     byArity = _wasmClosureWrapperCache.get(closure as object);
@@ -1646,13 +1744,31 @@ function _wrapWasmClosure(
   // for as long as the JS Function is reachable from the host. JS Function
   // identity is preserved across multiple invocations (host may capture a
   // reference, e.g. callbacks stored on plain objects).
+  //
+  // (#1712 / #1320) Method-call `this` threading: when the wrapper is
+  // invoked with a meaningful receiver — a Wasm struct (or its proxy, e.g.
+  // `fn.apply(wrappedObj,…)` in `__extern_method_call` or a vivified fnctor
+  // prototype method), or a plain JS object holder (#1320 iterator objects
+  // whose `next` is a Wasm closure) — dispatch through
+  // `__call_fn_method_<arity>` so the closure body's `ThisKeyword` (via the
+  // `__current_this` global, #1636-S1) observes the receiver. Wasm-struct
+  // proxies are unwrapped so the body sees the raw struct. Undefined /
+  // globalThis receivers keep the plain `__call_fn_<arity>` path, so bare
+  // callback invocations are byte-for-byte unchanged.
   const wrapped = function wasmClosureBridge(this: any, ...args: any[]): any {
+    const exports = callbackState.getExports();
+    const callFn = exports?.[`__call_fn_${arity}`];
+    if (typeof callFn !== "function") {
+      throw new TypeError("wasm closure dispatcher __call_fn_" + arity + " is not available");
+    }
     // Pad with undefined to exactly `arity` positional args. Extra args
     // dropped (JS spec for fewer/more args than declared params).
     const padded: any[] = [];
     for (let i = 0; i < arity; i++) padded.push(args[i]);
+    const methodCallFn = exports?.[`__call_fn_method_${arity}`];
     if (typeof methodCallFn === "function" && this !== undefined && this !== globalThis) {
-      return methodCallFn(this, closure, ...padded);
+      const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
+      return methodCallFn(_isWasmStruct(rawThis) ? rawThis : this, closure, ...padded);
     }
     return callFn(closure, ...padded);
   };
@@ -3398,6 +3514,16 @@ function _safeGet(obj: any, key: any, callbackState?: { getExports: () => Record
   // (e.g. getOwnPropertyNames conversion loop uses __extern_get with integer indices).
   // #1830 — the range must cover every id in `_symbolIdToKeys` (1-15, 15 =
   // @@matchAll); `<= 14` silently dropped Symbol.matchAll on WasmGC structs.
+  // #2014: a small integer key (1-15) collides with the well-known-symbol ID
+  // range below. A genuine numeric data property (`o[2]` on `{ 2: "two" }`) is
+  // stored under the string field name "2" and exposed as `__sget_2`, so try
+  // that real-property getter BEFORE interpreting the key as a symbol ID —
+  // otherwise `o[2]` is mis-resolved as Symbol(2) and returns undefined.
+  if (_isWasmStruct(obj) && typeof key === "number" && Number.isInteger(key) && key >= 0) {
+    const exports = callbackState?.getExports();
+    const getter = exports?.[`__sget_${String(key)}`];
+    if (typeof getter === "function") return getter(obj);
+  }
   if (_isWasmStruct(obj) && typeof key === "number" && key >= 1 && key <= 15) {
     const symKeys = _symbolIdToKeys.get(key);
     if (symKeys) {
@@ -3433,6 +3559,16 @@ function _safeGet(obj: any, key: any, callbackState?: { getExports: () => Record
         const sc2 = _sidecarGet(obj, wasmKey);
         if (sc2 !== undefined) return sc2;
       }
+    }
+    // (#1712) fnctor instances: resolve through the constructor's vivified
+    // prototype object before giving up. Accessors run with the instance
+    // (proxy-wrapped when one exists) as the receiver per §6.2.5.5 Get.
+    // Raw closure structs (stored during the module START function, before
+    // exports existed for the write-side wrap) are wrapped at read time.
+    const protoDesc = _fnctorProtoLookup(obj, key);
+    if (protoDesc) {
+      if (protoDesc.get) return protoDesc.get.call(_hostProxyCache.get(obj) ?? obj);
+      return _maybeWrapCallableUnknownArity(protoDesc.value, callbackState);
     }
     // Fall back to native access (e.g. Symbol.iterator set directly on the struct)
     return obj[key];
@@ -3981,6 +4117,28 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
         if (v !== undefined) return v;
       }
     }
+    // (#1712) fnctor instances: resolve through the constructor's vivified
+    // prototype object. Accessors run with the live-mirror proxy as the
+    // receiver so getter bodies reading `this.<field>` reach the struct.
+    // Values stored during the module START function were written before
+    // exports existed, so the write-side closure wrap no-op'd — wrap raw
+    // closure structs here, at read time, instead.
+    const protoDesc = _fnctorProtoLookup(obj, key);
+    if (protoDesc) {
+      if (process.env.DEBUG_1712)
+        console.error(
+          "[protoHook]",
+          String(key),
+          "valType=",
+          typeof protoDesc.value,
+          "exports?",
+          exports != null,
+          "is_closure?",
+          typeof exports?.__is_closure,
+        );
+      if (protoDesc.get) return protoDesc.get.call(_hostProxyCache.get(obj) ?? obj);
+      return _maybeWrapCallableUnknownArity(protoDesc.value, { getExports: () => exports });
+    }
     return undefined;
   };
 
@@ -4446,6 +4604,51 @@ function _toJsArray(arr: any, exports: Record<string, Function> | undefined): an
     }
   }
   return [arr]; // Fallback: wrap single value
+}
+
+/**
+ * (#1996) Recursion cap for `_toJsArrayDeep`. Generous enough for any
+ * realistic nesting while preventing unbounded recursion on a pathological
+ * input. Vec refs are acyclic, so this is a safety ceiling, not a semantic
+ * limit.
+ */
+const VEC_UNWRAP_MAX_DEPTH = 64;
+
+/**
+ * (#1996) Recursively materialize a WasmGC vec into a JS array, unwrapping
+ * any nested vec-ref elements into real JS arrays so native `Array.prototype`
+ * methods (`flat`, `flatMap`, `JSON.stringify`) recognize them via
+ * `Array.isArray`. Without this, `_toJsArray` converts only the outer vec and
+ * leaves inner elements as opaque WasmGC refs, which `flat()` cannot flatten
+ * and `JSON.stringify` renders as `null`.
+ *
+ * `maxDepth` bounds the recursion so already-flat scalar elements aren't probed
+ * past the depth the caller cares about (flat's depth argument). A non-vec
+ * value passes through unchanged.
+ */
+function _toJsArrayDeep(arr: any, exports: Record<string, Function> | undefined, maxDepth: number): any {
+  if (arr == null) return arr;
+  if (Array.isArray(arr)) {
+    if (maxDepth <= 0) return arr;
+    return arr.map((el) => _toJsArrayDeep(el, exports, maxDepth - 1));
+  }
+  // Only probe opaque WasmGC structs as candidate vecs — scalars (numbers,
+  // strings, booleans) and JS objects pass straight through.
+  if (maxDepth <= 0 || !_isWasmStruct(arr) || !exports) return arr;
+  const vecLen = exports.__vec_len;
+  const vecGet = exports.__vec_get;
+  if (typeof vecLen !== "function" || typeof vecGet !== "function") return arr;
+  try {
+    const len = vecLen(arr) as number;
+    if (typeof len !== "number" || len < 0) return arr;
+    const result: any[] = new Array(len);
+    for (let i = 0; i < len; i++) {
+      result[i] = _toJsArrayDeep(vecGet(arr, i), exports, maxDepth - 1);
+    }
+    return result;
+  } catch {
+    return arr; // Not a vec — pass through
+  }
 }
 
 /** Per-instance state shared across imports inside one `buildImports()`
@@ -5941,6 +6144,14 @@ assert._isSameValue = isSameValue;
           }
           const val = _safeGet(obj, key, callbackState);
           if (val !== undefined) return val;
+          // (#1712) `<fn>.prototype` on a Wasm closure struct: auto-vivify an
+          // identity-stable real JS object in the closure's sidecar so
+          // prototype-method writes, Object.defineProperties, and
+          // `var pp = P.prototype` aliasing all see one live object.
+          if (key === "prototype") {
+            const proto = _getOrVivifyFnPrototype(obj, callbackState);
+            if (proto !== undefined) return proto;
+          }
           // Try struct getter exports as fallback for WasmGC opaque fields
           if (obj == null || typeof obj !== "object") return undefined;
           try {
@@ -5959,6 +6170,13 @@ assert._isSameValue = isSameValue;
             if (typeof getter === "function") return getter(obj);
           }
           return undefined;
+        };
+      // (#1712) Synthesized fnctor constructors register each instance →
+      // constructor-closure link so instance property misses can resolve
+      // through the closure's vivified `.prototype` object.
+      if (name === "__register_fnctor_instance")
+        return (inst: any, ctor: any) => {
+          if (_canBeWeakKey(inst) && ctor != null) _fnctorInstanceCtor.set(inst, ctor);
         };
       if (name === "__extern_set")
         return (obj: any, key: any, val: any) => {
@@ -6144,6 +6362,17 @@ assert._isSameValue = isSameValue;
                 /* getter not defined for this struct variant — fall through */
               }
             }
+          }
+          // (#1991) `in` walks the [[Prototype]] chain (§13.10.1 → §7.3.12), so
+          // EVERY object value inherits the Object.prototype members. A WasmGC
+          // struct (object literal / class instance / array) arrives here as an
+          // opaque externref whose `key in obj` above can't see Object.prototype,
+          // so `"toString" in ({} as any)` wrongly returned 0. Recognise the
+          // well-known Object.prototype keys explicitly for any non-null object.
+          // (Inherited *user-class* methods still need a method registry — not
+          // covered here.)
+          if (typeof key === "string" && (typeof obj === "object" || typeof obj === "function") && obj !== null) {
+            if (_OBJECT_PROTO_KEYS.has(key)) return 1;
           }
           return 0;
         };
@@ -7016,9 +7245,25 @@ assert._isSameValue = isSameValue;
           return obj;
         };
       if (name === "__defineProperties")
-        return (obj: any, descsObj: any) => {
+        return function definePropertiesHandler(obj: any, descsObj: any) {
           if (obj == null || (typeof obj !== "object" && typeof obj !== "function")) {
             throw new TypeError("Object.defineProperties called on non-object");
+          }
+          // (#1712) A WasmGC-struct descriptor map is only readable through
+          // the __struct_field_names / __sget_* exports. During the module
+          // START function those don't exist yet (WebAssembly.instantiate
+          // hasn't returned), which previously made acorn's module-level
+          // `Object.defineProperties(Parser.prototype, prototypeAccessors)`
+          // a silent no-op (zero keys found). Park the application and let
+          // setExports replay it once the instance is wired.
+          if (
+            descsObj != null &&
+            _isWasmStruct(descsObj) &&
+            callbackState?.getExports() === undefined &&
+            typeof (callbackState as any)?.deferToExports === "function"
+          ) {
+            (callbackState as any).deferToExports(() => definePropertiesHandler(obj, descsObj));
+            return obj;
           }
           // #1362 — §20.1.2.3 step 2: `props = ToObject(Properties)` throws
           // TypeError on null/undefined. Previously the runtime silently
@@ -9421,15 +9666,23 @@ assert._isSameValue = isSameValue;
       if (name === "__array_flat")
         return (arr: any, depth: any) => {
           const exports = callbackState?.getExports();
-          const jsArr = _toJsArray(arr, exports);
-          return jsArr.flat(depth === undefined ? undefined : depth);
+          // (#1996) Deeply unwrap nested vec refs so native flat() can flatten
+          // them and JSON.stringify renders them as arrays, not null.
+          const jsArr = _toJsArrayDeep(arr, exports, VEC_UNWRAP_MAX_DEPTH) as any[];
+          // (#1995) An omitted depth arrives as JS null (ref.null.extern), not
+          // undefined. `null` would coerce to depth 0 via ToIntegerOrInfinity,
+          // so treat both null and undefined as "use the spec default of 1".
+          return depth == null ? jsArr.flat() : jsArr.flat(depth);
         };
       // Array.prototype.flatMap(callback, thisArg?) — map then flatten (#1136)
       if (name === "__array_flatMap")
         return (arr: any, fn: Function, thisArg: any) => {
           const exports = callbackState?.getExports();
           const jsArr = _toJsArray(arr, exports);
-          return thisArg !== undefined ? jsArr.flatMap(fn as any, thisArg) : jsArr.flatMap(fn as any);
+          // (#1996) The callback may return a WasmGC vec; unwrap its result so
+          // flatMap's single-level flatten recognizes it as an array.
+          const wrapped = (...args: any[]): any => _toJsArrayDeep((fn as any)(...args), exports, VEC_UNWRAP_MAX_DEPTH);
+          return thisArg !== undefined ? jsArr.flatMap(wrapped, thisArg) : jsArr.flatMap(wrapped);
         };
       // Callback bridges for functional array methods
       if (name === "__call_1_f64") return (fn: Function, a: number) => fn(a);
@@ -9496,6 +9749,24 @@ assert._isSameValue = isSameValue;
           // never reach this branch as wasm structs.
           if (ctorName === "Object" && v != null && _isWasmStruct(v)) {
             return 1;
+          }
+          // (#1992) `<fn> instanceof Function` — a compiled closure is a WasmGC
+          // struct, so V8's `v instanceof Function` above returns false for the
+          // opaque externref. Recognise it via `__is_closure` (the same callable
+          // discriminator `__typeof` uses to report "function"), so an
+          // `any`-typed callable answers `true` as the spec requires. Closures
+          // also have `Object` in their prototype chain — but only the explicit
+          // `Function` / `Object` RHS reaches here as a wasm struct.
+          if (ctorName === "Function" && v != null && typeof v === "object" && _isWasmStruct(v)) {
+            const exports = callbackState?.getExports();
+            const isClosureFn = exports?.__is_closure as ((x: any) => number) | undefined;
+            if (typeof isClosureFn === "function") {
+              try {
+                if (isClosureFn(v) === 1) return 1;
+              } catch {
+                /* fall through to false */
+              }
+            }
           }
           return 0;
         };
@@ -9942,6 +10213,13 @@ assert._isSameValue = isSameValue;
               // Not a vec wrapper — fall through
             }
           }
+        }
+        // (#1712) `<fn>.prototype` on a Wasm closure struct: auto-vivify an
+        // identity-stable real JS object in the closure's sidecar (mirrors
+        // the by-name __extern_get binding).
+        if (key === "prototype") {
+          const proto = _getOrVivifyFnPrototype(obj, callbackState);
+          if (proto !== undefined) return proto;
         }
         return undefined;
       };
@@ -10668,7 +10946,18 @@ export function buildImports(
 
   const env: Record<string, Function> = {};
   let wasmExports: Record<string, Function> | undefined;
-  const callbackState = { getExports: () => wasmExports };
+  // (#1712) Operations that NEED exports (e.g. Object.defineProperties with a
+  // WasmGC-struct descriptor map — its keys/fields are only readable via the
+  // __struct_field_names / __sget_* exports) but run during the module START
+  // function park themselves here and are replayed the moment setExports
+  // wires the instance.
+  const pendingExportsDeferred: Array<() => void> = [];
+  const callbackState = {
+    getExports: () => wasmExports,
+    deferToExports: (fn: () => void) => {
+      pendingExportsDeferred.push(fn);
+    },
+  };
   let hasCallbacks = false;
   let lastCaughtException: any = undefined;
 
@@ -10752,6 +11041,13 @@ export function buildImports(
   // and struct field getter discovery (__sget_*).
   result.setExports = (exports: Record<string, Function>) => {
     wasmExports = exports;
+    // (#1712) Replay operations parked during the module START function (see
+    // pendingExportsDeferred above) now that struct introspection exports
+    // are reachable.
+    while (pendingExportsDeferred.length > 0) {
+      const fn = pendingExportsDeferred.shift()!;
+      fn();
+    }
   };
   return result;
 }
