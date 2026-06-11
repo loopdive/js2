@@ -308,6 +308,25 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         state.primitiveNeeded.add("number_toString");
       }
     }
+    // #1993 — the default (no-comparator) Array.prototype.sort compares by
+    // ToString (§23.1.3.30). Pre-register `string_compare` (and, for numeric
+    // arrays, `number_toString`) here so the codegen path can emit the
+    // stringify+compare without a late module-function shift.
+    if (methodName === "sort") {
+      const noComparator =
+        node.arguments.length === 0 ||
+        node.arguments[0]!.kind === ts.SyntaxKind.UndefinedKeyword ||
+        (ts.isIdentifier(node.arguments[0]!) && (node.arguments[0] as ts.Identifier).text === "undefined");
+      if (noComparator) {
+        const elemType = receiverType.getNumberIndexType();
+        if (elemType && (isNumberType(elemType) || isBooleanType(elemType))) {
+          state.primitiveNeeded.add("number_toString");
+          state.primitiveNeeded.add("string_compare");
+        } else if (elemType && isStringType(elemType)) {
+          state.primitiveNeeded.add("string_compare");
+        }
+      }
+    }
     if (isNumberType(receiverType) && methodName === "toString") {
       // #1321: toString(radix) needs a 2-arg host import so the radix is
       // actually used. The 1-arg `number_toString` only handles default base 10.
