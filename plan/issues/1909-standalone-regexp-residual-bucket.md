@@ -1,10 +1,11 @@
 ---
 id: 1909
 title: "standalone RegExp residual bucket after #1474/#682: split Phase 2d and native-engine gaps"
-status: in-review
+status: done
 sprint: 61
 created: 2026-06-07
-updated: 2026-06-07
+updated: 2026-06-10
+completed: 2026-06-10
 priority: critical
 feasibility: hard
 reasoning_effort: high

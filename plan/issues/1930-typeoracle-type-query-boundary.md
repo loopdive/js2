@@ -65,3 +65,15 @@ Architect spec first; then mechanical migration:
 
 Compiler quality review 2026-06. Related: #1029 (TS7), #1852, #1948 (numeric
 lattice consumes the oracle). Needs `/architect-spec`.
+
+## Amendment (2026-06-11, analysis program)
+
+Define a **thin first slice as the boxing prerequisite** (report 05 §5):
+the value-representation work (#2072/#2080 P0, #2104 JsTag module) needs
+only a small TypeOracle facade — ONE CodegenContext field exposing 3–4
+queries (staticJsTypeOf(expr), isBooleanProducing(expr), union parts) —
+not the full decomposition. CodegenContext is now measured at ~190 fields
+/ 445 mutation sites (grown past the review's count); the full
+decomposition is sprint-64+ scale and blocks nothing if the thin slice
+lands first. Sequence: thin slice in sprint 62 alongside boxing P0; full
+boundary later.

@@ -171,6 +171,13 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
     match: (_record, text) => hasAny(text, ["u32 out of range", "binary emit error: u32"]),
   },
   {
+    id: "late-import-index-shift",
+    issues: ["#2079", "#2043"],
+    label:
+      "Late-import index-shift fail-loud CE (stale captured index across flushLateImportShifts) — standalone generators, class globals",
+    match: (_record, text) => hasAny(text, ["late-import index-shift class"]),
+  },
+  {
     id: "numeric-separator-literal-values",
     issues: ["#1782", "#53"],
     label: "Numeric and BigInt separator literals evaluate to wrong values",
