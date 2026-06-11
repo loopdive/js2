@@ -7652,6 +7652,23 @@ assert._isSameValue = isSameValue;
             return ret === wrappedObj ? obj : _unwrapForHost(ret);
           }
           if (typeof fn !== "function") {
+            // (#1712) Static method on a callable closure struct (function-style
+            // constructor): `wrapHostValue` wrapped the receiver into a bare JS
+            // function bridge (`_wrapWasmClosureUnknownArity`), which has no view
+            // of sidecar statics — `Parser.parse = function …` lands in the
+            // struct's sidecar via __extern_set. Resolve the method through
+            // `_safeGet` on the RAW struct (sidecar → accessors → vivified
+            // fnctor prototype) and dispatch with the raw closure struct as the
+            // receiver so `this` inside the static body (acorn's
+            // `Parser.parse = function(i,o){ return new this(o,i).parse() }`)
+            // observes the constructor closure.
+            if (typeof wrappedObj === "function" && _isWasmStruct(obj)) {
+              const resolved = _maybeWrapCallableUnknownArity(_safeGet(obj, method, callbackState), callbackState);
+              if (typeof resolved === "function") {
+                const ret = resolved.apply(obj, wrappedArgs);
+                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret);
+              }
+            }
             // (#837) Map/WeakMap upsert proposal polyfill — Node 25 / V8
             // currently don't ship `getOrInsert` / `getOrInsertComputed`
             // (TC39 Stage 3). Implement the spec algorithm here so the
@@ -8250,17 +8267,32 @@ assert._isSameValue = isSameValue;
       if (name === "__call_function")
         return (fn: any, thisArg: any, argsArray: any): any => {
           if (typeof fn !== "function") {
-            // Unwrap a wasm-struct closure if one slipped through.
+            // Wrap a wasm-struct closure if one slipped through. Arity-aware
+            // (#1712): the previous arity-0 wrap dropped every argument.
             if (_isWasmStruct(fn)) {
-              const wrapped = _wrapWasmClosure(fn, 0, callbackState);
-              if (wrapped) fn = wrapped;
+              const wrapped = _maybeWrapCallableUnknownArity(fn, callbackState);
+              if (typeof wrapped === "function") fn = wrapped;
             }
           }
           if (typeof fn !== "function") {
             throw new TypeError(String(fn) + " is not a function");
           }
           const args: any[] = Array.isArray(argsArray) ? argsArray : [];
-          return Reflect.apply(fn, thisArg, args);
+          // (#1712) Host-marshal wasmGC struct args the same way
+          // __extern_method_call does: callable closures become JS functions
+          // (so host higher-order callees can invoke them), plain structs get
+          // the live-mirror proxy (so `Object.hasOwn(o, "a")`-style builtins
+          // observe struct fields as real properties).
+          const exports = callbackState?.getExports();
+          const wrapHostValue = (v: any): any => {
+            if (!_isWasmStruct(v)) return v;
+            const callable = _maybeWrapCallableUnknownArity(v, callbackState);
+            return callable !== v ? callable : _wrapForHost(v, exports);
+          };
+          const wrappedThis = wrapHostValue(thisArg);
+          const wrappedArgs = args.map(wrapHostValue);
+          const ret = Reflect.apply(fn, wrappedThis, wrappedArgs);
+          return _unwrapForHost(ret);
         };
       if (name === "__reflect_construct")
         return (ctor: any, args: any, newTarget: any): any => {

@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-11T12:25:38.001Z",
-  "baseline_generated_at": "2026-06-11T12:25:37Z",
-  "baseline_sha": "94782aecf651bc977e54ce2a09b262a3c08a43d6",
+  "timestamp": "2026-06-11T12:52:42.278Z",
+  "baseline_generated_at": "2026-06-11T12:52:41Z",
+  "baseline_sha": "0a173efe4d4f3761a67df3283844cf8992ab7bd6",
   "mode": {
     "target": "gc",
     "include_proposals": 1,
@@ -1079,10 +1079,10 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 8062,
+    "assertion_fail": 8064,
     "illegal_cast": 208,
     "negative_test_fail": 77,
-    "null_deref": 216,
+    "null_deref": 214,
     "oob": 40,
     "other": 4138,
     "promise_error": 47,
