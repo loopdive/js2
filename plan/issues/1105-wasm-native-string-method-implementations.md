@@ -13,8 +13,6 @@ language_feature: string-methods
 goal: standalone-mode
 sprint: 58
 es_edition: multi
-claimed_by: codex-developer
-claimed_at: 2026-06-02T20:52:56.870Z
 ---
 # #1105 — Wasm-native String method implementations for standalone mode
 

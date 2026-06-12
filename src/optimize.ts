@@ -322,26 +322,36 @@ function optimizeWithBinaryenModule(
     // simply read as 0 and are no-ops. The "All" feature mask covers
     // everything binaryen knows about — equivalent to the CLI
     // `--all-features`.
+    // #1973: build the mask by OR-ing the NAMED feature keys, never starting
+    // from `Features.All`. binaryen 125's `All` (0x3FFFFF) includes an *unnamed*
+    // custom-descriptors bit (0x200000) that its JS Features enum does not
+    // expose as a key, so the `CustomDescriptors !== undefined` guard below
+    // silently no-ops and `mod.optimize()` can rewrite `(ref $T)` → `(ref (exact
+    // $T))` — a type stock V8/JSC and wasmtime ≤ 44 reject. OR-ing only the
+    // named keys covers everything js2wasm emits (the explicit list below is the
+    // same superset as the non-`All` branch) without that latent bit.
     let features = 0;
-    if (featureFlags.All !== undefined) {
-      features = featureFlags.All;
-    } else {
-      if (gc) features |= featureFlags.GC | featureFlags.ReferenceTypes;
-      if (referenceTypes) features |= featureFlags.ReferenceTypes;
-      if (exceptionHandling) features |= featureFlags.ExceptionHandling;
-      features |= featureFlags.BulkMemory ?? 0;
-      features |= featureFlags.MutableGlobals ?? 0;
-      features |= featureFlags.SignExt ?? 0;
-      features |= featureFlags.TruncSat ?? 0;
-      features |= featureFlags.TailCall ?? 0;
-      features |= featureFlags.Multivalue ?? 0;
-      features |= featureFlags.TypedFunctionReferences ?? 0;
-      features |= featureFlags.Strings ?? 0;
-    }
-    // Mirror the CLI's `--disable-custom-descriptors`: clear the
-    // CustomDescriptors bit if `All` set it, so wasm-opt's GC passes don't
-    // introduce `(ref (exact $T))` types that wasmtime ≤ 44 can't parse.
-    // See the matching comment in `optimizeWithSystemBinary`.
+    if (gc) features |= (featureFlags.GC ?? 0) | (featureFlags.ReferenceTypes ?? 0);
+    if (referenceTypes) features |= featureFlags.ReferenceTypes ?? 0;
+    if (exceptionHandling) features |= featureFlags.ExceptionHandling ?? 0;
+    features |= featureFlags.BulkMemory ?? 0;
+    features |= featureFlags.MutableGlobals ?? 0;
+    features |= featureFlags.SignExt ?? 0;
+    features |= featureFlags.TruncSat ?? 0;
+    features |= featureFlags.TailCall ?? 0;
+    features |= featureFlags.Multivalue ?? 0;
+    features |= featureFlags.TypedFunctionReferences ?? 0;
+    features |= featureFlags.Strings ?? 0;
+    features |= featureFlags.GCNNLocals ?? 0;
+    features |= featureFlags.RelaxedSIMD ?? 0;
+    features |= featureFlags.ExtendedConst ?? 0;
+    features |= featureFlags.SIMD128 ?? 0;
+    features |= featureFlags.Atomics ?? 0;
+    features |= featureFlags.MultiMemory ?? 0;
+    features |= featureFlags.CallIndirectOverlong ?? 0;
+    // Defensive: if a future binaryen DOES name the CustomDescriptors bit, still
+    // clear it (its GC passes introduce the unparseable exact types). On 125 the
+    // key is undefined, so OR-ing named keys above already excludes the bit.
     if (featureFlags.CustomDescriptors !== undefined) {
       features &= ~featureFlags.CustomDescriptors;
     }

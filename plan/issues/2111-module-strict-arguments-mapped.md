@@ -2,10 +2,10 @@
 id: 2111
 renumbered_from: 1952
 title: "module code (always strict) gets a mapped arguments object: parameter writes leak into arguments[i]"
-status: ready
+status: wont-fix
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -77,3 +77,7 @@ Grepped `arguments.*strict`, `unmapped`, `mapped`, `module.*strict`:
 #779e/#1511 (directive-based split, done), #833 (sloppy umbrella, ready — notes
 modules are always strict but doesn't cover this contradiction). Documented
 only in a source comment; tracked nowhere.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #2119 — the same audit batch was filed twice (#2110–#2117 ≡ #2118–#2125). The high series is canonical: merged/open PRs reference #2120–#2125. No work was lost; see #2119.

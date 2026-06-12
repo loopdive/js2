@@ -1,10 +1,10 @@
 ---
 id: 1854
 title: "Cross-backend differential testing harness — same TS to WasmGC / linear / bytecode-VM must produce identical observable output"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -48,3 +48,13 @@ trait-migration work (#1851).
 - [ ] A divergence fails the test with a minimal-enough repro pointer
       (full minimization is #1855).
 - [ ] Wired into CI; runtime kept modest (subset corpus if needed).
+
+## Sprint-62 planning amendment (2026-06-12)
+
+Concretized approach: implement as a `DIFF_TEST_TARGET=linear` lane in
+`scripts/diff-test.ts` against the same V8 oracle (oracle-agreement per
+backend ⇒ cross-backend agreement transitively), with a per-lane baseline
+like the optimize lane — most of the 104 corpus programs won't compile on
+linear yet, so baseline the gap and gate the delta. The bytecode-VM leg is
+demoted to "where applicable" (it is test-only today). Prerequisite: #2139
+(linear tests in CI at all). Scheduled sprint 62.

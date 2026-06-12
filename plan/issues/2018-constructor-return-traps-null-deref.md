@@ -1,10 +1,11 @@
 ---
 id: 2018
 title: "any return statement in a base-class constructor makes new C() trap 'dereferencing a null pointer' (bare return, return obj, return primitive)"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -54,3 +55,7 @@ control-flow.ts:142-161 which `as any` bypasses).
 
 #825 documents only the derived-ctor return-primitive TypeError subset.
 New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1326; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

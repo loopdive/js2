@@ -106,6 +106,19 @@ class Emitter {
     return this.scratchBase + this.scratchCount++;
   }
 
+  /**
+   * Emit a `CLEAR` at a quantifier-iteration head that resets the body's
+   * capture-group slots to -1 (§22.2.2.3.1 RepeatMatcher, #1960). No-op when the
+   * body has no capture groups. The slot range is `[2*lo, 2*hi+1]` for the
+   * group-index span `[lo, hi]`. Lookbehind bodies (reversed) store group spans
+   * the same way, so the same range applies.
+   */
+  private emitClearForBody(body: ReNode): void {
+    const span = captureSpan(body);
+    if (span === null) return;
+    this.emit(ReOp.CLEAR, 2 * span[0], 2 * span[1] + 1);
+  }
+
   /** Add a class to the class table, return its start offset. */
   private addClass(ranges: Array<[number, number]>): number {
     const offset = this.classTable.length;
@@ -212,14 +225,17 @@ class Emitter {
         return;
       }
       case "star": {
-        // Greedy: SAVE? sp ; L1: SPLIT body,exit ; body ; PROGRESS? ; JMP L1 ; exit
+        // Greedy: SAVE? sp ; L1: SPLIT body,exit ; CLEAR? ; body ; PROGRESS? ; JMP L1 ; exit
         // A nullable body needs the empty-iteration guard (§22.2.2.3.1): record
         // sp before SPLIT, and after the body PROGRESS fails the iteration when
         // sp is unchanged, so the loop can't spin on a zero-width match (#1959).
+        // CLEAR resets the subtree's capture slots on each iteration entry so a
+        // group that doesn't participate this time reads as unset (#1960).
         const guard = canMatchEmpty(node.node) ? this.allocScratch() : -1;
         if (guard >= 0) this.emit(ReOp.SAVE, guard);
         const l1 = this.emit(ReOp.SPLIT, 0, 0);
         const bodyStart = this.here();
+        this.emitClearForBody(node.node);
         this.compileNode(node.node);
         if (guard >= 0) this.emit(ReOp.PROGRESS, guard);
         this.emit(ReOp.JMP, guard >= 0 ? l1 - 1 : l1);
@@ -243,7 +259,11 @@ class Emitter {
         //   body ; SAVE g ; L2: SPLIT body2,exit ; body2 ; PROGRESS g ; JMP L2 ; exit
         const guard = canMatchEmpty(node.node) ? this.allocScratch() : -1;
         if (guard < 0) {
+          // L1: CLEAR? ; body ; SPLIT L1,exit ; exit — CLEAR runs each iteration
+          // (the SPLIT back-edge re-enters at L1), resetting the subtree's
+          // captures so only the final iteration participates (#1960).
           const l1 = this.here();
+          this.emitClearForBody(node.node);
           this.compileNode(node.node);
           const split = this.emit(ReOp.SPLIT, 0, 0);
           const exit = this.here();
@@ -256,7 +276,9 @@ class Emitter {
           }
           return;
         }
-        // Nullable body: mandatory first match, then a guarded star.
+        // Nullable body: mandatory first match (cleared), then a guarded star
+        // (which clears on every iteration of the remaining repetitions).
+        this.emitClearForBody(node.node);
         this.compileNode(node.node);
         this.compileNode({ kind: "star", node: node.node, greedy: node.greedy });
         return;
@@ -387,6 +409,49 @@ export function canMatchEmpty(node: ReNode): boolean {
     case "alt":
       return node.options.some(canMatchEmpty);
   }
+}
+
+/**
+ * Capture-group index span of a subtree (#1960): `[min, max]` of every group's
+ * `capIndex` reachable inside `node`, or null when it contains no captures.
+ * Used to emit a `CLEAR` at each quantifier-iteration head so stale captures
+ * from an earlier iteration don't leak (§22.2.2.3.1 RepeatMatcher). Lookaround
+ * bodies are NOT descended into — their captures live in separate sub-programs
+ * governed by the lookaround's own atomic attempt, not the outer loop.
+ */
+export function captureSpan(node: ReNode): [number, number] | null {
+  let lo = Infinity;
+  let hi = -Infinity;
+  const visit = (n: ReNode): void => {
+    switch (n.kind) {
+      case "group":
+        if (n.capIndex >= 0) {
+          if (n.capIndex < lo) lo = n.capIndex;
+          if (n.capIndex > hi) hi = n.capIndex;
+        }
+        visit(n.node);
+        return;
+      case "concat":
+        for (const p of n.parts) visit(p);
+        return;
+      case "alt":
+        for (const o of n.options) visit(o);
+        return;
+      case "star":
+      case "plus":
+      case "opt":
+      case "modGroup":
+      case "repeat":
+        visit(n.node);
+        return;
+      // lookaround: separate sub-program — do not descend. char/any/udot/class/
+      // bol/eol/wordBoundary/backref define no groups.
+      default:
+        return;
+    }
+  };
+  visit(node);
+  return hi >= lo ? [lo, hi] : null;
 }
 
 /** Thrown when `{n,m}` expansion would blow past the size cap. */

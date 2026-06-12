@@ -1,10 +1,10 @@
 ---
 id: 1943
 title: "Enforce the documented regression thresholds (10% ratio, 50-per-bucket) in CI — today the hard gate is only net ≥ 0"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low

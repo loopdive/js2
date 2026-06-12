@@ -2,10 +2,10 @@
 id: 2115
 renumbered_from: 1956
 title: "nativeStrings slice() swaps start/end like substring — \"hello\".slice(3,1) returns \"el\" instead of \"\""
-status: ready
+status: wont-fix
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low
@@ -55,3 +55,7 @@ instead of delegating to the swapping substring helper.
 
 #1381 (done) lists "substring-vs-slice swap" and fixed the **host** path only.
 No open issue mentions the native-side swap.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #2123 — the same audit batch was filed twice (#2110–#2117 ≡ #2118–#2125). The high series is canonical: merged/open PRs reference #2120–#2125. No work was lost; see #2123.

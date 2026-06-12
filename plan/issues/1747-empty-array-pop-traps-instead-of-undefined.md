@@ -13,8 +13,6 @@ language_feature: array-pop, empty-array, undefined
 goal: standalone-correctness
 sprint: 58
 related: [1584, 1748]
-claimed_by: codex-developer
-claimed_at: 2026-06-02T20:53:18.030Z
 ---
 # #1747 — `[].pop()` on an empty array traps instead of returning `undefined`
 

@@ -1,9 +1,9 @@
 ---
 id: 1166
 title: "Closed-world integer specialization from literal call sites"
-status: blocked
+status: ready
 created: 2026-04-22
-updated: 2026-04-28
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -11,7 +11,7 @@ task_type: feature
 area: codegen
 language_feature: compiler-internals
 goal: compiler-architecture
-sprint: 46
+sprint: Backlog
 depends_on: [1131, 1168]
 required_by: [1167, 1167a]
 ---
@@ -157,3 +157,7 @@ Zero f64 instructions, zero boxing, pure integer ALU.
 - #1126 — infer int32 flows from bitwise-coerced loops (complementary)
 - #1120 — int32 fast path for hot benchmarks (complementary)
 - #744 / #773 — monomorphization (broader generalization)
+
+## Unblocked (2026-06-12)
+
+Blockers resolved/closed (#1168 done, #1131 closed-superseded). Stays parked in Backlog: perf-family work ranks below the correctness program until value-rep P6 settles the representation it would specialize (07-proposal rule).

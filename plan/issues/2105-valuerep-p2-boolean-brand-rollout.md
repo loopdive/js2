@@ -2,9 +2,9 @@
 id: 2105
 title: "value-rep P2: boolean brand rollout — ~20 producer + ~12 consumer sites onto {kind:'i32', boolean:true}"
 status: ready
-sprint: Backlog
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium

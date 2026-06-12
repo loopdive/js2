@@ -509,6 +509,126 @@ export function lowerIrFunctionBody<S>(
     }
   }
 
+  // --- #1982: effects-aware emission scheduling ---------------------------
+  //
+  // Lazy use-site emission re-emits a value's defining tree at its consumer,
+  // which silently moves order-sensitive READS (slot.read, class.get, …) and
+  // EFFECTS (calls) past instructions that execute in between. Repro:
+  // `const t = b.v + 0; b.v = b.v * 10; return t + b.v` — the `b.v` read
+  // inside `t` was emitted after both `class.set`s.
+  //
+  // Resolve, bottom-up per block, where each instr's tree will actually be
+  // EMITTED ("emission point"): in-place instrs (void result, crossBlock,
+  // eager side-effect drop) emit at their own index; lazy values at their
+  // first consumer's emission point (multi-use tees at first use, later uses
+  // are local.gets and re-execute nothing); dead pure values never. A
+  // non-pure lazy candidate is then ANCHORED at its def position (emit +
+  // local.set, exactly like the crossBlock path) when some instr between its
+  // def and its emission point executes before the candidate's tree AND
+  // conflicts with it (read-vs-write / write-vs-anything / same slot).
+  //
+  // Two values collapsing into the SAME emission point execute in tree
+  // order. That matches def order only when one transitively consumes the
+  // other (operands emit before their consumer, and SSA guarantees the
+  // operand's def comes first). Unrelated siblings are conservatively
+  // conflict-checked: consumer operand order need not match def order
+  // (`select` emits its condition last; values defined by earlier
+  // statements are referenced in arbitrary operand positions).
+  //
+  // Buffer-internal values (loop bodies, if arms, try) are exempt: their
+  // uses are recorded against the synthetic -1 block, so any used value is
+  // already crossBlock-materialized at its def position. The IR itself is in
+  // program order — this is purely an emission-scheduling fix.
+  const anchorEager = new Set<IrValueId>();
+  {
+    const fxCache = new Map<IrInstr, SchedFx>();
+    const NEVER = Number.POSITIVE_INFINITY;
+    for (const block of func.blocks) {
+      const instrs = block.instrs;
+      const n = instrs.length;
+      if (n === 0) continue;
+
+      // Block-level consumers of each SSA value (terminator = index n).
+      // Buffer-internal uses are intentionally absent (crossBlock covers them).
+      const consumersOf = new Map<IrValueId, number[]>();
+      const addConsumer = (v: IrValueId, i: number): void => {
+        const list = consumersOf.get(v);
+        if (list) list.push(i);
+        else consumersOf.set(v, [i]);
+      };
+      instrs.forEach((instr, i) => {
+        for (const u of collectIrUses(instr)) addConsumer(u, i);
+      });
+      for (const u of collectTerminatorUses(block)) addConsumer(u, n);
+
+      const defIdxOf = new Map<IrValueId, number>();
+      instrs.forEach((instr, i) => {
+        if (instr.result !== null) defIdxOf.set(instr.result, i);
+      });
+
+      const emissionIdx: number[] = new Array(n).fill(NEVER);
+      const isLazyAt: boolean[] = new Array(n).fill(false);
+
+      // Does `instrs[k]`'s lazily-emitted tree transitively consume `target`?
+      // Walks only same-block lazy defs — anchored / in-place operands are
+      // local.gets at the use site and execute nothing. Defs at indices below
+      // `target`'s def cannot reach it (SSA def-before-use), so the default
+      // false for not-yet-processed entries only prunes irrelevant paths.
+      const treeConsumes = (k: number, target: IrValueId): boolean => {
+        const seen = new Set<number>();
+        const stack = [k];
+        while (stack.length > 0) {
+          const cur = stack.pop()!;
+          if (seen.has(cur)) continue;
+          seen.add(cur);
+          for (const u of collectIrUses(instrs[cur])) {
+            if (u === target) return true;
+            const d = defIdxOf.get(u);
+            if (d !== undefined && isLazyAt[d]) stack.push(d);
+          }
+        }
+        return false;
+      };
+
+      for (let i = n - 1; i >= 0; i--) {
+        const instr = instrs[i];
+        const r = instr.result;
+        const uses = r === null ? 0 : (totalUses.get(r) ?? 0);
+        if (r === null || crossBlock.has(r) || (uses === 0 && isSideEffecting(instr))) {
+          emissionIdx[i] = i; // emitted in place by emitBlockBody
+          continue;
+        }
+        if (uses === 0) continue; // dead pure value — never emitted
+        const consumers = consumersOf.get(r);
+        if (!consumers || consumers.length === 0) continue; // defensive: buffer-only uses are crossBlock
+        let e = NEVER;
+        for (const c of consumers) e = Math.min(e, c === n ? n : emissionIdx[c]);
+        if (e === NEVER) continue; // consumed only by dead chains — never emitted
+        const fx = schedFxOf(instr, fxCache);
+        let anchored = false;
+        if (!schedFxIsPure(fx)) {
+          for (let k = i + 1; k < e && k < n; k++) {
+            const ek = emissionIdx[k];
+            if (ek === NEVER || ek > e) continue; // executes after our tree (or never) — def order preserved
+            if (ek === e && treeConsumes(k, r)) continue; // same tree, operands emit before consumers
+            if (schedFxConflicts(fx, schedFxOf(instrs[k], fxCache))) {
+              anchored = true;
+              break;
+            }
+          }
+        }
+        if (anchored) {
+          anchorEager.add(r);
+          needsLocal.add(r);
+          emissionIdx[i] = i;
+        } else {
+          emissionIdx[i] = e;
+          isLazyAt[i] = true;
+        }
+      }
+    }
+  }
+
   // --- local allocation ---------------------------------------------------
   // Stable order: scan blocks then instrs. Every `needsLocal` value gets one
   // Wasm local slot, placed after the function's parameter slots. The slot's
@@ -2135,10 +2255,12 @@ export function lowerIrFunctionBody<S>(
         emitInstrTree(instr, out);
         continue;
       }
-      if (crossBlock.has(instr.result)) {
-        // Pre-materialize for successor blocks. `local.set` is a trait
-        // primitive (emitLocalSet) — byte-identical on WasmGC, OP.STORE on
-        // bytecode.
+      if (crossBlock.has(instr.result) || anchorEager.has(instr.result)) {
+        // Pre-materialize for successor blocks (crossBlock) or because the
+        // value's tree observes mutable state that a later instruction in
+        // this block writes before the use site (#1982 anchorEager).
+        // `local.set` is a trait primitive (emitLocalSet) — byte-identical
+        // on WasmGC, OP.STORE on bytecode.
         emitInstrTree(instr, out);
         emitter.emitLocalSet(localIdx.get(instr.result)!, out);
         materialized.add(instr.result);
@@ -2250,6 +2372,210 @@ export function lowerIrFunctionBody<S>(
     typeIdx,
     exported: func.exported,
   };
+}
+
+// --- #1982: emission-scheduling effect summaries ----------------------------
+//
+// `emitBlockBody`'s lazy use-site emission re-orders instruction trees
+// relative to program order. That is sound only for values that commute with
+// everything in between. These summaries classify what each instruction reads
+// and writes so the scheduler can anchor order-sensitive values at their def
+// position instead.
+//
+// Slots are Wasm locals of the current function: nothing but `slot.write`
+// (and the loop headers that own dedicated slot indices) can modify them —
+// calls cannot reach another function's locals, and mutable closure captures
+// go through refcells. That keeps slot conflicts precise per index, which
+// matters because `slot.read` is by far the most common deferred read.
+
+interface SchedFx {
+  /** Reads mutable heap state (struct fields, globals, vec elements, host objects). */
+  readsHeap: boolean;
+  /** Writes heap state or has arbitrary effects (calls, iterator advance, throw). */
+  writesHeap: boolean;
+  /** Touches statically-unknown slots (raw.wasm may local.set; gen.* use func-level slots). */
+  allSlots: boolean;
+  readSlots: Set<number>;
+  writeSlots: Set<number>;
+}
+
+function schedFxOf(instr: IrInstr, cache: Map<IrInstr, SchedFx>): SchedFx {
+  const hit = cache.get(instr);
+  if (hit) return hit;
+  const fx: SchedFx = {
+    readsHeap: false,
+    writesHeap: false,
+    allSlots: false,
+    readSlots: new Set(),
+    writeSlots: new Set(),
+  };
+  // Memoize BEFORE recursing — buffers cannot be cyclic, but this keeps the
+  // walk linear in total instr count.
+  cache.set(instr, fx);
+  const mergeBuffer = (body: readonly IrInstr[]): void => {
+    for (const sub of body) {
+      const s = schedFxOf(sub, cache);
+      fx.readsHeap ||= s.readsHeap;
+      fx.writesHeap ||= s.writesHeap;
+      fx.allSlots ||= s.allSlots;
+      for (const x of s.readSlots) fx.readSlots.add(x);
+      for (const x of s.writeSlots) fx.writeSlots.add(x);
+    }
+  };
+  switch (instr.kind) {
+    // Pure: constants, arithmetic, allocation of fresh objects, immutable
+    // string content ops. Re-ordering these is unobservable.
+    case "const":
+    case "string.const":
+    case "binary":
+    case "unary":
+    case "select":
+    case "box":
+    case "unbox":
+    case "tag.test":
+    case "coerce.to_externref":
+    case "string.concat":
+    case "string.eq":
+    case "string.len":
+    case "object.new":
+    case "refcell.new":
+    case "closure.new":
+    case "extern.regex":
+      break;
+    // Reads of mutable heap state.
+    case "global.get":
+    case "object.get":
+    case "class.get":
+    case "vec.get":
+    case "vec.len":
+    case "refcell.get":
+    case "closure.cap":
+      fx.readsHeap = true;
+      break;
+    // Writes of heap state (void-result, so only ever hazards).
+    case "global.set":
+    case "object.set":
+    case "class.set":
+    case "refcell.set":
+      fx.writesHeap = true;
+      break;
+    // Call-like: may read AND write arbitrary heap state. `extern.prop` can
+    // trigger a host getter; iterator ops advance host iterator state; throw
+    // is a control effect treated as a full heap barrier.
+    case "call":
+    case "class.call":
+    case "closure.call":
+    case "extern.call":
+    case "class.new":
+    case "extern.new":
+    case "extern.prop":
+    case "extern.propSet":
+    case "iter.new":
+    case "iter.next":
+    case "iter.done":
+    case "iter.value":
+    case "iter.return":
+    case "throw":
+    case "await":
+    case "async.return":
+    case "async.throw":
+      fx.readsHeap = true;
+      fx.writesHeap = true;
+      break;
+    // Generator ops read/write the function-level buffer/pendingThrow slots
+    // (slot indices live on IrFunction, not on the instr) plus the heap.
+    case "gen.push":
+    case "gen.epilogue":
+    case "gen.yieldStar":
+      fx.readsHeap = true;
+      fx.writesHeap = true;
+      fx.allSlots = true;
+      break;
+    // Raw embedded Wasm may contain arbitrary ops including local.set.
+    case "raw.wasm":
+      fx.readsHeap = true;
+      fx.writesHeap = true;
+      fx.allSlots = true;
+      break;
+    case "slot.read":
+      fx.readSlots.add(instr.slotIndex);
+      break;
+    case "slot.write":
+      fx.writeSlots.add(instr.slotIndex);
+      break;
+    // Loop headers write their pre-allocated state slots every iteration;
+    // body/cond/update effects merge in recursively.
+    case "forof.vec":
+      fx.readsHeap = true;
+      for (const s of [instr.counterSlot, instr.lengthSlot, instr.vecSlot, instr.dataSlot, instr.elementSlot]) {
+        fx.writeSlots.add(s);
+      }
+      mergeBuffer(instr.body);
+      break;
+    case "forof.iter":
+      fx.readsHeap = true;
+      fx.writesHeap = true; // iterator protocol host calls
+      for (const s of [instr.iterSlot, instr.resultSlot, instr.elementSlot]) fx.writeSlots.add(s);
+      mergeBuffer(instr.body);
+      break;
+    case "forof.string":
+      fx.readsHeap = true;
+      for (const s of [instr.counterSlot, instr.lengthSlot, instr.strSlot, instr.elementSlot]) {
+        fx.writeSlots.add(s);
+      }
+      mergeBuffer(instr.body);
+      break;
+    case "while.loop":
+      mergeBuffer(instr.cond);
+      mergeBuffer(instr.body);
+      break;
+    case "for.loop":
+      mergeBuffer(instr.cond);
+      mergeBuffer(instr.body);
+      mergeBuffer(instr.update);
+      break;
+    case "try":
+      mergeBuffer(instr.body);
+      if (instr.catchClause) mergeBuffer(instr.catchClause.body);
+      if (instr.finallyBody) mergeBuffer(instr.finallyBody);
+      break;
+    case "if":
+      mergeBuffer(instr.then);
+      mergeBuffer(instr.else);
+      break;
+    default: {
+      // Future instruction kinds default to a full barrier so a new kind can
+      // never silently become re-orderable.
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      fx.readsHeap = true;
+      fx.writesHeap = true;
+      fx.allSlots = true;
+      break;
+    }
+  }
+  return fx;
+}
+
+function schedFxIsPure(fx: SchedFx): boolean {
+  return !fx.readsHeap && !fx.writesHeap && !fx.allSlots && fx.readSlots.size === 0 && fx.writeSlots.size === 0;
+}
+
+/** May re-ordering `a` across `b` change observable behavior? */
+function schedFxConflicts(a: SchedFx, b: SchedFx): boolean {
+  if (a.writesHeap && (b.readsHeap || b.writesHeap)) return true;
+  if (b.writesHeap && a.readsHeap) return true;
+  const aTouchesSlots = a.allSlots || a.readSlots.size > 0 || a.writeSlots.size > 0;
+  const bTouchesSlots = b.allSlots || b.readSlots.size > 0 || b.writeSlots.size > 0;
+  if (a.allSlots && bTouchesSlots) return true;
+  if (b.allSlots && aTouchesSlots) return true;
+  for (const s of a.writeSlots) {
+    if (b.readSlots.has(s) || b.writeSlots.has(s)) return true;
+  }
+  for (const s of b.writeSlots) {
+    if (a.readSlots.has(s)) return true;
+  }
+  return false;
 }
 
 function collectIrUses(instr: IrInstr): readonly IrValueId[] {

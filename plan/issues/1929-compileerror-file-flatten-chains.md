@@ -1,10 +1,10 @@
 ---
 id: 1929
 title: "CompileError: add file attribution and stop truncating TS diagnostic message chains"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: low

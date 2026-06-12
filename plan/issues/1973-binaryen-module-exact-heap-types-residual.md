@@ -1,10 +1,11 @@
 ---
 id: 1973
 title: "optimize:true via binaryen npm module re-introduces exact heap types — optimized binaries rejected by stock V8 and JSC (#1580 masking silently no-ops)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
+completed: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -65,3 +66,44 @@ instantiation in tests so this class of breakage fails CI.
 
 #1173 (done) fixed the system-CLI path; #1580 (done) claims the npm-module
 masking — this is its silent failure, untracked.
+
+## Resolution (2026-06-12)
+
+`optimizeWithBinaryenModule` now builds the feature mask by **OR-ing only the
+NAMED `Features` enum keys**, instead of starting from `Features.All`. On
+binaryen 125 `All` = 0x3FFFFF but the OR of every named key = 0x1FFFFF — the
+extra bit 0x200000 is the unnamed custom-descriptors flag, and
+`Features.CustomDescriptors` is `undefined` so the old
+`CustomDescriptors !== undefined` guard no-opped. OR-ing named keys excludes the
+bit structurally; the guard is kept (defensively) for a future binaryen that
+names the flag.
+
+The named superset is the same one the non-`All` fallback branch already used,
+extended with the other named keys binaryen 125 exposes (GCNNLocals, RelaxedSIMD,
+ExtendedConst, SIMD128, Atomics, MultiMemory, CallIndirectOverlong) so nothing
+js2wasm emits is disabled. Verified the optimizer still shrinks output (e.g. the
+closure repro 2050 → 1300 bytes) and produces identical runtime results.
+
+### Note on current reproducibility
+
+On binaryen 125 the *symptom* (exact types in the output) no longer manifested
+for the repro programs even before this change — binaryen's GC passes only
+emit `(ref (exact $T))` under conditions that didn't trigger here — but the
+**latent hazard** the issue describes was real: the mask still carried the
+unnamed custom-descriptors bit, one binaryen-pass change away from re-emitting
+exact types. This makes the mask correct by construction and adds the
+post-optimize validation gate the issue asked for.
+
+### Files
+
+- `src/optimize.ts` — `optimizeWithBinaryenModule` feature mask
+- `tests/issue-1973.test.ts` — for closures/arrays/classes: optimized binary
+  passes `WebAssembly.validate`, contains no `exact` ref types (re-parsed via
+  binaryen), and round-trips to the same observable output as unoptimized.
+
+## Test Results
+
+`tests/issue-1973.test.ts` (3 cases) green. Existing optimize suites
+(`optimize-differential`, `wasm-opt-optimize`, `issue-1580`) green.
+(`tail-call-optimization.test.ts` has a pre-existing `string_constants` import
+failure on clean main, unrelated to this change.)

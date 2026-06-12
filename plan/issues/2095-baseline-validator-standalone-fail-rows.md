@@ -2,9 +2,9 @@
 id: 2095
 title: "baseline validator: sample the standalone lane and fail rows, not just 50 host pass rows"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: low

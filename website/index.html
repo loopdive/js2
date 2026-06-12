@@ -1519,6 +1519,12 @@
             Expect rough edges, incomplete language and standard-library coverage, and breaking changes between versions.
           </p>
           <p>
+            On compatibility: today, compiled modules still require a JavaScript host and rely on the host's WebAssembly
+            GC support to run. That is not a fixed design constraint &mdash; reducing the dependency on the JS host and
+            on host-provided GC, so more code runs as standalone WebAssembly, is an explicit goal that is actively being
+            worked on, and the requirement is expected to shrink over time.
+          </p>
+          <p>
             The mission of the JS² compiler project is to make WebAssembly a drop-in deployment target for existing
             JavaScript and npm packages, running modules without embedding a JS runtime and enabling more secure,
             flexible dependency management.
@@ -3966,15 +3972,35 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             </details>
             <details>
               <summary>
-                <span class="approach-faq-question">Why do you depend on Wasm GC?</span>
+                <span class="approach-faq-question">Do modules require a JS host to run?</span>
               </summary>
               <div class="approach-faq-answer">
                 <p>
-                  In supported WebAssembly 3.0 runtime a portable garbarge collector (GC) is provided by the host, so
-                  runtimes no longer need to implement their own GC in linear memory. They can now build on top of a
-                  built-in implementation, making modules leaner and interop with the host environment and across
-                  components more seamless. WasmGC gives the compiler host-managed structs, arrays, references, and
-                  function references that can represent many JavaScript object shapes more directly.
+                  Currently, yes &mdash; compiled modules still rely on a JavaScript host and on the host's WebAssembly
+                  GC support to run, and standalone (pure-Wasm, no-JS) execution is still incomplete. This is not a
+                  fixed design constraint: reducing the dependency on the JS host and on host-provided GC is an explicit
+                  goal that is actively being worked on, and the requirement is expected to shrink over time. Standalone
+                  mode already runs a growing subset of programs as pure WebAssembly with no JS runtime &mdash; you can
+                  track progress in the ECMAScript compatibility reports.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <span class="approach-faq-question">Do you depend on Wasm GC?</span>
+              </summary>
+              <div class="approach-faq-answer">
+                <p>
+                  WasmGC is our initial compilation target. In a supported WebAssembly 3.0 runtime a portable garbage
+                  collector (GC) is provided by the host, so runtimes no longer need to implement their own GC in linear
+                  memory. They can build on top of a built-in implementation, making modules leaner and interop with the
+                  host environment and across components more seamless. WasmGC gives the compiler host-managed structs,
+                  arrays, references, and function references that can represent many JavaScript object shapes more
+                  directly.
+                </p>
+                <p>
+                  WasmGC is the initial target, but it is not the only possible backend &mdash; support for compiling to
+                  linear memory may potentially be added in the future for runtimes without GC support.
                 </p>
               </div>
             </details>

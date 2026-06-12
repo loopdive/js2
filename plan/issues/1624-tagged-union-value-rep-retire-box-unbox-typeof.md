@@ -1,9 +1,9 @@
 ---
 id: 1624
 title: "Tagged-union value representation: retire __box_*, __unbox_*, __typeof, __is_truthy"
-status: backlog
+status: wont-fix
 created: 2026-05-20
-updated: 2026-05-24
+updated: 2026-06-12
 priority: medium
 feasibility: hard
 reasoning_effort: max
@@ -274,3 +274,7 @@ regression on test262 pass count after Phase D.
   + branch, faster than the current host call but slower than the
   monomorphic unboxed path. Mitigation — same monomorphism check as
   above.
+
+## Superseded (2026-06-12)
+
+The tagged-union `$Value` this issue proposes ≈ the existing `$AnyValue` struct; the migration it wants is re-specced with sharper phasing by the 2026-06 value-representation program: #2104 (P1 JsTag module), #2105 (P2 boolean brand), #2106 (P3 undefined observability), #2107 (P4 standalone helper conformance), plus #2140 (tag-5 ABI untangle — the blocker this issue's Phase D would have hit; see the #1888 −794-test incident). Host-import retirement remains the endgame after P1–P4 + #2140.

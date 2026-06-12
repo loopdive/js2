@@ -1,9 +1,9 @@
 ---
 id: 1325
 title: "instanceof against built-in types: compile-time type-tag registry eliminates JS host for common cases"
-status: in-progress
+status: ready
 created: 2026-05-07
-updated: 2026-05-08
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -119,3 +119,7 @@ End-to-end behavioural tests:
   `src/ir/nodes.ts`. The Phase-1 registry is consumed by the codegen
   short-circuit only; IR-level wiring will follow once a tagged-struct
   representation lands.
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

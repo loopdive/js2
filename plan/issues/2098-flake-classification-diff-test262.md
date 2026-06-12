@@ -2,9 +2,9 @@
 id: 2098
 title: "encode flake-classification rules in diff-test262: ct_flake/ct_suspect split + bucket signature hash"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: low
 feasibility: easy
 reasoning_effort: low

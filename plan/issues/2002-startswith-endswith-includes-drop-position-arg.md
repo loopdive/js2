@@ -1,10 +1,11 @@
 ---
 id: 2002
 title: "startsWith/endsWith/includes silently drop the position/endPosition argument on the JS-host backend (import arity truncation)"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low
@@ -51,3 +52,7 @@ undefined/NaN sentinel for the omitted arg (parseInt pattern).
 
 #1445 (in-review) covers ToInteger coercion of these args, not the drop;
 #2124 (ex-#1957) covers explicit-undefined args. New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1329; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

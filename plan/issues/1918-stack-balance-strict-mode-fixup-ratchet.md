@@ -1,10 +1,10 @@
 ---
 id: 1918
 title: "Stack-balance strict mode + fixup ratchet — stop silently patching emitter bugs into wrong runtime values"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high

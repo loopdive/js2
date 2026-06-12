@@ -2,9 +2,9 @@
 id: 2033
 title: "custom iterables ([Symbol.iterator]): spread emits invalid wasm (CE), destructuring reads NaN — only for-of consults the protocol"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high

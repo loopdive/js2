@@ -371,3 +371,20 @@ not re-filed; the issues below are net-new.
 - [#1936](../1936-async-contract-migration-enable-cps.md) — async contract migration: enable the built-but-disabled CPS lowering via call-site census + await-elision — high, hard, **backlog**, needs `/architect-spec`
 - [#1925](../1925-ir-hygiene-passes-nested-buffers.md) — run IR hygiene passes inside nested buffers, or commit to one control-flow representation (do before #1370/#1373 waves) — medium, hard, **backlog**
 - [#1926](../1926-remove-valtype-typeidx-from-irtype.md) — remove backend `ValType`/`typeIdx` from `IrType` (blocks IR serialization + linear union adoption) — medium, medium, **backlog**
+
+## 2026-06-12 — Sprint-62 planning triage (Fable architecture sprint)
+
+Full record: `plan/issues/sprints/62.md` (+ pre-staged `63.md`). Summary:
+- Scheduled into 62 (architecture/Fable): #1804 #1853 #1854 #1855(spec)
+  #1899 #1919 #1921 #1922 #1923 #1924 #1925 #1926 #1927 #1931 #1950 #2085
+  #2089 #2090 #2092 #2100 #2101 #2104 #2105 #2106 #2107 + #1095(re-scoped)
+  + from sprint 61: #1916 #1917 #1930 #1965 #1979-#1981 #1983 #1988-#1990
+  #2009 #2015 #2022 #2051 #2059 #2072 #2079 #2080 #2081 #2084
+- New issues filed: #2134-#2143 (sprint 62), #2144-#2147 (sprint 63)
+- Moved 61→63 (routine): #1994 #2001 #2007 #2008 #2011-#2013 #2017 #2021
+  #2023-#2028 #2033 #2035 #2076 #2077 #2083 #2118 #2119; backlog→63:
+  #2086-#2088 #2093-#2099 #2102 #2103 #2108
+- Closed: #1624 (superseded by #2104-#2107 + #2141); duplicates
+  #2110-#2117 (≡ #2118-#2125, high series canonical)
+- Stale-ready → done (fix PRs merged): #1991 #2002-#2006 #2018-#2020
+  #2027 #2078

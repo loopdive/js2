@@ -1414,35 +1414,48 @@ export function compileObjectLiteralForStruct(
   }
 
   for (const field of fields) {
-    // First check for an explicit property assignment (identifier, string literal, or computed key).
-    // #2010: resolvePropertyNameText now also matches shorthands; exclude them here so
-    // the dedicated shorthand branch below (which compiles `prop.name` as the value)
-    // keeps handling them — the property-assignment branch can't read a shorthand.
-    const prop = expr.properties.find(
-      (p) => !ts.isShorthandPropertyAssignment(p) && resolvePropertyNameText(ctx, p) === field.name,
-    );
-    // Also check for shorthand property assignment ({ x, y } where x/y are identifiers)
-    const shorthandProp = !prop
-      ? expr.properties.find((p) => ts.isShorthandPropertyAssignment(p) && p.name.text === field.name)
-      : undefined;
-    // #1118: Method shorthand `{ m() {…} }` — `resolvePropertyNameText`
-    // returns undefined for MethodDeclaration, so the search above misses
-    // it. Look it up explicitly by name. The pre-pass in
-    // `ensureStructForType` already registered the method's funcMap entry;
-    // emit a closure-struct ref to it and convert to the field type.
-    // Without this, the field defaults to `undefined` and dynamic dispatch
-    // through `any` (the test262 wrapper pattern) returns null.
-    const methodProp =
-      !prop && !shorthandProp
-        ? expr.properties.find(
-            (p): p is ts.MethodDeclaration =>
-              ts.isMethodDeclaration(p) &&
-              !!p.name &&
-              ((ts.isIdentifier(p.name) && p.name.text === field.name) ||
-                (ts.isStringLiteral(p.name) && p.name.text === field.name) ||
-                (ts.isNumericLiteral(p.name) && p.name.text === field.name)),
-          )
+    // (#2129) Collect EVERY property that defines this field, in source
+    // order. Per §13.2.5.5 PropertyDefinitionEvaluation, each duplicate runs
+    // (its initializer's side effects are observable) and the LAST definition
+    // provides the field's value — not the first.
+    //
+    // #2010: resolvePropertyNameText also matches shorthands; classify them
+    // separately so the dedicated shorthand branch below (which compiles
+    // `prop.name` as the value) keeps handling them.
+    // #1118: method shorthand `{ m() {…} }` — resolvePropertyNameText returns
+    // undefined for MethodDeclaration, so match those by name explicitly.
+    const matchingProps = expr.properties.filter((p) => {
+      if (ts.isShorthandPropertyAssignment(p)) return p.name.text === field.name;
+      if (ts.isMethodDeclaration(p)) {
+        return (
+          !!p.name &&
+          ((ts.isIdentifier(p.name) && p.name.text === field.name) ||
+            (ts.isStringLiteral(p.name) && p.name.text === field.name) ||
+            (ts.isNumericLiteral(p.name) && p.name.text === field.name))
+        );
+      }
+      return resolvePropertyNameText(ctx, p) === field.name;
+    });
+    const lastMatch = matchingProps[matchingProps.length - 1];
+    // (#2129) Evaluate earlier duplicates' initializers for their side
+    // effects and drop the values. (Shorthands/methods have no side effects
+    // to run.) Note: duplicates are evaluated adjacent to the winning one,
+    // so cross-key side-effect ORDER may deviate from strict source order in
+    // mixed duplicate literals — the same field-order evaluation the struct
+    // path already uses.
+    for (let di = 0; di < matchingProps.length - 1; di++) {
+      const dup = matchingProps[di]!;
+      if (ts.isPropertyAssignment(dup)) {
+        const dupType = compileExpression(ctx, fctx, dup.initializer);
+        if (dupType) fctx.body.push({ op: "drop" });
+      }
+    }
+    const prop =
+      lastMatch && !ts.isShorthandPropertyAssignment(lastMatch) && !ts.isMethodDeclaration(lastMatch)
+        ? lastMatch
         : undefined;
+    const shorthandProp = lastMatch && ts.isShorthandPropertyAssignment(lastMatch) ? lastMatch : undefined;
+    const methodProp = lastMatch && ts.isMethodDeclaration(lastMatch) ? lastMatch : undefined;
     if (methodProp) {
       const methodFullName = `${typeName}_${field.name}`;
       // (#1557) Prefer the per-literal funcIdx if we detected a sig mismatch

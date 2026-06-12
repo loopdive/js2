@@ -1,9 +1,9 @@
 ---
 id: 1322
 title: "Math.random() has no standalone fallback — requires JS host import in WASI/standalone mode"
-status: in-progress
+status: ready
 created: 2026-05-07
-updated: 2026-05-07
+updated: 2026-06-12
 priority: low
 feasibility: easy
 reasoning_effort: low
@@ -88,3 +88,7 @@ slot can be filled with the xorshift64 body.
 - JS-host regression guard: `env.Math_random` remains the host import path
 - regression guard: `Math.random` alongside `Math.sin`/`Math.cos` doesn't
   break the shared `pendingMathMethods` collection
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

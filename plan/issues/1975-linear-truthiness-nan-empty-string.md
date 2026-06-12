@@ -55,3 +55,28 @@ dispatching on the inferred expression kind (string → length check). Fix
 ## Dupe check
 
 No linear truthiness issue exists. Unfiled.
+
+## Progress (2026-06-12) — ToBoolean fixed; &&/|| operand-value follow-up
+
+**Done (this PR):** `emitTruthyCoercion` now takes the source expression and,
+for a string-typed value, replaces the i32 pointer on the stack with
+`__str_len(ptr) != 0` — so `""` is falsy and a non-empty string truthy. The
+NaN case (`f64.abs(x) > 0`) was already correct (#1937). The coercion feeds
+`if`/`while`/`for`/ternary and the `&&`/`||` left operand, so both problem-table
+rows now match Node, and string truthiness drives `&&`/`||` short-circuit
+correctly in boolean contexts (`"" && x`, `"" || x`, `"a" && x`). All 136
+existing linear tests pass; `tests/issue-1975.test.ts` (8 cases) added.
+
+**Remaining (separate follow-up):** the `&&`/`||` lowering still coerces its
+result to f64 and yields `0`/`1` constants on the short-circuit arm instead of
+the *operand value* — so `("" || "x")` used as a string doesn't yield `"x"`.
+Fixing this needs result-type unification in the linear backend (the f64-only
+`if` result type can't carry a string operand), which is a larger change than
+the ToBoolean fix and is left for a dedicated issue. The boolean-context use
+(the common case, and what the problem table exercises) is correct now.
+
+### Files
+
+- `src/codegen-linear/index.ts` — `emitTruthyCoercion` string branch + threaded
+  the source expression through all call sites (`if`/`while`/`for`/ternary/
+  unary-`!`/`&&`/`||`).

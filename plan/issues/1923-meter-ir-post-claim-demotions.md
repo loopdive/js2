@@ -1,10 +1,10 @@
 ---
 id: 1923
 title: "Meter IR post-claim demotions in the fallback ratchet — build/verify/lower failures are invisible to CI"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium

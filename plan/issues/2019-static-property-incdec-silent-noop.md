@@ -1,10 +1,11 @@
 ---
 id: 2019
 title: "static property ++/-- is a silent no-op (write dropped, NaN pushed) — compileMemberIncDec has no staticProps arm"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low
@@ -51,3 +52,7 @@ compileMemberIncDec (pre/post value semantics included).
 
 #1379 is inc/dec on null/undefined/string; #1643 is static init order.
 New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1333; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

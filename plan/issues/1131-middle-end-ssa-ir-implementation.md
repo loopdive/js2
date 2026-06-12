@@ -1,9 +1,9 @@
 ---
 id: 1131
 title: "Middle-end SSA IR: implementation plan"
-status: ready
+status: wont-fix
 created: 2026-04-19
-updated: 2026-04-19
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -1121,3 +1121,7 @@ Compiling `benchmarks/competitive/programs/fib-recursive.js`
 Its body contains no references to `__box_number` /
 `__unbox_number` — the recursive hot path is pure f64 arithmetic
 and direct calls.
+
+## Superseded (2026-06-12)
+
+The middle-end IR this container proposed EXISTS (src/ir/, ~24k LoC: select/from-ast/verify/passes/backends) and its adoption program is tracked by plan/log/ir-adoption.md + the sprint-62 IR lane (#1922-#1926, #2134-#2138, #1804). Child phases #1167a/b/c are done. Closing the container; nothing actionable remains under this ID.

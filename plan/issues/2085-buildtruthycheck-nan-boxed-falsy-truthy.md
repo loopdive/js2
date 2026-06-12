@@ -2,9 +2,9 @@
 id: 2085
 title: "array HOF predicate truthiness: buildTruthyCheck treats NaN and boxed 0/'' as truthy — contradicts ensureI32Condition's own spec matrix"
 status: ready
-sprint: Backlog
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: low

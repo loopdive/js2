@@ -2,9 +2,9 @@
 id: 2092
 title: "spec-conformance suite: tests/equivalence/spec/ table-driven harness + June probe-corpus migration"
 status: ready
-sprint: Backlog
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: critical
 feasibility: medium
 reasoning_effort: medium

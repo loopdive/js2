@@ -1,9 +1,9 @@
 ---
 id: 1532
 title: "test: WASI syscall unit test suite (fd_write, environ_get, clock_time_get, fd_read, proc_exit)"
-status: in-progress
+status: ready
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -75,3 +75,7 @@ async function runWasi(binary, opts) {
 ## Files to create
 
 - `tests/issue-1532.test.ts` — the test file
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

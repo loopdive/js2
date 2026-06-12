@@ -14,8 +14,6 @@ language_feature: iterators, externref, Array.from
 goal: spec-conformance
 sprint: 61
 related: [1154, 1665, 1472, 1620, 1633, 1684]
-claimed_by: codex-developer
-claimed_at: 2026-06-10T16:33:00.234Z
 completed: 2026-06-10
 ---
 # #1320 — Array.from / Iterator.from runtime bridge drops own [Symbol.iterator]

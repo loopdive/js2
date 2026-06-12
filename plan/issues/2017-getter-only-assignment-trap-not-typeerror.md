@@ -2,9 +2,9 @@
 id: 2017
 title: "assignment to a getter-only object-literal property traps 'illegal cast' instead of throwing strict-mode TypeError"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: low
 feasibility: medium
 reasoning_effort: medium

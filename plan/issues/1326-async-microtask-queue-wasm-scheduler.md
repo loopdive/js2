@@ -13,8 +13,6 @@ language_feature: async, promises, generators
 goal: standalone-mode
 sprint: 58
 required_by: [1326c, 1766, 1774]
-claimed_by: codex-developer
-claimed_at: 2026-06-02T22:45:33.452Z
 ---
 # #1326 — Async standalone: Wasm microtask queue + CPS desugaring
 

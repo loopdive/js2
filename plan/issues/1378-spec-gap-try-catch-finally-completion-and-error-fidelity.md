@@ -1,9 +1,9 @@
 ---
 id: 1378
 title: "spec gap: try/catch/finally — error type fidelity, finally completion override, dstr-binding (~85 fails)"
-status: in-progress
+status: ready
 created: 2026-05-08
-updated: 2026-05-08
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -184,3 +184,7 @@ Empty-pattern `catch ([])` short-circuits with no materialisation per
   Likely shares machinery with #1366 (subclass prototype chain).
 - `completion-values-fn-finally-normal.js` null_deref: needs separate
   investigation of the `assert_throws` host shim.
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

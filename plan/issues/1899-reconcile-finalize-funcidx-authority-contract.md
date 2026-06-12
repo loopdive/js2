@@ -2,6 +2,8 @@
 id: 1899
 title: "finalize funcIdx-authority contract: reconcile↔dead-elim native-string helper sibling-call mismatch (late-shift class recurrence-proofing)"
 status: ready
+updated: 2026-06-12
+sprint: 62
 created: 2026-06-05
 priority: medium
 feasibility: hard

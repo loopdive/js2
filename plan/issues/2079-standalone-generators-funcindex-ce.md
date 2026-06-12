@@ -2,9 +2,9 @@
 id: 2079
 title: "standalone: function* CEs with 'function index out of range' (late-import shift guard) — wasm-native generator lowering regressed; manual protocol leaks env import"
 status: ready
-sprint: 61
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: high

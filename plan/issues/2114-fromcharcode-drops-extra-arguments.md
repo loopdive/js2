@@ -2,10 +2,10 @@
 id: 2114
 renumbered_from: 1955
 title: "String.fromCharCode/fromCodePoint silently drop all arguments after the first (host backend; native fromCodePoint too)"
-status: ready
+status: wont-fix
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -64,3 +64,7 @@ add variadic host imports taking a vec.
 #1598 (`fromCharCode` standalone, in-review) covers the standalone/native
 helper only; host-mode dropping untracked. Greps for
 `fromCharCode`/`fromCodePoint` found no argument-dropping issue.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #2122 — the same audit batch was filed twice (#2110–#2117 ≡ #2118–#2125). The high series is canonical: merged/open PRs reference #2120–#2125. No work was lost; see #2122.

@@ -2,9 +2,9 @@
 id: 2090
 title: "stack-balance self-repair must not invent values — null patch becomes a hard compile error"
 status: ready
-sprint: Backlog
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low

@@ -44,6 +44,8 @@ permissions:
   contents: write
   pull-requests: write
   checks: read
+  actions: write # rerun cla-check when its status is stale on the head (#1958a)
+  issues: write # comment + stale-draft label on aging green drafts (#1958d)
 
 concurrency:
   group: auto-enqueue

@@ -2,9 +2,9 @@
 id: 2088
 title: "per-builtin representation scaffold (element accessor + coercion), starting with fromCharCode + join"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high

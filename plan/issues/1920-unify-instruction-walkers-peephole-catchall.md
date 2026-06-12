@@ -1,10 +1,10 @@
 ---
 id: 1920
 title: "One instruction walker — peephole misses catchAll bodies; ≥4 divergent recursive walkers"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: medium

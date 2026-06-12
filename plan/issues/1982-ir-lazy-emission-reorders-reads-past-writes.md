@@ -1,10 +1,11 @@
 ---
 id: 1982
 title: "IR: lazy use-site emission reorders memory reads past writes — slot/class-field reads observe future mutations"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -95,3 +96,65 @@ read/write order per memory class.
 #1850/#1844 (verifier SSA/dominance — orthogonal, IR is valid here), #1858
 (no emission-ordering item), #1945 (legacy for-of hoist — different
 mechanism), #1131/#1574. Unfiled.
+
+## Implementation notes (2026-06-12, senior-fable)
+
+Implemented as an **emission-point resolution pass** in `src/ir/lower.ts`,
+inserted between the crossBlock computation and local allocation, plus a
+one-line hook in `emitBlockBody` (anchored values take the existing
+crossBlock emit+`local.set` branch).
+
+**Why not the issue's "materialize eagerly unless the use is the
+immediately-next instruction" first cut:** that rule anchors every member
+chain (`a.b.c.d`) and every nested call (`f(g(x))`) — both extremely common
+and both safe — so the code-size criterion fails. Instead the pass resolves,
+bottom-up per block, where each instr's tree is actually emitted:
+
+- in-place instrs (void result, crossBlock, eager side-effect drop) emit at
+  their own index; lazy values at their first consumer's *resolved* emission
+  point (multi-use tees execute the tree once, at first use); dead pure
+  values never.
+- a non-pure lazy candidate anchors at its def iff some instr between def
+  and emission point **executes before the candidate's tree** and
+  **conflicts** with it.
+
+Two load-bearing subtleties found during design:
+
+1. **Same emission point ≠ safe.** Two values collapsing into the same
+   consumer tree execute in tree order, which matches def order only when
+   one transitively consumes the other (SSA: operand defs precede
+   consumers, operands emit before their op). Unrelated siblings can swap —
+   `select` emits its condition *last*, and values defined by earlier
+   statements are referenced in arbitrary operand positions (`const c = g();
+   const t = b.v + 1; return t + c` emits the read before the call). So
+   same-point pairs are conflict-checked unless data-dependent. This is
+   what keeps `f(g(x))` lazy (g flows into f) while fixing the sibling case.
+2. **Slot precision matters and is free.** Slots are Wasm locals: only
+   `slot.write` and loop headers (forof slot fields) touch them — a call can
+   never write another function's locals (mutable captures go through
+   refcells). So `slot.read` anchors only against writes of the *same*
+   slot index, not against every call, which keeps anchoring (and the
+   extra locals) limited to genuinely conflicting windows. Heap reads
+   (class.get/object.get/vec.*/refcell.get/global.get) conservatively
+   conflict with any heap write or call.
+
+Effect summaries (`SchedFx`) recurse into loop/if/try buffers; unknown
+future instr kinds default to a full barrier (exhaustiveness-checked).
+Buffer-internal values were already safe: their uses are recorded against
+the synthetic `-1` block, so every used buffer value is crossBlock and
+materializes at def.
+
+**Scope:** the lowerer runs only under `experimentalIR` (and linear-IR
+tests) — default-path codegen is byte-identical, so test262 cannot move.
+
+**Validation:** 4 repro variants fixed (probe + `tests/issue-1982-ir-emission-order.test.ts`,
+9 cases incl. sibling call/read both operand orders, multi-use tee across
+loop, disjoint-slot non-anchoring); IR suites — identical pass/fail set to
+main (the 8 failures in `tests/ir/{inline-small,passes}.test.ts` and the
+ir-*-equivalence env breakage pre-date this change); 600-program seeded
+statement fuzz (IR vs legacy vs Node, 4 seed bases) clean — the harness
+verifiably catches the bug on unfixed main (IR-only divergence at seed
+198200037), after two generator fixes: block-scoped name tracking, and
+box/helper moved inside `f` (module-level state body-shape-rejects the
+function, silently fuzzing legacy-vs-legacy); `check:ir-fallbacks`
+unchanged; 600-statement single-block compile time on par with main.

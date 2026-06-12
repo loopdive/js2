@@ -3,9 +3,9 @@ id: 2119
 renumbered_from: 1952
 title: "module code (always strict) gets a mapped arguments object: parameter writes leak into arguments[i]"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium

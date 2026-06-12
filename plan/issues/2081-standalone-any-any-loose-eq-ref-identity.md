@@ -2,9 +2,9 @@
 id: 2081
 title: "standalone: loose == between two any operands compares references, never coerces ('1' == 1 → false)"
 status: ready
-sprint: 61
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium

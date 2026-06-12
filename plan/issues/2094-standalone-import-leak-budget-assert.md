@@ -2,9 +2,9 @@
 id: 2094
 title: "standalone import-leak budget + emit-time import-section assert (post-link scan, structured CE)"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium

@@ -1,10 +1,11 @@
 ---
 id: 2003
 title: "charCodeAt out-of-range traps 'string offset out of bounds' instead of returning NaN"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: low
@@ -46,3 +47,7 @@ result type (or keep i32 fast path when the index is provably in range).
 ## Dupe check
 
 #103/#1105/#1175 unrelated (native impls, validation). New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1329; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

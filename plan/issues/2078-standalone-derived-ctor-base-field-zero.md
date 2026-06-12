@@ -1,10 +1,11 @@
 ---
 id: 2078
 title: "standalone: derived-class constructor reads base-initialized field as 0 after super() (same read from a method works)"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -47,3 +48,7 @@ writes into vs which one `this.x` reads.
 
 #2018 (ctor return trap, host), #1054 (eval supercall), #2082 (implicit
 ctor arg drop — sibling but explicit-ctor here). New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1354; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

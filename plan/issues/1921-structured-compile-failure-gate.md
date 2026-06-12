@@ -1,10 +1,10 @@
 ---
 id: 1921
 title: "Replace the 'Codegen error:' string-prefix compile-failure gate with structured severity"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium

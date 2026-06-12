@@ -43,7 +43,13 @@ import { execFileSync } from "node:child_process";
 
 const DRY_RUN = process.env.DRY_RUN === "1" || process.argv.includes("--dry-run");
 const STALL_MINUTES = Number(process.env.STALL_MINUTES || 12);
-const REPO = process.env.GH_REPO || "loopdive/js2wasm";
+// Default to the real upstream slug. The old default `loopdive/js2wasm` was a
+// dead repo name — a hand-run (`node scripts/unstick-merge-queue.mjs` without
+// GH_REPO) queried the wrong repo and silently saw an empty queue. CI passes
+// GH_REPO=${{ github.repository }} so this only bit manual invocations, but a
+// wrong default on a queue-rescue script is exactly the tool you reach for when
+// the queue is wedged and you cannot afford a misfire. (#1958b)
+const REPO = process.env.GH_REPO || "loopdive/js2";
 const [OWNER, NAME] = REPO.split("/");
 
 function gh(args, input) {
@@ -51,6 +57,10 @@ function gh(args, input) {
     encoding: "utf8",
     input,
     stdio: ["pipe", "pipe", "pipe"],
+    // The actions/runs API returns ~1 MB/page (each run carries full repo +
+    // actor objects). The default 1 MB stdio buffer ENOBUFS-crashes the script
+    // on a single page, let alone paginating. Give it generous headroom. (#1958b)
+    maxBuffer: 64 * 1024 * 1024,
   });
 }
 
@@ -81,8 +91,33 @@ if (entries.length === 0) {
 //    (or vice versa). A head-only check cleared one entry and left four
 //    others silently stalled — each needed its own nudge. So: check EVERY
 //    entry, nudge every stalled one (oldest first), capped per cycle.
-const runs = JSON.parse(gh(["api", `repos/${REPO}/actions/runs?event=merge_group&per_page=50`]));
-const allRuns = runs.workflow_runs ?? [];
+//
+//    WINDOW-SIZE GAP (#1958b — the 01:36Z-reported-success-during-#1364-wedge
+//    incident): each merge group spawns ~4-5 workflow runs (CI, CLA Check,
+//    Differential test, Test262 Sharded). A single `per_page=50` page therefore
+//    covers only ~10 PRs of merge_group history. During a busy stretch the
+//    wedged head's group runs (or, worse, a STALE prior-enqueue run that aliases
+//    it) can sit outside or skew that window, so detection silently misreads the
+//    state. We page back far enough to cover the whole queue's recent history
+//    (PAGES × 100) and de-alias by created_at below.
+const RUN_PAGES = Number(process.env.RUN_PAGES || 4); // 4 × 100 = up to ~80 PRs of merge_group history
+const allRuns = [];
+for (let page = 1; page <= RUN_PAGES; page++) {
+  // Project server-side to just the fields we use (id, head_branch, created_at)
+  // so we transfer ~60 B/run instead of ~10 KB/run — the full payload is what
+  // ENOBUFS'd the old per_page=50 fetch. `-q` emits one compact JSON object per
+  // line (jq default), which we parse line-by-line.
+  const out = gh([
+    "api",
+    `repos/${REPO}/actions/runs?event=merge_group&per_page=100&page=${page}`,
+    "-q",
+    ".workflow_runs[] | {id, head_branch, created_at}",
+  ]).trim();
+  const pageRuns = out ? out.split("\n").map((l) => JSON.parse(l)) : [];
+  allRuns.push(...pageRuns);
+  if (pageRuns.length < 100) break; // last page
+}
+log(`fetched ${allRuns.length} merge_group runs across up to ${RUN_PAGES} page(s)`);
 
 const MAX_NUDGES = Number(process.env.MAX_NUDGES || 5);
 let nudged = 0;
@@ -103,13 +138,31 @@ for (const entry of byPosition) {
     log(`#${prNum} pos=${entry.position} enqueued ${ageMin.toFixed(1)} min ago (< ${STALL_MINUTES}) — too fresh`);
     continue;
   }
-  const groupRuns = allRuns.filter(
-    (r) => r.head_branch?.includes(`/pr-${prNum}-`) && new Date(r.created_at) >= enqueuedAt,
-  );
+  // Match this entry's merge_group runs. The synthetic branch is
+  // `gh-readonly-queue/main/pr-<N>-<sha>`; anchor on `/pr-<N>-` so #136 never
+  // aliases #1364. DE-ALIAS (#1958b): only runs created AT OR AFTER this
+  // entry's current enqueuedAt count. A re-enqueue resets enqueuedAt, so a
+  // completed run from a PRIOR enqueue of the same PR has an older created_at
+  // and is correctly excluded — that stale-run aliasing is what let a wedged,
+  // re-enqueued head read "healthy" and the cycle report success.
+  const prefix = `/pr-${prNum}-`;
+  const groupRuns = allRuns.filter((r) => r.head_branch?.includes(prefix) && new Date(r.created_at) >= enqueuedAt);
   if (groupRuns.length > 0) {
     healthy++;
-    log(`#${prNum} pos=${entry.position} has ${groupRuns.length} merge_group run(s) — healthy`);
+    const ids = groupRuns
+      .slice(0, 4)
+      .map((r) => `${r.id}@${r.created_at}`)
+      .join(", ");
+    log(`#${prNum} pos=${entry.position} has ${groupRuns.length} merge_group run(s) — healthy [${ids}]`);
     continue;
+  }
+  // No matching runs after enqueuedAt. Surface whether ANY (stale) runs exist
+  // for this PR so a future "missed wedge" is debuggable from the cycle log.
+  const staleRuns = allRuns.filter((r) => r.head_branch?.includes(prefix));
+  if (staleRuns.length > 0) {
+    log(
+      `#${prNum} pos=${entry.position}: ${staleRuns.length} merge_group run(s) exist but ALL predate enqueuedAt=${entry.enqueuedAt} (stale prior-enqueue) — treating as wedged`,
+    );
   }
 
   // WEDGED entry.

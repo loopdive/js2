@@ -1,10 +1,10 @@
 ---
 id: 1927
 title: "One front-end pipeline driver — compileSourceSync/compileMultiSource/compileFilesSource are divergent clones"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -60,3 +60,24 @@ silent.
 
 Compiler quality review 2026-06. Related: #1931 (early-error decomposition
 rides on this), #1929.
+
+## Sprint-62 planning amendment (2026-06-12)
+
+Verified at main 682e22d76: still 3 driver clones in `compiler.ts`
+(`compileSourceSync:467`, `compileMultiSource:894`, `compileFilesSource:1195`)
+**plus a 4th** — `generateMultiModule` (`codegen/index.ts:4151`) never runs
+the IR overlay at all (`experimentalIR` consulted only in `generateModule:1195`),
+and the multi paths skip `detectEarlyErrors` + hardened mode and drop
+`experimentalIR`/`nodeBuiltins`/`wasiNodeFsFuncs`/`allowFs`/`jsxRuntime`.
+
+Added acceptance criteria:
+- multi-module paths gain IR / early-errors / hardened-mode **parity** (or
+  a single driver makes the question moot);
+- the ~14 copy-pasted ~25-line error-return objects collapse to one
+  `failResult` helper;
+- driver consumes the structured severities from #1921 (no
+  `"Codegen error:"` prefix matching).
+
+Scheduled sprint 62, `model: fable` (the proposal's "blocks nothing in the
+June corpus" parking applied a conformance lens; under the architecture
+lens this is the keystone).

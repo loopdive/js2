@@ -6,6 +6,7 @@
  */
 import { ts } from "../ts-api.js";
 import {
+  getNullablePrimitiveInfo,
   isBigIntType,
   isBooleanType,
   isNumberType,
@@ -982,6 +983,30 @@ export function compileBinaryExpression(
   const leftIsWrapperObj = isWrapperObjectType(leftTsType);
   const rightIsWrapperObj = isWrapperObjectType(rightTsType);
   const wrapperEquality = isEqualityOp && (leftIsWrapperObj || rightIsWrapperObj);
+
+  // (#1961) In nativeStrings mode a `string | undefined` / `string | null`
+  // operand (e.g. `"x".at(i)`, optional chains/params) lowers to a NULLABLE
+  // `$AnyString` ref. `isStringType` returns false for the union, so an equality
+  // like `"hello".at(1) === "e"` fell through to generic struct ref-equality
+  // (always false for equal content). Treat a nullable-string operand as a
+  // string operand for equality so it routes to `__str_equals` (content compare,
+  // null-tolerant). Only for equality ops — relational/`+` on nullable strings
+  // keep their existing handling.
+  const isStringOrNullableString = (t: ts.Type): boolean =>
+    isStringType(t) || getNullablePrimitiveInfo(t)?.primitiveKind === "string";
+  if (
+    ctx.nativeStrings &&
+    ctx.nativeStrTypeIdx >= 0 &&
+    isEqualityOp &&
+    !wrapperEquality &&
+    isStringOrNullableString(leftTsType) &&
+    isStringOrNullableString(rightTsType) &&
+    // At least one side is the union form (else the plain-string path below handles it)
+    (!isStringType(leftTsType) || !isStringType(rightTsType))
+  ) {
+    return compileStringBinaryOp(ctx, fctx, expr, op);
+  }
+
   if (
     !wrapperEquality &&
     isStringType(leftTsType) &&
@@ -1247,6 +1272,31 @@ export function compileBinaryExpression(
     op === ts.SyntaxKind.LessThanLessThanToken ||
     op === ts.SyntaxKind.GreaterThanGreaterThanToken ||
     op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken;
+
+  // (#2058) `+` where an operand is statically `any`/`unknown` (so it lowers to a
+  // dynamic externref that may hold a runtime string). §13.15.3 requires
+  // concatenation when either ToPrimitive result is a string, but the numeric
+  // paths below compile both operands with an f64 hint — ToNumber-coercing a
+  // runtime string, so `1 + "2"` wrongly produced `3` instead of `"12"`. Route
+  // these through a runtime-dispatched add BEFORE the f64 hint is applied. We
+  // require at least one `any`/`unknown` operand: provably-numeric and
+  // provably-string `+` were already handled above (string concat at the
+  // isStringType gate, numeric via the typed fast paths), so this leaves their
+  // codegen untouched. `ctx.fast` mode keeps its i32/f64 numeric semantics for
+  // statically-typed operands and is unaffected (those aren't `any`/`unknown`).
+  //
+  // Fast mode (`anyValueTypeIdx >= 0`) is excluded: there `any + any` is routed
+  // through `compileAnyBinaryDispatch` (the AnyValue `__any_add` helper) earlier,
+  // and the `__host_add` host import isn't part of that ABI. Per the #2058 design
+  // rule, this per-site recovery is **default-mode only**.
+  if (op === ts.SyntaxKind.PlusToken && ctx.anyValueTypeIdx < 0) {
+    const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+    const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+    if ((leftIsAnyish || rightIsAnyish) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
+      return emitAnyAdd(ctx, fctx, expr);
+    }
+  }
+
   // In fast mode, numeric hint is i32 (unless division/power which promotes to f64).
   // Also use i32 hint when operands have native i32 type annotations (type i32 = number).
   const isDivOrPow = op === ts.SyntaxKind.SlashToken || op === ts.SyntaxKind.AsteriskAsteriskToken;
@@ -2507,6 +2557,137 @@ function compileAnyBinaryDispatch(
     return { kind: "i32" };
   }
   return { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
+}
+
+/**
+ * (#2058) Emit `+` for two operands where at least one is a dynamic externref
+ * (an `any`/`unknown`/boxed value). The operands are already on the Wasm stack
+ * (left below right). Per §13.15.3 ApplyStringOrNumericBinaryOperator a runtime
+ * string on either side must CONCATENATE, not coerce to f64 — so we cannot take
+ * the externref-numeric f64 fast path.
+ *
+ * JS-host mode delegates to `__host_add` (JS `+`), which gives ToPrimitive, the
+ * string-if-either-is-string rule, and object valueOf/toString ordering for
+ * free. Standalone/WASI has no JS host, so we build the operation in-module from
+ * the union-native typeof/unbox probes + native string concat. If neither host
+ * nor native-string support is available we fall back to the legacy f64 add
+ * (status quo — no regression).
+ *
+ * Returns the value type left on the stack (`externref` for the host/native
+ * paths — a boxed number-or-string the caller stores into the `any` slot — or
+ * `f64` for the legacy numeric fallback).
+ */
+export function emitAnyAdd(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
+  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+
+  // Compile both operands to externref temps. Passing the externref hint keeps a
+  // runtime string boxed (no ToNumber coercion) so §13.15.3 can concatenate.
+  const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
+  if (!lType) return { kind: "externref" };
+  if (lType.kind !== "externref") {
+    coerceType(ctx, fctx, lType, { kind: "externref" });
+  }
+  const lTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: lTmp });
+  const rType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
+  if (!rType) {
+    releaseTempLocal(fctx, lTmp);
+    return { kind: "externref" };
+  }
+  if (rType.kind !== "externref") {
+    coerceType(ctx, fctx, rType, { kind: "externref" });
+  }
+  const rTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: rTmp });
+
+  // ── JS-host: JS `+` via __host_add ──
+  if (!noJsHost) {
+    fctx.body.push({ op: "local.get", index: lTmp });
+    fctx.body.push({ op: "local.get", index: rTmp });
+    releaseTempLocal(fctx, rTmp);
+    releaseTempLocal(fctx, lTmp);
+    const hostIdx = ensureLateImport(
+      ctx,
+      "__host_add",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const finalIdx = ctx.funcMap.get("__host_add") ?? hostIdx;
+    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_add");
+    fctx.body.push({ op: "call", funcIdx: finalIdx });
+    return { kind: "externref" };
+  }
+
+  // ── Standalone / WASI: build §13.15.3 in-module ──
+  // Requires native-string support for the concat arm; otherwise fall back.
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    ensureNativeStringHelpers(ctx);
+    addUnionImports(ctx);
+    const typeofStr = ctx.funcMap.get("__typeof_string");
+    const unboxNum = ctx.funcMap.get("__unbox_number");
+    const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+    if (typeofStr !== undefined && unboxNum !== undefined && concatIdx !== undefined) {
+      // ToString(externref) → ref $AnyString, via the runtime walker (handles
+      // boxed strings, numbers, null/undefined, and struct valueOf/toString).
+      const externToStr = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const finalToStr = ctx.funcMap.get("__extern_toString") ?? externToStr;
+
+      const emitToAnyString = (tmp: number): Instr[] => [
+        { op: "local.get", index: tmp },
+        { op: "call", funcIdx: finalToStr } as Instr,
+        { op: "any.convert_extern" } as Instr,
+        { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+      ];
+
+      // if (__typeof_string(l) | __typeof_string(r)) → concat both as strings
+      //                                      else      → f64.add(unbox, unbox)
+      const concatArm: Instr[] = [
+        ...emitToAnyString(lTmp),
+        ...emitToAnyString(rTmp),
+        { op: "call", funcIdx: concatIdx } as Instr,
+        { op: "extern.convert_any" } as Instr,
+      ];
+      const numericArm: Instr[] = [
+        { op: "local.get", index: lTmp },
+        { op: "call", funcIdx: unboxNum } as Instr,
+        { op: "local.get", index: rTmp },
+        { op: "call", funcIdx: unboxNum } as Instr,
+        { op: "f64.add" } as Instr,
+      ];
+      // Box the numeric arm's f64 result back to externref so both arms agree.
+      const boxNum = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const finalBoxNum = ctx.funcMap.get("__box_number") ?? boxNum;
+      numericArm.push({ op: "call", funcIdx: finalBoxNum } as Instr);
+
+      fctx.body.push({ op: "local.get", index: lTmp });
+      fctx.body.push({ op: "call", funcIdx: typeofStr } as Instr);
+      fctx.body.push({ op: "local.get", index: rTmp });
+      fctx.body.push({ op: "call", funcIdx: typeofStr } as Instr);
+      fctx.body.push({ op: "i32.or" } as Instr);
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: concatArm,
+        else: numericArm,
+      } as Instr);
+      releaseTempLocal(fctx, rTmp);
+      releaseTempLocal(fctx, lTmp);
+      return { kind: "externref" };
+    }
+  }
+
+  // ── Fallback: no host, no native strings → legacy f64 add (status quo) ──
+  fctx.body.push({ op: "local.get", index: lTmp });
+  coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+  fctx.body.push({ op: "local.get", index: rTmp });
+  coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+  releaseTempLocal(fctx, rTmp);
+  releaseTempLocal(fctx, lTmp);
+  fctx.body.push({ op: "f64.add" });
+  return { kind: "f64" };
 }
 
 export function compileNumericBinaryOp(

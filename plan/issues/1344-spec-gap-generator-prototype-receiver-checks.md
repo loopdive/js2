@@ -1,9 +1,9 @@
 ---
 id: 1344
 title: "spec gap: Generator/AsyncIterator prototype receiver TypeErrors + return/throw (52 + 12 test262 fails)"
-status: blocked
+status: ready
 created: 2026-05-08
-updated: 2026-05-28
+updated: 2026-06-12
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen
 language_feature: generators
 goal: spec-completeness
-sprint: 50
+sprint: 63
 parent: 1328
 depends_on: [1665]
 ---
@@ -138,3 +138,7 @@ even though tests check just for its existence).
 - `test262/test/built-ins/GeneratorPrototype/next/this-val-not-generator.js`
 - `test262/test/built-ins/GeneratorPrototype/throw/from-state-completed.js`
 - `test262/test/built-ins/AsyncGeneratorPrototype/throw/throw-promise-rejected.js`
+
+## Unblocked (2026-06-12)
+
+Blocker #1665 is done — flipped to `ready`, queued sprint 63. Re-validate the repro first (#2148).

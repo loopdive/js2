@@ -2,9 +2,9 @@
 id: 2107
 title: "value-rep P4: standalone any-helper conformance on canonical tags (__any_strict_eq, __any_unbox_bool, $__any_to_string, __any_typeof)"
 status: ready
-sprint: Backlog
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high

@@ -1,9 +1,9 @@
 ---
 id: 1342
 title: "spec gap: JSON.stringify replacer/toJSON/property-list (49 of 66 test262 fails)"
-status: in-progress
+status: wont-fix
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -119,3 +119,7 @@ attempt to convert WasmGC vec/array replacers into a plain JS array via
 - `tests/equivalence/json-stringify.test.ts`,
   `tests/issue-json-stringify-structs.test.ts` — same pre-existing
   failures as main, no new regressions from the replacer bridge.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #1636 (same slug, json-stringify replacer/toJSON spec gap — renumber artifact). #1636 carries the S1 strict-this regression note and is canonical.

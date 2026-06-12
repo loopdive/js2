@@ -1,9 +1,9 @@
 ---
 id: 1520
 title: "docs: architectural comparison — Static Hermes (native) vs js2wasm (WasmGC AOT)"
-status: in-progress
+status: ready
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -65,3 +65,7 @@ GC types) instead of C structs.
 - Static Hermes source: `https://github.com/facebook/hermes/tree/static_h`
 - Static Hermes README / docs in that tree
 - js2wasm: `src/codegen/index.ts`, `src/runtime.ts`, `CLAUDE.md`, `plan/goals/goal-graph.md`
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

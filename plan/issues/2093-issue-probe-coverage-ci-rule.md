@@ -2,9 +2,9 @@
 id: 2093
 title: "issue→probe coverage CI rule: bugfix issues cannot flip to done without a permanent probe/test reference"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low

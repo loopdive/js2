@@ -1,9 +1,9 @@
 ---
 id: 1534
 title: "test: Web API host import unit tests (fetch, timers, localStorage, crypto.getRandomValues)"
-status: in-progress
+status: ready
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -58,3 +58,7 @@ Build mock implementations matching those exact names and signatures.
 ## Notes
 
 If the actual import signatures are hard to mock (e.g. complex externref passing), document the gap and ship what works. The goal is coverage, not perfection.
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

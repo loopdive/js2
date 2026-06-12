@@ -1,7 +1,8 @@
 ---
 id: 1967
 title: "sort is a silent no-op on string/object-element arrays (even with comparator); map/filter/reduce on struct-element arrays return empty garbage"
-status: in-progress
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
 updated: 2026-06-12
@@ -94,3 +95,7 @@ Regression-clean across #1361/#1816/#1966/#1993/#1589 + array-prototype-methods
   siblings) to box each `ref` element to externref before invoking the callback
   (the convert-loop pattern in `destructureParamArray`). Larger, separate change
   — split out from the safe sort gate fix.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1390; frontmatter was stale at `in-progress`. Flipped to `done` during the sprint-62 issue review.

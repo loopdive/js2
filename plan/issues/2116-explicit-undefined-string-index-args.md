@@ -2,10 +2,10 @@
 id: 2116
 renumbered_from: 1957
 title: "explicit undefined as optional string-index arg coerced to NaN/0 instead of per-method default (substring/slice/lastIndexOf/endsWith/repeat, both backends)"
-status: ready
+status: wont-fix
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -67,3 +67,7 @@ truncate before the range check (keep the +Infinity check on the f64).
 
 #1248 (missing-arg defaults, done), #1381 (null-vs-undefined padding for
 *missing* args, done). Explicit-undefined / NaN-through-f64-slot untracked.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #2124 — the same audit batch was filed twice (#2110–#2117 ≡ #2118–#2125). The high series is canonical: merged/open PRs reference #2120–#2125. No work was lost; see #2124.

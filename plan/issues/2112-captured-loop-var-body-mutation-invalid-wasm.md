@@ -2,10 +2,10 @@
 id: 2112
 renumbered_from: 1953
 title: "captured let loop variable also mutated in the loop body produces an invalid module (F64Add type mismatch)"
-status: ready
+status: wont-fix
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -68,3 +68,7 @@ rewrites the same allocation strategy.
 Grepped `F64Add`, `boxed.*loop`, `capture.*loop`: #1617 (done — sibling
 shape), #1589 (pre-box origin), #1453 (in-review — per-iteration *values*,
 not this validation failure). Untracked.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #2120 — the same audit batch was filed twice (#2110–#2117 ≡ #2118–#2125). The high series is canonical: merged/open PRs reference #2120–#2125. No work was lost; see #2120.

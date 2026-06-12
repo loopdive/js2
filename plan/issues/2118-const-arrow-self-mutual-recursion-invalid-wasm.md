@@ -3,9 +3,9 @@ id: 2118
 renumbered_from: 1951
 title: "self/mutually-recursive const-arrow closures emit invalid Wasm (struct.get type mismatch) or runtime ref.cast traps"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: max

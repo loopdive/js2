@@ -1,10 +1,11 @@
 ---
 id: 2004
 title: "codePointAt out-of-range returns NaN instead of undefined — ?? / === undefined guards never fire"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -46,3 +47,7 @@ codePointAt. Coordinate with the #1852 representation work.
 
 #1445 (arg coercion), #1381 (substring/slice) don't cover return-value
 representation. New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1329; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

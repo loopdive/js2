@@ -2,10 +2,10 @@
 id: 2110
 renumbered_from: 1951
 title: "self/mutually-recursive const-arrow closures emit invalid Wasm (struct.get type mismatch) or runtime ref.cast traps"
-status: ready
+status: wont-fix
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -77,3 +77,7 @@ Grepped `recursive closure|self-recursive|arrow.*recursive`, `mutual`,
 `factorial|fibonacci`: #897 (top-level fib, done), #1312 (nested async
 fn-decl with captures, done), #1314/#1301/#1063 (other closure codegen, done),
 #1178 (stack exhaustion, done). Const-arrow self/mutual recursion is untracked.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #2118 — the same audit batch was filed twice (#2110–#2117 ≡ #2118–#2125). The high series is canonical: merged/open PRs reference #2120–#2125. No work was lost; see #2118.

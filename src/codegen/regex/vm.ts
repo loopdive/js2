@@ -247,6 +247,16 @@ export function runAt(
         else pc++;
         break;
       }
+      case ReOp.CLEAR: {
+        // Reset capture slots a..b (inclusive) to -1 at a quantifier-iteration
+        // head (§22.2.2.3.1, #1960) so a group that doesn't participate this
+        // iteration reads as unset. Copy-on-write like SAVE; the snapshot taken
+        // by the enclosing SPLIT restores it on backtrack.
+        caps = caps.slice();
+        for (let i = a; i <= b; i++) caps[i] = -1;
+        pc++;
+        break;
+      }
       case ReOp.MATCH: {
         return caps;
       }

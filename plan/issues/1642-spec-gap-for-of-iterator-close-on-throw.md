@@ -1,9 +1,9 @@
 ---
 id: 1642
 title: "spec gap: for-of doesn't IteratorClose on body throw (portion of 389 fails)"
-status: in-progress
+status: ready
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -162,3 +162,7 @@ to the outer function.
 The single root cause unlocks all `iterator-close-via-return` flavoured
 tests. Several other for-of failures are unrelated (destructuring, TS
 type checker rejections) and tracked elsewhere.
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

@@ -1,10 +1,10 @@
 ---
 id: 1812
 title: "node:buffer + global Buffer — host class with from/concat/toString"
-status: ready
+status: wont-fix
 sprint: Backlog
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -57,3 +57,7 @@ Tier 0 (JS-host target — standalone deferred):
 
 `tests/issue-6403.test.ts` — compile each Tier 0 snippet under JS-host config
 and assert against the host's native `Buffer`.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #1793 (node builtin filed twice — renumber artifact). #1793 is canonical; both were parked on the npm front.

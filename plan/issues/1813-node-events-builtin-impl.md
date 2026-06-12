@@ -1,10 +1,10 @@
 ---
 id: 1813
 title: "node:events / EventEmitter — host class + closure-callback contract"
-status: ready
+status: wont-fix
 sprint: Backlog
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -65,3 +65,7 @@ e.emit("tick", 42); // got === 42
 
 `tests/issue-6404.test.ts` — compile the Tier 0 snippet under JS-host config
 and assert `got === 42` plus once/off behavior.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #1794 (node builtin filed twice — renumber artifact). #1794 is canonical; both were parked on the npm front.

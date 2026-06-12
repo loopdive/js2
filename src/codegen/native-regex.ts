@@ -525,8 +525,18 @@ export function ensureRegexRun(ctx: CodegenContext): number {
                                                 op: "if",
                                                 blockType: { kind: "empty" },
                                                 then: progressArm(),
-                                                // op == MATCH (the only remaining op): return 1
-                                                else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                                else: [
+                                                  { op: "local.get", index: OP },
+                                                  { op: "i32.const", value: ReOp.CLEAR },
+                                                  { op: "i32.eq" },
+                                                  {
+                                                    op: "if",
+                                                    blockType: { kind: "empty" },
+                                                    then: clearArm(),
+                                                    // op == MATCH (the only remaining op): return 1
+                                                    else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                                  },
+                                                ],
                                               },
                                             ],
                                           },
@@ -704,6 +714,50 @@ export function ensureRegexRun(ctx: CodegenContext): number {
           { op: "local.set", index: PC },
         ],
       },
+    ];
+  }
+
+  function clearArm(): Instr[] {
+    // Reset capture slots a..b (inclusive) to -1 (§22.2.2.3.1, #1960). TMPI is
+    // the loop cursor (general i32 scratch — does not overlap backref state).
+    // Mirrors the CLEAR case in regex/vm.ts; backtrack restore is handled by
+    // the enclosing SPLIT's caps snapshot.
+    return [
+      { op: "local.get", index: A },
+      { op: "local.set", index: TMPI },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              // if (TMPI > B) break
+              { op: "local.get", index: TMPI },
+              { op: "local.get", index: B },
+              { op: "i32.gt_s" },
+              { op: "br_if", depth: 1 },
+              // caps[TMPI] = -1
+              { op: "local.get", index: CAPS },
+              { op: "local.get", index: TMPI },
+              { op: "i32.const", value: -1 },
+              { op: "array.set", typeIdx: i32Arr },
+              // TMPI++
+              { op: "local.get", index: TMPI },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: TMPI },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      // pc++
+      { op: "local.get", index: PC },
+      { op: "i32.const", value: 1 },
+      { op: "i32.add" },
+      { op: "local.set", index: PC },
     ];
   }
 

@@ -1,10 +1,10 @@
 ---
 id: 1950
 title: "Default-on optimization — default builds ship unoptimized; add -O default where Binaryen is present plus tiny always-on cleanups"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: medium

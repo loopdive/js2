@@ -2,9 +2,9 @@
 id: 2101
 title: "architect spec: class object model — constructor-as-value + prototype chain representation"
 status: ready
-sprint: Backlog
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: max

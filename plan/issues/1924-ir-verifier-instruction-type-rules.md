@@ -1,10 +1,10 @@
 ---
 id: 1924
 title: "Instruction-level type rules in the IR verifier — operands, branch-arg types, and resultType validation"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high

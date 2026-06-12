@@ -2,9 +2,9 @@
 id: 2023
 title: "new.target compiles to constant i32 1 — identity comparisons (new.target === A) always wrong"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: hard
 reasoning_effort: high

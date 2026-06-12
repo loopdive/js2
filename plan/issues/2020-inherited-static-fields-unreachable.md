@@ -1,10 +1,11 @@
 ---
 id: 2020
 title: "inherited static fields unreachable through subclass name (B.count → null; static method inheritance works)"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: low
@@ -49,3 +50,7 @@ static on B — document the chosen behavior).
 
 #1643 (static init order, in-review) doesn't cover inheritance lookup;
 #1395/#1116b done. New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1333; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

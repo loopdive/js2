@@ -2,9 +2,9 @@
 id: 2099
 title: "promote-baseline must re-run (not carry forward) poison-classified rows"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: low

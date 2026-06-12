@@ -1,10 +1,11 @@
 ---
 id: 2006
 title: "`${null}` in a template literal traps 'illegal cast' — externref spans assumed to be strings"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low
@@ -45,3 +46,7 @@ share the binary-concat helper).
 ## Dupe check
 
 #1918/#1922 unrelated (standalone). New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1321; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

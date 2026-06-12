@@ -661,7 +661,9 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   const restInfo = ctx.funcRestParams.get(func.name);
   const params: { name: string; type: ValType }[] = [];
   const linearParams = getLinearU8ParamIndicesForDeclaration(ctx, decl);
-  const linearParamBuffers: { name: string; ptrLocalIdx: number; lenLocalIdx: number }[] = [];
+  // #2045: carry the param's ts.Symbol so the buffer registry is keyed by
+  // symbol (scope-correct) rather than identifier text (shadow-blind).
+  const linearParamBuffers: { sym: ts.Symbol | undefined; ptrLocalIdx: number; lenLocalIdx: number }[] = [];
   const funcType = ctx.mod.types[func.typeIdx];
   const sigParamTypes = funcType?.kind === "func" ? funcType.params : undefined;
   let wasmParamCursor = 0;
@@ -681,7 +683,8 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
           type: sigParamTypes?.[lenLocalIdx] ?? { kind: "i32" },
         },
       );
-      linearParamBuffers.push({ name: paramName, ptrLocalIdx, lenLocalIdx });
+      const paramSym = ts.isIdentifier(param.name) ? ctx.checker.getSymbolAtLocation(param.name) : undefined;
+      linearParamBuffers.push({ sym: paramSym, ptrLocalIdx, lenLocalIdx });
     } else if (restInfo && i === restInfo.restIndex) {
       // Rest parameter — use the vec struct ref type from the function signature
       params.push({
@@ -751,7 +754,9 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     fctx.localMap.set(params[i]!.name, i);
   }
   for (const buf of linearParamBuffers) {
-    registerLinearU8Buffer(fctx, buf.name, buf.ptrLocalIdx, buf.lenLocalIdx);
+    // A param with no resolvable symbol can't be looked up by element access
+    // either, so skipping registration is sound — it falls to the GC path.
+    if (buf.sym) registerLinearU8Buffer(fctx, buf.sym, buf.ptrLocalIdx, buf.lenLocalIdx);
   }
 
   ctx.currentFunc = fctx;

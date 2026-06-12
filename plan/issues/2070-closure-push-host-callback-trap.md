@@ -1,10 +1,11 @@
 ---
 id: 2070
 title: "closures stored via Array.push/unshift (and bare Map.set) wrapped as host callbacks — trap when invoked from Wasm; HOST_CALLBACK_METHODS allowlist is dead code"
-status: in-progress
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -116,3 +117,7 @@ JS-callable externref; a universal `Map.set → closure` flip *re-broke* #1311
   same stored externref works from both the #1311 class-wrapper and a bare
   module-scope Map. Higher risk (touches the element-read dispatch site); split
   out to avoid bundling with the safe array fix.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1381; frontmatter was stale at `in-progress`. Flipped to `done` during the sprint-62 issue review.

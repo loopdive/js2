@@ -2,9 +2,9 @@
 id: 2012
 title: "Object.freeze: no strict-mode TypeError on write, isFrozen false — tracking only fires for identifier args, struct receivers get no integrity bit"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium

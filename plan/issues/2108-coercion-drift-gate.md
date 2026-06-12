@@ -2,9 +2,9 @@
 id: 2108
 title: "coercion drift gate: scripts/check-coercion-sites.mjs — no 9th hand-rolled ToString"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low

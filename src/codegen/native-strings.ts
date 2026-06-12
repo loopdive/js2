@@ -3975,8 +3975,10 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
     });
   }
 
-  // --- $__str_split(s: ref $NativeString, sep: ref $NativeString) -> ref $vec_nstr ---
-  // Splits s by sep, returns a native array of native strings.
+  // --- $__str_split(s: ref $NativeString, sep: ref $NativeString, limit: i32) -> ref $vec_nstr ---
+  // Splits s by sep, returns a native array of native strings. `limit` caps the
+  // number of pieces (ECMA-262 §22.1.3.23): callers pass 0xFFFFFFFF (= -1 as i32)
+  // for "no limit"; `limit === 0` yields the empty array (#2125).
   {
     // Register native string array type: (array (mut (ref null $AnyString)))
     // Use ref_null so array.new_default can initialize with null.
@@ -3987,29 +3989,47 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
     const nstrVecTypeIdx = getOrRegisterVecType(ctx, nstrElemKey, nstrElemType);
     const nstrVecRef: ValType = { kind: "ref", typeIdx: nstrVecTypeIdx };
 
-    const typeIdx = addFuncType(ctx, [strRef, strRef], [nstrVecRef]);
+    const typeIdx = addFuncType(ctx, [strRef, strRef, { kind: "i32" }], [nstrVecRef]);
     const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
     ctx.nativeStrHelpers.set("__str_split", funcIdx);
 
     const indexOfIdx = ctx.nativeStrHelpers.get("__str_indexOf")!;
     const substringIdx = ctx.nativeStrHelpers.get("__str_substring")!;
 
-    // params: s(0), sep(1)
-    // locals: sLen(2), sepLen(3), pos(4), idx(5), part(6-nullable),
-    //         resultArr(7-nullable), resultLen(8), resultCap(9), newArr(10-nullable)
+    // params: s(0), sep(1), limit(2)
+    // locals: sLen(3), sepLen(4), pos(5), idx(6), part(7-nullable),
+    //         resultArr(8-nullable), resultLen(9), resultCap(10), newArr(11-nullable)
     const S = 0,
-      SEP = 1;
-    const SLEN = 2,
-      SEPLEN = 3,
-      POS = 4,
-      IDX = 5,
-      PART = 6;
-    const RARR = 7,
-      RLEN = 8,
-      RCAP = 9,
-      NEWARR = 10;
+      SEP = 1,
+      LIMIT = 2;
+    const SLEN = 3,
+      SEPLEN = 4,
+      POS = 5,
+      IDX = 6,
+      PART = 7;
+    const RARR = 8,
+      RLEN = 9,
+      RCAP = 10,
+      NEWARR = 11;
 
     const body: Instr[] = [
+      // #2125: limit === 0 → return empty array (ECMA-262 §22.1.3.23 step 14).
+      // The vec struct is { length: i32, data: ref $arr }, so push length 0
+      // then a 0-capacity backing array.
+      { op: "local.get", index: LIMIT },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "i32.const", value: 0 }, // vec length
+          { op: "i32.const", value: 0 }, // backing array size
+          { op: "array.new_default", typeIdx: nstrArrTypeIdx },
+          { op: "struct.new", typeIdx: nstrVecTypeIdx },
+          { op: "return" },
+        ] as Instr[],
+      },
+
       // sLen = s.len
       { op: "local.get", index: S },
       { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
@@ -4060,9 +4080,14 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
                 op: "loop",
                 blockType: { kind: "empty" },
                 body: [
+                  // stop at sLen OR when we've emitted `limit` pieces (#2125)
                   { op: "local.get", index: POS },
                   { op: "local.get", index: SLEN },
                   { op: "i32.ge_s" },
+                  { op: "local.get", index: POS },
+                  { op: "local.get", index: LIMIT },
+                  { op: "i32.ge_u" },
+                  { op: "i32.or" },
                   { op: "br_if", depth: 1 },
 
                   // part = substring(s, pos, pos+1)
@@ -4090,8 +4115,9 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
             ] as Instr[],
           },
 
-          // return struct.new(sLen, resultArr)
-          { op: "local.get", index: SLEN },
+          // return struct.new(pos, resultArr) — `pos` is the number of chars
+          // actually emitted, which equals min(sLen, limit) (#2125).
+          { op: "local.get", index: POS },
           { op: "local.get", index: RARR },
           { op: "ref.as_non_null" },
           { op: "struct.new", typeIdx: nstrVecTypeIdx },
@@ -4108,6 +4134,13 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
             op: "loop",
             blockType: { kind: "empty" },
             body: [
+              // #2125: stop once `limit` pieces have been collected. From the
+              // loop body (not inside an `if`), depth 1 exits the wrapping block.
+              { op: "local.get", index: RLEN },
+              { op: "local.get", index: LIMIT },
+              { op: "i32.ge_u" },
+              { op: "br_if", depth: 1 }, // break outer block
+
               // idx = indexOf(s, sep, pos)
               { op: "local.get", index: S },
               { op: "local.get", index: SEP },

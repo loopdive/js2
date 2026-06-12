@@ -27,6 +27,7 @@ export type ImportIntent =
   | { type: "declared_global"; name: string }
   | { type: "host_eq" }
   | { type: "host_loose_eq" }
+  | { type: "host_add" }
   | { type: "same_value_zero" }
   | { type: "dynamic_import" }
   | { type: "proxy_create" }

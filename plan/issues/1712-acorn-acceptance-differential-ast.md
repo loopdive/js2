@@ -16,8 +16,6 @@ model: fable
 depends_on: [1710, 1711]
 es_edition: multi
 related: [1690, 1690b, 1584, 1058]
-claimed_by: codex-developer
-claimed_at: 2026-06-07T05:10:23.845Z
 pr: 1293
 ---
 

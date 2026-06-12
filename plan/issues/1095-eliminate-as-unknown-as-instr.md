@@ -1,16 +1,16 @@
 ---
 id: 1095
 title: "Eliminate `as unknown as Instr` casts — extend Instr union to cover all emitted opcodes"
-status: in-review
+status: ready
 created: 2026-04-12
-updated: 2026-04-12
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: high
 task_type: refactor
 language_feature: compiler-internals
 goal: maintainability
-sprint: 45
+sprint: 62
 es_edition: n/a
 ---
 # #1095 — Eliminate `as unknown as Instr` casts (273 sites)
@@ -56,3 +56,13 @@ L (>400 lines touched across 26 files, but each change is mechanical)
 
 - CLAUDE.md mentions 158 occurrences as of an earlier count — now 273, confirming drift
 - #1013 codegen/index.ts split (reduces per-file cast density but doesn't fix the type model)
+
+## Sprint-62 planning amendment (2026-06-12)
+
+Re-scoped from big-bang union extension to a **ratchet**: current count is
+175 sites in 13 files (was 273/26 when filed; organic decay works). Sprint
+62 lands the mechanism only — `scripts/check-instr-casts.mjs` + committed
+baseline + `quality`-job wiring (clone of `check:ir-fallbacks`); growth
+fails CI, decreases auto-bank with `--update-on-decrease`. The remaining
+union extension is sprint-63 mop-up. Status reset from stale `in-review`
+(sprint 45) to `ready`.

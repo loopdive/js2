@@ -1,9 +1,9 @@
 ---
 id: 1315
 title: "import.defer / import.source missing early error detection — 157 negative tests false-pass"
-status: in-progress
+status: ready
 created: 2026-05-07
-updated: 2026-06-02
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -63,3 +63,7 @@ and module-loader/runtime diagnostics. The root cause remains the same:
 recognize the proposal forms in early-error detection and produce deliberate
 syntax/unsupported-feature diagnostics instead of falling through into generic
 codegen or runtime behavior.
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

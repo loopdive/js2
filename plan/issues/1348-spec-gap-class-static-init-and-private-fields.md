@@ -13,8 +13,6 @@ language_feature: class
 goal: spec-completeness
 sprint: 61
 parent: 1328
-claimed_by: codex-developer
-claimed_at: 2026-06-06T09:51:22.932Z
 pr: 1250
 completed: 2026-06-06
 ---

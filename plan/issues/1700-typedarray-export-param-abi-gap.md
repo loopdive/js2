@@ -1,9 +1,10 @@
 ---
 id: 1700
 title: "TypedArray as exported Wasm function param fails JS↔Wasm marshalling (TypeError: type incompatibility)"
-status: in-progress
+status: done
+completed: 2026-06-12
 created: 2026-05-28
-updated: 2026-05-28
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -165,3 +166,7 @@ correctly satisfies host imports; the failure is strictly the JS↔Wasm
 parameter type coercion, not a missing import. Probe with `(input: any)`
 verified that the boundary tolerates `Uint8Array` through externref. WAT
 dump above is verbatim from `binaryen.readBinary(r.binary).emitText()`.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #849; frontmatter was stale at `in-progress`. Flipped to `done` during the sprint-62 issue review.

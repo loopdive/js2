@@ -1,10 +1,10 @@
 ---
 id: 1814
 title: "node:http (+ https) — GET round-trip host import (axios unblocker)"
-status: ready
+status: wont-fix
 sprint: Backlog
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -66,3 +66,7 @@ function fetchText(url: string, cb: (s: string) => void): void {
 
 `tests/issue-6405.test.ts` — spin up a localhost server, compile the Tier 0
 `fetchText`, assert the returned body. Gate behind #6403 + #6404 landing.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #1795 (node builtin filed twice — renumber artifact). #1795 is canonical; both were parked on the npm front.

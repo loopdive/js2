@@ -1,10 +1,11 @@
 ---
 id: 1960
 title: "native RegExp VM: capture groups not reset between quantifier iterations"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
+completed: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -64,3 +65,41 @@ backtrack-aware (restore on backtrack like SAVE).
 
 #1539's Phase 2b `.exec` capture work has no reset note; no grep hit for
 "capture reset"/RepeatMatcher in plan/issues.
+
+## Resolution (2026-06-12)
+
+Added a `CLEAR loSlot,hiSlot` opcode (`ReOp.CLEAR = 14`) that resets capture
+slots `[loSlot..hiSlot]` to -1. The compiler emits it at the head of every
+star/plus body (`emitClearForBody`), using a new `captureSpan` helper to find
+the body's group-index span `[lo, hi]` → slot range `[2*lo, 2*hi+1]`. Bodies
+with no capture groups emit no CLEAR (common case unchanged). CLEAR runs once
+per iteration (the loop back-edge re-enters at the body head), so a group that
+doesn't participate in the final iteration reads as unset.
+
+CLEAR mutates the caps array in place (like SAVE); the enclosing SPLIT's caps
+snapshot restores it on backtrack, so the reset is correctly undone when an
+iteration is abandoned. Implemented in both the reference VM (`vm.ts`) and the
+hand-authored Wasm VM (`native-regex.ts` `clearArm()`).
+
+This builds on the #1959 PROGRESS work (same loop lowering); the branch is
+stacked on #1959 (PR #1395).
+
+### Files
+
+- `src/codegen/regex/bytecode.ts` — `ReOp.CLEAR`
+- `src/codegen/regex/compile.ts` — `captureSpan`, `emitClearForBody`, CLEAR at
+  star/plus body heads
+- `src/codegen/regex/vm.ts` — reference VM `CLEAR` dispatch
+- `src/codegen/native-regex.ts` — Wasm VM `clearArm()` dispatch
+
+## Test Results
+
+All match Node `RegExp` on the standalone backend:
+
+- `/(?:(a)|(b))+/.exec("ab")` → group 1 `undefined`, group 2 `"b"` (was group 1
+  stale `"a"`) — `test()` returns 18, matching Node
+- `/(?:(a)|(b))+/.exec("ba")` → group 1 `"a"`, group 2 `undefined`
+- `/((a)|(b))*/.exec("abab")`, `/(?:a(b)?)+/.exec("aa")` correct
+- `tests/issue-1960.test.ts` (5 cases) green
+- `regex-bytecode.test.ts` (277), replace (17), phase2b (#1912), #1914 — all
+  green, no capture regression

@@ -346,16 +346,20 @@ function emitReturnTail(ctx: CodegenContext, fctx: FunctionContext, hasPendingFi
   // for recursive and tail-position calls.
   // Guard: only apply when the callee's return type matches the caller's,
   // otherwise return_call produces a type mismatch (#839).
+  // Guard: never inside a try with a catch handler — return_call replaces the
+  // caller frame, so a throw from the callee would unwind past the enclosing
+  // catch and escape to the host (#1972).
+  const inTryWithHandler = (fctx.tryCatchDepth ?? 0) > 0;
   const lastInstr = fctx.body[fctx.body.length - 1];
   const resetBeforeReturn = emitLinearU8ArenaResetBeforeReturn(ctx, fctx);
-  if (!resetBeforeReturn && lastInstr && lastInstr.op === "call") {
+  if (!resetBeforeReturn && !inTryWithHandler && lastInstr && lastInstr.op === "call") {
     const calleeIdx = (lastInstr as any).funcIdx as number;
     if (canTailCall(ctx, fctx, calleeIdx)) {
       (lastInstr as any).op = "return_call";
       return; // return_call implicitly returns — no need for explicit return
     }
   }
-  if (!resetBeforeReturn && lastInstr && lastInstr.op === "call_ref") {
+  if (!resetBeforeReturn && !inTryWithHandler && lastInstr && lastInstr.op === "call_ref") {
     const typeIdx = (lastInstr as any).typeIdx as number | undefined;
     if (typeIdx !== undefined && canTailCallRef(ctx, fctx, typeIdx)) {
       (lastInstr as any).op = "return_call_ref";

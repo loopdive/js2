@@ -2,9 +2,9 @@
 id: 2102
 title: "shared throwJsError(kind, msg) lowering + trap-site audit — runtime checks must throw catchable JS errors, not Wasm traps"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high

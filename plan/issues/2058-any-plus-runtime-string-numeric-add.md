@@ -1,10 +1,11 @@
 ---
 id: 2058
 title: "+ and += with a runtime string in an any/externref position do numeric addition instead of concatenation"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
+completed: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -261,3 +262,64 @@ is precisely the −788 trap.
 - `tests/equivalence.test.ts` add `any`-concat cases.
 - Standalone: re-run the `test262` standalone shard; assert no movement in the
   `isSameValue`/`assert.sameValue` pass buckets (the −788 guard).
+
+---
+
+## Resolution (2026-06-12)
+
+Implemented per the staged plan: a new `__host_add` host import (JS `+`) plus a
+shared per-site runtime-dispatched add. **The comparator path
+(`binary-ops.ts` externref-equality block) and `__any_from_extern` /
+type-coercion boxing were NOT touched** — the gate only fires for `+`/`+=`, so
+the test262 `isSameValue` comparator ABI is untouched (the −788 guard holds).
+
+### What landed
+
+1. **`__host_add` wiring** — `src/index.ts` (`host_add` in the `ImportIntent`
+   union), `src/compiler/import-manifest.ts` (`__host_add → { type: "host_add" }`),
+   `src/runtime.ts` (`case "host_add": (a, b) => a + b`). JS `+` provides
+   ToPrimitive, the string-if-either-is-string rule, and object valueOf/toString
+   ordering for free.
+2. **`emitAnyAdd(ctx, fctx, expr)`** (`src/codegen/binary-ops.ts`) — the shared
+   add. Compiles both operands with an **externref hint** (keeping a runtime
+   string boxed, no ToNumber) then:
+   - JS-host → spill to externref temps, `call __host_add`, return externref.
+   - standalone/WASI (`noJsHost`) with `nativeStrings` → runtime branch:
+     `if (__typeof_string(l) | __typeof_string(r))` ToString both via
+     `__extern_toString` + `__str_concat`, **else** `__unbox_number` both +
+     `f64.add` + `__box_number`. No `__host_add` import is emitted standalone.
+   - no host / no native strings → legacy f64 add (status quo, no regression).
+3. **`+` gate** (`compileBinaryExpression`, after `isNumericOp`) — when
+   `op === PlusToken` and either static operand type is `any`/`unknown` (and not
+   bigint), route to `emitAnyAdd` **before** the f64 `numericHint` is applied
+   (the root cause: operands were ToNumber-coerced at compile time by the
+   numeric hint, so the late externref-numeric fallback never saw a string).
+4. **`+=` gate** (`compileCompoundAssignment` simple-identifier path) — new
+   `compileAnyCompoundAdd`: when LHS or RHS is `any`/`unknown`, compute via
+   `emitAnyAdd` (which reads `expr.left` as the current value) and store the
+   externref result back to the local / captured-global / module-global,
+   coercing to the binding's storage type. Boxed-capture and static-string
+   concat paths are left to their existing handlers.
+
+### Why it's regression-safe
+
+- Provably-numeric `+`/`+=` (neither side `any`/`unknown`) keep the f64/i32 fast
+  path verbatim — the gate's `leftIsAnyish || rightIsAnyish` predicate is false.
+- Provably-string `+` is still handled by the earlier `isStringType` concat gate
+  (runs before the new gate).
+- Fast mode (`anyValueTypeIdx >= 0`) intercepts `any + any` via
+  `compileAnyBinaryDispatch` earlier still, so it never reaches the new gate.
+- Standalone never emits a `__host_add` import (builds in-module or falls back).
+
+### Outcome (all verified)
+
+`plus("2")`/`plusBoth("1","2")`/`compound("2")` → `"12"`; `plusBoth(1,2)` → `3`;
+`null + 1` → `1`; `undefined + 1` → `NaN`; `"x" + null` → `"xnull"`;
+`string + (any number)` concatenates. Standalone numeric add computes correctly
+and the concat arm validates with no unsatisfiable import.
+
+### Tests
+
+`tests/issue-2058-any-plus-string.test.ts` — 12 JS-host equivalence cases
+(`assertEquivalent`) + 3 standalone cases (`--target standalone`,
+`WebAssembly.validate` + run).

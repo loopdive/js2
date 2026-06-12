@@ -1,9 +1,9 @@
 ---
 id: 1533
 title: "test: Node.js API host import unit tests (fs, crypto, process, console)"
-status: in-progress
+status: ready
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -50,3 +50,7 @@ Compile each snippet with `compile(src, { fileName: 'test.ts', allowFs: true })`
 ## Files to create
 
 - `tests/issue-1533.test.ts`
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

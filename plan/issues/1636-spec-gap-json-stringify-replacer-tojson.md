@@ -1,9 +1,9 @@
 ---
 id: 1636
 title: "spec gap: JSON.stringify replacer/toJSON/property-list (49 of 66 test262 fails)"
-status: in-progress
+status: ready
 created: 2026-05-08
-updated: 2026-05-28
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -334,3 +334,7 @@ clusters. Confirmed via per-test baseline diff (investigation 2026-05-29).
 `this` for a call site whose target is a strict-mode function. Add a strict-mode
 regression test (a strict fn asserting `this === undefined`) to the slice's
 test set before merging.
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

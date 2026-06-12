@@ -1,10 +1,10 @@
 ---
 id: 1811
 title: "node:url — URL / URLSearchParams as host constructors"
-status: ready
+status: wont-fix
 sprint: Backlog
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -56,3 +56,7 @@ Tier 0 (JS-host target — standalone deferred):
 
 `tests/issue-6402.test.ts` — compile each Tier 0 snippet under JS-host config
 and assert the result against the host's native `URL`.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #1792 (node builtin filed twice — renumber artifact). #1792 is canonical; both were parked on the npm front.

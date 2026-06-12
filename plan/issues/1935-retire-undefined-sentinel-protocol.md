@@ -1,10 +1,10 @@
 ---
 id: 1935
 title: "Retire the undefined-as-sentinel protocol in runtime.ts — getters returning undefined are misread as absent"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium

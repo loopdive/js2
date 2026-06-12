@@ -1,10 +1,11 @@
 ---
 id: 1861
 title: "promote-baseline never refreshes main: missing commit + push race freezes the test262 baseline"
-status: in-progress
+status: done
+completed: 2026-06-12
 sprint: Backlog
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-12
 status_note: "follow-up 2026-06-04 — main-repo push re-instated on MAIN_DEPLOY_KEY (SSH) to bypass GH013; see ## Follow-up"
 priority: high
 feasibility: easy
@@ -180,3 +181,7 @@ re-introduced.
 Validated locally with a throwaway repo that reproduces a divergent `main` + a
 dirty `test262` submodule: Option A pushed the fresh baseline on attempt 1 and
 preserved the concurrent commit that landed on `main` mid-run.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1156; frontmatter was stale at `in-progress`. Flipped to `done` during the sprint-62 issue review.

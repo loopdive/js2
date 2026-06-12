@@ -361,6 +361,19 @@ function verifyBlock(
       // would spuriously read as use-before-def. (#1844)
       if (instr.kind === "while.loop" || instr.kind === "for.loop") {
         walkBuffer(instr.cond);
+        // The lowerer emits an unconditional `i32.eqz` on `condValue`, so a
+        // non-i32 cond produces invalid Wasm that bricks the whole module.
+        // Reject it here (the lowerer's #1980 fix throws a fallback before
+        // reaching this, but the verifier is the structural backstop — the
+        // #1850 gap that let this through silently). (#1980)
+        const condT = operandIrType(func, block, instr.condValue, localDefs);
+        if (condT && asVal(condT)?.kind !== "i32") {
+          errors.push({
+            message: `${instr.kind} condValue must be i32, got ${asVal(condT)?.kind ?? condT.kind}`,
+            func: func.name,
+            block: block.id as number,
+          });
+        }
       }
 
       // Use-before-def check (params + block args always count). Nested-body

@@ -2,10 +2,10 @@
 id: 2113
 renumbered_from: 1954
 title: "parameter-default TDZ not enforced: f(a = a) yields NaN and f(a = b, b = 2) reads later params instead of throwing ReferenceError"
-status: ready
+status: wont-fix
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: low
 feasibility: medium
 reasoning_effort: medium
@@ -54,3 +54,7 @@ the mechanism #1128 added for destructuring.
 
 Grepped `param.*tdz`, `default.*reference`: #1128 (destructuring TDZ, done).
 Plain-parameter case untracked.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #2121 — the same audit batch was filed twice (#2110–#2117 ≡ #2118–#2125). The high series is canonical: merged/open PRs reference #2120–#2125. No work was lost; see #2121.

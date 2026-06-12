@@ -1,10 +1,10 @@
 ---
 id: 1925
 title: "Run IR hygiene passes inside nested buffers — or commit to one control-flow representation"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: hard
 reasoning_effort: max

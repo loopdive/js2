@@ -1,10 +1,11 @@
 ---
 id: 2005
 title: "template literal interpolation stringifies booleans as '1'/'0' and undefined as '0' (i32 spans bypass emitBoolToString)"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low
@@ -50,3 +51,7 @@ undefined-typed spans to the literal `"undefined"` constant.
 
 #183 (done, wasm-validation only); #1931 same family different trigger.
 New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1321; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

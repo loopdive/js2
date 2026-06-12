@@ -1,9 +1,10 @@
 ---
 id: 1167
 title: "SSA IR Phase 3 — optimization passes (meta issue — see 1167a/b/c)"
-status: ready
+status: done
+completed: 2026-06-12
 created: 2026-04-22
-updated: 2026-04-28
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -267,3 +268,7 @@ Minimum edits to make this sprintable:
 4. **Fix the ordering contradiction** between "Passes — in implementation order" and "Suggested implementation order".
 5. **Remove / rescope the repair-pass kill list** — either defer to a later phase or rewrite as "add instrumentation to measure how often these passes are no-ops for IR-path functions".
 6. **Add a unit-test line** to acceptance criteria: every new pass ships with targeted IR-level tests that exercise the transformation in isolation.
+
+## Container closed (2026-06-12)
+
+All child phases (1167a/b/c) are done; the optimization work continues under the IR-lane issues. Administrative close during the sprint-62 issue review.

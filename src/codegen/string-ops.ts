@@ -552,6 +552,97 @@ export function compileNativeTemplateExpression(
 
 // ── Tagged template expressions ──────────────────────────────────────
 
+/** Is `tag` syntactically the builtin `String.raw`? (#2008) */
+function isStringRawTag(tag: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(tag) &&
+    ts.isIdentifier(tag.expression) &&
+    tag.expression.text === "String" &&
+    tag.name.text === "raw"
+  );
+}
+
+/**
+ * Lower `String.raw`tmpl`` to the RAW parts interleaved with the stringified
+ * substitutions, as a plain in-module string concat (#2008). The raw parts are
+ * compile-time string literals, so no template struct read or host bridge is
+ * needed — this works in both JS-host and standalone/native-strings modes.
+ */
+function compileStringRaw(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.TaggedTemplateExpression,
+  rawParts: readonly string[],
+  substitutions: readonly ts.Expression[],
+): ValType | null {
+  addStringImports(ctx);
+  const concatIdx = ctx.jsStringImports.get("concat") ?? ctx.nativeStrHelpers.get("__str_concat");
+  if (concatIdx === undefined) {
+    reportError(ctx, expr, "String.raw: string concat helper unavailable");
+    return null;
+  }
+  const toStrIdx = ctx.funcMap.get("number_toString");
+
+  // rawParts has length substitutions.length + 1: raw0 sub0 raw1 sub1 ... rawN.
+  // Start the accumulator with raw0.
+  compileStringLiteral(ctx, fctx, rawParts[0] ?? "", expr);
+
+  for (let i = 0; i < substitutions.length; i++) {
+    const sub = substitutions[i]!;
+    const subTsType = ctx.checker.getTypeAtLocation(sub);
+    const subIsUndef = (subTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
+    const subIsNull = (subTsType.flags & ts.TypeFlags.Null) !== 0;
+    const subType = compileExpression(ctx, fctx, sub);
+
+    if ((subIsUndef || subIsNull) && subType && subType.kind !== "externref") {
+      fctx.body.push({ op: "drop" });
+      const word = subIsNull ? "null" : "undefined";
+      addStringConstantGlobal(ctx, word);
+      fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get(word)! });
+    } else if (subType && subType.kind === "i32" && isBooleanType(subTsType)) {
+      emitBoolToString(ctx, fctx);
+    } else if (subType && subType.kind === "f64" && toStrIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: toStrIdx });
+    } else if (subType && subType.kind === "i32" && toStrIdx !== undefined) {
+      fctx.body.push({ op: "f64.convert_i32_s" });
+      fctx.body.push({ op: "call", funcIdx: toStrIdx });
+    } else if (subType && subType.kind === "i64" && toStrIdx !== undefined) {
+      fctx.body.push({ op: "f64.convert_i64_s" });
+      fctx.body.push({ op: "call", funcIdx: toStrIdx });
+    } else if (subType && subType.kind === "externref") {
+      if (subIsNull) {
+        fctx.body.push({ op: "drop" });
+        addStringConstantGlobal(ctx, "null");
+        fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("null")! });
+      } else if (subIsUndef) {
+        fctx.body.push({ op: "drop" });
+        addStringConstantGlobal(ctx, "undefined");
+        fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("undefined")! });
+      } else if (!isStringType(subTsType)) {
+        const externToStrIdx = ensureLateImport(
+          ctx,
+          "__extern_toString",
+          [{ kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        const finalIdx = ctx.funcMap.get("__extern_toString") ?? externToStrIdx;
+        if (finalIdx !== undefined) fctx.body.push({ op: "call", funcIdx: finalIdx });
+      }
+    } else if (subType && (subType.kind === "ref" || subType.kind === "ref_null")) {
+      coerceType(ctx, fctx, subType, { kind: "externref" }, "string");
+    }
+    // Accumulator + stringified substitution.
+    fctx.body.push({ op: "call", funcIdx: concatIdx });
+
+    // Append the following raw part.
+    compileStringLiteral(ctx, fctx, rawParts[i + 1] ?? "", expr);
+    fctx.body.push({ op: "call", funcIdx: concatIdx });
+  }
+
+  return { kind: "externref" };
+}
+
 /**
  * Compile a tagged template expression: tag`hello ${x} world`
  * Desugars to: tag(["hello ", " world"], x)
@@ -687,6 +778,15 @@ export function compileTaggedTemplateExpression(
   // Load cached template object into the local
   fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
   fctx.body.push({ op: "local.set", index: stringsLocal });
+
+  // `String.raw` is a builtin whose result is the RAW (uncooked) parts
+  // interleaved with the stringified substitutions. Lower it in-module rather
+  // than routing the template struct through the `__tagged_template` host
+  // bridge, which can't index a WasmGC struct from JS (#2008). The raw parts
+  // are known at compile time, so this "compiles away" to a plain concat.
+  if (isStringRawTag(expr.tag)) {
+    return compileStringRaw(ctx, fctx, expr, rawParts, substitutions);
+  }
 
   // Now compile the call to the tag function.
   // The tag function receives (stringsArray, ...substitutions).
@@ -1233,14 +1333,25 @@ function compileAndCoerceConcatOperand(ctx: CodegenContext, fctx: FunctionContex
       });
     }
   } else if (valType.kind === "ref" || valType.kind === "ref_null") {
-    // #1525 — string concat is an explicit ToPrimitive("string") site, so
-    // walk @@toPrimitive("string") → toString() per §7.1.1.1. Routing through
-    // coerceType with an explicit hint reuses the dispatch table built in
-    // type-coercion.ts (ref → externref hint="string"). Without the hint,
-    // coerceType emits a bare `extern.convert_any`, and the wasm:js-string
-    // `concat` polyfill then calls V8 native String concat on the opaque
-    // struct, throwing "Cannot convert object to primitive value".
-    coerceType(ctx, fctx, valType, { kind: "externref" }, "string");
+    // #2022 — `+` applies ToPrimitive with the DEFAULT hint (valueOf-first),
+    // not the string hint. Convert the struct to externref and route through
+    // `__extern_to_string_default`. (Was `coerceType(..., "string")`, which
+    // walked @@toPrimitive("string")/toString — the wrong hint for `+`; e.g.
+    // `objWithValueOf + ""` must use valueOf.) The bare extern.convert_any
+    // alone would also let the wasm:js-string concat polyfill throw on the
+    // opaque struct, so the host stringify call is still required.
+    coerceType(ctx, fctx, valType, { kind: "externref" });
+    const toStrIdx = ensureLateImport(
+      ctx,
+      "__extern_to_string_default",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const finalIdx = ctx.funcMap.get("__extern_to_string_default") ?? toStrIdx;
+    if (finalIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: finalIdx });
+    }
   }
 }
 
@@ -1288,6 +1399,61 @@ function coerceCompiledValueToNumber(ctx: CodegenContext, fctx: FunctionContext,
     return;
   }
   coerceType(ctx, fctx, valueType, { kind: "f64" }, "number");
+}
+
+/**
+ * (#1961) Null-tolerant native string content equality. A `string | undefined`
+ * operand lowers to a NULLABLE `$AnyString` ref where a null ref IS the
+ * `undefined` value. `__str_flatten`/`__str_equals` deref their operands and
+ * trap on null, so guard first: both-null → equal (1), exactly-one-null →
+ * unequal (0), else flatten both and compare content. Leaves an i32 (1/0) on
+ * the stack representing `left == right` (the caller negates for `!=`/`!==`).
+ */
+function emitNullableStringEquals(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  flattenIdx: number,
+  equalsIdx: number,
+): void {
+  const nullableStr = nativeStringTypeNullable(ctx);
+  const leftLocal = allocLocal(fctx, `__streq_l_${fctx.locals.length}`, nullableStr);
+  const rightLocal = allocLocal(fctx, `__streq_r_${fctx.locals.length}`, nullableStr);
+  compileExpression(ctx, fctx, expr.left, nullableStr);
+  fctx.body.push({ op: "local.set", index: leftLocal });
+  compileExpression(ctx, fctx, expr.right, nullableStr);
+  fctx.body.push({ op: "local.set", index: rightLocal });
+
+  // if (left is null) { result = right is null ? 1 : 0 }
+  // else if (right is null) { result = 0 }
+  // else { result = __str_equals(flatten(left), flatten(right)) }
+  const compareBody: Instr[] = [
+    { op: "local.get", index: leftLocal },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+    { op: "call", funcIdx: flattenIdx },
+    { op: "local.get", index: rightLocal },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+    { op: "call", funcIdx: flattenIdx },
+    { op: "call", funcIdx: equalsIdx },
+  ];
+  const rightNullCheck: Instr[] = [
+    { op: "local.get", index: rightLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 } as Instr],
+      else: compareBody,
+    } as Instr,
+  ];
+  fctx.body.push({ op: "local.get", index: leftLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [{ op: "local.get", index: rightLocal } as Instr, { op: "ref.is_null" } as Instr],
+    else: rightNullCheck,
+  } as Instr);
 }
 
 export function compileStringBinaryOp(
@@ -1349,27 +1515,18 @@ export function compileStringBinaryOp(
       }
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
       case ts.SyntaxKind.EqualsEqualsToken: {
-        // equals needs flat strings — flatten both operands
-        compileExpression(ctx, fctx, expr.left);
-        fctx.body.push({ op: "call", funcIdx: strFlattenIdx });
-        compileExpression(ctx, fctx, expr.right);
-        fctx.body.push({ op: "call", funcIdx: strFlattenIdx });
         const funcIdx = ctx.nativeStrHelpers.get("__str_equals");
         if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
+          emitNullableStringEquals(ctx, fctx, expr, strFlattenIdx, funcIdx);
           return { kind: "i32" };
         }
         break;
       }
       case ts.SyntaxKind.ExclamationEqualsEqualsToken:
       case ts.SyntaxKind.ExclamationEqualsToken: {
-        compileExpression(ctx, fctx, expr.left);
-        fctx.body.push({ op: "call", funcIdx: strFlattenIdx });
-        compileExpression(ctx, fctx, expr.right);
-        fctx.body.push({ op: "call", funcIdx: strFlattenIdx });
         const funcIdx = ctx.nativeStrHelpers.get("__str_equals");
         if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
+          emitNullableStringEquals(ctx, fctx, expr, strFlattenIdx, funcIdx);
           fctx.body.push({ op: "i32.eqz" });
           return { kind: "i32" };
         }
@@ -1512,26 +1669,42 @@ export function compileStringBinaryOp(
         index: ctx.stringGlobalMap.get("undefined")!,
       });
     } else if (!isStringType(leftTsType)) {
-      // #1525 — string concat is a ToPrimitive("string") site (§7.1.1.1).
-      // For externref operands that aren't statically known to be strings
-      // (e.g. `const obj: any = {...}; obj + "x"`), route through
-      // `__extern_toString` so the runtime walks valueOf/toString on
-      // wasmGC structs before handing a value to `wasm:js-string concat`.
-      // Without this, the concat polyfill calls V8's native string concat
-      // on an opaque struct and throws "Cannot convert object to
-      // primitive value" before our spec-conformant walker runs.
-      const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+      // #2022 — `+` applies ToPrimitive with the DEFAULT hint (valueOf before
+      // toString), not the string hint, even when the other operand is a
+      // string. Route opaque externref operands through
+      // `__extern_to_string_default` so wasmGC structs run valueOf-first
+      // before `wasm:js-string concat`. (Previously `__extern_toString`'s
+      // string hint made `objWithValueOf + ""` use toString — wrong.)
+      const toStrIdx = ensureLateImport(
+        ctx,
+        "__extern_to_string_default",
+        [{ kind: "externref" }],
+        [{ kind: "externref" }],
+      );
       flushLateImportShifts(ctx, fctx);
-      if (toStrIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: toStrIdx });
+      const finalIdx = ctx.funcMap.get("__extern_to_string_default") ?? toStrIdx;
+      if (finalIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalIdx });
       }
     }
   } else if (op === ts.SyntaxKind.PlusToken && leftType && (leftType.kind === "ref" || leftType.kind === "ref_null")) {
-    // Struct ref → externref for concat. #1525 — route through coerceType
-    // with hint "string" so the dispatch table walks @@toPrimitive("string")
-    // / toString() rather than emitting a bare `extern.convert_any` that
-    // would let `wasm:js-string concat` throw on the opaque struct.
-    coerceType(ctx, fctx, leftType, { kind: "externref" }, "string");
+    // #2022 — `+` is a ToPrimitive(default) site. Convert the struct ref to an
+    // externref (bare extern.convert_any) and route it through
+    // `__extern_to_string_default`, which runs valueOf-first ToPrimitive on the
+    // wasmGC struct. (Was `coerceType(..., "string")`, which walks
+    // @@toPrimitive("string")/toString — the wrong hint for `+`.)
+    coerceType(ctx, fctx, leftType, { kind: "externref" });
+    const toStrIdx = ensureLateImport(
+      ctx,
+      "__extern_to_string_default",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const finalIdx = ctx.funcMap.get("__extern_to_string_default") ?? toStrIdx;
+    if (finalIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: finalIdx });
+    }
   }
   // For equality/inequality ops: String wrapper objects (new String("x")) are externrefs
   // but NOT wasm:js-string strings — the `equals` builtin would throw a WebAssembly trap.
@@ -1588,14 +1761,19 @@ export function compileStringBinaryOp(
         index: ctx.stringGlobalMap.get("undefined")!,
       });
     } else if (!isStringType(rightTsType)) {
-      // #1525 — see left-operand branch above. Route opaque externref
-      // operands through `__extern_toString` so wasmGC structs ride
-      // through the runtime ToPrimitive walker before reaching
-      // `wasm:js-string concat`.
-      const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+      // #2022 — see left-operand branch above. `+` uses ToPrimitive(default),
+      // so route opaque externref operands through `__extern_to_string_default`
+      // (valueOf-first) before `wasm:js-string concat`.
+      const toStrIdx = ensureLateImport(
+        ctx,
+        "__extern_to_string_default",
+        [{ kind: "externref" }],
+        [{ kind: "externref" }],
+      );
       flushLateImportShifts(ctx, fctx);
-      if (toStrIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: toStrIdx });
+      const finalIdx = ctx.funcMap.get("__extern_to_string_default") ?? toStrIdx;
+      if (finalIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalIdx });
       }
     }
   } else if (
@@ -1603,11 +1781,21 @@ export function compileStringBinaryOp(
     rightType &&
     (rightType.kind === "ref" || rightType.kind === "ref_null")
   ) {
-    // Struct ref → externref for concat. #1525 — route through coerceType
-    // with hint "string" so toString()/@@toPrimitive("string") run rather
-    // than emitting a raw `extern.convert_any` that crashes the concat
-    // polyfill on opaque wasmGC structs.
-    coerceType(ctx, fctx, rightType, { kind: "externref" }, "string");
+    // #2022 — `+` is a ToPrimitive(default) site. Convert the struct ref to an
+    // externref and route through `__extern_to_string_default` (valueOf-first)
+    // rather than `coerceType(..., "string")` (toString-first, wrong for `+`).
+    coerceType(ctx, fctx, rightType, { kind: "externref" });
+    const toStrIdx = ensureLateImport(
+      ctx,
+      "__extern_to_string_default",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const finalIdx = ctx.funcMap.get("__extern_to_string_default") ?? toStrIdx;
+    if (finalIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: finalIdx });
+    }
   }
   // Unwrap right-side String wrapper for equality/inequality (same as left above)
   const isRightStringWrapper =
@@ -2383,6 +2571,13 @@ export function compileNativeStringMethodCall(
         typeIdx: ctx.nativeStrDataTypeIdx,
       });
       fctx.body.push({ op: "struct.new", typeIdx: ctx.nativeStrTypeIdx });
+    }
+    // #2125: limit arg → i32 (ToUint32). Default (absent/undefined) is no limit,
+    // encoded as 0xFFFFFFFF (= -1 as i32) which the helper treats as unbounded.
+    if (expr.arguments.length > 1) {
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
+    } else {
+      fctx.body.push({ op: "i32.const", value: -1 });
     }
     const splitIdx = ctx.nativeStrHelpers.get("__str_split")!;
     fctx.body.push({ op: "call", funcIdx: splitIdx });

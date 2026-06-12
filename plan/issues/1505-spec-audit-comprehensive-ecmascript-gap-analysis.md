@@ -1,9 +1,9 @@
 ---
 id: 1505
 title: "spec audit: comprehensive ECMAScript implementation gap analysis"
-status: in-progress
+status: ready
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: max
@@ -77,3 +77,7 @@ Focus on spec areas most likely to have **silent correctness gaps** (wrong outpu
 - Do NOT run test262 locally — use the existing failure data in `benchmarks/results/test262-current.jsonl` and `benchmarks/results/test262-report.json`
 - Cross-reference against existing issues in `plan/issues/sprints/52/` to avoid duplicates
 - Prioritize by test262 impact × implementation feasibility
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

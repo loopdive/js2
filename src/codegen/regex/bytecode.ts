@@ -62,6 +62,14 @@ export enum ReOp {
    *  iteration (backtracking to the quantifier's exit arm). Only emitted for
    *  star/plus whose body can match the empty string. #1959. */
   PROGRESS = 13,
+  /** `[CLEAR, loSlot, hiSlot]` — reset capture slots `loSlot..hiSlot`
+   *  (inclusive) to -1. §22.2.2.3.1 RepeatMatcher clears the quantified
+   *  subtree's capture set on each repetition entry, so only the final
+   *  iteration's participation is observable. Emitted at the head of every
+   *  star/plus/repeat body that contains capture groups; the slot range is the
+   *  group span `[2*lo, 2*hi+1]`. Backtrack-aware via the usual caps snapshot
+   *  (CLEAR mutates `caps`, which SPLIT snapshots). #1960. */
+  CLEAR = 14,
 }
 
 /** Slots per instruction in the flat program array. */

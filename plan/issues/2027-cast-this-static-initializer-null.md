@@ -1,10 +1,11 @@
 ---
 id: 2027
 title: "(this as any).prop in a static field initializer yields null — static-context arm matches bare ThisKeyword only"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: low
 feasibility: easy
 reasoning_effort: low
@@ -49,3 +50,7 @@ Unwrap AsExpression/ParenthesizedExpression before the ThisKeyword match
 
 #1643 (static init umbrella, in-review) — could fold there, filed
 separately to keep #1643's scope stable. New.
+
+## Frontmatter reconcile (2026-06-12)
+
+Fixed by merged PR #1333; frontmatter was stale at `ready`. Flipped to `done` during sprint-62 planning triage.

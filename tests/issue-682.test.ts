@@ -150,20 +150,22 @@ describe("#682 standalone RegExp literal-substring backend", () => {
     expect(r.imports.some((i) => HOST_REGEXP_IMPORT_RE.test(`${i.module}::${i.name}`))).toBe(false);
   });
 
-  it("refuses unsupported RegExp prototype calls without the host prototype bridge", async () => {
+  it("RegExp.prototype.exec.call on a standalone literal compiles and matches (no host import)", async () => {
+    // Formerly refused (#682/#1474); the standalone RegExp prototype bridge now
+    // supports it. exec returns the match array or null — verify a hit + miss.
     const r = await compile(
-      `export function test(): boolean { return RegExp.prototype.exec.call(/abc/, "abc") !== null; }`,
-      {
-        fileName: "issue-682.ts",
-        target: "standalone",
-      },
+      `export function test(): boolean {
+        return RegExp.prototype.exec.call(/abc/, "xabcy") !== null
+          && RegExp.prototype.exec.call(/abc/, "xyz") === null;
+      }`,
+      { fileName: "issue-682.ts", target: "standalone" },
     );
-
-    expect(r.success).toBe(false);
-    expect(r.errors.some((e) => /RegExp\.prototype\.exec\.call/.test(e.message) && /#682\/#1474/.test(e.message))).toBe(
-      true,
-    );
+    expect(r.success, r.success ? "" : r.errors?.[0]?.message).toBe(true);
+    // Still no JS-host RegExp import — it runs on the pure-WasmGC engine.
     expect(r.imports.some((i) => HOST_REGEXP_IMPORT_RE.test(`${i.module}::${i.name}`))).toBe(false);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    // boolean exports lower to i32 1/0 across the WASM boundary.
+    expect((instance.exports as { test(): number }).test()).toBe(1);
   });
 
   it("refuses opaque RegExp receivers not created by the standalone backend", async () => {
@@ -205,15 +207,21 @@ describe("#682 standalone RegExp literal-substring backend", () => {
     expect(r.imports.some((i) => HOST_REGEXP_IMPORT_RE.test(`${i.module}::${i.name}`))).toBe(false);
   });
 
-  it("refuses RegExp-consuming string methods without JS-host string imports", async () => {
-    const r = await compile(`export function test(s: string): string { return s.replace(/a/g, "b"); }`, {
+  it("RegExp-consuming string methods (String.prototype.replace) compile standalone (no host import)", async () => {
+    // Formerly refused (#1474); the standalone backend now lowers
+    // `String.prototype.replace(/re/g, repl)` on the pure-WasmGC engine.
+    const r = await compile(`export function test(): string { return "banana".replace(/a/g, "o"); }`, {
       fileName: "issue-682.ts",
       target: "standalone",
     });
-
-    expect(r.success).toBe(false);
-    expect(r.errors.some((e) => /String\.prototype\.replace/.test(e.message) && /#1474/.test(e.message))).toBe(true);
+    expect(r.success, r.success ? "" : r.errors?.[0]?.message).toBe(true);
     expect(r.imports.some((i) => HOST_REGEXP_IMPORT_RE.test(`${i.module}::${i.name}`))).toBe(false);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    // "banana".replace(/a/g, "o") === "bonono"
+    const str = (instance.exports as { test(): unknown }).test();
+    // The export returns a WasmGC string; round-trip length via a second probe
+    // would need the string ABI, so we just assert it compiled + ran without trap.
+    expect(str).toBeDefined();
   });
 
   it("refuses RegExp-building string methods without JS-host string imports", async () => {

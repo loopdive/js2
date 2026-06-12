@@ -2,10 +2,10 @@
 id: 2117
 renumbered_from: 1958
 title: "nativeStrings split() ignores the limit argument; split(undefined) emits an invalid Wasm module"
-status: ready
+status: wont-fix
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -61,3 +61,7 @@ array containing the whole string).
 #1369 (done) fixed limit on the **host** path; #1913 (ready) covers
 **RegExp**-separator split limit in standalone. The native string-separator
 helper untracked; no hit for the invalid-wasm shape.
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #2125 — the same audit batch was filed twice (#2110–#2117 ≡ #2118–#2125). The high series is canonical: merged/open PRs reference #2120–#2125. No work was lost; see #2125.

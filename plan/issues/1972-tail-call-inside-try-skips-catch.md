@@ -1,10 +1,11 @@
 ---
 id: 1972
 title: "return_call conversion fires inside try/catch — the catch handler becomes unreachable, exceptions escape to the host"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
+completed: 2026-06-12
 priority: critical
 feasibility: easy
 reasoning_effort: medium
@@ -62,3 +63,45 @@ when > 0, exactly as `hasPendingFinally` does. Same guard for the
 
 #822/#839 are return_call *validation* CEs; #1642 is return-in-IIFE leak.
 Catch-skipping is unfiled.
+
+## Resolution (2026-06-12)
+
+Implemented per the fix direction: `FunctionContext.tryCatchDepth`
+(`src/codegen/context/types.ts`) counts enclosing try blocks WITH a catch
+clause; `compileTryStatement` increments it around the try-body statement
+loop (catch body compiles after the decrement, so its returns only answer
+to outer handlers), and `emitReturnTail`
+(`src/codegen/statements/control-flow.ts`) skips both the `return_call`
+and `return_call_ref` rewrites while it is > 0 — exactly as
+`hasPendingFinally` already did.
+
+## Test Results
+
+- Repro returns 42 (was: exception escaped to host).
+- `tests/issue-1972.test.ts` — 8/8: repro, `return_call_ref` (indirect call
+  in try), TCO outside try still emits `return_call` (WAT-asserted),
+  catch-body return still TCO-eligible, return-after-try eligible again,
+  nested try caught by inner handler, deeper-nested throw caught,
+  try/finally value + finally side effect.
+- Related suites: `issue-822` + `issue-839` (return_call validation) pass;
+  `issue-2061`, `issue-1858`, `error-reporting-catchpaths` pass.
+- Pre-existing failures identical on main (NOT from this change):
+  `tests/tail-call-optimization.test.ts` (4 fails — see discovery below),
+  `tests/finally-block.test.ts` (5 fails), `tests/global-index-shift-trycatch.test.ts`
+  (file-level).
+
+## Discovery — IR path strips return_call (pre-existing, separate issue)
+
+While verifying "tail calls outside try still emit return_call":
+the experimental-IR path (`compileIrPathFunctions`, runs after legacy
+`compileDeclarations` in `generateModule`) re-lowers every IR-claimed
+function and its lowering NEVER emits `return_call` — the legacy rewrite is
+discarded with the legacy body. Confirmed by instrumentation: factorial
+finalizes with 1 `return_call`, emit sees 0. This is why all 4
+WAT/recursion assertions in `tests/tail-call-optimization.test.ts` fail on
+current main: simple numeric recursions are exactly the functions IR
+claims, so they lose TCO and deep recursion overflows the stack again.
+Needs its own issue (IR-side tail-call support or preserving legacy TCO
+for IR-claimed functions). The tests in `tests/issue-1972.test.ts` force
+the legacy path (via `new Error`, which IR rejects as external-call) for
+their positive `return_call` assertions.

@@ -2,9 +2,9 @@
 id: 1984
 title: "freeze-point discipline: indexSpaceFrozen flag — late addImport/ensureLateImport after final flush throws at the producer (#2043 Option 3)"
 status: ready
-sprint: Backlog
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: high

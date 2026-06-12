@@ -1,10 +1,11 @@
 ---
 id: 1974
 title: "linear backend: % silently evaluates to the right-hand operand (empty PercentToken case leaves operands on the stack)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
+completed: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low
@@ -47,3 +48,17 @@ than duplicating the naive `a - trunc(a/b)*b` formula).
 
 No issue mentions linear modulo/Percent; #1858's only linear entry is the meta
 "zero differential coverage". Unfiled.
+
+## Resolution (2026-06-12)
+
+**Already fixed on main** — the empty `PercentToken` arm was filled (the #1937
+work referenced in `src/codegen-linear/index.ts:2189`). It now spills both
+operands to f64 locals and emits `a - trunc(a/b)*b` (sign of the dividend,
+matching JS `%` for finite operands; documented divergence: `b = ±Infinity`
+yields NaN). Verified on `target: "linear"`:
+
+- `7 % 2 === 1`, `-7 % 2 === -1`, `7 % -2 === 1`, `5.5 % 2 === 1.5`, `10 % 3 === 1`
+- Stack discipline holds in non-return positions: `(7 % 3) + (8 % 5)` and a
+  loop-body `i % 3 === 0` both validate and compute correctly.
+
+Added `tests/issue-1974.test.ts` (9 cases) as a regression guard.

@@ -2,9 +2,9 @@
 id: 2011
 title: "object-literal getter/setter closures capture copies — writes through accessors never reach the outer scope, getter pairs don't share state"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: high

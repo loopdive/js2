@@ -120,7 +120,7 @@ function openPrs() {
       "--limit",
       "100",
       "--json",
-      "number,mergeStateStatus,isDraft,labels,id,title",
+      "number,mergeStateStatus,isDraft,labels,id,title,headRefName,createdAt",
     ]),
   );
 }
@@ -177,6 +177,49 @@ function visibleCheckState(prNumber) {
   if (parsed === 0) return { failed: [], pending: [], error: "no parseable checks" };
 
   return { failed, pending, error: null };
+}
+
+// CLA-CHECK SHA STRANDING (#1958a). When the merge queue or a drift-update adds
+// a `Merge branch 'main'` commit on top of a PR branch, the NEW head SHA has no
+// `cla-check` commit status — cla-check.yml runs on pull_request_target and
+// posts the status to the PR head SHA only, and does not re-fire when a merge
+// commit changes the head. So `enqueuePullRequest` fails with
+//   Required status check "cla-check" is expected
+// even though CLA was already accepted on the prior head. The fix: rerun the
+// PR's latest cla-check workflow run; the pull_request_target re-run re-resolves
+// pr.head.sha and reposts cla-check=success on the current head, so the NEXT
+// sweep enqueues cleanly. Returns true if a rerun was kicked off.
+function isClaExpectedError(msg) {
+  return /cla-check.*is expected/i.test(msg) || /required status check.*cla-check/i.test(msg);
+}
+function rerunClaCheck(prNumber, branch) {
+  // Find the most recent cla-check run for this PR's branch and rerun it.
+  // `--branch` matches the PR head branch (fork PRs show the source branch).
+  const res = ghMaybe([
+    "run",
+    "list",
+    "--repo",
+    REPO,
+    "--workflow",
+    "cla-check.yml",
+    "--branch",
+    branch,
+    "--limit",
+    "1",
+    "--json",
+    "databaseId",
+    "-q",
+    ".[0].databaseId",
+  ]);
+  const runId = res.ok ? res.stdout.trim() : "";
+  if (!runId) {
+    return { ok: false, why: `no cla-check run found for branch ${branch}` };
+  }
+  const rerun = ghMaybe(["run", "rerun", runId, "--repo", REPO]);
+  if (!rerun.ok) {
+    return { ok: false, why: `rerun ${runId} failed: ${(rerun.stderr || "").split("\n")[0].slice(0, 80)}` };
+  }
+  return { ok: true, why: `reran cla-check run ${runId}` };
 }
 
 const { queued: inQueue, forming } = mergeQueueSnapshot();
@@ -312,13 +355,71 @@ for (const pr of prs) {
     const msg = String(e.stderr || e.message || e)
       .split("\n")[0]
       .slice(0, 120);
-    skipped.push([pr.number, `enqueue-failed: ${msg}`]);
+    // CLA-CHECK SHA STRANDING (#1958a): if the ONLY blocker is a missing
+    // cla-check status on the current head (typical after a merge-main commit),
+    // rerun cla-check so the next sweep enqueues cleanly. We already verified
+    // above that every VISIBLE check is pass/skipping, so cla-check-expected
+    // here means the status is on a stale SHA, not a genuine CLA rejection.
+    if (isClaExpectedError(msg)) {
+      const r = DRY ? { ok: true, why: "would rerun cla-check" } : rerunClaCheck(pr.number, pr.headRefName);
+      skipped.push([pr.number, `cla-check stale on head — ${r.why}; retry next sweep`]);
+    } else {
+      skipped.push([pr.number, `enqueue-failed: ${msg}`]);
+    }
   }
+}
+
+// DRAFT ROT (#1958d). Green drafts are invisible to auto-enqueue BY DESIGN —
+// but nothing flags them, so a finished draft can rot for ~a day (PRs
+// #1345/#1335 — the acorn dogfood blocker — sat green as drafts). This pass
+// lists drafts older than DRAFT_AGE_HOURS whose visible checks are all green
+// and, ONCE per PR (idempotent on the comment marker + label), nudges the
+// author to mark it ready. It never un-drafts or enqueues — that stays a human
+// decision.
+const DRAFT_AGE_HOURS = Number(process.env.DRAFT_AGE_HOURS ?? "6");
+const DRAFT_AGE_MS = DRAFT_AGE_HOURS * 60 * 60 * 1000;
+const STALE_DRAFT_LABEL = "stale-draft";
+const DRAFT_MARKER = "<!-- enqueue-bot:stale-draft -->";
+const draftFlagged = [];
+for (const pr of prs) {
+  if (!pr.isDraft) continue;
+  const labels = (pr.labels || []).map((l) => (l.name || "").toLowerCase());
+  if (labels.some((l) => HOLD_LABELS.has(l))) continue; // wip/hold drafts are intentional
+  if (labels.includes(STALE_DRAFT_LABEL)) {
+    draftFlagged.push([pr.number, "already-flagged"]);
+    continue; // idempotent — flagged on a prior sweep
+  }
+  const ageMs = Date.now() - Date.parse(pr.createdAt);
+  if (!Number.isFinite(ageMs) || ageMs < DRAFT_AGE_MS) continue; // too fresh
+  const checks = visibleCheckState(pr.number);
+  if (checks.error || checks.failed.length > 0 || checks.pending.length > 0) continue; // not green
+  const ageH = (ageMs / 3_600_000).toFixed(1);
+  if (DRY) {
+    draftFlagged.push([pr.number, `would-flag (green draft ${ageH}h old)`]);
+    continue;
+  }
+  // Post one comment + add the label. Both are guarded so re-running is a no-op.
+  const comment = ghMaybe([
+    "pr",
+    "comment",
+    String(pr.number),
+    "--repo",
+    REPO,
+    "--body",
+    `${DRAFT_MARKER}\nThis PR has been a green draft for ${ageH}h. If it is ready, mark it **Ready for review** so auto-enqueue can pick it up; otherwise add a \`wip\`/\`hold\` label so it stops showing up here.`,
+  ]);
+  const label = ghMaybe(["pr", "edit", String(pr.number), "--repo", REPO, "--add-label", STALE_DRAFT_LABEL]);
+  const why =
+    comment.ok && label.ok
+      ? `flagged (green draft ${ageH}h)`
+      : `flag-partial (comment=${comment.ok} label=${label.ok})`;
+  draftFlagged.push([pr.number, why]);
 }
 
 console.log(
   `enqueue-green-prs: ${prs.length} open, ${inQueue.size} already queued, grace=${GRACE_MINUTES}m${DRY ? " (DRY RUN)" : ""}`,
 );
+for (const [n, why] of draftFlagged) console.log(`  ! #${n} draft ${why}`);
 for (const [n, why] of updated) console.log(`  ~ #${n} ${why}`);
 for (const [n, why] of enqueued) console.log(`  + #${n} ${why}`);
 for (const [n, why] of skipped) console.log(`  - #${n} skip (${why})`);

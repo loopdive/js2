@@ -2,9 +2,9 @@
 id: 2035
 title: "generator return value leaks into iteration: spread/for-of/Array.from/yield* include it; final {value, done:true} never materializes"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium

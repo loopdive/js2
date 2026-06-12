@@ -78,6 +78,7 @@
 - [feedback_never_delete_test_data.md](feedback_never_delete_test_data.md) — Never delete test data/cache/runs without asking
 - [feedback_ask_before_killing_tests.md](feedback_ask_before_killing_tests.md) — Never kill running tests without asking
 - [feedback_baseline_drift_cross_check.md](feedback_baseline_drift_cross_check.md) — Cross-check CI regressions against other open PRs; sample locally — identical clusters across unrelated PRs are drift
+- [feedback_cla_check_rerun_after_merge_commit.md](feedback_cla_check_rerun_after_merge_commit.md) — Fork PR enqueue fails "cla-check expected" after a merge-main commit; gh run rerun the cla-check workflow to repost on the new head
 - [reference_error_analysis.md](reference_error_analysis.md) — Test262 error analysis procedure
 
 ### Development methodology

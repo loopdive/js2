@@ -1,10 +1,10 @@
 ---
 id: 1928
 title: "Source-position remapping for pre-parse rewrites — diagnostics report wrong line numbers"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium

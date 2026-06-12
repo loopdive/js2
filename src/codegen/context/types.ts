@@ -354,6 +354,14 @@ export interface FunctionContext {
     continueDepthBaseline: number[];
   }[];
   /**
+   * Number of enclosing `try` blocks WITH a catch clause currently being
+   * compiled. Wasm `return_call` replaces the caller frame, so a callee's
+   * throw would unwind past the enclosing handler — the tail-call rewrite
+   * must be suppressed while this is > 0, exactly like `finallyStack`
+   * suppresses it for pending finally blocks. (#1972)
+   */
+  tryCatchDepth?: number;
+  /**
    * Pending writeback instructions for mutable callback captures (#859).
    */
   pendingCallbackWritebacks?: Instr[];
@@ -426,16 +434,22 @@ export interface FunctionContext {
     }
   >;
   /**
-   * #1886 Slice B — live linear-backed `Uint8Array` buffers in this function,
-   * keyed by binding name. A buffer proven linear-safe by the #1886 analysis
+   * #1886 Slice B — live linear-backed `Uint8Array` buffers in this function. A
+   * buffer proven linear-safe by the #1886 analysis
    * (`ctx.linearUint8.safeBindings`) is represented as a `(ptr, len)` pair of
    * i32 locals instead of a GC vec, so `buf[i]`, `buf.length`, and
    * `process.std*.{read,write}(buf)` operate on linear memory with zero
    * GC↔linear copies. Absent entry ⇒ the binding uses the existing GC-vec path
    * unchanged.
+   *
+   * #2045: keyed by the binding's `ts.Symbol`, NOT by identifier text. A
+   * name-keyed registry was scope-blind — a linear param `buf` plus an
+   * inner-block `const buf = new Uint8Array(...)` (a distinct symbol with the
+   * same name) collided, so element access addressed the wrong buffer in both
+   * shadowing directions (silent corruption). Symbol identity is scope-correct.
    */
   linearU8Buffers?: Map<
-    string,
+    ts.Symbol,
     {
       ptrLocalIdx: number; // i32 — base byte offset into the page-4 linear arena
       lenLocalIdx: number; // i32 — element length (== byte length for Uint8Array)

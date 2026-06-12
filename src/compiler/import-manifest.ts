@@ -128,6 +128,12 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // Used for `any`-typed loose equality where null == undefined must be true. (#1134)
   if (name === "__host_loose_eq") return { type: "host_loose_eq" };
 
+  // Host `+` for two externref operands (§13.15.3 ApplyStringOrNumericBinaryOperator).
+  // Used for `any`/externref-typed `+`/`+=` where a runtime string must concatenate
+  // rather than coerce to f64 (`1 + "2"` → `"12"`, not `3`). ToPrimitive + the
+  // string-if-either-is-string rule come free from JS `+`. (#2058)
+  if (name === "__host_add") return { type: "host_add" };
+
   // SameValueZero comparison (§7.2.11) — like === except NaN equals NaN.
   // Used by Array.prototype.includes on array-like receivers (#1360).
   if (name === "__same_value_zero") return { type: "same_value_zero" };

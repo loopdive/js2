@@ -1,10 +1,10 @@
 ---
 id: 1810
 title: "node:path — typed host import + standalone TS-port fallback"
-status: ready
+status: wont-fix
 sprint: Backlog
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -68,3 +68,7 @@ Tier 0 (smoke test — must pass on **both** JS-host and standalone WASI):
 `tests/issue-6401.test.ts` — compile each Tier 0 snippet and assert the
 returned value, once with default JS-host config and once with
 `--target wasi` (standalone).
+
+## Closed as duplicate (2026-06-12)
+
+Duplicate of #1791 (node builtin filed twice — renumber artifact). #1791 is canonical; both were parked on the npm front.

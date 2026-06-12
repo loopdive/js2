@@ -1,9 +1,9 @@
 ---
 id: 1132
 title: "Publish compiler as @loopdive/js2 on npm + JSR"
-status: in-progress
+status: ready
 created: 2026-04-19
-updated: 2026-04-28
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -184,3 +184,7 @@ Node/Bun users can use the npm compat layer JSR provides automatically.
 - `@loopdive/js2` is available on npm (was unpublished in 2021). Can publish as unscoped `@loopdive/js2` OR scoped `@loopdive/js2` — user's call. Unscoped is more discoverable (`npm install @loopdive/js2` vs `npm install @loopdive/js2`).
 - `wasm-opt` binary integration: if `--optimize` is used, the CLI should gracefully degrade if Binaryen is not installed rather than crashing.
 - Check if `typescript` peer dependency needs to be listed or bundled.
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

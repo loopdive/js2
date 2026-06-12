@@ -1,10 +1,11 @@
 ---
 id: 1961
 title: "nativeStrings: === on a string|undefined value compares by reference, not content (\"hello\".at(1) === \"e\" → false)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
+completed: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium

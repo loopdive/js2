@@ -2,9 +2,9 @@
 id: 2096
 title: "oracle_version stamping + cross-version diff guard (prerequisite for the #1945 oracle flip)"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: low

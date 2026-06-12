@@ -1,0 +1,53 @@
+name: Approve trusted-fork runs
+
+# WHY (#1958c): PRs from the team's fork (ttraenkler/js2) land their CI runs in
+# `action_required` until a maintainer approves them (GitHub's fork-PR gate).
+# Our dev agents all push to that fork, so every run stalls until approved; on
+# 2026-06-12 ~90 runs stranded until a tech-lead session swept them by hand, and
+# that manual sweep dies with the session. This workflow approves the backlog
+# automatically — but ONLY for the trusted fork ttraenkler/js2. Arbitrary forks
+# are never auto-approved (that would run untrusted code with repo secrets); a
+# drive-by contributor's run stays in action_required for a human.
+#
+# TOKEN: the approve endpoint is NOT accessible to the default GITHUB_TOKEN
+# (github-actions[bot] → 403). It needs the AUTO_ENQUEUE_TOKEN PAT (repo write +
+# actions:write) that auto-enqueue.yml / queue-unstick.yml already use. If that
+# secret is unset the job runs and logs a clear pointer, but every approve 403s.
+
+on:
+  # Responsive: when any run completes/changes state, sweep for fork runs that
+  # just landed in action_required.
+  workflow_run:
+    workflows: ["Test262 Sharded", "CI", "Differential test"]
+    types: [requested, completed]
+  # Backstop: catch runs the workflow_run trigger missed.
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write # approve action_required runs
+  contents: read
+
+concurrency:
+  group: approve-fork-runs
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/approve-fork-runs.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Approve trusted-fork action_required runs
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_ENQUEUE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/approve-fork-runs.mjs

@@ -357,9 +357,16 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
   // Save/restore block-scoped shadows for let/const in the try block (#817).
   const savedTryScope = saveBlockScopedShadows(fctx, stmt.tryBlock);
+  // While compiling the try body, record that a catch handler encloses it so
+  // `return f()` is NOT rewritten to `return_call` — return_call replaces the
+  // caller frame and a throw from the callee would skip this catch (#1972).
+  // The catch body itself is compiled after the decrement: its returns only
+  // answer to OUTER handlers, which keep their own counts.
+  if (stmt.catchClause) fctx.tryCatchDepth = (fctx.tryCatchDepth ?? 0) + 1;
   for (const s of stmt.tryBlock.statements) {
     compileStatement(ctx, fctx, s);
   }
+  if (stmt.catchClause) fctx.tryCatchDepth!--;
   restoreBlockScopedShadows(fctx, savedTryScope);
 
   // Pop finallyStack before inlining the normal-path finally (avoid double-inline)

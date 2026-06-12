@@ -2,9 +2,9 @@
 id: 2024
 title: "class accessor override with partial pair: get-only override silently drops writes (should TypeError); set-only override reads NaN (should undefined)"
 status: ready
-sprint: 61
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium

@@ -1,9 +1,10 @@
 ---
 id: 1858
 title: "Compiler correctness & production-hardening audit (fail-loud, validate, gate)"
-status: in-progress
+status: done
+completed: 2026-06-12
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-12
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -216,3 +217,7 @@ C1 (P0.1, `stack-balance.ts` `fixBranchType`, the drop-and-default keystone) is
    net-positive/neutral. If the throw causes a large pass→compile_error
    regression, gate it behind a dev/test flag and surface (don't gate-prod)
    until measured — mirror P0.3's "surface, don't gate-prod" approach.
+
+## Closed as audit-complete (2026-06-12)
+
+The audit is done and its residuals are filed: C1 → #2140 (fixBranchType coerce-or-throw), C5 → #2143 (validate unoptimized output); quick wins landed via PR #1145 and the 1815-1852 sub-issue series. Remaining audit rows C7 (standalone key-enumeration order) and C9b (isFrozen/isSealed) are tracked in #2148's reconciliation scope for individual filing.

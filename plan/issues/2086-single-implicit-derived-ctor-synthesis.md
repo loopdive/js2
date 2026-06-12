@@ -2,9 +2,9 @@
 id: 2086
 title: "single implicit-derived-ctor synthesis shared by all three representation paths (externref / WasmGC struct / standalone)"
 status: ready
-sprint: Backlog
+sprint: 63
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: medium

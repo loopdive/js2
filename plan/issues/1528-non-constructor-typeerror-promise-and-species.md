@@ -1,9 +1,9 @@
 ---
 id: 1528
 title: "spec gap: non-constructor TypeError — Promise.all / allSettled species and executor paths"
-status: in-progress
+status: ready
 created: 2026-05-20
-updated: 2026-05-27
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -539,3 +539,7 @@ callsite to the genuinely-dynamic shapes only (parameter / captured
 local / member-access on externref / IIFE result), not every `new <expr>`
 that falls past the static guards.
 
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

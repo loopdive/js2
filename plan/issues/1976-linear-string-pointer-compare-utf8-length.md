@@ -62,3 +62,35 @@ tracking for concat results in compound assignment and declarations.
 
 #1588 tracks UTF-8/WTF-16 strategy for the **GC** backend's dual storage; no
 issue on linear string compare/length. Unfiled.
+
+## Progress (2026-06-12) — relationals + concat-typing fixed; UTF-8 length follow-up
+
+**Done (this PR):**
+
+1. **String relationals** (`<`/`<=`/`>`/`>=`) now compare by content. Added a
+   `__str_cmp` runtime fn (lexicographic byte compare → -1/0/1) and route string
+   relationals through it before the `bothI32` pointer-comparison path. For
+   ASCII this matches JS UTF-16 ordering. (Multi-byte UTF-8 orders by byte, which
+   can differ for astral code points — folded into the length follow-up below.)
+2. **Concat type confusion → invalid module** fixed. `s += t` for a string `s`
+   now calls `__str_concat` and stores the i32 result (was `f64.add` → i32/f64
+   mismatch); `inferExprType` treats a string `a + b` as an i32 result so
+   `const x = "a" + b` declares an i32 local. Both compound-assign and
+   declaration paths produce valid modules now.
+
+Repro rows 1–2 (relationals) match Node; both invalid-module cases are gone.
+`tests/issue-1976.test.ts` (15 cases) + all 136 existing linear tests green.
+
+**Remaining (separate follow-up):** `.length` still returns the UTF-8 **byte**
+count, not UTF-16 code units (`"é世😀".length` → 9, Node → 4). Fixing this needs
+either WTF-16 storage (matching the GC nativeStrings i16 layout) or a code-unit
+count in `__str_len`, plus an audit of `charCodeAt`/`codePointAt`/slice on the
+same decision — a substantial string-subsystem change, larger than the compare
++ concat fixes here. ASCII lengths are correct. (Related to #1588's GC-side
+UTF-8/WTF-16 work.)
+
+### Files
+
+- `src/codegen-linear/runtime.ts` — new `__str_cmp` helper
+- `src/codegen-linear/index.ts` — route string relationals through `__str_cmp`;
+  string `+=` via `__str_concat`; `inferExprType` string-concat → i32

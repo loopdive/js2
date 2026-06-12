@@ -1,10 +1,11 @@
 ---
 id: 1964
 title: "nativeStrings: for-of over a string iterates code units, not code points (4 iterations for \"a😀b\")"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
+completed: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -48,3 +49,21 @@ advancing by 2. Share the surrogate-pair walk with the string-spread fix
 
 #1183 explicitly deferred with a follow-up request; no follow-up issue
 existed. jsHost path is correct (host iterator).
+
+## Resolution (2026-06-12)
+
+**Already fixed on main** by the time this was re-picked up — the native string
+for-of lowering is now surrogate-pair aware. Verified every acceptance criterion
+on `target: "standalone"`:
+
+- `for (const c of "a😀b")` → 3 iterations (was 4); middle chunk `.length === 2`
+- the emoji chunk leads with its high surrogate (U+D83D)
+- `"😀😁"` → 2 iterations; `""` → 0
+- lone high surrogate (`"\uD83D"`) → 1 iteration (single unit, per spec)
+- BMP-only strings keep the one-iteration-per-char fast path
+
+This landed via the same string-iterator work that resolved the related string
+spread (#1962) after the issue was filed (2026-06-10). No further code change
+was needed.
+
+Added `tests/issue-1964.test.ts` (7 cases) as a regression guard.

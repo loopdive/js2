@@ -1,9 +1,9 @@
 ---
 id: 1206
 title: "fix(build-pages): copy benchmark JSONs + frame-nav-sync.js to top-level pages-dist paths (404s on landing page)"
-status: in-progress
+status: ready
 created: 2026-04-27
-updated: 2026-04-27
+updated: 2026-06-12
 priority: medium
 feasibility: easy
 reasoning_effort: low
@@ -125,3 +125,7 @@ Verified after `pnpm run build:pages`:
 Audit note: `playground-benchmark-sidebar.json` is committed in
 `benchmarks/results/`, so acceptance criterion 3 is satisfied — the
 source file exists; landing page references resolve.
+
+## Frontmatter reconcile (2026-06-12)
+
+Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).

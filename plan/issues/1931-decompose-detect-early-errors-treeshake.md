@@ -1,10 +1,10 @@
 ---
 id: 1931
 title: "Decompose detectEarlyErrors (3,350-line function) and run it on every path; wire or delete the dead treeshake option"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 priority: medium
 feasibility: medium
 reasoning_effort: medium

@@ -2,9 +2,9 @@
 id: 2089
 title: "silent-fallback telemetry + check-codegen-fallbacks ratchet (Phase 0: instrument the 16 verified sites)"
 status: ready
-sprint: Backlog
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 priority: critical
 feasibility: easy
 reasoning_effort: medium

@@ -955,12 +955,24 @@ jobs:
           # clone take ~100s; materializing just the host baseline JSONL takes
           # ~2-5s. The #1081 merge-base step below sparse-checkout-adds its
           # runs/<sha> entry on demand from the same clone.
+          # #49 — also materialize the baselines-repo report JSON so the
+          # regression diff can read FRESH baseline metadata (baseline_sha /
+          # baseline_generated_at) from the SAME source as the JSONL it diffs.
+          # The committed benchmarks/results/test262-current.json on main is
+          # deliberately frozen by promote-baseline (it skips the main commit
+          # when only baseline_sha/timestamp changed), so reading age/SHA from
+          # it reports a stale "8h old (commit 3903ea6)" even though the JSONL
+          # being diffed is current.
           { git clone --depth=2 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines \
-            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /test262-current.jsonl \
+            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /test262-current.jsonl /test262-current.json \
             && git -C /tmp/js2wasm-baselines checkout main; } 2>/dev/null || true
           if [ -f /tmp/js2wasm-baselines/test262-current.jsonl ]; then
             mkdir -p benchmarks/results
             cp /tmp/js2wasm-baselines/test262-current.jsonl benchmarks/results/test262-current.jsonl
+            # Fresh metadata for the staleness warning (#49). Kept at a distinct
+            # path so it never overwrites the committed file the rest of the
+            # tree reads, and is only used for --baseline-meta below.
+            cp /tmp/js2wasm-baselines/test262-current.json /tmp/baseline-meta-fresh.json 2>/dev/null || true
             echo "Baseline fetched from js2wasm-baselines repo."
             # #1235 — capture baseline commit timestamp + sha for the staleness
             # check below. The PR gate will warn if the baseline is older than
@@ -999,6 +1011,10 @@ jobs:
           MERGE_BASE=$(git merge-base origin/main HEAD 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || echo "")
           TEST262_VERSION=$(git submodule status test262 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo "")
           echo "Merge-base: ${MERGE_BASE:-<unknown>}; test262 version: ${TEST262_VERSION:-<unknown>}"
+          # Expose merge-base so the regression-diff step can read fresh metadata
+          # from runs/<merge-base>.json when the cache hit (#49). The .json is
+          # sparse-checked-out below alongside the .jsonl.
+          echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
           # The clone above is sparse + blob-filtered; materialize only this
           # merge-base's run-cache entry. A pattern that matches nothing in
           # the tree is a silent no-op, and the resolver then reports a miss.
@@ -1123,14 +1139,31 @@ jobs:
             echo "Missing baseline JSONL: $BASELINE"
             exit 2
           fi
-          # Prefer the committed baseline JSON (test262-current.json) for age/SHA
-          # metadata; fall back to test262-report.json if the first doesn't exist.
+          # Age/SHA metadata for the staleness warning. Prefer the FRESH
+          # baselines-repo report JSON (#49) — it carries the baseline_sha /
+          # baseline_generated_at of the JSONL we actually diff against. The
+          # committed benchmarks/results/test262-current.json is deliberately
+          # frozen by promote-baseline (it skips the main commit when only
+          # baseline_sha/timestamp changed), so using it reports a stale
+          # "Nh old (commit <old-sha>)" even when the diffed baseline is current.
+          # Order: fresh baselines JSON → merge-base cache JSON (#1081, if the
+          # diff used it) → committed JSON → committed report.json.
           BASELINE_META=""
-          if [ -f "benchmarks/results/test262-current.json" ]; then
+          MERGE_BASE_JSON=""
+          if [ "${{ steps.merge_base_cache.outputs.cache }}" = "hit" ]; then
+            MB="${{ steps.merge_base_cache.outputs.merge_base }}"
+            [ -n "$MB" ] && [ -f "/tmp/js2wasm-baselines/runs/${MB}.json" ] && MERGE_BASE_JSON="/tmp/js2wasm-baselines/runs/${MB}.json"
+          fi
+          if [ -n "$MERGE_BASE_JSON" ]; then
+            BASELINE_META="$MERGE_BASE_JSON"
+          elif [ -f "/tmp/baseline-meta-fresh.json" ]; then
+            BASELINE_META="/tmp/baseline-meta-fresh.json"
+          elif [ -f "benchmarks/results/test262-current.json" ]; then
             BASELINE_META="benchmarks/results/test262-current.json"
           elif [ -f "benchmarks/results/test262-report.json" ]; then
             BASELINE_META="benchmarks/results/test262-report.json"
           fi
+          echo "Using baseline metadata for staleness warning: ${BASELINE_META:-<none>}"
           META_ARGS=""
           if [ -n "$BASELINE_META" ]; then
             META_ARGS="--baseline-meta $BASELINE_META"
