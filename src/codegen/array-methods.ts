@@ -2437,6 +2437,39 @@ const ARRAY_METHODS = new Set([
  * Returns ValType for successful compilation, VOID_RESULT for void methods,
  * or null for failed compilation.
  */
+/**
+ * #1967 — element kinds the native WasmGC higher-order-function loop
+ * (map/filter/find/some/every/forEach) can iterate. The loop reads each
+ * element via `array.get` and coerces it to the closure's param type, so it
+ * is generic over the element ValType: numeric (f64/i32), boxed (externref),
+ * and struct/string refs (ref/ref_null) all work. Previously the dispatch
+ * gates only passed f64/i32/externref, dropping ref-element receivers
+ * (`[{v:"a"}].map(o=>o.v)`) into the generic no-op fallback.
+ */
+function isHofElemKind(kind: ValType["kind"]): boolean {
+  return kind === "f64" || kind === "i32" || kind === "externref" || kind === "ref" || kind === "ref_null";
+}
+
+/**
+ * Nullable version of a ref element ValType, used for "not found"-style
+ * sentinels (e.g. `find` on a struct array). A non-null `ref` becomes
+ * `ref_null` so a null sentinel validates; externref is already nullable.
+ */
+function nullableValType(elemType: ValType): ValType {
+  if (elemType.kind === "ref" || elemType.kind === "ref_null") {
+    return { kind: "ref_null", typeIdx: elemType.typeIdx };
+  }
+  return elemType;
+}
+
+/** Push the null ref matching a ref element ValType (struct null vs externref null). */
+function nullRefInstrs(elemType: ValType): Instr[] {
+  if (elemType.kind === "ref" || elemType.kind === "ref_null") {
+    return [{ op: "ref.null", typeIdx: elemType.typeIdx } as Instr];
+  }
+  return [{ op: "ref.null.extern" } as Instr];
+}
+
 export function compileArrayMethodCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2643,75 +2676,77 @@ export function compileArrayMethodCall(
           ? compileArraySort(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
           : undefined;
       break;
-    // Functional array methods -- supported for numeric (f64, i32) and externref element types
+    // Functional array methods -- supported for numeric (f64, i32), externref,
+    // and ref/ref_null (struct) element types. #1967: ref-element receivers
+    // (`[{v:"a"}].map(o=>o.v)`) previously fell into the generic no-op
+    // fallback because the gate excluded ref/ref_null. The native loop machinery
+    // (setupArrayLoop + buildClosureCallInstrs) is generic over elemType: the
+    // element is read via array.get and coerced to the closure param type via
+    // coercionInstrs(elemType, paramTypes[0]) — a no-op when the closure param
+    // is the same struct ref, or extern.convert_any when it is externref. Only
+    // the gate kept it unreachable (mirrors the #1390 sort gate widening).
     case "filter":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayFilter(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayFilter(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "map":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayMap(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayMap(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "reduce":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayReduce(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      // #1967: ref/ref_null (struct) elements with a numeric accumulator
+      // (`[{k:1}].reduce((a,o)=>a+o.k, 0)`) iterate fine — the element is read
+      // via array.get and coerced to the callback's 2nd param. (A *struct*
+      // accumulator with no initial value still hits the numeric accTmp typing
+      // generalised under #1994.)
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayReduce(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "reduceRight":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayReduceRight(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayReduceRight(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "forEach": {
-      const feResult =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayForEach(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      const feResult = isHofElemKind(elemType.kind)
+        ? compileArrayForEach(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       // forEach returns void; use VOID_RESULT so compileExpression doesn't rollback
       result = feResult === null ? (VOID_RESULT as any) : feResult;
       break;
     }
     case "find":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "findIndex":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayFindIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayFindIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "findLast":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayFindLast(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayFindLast(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "findLastIndex":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayFindLastIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayFindLastIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "some":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArraySome(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArraySome(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "every":
-      result =
-        elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "externref"
-          ? compileArrayEvery(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-          : undefined;
+      result = isHofElemKind(elemType.kind)
+        ? compileArrayEvery(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        : undefined;
       break;
     case "toReversed":
       result = compileArrayToReversed(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
@@ -6166,10 +6201,17 @@ function compileArrayFind(
     "truthy",
   );
 
-  // Result local -- NaN (not found) or element value
-  const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
+  // Result local. For numeric elements, the not-found sentinel is NaN (f64) /
+  // 0 (i32). For ref/externref elements (#1967), the result is the matching
+  // element itself and the not-found sentinel is a null ref — returning f64 NaN
+  // here would mismatch the struct ref on `local.set` and produce an invalid
+  // binary, so the result local carries the (nullable) element type instead.
+  const isRefElem = elemType.kind === "ref" || elemType.kind === "ref_null" || elemType.kind === "externref";
+  const findResType: ValType = ctx.fast || isRefElem ? nullableValType(elemType) : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_find_res_${fctx.locals.length}`, findResType);
-  if (ctx.fast) {
+  if (isRefElem) {
+    fctx.body.push(...nullRefInstrs(elemType));
+  } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -6192,7 +6234,7 @@ function compileArrayFind(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: elemTmpLocal } as Instr,
-        ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        ...(!ctx.fast && !isRefElem && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
         { op: "local.set", index: findResTmp } as Instr,
         { op: "br", depth: 2 } as Instr,
       ],
@@ -6204,7 +6246,7 @@ function compileArrayFind(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: findResTmp });
-  return ctx.fast ? elemType : { kind: "f64" };
+  return findResType;
 }
 
 /**
@@ -6357,9 +6399,14 @@ function compileArrayFindLast(
     "truthy",
   );
 
-  const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
+  // See compileArrayFind: ref/externref elements (#1967) return the matching
+  // element with a null not-found sentinel; numeric elements use NaN/0.
+  const isRefElem = elemType.kind === "ref" || elemType.kind === "ref_null" || elemType.kind === "externref";
+  const findResType: ValType = ctx.fast || isRefElem ? nullableValType(elemType) : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_findLast_res_${fctx.locals.length}`, findResType);
-  if (ctx.fast) {
+  if (isRefElem) {
+    fctx.body.push(...nullRefInstrs(elemType));
+  } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -6382,7 +6429,7 @@ function compileArrayFindLast(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: elemTmpLocal } as Instr,
-        ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        ...(!ctx.fast && !isRefElem && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
         { op: "local.set", index: findResTmp } as Instr,
         { op: "br", depth: 2 } as Instr,
       ],
@@ -6394,7 +6441,7 @@ function compileArrayFindLast(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: findResTmp });
-  return ctx.fast ? elemType : { kind: "f64" };
+  return findResType;
 }
 
 /**

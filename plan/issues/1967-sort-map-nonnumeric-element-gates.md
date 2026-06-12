@@ -96,6 +96,45 @@ Regression-clean across #1361/#1816/#1966/#1993/#1589 + array-prototype-methods
   (the convert-loop pattern in `destructureParamArray`). Larger, separate change
   — split out from the safe sort gate fix.
 
+## map-family on struct elements landed (2026-06-12) — issue fully closed
+
+The remaining HOF work is now fixed. The presumed complexity above
+(boxing each `ref` element to externref) was unnecessary: the native
+WasmGC loop machinery (`setupArrayLoop` + `buildClosureCallInstrs`) is
+**already generic over `elemType`** — it reads the element via
+`array.get` and coerces it to the closure's param type via
+`coercionInstrs(elemType, paramTypes[0])` (a no-op when the closure param
+is the same struct ref). As with the sort gate (#1390), the only blocker
+was the dispatch gate.
+
+Changes (`src/codegen/array-methods.ts`):
+- Added an `isHofElemKind(kind)` helper and widened the `map` / `filter` /
+  `reduce` / `reduceRight` / `forEach` / `find` / `findIndex` / `findLast` /
+  `findLastIndex` / `some` / `every` gates from `f64|i32|externref` to also
+  accept `ref`/`ref_null`.
+- Fixed `compileArrayFind` and `compileArrayFindLast`: in non-fast mode the
+  result local was hard-coded `f64` (initialised to NaN), which mismatches a
+  struct ref on `local.set` → invalid binary. ref/externref elements now use
+  a **nullable element-typed** result local with a `null` not-found sentinel
+  (new `nullableValType` / `nullRefInstrs` helpers), matching JS `find`
+  returning `undefined`.
+
+Covered (match Node — `tests/equivalence/hof-struct-elements.test.ts`, 15
+green): map (string field / numeric / struct-returning), filter (length +
+chained field access), reduce/reduceRight (numeric accumulator over structs),
+find/findLast (+ null not-found sentinel), findIndex/findLastIndex,
+some/every, forEach. Regression-clean across array-prototype-methods /
+sort-nonnumeric / array-of-structs / reverse-struct-map /
+array-callback-three-params / array-filter-obj-length (31 green); tsc clean.
+
+Out of scope (distinct issues, NOT regressed by this change):
+- `some`/`every` return an i32 truthy flag not boxed to a JS boolean at the
+  export boundary — pre-existing for **numeric** arrays too (verified on
+  main); unrelated to struct elements.
+- A **struct accumulator** in `reduce` with no initial value still hits the
+  numeric `accTmp` typing generalised under #1994.
+
 ## Frontmatter reconcile (2026-06-12)
 
-Fixed by merged PR #1390; frontmatter was stale at `in-progress`. Flipped to `done` during the sprint-62 issue review.
+Fixed by merged PR #1390 (sort) plus the map-family PR above; frontmatter was
+stale at `in-progress`. Flipped to `done` during the sprint-62 issue review.
