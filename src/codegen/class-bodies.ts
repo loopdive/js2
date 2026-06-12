@@ -27,6 +27,7 @@ import {
   hasStaticModifier,
   resolveWasmType,
 } from "./index.js";
+import { userClassMemberKey, userClassMemberPrefix } from "./class-member-key.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -655,7 +656,7 @@ export function collectClassDeclaration(
       // Abstract methods have no body — skip generating a wasm function stub
       if (hasAbstractModifier(member)) continue;
 
-      const fullName = `${className}_${methodName}`;
+      const fullName = userClassMemberKey(ctx, className, methodName);
       const isStatic = hasStaticModifier(member);
 
       // ES2015 14.5.14 step 21: static methods cannot be named 'prototype'
@@ -759,7 +760,7 @@ export function collectClassDeclaration(
         ctx.staticAccessorSet.add(accessorKey);
       }
 
-      const getterName = `${className}_get_${propName}`;
+      const getterName = userClassMemberKey(ctx, className, `get_${propName}`);
       // Skip if a function with this name is already registered (e.g., when
       // both a static and instance getter share the same computed property name,
       // they produce the same function name — avoid creating duplicates that
@@ -798,7 +799,7 @@ export function collectClassDeclaration(
         ctx.staticAccessorSet.add(accessorKey);
       }
 
-      const setterName = `${className}_set_${propName}`;
+      const setterName = userClassMemberKey(ctx, className, `set_${propName}`);
       // Skip if already registered (same collision guard as getter above)
       if (ctx.funcMap.has(setterName)) continue;
       // Setter takes self + value, returns void
@@ -841,10 +842,12 @@ export function collectClassDeclaration(
     let ancestor: string | undefined = parentClassName;
     while (ancestor && !visitedAncestors.has(ancestor)) {
       visitedAncestors.add(ancestor);
-      // Inherit methods
+      // Inherit methods. The ancestor's member keys use the #1983 separator
+      // (`#` for user classes, `_` for extern), so match on that exact prefix.
+      const ancestorPrefix = userClassMemberPrefix(ctx, ancestor);
       for (const [key, funcIdx] of ctx.funcMap) {
-        if (key.startsWith(`${ancestor}_`) && !key.endsWith("_new") && !key.endsWith("_type")) {
-          const suffix = key.substring(ancestor.length + 1);
+        if (key.startsWith(ancestorPrefix) && !key.endsWith("_new") && !key.endsWith("_type")) {
+          const suffix = key.substring(ancestorPrefix.length);
           // Skip constructor-related entries
           if (suffix === "new" || suffix.startsWith("new_")) continue;
           // Check if this is a getter/setter (get_X or set_X)
@@ -854,7 +857,7 @@ export function collectClassDeclaration(
             // Accessor inheritance
             const accPropName = (getMatch || setMatch)![1]!;
             if (!ownAccessorNames.has(accPropName)) {
-              const childFullName = `${className}_${suffix}`;
+              const childFullName = userClassMemberKey(ctx, className, suffix);
               if (!ctx.funcMap.has(childFullName)) {
                 ctx.funcMap.set(childFullName, funcIdx);
               }
@@ -868,7 +871,7 @@ export function collectClassDeclaration(
           } else {
             // Regular method — inherit from parent (works for all method names,
             // including those with underscores like my_method) (#799 WI6)
-            const childFullName = `${className}_${suffix}`;
+            const childFullName = userClassMemberKey(ctx, className, suffix);
             if (!ownMethodNames.has(suffix) && !ctx.funcMap.has(childFullName)) {
               ctx.funcMap.set(childFullName, funcIdx);
               ctx.classMethodSet.add(childFullName);
@@ -1556,7 +1559,7 @@ function compileClassBodiesInner(
     if (ts.isMethodDeclaration(member) && member.name) {
       const methodName = resolveClassMemberName(ctx, member.name);
       if (methodName === undefined) continue; // dynamic computed name — skip
-      const fullName = `${className}_${methodName}`;
+      const fullName = userClassMemberKey(ctx, className, methodName);
       if (compiledMethods.has(fullName)) continue; // already compiled
       compiledMethods.add(fullName);
       const isStatic = ctx.staticMethodSet.has(fullName);
@@ -1825,7 +1828,7 @@ function compileClassBodiesInner(
     if (ts.isGetAccessorDeclaration(member) && member.name) {
       const propName = resolveClassMemberName(ctx, member.name);
       if (propName === undefined) continue; // dynamic computed name — skip
-      const getterName = `${className}_get_${propName}`;
+      const getterName = userClassMemberKey(ctx, className, `get_${propName}`);
       if (compiledAccessors.has(getterName)) continue; // already compiled
       compiledAccessors.add(getterName);
       const getterLocalIdx = funcByName.get(getterName);
@@ -1913,7 +1916,7 @@ function compileClassBodiesInner(
     if (ts.isSetAccessorDeclaration(member) && member.name) {
       const propName = resolveClassMemberName(ctx, member.name);
       if (propName === undefined) continue; // dynamic computed name — skip
-      const setterName = `${className}_set_${propName}`;
+      const setterName = userClassMemberKey(ctx, className, `set_${propName}`);
       if (compiledAccessors.has(setterName)) continue; // already compiled
       compiledAccessors.add(setterName);
       const setterLocalIdx = funcByName.get(setterName);

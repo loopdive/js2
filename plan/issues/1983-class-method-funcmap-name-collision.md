@@ -1,7 +1,7 @@
 ---
 id: 1983
 title: "synthetic class-method names collide with user functions: class A { m() {} } + function A_m() breaks both paths"
-status: blocked
+status: suspended
 sprint: 61
 created: 2026-06-10
 updated: 2026-06-12
@@ -122,13 +122,174 @@ through. That is an architect-level design (a `userClassMemberKey` that only
 mangles when the receiver is a user class, vs leaving extern host-import names
 untouched), not a mechanical separator swap.
 
-**Status:** helper `src/codegen/class-member-key.ts` is committed (the `#`
-mangling primitive) and the bug is reproduced + scoped. Releasing for an
-`[ARCH input first]` pass to design the user-vs-extern discriminator before the
-~20-site flip, so the implementation doesn't regress extern-class dispatch.
-Alternative narrower fix worth evaluating: **uniquify only on detected collision
-at the single registration site** — when `funcMap.has(syntheticName)` is already
-true at method registration, mangle just that one entry and record the mangled
-name in a `ctx.classMemberKeyOverride` map that every lookup consults. That
-confines the change to one producer + one shared lookup wrapper instead of 20
-edits, at the cost of a lookup indirection.
+### Resolved design (senior-1, satisfying the [ARCH input first] gate)
+
+**The discriminator is `ctx.classSet.has(className)`.** Two facts make this clean
+and consistent across producer + consumer:
+
+1. **`importPrefix` *equals* the className for extern classes**
+   (index.ts:10027 `importPrefix: className`). So a user class `Foo` and an
+   extern class `Foo` produce the identical string `Foo_method` — but a name is
+   *either* a user class *or* an extern class, never both. `ctx.classSet` holds
+   **only user-class names** (class-bodies.ts:371 `classSet.add(className)`);
+   extern classes are registered via `ctx.externClasses` / `importPrefix` and are
+   **not** in `classSet`.
+2. So `ctx.classSet.has(name) === true` ⇒ user class (mangle to `#`);
+   `=== false` ⇒ extern/host class (leave `_`, it is a real `env` import name).
+
+Every producer already registers only when the name is a user class, and every
+consumer either already gates on `classSet.has` (calls.ts:3311/3315,
+index.ts:720) or can cheaply add the check. Producer and consumer therefore
+**always agree** on the separator because they consult the same `classSet`.
+
+#### The helper (replaces the unconditional `classMemberKey`)
+
+```ts
+// src/codegen/class-member-key.ts
+export const CLASS_MEMBER_SEP = "#";            // not a valid TS identifier char
+export function userClassMemberKey(ctx: CodegenContext, className: string, member: string): string {
+  // Mangle ONLY user-class members. Extern/host-class keys (Array_push, Map_new,
+  // String_charAt, …) are real `env` import names and MUST stay `${name}_${member}`.
+  return ctx.classSet.has(className)
+    ? `${className}${CLASS_MEMBER_SEP}${member}`
+    : `${className}_${member}`;
+}
+```
+
+The `#` key is internal — exports/WIT names come from the user identifier
+(index.ts export path), never the funcMap key, so the separator never leaks.
+
+#### Sites to route (funcMap method/getter/setter only; NOT ctor — see below)
+
+Producers (register user-class members): class-bodies.ts method `fullName`
+(:658, :1559), getter (:762, :1828), setter (:801, :1916), child-class
+`childFullName` (:857, :871); index.ts struct-method registration (:2212, :3311
+context). Consumers (dispatch): calls.ts (:1771/:1802, :3315/:3316,
+:6511/:6523, :10661/:10662), closures.ts (:1169), property-access.ts (:2093,
+:3939), literals.ts object-literal methods (:1313, :1813). Each
+`` `${className}_${methodName}` `` / `` `${className}_get_${prop}` `` /
+`` `${className}_set_${prop}` `` becomes `userClassMemberKey(ctx, className,
+methodName)` / `userClassMemberKey(ctx, className, "get_" + prop)` /
+`userClassMemberKey(ctx, className, "set_" + prop)`. The
+`classMethodSet`/`staticMethodSet` membership stores (class-bodies.ts:667/669)
+and their `.has` checks must use the SAME helper so the gate and the funcMap key
+agree.
+
+**Constructor (`_new`) is OUT OF SCOPE for this fix** — the repro is a *method*
+collision (`A_m`), and the ctor path has the densest extern-overload surface
+(new-super.ts has ~6 `${name}_new` sites, several of which resolve extern Map/
+Array/RegExp ctors by the same string). A `class A {}` + `function A_new()`
+collision is a separate, rarer case; if wanted, file a follow-up and apply the
+identical `userClassMemberKey(ctx, className, "new")` discriminator to the ctor
+sites only after auditing each new-super.ts site for extern-vs-user.
+
+#### Why NOT the collision-only-uniquify alternative
+
+The "uniquify on detected collision + override map" idea avoids the 20-site edit
+but adds a lookup indirection on the **class-method hot path** and a second
+source of truth (`classMemberKeyOverride`) that every one of the same ~20
+consumers would still have to consult — so it does not actually shrink the
+consumer surface, only hides it behind a map. The discriminator helper is
+simpler, has zero per-call overhead beyond a Set lookup the consumers largely
+already do, and keeps one source of truth. **Chosen: the discriminator helper.**
+
+#### Verification
+
+Full class equivalence suite + extern-class suites (Array/Map/Set/String/RegExp
+method dispatch — the regression surface) + the #1983 repro → 12 on both legacy
+and IR paths. A missed user-class consumer fails as a method-dispatch
+trap/invalid-wasm in the class suite; a wrongly-mangled extern key fails as an
+unsatisfiable-import / wrong-dispatch in the extern suites — both caught locally.
+
+---
+
+## Suspended Work (senior-1, 2026-06-12 — sprint close, token budget)
+
+**Worktree:** `/workspace/.claude/worktrees/issue-1983-name-collision`
+**Branch:** `issue-1983-name-collision` (pushed; doc-only commit `a3e9fa55d` is on
+PR #1425). The partial **implementation** below is UNCOMMITTED in the worktree —
+commit it on resume.
+
+### ⚠️ STATE: build is HALF-FLIPPED — do NOT test until consumers are done
+
+The **producers** (registration) now write mangled `#` keys, but the
+**consumers** (dispatch lookups) still read `_` keys. So user-class method/
+getter/setter dispatch is currently BROKEN (registration `A#m`, lookup `A_m`).
+This is expected mid-refactor — finish ALL consumers, THEN test. `tsc` passes;
+runtime would fail until consumers match.
+
+### DONE (helper + all class-bodies.ts producers)
+
+- `src/codegen/class-member-key.ts` (NEW, uncommitted): `userClassMemberKey(ctx,
+  className, member)` and `userClassMemberPrefix(ctx, className)` — mangle to `#`
+  iff `ctx.classSet.has(className)`, else legacy `_` (extern/host keys untouched).
+- `src/codegen/class-bodies.ts` (uncommitted): imported the helpers; flipped
+  method `fullName` (collect ~658 + compile ~1560), getter/setter names (~763,
+  ~802, ~1831, ~1919), child-class inherit `childFullName` (~858, ~872), and the
+  inheritance walk's prefix match + suffix extraction (~846-848, now uses
+  `userClassMemberPrefix`). Left as `_` (correct — disjoint maps): `accessorKey`
+  (classAccessorSet, ~757/796/866), static-prop `fullName` (staticProps, ~947),
+  the CONSTRUCTOR `${className}_new` (extern-overload — out of scope, see spec).
+
+### TODO (consumers — NONE done yet; this is the risky remainder)
+
+Flip every funcMap **lookup** of a user-class member key to
+`userClassMemberKey(ctx, className, methodName)` (or `"get_"+p`/`"set_"+p`).
+Exact sites (from `grep -n '${className}_${methodName}' ... ${structName}_...`):
+- `src/codegen/expressions/calls.ts`: ~1771 (`fullName0`), ~1802 (`funcMap.get`),
+  ~3315 (`funcMap.has` guard) + ~3316 (`fullName`), ~6511 (`funcMap.has`) +
+  ~6523 (`funcMap.has`), ~10661 (`funcMap.has`) + ~10662 (`fullName`). NOTE the
+  `funcMap.has(`${className}_${methodName}`)` disjuncts at 3315/6511/10661 are
+  what currently *route* extern vs user — replace the string with
+  `userClassMemberKey(...)` so the user-class branch checks the mangled key while
+  extern names (classSet.has false) still produce `_` and match their imports.
+- `src/codegen/closures.ts`: ~1169 (`fullName`).
+- `src/codegen/property-access.ts`: ~2093 (`fullName`), ~3939 (`methodFullName`),
+  ~3926 (`accessorKey` — verify whether funcMap or classAccessorSet; if the
+  latter, leave `_`).
+- `src/codegen/literals.ts`: ~1313, ~1813 (object-literal method `fullName` —
+  these are STRUCT methods; `classSet.has(typeName)` may be false for anonymous
+  object-literal struct types, in which case the helper leaves `_` and they keep
+  working. VERIFY: object-literal method registration in literals.ts ~1447 uses
+  the same `${typeName}_${field.name}` — producer and consumer must agree, so
+  flip BOTH or NEITHER per whether `typeName` is in `classSet`).
+- `src/codegen/index.ts`: ~2212/2330 (`${structName}_${methodSuffix}` register +
+  lookup — STRUCT method trampolines; same classSet caveat as literals.ts),
+  ~3311 (`methodFullName` lookup). VERIFY each `structName` is a user class.
+- `src/codegen/context/types.ts:989/995`: the `__obj_meth_tramp_${className}_
+  ${methodName}` cached-trampoline GLOBAL key (#1394) — this is a SEPARATE
+  namespace (a global-name string, not funcMap), but its producer + consumer must
+  still agree if a class method name could collide there. Lower priority; audit.
+
+### Resume steps
+
+1. `cd` into the worktree (above). `git status` — confirm the uncommitted
+   class-member-key.ts + class-bodies.ts changes are present.
+2. Flip the consumer sites above, one file at a time. For each
+   `funcMap.has/get(`${name}_${member}`)`, substitute
+   `userClassMemberKey(ctx, name, member)`. For object-literal/struct sites,
+   first confirm `classSet.has(typeName)` (anonymous struct types are NOT in
+   classSet → helper leaves `_` → no change needed, but the call site is still
+   correct to route through the helper for consistency).
+3. `npx tsc --noEmit -p tsconfig.json` (must stay green).
+4. Repro: `class A { m(){return 10;} } function A_m(){return 2;} export function
+   test(){ return new A().m() + A_m(); }` → must return 12, valid Wasm, both
+   default and IR.
+5. Run the full **class** equivalence suite + **extern-class** suites
+   (Array/Map/Set/String/RegExp method dispatch — the regression surface). A
+   missed user consumer → class-suite dispatch trap; a wrongly-mangled extern key
+   → extern-suite unsatisfiable-import.
+6. Add `tests/issue-1983-class-method-collision.test.ts` (repro + a
+   `function A_get_x()` collision + an extern-class smoke e.g. `[1,2].push(3)`).
+7. prettier-write the touched files; `pnpm run lint` / `format:check` /
+   `check:ir-fallbacks` green; commit (squash the doc commit), set `status: done`,
+   open/refresh the PR.
+
+### Alternative if the consumer surface proves too tangled
+
+The collision-only-uniquify fallback (in the spec above) stays available: revert
+to legacy `_` everywhere, and instead at the SINGLE method-registration site,
+when `funcMap.has(syntheticName)` is already true, mangle just that one entry and
+store the override in a new `ctx.classMemberKeyOverride: Map<string,string>` that
+a single shared `lookupClassMember(ctx, name, member)` wrapper consults. Higher
+indirection, but confines the change and can't break extern dispatch.
