@@ -30,6 +30,54 @@ import { cpRangesToNode, dotCpRanges } from "./unicode.js";
  *  repeated atoms, so cap the expansion to keep programs small. */
 const MAX_REPEAT_EXPANSION = 1000;
 
+/**
+ * Can `node` match the empty string (consume zero input)? Used to decide
+ * whether a `*`/`+`/`{0,}` loop body needs the RepeatMatcher empty-iteration
+ * progress guard (#1959). Conservative: when unsure, return true (emitting the
+ * guard is always safe — it only ever short-circuits a genuinely empty
+ * iteration). Assertions (`^ $ \b (?=...)`) are zero-width ⇒ nullable; a single
+ * char/class always consumes one unit ⇒ not nullable.
+ */
+export function nodeMatchesEmpty(node: ReNode): boolean {
+  switch (node.kind) {
+    case "char":
+    case "any":
+    case "udot":
+    case "class":
+      // A single code unit / class always consumes exactly one unit.
+      return false;
+    case "backref":
+      // A backref to an unset/empty group matches empty; treating every backref
+      // inside a quantifier body as nullable is the conservative-safe choice.
+      return true;
+    case "bol":
+    case "eol":
+    case "wordBoundary":
+    case "lookaround":
+      // Zero-width assertions consume nothing.
+      return true;
+    case "modGroup":
+    case "group":
+      return nodeMatchesEmpty(node.node);
+    case "star":
+    case "opt":
+      // `x*` and `x?` can match zero times.
+      return true;
+    case "plus":
+      // `x+` matches empty iff its body can.
+      return nodeMatchesEmpty(node.node);
+    case "repeat":
+      // `{0,m}` is nullable; `{n,}`/`{n,m}` with n>=1 is nullable iff the body is.
+      return node.min === 0 || nodeMatchesEmpty(node.node);
+    case "concat":
+      // Empty iff every part can be empty.
+      return node.parts.every(nodeMatchesEmpty);
+    case "alt":
+      // Empty iff any option can be empty.
+      return node.options.some(nodeMatchesEmpty);
+  }
+}
+
 /** A lookaround body queued for sub-program emission after the main MATCH.
  *  Snapshot the modifier state (#1911) — the body compiles LATER but must see
  *  the i/m/s flags that were active at its syntactic position. */
@@ -62,11 +110,28 @@ class Emitter {
   private reversed = false;
   /** Lookaround bodies pending sub-program emission (drained by compileParsed). */
   private readonly pendingSubs: PendingSub[] = [];
+  /** First caps index available for EMPTYCHECK scratch slots: `2 * nGroups`.
+   *  Capture slots occupy `[0, scratchBase)`; scratch slots are handed out
+   *  sequentially from here (#1959). */
+  private readonly scratchBase: number;
+  /** Number of scratch slots allocated so far (one per EMPTYCHECK). */
+  private scratchCount = 0;
 
-  constructor(caseInsensitive: boolean, dotAll: boolean, multiline: boolean) {
+  constructor(caseInsensitive: boolean, dotAll: boolean, multiline: boolean, nGroups: number) {
     this.caseInsensitive = caseInsensitive;
     this.dotAll = dotAll;
     this.multiline = multiline;
+    this.scratchBase = 2 * nGroups;
+  }
+
+  /** Allocate the next EMPTYCHECK scratch caps slot. #1959. */
+  private allocScratchSlot(): number {
+    return this.scratchBase + this.scratchCount++;
+  }
+
+  /** Total caps slots the VM must allocate: capture slots + scratch slots. */
+  nSlots(): number {
+    return this.scratchBase + this.scratchCount;
   }
 
   /** Append an instruction, return its program-counter (instruction index). */
@@ -194,10 +259,17 @@ class Emitter {
         return;
       }
       case "star": {
-        // L1: SPLIT body,exit ; body ; JMP L1 ; exit:   (greedy: body first)
+        // L1: SPLIT body,exit ; body ; [EMPTYCHECK] ; JMP L1 ; exit:
+        //   (greedy: body first). When the body is nullable (#1959) record sp
+        //   at iteration start (SAVE scratch) and verify progress before
+        //   looping (EMPTYCHECK scratch) — a zero-width iteration FAILs and
+        //   takes the exit arm, per §22.2.2.3.1 RepeatMatcher.
+        const guard = nodeMatchesEmpty(node.node) ? this.allocScratchSlot() : -1;
         const l1 = this.emit(ReOp.SPLIT, 0, 0);
         const bodyStart = this.here();
+        if (guard >= 0) this.emit(ReOp.SAVE, guard);
         this.compileNode(node.node);
+        if (guard >= 0) this.emit(ReOp.EMPTYCHECK, guard);
         this.emit(ReOp.JMP, l1);
         const exit = this.here();
         if (node.greedy) {
@@ -210,6 +282,16 @@ class Emitter {
         return;
       }
       case "plus": {
+        if (nodeMatchesEmpty(node.node)) {
+          // Nullable body: `x+` ≡ `x x*`. The first body match is mandatory and
+          // may legally match empty (that satisfies the one required rep), so it
+          // is emitted WITHOUT a guard; the trailing star carries the
+          // empty-iteration guard so 2nd+ reps cannot spin (#1959, §22.2.2.3.1).
+          this.compileNode(node.node);
+          this.compileNode({ kind: "star", node: node.node, greedy: node.greedy });
+          return;
+        }
+        // Non-nullable body — every rep consumes ≥1 unit, no guard needed.
         // L1: body ; SPLIT L1,exit ; exit:   (greedy: loop first)
         const l1 = this.here();
         this.compileNode(node.node);
@@ -390,7 +472,8 @@ export function compileParsed(parsed: ParsedRegex, flags: number): CompiledRegex
   const caseInsensitive = (flags & RE_FLAG_I) !== 0;
   const dotAll = (flags & RE_FLAG_S) !== 0;
   const multiline = (flags & RE_FLAG_M) !== 0;
-  const em = new Emitter(caseInsensitive, dotAll, multiline);
+  const nGroups = parsed.numCaptures + 1;
+  const em = new Emitter(caseInsensitive, dotAll, multiline, nGroups);
   // SAVE 0 (match start)
   em.emit(ReOp.SAVE, 0);
   em.compileNode(parsed.root);
@@ -404,7 +487,9 @@ export function compileParsed(parsed: ParsedRegex, flags: number): CompiledRegex
   return {
     prog,
     classTable: em.classTable,
-    nGroups: parsed.numCaptures + 1,
+    nGroups,
+    // 2*nGroups capture slots + one scratch slot per EMPTYCHECK (#1959).
+    nSlots: em.nSlots(),
     flags,
   };
 }

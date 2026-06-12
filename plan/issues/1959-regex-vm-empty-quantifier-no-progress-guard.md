@@ -1,10 +1,11 @@
 ---
 id: 1959
 title: "native RegExp VM: empty-body quantifier loops burn the 1M-step cap and silently report no-match (/(?:a?)*/ fails)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
+completed: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -58,6 +59,39 @@ exhaustion a thrown error rather than a silent no-match.
 - `/(a?)*x/.test("bbb")` fast
 - Greedy/lazy quantifier backtracking unregressed (RegExp test262 buckets
   net non-negative)
+
+## Resolution
+
+Implemented the PROGRESS/empty-check opcode (`ReOp.EMPTYCHECK = 13`).
+
+- **bytecode.ts** — new `EMPTYCHECK` opcode; `CompiledRegex` gains `nSlots`
+  (`2*nGroups` capture slots + one scratch slot per EMPTYCHECK).
+- **compile.ts** — `nodeMatchesEmpty()` nullability analysis. A nullable-bodied
+  `star` emits `SAVE scratch` at iteration start and `EMPTYCHECK scratch` before
+  the JMP-back; a nullable-bodied `plus` is lowered as `body · star(body)` so the
+  mandatory first rep may match empty while 2nd+ reps are guarded. `repeat`
+  inherits the guard via its star/opt expansion. Scratch slots are allocated
+  past the capture slots; `nSlots` is recorded.
+- **vm.ts** (reference VM) — `EMPTYCHECK` case: `caps[slot] === sp ⇒ FAIL` (take
+  the loop exit) else `pc++`. `runAt`/`search` now take `nSlots` (was `nGroups`)
+  so the scratch slot is in-bounds.
+- **native-regex.ts** (Wasm VM) — `emptyCheckArm()` dispatch + `nSlots` threaded
+  as a trailing param through `__regex_replace` / `__regex_split` /
+  `__regex_match_all` (caps allocation only; result-array shape still uses
+  `nGroups`). `__regex_search`/`__regex_run` already took `nSlots`.
+- **regexp-standalone.ts** — `$NativeRegExp` struct gains field 6 `nSlots`; the
+  caps allocation + every helper call now pass it.
+
+## Test Results
+
+`tests/issue-1959.test.ts` — 14 standalone-Wasm cases via `String.prototype.search`
+vs native (headline `(?:a?)*`, nested `(?:a*)*`, `(a*)+`, `(?:|a)*`, anchored-fail
+`(a?)*x`, plus non-nullable controls). All match native, all <1ms (was 300ms–3s,
+silent wrong answer). `tests/regex-bytecode.test.ts` (TS VM) + the #1539 suite:
+454/455 pass. The one failure (`refuses unicode flag (u)`) is **pre-existing on
+main** — the `u`-flag refusal was lifted earlier and that test was never updated
+(confirmed by running it on a clean checkout); tracked separately (task #46), not
+caused by this change.
 
 ## Dupe check
 

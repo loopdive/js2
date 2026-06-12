@@ -16,7 +16,7 @@ import { search } from "../src/codegen/regex/vm.js";
 function ourMatch(pattern: string, flags: string, input: string): [number, number] | null {
   const flagBits = parseFlags(flags);
   const c = compilePattern(pattern, flagBits);
-  const m = search(c.prog, c.classTable, c.nGroups, input, 0, false);
+  const m = search(c.prog, c.classTable, c.nSlots, input, 0, false);
   if (!m) return null;
   return [m[0]!, m[1]!];
 }
@@ -87,7 +87,7 @@ describe("#1539 regex bytecode pipeline vs native RegExp", () => {
 describe("#1539 capture groups", () => {
   it("records group spans", () => {
     const c = compilePattern("(a)(b)c", 0);
-    const m = search(c.prog, c.classTable, c.nGroups, "xabcy", 0, false);
+    const m = search(c.prog, c.classTable, c.nSlots, "xabcy", 0, false);
     expect(m).not.toBeNull();
     // g0=[1,4] g1=[1,2] g2=[2,3]
     expect([m![0], m![1]]).toEqual([1, 4]);
@@ -166,14 +166,14 @@ describe("#1911 Phase 2d Slice A pipeline vs native RegExp", () => {
   it("negative lookaround leaves captures unset", () => {
     // (?!(x))ab — the inner group never sticks (§22.2.2.4).
     const c = compilePattern("(?!(x))ab", 0);
-    const m = search(c.prog, c.classTable, c.nGroups, "ab", 0, false);
+    const m = search(c.prog, c.classTable, c.nSlots, "ab", 0, false);
     expect(m).not.toBeNull();
     expect([m![2], m![3]]).toEqual([-1, -1]);
   });
 
   it("lookbehind capture spans stay [left, right]", () => {
     const c = compilePattern("(?<=(ab))c", 0);
-    const m = search(c.prog, c.classTable, c.nGroups, "xabc", 0, false);
+    const m = search(c.prog, c.classTable, c.nSlots, "xabc", 0, false);
     expect(m).not.toBeNull();
     expect([m![2], m![3]]).toEqual([1, 3]); // "ab"
   });
@@ -219,7 +219,7 @@ describe("#1912 Phase 2b pipeline vs native RegExp", () => {
 
   it("backref capture slots populate like native", () => {
     const c = compilePattern("(?<x>a+)b\\k<x>", 0);
-    const m = search(c.prog, c.classTable, c.nGroups, "xaabaay", 0, false);
+    const m = search(c.prog, c.classTable, c.nSlots, "xaabaay", 0, false);
     expect(m).not.toBeNull();
     expect([m![0], m![1]]).toEqual([1, 6]); // aabaa
     expect([m![2], m![3]]).toEqual([1, 3]); // aa

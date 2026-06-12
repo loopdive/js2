@@ -436,6 +436,11 @@ const RE_FIELD_PROG = 2;
 const RE_FIELD_CLASS_TABLE = 3;
 const RE_FIELD_SOURCE = 4;
 const RE_FIELD_LASTINDEX = 5;
+// #1959 — total caps slots the VM needs: `2*nGroups` capture slots plus one
+// scratch slot per EMPTYCHECK in `prog`. Distinct from `nGroups` (which still
+// drives match-result array shape). Appended last so existing field indices are
+// unchanged.
+const RE_FIELD_NSLOTS = 6;
 
 /**
  * EscapeRegExpPattern (ECMA-262 §22.2.6.13.1), computed at compile time —
@@ -502,6 +507,9 @@ function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
     // g/y exec mutates it (#1913); reads/writes route through the #1914
     // reflection path below.
     { name: "lastIndex", type: { kind: "f64" } as ValType, mutable: true },
+    // nSlots (#1959) — `2*nGroups` + EMPTYCHECK scratch slots; caps allocation
+    // size. Field index 6 (RE_FIELD_NSLOTS).
+    { name: "nSlots", type: { kind: "i32" } as ValType, mutable: false },
   ];
   ctx.mod.types.push({
     kind: "struct",
@@ -544,6 +552,8 @@ function emitStandaloneRegExpStruct(
   if (!srcType) return null;
   // field 5: lastIndex — fresh RegExp objects start at 0 (§22.2.3.3).
   fctx.body.push({ op: "f64.const", value: 0 });
+  // field 6: nSlots (#1959) — caps allocation size including EMPTYCHECK scratch.
+  fctx.body.push({ op: "i32.const", value: compiled.nSlots });
   fctx.body.push({ op: "struct.new", typeIdx });
   return { kind: "ref", typeIdx };
 }
@@ -770,12 +780,10 @@ function emitRegexSearchCall(
   });
   fctx.body.push({ op: "local.set", index: inputLocal });
 
-  // caps = array.new_default(2 * nGroups)
+  // caps = array.new_default(nSlots) — nSlots includes EMPTYCHECK scratch (#1959)
   const capsLocal = allocLocal(fctx, `__re_caps_${fctx.locals.length}`, { kind: "ref", typeIdx: i32Arr });
   fctx.body.push({ op: "local.get", index: regexpLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NGROUPS });
-  fctx.body.push({ op: "i32.const", value: 2 });
-  fctx.body.push({ op: "i32.mul" });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSLOTS });
   fctx.body.push({ op: "array.new_default", typeIdx: i32Arr } as Instr);
   fctx.body.push({ op: "local.set", index: capsLocal });
 
@@ -794,11 +802,9 @@ function emitRegexSearchCall(
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_PROG });
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_CLASS_TABLE });
-  // nSlots = 2 * nGroups
+  // nSlots — caps length incl. EMPTYCHECK scratch (#1959)
   fctx.body.push({ op: "local.get", index: regexpLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NGROUPS });
-  fctx.body.push({ op: "i32.const", value: 2 });
-  fctx.body.push({ op: "i32.mul" });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSLOTS });
   // input data / off / len
   fctx.body.push({ op: "local.get", index: inputLocal });
   fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }); // data
@@ -1120,6 +1126,9 @@ export function tryCompileStandaloneStringMatch(
     fctx.body.push({ op: "local.get", index: subjLocal });
     fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }); // len
     fctx.body.push({ op: "local.get", index: subjLocal });
+    // nSlots (#1959) — caps size incl. EMPTYCHECK scratch
+    fctx.body.push({ op: "local.get", index: regexpLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSLOTS });
     fctx.body.push({ op: "call", funcIdx: matchAllIdx });
     // lastIndex = 0 (net effect of the spec's exec loop on a global regex).
     fctx.body.push({ op: "local.get", index: regexpLocal });
@@ -1245,6 +1254,9 @@ export function tryCompileStandaloneStringReplace(
   fctx.body.push({ op: "local.get", index: subjLocal });
   fctx.body.push({ op: "local.get", index: replLocal });
   fctx.body.push({ op: "i32.const", value: globalReplace ? 1 : 0 });
+  // nSlots (#1959) — caps size incl. EMPTYCHECK scratch
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSLOTS });
   fctx.body.push({ op: "call", funcIdx: replaceIdx });
   return nativeStringType(ctx);
 }
@@ -1343,6 +1355,9 @@ export function tryCompileStandaloneStringSplit(
       return null;
     }
   }
+  // nSlots (#1959) — caps size incl. EMPTYCHECK scratch
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSLOTS });
   fctx.body.push({ op: "call", funcIdx: splitIdx });
 
   const nstrVecTypeIdx = ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`);

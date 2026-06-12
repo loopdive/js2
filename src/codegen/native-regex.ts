@@ -517,8 +517,18 @@ export function ensureRegexRun(ctx: CodegenContext): number {
                                             op: "if",
                                             blockType: { kind: "empty" },
                                             then: lookaroundArm(),
-                                            // op == MATCH (the only remaining op): return 1
-                                            else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                            else: [
+                                              { op: "local.get", index: OP },
+                                              { op: "i32.const", value: ReOp.EMPTYCHECK },
+                                              { op: "i32.eq" },
+                                              {
+                                                op: "if",
+                                                blockType: { kind: "empty" },
+                                                then: emptyCheckArm(),
+                                                // op == MATCH (the only remaining op): return 1
+                                                else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                              },
+                                            ],
                                           },
                                         ],
                                       },
@@ -666,6 +676,35 @@ export function ensureRegexRun(ctx: CodegenContext): number {
       { op: "i32.const", value: 1 },
       { op: "i32.add" },
       { op: "local.set", index: PC },
+    ];
+  }
+
+  function emptyCheckArm(): Instr[] {
+    // §22.2.2.3.1 RepeatMatcher progress guard (#1959). `a` = scratch caps slot
+    // holding the sp recorded at this loop iteration's start (preceding SAVE).
+    // if caps[a] == sp: FAILED = 1 (zero-width iteration → backtrack to the
+    // loop's exit alternative); else pc++. Mirrors the EMPTYCHECK case in
+    // regex/vm.ts.
+    return [
+      { op: "local.get", index: CAPS },
+      { op: "local.get", index: A },
+      { op: "array.get", typeIdx: i32Arr },
+      { op: "local.get", index: SP },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: FAILED },
+        ],
+        else: [
+          { op: "local.get", index: PC },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.set", index: PC },
+        ],
+      },
     ];
   }
 
@@ -1381,6 +1420,7 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
       strRef, // subject (flattened)
       strRef, // replacement (flattened)
       { kind: "i32" }, // global flag
+      { kind: "i32" }, // nSlots (#1959 — caps size incl. EMPTYCHECK scratch; trailing)
     ],
     [strRef],
   );
@@ -1396,21 +1436,20 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
     SLEN = 5,
     SUBJ = 6,
     REPL = 7,
-    GLOBAL = 8;
+    GLOBAL = 8,
+    NSLOTS_PARAM = 9; // #1959 — caps size incl. EMPTYCHECK scratch; trailing param
   // locals
-  const NSLOTS = 9; // 2 * nGroups
-  const CAPS = 10; // ref array<i32> capture slots
-  const POS = 11; // current search start
-  const LASTEND = 12; // end of last replaced match (start of next kept slice)
-  const RESULT = 13; // ref $NativeString accumulator
-  const MSTART = 14;
-  const MEND = 15;
+  const NSLOTS = 10; // = NSLOTS_PARAM (kept as a local so indices below are stable)
+  const CAPS = 11; // ref array<i32> capture slots
+  const POS = 12; // current search start
+  const LASTEND = 13; // end of last replaced match (start of next kept slice)
+  const RESULT = 14; // ref $NativeString accumulator
+  const MSTART = 15;
+  const MEND = 16;
 
   const body: Instr[] = [
-    // nSlots = 2 * nGroups
-    { op: "local.get", index: NGROUPS },
-    { op: "i32.const", value: 2 },
-    { op: "i32.mul" },
+    // caps = array.new_default(nSlots); nSlots supplied by caller (#1959)
+    { op: "local.get", index: NSLOTS_PARAM },
     { op: "local.set", index: NSLOTS },
     { op: "local.get", index: NSLOTS },
     { op: "array.new_default", typeIdx: i32Arr },
@@ -1517,6 +1556,7 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
     name: "__regex_replace",
     typeIdx,
     locals: [
+      // #1959: NSLOTS_PARAM is a trailing param (index 9); locals begin at 10.
       { name: "nslots", type: { kind: "i32" } },
       { name: "caps", type: i32ArrRef },
       { name: "pos", type: { kind: "i32" } },
@@ -1779,6 +1819,7 @@ export function ensureRegexSplit(ctx: CodegenContext): number {
       { kind: "i32" }, // strLen
       strRef, // subject (flattened)
       { kind: "i32" }, // lim (u32; -1 = no limit)
+      { kind: "i32" }, // nSlots (#1959 — caps size incl. EMPTYCHECK scratch; trailing)
     ],
     [nstrVecRef],
   );
@@ -1793,22 +1834,23 @@ export function ensureRegexSplit(ctx: CodegenContext): number {
     SOFF = 4,
     SLEN = 5,
     SUBJ = 6,
-    LIM = 7;
-  // locals
-  const NSLOTS = 8;
-  const CAPS = 9;
-  const P = 10; // last split point (spec p)
-  const Q = 11; // scan cursor (spec q)
-  const RARR = 12;
-  const RLEN = 13;
-  const RCAP = 14;
-  const NEWARR = 15;
-  const PART = 16;
-  const MSTART = 17;
-  const MEND = 18;
-  const GI = 19; // capture interleave index
-  const CS = 20;
-  const CE = 21;
+    LIM = 7,
+    NSLOTS_PARAM = 8; // #1959 — caps size incl. EMPTYCHECK scratch; trailing param
+  // locals (begin at index 9 now that NSLOTS_PARAM is a trailing param)
+  const NSLOTS = 9;
+  const CAPS = 10;
+  const P = 11; // last split point (spec p)
+  const Q = 12; // scan cursor (spec q)
+  const RARR = 13;
+  const RLEN = 14;
+  const RCAP = 15;
+  const NEWARR = 16;
+  const PART = 17;
+  const MSTART = 18;
+  const MEND = 19;
+  const GI = 20; // capture interleave index
+  const CS = 21;
+  const CE = 22;
 
   const appendPart = (): Instr[] => [
     // Grow result if needed.
@@ -1887,10 +1929,8 @@ export function ensureRegexSplit(ctx: CodegenContext): number {
   ];
 
   const body: Instr[] = [
-    // nSlots = 2 * nGroups; caps = array.new_default(nSlots)
-    { op: "local.get", index: NGROUPS },
-    { op: "i32.const", value: 2 },
-    { op: "i32.mul" },
+    // nSlots supplied by caller (#1959 — incl. EMPTYCHECK scratch); caps = array.new_default(nSlots)
+    { op: "local.get", index: NSLOTS_PARAM },
     { op: "local.set", index: NSLOTS },
     { op: "local.get", index: NSLOTS },
     { op: "array.new_default", typeIdx: i32Arr },
@@ -2140,6 +2180,7 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
       { kind: "i32" }, // strOff
       { kind: "i32" }, // strLen
       strRef, // subject (flattened)
+      { kind: "i32" }, // nSlots (#1959 — caps size incl. EMPTYCHECK scratch; trailing)
     ],
     [{ kind: "ref_null", typeIdx: matchVecTypeIdx }],
   );
@@ -2153,23 +2194,23 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
     SDATA = 3,
     SOFF = 4,
     SLEN = 5,
-    SUBJ = 6;
-  // locals
-  const NSLOTS = 7;
-  const CAPS = 8;
-  const POS = 9;
-  const RARR = 10;
-  const RLEN = 11;
-  const RCAP = 12;
-  const NEWARR = 13;
-  const MSTART = 14;
-  const MEND = 15;
-  const FIRSTMS = 16;
+    SUBJ = 6,
+    NSLOTS_PARAM = 7; // #1959 — caps size incl. EMPTYCHECK scratch; trailing param
+  // locals (begin at index 8 now that NSLOTS_PARAM is a trailing param)
+  const NSLOTS = 8;
+  const CAPS = 9;
+  const POS = 10;
+  const RARR = 11;
+  const RLEN = 12;
+  const RCAP = 13;
+  const NEWARR = 14;
+  const MSTART = 15;
+  const MEND = 16;
+  const FIRSTMS = 17;
 
   const body: Instr[] = [
-    { op: "local.get", index: NGROUPS },
-    { op: "i32.const", value: 2 },
-    { op: "i32.mul" },
+    // nSlots supplied by caller (#1959 — incl. EMPTYCHECK scratch)
+    { op: "local.get", index: NSLOTS_PARAM },
     { op: "local.set", index: NSLOTS },
     { op: "local.get", index: NSLOTS },
     { op: "array.new_default", typeIdx: i32Arr },

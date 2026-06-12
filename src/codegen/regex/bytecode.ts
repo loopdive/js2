@@ -54,6 +54,16 @@ export enum ReOp {
    *  successful positive lookaround persist; everything else restores the
    *  pre-assertion capture state. #1911. */
   LOOKAROUND = 12,
+  /** `[EMPTYCHECK, slot, 0]` — the RepeatMatcher empty-iteration progress guard
+   *  (§22.2.2.3.1 RepeatMatcher step 4: if min is 0 and the iteration matched
+   *  the empty string, the iteration fails). Emitted at the tail of a
+   *  nullable-bodied `*`/`+`/`{0,}`-style loop. `slot` is a scratch capture
+   *  slot (≥ `2*nGroups`) holding the sp recorded at the iteration's start.
+   *  If `caps[slot] === sp` the body consumed nothing this iteration → FAIL
+   *  (backtrack, taking the loop's exit arm). Otherwise record `caps[slot] = sp`
+   *  and continue. Without this guard a nullable body loops pushing backtrack
+   *  frames until the step cap, reported as a silent "no match". #1959. */
+  EMPTYCHECK = 13,
 }
 
 /** Slots per instruction in the flat program array. */
@@ -90,6 +100,14 @@ export interface CompiledRegex {
   classTable: number[];
   /** Number of capture groups including group 0 (the whole match). */
   nGroups: number;
+  /**
+   * Total i32 slots the VM's `caps` array needs: `2 * nGroups` capture slots
+   * plus one scratch slot per EMPTYCHECK in the program (#1959). Scratch slots
+   * occupy indices `[2*nGroups, nSlots)`. Result-building (exec/match group
+   * arrays) still uses `nGroups`; only the caps allocation and the VM's
+   * snapshot length use `nSlots`.
+   */
+  nSlots: number;
   /** Flags bitfield: g=1 i=2 m=4 s=8 u=16 y=32 d=64 v=128. */
   flags: number;
 }
