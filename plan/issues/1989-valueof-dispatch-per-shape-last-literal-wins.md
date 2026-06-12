@@ -1,7 +1,7 @@
 ---
 id: 1989
 title: "ToPrimitive valueOf dispatch keyed by struct type name, not object identity — last same-shape literal's valueOf wins for ALL coercions"
-status: ready
+status: suspended
 sprint: 62
 created: 2026-06-10
 updated: 2026-06-12
@@ -177,3 +177,67 @@ building new dispatch. PR-1 is small and high-leverage. Developer-claimable
 struct construction in literals.ts (different concerns — field NAMES vs field
 TYPE for valueOf — low conflict risk, but sequence #2009 PR-1 and #1989 PR-1 to
 avoid overlapping edits at literals.ts:9314/9348).
+
+## Suspended Work (2026-06-12, dev-c)
+
+- **Worktree**: `/workspace/.claude/worktrees/issue-1989-valueof-dispatch`
+  (branch `issue-1989-valueof-dispatch`, NO code changes committed — analysis only)
+
+### Confirmed root cause (current main, line numbers re-verified)
+The field-type decision is **`src/codegen/index.ts:9231-9235`** (not the
+`literals.ts:9314` cited in the plan — that line doesn't exist; `literals.ts`
+is ~2500 lines). When a callable `valueOf`/`toString` object property would be
+`externref`, it is stored as **`{ kind: "eqref" }`** "so coercion can recover
+the closure and call it via call_ref". `eqref` cannot carry the closure's
+typeIdx, so the ToPrimitive eqref path
+(`src/codegen/type-coercion.ts:1928+`) falls back to the name-keyed
+`ctx.valueOfClosureTypes.get(typeName)` lookup, which collides across
+same-shape literals.
+
+### The correct per-instance path already exists and is sound
+`src/codegen/type-coercion.ts:1871-1905` (the `ref`/`ref_null` valueOf branch)
+does the RIGHT thing per instance: `local.set` the struct, `struct.get` the
+valueOf field, `struct.get` field 0 (funcref), `call_ref` — **no name-keying**.
+It only requires `valueOfField.type` to be `{ kind: "ref_null", typeIdx:
+<closureTypeIdx> }` where `closureInfoByTypeIdx.get(closureTypeIdx)` resolves.
+
+### The blocker (why this is reasoning_effort: high)
+Chicken-and-egg ordering: the field TYPE is decided at **shape-build time**
+(index.ts:9234), but the closure's concrete `typeIdx` is only produced at
+**construction time** when `emitObjectMethodAsClosure(...)` compiles the method
+(`literals.ts:1466`, returns `closureType`). To flip the field type to a typed
+closure ref, the shape builder must resolve the closure typeIdx UP FRONT from
+the property's call signature.
+
+### Exact resume plan
+1. In `src/codegen/index.ts` near line 9234, instead of `{ kind: "eqref" }`,
+   resolve the closure typeIdx for the property's call signature (arity +
+   return type) — investigate how `emitObjectMethodAsClosure` derives/registers
+   the closure struct typeIdx and whether a per-signature **base closure type**
+   is registered in `ctx.closureInfoByTypeIdx` early enough. If a base closure
+   supertype per `(arity, retType)` exists (or can be pre-registered in the same
+   pass that registers the method placeholder funcType, index.ts:9237-9244),
+   store the field as `{ kind: "ref_null", typeIdx: baseClosureTypeIdx }`.
+2. Confirm the construction path: `literals.ts:1466-1487` already emits the
+   typed closure value; with a typed-ref field it stores it directly (the
+   `field.type.kind === "ref"/"ref_null"` branch at 1476-1486 handles the
+   typeIdx match; ensure the closure typeIdx the builder picked == the one
+   `emitObjectMethodAsClosure` emits, else the 1476-1485 mismatch branch drops
+   it to null — THIS is the alignment to get right).
+3. The eqref path (type-coercion.ts:1928+) and the host export
+   (index.ts:3616 `__valueOf`/`__toString`) then become fallbacks only.
+4. Property-assignment form (`{ valueOf: () => 7 }`, literals.ts:1500-1517) also
+   needs the typed-ref field — same flip.
+
+### Repro (verified on main)
+`String(a+1)+","+String(b+1)` with `a={valueOf(){return 7}}`,
+`b={valueOf(){return 100}}`: **wasm THROWS "Cannot convert object to primitive
+value"** (worse than the doc's "101,101"); node = `"8,101"`. Probe via
+`compileToWasm`/`evaluateAsJs` from `tests/equivalence/helpers.js`.
+
+### Why suspended not completed
+Solving the up-front closure-typeIdx resolution (step 1) cleanly is the high-
+effort core and warrants a dedicated focused pass or senior-dev — rushing it
+risks the 1476-1485 typeIdx-mismatch silently nulling the field (regressing all
+object-literal valueOf/toString). No partial code committed to avoid a
+half-done state.
