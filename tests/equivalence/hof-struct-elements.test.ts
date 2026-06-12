@@ -63,25 +63,11 @@ describe("#1967 higher-order methods on struct-element arrays", () => {
     );
   });
 
-  it("reduce with numeric accumulator over structs", async () => {
-    await assertEquivalent(
-      `export function test(): number {
-        const a = [{ k: 1 }, { k: 2 }, { k: 3 }];
-        return a.reduce((acc, o) => acc + o.k, 0);
-      }`,
-      [{ fn: "test", args: [] }],
-    );
-  });
-
-  it("reduceRight with numeric accumulator over structs", async () => {
-    await assertEquivalent(
-      `export function test(): number {
-        const a = [{ k: 1 }, { k: 2 }, { k: 3 }];
-        return a.reduceRight((acc, o) => acc + o.k, 0);
-      }`,
-      [{ fn: "test", args: [] }],
-    );
-  });
+  // NOTE: reduce/reduceRight over struct (ref) elements are intentionally NOT
+  // covered here — they keep the pre-#1967 f64/i32/externref gate because
+  // compileArrayReduce hard-codes a numeric accumulator local (generalising it
+  // is #1994). Widening reduce to ref elements regressed ~300 test262 cases, so
+  // it was reverted; struct-element reduce stays on the fallback until #1994.
 
   it("find returns the matching struct", async () => {
     await assertEquivalent(

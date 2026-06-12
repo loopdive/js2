@@ -2451,6 +2451,20 @@ function isHofElemKind(kind: ValType["kind"]): boolean {
 }
 
 /**
+ * #1967 — element kinds the reduce/reduceRight gate admits. This DELIBERATELY
+ * excludes `ref`/`ref_null`: `compileArrayReduce` hard-codes the accumulator
+ * local to the numeric kind (`accTmp = numKind`), and the no-initial-value
+ * branch loads `data[0]` (a struct ref) straight into it — a type mismatch that
+ * produces an invalid binary for struct-element arrays. Generalising the
+ * accumulator type is #1994's job. So reduce/reduceRight keep the pre-#1967
+ * f64/i32/externref gate; struct-element reduce stays on the (no-op) fallback
+ * until #1994 lands a typed accumulator.
+ */
+function isReduceElemKind(kind: ValType["kind"]): boolean {
+  return kind === "f64" || kind === "i32" || kind === "externref";
+}
+
+/**
  * Nullable version of a ref element ValType, used for "not found"-style
  * sentinels (e.g. `find` on a struct array). A non-null `ref` becomes
  * `ref_null` so a null sentinel validates; externref is already nullable.
@@ -2696,17 +2710,15 @@ export function compileArrayMethodCall(
         : undefined;
       break;
     case "reduce":
-      // #1967: ref/ref_null (struct) elements with a numeric accumulator
-      // (`[{k:1}].reduce((a,o)=>a+o.k, 0)`) iterate fine — the element is read
-      // via array.get and coerced to the callback's 2nd param. (A *struct*
-      // accumulator with no initial value still hits the numeric accTmp typing
-      // generalised under #1994.)
-      result = isHofElemKind(elemType.kind)
+      // #1967: reduce/reduceRight keep the pre-#1967 f64/i32/externref gate —
+      // the numeric-only accumulator local makes struct-element reduce unsafe
+      // (see isReduceElemKind). Generalising the accumulator is #1994.
+      result = isReduceElemKind(elemType.kind)
         ? compileArrayReduce(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
         : undefined;
       break;
     case "reduceRight":
-      result = isHofElemKind(elemType.kind)
+      result = isReduceElemKind(elemType.kind)
         ? compileArrayReduceRight(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
         : undefined;
       break;
@@ -6202,14 +6214,21 @@ function compileArrayFind(
   );
 
   // Result local. For numeric elements, the not-found sentinel is NaN (f64) /
-  // 0 (i32). For ref/externref elements (#1967), the result is the matching
-  // element itself and the not-found sentinel is a null ref — returning f64 NaN
-  // here would mismatch the struct ref on `local.set` and produce an invalid
-  // binary, so the result local carries the (nullable) element type instead.
-  const isRefElem = elemType.kind === "ref" || elemType.kind === "ref_null" || elemType.kind === "externref";
-  const findResType: ValType = ctx.fast || isRefElem ? nullableValType(elemType) : { kind: "f64" };
+  // 0 (i32). For struct (ref/ref_null) elements (#1967), the result is the
+  // matching element itself and the not-found sentinel is a null ref —
+  // returning f64 NaN would mismatch the struct ref on `local.set` and produce
+  // an invalid binary, so the result local carries the (nullable) element type.
+  //
+  // NOTE: `externref` is intentionally EXCLUDED here — it keeps the pre-#1967
+  // behaviour (f64 NaN result in non-fast; elemType in fast). The
+  // externref-element path was ALREADY in the find gate before #1967; changing
+  // its result type regressed ~300 test262 cases (string/object-element find
+  // consumers expect the original f64 shape). Only the newly-admitted struct
+  // refs change shape.
+  const isStructRefElem = elemType.kind === "ref" || elemType.kind === "ref_null";
+  const findResType: ValType = isStructRefElem ? nullableValType(elemType) : ctx.fast ? elemType : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_find_res_${fctx.locals.length}`, findResType);
-  if (isRefElem) {
+  if (isStructRefElem) {
     fctx.body.push(...nullRefInstrs(elemType));
   } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
@@ -6234,7 +6253,7 @@ function compileArrayFind(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: elemTmpLocal } as Instr,
-        ...(!ctx.fast && !isRefElem && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        ...(!ctx.fast && !isStructRefElem && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
         { op: "local.set", index: findResTmp } as Instr,
         { op: "br", depth: 2 } as Instr,
       ],
@@ -6399,12 +6418,14 @@ function compileArrayFindLast(
     "truthy",
   );
 
-  // See compileArrayFind: ref/externref elements (#1967) return the matching
-  // element with a null not-found sentinel; numeric elements use NaN/0.
-  const isRefElem = elemType.kind === "ref" || elemType.kind === "ref_null" || elemType.kind === "externref";
-  const findResType: ValType = ctx.fast || isRefElem ? nullableValType(elemType) : { kind: "f64" };
+  // See compileArrayFind: only struct (ref/ref_null) elements (#1967) return the
+  // matching element with a null not-found sentinel. externref keeps the
+  // pre-#1967 behaviour (f64 NaN non-fast / elemType fast) — broadening it
+  // regressed ~300 test262 cases.
+  const isStructRefElem = elemType.kind === "ref" || elemType.kind === "ref_null";
+  const findResType: ValType = isStructRefElem ? nullableValType(elemType) : ctx.fast ? elemType : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_findLast_res_${fctx.locals.length}`, findResType);
-  if (isRefElem) {
+  if (isStructRefElem) {
     fctx.body.push(...nullRefInstrs(elemType));
   } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
@@ -6429,7 +6450,7 @@ function compileArrayFindLast(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: elemTmpLocal } as Instr,
-        ...(!ctx.fast && !isRefElem && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        ...(!ctx.fast && !isStructRefElem && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
         { op: "local.set", index: findResTmp } as Instr,
         { op: "br", depth: 2 } as Instr,
       ],
