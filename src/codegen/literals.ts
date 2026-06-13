@@ -451,6 +451,18 @@ function compileObjectLiteralWithAccessors(
         fctx.body.push({ op: "local.get", index: objLocal });
         fctx.body.push({ op: "i32.const", value: wellKnownSymId });
         fctx.body.push({ op: "call", funcIdx: boxSymIdx });
+      } else if (propName === undefined && ts.isComputedPropertyName(prop.name)) {
+        // (#2126) Runtime computed key: evaluate the key expression here (in
+        // source order, before the value — its side effects must run) and
+        // pass it to __extern_set as the externref key. The host coerces a
+        // non-string key (e.g. a boxed number) per ToPropertyKey.
+        fctx.body.push({ op: "local.get", index: objLocal });
+        const keyType = compileExpression(ctx, fctx, prop.name.expression);
+        if (!keyType) {
+          fctx.body.push({ op: "ref.null.extern" });
+        } else if (keyType.kind !== "externref") {
+          coerceType(ctx, fctx, keyType, { kind: "externref" });
+        }
       } else {
         if (propName === undefined) continue;
         addStringConstantGlobal(ctx, propName);
@@ -512,6 +524,28 @@ function compileObjectLiteralWithAccessors(
           fctx.body.push({ op: "ref.null.extern" });
         }
         fctx.body.push({ op: "call", funcIdx: setIdx });
+        continue;
+      }
+      if (methodName === undefined && ts.isComputedPropertyName(prop.name)) {
+        // (#2126) Runtime computed method key — same as the PropertyAssignment
+        // branch: evaluate the key expression and pass it as the externref key.
+        fctx.body.push({ op: "local.get", index: objLocal });
+        const keyType = compileExpression(ctx, fctx, prop.name.expression);
+        if (!keyType) {
+          fctx.body.push({ op: "ref.null.extern" });
+        } else if (keyType.kind !== "externref") {
+          coerceType(ctx, fctx, keyType, { kind: "externref" });
+        }
+        const okRt = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+        if (okRt) {
+          fctx.body.push({ op: "call", funcIdx: setIdx });
+        } else {
+          // Callback compilation declined — keep the pre-#2126 "property
+          // skipped" semantics (drop key + obj) but the key expression's
+          // side effects above have already run, per spec evaluation order.
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "drop" });
+        }
         continue;
       }
       if (methodName === undefined) continue;
@@ -614,6 +648,34 @@ function emitObjectLiteralAccessorFn(
 }
 
 /**
+ * (#2127) True when the literal contains a spread whose SOURCE type carries
+ * accessor-declared own properties (get/set). The struct spread lowering
+ * copies data fields by struct layout and never invokes getters — per spec
+ * CopyDataProperties each own enumerable key gets a [[Get]] whose result is
+ * copied as a data property. Such literals must take the host plain-object
+ * path, whose spread uses __object_assign (Object.assign semantics = the
+ * required [[Get]]-then-copy).
+ */
+function _hasAccessorSpreadSource(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  for (const p of expr.properties) {
+    if (!ts.isSpreadAssignment(p)) continue;
+    let srcType: ts.Type | undefined;
+    try {
+      srcType = ctx.checker.getTypeAtLocation(p.expression);
+    } catch {
+      continue;
+    }
+    if (!srcType) continue;
+    for (const sym of srcType.getProperties()) {
+      if ((sym.flags & (ts.SymbolFlags.GetAccessor | ts.SymbolFlags.SetAccessor)) !== 0) return true;
+      const decls = sym.declarations ?? [];
+      if (decls.some((d) => ts.isGetAccessorDeclaration(d) || ts.isSetAccessorDeclaration(d))) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * (#1433) Check whether an object literal contains a method whose computed
  * property name resolves to `Symbol.dispose` or `Symbol.asyncDispose`. Such
  * objects MUST be routed through the JS-host plain-object path so the
@@ -639,6 +701,32 @@ function _hasDisposalMethod(expr: ts.ObjectLiteralExpression): boolean {
   return false;
 }
 
+/**
+ * (#2126) True when the literal has a data property or method whose computed
+ * key is only known at runtime — `[expr]` neither folds to a compile-time
+ * string (resolveComputedKeyExpression) nor names a well-known `Symbol.X`
+ * (those keep their existing __box_symbol routing). The struct paths lay out
+ * fields from compile-time names only, so these literals must take the host
+ * plain-object path, which evaluates the key expression at runtime.
+ */
+function _hasRuntimeComputedKey(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  for (const p of expr.properties) {
+    if (!ts.isPropertyAssignment(p) && !ts.isMethodDeclaration(p)) continue;
+    if (!ts.isComputedPropertyName(p.name)) continue;
+    const inner = p.name.expression;
+    if (
+      ts.isPropertyAccessExpression(inner) &&
+      ts.isIdentifier(inner.expression) &&
+      inner.expression.text === "Symbol" &&
+      getWellKnownSymbolId(inner.name.text) !== undefined
+    ) {
+      continue;
+    }
+    if (resolveComputedKeyExpression(ctx, inner) === undefined) return true;
+  }
+  return false;
+}
+
 export function compileObjectLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -652,11 +740,27 @@ export function compileObjectLiteral(
   // (#1433) Same routing for objects containing a `[Symbol.dispose]` or
   // `[Symbol.asyncDispose]` method — host DisposableStack / `using`
   // declarations rely on real Symbol-keyed properties.
+  //
+  // (#2126) Same routing for literals with a RUNTIME computed key — `[expr]`
+  // that neither folds to a compile-time string nor names a well-known
+  // Symbol. The struct paths lay out fields from compile-time-known names
+  // only, so such a property (and the key expression's side effects) would
+  // be silently dropped; the host plain-object path evaluates the key at
+  // runtime.
   if (
     expr.properties.length > 0 &&
     (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
-      _hasDisposalMethod(expr))
+      _hasDisposalMethod(expr) ||
+      _hasRuntimeComputedKey(ctx, expr))
   ) {
+    return compileObjectLiteralWithAccessors(ctx, fctx, expr);
+  }
+
+  // (#2127) Same routing when a spread SOURCE has accessor-declared
+  // properties: the struct spread copies data fields by layout and never
+  // fires the getter. The host path's __object_assign spread performs the
+  // spec CopyDataProperties [[Get]]-then-copy.
+  if (expr.properties.length > 0 && _hasAccessorSpreadSource(ctx, expr)) {
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }
 

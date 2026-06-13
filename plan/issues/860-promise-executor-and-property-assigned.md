@@ -1,7 +1,8 @@
 ---
 id: 860
 title: "Promise executor and property-assigned functions not compiled as host callbacks"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-03-28
 updated: 2026-05-28
 priority: medium

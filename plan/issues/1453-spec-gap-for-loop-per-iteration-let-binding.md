@@ -1,7 +1,8 @@
 ---
 id: 1453
 title: "spec gap: per-iteration fresh let/const binding in for-statements"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: medium

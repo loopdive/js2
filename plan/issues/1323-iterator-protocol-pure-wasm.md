@@ -1,7 +1,8 @@
 ---
 id: 1323
 title: "Iterator protocol bridging: implement $IteratorResult struct in pure Wasm, eliminate host bridge"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-07
 updated: 2026-05-07
 priority: medium
@@ -53,3 +54,17 @@ struct type in the IR.
 - `src/ir/types.ts` — register canonical type
 - `src/ir/lower.ts` — construct structs at call sites
 - `src/runtime.ts` — remove `__iterator_next`, `__iterator_done`, `__iterator_value` imports
+
+## Board-hygiene triage (2026-06-12, #2147)
+
+Resolved `in-review` → **`done`** (goal achieved, approach superseded). The
+issue's dedicated `$IteratorResult`-struct branch
+(`issue-1323-iterator-result-struct`, commit 65c69ca7) never merged to main.
+**But its actual goal — eliminating the `__iterator_done` / `__iterator_value`
+JS host imports — was delivered by #1620**, which gave `__iterator_next` a
+multi-value `[i32 done, externref value]` result ABI that folds in the old
+done/value extraction (see `src/codegen/index.ts` ~L8612 and the
+`__iterator_next` handler note in `src/runtime.ts`). The two imports no longer
+exist. So the host-independence objective is met; the specific struct-design
+deliverable was replaced by the multi-value ABI. Closing as done/superseded
+rather than re-opening, since there is no remaining host bridge to remove.

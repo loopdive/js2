@@ -1,7 +1,8 @@
 ---
 id: 1440
 title: "spec gap: Date setters ToNumber coercion + Invalid Date (NaN) propagation"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: high

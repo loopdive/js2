@@ -1,7 +1,8 @@
 ---
 id: 1598
 title: "host-indep: pure-Wasm String.fromCharCode / fromCodePoint in standalone mode"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-24
 updated: 2026-05-24
 priority: medium

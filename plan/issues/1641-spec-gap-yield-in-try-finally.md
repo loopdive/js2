@@ -1,7 +1,7 @@
 ---
 id: 1641
 title: "spec gap: yield in nested try/finally + yield expression evaluation order (46 test262 fails)"
-status: in-review
+status: ready
 created: 2026-05-08
 updated: 2026-05-24
 priority: medium
@@ -85,3 +85,12 @@ the outer's `.return(value)` and `.throw(error)` to the inner — it just propag
 - `test262/test/language/expressions/yield/star-rhs-iter-rtrn-meth-throws.js`
 - `test262/test/language/expressions/yield/star-iterable.js`
 - `test262/test/language/expressions/yield/yield-as-yield-operand-in-fn-arg.js`
+
+## Board-hygiene triage (2026-06-12, #2147)
+
+Reset `in-review` → **`ready`**. The only PR referencing this issue (#664)
+was a docs-only escalation recording that the work was **blocked on #680**
+(Wasm-native generators); no implementing fix ever merged. #680 is now done
+(merged), so #1641 is **unblocked and re-doable** — the try/finally + yield
+and yield* delegation work can proceed on top of the native generator state
+machine. Not flipped to `done` (no implementing PR exists).

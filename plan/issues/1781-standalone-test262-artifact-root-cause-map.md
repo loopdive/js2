@@ -1,7 +1,8 @@
 ---
 id: 1781
 title: "standalone test262 run must publish full JSONL and root-cause issue map"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-06-02
 updated: 2026-06-02
 priority: high

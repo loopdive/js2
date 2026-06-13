@@ -8912,6 +8912,17 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // in the lib as `declare var Array: ArrayConstructor` which would match externref
   if (tsType.flags & ts.TypeFlags.Object) {
     const sym = (tsType as ts.TypeReference).symbol ?? (tsType as ts.Type).symbol;
+    // `TemplateStringsArray` (the first parameter of a tag function) is the
+    // template object built by `compileTaggedTemplateExpression` — a vec struct
+    // `{ length, data, raw }` (the template vec type). It extends
+    // `ReadonlyArray<string>`, so it MUST be matched before the Array branch
+    // below, otherwise it would lower to a plain string vec without the `raw`
+    // field and indexed/`.raw` reads would mismatch the runtime struct (#2008).
+    if (sym?.name === "TemplateStringsArray") {
+      const templateVecTypeIdx = getOrRegisterTemplateVecType(ctx);
+      return { kind: "ref_null", typeIdx: templateVecTypeIdx };
+    }
+
     // `readonly T[]` / `ReadonlyArray<T>` lower identically to `T[]` — `readonly`
     // is a TS-only modifier with no runtime representation. Without this, a
     // ReadonlyArray-typed struct field falls through to the anonymous-struct /

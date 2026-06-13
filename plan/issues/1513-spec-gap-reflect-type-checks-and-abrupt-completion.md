@@ -1,7 +1,7 @@
 ---
 id: 1513
 title: "spec gap: Reflect — TypeError on non-object/Symbol target + abrupt-completion propagation"
-status: in-review
+status: wont-fix
 created: 2026-05-20
 updated: 2026-05-28
 priority: medium
@@ -190,3 +190,12 @@ that USE Reflect but assert about behavior owned elsewhere in the engine.
 - `.tmp/probe2.mts`: same shape for `Reflect.X(primitive)` — silently
   returns `undefined` from the outer function instead of going through
   the catch block.
+
+## Board-hygiene triage (2026-06-12, #2147)
+
+Reset `in-review` → **`wont-fix`** (decomposed, not a localized fix). The only
+PR referencing this issue is #792, explicitly titled
+`[NOT-A-LOCALIZED-FIX] Reflect — decomposes into existing issues`: the Reflect
+spec-gap was split into the concrete sub-issues it covers rather than fixed as
+one unit. No single implementing fix exists, so this umbrella issue is closed
+as decomposed; the real work is tracked by the sub-issues it was split into.

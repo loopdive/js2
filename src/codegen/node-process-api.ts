@@ -56,7 +56,7 @@ export function tryCompileNodeProcessCall(
   // Uint8Array — fd_write reads straight from `ptr` for `len` bytes (no
   // GC→linear staging copy). Only fires for a registered linear-safe buffer.
   if (ctx.wasiFdWriteIdx !== undefined && ctx.wasiFdWriteIdx >= 0) {
-    if (tryEmitLinearU8StdWrite(fctx, argExpr, ctx.wasiFdWriteIdx, useStderr)) {
+    if (tryEmitLinearU8StdWrite(ctx, fctx, argExpr, ctx.wasiFdWriteIdx, useStderr)) {
       // Match the GC Uint8Array write path's contract: push `1` (write
       // succeeded) and return i32, so the expression-statement wrapper drops it
       // exactly like the GC path. (#1886)

@@ -111,7 +111,7 @@ export function tryEmitLinearU8New(
       fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
       fctx.body.push({ op: "i32.store8", align: 0, offset: 0 } as Instr);
     });
-    registerBuffer(fctx, nameNode.text, ptrLocal, lenLocal);
+    registerBuffer(ctx, fctx, nameNode, ptrLocal, lenLocal);
     return true;
   }
 
@@ -127,12 +127,26 @@ export function tryEmitLinearU8New(
   fctx.body.push({ op: "local.get", index: lenLocal } as Instr);
   fctx.body.push({ op: "call", funcIdx: allocIdx } as Instr);
   fctx.body.push({ op: "local.set", index: ptrLocal } as Instr);
-  registerBuffer(fctx, nameNode.text, ptrLocal, lenLocal);
+  registerBuffer(ctx, fctx, nameNode, ptrLocal, lenLocal);
   return true;
 }
 
-function registerBuffer(fctx: FunctionContext, name: string, ptrLocalIdx: number, lenLocalIdx: number): void {
-  registerLinearU8Buffer(fctx, name, ptrLocalIdx, lenLocalIdx);
+/**
+ * Register a linear-backed buffer under the binding's `ts.Symbol` (#2045).
+ * Falls back to a no-op when the identifier has no resolvable symbol — codegen
+ * then leaves the binding on the GC path, which is sound (never silent
+ * corruption).
+ */
+function registerBuffer(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  nameNode: ts.Identifier,
+  ptrLocalIdx: number,
+  lenLocalIdx: number,
+): void {
+  const sym = ctx.checker.getSymbolAtLocation(nameNode);
+  if (!sym) return;
+  registerLinearU8Buffer(fctx, sym, ptrLocalIdx, lenLocalIdx);
 }
 
 /**
@@ -145,16 +159,47 @@ export function tryEmitLinearU8ElementGet(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | null {
-  const buf = lookupLinearU8Buffer(fctx, expr.expression);
+  const buf = lookupLinearU8Buffer(ctx, fctx, expr.expression);
   if (!buf) return null;
-  // address = ptr + trunc(index)
-  fctx.body.push({ op: "local.get", index: buf.ptrLocalIdx } as Instr);
+  // idx = trunc(index), stored once so the bounds check and the address
+  // computation observe the same value (and side-effecting index exprs run once).
+  const idxLocal = allocLocal(fctx, `__linu8_gidx_${fctx.locals.length}`, { kind: "i32" });
   compileExpression(ctx, fctx, expr.argumentExpression, { kind: "f64" });
   fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
+  fctx.body.push({ op: "local.set", index: idxLocal } as Instr);
+  // #2045 A.2: bounds-check like the GC path. An unchecked OOB read silently
+  // returned arbitrary linear memory (iovec scratch, string data, a caller's
+  // buffer under Slice C); trap instead.
+  emitLinearU8BoundsCheck(fctx, idxLocal, buf.lenLocalIdx);
+  // address = ptr + idx
+  fctx.body.push({ op: "local.get", index: buf.ptrLocalIdx } as Instr);
+  fctx.body.push({ op: "local.get", index: idxLocal } as Instr);
   fctx.body.push({ op: "i32.add" } as Instr);
   fctx.body.push({ op: "i32.load8_u", align: 0, offset: 0 } as Instr);
   fctx.body.push({ op: "f64.convert_i32_u" } as Instr);
   return { kind: "f64" };
+}
+
+/**
+ * #2045 A.2 — emit a `idx (u32) >= len → unreachable` guard before a linear
+ * element access, matching the WasmGC array path which traps on OOB. The index
+ * is compared as unsigned so a negative (huge-u32) index also traps.
+ *
+ * `idxLocal` holds the truncated i32 index; `lenLocalIdx` the buffer length.
+ * On out-of-range the module traps (`unreachable`) — the same observable
+ * outcome as the GC `array.get`/`array.set` bounds trap. A provably in-range
+ * constant index could elide this, but I keep it unconditional for soundness;
+ * the cost is one compare + branch per element access.
+ */
+function emitLinearU8BoundsCheck(fctx: FunctionContext, idxLocal: number, lenLocalIdx: number): void {
+  fctx.body.push({ op: "local.get", index: idxLocal } as Instr);
+  fctx.body.push({ op: "local.get", index: lenLocalIdx } as Instr);
+  fctx.body.push({ op: "i32.ge_u" } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [{ op: "unreachable" } as Instr],
+  } as Instr);
 }
 
 /**
@@ -181,20 +226,28 @@ export function tryEmitLinearU8ElementSet(
   target: ts.ElementAccessExpression,
   valueExpr: ts.Expression,
 ): InnerResult {
-  const buf = lookupLinearU8Buffer(fctx, target.expression);
+  const buf = lookupLinearU8Buffer(ctx, fctx, target.expression);
   if (!buf) return null;
   // Allocate the result/addr temps up-front so their slot indices are fixed
   // before the nested index/value sub-expressions compile (those allocate their
   // own temps as they go). Each sub-expression is fully evaluated into a temp
   // before the next is compiled, so no stash ever interleaves with another
   // expression's temp usage on the value stack (#1886).
+  const idxLocal = allocLocal(fctx, `__linu8_sidx_${fctx.locals.length}`, { kind: "i32" });
   const addrLocal = allocLocal(fctx, `__linu8_addr_${fctx.locals.length}`, { kind: "i32" });
   const valLocal = allocLocal(fctx, `__linu8_val_${fctx.locals.length}`, { kind: "f64" });
 
-  // addr = ptr + trunc(index)  (index evaluated first, per JS + the GC path)
-  fctx.body.push({ op: "local.get", index: buf.ptrLocalIdx } as Instr);
+  // idx = trunc(index)  (index evaluated first, per JS + the GC path)
   compileExpression(ctx, fctx, target.argumentExpression, { kind: "f64" });
   fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
+  fctx.body.push({ op: "local.set", index: idxLocal } as Instr);
+  // #2045 A.2: bounds-check BEFORE evaluating the value, so an OOB write traps
+  // (like the GC path) rather than scribbling into a caller's linear memory.
+  // The check precedes value evaluation to match the GC array.set trap order.
+  emitLinearU8BoundsCheck(fctx, idxLocal, buf.lenLocalIdx);
+  // addr = ptr + idx
+  fctx.body.push({ op: "local.get", index: buf.ptrLocalIdx } as Instr);
+  fctx.body.push({ op: "local.get", index: idxLocal } as Instr);
   fctx.body.push({ op: "i32.add" } as Instr);
   fctx.body.push({ op: "local.set", index: addrLocal } as Instr);
   // val = v (kept as f64 for the assignment-expression result)
@@ -219,9 +272,13 @@ export function tryEmitLinearU8ElementSet(
 }
 
 /** `b.length` for a linear-backed buffer → `len` widened to f64. */
-export function tryEmitLinearU8Length(fctx: FunctionContext, expr: ts.PropertyAccessExpression): ValType | null {
+export function tryEmitLinearU8Length(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | null {
   if (expr.name.text !== "length") return null;
-  const buf = lookupLinearU8Buffer(fctx, expr.expression);
+  const buf = lookupLinearU8Buffer(ctx, fctx, expr.expression);
   if (!buf) return null;
   fctx.body.push({ op: "local.get", index: buf.lenLocalIdx } as Instr);
   fctx.body.push({ op: "f64.convert_i32_u" } as Instr);
@@ -230,10 +287,11 @@ export function tryEmitLinearU8Length(fctx: FunctionContext, expr: ts.PropertyAc
 
 /** Accessor used by the WASI I/O intrinsics to get a buffer's (ptr, len) locals. */
 export function getLinearU8Buffer(
+  ctx: CodegenContext,
   fctx: FunctionContext,
   node: ts.Node,
 ): { ptrLocalIdx: number; lenLocalIdx: number } | undefined {
-  return lookupLinearU8Buffer(fctx, node);
+  return lookupLinearU8Buffer(ctx, fctx, node);
 }
 
 /**
@@ -251,7 +309,7 @@ export function tryEmitLinearU8StdinRead(
   expr: ts.CallExpression,
   fdReadIdx: number,
 ): ValType | null {
-  const buf = getLinearU8Buffer(fctx, expr.arguments[0]!);
+  const buf = getLinearU8Buffer(ctx, fctx, expr.arguments[0]!);
   if (!buf) return null;
 
   // off = arg1 (trunc) or 0
@@ -298,12 +356,13 @@ export function tryEmitLinearU8StdinRead(
  * stack, matching the GC write path), `null` if `buf` is not linear-backed.
  */
 export function tryEmitLinearU8StdWrite(
+  ctx: CodegenContext,
   fctx: FunctionContext,
   bufArg: ts.Expression,
   fdWriteIdx: number,
   useStderr: boolean,
 ): boolean {
-  const buf = getLinearU8Buffer(fctx, bufArg);
+  const buf = getLinearU8Buffer(ctx, fctx, bufArg);
   if (!buf) return false;
   const fd = useStderr ? 2 : 1;
   // iovec.buf = ptr (memory[0])

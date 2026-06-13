@@ -9480,7 +9480,7 @@ function compileCallExpression(
       for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
         if (hasLinearParamsForCall && linearParamsForCall.has(i)) {
           const arg = expr.arguments[i]!;
-          const buf = getLinearU8Buffer(fctx, arg);
+          const buf = getLinearU8Buffer(ctx, fctx, arg);
           if (!buf) {
             reportError(
               ctx,

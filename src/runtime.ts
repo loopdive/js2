@@ -6412,6 +6412,41 @@ assert._isSameValue = isSameValue;
             return "[object Object]";
           }
         };
+      // (#2022) ToString of a `+`-concat operand. `+` applies ToPrimitive with
+      // the DEFAULT hint (valueOf before toString), even when the other operand
+      // is a string — unlike `String(x)` / template literals which use the
+      // string hint. So `({ toString:()=>"P!", valueOf:()=>7 }) + ""` is "7",
+      // not "P!". Mirrors `__extern_toString` but with the "default" hint.
+      if (name === "__extern_to_string_default")
+        return (v: any) => {
+          if (v == null) return String(v);
+          if (typeof v === "object" && _isWasmStruct(v)) {
+            const prim = _toPrimitive(v, "default", callbackState);
+            if (prim !== undefined) {
+              if (typeof prim === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+              return String(prim);
+            }
+            try {
+              const prim2 = _hostToPrimitive(v, "default", callbackState);
+              if (typeof prim2 === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+              return String(prim2);
+            } catch {
+              return "[object Object]";
+            }
+          }
+          if (typeof v === "object") {
+            const prim = _toPrimitive(v, "default", callbackState);
+            if (prim !== undefined) {
+              if (typeof prim === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+              return String(prim);
+            }
+          }
+          try {
+            return String(v);
+          } catch {
+            return "[object Object]";
+          }
+        };
       // (#1638) Date.prototype string formatters. The Wasm side holds the
       // timestamp as an i64 and passes it here with a mode selector; we build
       // the spec-correct string from a UTC Date. The invalid-Date sentinel
@@ -10346,8 +10381,29 @@ assert._isSameValue = isSameValue;
     case "host_loose_eq":
       // #1134 — loose equality for two externref operands (§7.2.15).
       // Handles null == undefined → true and other JS coercion rules.
-      // biome-ignore lint/suspicious/noDoubleEquals: §7.2.15 IsLooselyEqual requires == semantics (null == undefined, type coercion)
-      return (a: any, b: any) => (a == b ? 1 : 0);
+      return (a: any, b: any) => {
+        // #1990 — IsLooselyEqual §7.2.15 steps 8-9: `object == primitive`
+        // coerces the object via ToPrimitive (no hint → "default"). For a
+        // WasmGC struct carrying a compiled valueOf/toString, host `==` would
+        // throw "Cannot convert object to primitive value" because the funcref
+        // field isn't a JS-callable method. Route struct operands through
+        // `_toPrimitiveSync` first — the same fix `__extern_has` already uses —
+        // BUT only when the other operand is a primitive (object == object is
+        // reference identity per steps 1-2, no coercion). A no-method struct
+        // resolves to "[object Object]", preserving `{} == "[object Object]"`.
+        const aStruct = a != null && typeof a === "object" && _isWasmStruct(a);
+        const bStruct = b != null && typeof b === "object" && _isWasmStruct(b);
+        let av = a;
+        let bv = b;
+        if (aStruct && !bStruct && (b == null || typeof b !== "object")) {
+          av = _toPrimitiveSync(a, "default", callbackState);
+        }
+        if (bStruct && !aStruct && (a == null || typeof a !== "object")) {
+          bv = _toPrimitiveSync(b, "default", callbackState);
+        }
+        // biome-ignore lint/suspicious/noDoubleEquals: §7.2.15 IsLooselyEqual requires == semantics (null == undefined, type coercion)
+        return av == bv ? 1 : 0;
+      };
     case "host_add":
       // #2058 — `+` for two externref operands (§13.15.3
       // ApplyStringOrNumericBinaryOperator). JS `+` gives us ToPrimitive on both

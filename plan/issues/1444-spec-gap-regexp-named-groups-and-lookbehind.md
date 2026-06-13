@@ -1,7 +1,8 @@
 ---
 id: 1444
 title: "spec gap: RegExp named groups (unmatched + duplicate) and lookbehind edge cases"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: medium

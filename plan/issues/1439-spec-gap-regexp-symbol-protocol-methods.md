@@ -1,7 +1,8 @@
 ---
 id: 1439
 title: "spec gap: RegExp.prototype Symbol.* protocol methods (replace/match/split/matchAll/search)"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: high
