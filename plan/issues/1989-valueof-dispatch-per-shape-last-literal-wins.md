@@ -4,10 +4,10 @@ title: "ToPrimitive valueOf dispatch keyed by struct type name, not object ident
 status: suspended
 sprint: 62
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-13
 priority: high
-feasibility: medium
-reasoning_effort: high
+feasibility: hard
+reasoning_effort: max
 task_type: bugfix
 area: codegen
 language_feature: type-coercion
@@ -241,3 +241,54 @@ effort core and warrants a dedicated focused pass or senior-dev — rushing it
 risks the 1476-1485 typeIdx-mismatch silently nulling the field (regressing all
 object-literal valueOf/toString). No partial code committed to avoid a
 half-done state.
+
+## CORRECTED root-cause analysis (2026-06-13, sdev) — the plan targets the WRONG layer
+
+Deep WAT inspection (JS-host mode, `compile(src)` then run) shows the
+architect's "Implementation Plan" and dev-c's resume plan both target the
+**dispatch field type** (eqref vs typed closure ref) — but that is **not** the
+bug. There are at least THREE stacked defects, none fixed by the planned change:
+
+### Defect A — method bodies are deduplicated by struct shape (last literal wins)
+`{valueOf(){return 7}}` and `{valueOf(){return 100}}` share the SAME anon struct
+shape `$__anon_0`, so they compile to **ONE** shared method body
+`$__anon_0_valueOf`, and the **last-compiled body overwrites** — the emitted WAT
+has a single `(func $__anon_0_valueOf (result f64) f64.const 100)`. BOTH
+per-literal trampolines (`__obj_meth_tramp___anon_0_valueOf_1` and `_2`) call
+`call 5` = that ONE shared body. So even a *perfect* per-instance `call_ref`
+reaches the same body returning 100. The dispatch field-type change the plan
+proposes cannot fix this — it is a body-dedup problem.
+
+The existing per-literal fork (#1557/#1602, `literalMethodFuncIdx`,
+literals.ts:1390-1517) only forks when the methods have **different
+SIGNATURES** (`sameArity && sameParamTypes` → skip). Same-shape literals with
+identical signatures but **different bodies** (exactly #1989) are NOT forked.
+Fixing this means forking a per-literal body whenever same-shape literals have
+structurally different method bodies — which defeats the load-bearing struct/
+type dedup and needs an expensive "bodies differ" detection. Large, risky.
+
+### Defect B — `a + 1` never reaches the in-module valueOf dispatch
+Even a SINGLE literal `{valueOf(){return 7}}; a + 1` throws
+**"Cannot convert object to primitive value"**. The `test` body lowers to host
+`call 0/1/2` (`__to_primitive`-family), NOT the per-instance `call_ref` path in
+`type-coercion.ts:1871`. So the binary-`+` ToPrimitive lowering for an
+`any`-typed object-with-valueOf does not route to the in-module dispatch the
+plan assumes is already firing. (The plan's claim "the correct per-instance
+path already fires" is false for this expression shape.)
+
+### Defect C — the host `__to_primitive` cannot reach the WasmGC valueOf closure
+Because B falls to the host helper, and the host has no access to the WasmGC
+struct's valueOf closure (it is a GC ref, not an externref method), the host
+throws — hence the repro is *worse* than the doc's "101,101": it throws.
+
+### Verdict — re-suspended pending architect re-spec
+This is a **multi-layer architectural problem** (object-literal method-body
+dedup + binary-op ToPrimitive routing + host/Wasm closure bridging), not the
+single-PR dispatch-field-type change scoped by the architect. A correct fix
+needs an architect re-spec across literals.ts (per-body forking),
+binary-ops.ts / type-coercion.ts (route `+` / `String()` ToPrimitive on
+any-objects to the in-module per-instance `call_ref`), and possibly the host
+bridge. No code committed (the planned change would not fix the repro and risks
+regressing all object valueOf/toString via the 1580-1589 typeIdx-mismatch
+null-out). Siblings: #2009 (field-name keying), #2022/#1990/#2059 (ToPrimitive
+routing family). **status: suspended.**
