@@ -1,7 +1,8 @@
 ---
 id: 1494
 title: "nodejs: __dirname / __filename / import.meta.url for compiled modules"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: medium

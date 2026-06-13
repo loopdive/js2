@@ -395,6 +395,31 @@ export function lowerFunctionAstToIr(
   return { main: builder.finish(), lifted };
 }
 
+/**
+ * Does `stmt` unconditionally terminate its control flow (return / throw, or a
+ * block / if-else whose every path does)? Used by the mid-body `if (cond)
+ * <then>; <rest>` rewrite: the "early-return" structural reinterpretation
+ * (`if (cond) <then> else { <rest> }`) is only sound when the then-arm
+ * terminates — otherwise `<rest>` must still run after a true-branch
+ * side effect. (#1979)
+ */
+function thenArmTerminates(stmt: ts.Statement): boolean {
+  if (ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt)) {
+    return true;
+  }
+  if (ts.isBlock(stmt)) {
+    const last = stmt.statements[stmt.statements.length - 1];
+    return last !== undefined && thenArmTerminates(last);
+  }
+  if (ts.isIfStatement(stmt)) {
+    // An `if` terminates only when it has an else and BOTH arms terminate.
+    return (
+      stmt.elseStatement !== undefined && thenArmTerminates(stmt.thenStatement) && thenArmTerminates(stmt.elseStatement)
+    );
+  }
+  return false;
+}
+
 function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void {
   if (stmts.length < 1) {
     throw new Error(`ir/from-ast: empty statement list in ${cx.funcName}`);
@@ -479,16 +504,27 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
     // (lowerTail enforces that); the else-arm opens a reserved block and
     // recursively lowers the remaining statements.
     if (ts.isIfStatement(s) && !s.elseStatement) {
+      // Whether the then-arm unconditionally terminates decides the shape:
+      // a terminating then-arm permits the early-return rewrite
+      // (`if (cond) <tail> else { <rest> }`); a non-terminating one is just a
+      // side-effecting guard and `<rest>` must run afterwards either way. (#1979)
+      const terminates = thenArmTerminates(s.thenStatement);
+
       // #1043: compile-time constant fold. After --define substitution of
       // process.env.NODE_ENV (etc.), the condition may be a literal-vs-literal
       // comparison. Skip the dead arm so dev-only code never reaches codegen.
       const constResult = evaluateConstantCondition(s.expression);
       if (constResult !== undefined) {
         if (constResult) {
-          // Then-arm taken: it must be a tail (returns), so the rest is
-          // unreachable and we stop here.
-          lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
-          return;
+          if (terminates) {
+            // Then-arm taken and terminating: the rest is unreachable, stop.
+            lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
+            return;
+          }
+          // Then-arm taken but non-terminating: run its side effects, then
+          // fall through to the rest in the same block / scope.
+          lowerStmt(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
+          continue;
         }
         // Then-arm dead: skip it and continue with the remaining statements
         // in the same block / scope.
@@ -499,21 +535,50 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
       if (asVal(condType)?.kind !== "i32") {
         throw new Error(`ir/from-ast: if condition must be bool in ${cx.funcName}`);
       }
+      const rest = stmts.slice(i + 1);
+
+      if (terminates) {
+        // Early-return rewrite: `if (cond) <tail> else { <rest> }`.
+        const thenId = cx.builder.reserveBlockId();
+        const elseId = cx.builder.reserveBlockId();
+        cx.builder.terminate({
+          kind: "br_if",
+          condition: cond,
+          ifTrue: { target: thenId, args: [] },
+          ifFalse: { target: elseId, args: [] },
+        });
+
+        cx.builder.openReservedBlock(thenId);
+        lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
+
+        cx.builder.openReservedBlock(elseId);
+        lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
+        return;
+      }
+
+      // Non-terminating then-arm: emit a converging guard. Both the then-block
+      // (after its side effect) and the false branch fall through to a shared
+      // continuation block holding `<rest>`. (#1979)
       const thenId = cx.builder.reserveBlockId();
-      const elseId = cx.builder.reserveBlockId();
+      const contId = cx.builder.reserveBlockId();
       cx.builder.terminate({
         kind: "br_if",
         condition: cond,
         ifTrue: { target: thenId, args: [] },
-        ifFalse: { target: elseId, args: [] },
+        ifFalse: { target: contId, args: [] },
       });
 
       cx.builder.openReservedBlock(thenId);
-      lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
+      lowerStmt(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
+      cx.builder.terminate({ kind: "br", branch: { target: contId, args: [] } });
 
-      cx.builder.openReservedBlock(elseId);
-      const rest = stmts.slice(i + 1);
-      lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
+      cx.builder.openReservedBlock(contId);
+      if (rest.length === 0) {
+        // No trailing statements — the function's implicit void return.
+        cx.builder.terminate({ kind: "return", values: [] });
+      } else {
+        lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
+      }
       return;
     }
     throw new Error(`ir/from-ast: unexpected statement before tail (got ${ts.SyntaxKind[s.kind]} in ${cx.funcName})`);
@@ -2933,12 +2998,23 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
  * through `slot.read` / `slot.write` and survive the loop.
  */
 function lowerWhileStatement(stmt: ts.WhileStatement, cx: LowerCtx): void {
+  // Capture the value id `lowerExpr` returns rather than the cond buffer's
+  // last instruction result — the latter is fragile (e.g. a trailing store
+  // produces no value). (#1980)
+  let condResult: number | null = null;
   const condInstrs = cx.builder.collectBodyInstrs(() => {
-    lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
+    condResult = lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
   });
-  const condResult = condInstrs[condInstrs.length - 1]?.result;
   if (condResult === null || condResult === undefined) {
     throw new Error(`ir/from-ast: while cond produced no SSA value (${cx.funcName})`);
+  }
+  // `if`/ternary throw a clean fallback when the condition isn't already an
+  // i32 bool; loops skipped that check and the lowerer's unconditional
+  // `i32.eqz` then emitted invalid Wasm (e.g. a numeric-truthiness `while (k)`
+  // with an f64 `k`). Throw the same fallback so the legacy path handles
+  // ToBoolean lowering until the IR grows its own. (#1980)
+  if (asVal(cx.builder.typeOf(condResult))?.kind !== "i32") {
+    throw new Error(`ir/from-ast: while condition must be bool in ${cx.funcName}`);
   }
   const bodyCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
   const bodyInstrs = cx.builder.collectBodyInstrs(() => {
@@ -2982,12 +3058,20 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx): void {
   }
 
   // 2. Cond — collect its IR into a buffer.
+  // Capture the value id `lowerExpr` returns rather than the buffer's last
+  // instruction result (fragile — see #1980).
+  let condResult: number | null = null;
   const condInstrs = innerCx.builder.collectBodyInstrs(() => {
-    lowerExpr(stmt.condition!, innerCx, irVal({ kind: "i32" }));
+    condResult = lowerExpr(stmt.condition!, innerCx, irVal({ kind: "i32" }));
   });
-  const condResult = condInstrs[condInstrs.length - 1]?.result;
   if (condResult === null || condResult === undefined) {
     throw new Error(`ir/from-ast: for cond produced no SSA value (${cx.funcName})`);
+  }
+  // Same i32-bool fallback as `if`/ternary — a numeric-truthiness `for` cond
+  // (e.g. `for (...; k; ...)` with f64 `k`) otherwise reaches the lowerer's
+  // unconditional `i32.eqz` and emits invalid Wasm. (#1980)
+  if (asVal(innerCx.builder.typeOf(condResult))?.kind !== "i32") {
+    throw new Error(`ir/from-ast: for condition must be bool in ${cx.funcName}`);
   }
 
   // 3. Body — collect into a buffer.
@@ -3984,6 +4068,18 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
   // `ref.is_null` check on the receiver. (TODO follow-up: emit
   // `ref.is_null` directly from the IR.)
   if (otherType.kind === "extern") return null;
+  // #1981: `class`, `object`, and `closure` IrTypes lower to nullable WasmGC
+  // ref shapes (`(ref null $Struct)`). A class/object/closure-typed value can
+  // be `null` at runtime (e.g. a host call passing `null` for a class-typed
+  // parameter), so the defensive `=== null` / `!== null` guard must NOT be
+  // folded to a constant — folding it deletes the guard, which either returns
+  // the wrong value (`=== null` → false) or dereferences null (`!== null` →
+  // true, then `p.v` traps). Bail so the caller falls back to legacy, which
+  // emits a runtime `ref.is_null` check. The slice-1 fold is only sound for
+  // statically non-nullable kinds.
+  if (otherType.kind === "class" || otherType.kind === "object" || otherType.kind === "closure") {
+    return null;
+  }
   // Slice 10 (#1169i): a `val { externref }` operand is similarly
   // nullable. Functions that compare externref-typed values against
   // null (e.g. through extern.call results assigned to a local) need

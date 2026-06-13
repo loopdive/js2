@@ -1,10 +1,11 @@
 ---
 id: 1981
 title: "IR: === null / !== null on class-typed values statically folded to false/true — null guards silently deleted"
-status: ready
+status: done
 sprint: 62
 created: 2026-06-10
 updated: 2026-06-12
+completed: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -61,3 +62,39 @@ by `??` and optional chaining) instead of folding, for every ref-shaped kind.
 
 #1392 (ref.is_null primitive — done, didn't touch the fold), #1169a (documents
 the fold + boxed bail only), #1574 (class nominality note). Unfiled.
+
+## Resolution (2026-06-12)
+
+Took the minimal fix from the fix direction: extended `tryFoldNullCompare`'s
+bail-out list (`src/ir/from-ast.ts`) to cover the nullable WasmGC ref-shaped
+IrType kinds `class`, `object`, and `closure`. When the non-null operand has
+one of these kinds the fold returns `null`, so the caller falls through to the
+standard lowering, which (for a `NullKeyword` operand) throws and triggers the
+whole-function legacy fallback — and legacy emits the runtime `ref.is_null`
+check on the receiver. This is exactly the pattern the existing `boxed` and
+`extern` bails already use.
+
+Note: the issue title lists `vec` too, but `vec` is not a distinct `IrType`
+kind (vecs surface as `object`/`class` shapes or `val{ref_null}`, all already
+covered by this bail or the pre-existing `ref_null` bail), so no `vec` branch
+is needed.
+
+## Test Results
+
+`tests/issue-1981.test.ts` — 4/4 pass (`assertEquivalent`, wasm vs Node):
+- `class === null` guard fires when the arg is `null` (was: folded to false →
+  returned 0; now: returns -1).
+- `class !== null` guard protects a field access when `null` (was:
+  `RuntimeError: dereferencing a null pointer`; now: returns -1).
+- loose `== null` guard fires when `null`.
+- non-null class receiver still reads the field (no spurious guard).
+
+Pre-existing, unrelated failures confirmed identical on clean `origin/main`:
+`tests/null-deref-class.test.ts` (4/17) and `tests/null-dereference-guards.test.ts`
+(2 SpreadElement-IIFE cases) fail on main too — neither touched by this change.
+Several null/equality suites (`null-narrowing`, `coalesce-operator`,
+`equality-mixed-types`, `strict-equality-edge-cases`, `optional-chaining-call`)
+fail at import on main (broken `./helpers.js` import) — pre-existing.
+
+IR fallback budget gate (`check:ir-fallbacks`): OK, no unintended increases.
+`biome lint`, `tsc --noEmit`, `prettier --check`: all clean.

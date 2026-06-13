@@ -1,7 +1,8 @@
 ---
 id: 1452
 title: "spec gap: for-loop init binding patterns — declared names not visible in loop body"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: high

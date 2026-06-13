@@ -317,3 +317,15 @@ against the existing WASI examples in `examples/wasi-*`.
 - Async generators standalone (Phase 3)
 - Microtask queue eviction policies / panic-on-overflow tuning
 - Performance optimization vs existing JS-host Promise (correctness first)
+
+## Board-hygiene triage (2026-06-12, #2147)
+
+CONFIRM-THEN-FLIP candidate — **left `in-review`** pending a PO/tech-lead
+confirmation. Phase-1 PRs (#261/#323/#405/#1051) merged and the issue
+scopes Phase 2+ (async/await CPS, Promise.all/race, async generators)
+**explicitly out-of-scope**, with Phase-1 `.then` chaining implemented and
+`tests/issue-1326.test.ts` present. So Phase-1 acceptance appears met and a
+flip to `done` is defensible. Not flipped here only because the issue body
+still carries a "~70% done" implementation note and this is a hard,
+multi-phase issue — confirm the Phase-1 test passes on current main, then
+flip to `done` (or split Phase 2+ into a follow-up and flip this).

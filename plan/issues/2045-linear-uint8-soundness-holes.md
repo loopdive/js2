@@ -1,7 +1,7 @@
 ---
 id: 2045
 title: "linear Uint8Array (WASI): silent-corruption holes — name-keyed buffer registry, no bounds checks — plus escape-analysis demotion gaps (#1886 follow-up)"
-status: ready
+status: in-progress
 sprint: 62
 created: 2026-06-10
 updated: 2026-06-12
@@ -91,3 +91,59 @@ corruption routes must be fixed before the linear path widens further
   compile errors on valid programs, no signature mismatches.
 - `real-world-wasi.test.ts` and `tests/issue-1886*.test.ts` stay green;
   new regression tests for findings 1, 2, 3, 4, 8.
+
+## Partial resolution (2026-06-12) — silent-corruption routes A.1 + A.2 landed
+
+The two **silent-corruption** routes (Part A, "fix first") are fixed. The
+escape-analysis demotion gaps (Part B) and the smaller correctness items
+(Part C) remain — the issue stays **in-progress**.
+
+### A.1 — scope-blind buffer registry → symbol-keyed
+
+`fctx.linearU8Buffers` was keyed by identifier **text**
+(`linear-uint8-signatures.ts`), so a linear param `buf` plus an inner-block
+`const buf = new Uint8Array(...)` (distinct symbol, same name) collided — the
+inner registration overwrote the param's `(ptr,len)` entry, and element access
+addressed the wrong buffer in **both** shadowing directions (verified: the
+param's trailing `write(buf)` emitted the inner buffer's bytes).
+
+Fix: key the registry by the binding's `ts.Symbol`. `registerLinearU8Buffer`
+now takes a symbol; `getLinearU8Buffer(ctx, fctx, node)` resolves the symbol
+via `ctx.checker.getSymbolAtLocation(node)`. Param registration
+(`function-body.ts`) and `new Uint8Array(...)` registration
+(`linear-uint8-codegen.ts`) both pass the symbol; a binding with no resolvable
+symbol simply isn't registered (falls to the GC path — sound).
+
+### A.2 — no bounds check on linear element access → trap like GC
+
+`b[i]` / `b[i] = v` lowered to a raw `i32.load8_u`/`i32.store8` at
+`ptr + trunc(i)` with no bounds check; an OOB index silently read/wrote
+arbitrary linear memory (iovec scratch at 0..11, string-literal data, and —
+under Slice C — a caller's buffer). The GC array path traps.
+
+Fix: `emitLinearU8BoundsCheck` emits `idx (u32) >= len → unreachable` before
+every linear element get/set, matching the GC trap. The index is compared
+unsigned so a negative (huge-u32) index also traps. The store path checks
+**before** evaluating the value, matching the GC `array.set` trap order. Index
+exprs are stored once so a side-effecting index runs once. The guard is
+unconditional (one compare + branch per access); eliding it for provably
+in-range constant indices is a possible later perf tweak, not a soundness need.
+
+Covered (`tests/issue-2045-linear-u8-soundness.test.ts`, 6 green): OOB read
+traps, OOB write traps, negative-index traps, in-bounds access unchanged
+(read-back), inner-block same-name shadow (param not corrupted), outer local
+keeps its buffer after a same-name inner const. Regression-clean across
+`tests/issue-1886*.test.ts` (16 green), `linear-*` (22 green), and the WASI
+I/O suites; tsc + biome + prettier clean. (`real-world-wasi.test.ts` and the
+`issue-1886-slice-b` escaping test have two pre-existing host-import-allowlist
+failures unrelated to this change — verified identical on main.)
+
+### Remaining (issue stays open)
+
+- **B.3 / B.4** escape-analysis demotion gaps (untracked call-site args;
+  function-value escapes of rewritten helpers) — these are fail-closed
+  `reportError`s on otherwise-valid WASI programs, a larger interprocedural
+  change split out from the corruption fixes.
+- **C.5–C.8** loop-arena rewind ordering, the all-target while-loop
+  restructure gate, `process.stdin.read` offset clamp + errno, and compound
+  element writes (`b[i] += 1`).

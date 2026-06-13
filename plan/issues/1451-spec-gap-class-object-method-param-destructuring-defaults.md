@@ -1,7 +1,8 @@
 ---
 id: 1451
 title: "spec gap: class/object-literal method parameter destructuring with non-trivial defaults"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: high

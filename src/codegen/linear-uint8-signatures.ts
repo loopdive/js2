@@ -105,20 +105,30 @@ export function sourceParamCountFromExpanded(
   return wasmParamCount - leadingParams - (linearParams?.size ?? 0);
 }
 
+/**
+ * #2045: look up a linear-backed buffer by the binding's `ts.Symbol`, resolved
+ * from the identifier `node`. Symbol identity is scope-correct, so a param
+ * `buf` and an inner-block `const buf` (distinct symbols, same text) no longer
+ * collide — the previous name-keyed map addressed whichever was registered last
+ * in both shadowing directions (silent corruption).
+ */
 export function getLinearU8Buffer(
+  ctx: CodegenContext,
   fctx: FunctionContext,
   node: ts.Node,
 ): { ptrLocalIdx: number; lenLocalIdx: number } | undefined {
   if (!fctx.linearU8Buffers || !ts.isIdentifier(node)) return undefined;
-  return fctx.linearU8Buffers.get(node.text);
+  const sym = ctx.checker.getSymbolAtLocation(node);
+  if (!sym) return undefined;
+  return fctx.linearU8Buffers.get(sym);
 }
 
 export function registerLinearU8Buffer(
   fctx: FunctionContext,
-  name: string,
+  sym: ts.Symbol,
   ptrLocalIdx: number,
   lenLocalIdx: number,
 ): void {
   if (!fctx.linearU8Buffers) fctx.linearU8Buffers = new Map();
-  fctx.linearU8Buffers.set(name, { ptrLocalIdx, lenLocalIdx });
+  fctx.linearU8Buffers.set(sym, { ptrLocalIdx, lenLocalIdx });
 }

@@ -1,7 +1,8 @@
 ---
 id: 1130
 title: "Array methods — getter-observing property access on indices and length"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-04-20
 updated: 2026-05-25
 priority: medium

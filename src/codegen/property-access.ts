@@ -1355,7 +1355,7 @@ export function compilePropertyAccess(
   // #1886 Slice B: linear-backed Uint8Array `buf.length` → the len i32 local
   // (widened to f64). Only fires for a registered linear-safe buffer; any other
   // receiver falls through to the GC property-access path unchanged.
-  const linU8Len = tryEmitLinearU8Length(fctx, expr);
+  const linU8Len = tryEmitLinearU8Length(ctx, fctx, expr);
   if (linU8Len !== null) return linU8Len;
 
   const objType = ctx.checker.getTypeAtLocation(expr.expression);

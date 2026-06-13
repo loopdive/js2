@@ -1,10 +1,11 @@
 ---
 id: 1980
 title: "IR: while/for with a numeric-truthiness condition emits invalid Wasm and bricks the entire module (no fallback, verifier silent)"
-status: ready
+status: done
 sprint: 62
 created: 2026-06-10
 updated: 2026-06-12
+completed: 2026-06-12
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -63,3 +64,37 @@ only uses `i < N` conditions — add truthiness-cond cases.
 
 #1280 (introduced while/for claims — no mention), #1850 (verifier umbrella,
 in-progress — lists dominance/buffer recursion, not cond typing).
+
+## Resolution (2026-06-12)
+
+Two source changes, both following the fix direction:
+
+1. **`src/ir/from-ast.ts`** — `lowerWhileStatement` and `lowerForStatement`
+   now capture the value id `lowerExpr` returns (instead of the fragile
+   `condInstrs[last].result`) and throw the same `if`/ternary-style fallback
+   (`"while/for condition must be bool"`) when `asVal(typeOf(condValue))` isn't
+   i32. The IR demotes the function to the legacy path, which already does
+   ToBoolean lowering for numeric-truthiness loops — restoring `f(3)=6`,
+   `f(0)=0` for both the `while` and `for` repros.
+
+2. **`src/ir/verify.ts`** — `while.loop`/`for.loop` now type-check `condValue`
+   after walking the cond buffer: a non-i32 condValue pushes a
+   `"condValue must be i32"` error. This is the structural backstop for the
+   #1850 gap (the lowerer throw in (1) fires first, but the verifier should
+   never wave a non-i32 loop cond through to the unconditional `i32.eqz`).
+
+### Test Results
+
+New `tests/issue-1980.test.ts` — 5 cases, all pass:
+- `while (k)` / `for (; k; )` with an f64 counter → `f(3)=6`, `f(5)=15`,
+  `f(0)=0` (were: `i32.eqz expected i32, found f64` invalid-Wasm, whole module
+  failed to instantiate).
+- i32-comparison `for (i < n)` and `while (i < n)` loops → unchanged, still
+  compile via the IR path (`f(4)=6`).
+
+`tests/issue-1280.test.ts` (9/9) and `tests/issue-1844.test.ts` pass — #1280's
+claimed loop shapes unregressed. Pre-existing failures in
+`tests/ir/passes.test.ts` / `tests/ir/inline-small.test.ts` (8 total) are
+confirmed identical on clean `origin/main` — unrelated to this change (they
+exercise `if`/`return`/inline, not loops). `tsc --noEmit`, `biome lint`,
+`prettier --check` all clean on the changed files.

@@ -1,7 +1,8 @@
 ---
 id: 1657
 title: "Skip merge_group test262 shards for non-src changes (keep required check green)"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-24
 updated: 2026-05-24
 priority: medium

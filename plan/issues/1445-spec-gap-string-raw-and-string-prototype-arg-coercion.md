@@ -1,7 +1,8 @@
 ---
 id: 1445
 title: "spec gap: String.raw + String.prototype.* argument coercion (ToInteger / ToPrimitive)"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: medium

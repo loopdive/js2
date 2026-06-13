@@ -1,10 +1,11 @@
 ---
 id: 1979
 title: "IR: mid-body `if (cond) stmt;` in a void function silently skips ALL subsequent statements when cond is true"
-status: ready
+status: done
 sprint: 62
 created: 2026-06-10
 updated: 2026-06-12
+completed: 2026-06-12
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -70,3 +71,36 @@ non-terminating then-arms as a plain side-effect `if` followed by the rest.
 
 #1228 (introduced the relaxation; tests only cover early-*return*),
 #1131/#1850/#1858 umbrellas — none mention this.
+
+## Resolution (2026-06-12)
+
+Fixed in `src/ir/from-ast.ts` `lowerStatementList`, in lowering (the selector
+still claims the shape, so IR fallback counts are unchanged):
+
+1. Added `thenArmTerminates(stmt)` — true for `return`/`throw`, a block ending
+   in a terminating tail, or an `if/else` where both arms terminate.
+2. The mid-body `if (cond) <then>; <rest>` branch now splits on it:
+   - **Terminating then-arm** → the original early-return rewrite
+     (`if (cond) <tail> else { <rest> }`) — unchanged.
+   - **Non-terminating then-arm** → a converging guard: `br_if cond → then /
+     cont`; the then-block lowers the side effect and `br`s to `cont`; the
+     false branch targets `cont`; `cont` holds `<rest>` (or the implicit void
+     return when `<rest>` is empty). Both paths run the rest.
+   - The compile-time constant-fold branch (`evaluateConstantCondition`) got
+     the same split — a true-but-non-terminating then-arm now lowers its side
+     effect and falls through instead of synthesizing a return.
+
+### Test Results
+
+New `tests/issue-1979.test.ts` — 6 cases, all pass:
+- `if (a>0) g(b); h(b);` → `f(b,1)=101` (was `100`, h skipped), `f(b,0)=1`.
+- Non-terminating guard at end of fn → runs (`101`/`1`).
+- True/false early-RETURN guard → still short-circuits / falls through
+  (`0`/`1`) — unregressed.
+- Non-void early-return recursion `fact(5)=120` — unregressed.
+
+`tests/issue-1228.test.ts` (9/9), `tests/issue-1280.test.ts`,
+`tests/ir/issue-1373*.test.ts`, `tests/ir/issue-1392.test.ts` all pass.
+`pnpm run check:ir-fallbacks` OK (no unintended increases). `tsc --noEmit`,
+`biome lint`, `prettier --check` clean. Pre-existing `tests/ir/passes.test.ts`
+/ `inline-small.test.ts` failures are unrelated (confirmed on clean main).

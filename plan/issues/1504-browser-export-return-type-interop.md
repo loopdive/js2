@@ -1,7 +1,8 @@
 ---
 id: 1504
 title: "browser: marshal compiled export return values (structs/arrays) to plain JS"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: medium
