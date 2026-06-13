@@ -73,3 +73,59 @@ the microtask/CPS scheduler (#1326/#1326c).
   baseline; overall bucket ≤ 50 (remaining rows reassigned to owners).
 - Wasm traps are not used for spec-reachable error paths in the iterator
   protocol (TypeError surfaces as catchable JS error).
+
+## Reproduction findings (2026-06-13, dev-a)
+
+Confirmed the bucket reproduces on current main (c28b423e6). Key observations
+from minimal repros (standalone target, `WebAssembly.validate` + zero-import
+instantiate):
+
+- **Sync iteration is healthy.** `for (const {a} of [{a:1}])`,
+  `for (const [a,b] of [[1,2]])`, and `for (const v of [1,2,3].values())` all
+  compile to valid standalone Wasm and run correctly (no illegal cast). So the
+  shared `__iterator`/`__iterator_next` consumer path (loops.ts ~L3940+,
+  `ensureNativeIteratorRuntime`) is NOT the problem on its own.
+- **The `illegal cast` bucket is async-specific.** `for await (const x of
+  [Promise.resolve(1)])` compiles + validates but:
+  1. **leaks `env.Promise_resolve`** as a host import even under
+     `--target standalone` — i.e. the async path is not standalone-complete
+     (Promise.resolve has no pure-Wasm lowering). This is a precondition: the
+     module can't even instantiate with `{}` imports, so the runtime trap only
+     surfaces once the microtask scheduler + Promise host shims are supplied.
+  2. The `illegal cast` itself (per the issue's trap-trace) is downstream:
+     `__iterator_next` `ref.cast`s the result to the sync `$IteratorResult`/
+     `$Object` carrier, but the async wrapper hands it the awaited promise
+     resolution value (boxed / externref / async-generator state struct),
+     whose runtime type does not match the cast target.
+- **`yield*` over an array** hits a *different* wall first:
+  `Codegen error: native generator lowering currently supports only sequential
+  ...` (generators-native.ts) — so the `yield*`-delegation sub-bucket is gated
+  by a native-generator limitation upstream of the cast, not the same fix as
+  the for-await-of sub-bucket.
+
+### Where to look
+
+- `src/codegen/statements/loops.ts` — the `__iterator_next` consumer (~L3891+,
+  the multi-value `(done, value) = __iterator_next(iter)` path) and the
+  `iterResultType` struct cast (~L3602/3682).
+- `src/codegen/generators-native.ts` — async-generator / `yield*` lowering.
+- The async bridge over the microtask/CPS scheduler (#1326) — where the awaited
+  value's carrier type diverges from the sync `$IteratorResult` the consumer
+  casts to.
+
+### Recommendation
+
+Two distinct sub-fixes hide under this one bucket:
+1. **for-await-of carrier mismatch** (210 + misc): unify the async iterator
+   result carrier with the sync `$IteratorResult`, OR brand-switch before the
+   `ref.cast`; AND give Promise.resolve a standalone lowering so the module is
+   host-free. Per #1888, an unknown carrier must throw a JS `TypeError` via the
+   standalone throw helper, never a Wasm trap.
+2. **`yield*` async delegation** (115): first lift the native-generator
+   "sequential only" restriction, then the §27.6.3.8 / §7.4.3 "next() returns
+   non-object ⇒ TypeError" path.
+
+This is `reasoning_effort: high` and spans the async scheduler + native
+generators + iterator runtime — recommend an `## Implementation Plan`
+(architect spec) before implementation, and likely splitting the for-await-of
+and yield* sub-buckets into separate PRs.
