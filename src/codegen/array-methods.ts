@@ -1757,23 +1757,6 @@ export function compileArrayPrototypeCall(
   // Check if the method is a known array method
   if (!ARRAY_METHODS.has(methodName)) return undefined;
 
-  // (#2036) Standalone / WASI: `Array.prototype.<m>.call(arrayLike, …)` over a
-  // NON-array receiver (an open `$Object`, `arguments`, `any`) cannot use the
-  // typed shape-inferred fast paths (they emit f64/i32 element loads on an
-  // externref → invalid Wasm / null-deref / silently-wrong `-1`), nor the
-  // `compileArrayLikePrototypeCall` host-import path (`__extern_length` /
-  // `__extern_get_idx` are JS-host `env` imports that don't exist standalone).
-  // Per the #1888 dual-mode invariant ("any uncertainty ⇒ fail loud, never
-  // invalid Wasm"), bail to `undefined` so the borrowed-method dispatch in
-  // calls.ts emits the loud `#1888 Slice 3/4` refusal — exactly like
-  // `map`/`reduce` already do. A genuine native-array receiver (resolveArrayInfo
-  // truthy) still takes the fast path below. Host mode is unaffected.
-  if (ctx.standalone || ctx.wasi) {
-    const recvTsType = ctx.checker.getTypeAtLocation(receiverArg);
-    const recvArrInfo = recvTsType ? resolveArrayInfo(ctx, recvTsType) : null;
-    if (!recvArrInfo) return undefined;
-  }
-
   // Resolve array info from shape map or TypeScript type
   let receiverTsType: ts.Type | undefined;
   if (ts.isIdentifier(receiverArg)) {
@@ -1805,6 +1788,17 @@ export function compileArrayPrototypeCall(
   if (!receiverTsType) return undefined;
   const arrInfo = resolveArrayInfo(ctx, receiverTsType);
   if (!arrInfo) {
+    // (#2036) Standalone / WASI: the array-like fallback
+    // (`compileArrayLikePrototypeCall`) iterates via the `__extern_length` /
+    // `__extern_get_idx` JS-host `env` imports, which DON'T exist standalone —
+    // the receiver is an open `$Object`/`any`, not a genuine vec. Emitting it
+    // there produced invalid Wasm / null-deref / silently-wrong `-1`. Per the
+    // #1888 dual-mode invariant ("any uncertainty ⇒ fail loud"), bail to
+    // `undefined` so the borrowed-method dispatch in calls.ts emits the loud
+    // `#1888 Slice 3/4` refusal — like `map`/`reduce` already do. The
+    // shape-inferred genuine-array path above and the `arrInfo` typed path
+    // below still work standalone; host mode is unaffected (it has the imports).
+    if (ctx.standalone || ctx.wasi) return undefined;
     // For any-typed receivers, use the array-like implementation that iterates
     // using __extern_length/__extern_get_idx and calls the callback directly in Wasm.
     return compileArrayLikePrototypeCall(ctx, fctx, callExpr, methodName, receiverArg as ts.Expression);
