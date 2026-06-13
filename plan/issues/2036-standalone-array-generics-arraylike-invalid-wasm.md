@@ -1,10 +1,10 @@
 ---
 id: 2036
 title: "standalone: Array.prototype generics over array-like receivers emit invalid Wasm / null-deref / wrong results instead of refusing loud (~500+ tests)"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-13
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -101,3 +101,38 @@ null deref or `-1`.
 - No `local.set expected f64, found externref` rows remain in the standalone
   baseline for `built-ins/Array/prototype`.
 - Host mode unchanged.
+
+## Stage 1 landed (2026-06-13) — stop the bleeding
+
+Implemented the issue's "stop the bleeding first (small PR)" step in
+`src/codegen/array-methods.ts` `compileArrayPrototypeCall`: in standalone /
+WASI mode, when the borrowed receiver is NOT a genuine native-array vec
+(`resolveArrayInfo` returns null — i.e. an open `$Object`, `arguments`, or
+`any`), the function now returns `undefined` so the borrowed-method dispatch in
+`expressions/calls.ts` emits the loud `#1888 Slice 3/4` refusal — exactly like
+`map`/`reduce`/`lastIndexOf` already do. This is the correct move because the
+typed shape-inferred fast paths emit f64/i32 element loads on an externref
+(invalid Wasm) and `compileArrayLikePrototypeCall` depends on the
+`__extern_length`/`__extern_get_idx` JS-host `env` imports that don't exist
+standalone.
+
+Effect: standalone `Array.prototype.indexOf/filter/forEach/…call(arrayLike)`
+moves from `compile_error`(invalid Wasm) / null-deref / silently-wrong `-1` to
+an honest `Codegen error:` refusal — converting the ~430 broken rows into honest
+refusals and protecting conformance from silent wrongness. Genuine native-array
+receivers still take the fast path; **host mode is byte-for-byte unchanged**
+(the gate is `ctx.standalone || ctx.wasi` only).
+
+`tests/issue-2036.test.ts` (5 cases): standalone indexOf/filter/forEach.call on
+an array-like → loud refusal; standalone `indexOf.call([10,20,30], 20)` → `1`;
+host array-like call still compiles. `tsc`/`biome`/`prettier` clean; all
+pre-existing array-call test failures (#1461 concat-spreadable, #1131 fib,
+#1888 wasi-roundtrip) confirmed identical on clean main.
+
+## Stage 2 still open (follow-up)
+
+The generic `$Object` arm (read `length` via `__extern_get`, elements via keyed
+get, externref/anyref comparison per §23.1.3.17) is NOT in this PR — that's the
+larger Slice-4 implementation. This issue stays `in-progress` until stage 2
+lands; the host-mode array-like wrong-results (`-1`/`0`) are a separate,
+pre-existing concern outside this standalone issue's scope.
