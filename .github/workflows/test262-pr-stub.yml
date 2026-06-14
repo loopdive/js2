@@ -1,23 +1,62 @@
 name: Test262 PR stub
 
-# PR-level companion to test262-sharded.yml. This workflow is informational
-# only: it must NOT publish any required branch-protection check name.
+# PR-level companion to test262-sharded.yml. Its ONE job is to keep src-less /
+# test-only PRs mergeable under the strict required-checks ruleset.
+#
+# The deadlock this fixes (#4 / unblocks #1441-class, #1345-class, #24-class,
+# bookkeeping doc PRs):
+#   test262-sharded.yml's `pull_request` trigger has a `paths:` allowlist
+#   (the `&test262-paths` anchor: src/**, package.json, lockfile, tsconfigs,
+#   the test262 scripts/tests, and the workflow file itself). A PR that
+#   touches NONE of those paths — a docs-only PR, a plan/bookkeeping PR, or a
+#   `tests/issue-N.test.ts`-only PR (those test files are NOT in the allowlist)
+#   — never triggers test262-sharded.yml at all. So three of the six required
+#   branch-protection contexts are NEVER produced for the PR head SHA:
+#       cheap gate (main-ancestor + lint)
+#       merge shard reports
+#       check for test262 regressions
+#   GitHub then reports "3 of 6 required status checks expected" and the PR is
+#   permanently BLOCKED even when fully green. (`ci.yml` has no paths filter, so
+#   `quality`, `equivalence-gate`, and `cla-check` ARE produced — only the three
+#   test262-sharded.yml contexts go missing.)
+#
+# The masking trap (why this is GATED, not unconditional):
+#   A required context has ONE authoritative producer. If this cheap workflow
+#   emitted those names on EVERY PR, a src PR would have the name produced twice
+#   — once by the real test262-sharded.yml run (which may be RED) and once by
+#   this green stub. GitHub satisfies a required check when ANY run of that name
+#   is green, so the green stub would MASK the red real run. That is exactly the
+#   bug PR #496 introduced and commit c9688f33b backed out.
+#
+# The safe design — MUTUAL EXCLUSION on the same path matcher:
+#   This workflow runs on every PR but FIRST diffs the PR (base..head) and pipes
+#   the changed files through scripts/test262-paths-match.sh — the SAME single
+#   source of truth that test262-sharded.yml's `&test262-paths` allowlist
+#   mirrors.
+#     - test262 path(s) changed -> the REAL test262-sharded.yml runs and owns
+#       the three contexts. This stub emits NOTHING for those names (no mask):
+#       the three stub jobs `skipped`, and a skipped job does not publish its
+#       context.
+#     - NO test262 path changed -> the real workflow will NOT trigger. This stub
+#       emits the three contexts GREEN so the PR can reach mergeable + enqueue.
+#   The two producers are therefore never both active on one PR -> masking is
+#   impossible, while a path-excluded PR is no longer wedged BLOCKED.
+#
+# Correctness of the green stub: a path-excluded PR cannot affect test262
+# conformance by definition (it changed zero compiler/test262 paths). The merge
+# QUEUE still runs the full real validation on the merge_group ref regardless
+# (merge_group has no paths filter; #1657 made its skip path report the same
+# contexts green), so nothing merges without the authoritative gate having had
+# its say on the merged-with-main tree.
 #
 # Historical context (the over-filter bug, see PR #496):
-#   test262-sharded.yml skips its heavy `test262-shard` matrix when the
-#   pull_request synchronize was triggered by github-actions[bot] (i.e.
-#   auto-refresh-prs doing 'Merge branch main into <branch>'). That's correct
-#   — we don't want N PR-level test262 storms every time main moves. The real
-#   `merge-report` job now handles that explicit bot-sync skip path itself.
-#
-# Why this no longer stubs required names:
-#   A same-named check from this cheap workflow can mask a failing real check.
-#   That is how a red `test262 standalone shard` could still leave the required
-#   `merge shard reports` context looking green. Required contexts must have one
-#   authoritative producer; for test262, that producer is test262-sharded.yml.
-#
-# The merge_group event still runs the full 57-shard per-target test262 on the
-# temp merge-with-main branch when test262-relevant files changed.
+#   test262-sharded.yml also skips its heavy `test262-shard` matrix when a
+#   pull_request synchronize is triggered by github-actions[bot] (auto-refresh
+#   doing 'Merge branch main into <branch>'). That bot-sync skip path is handled
+#   INSIDE test262-sharded.yml's own `merge-report`/`regression-gate` jobs (they
+#   run under `always()`), not here — on a bot synchronize the test262 paths
+#   still match relative to base, so the real workflow runs and this stub stays
+#   silent. This stub only ever fires for genuinely path-excluded PRs.
 
 on:
   pull_request:
@@ -31,38 +70,123 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gate:
-    name: test262 PR stub gate
+  # Decide whether the REAL test262-sharded.yml will run for this PR. We mirror
+  # its `&test262-paths` allowlist via the shared matcher so the two workflows
+  # can never both own a required context on the same PR.
+  detect:
+    name: test262 PR stub — detect relevance
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      # 'true'  -> no test262-relevant path changed; the real workflow will not
+      #            trigger, so this stub must emit the three contexts green.
+      # 'false' -> a test262-relevant path changed (or detection was uncertain);
+      #            the real workflow owns the contexts and this stub stays silent.
+      stub_required: ${{ steps.detect.outputs.stub_required }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v5
         with:
-          submodules: recursive
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 25
-      - name: Setup pnpm via Corepack
+          # Need base + head reachable to diff the PR's changed files.
+          fetch-depth: 0
+      - name: Detect test262-relevant changes
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          corepack enable
-          corepack prepare pnpm@10.30.2 --activate
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Typecheck + lint
+          set -euo pipefail
+          # CONSERVATIVE FAIL-SAFE — bias toward SILENT (stub_required=false):
+          # we only emit the green contexts (stub_required=true) when the diff
+          # SUCCEEDS and the matcher POSITIVELY reports zero test262-relevant
+          # paths. On any doubt (missing SHA, failed/empty diff) we stay silent
+          # and assume the real workflow runs. The asymmetry is the safe one:
+          #   - false "real workflow runs" (when it actually didn't) leaves the
+          #     PR BLOCKED — annoying but not unsafe, and the native paths
+          #     filter makes this combination impossible in practice;
+          #   - false "stub emits green" (when the real workflow DID run) would
+          #     MASK the authoritative producer — unsafe. So never risk it.
+          stub_required=false
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo "::warning::missing base/head SHA — assuming real workflow runs (stub silent)"
+            echo "stub_required=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Ensure base is present for the diff (fetch-depth:0 should cover it,
+          # but a force-push history rewrite could leave base unreachable).
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$BASE_SHA" 2>/dev/null || true
+          fi
+          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null); then
+            echo "::warning::diff failed — assuming real workflow runs (stub silent)"
+            echo "stub_required=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$changed" ]; then
+            echo "::warning::empty diff — assuming real workflow runs (stub silent)"
+            echo "stub_required=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "--- changed files ---"
+          printf '%s\n' "$changed"
+          match=$(printf '%s\n' "$changed" | bash scripts/test262-paths-match.sh)
+          echo "test262-paths-match.sh -> $match"
+          if [ "$match" = "true" ]; then
+            # A test262-relevant path changed: the real test262-sharded.yml runs
+            # and owns the three required contexts. Stay silent (no mask).
+            echo "-> real test262-sharded.yml owns the required contexts; stub silent."
+            echo "stub_required=false" >> "$GITHUB_OUTPUT"
+          else
+            # No test262-relevant path: the real workflow will not trigger. Emit
+            # the three required contexts green so the PR can reach mergeable.
+            echo "-> no test262-relevant path changed; stub will report required contexts green."
+            echo "stub_required=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The three jobs below carry the EXACT required-check context names from
+  # test262-sharded.yml. They run ONLY on the path-excluded arm
+  # (stub_required == 'true'); otherwise they `skipped` and the real workflow
+  # owns the names. A `skipped` job does NOT publish its context, so on the src
+  # arm GitHub only ever sees the real (authoritative) producer.
+
+  cheap-gate:
+    name: cheap gate (main-ancestor + lint)
+    needs: [detect]
+    if: needs.detect.outputs.stub_required == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stub-pass (no test262-relevant change in this PR)
         run: |
-          pnpm run typecheck 2>&1 | tail -50 || (echo "::error::typecheck failed"; exit 1)
-          if grep -q '"lint"' package.json; then pnpm run lint 2>&1 | tail -50; fi
+          echo "-> This PR changed no test262-relevant path (per scripts/test262-paths-match.sh)."
+          echo "-> test262-sharded.yml did not trigger, so this stub reports its"
+          echo "   required context 'cheap gate (main-ancestor + lint)' green."
+          echo "-> The merge queue still runs the full authoritative gate on the"
+          echo "   merge_group ref before anything lands on main."
 
   merge-report:
-    name: test262 PR stub merge placeholder
+    name: merge shard reports
+    needs: [detect]
+    if: needs.detect.outputs.stub_required == 'true'
     runs-on: ubuntu-latest
-    needs: [gate]
     steps:
-      - name: Stub-pass (real 57-shard per-target test262 runs in merge_group)
+      - name: Stub-pass (no test262-relevant change in this PR)
         run: |
-          echo "→ PR-level informational stub — does not run test262."
-          echo "→ This workflow intentionally avoids required check names."
-          echo "→ test262-sharded.yml owns 'cheap gate (main-ancestor + lint)'"
-          echo "  and 'merge shard reports' so failing real checks cannot be"
-          echo "  hidden by a same-named stub."
+          echo "-> This PR changed no test262-relevant path (per scripts/test262-paths-match.sh)."
+          echo "-> A path-excluded PR cannot affect test262 conformance, so the"
+          echo "   required context 'merge shard reports' is reported green."
+          echo "-> The merge queue still runs the full 57-shard matrix on the"
+          echo "   merge_group ref before anything lands on main (#1657)."
+
+  regression-gate:
+    name: check for test262 regressions
+    needs: [detect]
+    if: needs.detect.outputs.stub_required == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stub-pass (no test262-relevant change in this PR)
+        run: |
+          echo "-> This PR changed no test262-relevant path (per scripts/test262-paths-match.sh)."
+          echo "-> A path-excluded PR cannot regress test262 conformance, so the"
+          echo "   required context 'check for test262 regressions' is reported green."
+          echo "-> The merge queue still runs the full regression gate on the"
+          echo "   merge_group ref before anything lands on main."

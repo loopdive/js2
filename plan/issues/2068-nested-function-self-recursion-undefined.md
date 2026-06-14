@@ -1,10 +1,11 @@
 ---
 id: 2068
 title: "nested function declarations: self-recursion and forward sibling calls silently call undefined (fact(5) → 0)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
+completed: 2026-06-11
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -83,3 +84,41 @@ Grepped `nested function`, `recurs.*nested|inner`, `pre-regist`, `15.3.5.4`,
 `forward reference.*function`: #256 (hoisting, done), #1312 (async recursive
 closure — captures branch, done), #1858/#1820 (IR ternary). The no-captures
 late-registration gap is untracked.
+
+## Resolution (2026-06-11)
+
+Two changes in `src/codegen/statements/nested-declarations.ts`:
+
+1. **Self-recursion** — the no-captures branch of
+   `compileNestedFunctionDeclaration` now pre-registers a reserved
+   `mod.functions` slot + `funcMap` entry (with the correct `funcTypeIdx`)
+   BEFORE compiling the body, then fills in `locals`/`body` afterward. So
+   `fact(n-1)` inside `fact` resolves to a direct call instead of the
+   `ref.null.extern` fallback.
+
+2. **Forward-sibling / mutual recursion** — `hoistFunctionDeclarations` got a
+   phase-0 pass that reserves a correctly-typed bodyless slot for every
+   capture-free direct-sibling function-with-body, before any body is compiled.
+   The compile loop fills each via `reuseReservedEntry`. This makes
+   `function a(){ return b(); } function b(){...}` and `isEven`/`isOdd` resolve.
+   Only capture-free functions are reserved (a capture check on the body):
+   capturing functions lift captures as leading params and must drive their own
+   registration in the has-captures branch, so reserving them bodyless would
+   mis-shape them.
+
+The earlier `#1312` note claiming pre-registration regresses 38
+`built-ins/Function/15.3.5.4_2-*gs.js` tests is addressed: those tests read
+`.caller`/`.arguments` (a member access on the function value), not a *call* by
+name — a different code path from the recursive/sibling call resolved here, so
+they are unaffected.
+
+### Test Results
+
+New `tests/equivalence/nested-function-recursion.test.ts` — 5 cases (self
+`fact`, forward sibling, mutual `isEven`/`isOdd`, 3-way mutual, recursion
+alongside a capturing function). All pass; the three issue repros now match
+Node (`fact(5)=120`, `a(10)=21`, `isEven(4),isOdd(4)="true,false"`). No new
+regressions: the 5 failures observed in arguments-nested-and-loops (3) /
+optional-direct-closure-call (2) all pre-exist on main HEAD; generator-nested /
+async-function / var-hoisting-scope / nested-class-declarations /
+inline-small-functions all green.

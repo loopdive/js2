@@ -2,7 +2,7 @@
 id: 1978
 title: "user function named main gets the module-init body spliced into it: top-level state resets on every call; WASI infinite recursion for main() convention"
 status: ready
-sprint: 61
+sprint: 62
 created: 2026-06-10
 updated: 2026-06-10
 priority: high

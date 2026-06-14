@@ -199,6 +199,14 @@ jobs:
     name: merge shards and promote baseline
     needs: test262-shard
     runs-on: ubuntu-latest
+    # (#3) The main-repo audit-commit push uses the MAIN_DEPLOY_KEY SSH deploy
+    # key (the only auth path in the ruleset's bypass_actors — DeployKey:always),
+    # because the GITHUB_TOKEN origin push is rejected by ruleset GH013. The key
+    # is gated behind the `baseline-promote` Environment (deployment branch
+    # restricted to `main`), exactly like test262-sharded.yml's promote-baseline
+    # and baseline-summary-sync.yml. Declaring the environment is what makes the
+    # ENVIRONMENT-scoped secret resolvable here.
+    environment: baseline-promote
 
     steps:
       - name: Checkout
@@ -335,8 +343,26 @@ jobs:
             git push
           fi
 
+      # (#3) Push the audit commit to main over the SSH deploy-key remote — that
+      # auth path is in the ruleset's bypass_actors (DeployKey: always), so it is
+      # NOT rejected by GH013 the way the GITHUB_TOKEN `origin` push is. The
+      # previous `git pull --rebase origin main && git push` here authenticated
+      # with the checkout's GITHUB_TOKEN and was BLOCKED by GH013, freezing the
+      # committed baseline even on this emergency-recovery workflow (the exact
+      # drift-deadlock this step is supposed to BREAK). Mirrors the proven
+      # Option-A re-anchor loop (#1861) in test262-sharded.yml's promote-baseline
+      # and baseline-summary-sync.yml: snapshot the small promote JSON files,
+      # hard-checkout a CLEAN tip of main on each attempt, re-apply, commit
+      # [skip ci], push via the deploy key, retry on the merge-queue race.
       - name: Commit FORCED baseline refresh (audit trail)
+        env:
+          MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
         run: |
+          set -uo pipefail
+          if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
+            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset (environment baseline-promote). The main-repo baseline push needs the private half of the loopdive/js2 'MAIN_DEPLOY_KEY' deploy key — GITHUB_TOKEN is blocked by ruleset GH013."
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Stage only the small JSON files and generated edition buckets (JSONL lives in baselines repo, not main).
@@ -353,25 +379,64 @@ jobs:
           PASS=${{ steps.sanity.outputs.pass }}
           TOTAL=${{ steps.sanity.outputs.total }}
           ACTOR="${{ github.actor }}"
-          git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass [skip ci]"
-          if ! git pull --rebase origin main; then
-            git rebase --abort 2>/dev/null || true
-            git fetch origin main
-            git reset --hard origin/main
-            cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
-            cp merged-reports/test262-report-merged.json benchmarks/results/test262-current.json
-            cp merged-reports/test262-report-merged.json benchmarks/results/test262-report.json
-            cp merged-reports/test262-report-merged.json public/benchmarks/results/test262-report.json
-            node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
-            git add -f benchmarks/results/test262-current.json \
-              benchmarks/results/test262-report.json \
-              public/benchmarks/results/test262-report.json \
-              website/public/benchmarks/results/test262-editions.json \
-              website/public/benchmarks/results/test262-category-editions.json
-            git diff --cached --quiet && exit 0
+
+          # --- Set up the SSH deploy key (mirrors the baselines-repo push step
+          # above and the promote-baseline / summary-sync main pushes). ---
+          eval "$(ssh-agent -s)"
+          echo "$MAIN_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git remote remove deploykey 2>/dev/null || true
+          git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
+          # The shard run can leave the test262 submodule dirty — keep it from
+          # blocking the clean re-anchor checkout below.
+          git config submodule.test262.ignore all || true
+          git config diff.ignoreSubmodules dirty || true
+
+          # Option A re-anchor loop (#1861): snapshot the staged promote files,
+          # hard-checkout a clean tip of main on every attempt, re-apply, commit
+          # [skip ci] (prevents self-retrigger), push via the deploy key, retry
+          # on the merge-queue advance race.
+          PROMOTE_FILES=$(git diff --cached --name-only)
+          echo "Promote files staged for main:"; echo "$PROMOTE_FILES" | sed 's/^/  /'
+          PROMOTE_SNAPSHOT="$(mktemp -d)"
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            mkdir -p "$PROMOTE_SNAPSHOT/$(dirname "$f")"
+            cp "$f" "$PROMOTE_SNAPSHOT/$f"
+          done <<< "$PROMOTE_FILES"
+          PUSHED=0
+          for attempt in 1 2 3 4 5; do
+            git fetch deploykey main
+            git checkout -f -B _emergency_promote_tmp deploykey/main || {
+              echo "checkout of deploykey/main failed (attempt ${attempt}) — retrying"
+              sleep $((attempt * 5))
+              continue
+            }
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              mkdir -p "$(dirname "$f")"
+              cp "$PROMOTE_SNAPSHOT/$f" "$f"
+              git add -f "$f"
+            done <<< "$PROMOTE_FILES"
+            if git diff --cached --quiet; then
+              echo "Baseline already current on main after re-anchor — nothing to push."
+              PUSHED=1
+              break
+            fi
             git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass [skip ci]"
+            if git push deploykey HEAD:main; then
+              echo "Pushed FORCED baseline refresh to main via deploy key (${PASS}/${TOTAL} pass, attempt ${attempt})."
+              PUSHED=1
+              break
+            fi
+            echo "push race lost (attempt ${attempt}) — re-anchoring on latest main and retrying"
+            sleep $((attempt * 5))
+          done
+          if [ "$PUSHED" != "1" ]; then
+            echo "::error::Failed to push refreshed baseline to main after 5 attempts (persistent, not a transient race)."
+            exit 1
           fi
-          git push
 
       - name: Trigger Pages deploy
         if: success()

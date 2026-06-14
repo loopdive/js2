@@ -96,7 +96,7 @@ export function getX(): number { return x; }
     expect(r.wat).not.toContain("__init_done");
   });
 
-  it("module with main() and top-level statements: init prepended to main, no start section", async () => {
+  it("module with a user main() and top-level statements: init is a standalone start function, NOT spliced into main (#1978)", async () => {
     const src = `
 let counter = 0;
 counter = 5;
@@ -104,8 +104,11 @@ export function main(): number { return counter; }
 `;
     const r = await compile(src, { fileName: "test.ts" });
     expect(r.success).toBe(true);
-    // main() carries the init body; no start section needed
-    expect(r.wat).not.toContain("(start ");
+    // #1978: a user function named `main` is an ordinary export and gets NO
+    // init splice. Module-global init lives in a standalone `__module_init` run
+    // once via the Wasm start section — so the start section IS present, and the
+    // legacy `__init_done` per-call guard is gone.
+    expect(r.wat).toContain("(start ");
     expect(r.wat).not.toContain("__init_done");
   });
 

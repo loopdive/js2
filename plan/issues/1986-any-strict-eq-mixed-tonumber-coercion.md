@@ -1,10 +1,11 @@
 ---
 id: 1986
 title: "strict === between any-typed and number-typed operands applies ToNumber coercion (null === 0 → true, '1' === 1 → true)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-13
+completed: 2026-06-13
 priority: high
 feasibility: medium
 reasoning_effort: medium

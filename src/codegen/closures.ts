@@ -19,7 +19,7 @@ import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
-import { allocLocal, getLocalType } from "./context/locals.js";
+import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
@@ -61,6 +61,7 @@ import {
   emitF64ParamSentinelCheck,
   emitArgumentsVecBody,
   emitParamDefaultArgMissingCheck,
+  ensureCurrentThisGlobal,
   paramDefaultNeedsArgc,
 } from "./statements/nested-declarations.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
@@ -2458,11 +2459,59 @@ export function compileArrowAsClosure(
 
 /** Compile an arrow function as a host callback via __make_callback.
  *  Captures are bundled into a per-instance GC struct (not shared globals). */
+/**
+ * (#2128) Collect the names a callback body WRITES that resolve to locals of
+ * the enclosing function — i.e. its mutable captures. Used by the
+ * object-literal accessor path to pre-compute, across a whole get/set pair,
+ * which locals must be captured through a SHARED ref cell so the getter
+ * observes the setter's writes.
+ */
+export function collectMutatedCaptureNames(
+  fctx: FunctionContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+): Set<string> {
+  const ownLocals = new Set<string>();
+  collectFunctionOwnLocals(arrow, ownLocals);
+  if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
+  const written = new Set<string>();
+  const body = arrow.body;
+  if (ts.isBlock(body)) {
+    for (const stmt of body.statements) collectWrittenIdentifiers(stmt, written, ownLocals);
+  } else {
+    collectWrittenIdentifiers(body, written, ownLocals);
+  }
+  const result = new Set<string>();
+  for (const name of written) {
+    if (fctx.localMap.has(name)) result.add(name);
+  }
+  return result;
+}
+
+/** (#2128) Per-literal registry of shared capture ref cells — see compileArrowAsCallback. */
+export type SharedRefCellMap = Map<string, { refCellLocal: number; refCellTypeIdx: number; valType: ValType }>;
+
 export function compileArrowAsCallback(
   ctx: CodegenContext,
   fctx: FunctionContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
-  options?: { needsThis?: boolean; deferredInvocation?: boolean },
+  options?: {
+    needsThis?: boolean;
+    deferredInvocation?: boolean;
+    /**
+     * (#2128) Locals to capture mutably (via ref cell) even when THIS
+     * callback only reads them — a sibling callback in the same object
+     * literal writes them, and both must see one shared cell.
+     */
+    forceMutableCaptures?: Set<string>;
+    /**
+     * (#2128) Per-object-literal shared-cell registry. The first callback
+     * capturing a name mutably creates the cell and records it here; sibling
+     * callbacks reuse it so mutations are visible across the get/set pair.
+     * Scoped to one literal compilation — do NOT share across loop-iteration
+     * callback creations (per-iteration `let` semantics need fresh cells).
+     */
+    sharedRefCells?: SharedRefCellMap;
+  },
 ): ValType | null {
   const cbId = ctx.callbackCounter++;
   const cbName = `__cb_${cbId}`;
@@ -2503,7 +2552,10 @@ export function compileArrowAsCallback(
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type
         : (fctx.locals[localIdx - fctx.params.length]?.type ?? { kind: "f64" });
-    const isMutable = writtenInCallback.has(name);
+    // (#2128) forceMutableCaptures: a sibling accessor in the same object
+    // literal writes this local — capture via the shared ref cell even if
+    // this callback (e.g. the getter) only reads it.
+    const isMutable = writtenInCallback.has(name) || (options?.forceMutableCaptures?.has(name) ?? false);
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
     captures.push({ name, type, localIdx, mutable: isMutable, alreadyBoxed });
   }
@@ -2823,8 +2875,17 @@ export function compileArrowAsCallback(
       [];
     for (const cap of captures) {
       if (cap.mutable && !cap.alreadyBoxed) {
-        // Create a ref cell: struct.new $ref_cell_T (value)
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
+        // (#2128) Reuse the literal's shared cell when a sibling callback
+        // already created one for this local (same ref-cell type), so the
+        // get/set pair aliases ONE cell. No new writebacks: the creator
+        // registered them.
+        const shared = options?.sharedRefCells?.get(cap.name);
+        if (shared && shared.refCellTypeIdx === refCellTypeIdx) {
+          fctx.body.push({ op: "local.get", index: shared.refCellLocal });
+          continue;
+        }
+        // Create a ref cell: struct.new $ref_cell_T (value)
         fctx.body.push({ op: "local.get", index: cap.localIdx });
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
         // Keep a local ref to the ref cell for writeback after the host call
@@ -2835,6 +2896,7 @@ export function compileArrowAsCallback(
         fctx.body.push({ op: "local.tee", index: refCellLocal });
         // The struct.new result (ref cell) is on the stack for the capture struct
         refCellLocals.push({ refCellLocal, outerLocalIdx: cap.localIdx, refCellTypeIdx, valType: cap.type });
+        options?.sharedRefCells?.set(cap.name, { refCellLocal, refCellTypeIdx, valType: cap.type });
       } else {
         // Immutable capture or already-boxed: push directly
         fctx.body.push({ op: "local.get", index: cap.localIdx });
@@ -2851,10 +2913,23 @@ export function compileArrowAsCallback(
     if (refCellLocals.length > 0) {
       const writebacks: Instr[] = [];
       for (const rc of refCellLocals) {
+        // (#2128) Null-guard the cell: writebacks are re-emitted at sites that
+        // may execute while the creation site (e.g. inside an untaken branch)
+        // hasn't run, leaving refCellLocal null — skip instead of trapping.
         writebacks.push({ op: "local.get", index: rc.refCellLocal } as Instr);
-        writebacks.push({ op: "ref.as_non_null" });
-        writebacks.push({ op: "struct.get", typeIdx: rc.refCellTypeIdx, fieldIdx: 0 } as Instr);
-        writebacks.push({ op: "local.set", index: rc.outerLocalIdx } as Instr);
+        writebacks.push({ op: "ref.is_null" } as Instr);
+        writebacks.push({ op: "i32.eqz" } as Instr);
+        writebacks.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: rc.refCellLocal } as Instr,
+            { op: "ref.as_non_null" } as Instr,
+            { op: "struct.get", typeIdx: rc.refCellTypeIdx, fieldIdx: 0 } as Instr,
+            { op: "local.set", index: rc.outerLocalIdx } as Instr,
+          ],
+          else: [],
+        } as Instr);
       }
       // (#1695) Promote to persistent for stored-callback host methods too:
       // defer/use/adopt only register the callback, the actual invocation
@@ -3359,6 +3434,50 @@ export function emitFuncRefAsClosure(
 }
 
 /**
+ * (#2015) Build the `this`-slot prologue for an object-method trampoline.
+ *
+ * Object-literal / cached method trampolines bridge the closure-value ABI
+ * `(closure_self, …userParams)` to the method ABI `(this_struct, …userParams)`.
+ * Historically they hardcoded `ref.null <objStruct>` for the method's `this`
+ * slot, implementing the unbound-`this` method-extraction case (`var f = o.m;
+ * f()` → `this === undefined`). But the SAME trampoline is reached when the
+ * closure is dispatched as a METHOD via `__call_fn_method_N`, which installs
+ * the receiver into the `__current_this` module global before the inner
+ * `call_ref` (#1636-S1). In that case the hardcoded null made `this.<field>`
+ * trap (the issue's bare `WebAssembly.Exception`).
+ *
+ * Read `__current_this` instead and use it as `this` when it `ref.test`s as the
+ * method's object struct; otherwise fall back to `ref.null` (preserving the
+ * unbound-extraction semantics, since plain `__call_fn_N` dispatch leaves the
+ * global null). This mirrors the null-guarded `__current_this` read that lifted
+ * closure bodies already use for `ThisKeyword` (`expressions.ts`, #1702).
+ *
+ * `anyTempLocalIdx` must reference a spare `anyref` local appended to the
+ * trampoline. Emits a sequence leaving exactly one `(ref null objStructTypeIdx)`
+ * on the stack.
+ */
+function buildTrampolineThisSlot(ctx: CodegenContext, objStructTypeIdx: number, anyTempLocalIdx: number): Instr[] {
+  const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
+  const nullThis: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx } as Instr];
+  if (currentThisGlobalIdx < 0) return nullThis;
+  return [
+    { op: "global.get", index: currentThisGlobalIdx } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "local.tee", index: anyTempLocalIdx } as Instr,
+    { op: "ref.test", typeIdx: objStructTypeIdx } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: objStructTypeIdx } },
+      then: [
+        { op: "local.get", index: anyTempLocalIdx } as Instr,
+        { op: "ref.cast", typeIdx: objStructTypeIdx } as Instr,
+      ],
+      else: nullThis,
+    } as unknown as Instr,
+  ];
+}
+
+/**
  * #1118: Emit an object-literal method as a first-class closure value.
  *
  * Object-literal methods are compiled as Wasm functions with signature
@@ -3404,10 +3523,13 @@ export function emitObjectMethodAsClosure(
 
   // Create the trampoline. Signature matches the wrapper's lifted func
   // type: (closure_self, ...userParams) → ret. We ignore closure_self,
-  // push ref.null <objStruct> for the method's self_obj, then forward
-  // the user params.
+  // resolve the method's self_obj from `__current_this` (#2015 — falls back
+  // to `ref.null` for the unbound method-extraction case), then forward the
+  // user params.
   const trampolineName = `__obj_meth_tramp_${methodName}_${ctx.closureCounter++}`;
-  const trampolineBody: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx } as Instr];
+  // anyref temp at the first slot past the params (closure_self + userParams).
+  const anyTempLocalIdx = 1 + userParams.length;
+  const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx);
   for (let i = 0; i < userParams.length; i++) {
     // Skip closure_self at param 0; user params start at index 1
     trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
@@ -3418,7 +3540,7 @@ export function emitObjectMethodAsClosure(
   ctx.mod.functions.push({
     name: trampolineName,
     typeIdx: liftedFuncTypeIdx,
-    locals: [],
+    locals: [{ name: "__this_any", type: { kind: "anyref" } }],
     body: trampolineBody,
     exported: false,
   });
@@ -3559,9 +3681,18 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     };
 
     // (#1340) Function-decl trampolines have no `this` prologue; method
-    // trampolines emit `ref.null <objStruct>` as the receiver before
-    // forwarding user params.
-    const newBody: Instr[] = t.noThisParam ? [] : [{ op: "ref.null", typeIdx: t.objStructTypeIdx } as Instr];
+    // trampolines resolve the receiver from `__current_this` (#2015, falling
+    // back to `ref.null` for the unbound method-extraction case) before
+    // forwarding user params. The anyref scratch local is allocated through
+    // `tFctx` so it lands in `localDefs` (attached to the registered function
+    // below) and any later coercion temps allocate after it.
+    let newBody: Instr[];
+    if (t.noThisParam) {
+      newBody = [];
+    } else {
+      const anyTempLocalIdx = allocTempLocal(tFctx, { kind: "anyref" });
+      newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx);
+    }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 } as Instr);
       const from = wrapperUserParams[i];
@@ -3633,9 +3764,17 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     // coercion allocated for this trampoline. The function is located by body
     // identity (not by `trampolineFuncIdx`, which may have shifted): the
     // registered trampoline holds the SAME `t.trampolineBody` array reference.
-    if (localDefs.length > 0) {
+    //
+    // (#2015) The rebuilt body's local indices are computed against `tFctx`,
+    // whose `locals` (`localDefs`) start empty — so the `__current_this` anyref
+    // scratch lands at the first slot past the wrapper params and any coercion
+    // temps after it. The initial emit pre-seeded the function with a single
+    // `__this_any` anyref local at that SAME index, so REPLACE the function's
+    // locals with `localDefs` (rather than append) to keep the persisted layout
+    // in lockstep with the rebuilt body; an append would shift every temp by one.
+    if (!t.noThisParam || localDefs.length > 0) {
       const func = ctx.mod.functions.find((f) => f.body === t.trampolineBody);
-      if (func) func.locals.push(...localDefs);
+      if (func) func.locals = localDefs;
     }
     t.trampolineBody.length = 0;
     t.trampolineBody.push(...newBody);
@@ -3687,14 +3826,14 @@ export function emitCachedMethodClosureAccess(
   const trampolineName = `__obj_meth_tramp_${methodName}_cached`;
   let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
   if (trampolineFuncIdx === undefined) {
-    // Trampoline body: drop the closure-self arg (param 0), push
-    // `ref.null <objStruct>` for the method's `this` (matches the
-    // per-call-site emitObjectMethodAsClosure semantics — JS strict
-    // mode `var fn = c.m; fn();` calls with `this = undefined`, so a
-    // null receiver propagates the spec-mandated TypeError on
-    // `this.field` access), then forward user params, then call the
-    // method.
-    const trampolineBody: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx } as Instr];
+    // Trampoline body: drop the closure-self arg (param 0), resolve the
+    // method's `this` from `__current_this` (#2015 — falls back to
+    // `ref.null` for the unbound method-extraction case `var fn = c.m;
+    // fn();` where JS strict mode calls with `this = undefined`, so the
+    // null receiver propagates the spec-mandated TypeError on `this.field`
+    // access), then forward user params, then call the method.
+    const anyTempLocalIdx = 1 + userParams.length;
+    const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx);
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
     }
@@ -3703,7 +3842,7 @@ export function emitCachedMethodClosureAccess(
     ctx.mod.functions.push({
       name: trampolineName,
       typeIdx: liftedFuncTypeIdx,
-      locals: [],
+      locals: [{ name: "__this_any", type: { kind: "anyref" } }],
       body: trampolineBody,
       exported: false,
     });

@@ -2,7 +2,7 @@
 id: 1975
 title: "linear backend: NaN and \"\" are truthy (f64.ne 0 / raw i32 pointer truthiness); &&/|| return 0/1 instead of operand values"
 status: ready
-sprint: 61
+sprint: 62
 created: 2026-06-10
 updated: 2026-06-10
 priority: high

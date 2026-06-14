@@ -4000,81 +4000,57 @@ export function compileDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     ctx.pendingInitBody = compiledInitFctx.body;
   }
 
-  // Clear pendingInitBody before injection (it will be in mod.functions or main body after this)
+  // Clear pendingInitBody before injection (it lands in mod.functions after this)
   ctx.pendingInitBody = null;
 
-  // Helper: recursively shift local indices in instruction trees
-  function shiftLocalIndices(instrs: Instr[], shift: number): void {
-    for (const instr of instrs) {
-      if (
-        (instr.op === "local.get" || instr.op === "local.set" || instr.op === "local.tee") &&
-        typeof (instr as any).index === "number"
-      ) {
-        (instr as any).index += shift;
-      }
-      // Recurse into nested blocks
-      const a = instr as any;
-      if (a.then) shiftLocalIndices(a.then, shift);
-      if (a.else) shiftLocalIndices(a.else, shift);
-      if (a.body) shiftLocalIndices(a.body, shift);
-      if (a.instrs) shiftLocalIndices(a.instrs, shift);
-    }
-  }
-
-  // Inject the compiled init body into the appropriate location
+  // Inject the compiled init body into a standalone `__module_init`.
+  //
+  // #1978: we deliberately do NOT splice the init body into a user function
+  // named `main`. Module-global initializers must run exactly ONCE (at module
+  // load / instantiation), but a user `main()` is a normal export the host may
+  // call repeatedly — splicing the init body in re-ran the global initializers
+  // on every call (top-level state reset to its initial value) and, under the
+  // `main()`-calls-itself WASI convention, prepended a call to `main`'s own
+  // index, causing unbounded self-recursion. `main` is just an ordinary export;
+  // it gets no special init treatment. The standalone `__module_init` runs once
+  // via the Wasm start section (or WASI `_start`), matching ES module semantics.
   if (compiledInitFctx && compiledInitFctx.body.length > 0) {
     ctx.mod.hasTopLevelStatements = true;
-    const mainIdx = funcByName.get("main");
-    if (mainIdx !== undefined) {
-      const mainFunc = ctx.mod.functions[mainIdx]!;
-      // Prepend init body + init locals to main's body
-      mainFunc.body = [...compiledInitFctx.body, ...mainFunc.body];
-      // Add init locals to main's locals (adjust any local indices in init body)
-      // Find number of existing main locals
-      const existingLocals = mainFunc.locals.length;
-      // Append init locals to main's locals
-      mainFunc.locals = [...mainFunc.locals, ...compiledInitFctx.locals];
-      // Adjust local indices in init body (shift by existing locals count in main)
-      // Must recurse into nested blocks (if/then/else, block, loop)
-      if (existingLocals > 0) {
-        shiftLocalIndices(compiledInitFctx.body, existingLocals);
-      }
-    } else {
-      // No main() function — create a standalone __module_init and run it
-      // automatically via the Wasm start section on instantiation (#907).
-      //
-      // This replaces both:
-      //   - the legacy `__init_done` runtime guard that injected a
-      //     `if (!done) { done = 1; __module_init(); }` preamble at the start
-      //     of every exported function, and
-      //   - the `_start` export wrapper used for module-init-only programs.
-      //
-      // Wasm `start` runs once during instantiation, before the host can call
-      // any export. That matches ES module semantics (top-level code runs at
-      // module load) and removes the per-call guard branch from every export.
-      //
-      // For WASI mode, we don't set the start section here — `addWasiStartExport`
-      // creates a dedicated `_start` export that wraps `__module_init`. Setting
-      // both would cause init to run twice (once during instantiation, once
-      // when the host calls `_start`).
 
-      const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
-      const initFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-      ctx.mod.functions.push({
-        name: "__module_init",
-        typeIdx: initTypeIdx,
-        locals: compiledInitFctx.locals,
-        body: compiledInitFctx.body,
-        exported: false,
-      });
+    // Create a standalone __module_init and run it automatically via the Wasm
+    // start section on instantiation (#907).
+    //
+    // This replaces both:
+    //   - the legacy `__init_done` runtime guard that injected a
+    //     `if (!done) { done = 1; __module_init(); }` preamble at the start
+    //     of every exported function, and
+    //   - the `_start` export wrapper used for module-init-only programs.
+    //
+    // Wasm `start` runs once during instantiation, before the host can call
+    // any export. That matches ES module semantics (top-level code runs at
+    // module load) and removes the per-call guard branch from every export.
+    //
+    // For WASI mode, we don't set the start section here — `addWasiStartExport`
+    // creates a dedicated `_start` export that wraps `__module_init`. Setting
+    // both would cause init to run twice (once during instantiation, once
+    // when the host calls `_start`).
 
-      if (!ctx.wasi) {
-        // Use Wasm start section — init runs automatically on instantiation.
-        ctx.mod.startFuncIdx = initFuncIdx;
-      }
-      // else: WASI path — addWasiStartExport will export `_start` calling
-      // `__module_init`, and the host will invoke it explicitly.
+    const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
+    const initFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.mod.functions.push({
+      name: "__module_init",
+      typeIdx: initTypeIdx,
+      locals: compiledInitFctx.locals,
+      body: compiledInitFctx.body,
+      exported: false,
+    });
+
+    if (!ctx.wasi) {
+      // Use Wasm start section — init runs automatically on instantiation.
+      ctx.mod.startFuncIdx = initFuncIdx;
     }
+    // else: WASI path — addWasiStartExport will export `_start` calling
+    // `__module_init`, and the host will invoke it explicitly.
   }
 }
 

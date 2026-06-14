@@ -1,10 +1,11 @@
 ---
 id: 1987
 title: "any-boxed 0 === -0 returns false: __any_strict_eq bails on i32-box vs f64-box tag mismatch before numeric compare"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-13
+completed: 2026-06-13
 priority: low
 feasibility: easy
 reasoning_effort: low

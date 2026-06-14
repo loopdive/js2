@@ -20,6 +20,7 @@ import {
   nativeStringLiteralInstrs,
   nativeStringTypeNullable,
   stringConstantExternrefInstrs,
+  tryCompileNativeVecConcatOperand,
 } from "./native-strings.js";
 import {
   tryCompileStandaloneStringMatch,
@@ -106,6 +107,7 @@ function emitNativeStringRefFromExternref(ctx: CodegenContext, fctx: FunctionCon
  * Returns true when the operand was compiled and left a `ref $AnyString` on the
  * stack; false when the caller should fall back to its own handling.
  */
+
 function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
   // Precondition: caller has established `noJsHost(ctx)` (WASI / --target
   // standalone). There, `number_toString` is the pure-Wasm helper whose
@@ -175,6 +177,13 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
   }
 
   if (opType.kind === "ref" || opType.kind === "ref_null") {
+    // #2007 — a statically-known vec (array) operand stringifies via
+    // Array.prototype.join semantics ("1,2"), not the `$__any_to_string`
+    // "[object Object]" fallthrough. The concrete vec type is known here, so
+    // emit the join lowering inline (index-shift-safe — see #1448).
+    if (tryCompileNativeVecConcatOperand(ctx, fctx, opType)) {
+      return true;
+    }
     // #1806 Phase 1 (string-hint): when the operand is a compile-time-resolvable
     // object struct with its own `@@toPrimitive`/`toString`, dispatch that method
     // (OrdinaryToPrimitive, hint "string") instead of `$__any_to_string`, which
@@ -516,12 +525,18 @@ export function compileNativeTemplateExpression(
       }
     } else if (spanType && (spanType.kind === "ref" || spanType.kind === "ref_null")) {
       if (standaloneNativeStrings) {
-        // #1806 Phase 1 (string-hint): compile-time-resolvable object struct →
-        // dispatch its own `@@toPrimitive`/`toString` (OrdinaryToPrimitive, hint
-        // "string"). Falls through to `$__any_to_string` only when no static
-        // method exists (e.g. eqref-stored closure) — which yields AnyString
-        // passthrough / AnyValue tag dispatch / "[object Object]" as before.
-        if (!tryStructToString(ctx, fctx, spanType)) {
+        // #2007 — a vec (array) substitution stringifies via join semantics
+        // ("1,2") rather than the `$__any_to_string` "[object Object]"
+        // fallthrough. Concrete vec type is known here; emit the join lowering
+        // inline (index-shift-safe — see #1448).
+        if (tryCompileNativeVecConcatOperand(ctx, fctx, spanType)) {
+          // joined native string is on the stack — fall through to concat tail
+        } else if (!tryStructToString(ctx, fctx, spanType)) {
+          // #1806 Phase 1 (string-hint): compile-time-resolvable object struct →
+          // dispatch its own `@@toPrimitive`/`toString` (OrdinaryToPrimitive, hint
+          // "string"). Falls through to `$__any_to_string` only when no static
+          // method exists (e.g. eqref-stored closure) — which yields AnyString
+          // passthrough / AnyValue tag dispatch / "[object Object]" as before.
           const anyToStrIdx = ensureAnyToStringHelper(ctx);
           fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
         }

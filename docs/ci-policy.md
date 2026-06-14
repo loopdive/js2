@@ -119,6 +119,22 @@ Two test262 workflows currently run on PRs:
     summary) and the `js2wasm-baselines` repo's `test262-current.jsonl`
     (history feed for the trend chart). The `refresh-committed-baseline.yml`
     workflow consumes the sharded artifact to sync the committed JSONL.
+  - **Baseline pushes to `main` MUST authenticate with the `MAIN_DEPLOY_KEY`
+    SSH deploy key, never `GITHUB_TOKEN`.** The deploy key is the only auth
+    path in this ruleset's `bypass_actors` (DeployKey: `always`); a
+    `GITHUB_TOKEN`-authenticated push to `main` is rejected by ruleset GH013
+    ("Changes must be made through a pull request") and silently FREEZES the
+    committed baseline while the `js2wasm-baselines` repo moves on — the
+    drift deadlock (regression gates go blind; phantom ~500-test regression
+    in `git status` / fresh clones). All three baseline-promoting jobs use
+    the deploy key + the `baseline-promote` Environment (deployment branch
+    restricted to `main`): `promote-baseline` (test262-sharded.yml), the
+    scheduled `sync` (baseline-summary-sync.yml), and the manual emergency
+    `merge-and-promote` (refresh-baseline.yml). PR #725/#896 and #3 each
+    regressed one of these back onto `GITHUB_TOKEN`; do NOT swap any of them
+    back. If GH013 recurs, first confirm the ruleset still lists the
+    `DeployKey: always` bypass actor
+    (`gh api /repos/loopdive/js2/rulesets/16700772 --jq .bypass_actors`).
   - The `check for test262 regressions` job is also required. It compares
     the merged PR report against the baseline and catches full pass→fail
     regressions even when the inline hard guards inside `merge shard reports`
@@ -128,6 +144,25 @@ Two test262 workflows currently run on PRs:
   (#1246). Compares branch tip vs. main HEAD with src-tree-hash caching.
   Useful for triaging "which exact tests flipped on my branch?" but the
   sharded `merge shard reports` aggregate is what gates the merge.
+- **`test262-pr-stub.yml` is the path-excluded companion producer (#4).**
+  The `paths:` filter above means a PR that touches **no** test262-relevant
+  path (docs-only, plan/bookkeeping, or a `tests/issue-N.test.ts`-only PR —
+  those test files are not in the allowlist) never triggers
+  `test262-sharded.yml` at all, so its three required contexts
+  (`cheap gate (main-ancestor + lint)`, `merge shard reports`,
+  `check for test262 regressions`) are never produced and the PR is
+  permanently BLOCKED ("3 of 6 required status checks expected") even when
+  fully green. `test262-pr-stub.yml` runs on **every** PR, diffs base..head
+  through `scripts/test262-paths-match.sh` (the same single source of truth
+  the `&test262-paths` allowlist mirrors), and emits those three contexts
+  **green only when no test262-relevant path changed**. When a test262 path
+  did change, the three stub jobs `skipped` (a skipped job publishes no
+  context), so the real workflow remains the **sole** producer — the two are
+  mutually exclusive on the same matcher, so the green stub can never mask a
+  red real run (the PR #496 masking trap). Correctness: a path-excluded PR
+  cannot affect conformance, and the merge **queue** still runs the full
+  authoritative validation on the merge_group ref regardless (#1657), so
+  nothing lands without the real gate's verdict on the merged-with-main tree.
 
 For one-off sharded runs outside the normal PR/merge_group path,
 `workflow_dispatch` is the supported entry point.

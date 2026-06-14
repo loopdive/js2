@@ -145,23 +145,19 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
     if (stmt.expression) {
       const bufferIdx = fctx.localMap.get("__gen_buffer");
       const resultType = compileExpression(ctx, fctx, stmt.expression);
-      if (resultType !== null && bufferIdx !== undefined) {
-        // Push the return value into the gen buffer so it appears as the
-        // final next() value (#729)
+      const setReturnIdx = ctx.funcMap.get("__gen_set_return");
+      if (resultType !== null && bufferIdx !== undefined && setReturnIdx !== undefined) {
+        // #2035: the generator's `return` value belongs ONLY to the terminal
+        // `{value, done:true}` result — it must NOT be pushed into the yield
+        // buffer (where spread/for-of/Array.from would surface it as a yielded
+        // element). Coerce it to externref and stash it on the buffer via
+        // `__gen_set_return`; the host drain emits it once with `done:true`.
         const tmpLocal = allocLocal(fctx, `__gen_ret_${fctx.locals.length}`, resultType);
         fctx.body.push({ op: "local.set", index: tmpLocal });
         fctx.body.push({ op: "local.get", index: bufferIdx });
         fctx.body.push({ op: "local.get", index: tmpLocal });
-        if (resultType.kind === "f64") {
-          const pushIdx = ctx.funcMap.get("__gen_push_f64");
-          if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
-        } else if (resultType.kind === "i32") {
-          const pushIdx = ctx.funcMap.get("__gen_push_i32");
-          if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
-        } else {
-          const pushIdx = ctx.funcMap.get("__gen_push_ref");
-          if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
-        }
+        coerceType(ctx, fctx, resultType, { kind: "externref" });
+        fctx.body.push({ op: "call", funcIdx: setReturnIdx });
       } else if (resultType !== null) {
         fctx.body.push({ op: "drop" });
       }
@@ -547,22 +543,15 @@ export function compileIfStatement(ctx: CodegenContext, fctx: FunctionContext, s
   // Handles: "x" === "y", "x" !== "y", true, false, !true, !false
   const constResult = evaluateConstantCondition(stmt.expression);
   if (constResult !== undefined) {
+    // Route the taken branch through compileStatement so its Block case runs
+    // block-scope save/restore — a const-folded `if (true) { let x = ... }`
+    // must not leak the inner binding into the enclosing scope either (#2064).
     if (constResult) {
       // Condition is always true — emit only the then branch
-      if (ts.isBlock(stmt.thenStatement)) {
-        for (const s of stmt.thenStatement.statements) compileStatement(ctx, fctx, s);
-      } else {
-        compileStatement(ctx, fctx, stmt.thenStatement);
-      }
-    } else {
+      compileStatement(ctx, fctx, stmt.thenStatement);
+    } else if (stmt.elseStatement) {
       // Condition is always false — emit only the else branch (if any)
-      if (stmt.elseStatement) {
-        if (ts.isBlock(stmt.elseStatement)) {
-          for (const s of stmt.elseStatement.statements) compileStatement(ctx, fctx, s);
-        } else {
-          compileStatement(ctx, fctx, stmt.elseStatement);
-        }
-      }
+      compileStatement(ctx, fctx, stmt.elseStatement);
     }
     return;
   }
@@ -609,13 +598,11 @@ export function compileIfStatement(ctx: CodegenContext, fctx: FunctionContext, s
     typeofNarrowResult = applyTypeofNarrowing(ctx, fctx, typeofNarrowing.varName, typeofNarrowing.typeLiteral);
   }
 
-  if (ts.isBlock(stmt.thenStatement)) {
-    for (const s of stmt.thenStatement.statements) {
-      compileStatement(ctx, fctx, s);
-    }
-  } else {
-    compileStatement(ctx, fctx, stmt.thenStatement);
-  }
+  // Route through compileStatement so the generic Block case runs its
+  // saveBlockScopedShadows/restoreBlockScopedShadows handling — otherwise a
+  // branch-local `let`/`const` permanently clobbers the outer binding in
+  // fctx.localMap/constBindings for the rest of the function (#2064).
+  compileStatement(ctx, fctx, stmt.thenStatement);
   const thenInstrs = fctx.body;
 
   // Restore typeof narrowing after then branch
@@ -661,13 +648,8 @@ export function compileIfStatement(ctx: CodegenContext, fctx: FunctionContext, s
       typeofNarrowResultElse = applyTypeofNarrowing(ctx, fctx, typeofNarrowing.varName, typeofNarrowing.typeLiteral);
     }
 
-    if (ts.isBlock(stmt.elseStatement)) {
-      for (const s of stmt.elseStatement.statements) {
-        compileStatement(ctx, fctx, s);
-      }
-    } else {
-      compileStatement(ctx, fctx, stmt.elseStatement);
-    }
+    // Block-scope save/restore via compileStatement's Block case (#2064).
+    compileStatement(ctx, fctx, stmt.elseStatement);
     elseInstrs = fctx.body;
 
     // Restore typeof narrowing after else branch

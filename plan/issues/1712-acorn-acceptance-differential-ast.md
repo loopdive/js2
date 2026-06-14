@@ -11,7 +11,7 @@ task_type: test
 area: test-infrastructure, codegen
 language_feature: multi
 goal: self-hosting-dogfood
-sprint: 61
+sprint: 62
 model: fable
 depends_on: [1710, 1711]
 es_edition: multi
@@ -338,3 +338,107 @@ existing `__vec_len`/`__vec_get`/`__vec_set_byte` precedent,
 chains (grow = alloc new $arr + struct.set, fields are mutable), then route
 array methods on vec receivers there from `__extern_method_call`. The
 two-shape struct issue (previous section) remains relevant after that.
+
+### Vec-mutator slice 2026-06-11 (fable-1712c, branch issue-1712-vec-mutators, stacked on issue-1712-dyn-dispatch)
+
+Fixes the `push is not a function` blocker (acorn `enterScope`:
+`this.scopeStack.push(new Scope(flags))`) — THREE stacked defects:
+
+1. **No host-side vec mutation**: new Wasm-side exports in
+   `_emitVecAccessExportsInner` (`src/codegen/index.ts`): `__is_vec`,
+   `__vec_mut_supported`, `__vec_push`, `__vec_pop` — per-vec-type ref.test
+   dispatch, grow = compileArrayPush discipline (newCap = max((len+1)*2,4),
+   array.new_default + array.copy + struct.set). Elem coverage: externref
+   always; f64/i32 when __box_number/__unbox_number imported; others return
+   the -1/0 sentinel (runtime falls through to its fail-loud TypeError).
+2. **closureBridge wrapped DATA fields**: `_wrapForHost`'s get trap bridged
+   ANY struct field into a callable (`closureBridge`, #1090) — acorn's
+   `this.scopeStack` read returned a JS function. Vetoed via `__is_vec`
+   (positive discriminator; `__is_closure` can FALSE-POSITIVE on vecs whose
+   canonicalized layout collides with a closure capture struct).
+3. **Routing**: `__extern_method_call`'s not-a-function arm routes push/pop
+   on vec receivers through the new exports (raw args, not host proxies, so
+   Wasm-side element reads see structs; receiver unwrapped through both the
+   proxy map and `_wasmClosureWrapperTargets`).
+
+acorn now executes enterScope/exitScope; the chain stops at the NEXT
+blocker — a null-deref in `__closure_340` (the static `Parser.parse` body)
+right after `__fnctor_Parser_new` returns: this is the documented TWO-SHAPE
+instance trap (`new this(…).parse()` member call guard-casts the ctor-shape
+instance against the checker shape → null → struct.get). See the
+"fnctor instances have TWO irreconcilable struct shapes" analysis above —
+that is now the live front of the onion.
+
+Also KNOWN, pre-existing, NOT fixed here (`.tmp/dbg23.mts` L1/L2): when the
+TS checker CAN type the instance array field (TS-typed input, not acorn),
+the member call takes the STATIC vec path which UNGUARDED-casts the
+externref field value to the checker-inferred vec type → "illegal cast".
+Needs the same guarded-cast + dynamic-fallback treatment in the
+property-access lowering that feeds compileArrayPush.
+
+### Two-shape slice 2026-06-11 (fable-1712c, branch issue-1712-two-shape, stacked on issue-1712-vec-mutators)
+
+The original Blocker-2 two-shape trap is FIXED — three coordinated changes
+(the "steer member-call split together with the type change" the failed
+attempt called for, but resolved to EXTERNREF instead of the ctor struct):
+
+1. `resolveWasmType` (src/codegen/index.ts, before the named-struct arm):
+   fnctor instance types resolve to EXTERNREF — the checker shape is never
+   synthesized. Gated to instance shapes only (`getCallSignatures().length
+   === 0` keeps the function VALUE on its closure-wrapper resolution),
+   JS-host only. This makes fnctor instances flow dynamically end-to-end.
+2. `compileCallablePropertyCall` (calls-closures.ts): when the receiver is
+   an fnctor instance, route the member call through
+   `emitWrapperDynamicMethodCall` (host bridge) instead of the
+   checker-shape field-read path (which trapped struct.get-on-null).
+3. `emitWrapperDynamicMethodCall` (calls.ts, exported now): grew args
+   support (__js_array_push packing, JS-host).
+4. Runtime `_wrapForHost.safeGetField`: a nullish `__sget_<name>` result is
+   a MISS, not a hit — the per-shape dispatcher returns undefined for
+   shapes that don't carry the field, which short-circuited the vivified-
+   prototype fallback (every prototype method was unreachable whenever the
+   checker shape had synthesized a same-named __sget export).
+
+Verified: `.tmp/dbg16/25/26` (E4/M-series) green, G/H probes unchanged,
+tests/issue-1712-dynamic-dispatch.test.ts extended (8 green), targeted
+suites 0 new fails (19 pre-existing env fails).
+
+**acorn status: parse() now EXECUTES into the tokenizer and LOOPS FOREVER
+(dogfood times out after compile+validate).** Next root-cause: likely
+instance field WRITES through dynamic dispatch (`this.pos = ...` /
+`+= `) not writing back to the struct (so the scan position never
+advances), or a loop-condition coercion. Probe direction: minimal
+`Parser.prototype.step = function(){ this.pos = this.pos + 1 }` write-back
+check, then bisect acorn's nextToken loop.
+
+**Correction (same session): the field-write-back hypothesis is DISPROVEN.**
+`.tmp/dbg27.mts` N-probes all pass: `this.pos = this.pos + 1` through a
+prototype method writes back (N1=2), a bounded `while (this.pos <
+this.input.length)` terminates correctly (N2), and compound `this.pos += n`
+works (N3). The acorn tokenizer infinite loop must be bisected INSIDE the
+loop instead — likely candidates: `charCodeAt`/`fullCharCodeAtPos` results
+through the dynamic path (NaN making no scanner branch match so `pos` never
+moves), `skipSpace` semantics, or a context/type-token comparison that
+never becomes true. Suggested approach: instrument the host bridge with an
+invocation counter per method name (env-gated) and run one fixture to see
+which method spins; or precompile acorn once to .tmp and drive
+`parse` with a 1-char input under a watchdog.
+
+**Tokenizer-loop root cause pinned (`.tmp/dbg28.mts`, host-bridge call
+counter under a 200k watchdog):** for input `var x = 1;`, `parseStatement`
+executes 9,090 times — each iteration COMPLETES (its statement is pushed:
+`push` 9,090, `parseExpressionStatement` 9,089), but `parseTopLevel`'s
+guard `this.type !== types$1.eof` never becomes false. This is a token-
+object IDENTITY failure across dynamic reads: TokenType objects are
+compared with `!==` by reference, and the two operands (`this.type` via
+the instance read path; `types$1.eof` via module-global + property read)
+evidently don't resolve to the SAME reference — one side likely a
+`_wrapForHost` proxy / boxed copy and the other the raw struct (the
+`_hostProxyCache` makes proxies identity-stable per struct, so the bug is
+a path that returns the RAW value while the other returns the proxy, or
+vice versa). Also suspicious: every statement parses as an
+ExpressionStatement (`isLet` truthiness / keyword-token recognition may
+have the same identity/equality defect). Next slice: make all dynamic
+read paths return ONE canonical representation per struct (always raw, or
+always cached proxy) before values re-enter Wasm, and check the strict-
+equality lowering for externref operands unwraps proxies on both sides.

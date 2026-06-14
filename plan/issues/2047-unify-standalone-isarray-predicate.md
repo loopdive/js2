@@ -1,10 +1,11 @@
 ---
 id: 2047
 title: "unify standalone Array.isArray: inline snapshot predicate diverges from direct calls; #1904's native __extern_is_array is dead code; both over-claim non-array carriers"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-14
+completed: 2026-06-14
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -85,3 +86,46 @@ and merged without integrating:
   shipping in modules (or it is the only implementation).
 - No host-mode changes; equivalence + issue-1904/1907 tests green with the
   new coexistence cases.
+
+## Resolution (2026-06-14)
+
+Unified the standalone `Array.isArray` predicate onto the finalize-filled
+native helper and filtered the exclusively-non-array byte carriers.
+
+**Changes**
+- `src/codegen/property-access.ts` — `emitArrayIsArrayExternrefPredicate` now
+  routes the `ctx.standalone` arm to the in-module native `__extern_is_array`
+  helper (which is *filled at finalize* by `fillExternIsArray` with the complete
+  carrier list), deleting the inline `vecTypeMap` `ref.test` snapshot chain for
+  standalone. Host **and** WASI keep the existing inline chain (host ORs the JS
+  `__extern_is_array` predicate for foreign JS arrays — #1328/#1678 unchanged;
+  WASI's `__extern_is_array` does not resolve to the native object-runtime func,
+  so it stays on the inline chain). Both standalone dispatch sites (the direct
+  `Array.isArray(x)` call in `calls.ts` and the value-read closure) already share
+  this one function, so fixing it covers both.
+- `src/codegen/object-runtime.ts` — `collectStandaloneArrayCarrierTypeIdxs` now
+  excludes the `i32_byte` (ArrayBuffer/DataView) and `i8_byte` (native
+  Uint8Array) byte carriers per ES §7.2.2 IsArray.
+
+**Known residual** (documented in `object-runtime.ts`): other TypedArrays
+(Float64Array, Int32Array, …) share the generic `__vec_f64` carrier with
+`number[]` and cannot be distinguished by a struct-level `ref.test` without a
+brand bit. `__vec_f64` is kept in the carrier list, so
+`Array.isArray(new Float64Array(1))` remains a false-positive pending a
+brand-bit follow-up. Only the cleanly-non-array `_byte` carriers are filtered.
+
+## Test Results (2026-06-14)
+
+- `tests/issue-2047.test.ts` (new) — 8/8 pass: value-read↔direct-call agreement
+  for boolean[]/number[]/string[], capture-before-decl snapshot case,
+  ArrayBuffer/DataView/Uint8Array ⇒ false, byte carrier false beside a real
+  array carrier, primitives/objects ⇒ false, `$ObjVec` (Object.keys) ⇒ true,
+  host-mode parity (unchanged output).
+- `tests/issue-1904.test.ts`, `tests/issue-1907.test.ts` — green (the rival
+  inline impl's tests survive its deletion).
+- Pre-existing, unrelated failures (byte-identical to origin/main, not touched
+  by this change): `tests/array-methods.test.ts` /
+  `tests/arraybuffer-dataview.test.ts` instantiate with a partial import object
+  (missing `string_constants`); `tests/sparse-array-spread.test.ts` imports the
+  broken `tests/helpers.js`; `tests/issue-1767.test.ts` 64 MiB memory-cap stream
+  test is environmental.

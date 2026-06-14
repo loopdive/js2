@@ -2,7 +2,7 @@
 id: 1976
 title: "linear backend: string relationals compare memory addresses; .length returns UTF-8 byte count; string concat in compound-assign emits invalid module"
 status: ready
-sprint: 61
+sprint: 62
 created: 2026-06-10
 updated: 2026-06-10
 priority: high

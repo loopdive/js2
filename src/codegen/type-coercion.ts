@@ -2046,6 +2046,13 @@ export function coerceType(
             for (const instr of buildDispatch(0)) {
               fctx.body.push(instr);
             }
+            // (#1989) Restore the re-entrancy guard before returning. Without
+            // this, coercing the FIRST of two struct operands (e.g. `a < b`)
+            // leaves `__insideValueOfCoercion` set, so the SECOND operand's
+            // coercion takes the recursion-guard early-return and silently
+            // yields NaN. (Latent since this eqref-closure path was rarely
+            // reached for method-shorthand before per-instance dispatch.)
+            cleanup();
             return;
           }
           // No closure types found — check for a standalone ClassName_valueOf function (#433)

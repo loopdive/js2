@@ -1198,13 +1198,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
 
   // ── __delete_property(externref obj, externref key) -> i32 ───────────────
   //
-  // ES §13.5.1 delete operator on an own data property. Finds the live entry;
-  // if present, marks it tombstoned (FLAG_TOMBSTONE), nulls its value (drop the
-  // reference for GC), decrements count, increments tombstones, returns 1. A
-  // configurable check could refuse non-configurable props, but data props
-  // created via __extern_set are always configurable (FLAG_DEFAULT), so delete
-  // always succeeds — returns 1 even when the key is absent (matches the host
-  // import, which returns true for missing own props per spec step 5).
+  // ES §13.5.1 delete operator / §28.1.4 Reflect.deleteProperty on an own data
+  // property. Finds the live entry; if present AND configurable (§10.1.10
+  // OrdinaryDelete), marks it tombstoned (FLAG_TOMBSTONE), nulls its value (drop
+  // the reference for GC), decrements count, increments tombstones, returns 1.
+  // (#2046 PR-B) A configurability preflight refuses non-configurable props
+  // (return 0): props on a sealed/frozen object, or data props defined
+  // non-configurable via __defineProperty_value (#1629) — the prior "always
+  // configurable" assumption was stale once #1629 landed. Returns 1 when the key
+  // is absent (delete of a missing own prop succeeds, §10.1.10 step 2 / host
+  // import parity).
   //
   // params: 0=obj(externref) 1=key(externref)
   // locals: 2=any(anyref) 3=o(ref null $Object) 4=e(ref null $PropEntry)
@@ -1234,6 +1237,39 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         op: "if",
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      },
+      // (#2046 PR-B) Configurability preflight — §10.1.10 OrdinaryDelete step 3-4:
+      // a non-configurable own property is NOT deletable. Return 0 (false, keep)
+      // when either:
+      //   (a) the OBJECT is sealed/frozen — `__object_seal`/`__object_freeze`
+      //       set the object-level OBJ_FLAG_SEALED bit but do NOT clear each
+      //       entry's FLAG_CONFIGURABLE, so the per-entry check below is NOT
+      //       sufficient on its own; sealed ⇒ every own prop is non-configurable
+      //       (frozen ⊃ sealed), so test the object bit too; OR
+      //   (b) the individual entry was defined non-configurable
+      //       (FLAG_CONFIGURABLE cleared) via __defineProperty_value (#1629).
+      // This is correct for BOTH callers of __delete_property: Reflect (returns
+      // false) and sloppy `delete obj[k]` (also returns false for a
+      // non-configurable own prop, §13.5.1.2).
+      // (a) object sealed/frozen?
+      { op: "local.get", index: 3 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+      { op: "i32.const", value: OBJ_FLAG_SEALED },
+      { op: "i32.and" },
+      // (b) entry non-configurable? ((e.flags & FLAG_CONFIGURABLE) == 0)
+      { op: "local.get", index: 4 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+      { op: "i32.const", value: FLAG_CONFIGURABLE },
+      { op: "i32.and" },
+      { op: "i32.eqz" },
+      // refuse-delete = (sealed) | (entry not configurable)
+      { op: "i32.or" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
       },
       // e.flags |= TOMBSTONE
       { op: "local.get", index: 4 },
@@ -4370,15 +4406,48 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   bridgeFn.locals = [{ name: "n", type: { kind: "i32" } }];
 }
 
+/**
+ * (#2047) Byte-backed vec carriers that are NEVER JS arrays and must report
+ * `Array.isArray === false` per ES §7.2.2:
+ *   - `i32_byte` — ArrayBuffer / DataView backing store.
+ *   - `i8_byte`  — native (standalone/WASI) `Uint8Array` packed-byte storage.
+ * The codebase already excludes `i32_byte` vecs from array treatment elsewhere
+ * (`type-coercion.ts` — the `__make_iterable` shim skips it), so this filter is
+ * consistent precedent. NOTE: other TypedArrays (Float64Array, Int32Array, …)
+ * share the generic `f64` vec carrier with `number[]`, so a struct-level
+ * `ref.test` cannot distinguish them without a brand bit — `__vec_f64` is kept
+ * IN the carrier list and `Array.isArray(new Float64Array(1))` remains a known
+ * residual false-positive tracked for a brand-bit follow-up. Only the
+ * exclusively-non-array `_byte` carriers can be filtered cleanly.
+ */
+const NON_ARRAY_BYTE_VEC_ELEM_KINDS: ReadonlySet<string> = new Set(["i32_byte", "i8_byte"]);
+
+function isNonArrayByteVecName(name: string): boolean {
+  // Matches `__vec_i32_byte` / `__vec_i8_byte`. Only `__vec_*` structs reach
+  // this check (the caller already restricts to vec struct names).
+  for (const elemKind of NON_ARRAY_BYTE_VEC_ELEM_KINDS) {
+    if (name === `__vec_${elemKind}`) return true;
+  }
+  return false;
+}
+
 function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
   const carriers = new Set<number>();
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
   if (objVecTypeIdx !== undefined) carriers.add(objVecTypeIdx);
-  for (const typeIdx of ctx.vecTypeMap.values()) carriers.add(typeIdx);
+
+  // (#2047) Drop the exclusively-non-array byte carriers from vecTypeMap by key
+  // so ArrayBuffer/DataView (`i32_byte`) and native Uint8Array (`i8_byte`) are
+  // never claimed as arrays.
+  for (const [elemKind, typeIdx] of ctx.vecTypeMap.entries()) {
+    if (NON_ARRAY_BYTE_VEC_ELEM_KINDS.has(elemKind)) continue;
+    carriers.add(typeIdx);
+  }
   for (let typeIdx = 0; typeIdx < ctx.mod.types.length; typeIdx++) {
     const typeDef = ctx.mod.types[typeIdx];
     if (typeDef?.kind !== "struct") continue;
     const name = typeDef.name ?? "";
+    if (isNonArrayByteVecName(name)) continue; // (#2047) §7.2.2 — never an array
     if (name.startsWith("__vec_") || name === "__template_vec_externref") carriers.add(typeIdx);
   }
   return Array.from(carriers).sort((a, b) => a - b);

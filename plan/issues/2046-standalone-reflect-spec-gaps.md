@@ -1,10 +1,10 @@
 ---
 id: 2046
 title: "standalone Reflect: receiver arg silently dropped, deleteProperty ignores freeze/configurable, no ToPropertyKey (#1905 follow-up)"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-14
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -86,3 +86,58 @@ non-string-key cases; the `fallbackReturn(n, "i32-true")` dead branch at
 - tests/issue-1905.test.ts extended with proto-chain, frozen-delete,
   numeric-key, and receiver cases; standalone test262
   `built-ins/Reflect/{get,set,has,deleteProperty}` rows improve.
+
+## Resolution — PR-A + PR-B (2026-06-14)
+
+PR-A (defects 1 + 3a) and PR-B (defect 2) landed; PR-C (real receiver) is
+senior/deferred and PR-D (ToPropertyKey) rides #2042 — both remain, so this
+issue stays `in-progress`.
+
+**PR-A — restore fail-loud** (`src/codegen/expressions/calls.ts`, all inside
+`if (ctx.standalone)`):
+- **Defect 1 (receiver mis-bind):** `Reflect.get`/`Reflect.set` now refuse
+  loudly (`reportError`) when an explicit receiver is present
+  (`arguments.length > 2` / `> 3`) instead of evaluating-then-dropping it (which
+  silently bound `this = target` for accessors, §28.1.5/§28.1.12 →
+  §10.1.8/§10.1.9). Removed the now-dead `emitAndDropOptionalArg`.
+- **Defect 3a (non-object deleteProperty):** added a CALL-SITE `ref.test $Object`
+  guard on the target; a non-`$Object` target throws a catchable TypeError
+  (`emitThrowTypeError`, §28.1.4). The SHARED `__delete_property` helper is
+  untouched (sloppy `delete primitive[k]` stays a no-op success).
+- Cleanup: the boolean-Reflect `fallbackReturn` dead branches now return
+  `i32-false` (registration-failure default), not a phantom `true`.
+
+**PR-B — delete configurability/integrity preflight**
+(`src/codegen/object-runtime.ts`, `__delete_property`):
+- After finding a live entry, refuse (return 0, keep the prop) when the object
+  is sealed/frozen **OR** the entry is non-configurable
+  (`FLAG_CONFIGURABLE` cleared), per §10.1.10 OrdinaryDelete.
+- **Verified subtlety:** `__object_freeze`/`__object_seal` set only the
+  object-level `$Object.flags` `OBJ_FLAG_SEALED` bit and do NOT clear each
+  entry's `FLAG_CONFIGURABLE`, so the preflight checks BOTH the object
+  `OBJ_FLAG_SEALED` bit and the per-entry `FLAG_CONFIGURABLE` bit.
+  `Object.preventExtensions` (NONEXTENSIBLE only, not SEALED) does NOT block
+  delete — confirmed. Correct for both `Reflect.deleteProperty` and sloppy
+  `delete` (§13.5.1.2 — both refuse a non-configurable own prop).
+
+**Remaining (out of this PR):**
+- **PR-C (real receiver plumbing)** — senior/deferred, coordinates with #1888
+  Slice 5 accessor-invocation machinery.
+- **PR-D (ToPropertyKey)** — `Reflect.get(o, 1)` still traps ("illegal cast" on
+  `ref.cast $AnyString` in `__obj_hash`). This is the SAME numeric-key fix as
+  #2042 PR-A; reuse #2042's shared key-coercion helper once it lands rather than
+  duplicating. Coordinated with dev-b.
+
+## Test Results (2026-06-14)
+
+- `tests/issue-2046.test.ts` (new) — 10/10: explicit-receiver refusal (get+set),
+  no-receiver get/set work, non-object deleteProperty throws TypeError,
+  object deleteProperty deletes, frozen/sealed deleteProperty → false + kept,
+  preventExtensions delete still succeeds, sloppy delete honors freeze, sloppy
+  delete normal succeeds.
+- `tests/issue-1905.test.ts` — green (4/4, no regression).
+- Pre-existing unrelated failures (byte-identical to origin/main, untouched by
+  this change): `tests/object-define-property.test.ts` /
+  `tests/delete-operator.test.ts` import the broken `tests/helpers.js`;
+  `tests/equivalence/reflect-api.test.ts` "Reflect.construct creates a new
+  instance" fails identically on clean origin/main (host-mode, not standalone).

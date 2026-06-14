@@ -1853,6 +1853,38 @@ function emitRuntimeFlagsF64(
 }
 
 /**
+ * #2042 PR-A — ToPropertyKey the `Object.defineProperty` key in standalone mode.
+ *
+ * The standalone `$Object` runtime is string-keyed: `__obj_insert` /
+ * `__defineProperty_value` / `__defineProperty_accessor` all `ref.cast
+ * $AnyString` the incoming key. The defineProperty call sites compile the key
+ * with the `{ externref }` hint, which boxes a *number* literal
+ * (`Object.defineProperty(o, 0, …)`) as a boxed-number externref rather than a
+ * string — that boxed number then traps `illegal cast` in `__obj_insert`.
+ *
+ * `__extern_toString` (host import in JS mode, native runtime helper in
+ * standalone) maps any externref through ToString — numeric keys become their
+ * canonical decimal ("0", "1.5"), matching how `{0:x}` / `obj[0]=x` store the
+ * key. It is idempotent on strings, so string keys pass through unchanged.
+ *
+ * Expects the key externref on top of the stack; leaves a $AnyString externref.
+ * Gated on `ctx.standalone`: in host mode `__defineProperty_value` is a JS
+ * import that ToPropertyKeys the key itself (and correctly preserves Symbol
+ * keys, which a pre-emptive ToString would alias) — so host output stays
+ * byte-identical. Symbol keys in standalone are out of scope for Part A; the
+ * string-keyed runtime cannot represent them, and ToString-ing one would alias
+ * `Symbol("x")` to `"Symbol(x)"` — but the `15.2.3.6-4-*` illegal-cast rows are
+ * numeric, not symbol, so the bulk is fixed here.
+ */
+function emitStandaloneDefinePropertyKeyToString(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (!ctx.standalone) return;
+  const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  const finalIdx = ctx.funcMap.get("__extern_toString") ?? toStrIdx;
+  if (finalIdx !== undefined) fctx.body.push({ op: "call", funcIdx: finalIdx });
+}
+
+/**
  * Emit __defineProperty_value(obj, prop, value, flags) for the externref value path.
  */
 function emitExternDefinePropertyValue(
@@ -1895,6 +1927,14 @@ function emitExternDefinePropertyValue(
   if (propType.kind !== "externref") {
     coerceType(ctx, fctx, propType, { kind: "externref" });
   }
+  // #2042 PR-A: in standalone mode the `$Object` table is string-keyed and
+  // `__obj_insert` does `ref.cast $AnyString` on the key. A non-string key —
+  // `Object.defineProperty(o, 0, …)` boxes `0` as a number externref — traps
+  // `illegal cast`. ToPropertyKey (ToString for everything but Symbols) it here
+  // so the value handed to `__defineProperty_value` is always a $AnyString. In
+  // host mode `__defineProperty_value` is a JS import that ToPropertyKeys
+  // itself (and would mishandle a pre-stringified Symbol), so gate on standalone.
+  emitStandaloneDefinePropertyKeyToString(ctx, fctx);
   const propLocal = allocLocal(fctx, `__defprop_key_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: propLocal });
 
@@ -2060,6 +2100,11 @@ function emitExternDefinePropertyNoValue(
     if (propType.kind !== "externref") {
       coerceType(ctx, fctx, propType, { kind: "externref" });
     }
+    // #2042 PR-A: symmetric with the value path — stringify the key in
+    // standalone so the string-keyed `$Object` runtime (__obj_insert /
+    // __defineProperty_accessor) never `ref.cast $AnyString`-traps on a
+    // numeric/boxed key.
+    emitStandaloneDefinePropertyKeyToString(ctx, fctx);
     propLocal = allocLocal(fctx, `__defprop_key_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: propLocal });
   }

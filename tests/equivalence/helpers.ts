@@ -110,17 +110,32 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     __gen_push_ref: (buf: any[], v: any) => {
       buf.push(v);
     },
+    // (#2035) Stash the generator's `return` value on the buffer instead of
+    // pushing it as a yielded element; surfaced once as the terminal result.
+    __gen_set_return: (buf: any, v: any) => {
+      if (buf != null) {
+        Object.defineProperty(buf, "__genReturn", { value: v, writable: true, enumerable: false, configurable: true });
+      }
+    },
     __create_generator: (buf: any[]) => {
       let index = 0;
+      let retDone = false;
+      const retVal = (buf as any)?.__genReturn;
       return {
         next() {
           if (index < buf.length) {
             return { value: buf[index++], done: false };
           }
+          // Terminal result carries the return value exactly once. (#2035)
+          if (!retDone) {
+            retDone = true;
+            return { value: retVal, done: true };
+          }
           return { value: undefined, done: true };
         },
         return(value: any) {
           index = buf.length;
+          retDone = true;
           return { value, done: true };
         },
         [Symbol.iterator]() {
