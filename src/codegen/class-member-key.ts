@@ -47,9 +47,7 @@ export const CLASS_MEMBER_SEP = "#";
  * (`get_x`), or setter (`set_x`).
  */
 export function userClassMemberKey(ctx: CodegenContext, className: string, member: string): string {
-  return ctx.classSet.has(className)
-    ? `${className}${CLASS_MEMBER_SEP}${member}`
-    : `${className}_${member}`;
+  return ctx.classSet.has(className) ? `${className}${CLASS_MEMBER_SEP}${member}` : `${className}_${member}`;
 }
 
 /**
