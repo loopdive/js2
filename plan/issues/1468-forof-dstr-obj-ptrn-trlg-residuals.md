@@ -1,7 +1,8 @@
 ---
 id: 1468
 title: "for-of/dstr: obj-ptrn-id-init undefined-key + array-elem-trlg iterator close"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-09
 updated: 2026-05-20
 priority: medium

@@ -7,8 +7,10 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
-import type { CodegenContext } from "./context/types.js";
+import { allocLocal } from "./context/locals.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { emitNativeNumberFormat } from "./number-format-native.js";
 import { addImport } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterArrayType, getOrRegisterVecType } from "./registry/types.js";
 
@@ -5667,7 +5669,410 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
     body,
     exported: false,
   });
+
   return funcIdx;
+}
+
+/**
+ * #2007 — emit a per-vec-type native array-join helper
+ * `__vec_join_<elemKind>(v: ref null $__vec_<elemKind>) -> ref $AnyString`.
+ *
+ * Joins the vec's elements with `","` using native string concat:
+ *   - numeric element (f64/i32/i8/i16) → `number_toString` (native string boxed
+ *     as externref → convert back to `ref $AnyString`);
+ *   - native-string element (`ref $AnyString` / `$NativeString`) → passthrough
+ *     (a subtype of `$AnyString`);
+ *   - nested-vec element (`ref` to another registered `__vec_*`) → recurse into
+ *     THAT vec's own `__vec_join_*` helper, so `[[1,2],[3]]` yields `"1,2,3"`;
+ *   - any other ref / externref element → `"[object Object]"` (the same residual
+ *     `$__any_to_string` would give — kept simple to avoid a cross-helper call
+ *     index that the addUnionImports late shift can desync, #1839).
+ *
+ * **Index-shift safety (the #1448 regression fix):** every dependency
+ * (`number_toString`, a nested `__vec_join_*`) is emitted *first*, so any late
+ * import shift it triggers happens BEFORE this body is built; their final
+ * indices are read after, then the body is built and pushed with NO intervening
+ * helper emission. Otherwise a shift between baking a `call funcIdx` and pushing
+ * the body leaves the not-yet-attached body un-walked by `shiftFuncIndices` →
+ * stale index → "call expected (ref null 5), found anyref" (the #1448 break).
+ *
+ * Empty vec → `""`; single element → that element's string. Idempotent: cached
+ * under `nativeStrHelpers["__vec_join_<elemKind>"]`.
+ */
+function ensureNativeVecJoinHelper(
+  ctx: CodegenContext,
+  elemKind: string,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+): number | undefined {
+  const cacheKey = `__vec_join_${elemKind}`;
+  const cached = ctx.nativeStrHelpers.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  if (anyStrTypeIdx < 0) return undefined;
+  const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
+
+  const arrDef = ctx.mod.types[arrTypeIdx];
+  const elemType: ValType = arrDef && arrDef.kind === "array" ? (arrDef.element as ValType) : { kind: "f64" };
+  const isNumeric =
+    elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "i8" || elemType.kind === "i16";
+  const isNativeStrElem =
+    (elemType.kind === "ref" || elemType.kind === "ref_null") &&
+    (elemType as { typeIdx: number }).typeIdx === anyStrTypeIdx;
+  // A non-string ref element whose target is itself a registered vec → nested
+  // array; recurse into that vec's join helper.
+  let nestedElemKind: string | undefined;
+  if ((elemType.kind === "ref" || elemType.kind === "ref_null") && !isNativeStrElem) {
+    const elemTypeIdx = (elemType as { typeIdx: number }).typeIdx;
+    for (const [k, idx] of ctx.vecTypeMap.entries()) {
+      if (idx === elemTypeIdx) {
+        nestedElemKind = k;
+        break;
+      }
+    }
+  }
+
+  // ── Run EVERY side-effecting emission FIRST, then read ALL indices last ──
+  // (#1448) `emitNativeNumberFormat`, a nested `ensureNativeVecJoinHelper`, and
+  // `nativeStringLiteralInstrs` (string-constant global / late import
+  // registration) can each trigger an `addUnionImports` function-index shift.
+  // If we read a funcIdx and THEN one of these shifts, the read index goes
+  // stale and the baked `call` targets the wrong function (the #1448
+  // catastrophe: number_toString resolved to a (i32)→… and codegen even
+  // inserted an `i32.trunc_sat_f64_s` to match it, plus a stray stack value).
+  // So perform ALL emissions up front, materialize the literal-string
+  // instruction arrays here too, and only THEN snapshot every funcIdx.
+  if (isNumeric && ctx.funcMap.get("number_toString") === undefined) {
+    emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+  }
+  let nestedJoinIdx: number | undefined;
+  if (nestedElemKind !== undefined) {
+    const nestedVecTypeIdx = ctx.vecTypeMap.get(nestedElemKind)!;
+    const nestedArrTypeIdx = getArrTypeIdxFromVec(ctx, nestedVecTypeIdx);
+    if (nestedArrTypeIdx >= 0) {
+      nestedJoinIdx = ensureNativeVecJoinHelper(ctx, nestedElemKind, nestedVecTypeIdx, nestedArrTypeIdx);
+    }
+  }
+  const litStr = (value: string): Instr[] => nativeStringLiteralInstrs(ctx, value);
+  // Materialize the constant strings now (last possible shift source) so their
+  // string-constant globals register before we snapshot any function index.
+  const objObjInstrs = litStr("[object Object]");
+  const sepInstrs = litStr(",");
+  const emptyInstrs = litStr("");
+
+  // Now snapshot every cross-function index — all shift sources are behind us.
+  const numToStrIdx = isNumeric ? ctx.funcMap.get("number_toString") : undefined;
+  if (isNumeric && numToStrIdx === undefined) return undefined;
+  const strConcatIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (strConcatIdx === undefined) return undefined;
+
+  // param v(0); locals: data(1), len(2), i(3), result(4)
+  const V = 0;
+  const DATA = 1;
+  const LEN = 2;
+  const I = 3;
+  const RESULT = 4;
+
+  const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
+
+  // element i → ref $AnyString
+  const elemToStr: Instr[] = [
+    { op: "local.get", index: DATA },
+    { op: "local.get", index: I },
+    { op: getOp, typeIdx: arrTypeIdx } as Instr,
+  ];
+  if (isNumeric && numToStrIdx !== undefined) {
+    if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" });
+    elemToStr.push({ op: "call", funcIdx: numToStrIdx });
+    elemToStr.push({ op: "any.convert_extern" } as Instr);
+    elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+  } else if (isNativeStrElem) {
+    // native-string element — already a (ref null $AnyString) subtype; non-null.
+    elemToStr.push({ op: "ref.as_non_null" } as Instr);
+  } else if (nestedJoinIdx !== undefined) {
+    // nested array element → recurse into its own join helper.
+    elemToStr.push({ op: "call", funcIdx: nestedJoinIdx });
+  } else {
+    // any other ref / externref element → residual "[object Object]".
+    elemToStr.length = 0;
+    elemToStr.push(...objObjInstrs);
+  }
+
+  const loopBody: Instr[] = [
+    { op: "local.get", index: I },
+    { op: "local.get", index: LEN },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+
+    // result = (i == 0) ? elem : __str_concat(__str_concat(result, ","), elem)
+    { op: "local.get", index: I },
+    { op: "i32.const", value: 0 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...elemToStr, { op: "local.set", index: RESULT } as Instr],
+      else: [
+        { op: "local.get", index: RESULT } as Instr,
+        ...sepInstrs,
+        { op: "call", funcIdx: strConcatIdx } as Instr,
+        ...elemToStr,
+        { op: "call", funcIdx: strConcatIdx } as Instr,
+        { op: "local.set", index: RESULT } as Instr,
+      ],
+    } as Instr,
+
+    { op: "local.get", index: I },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: I },
+    { op: "br", depth: 0 },
+  ];
+
+  const body: Instr[] = [
+    // null receiver → "" (defensive; concat callers never pass null vecs)
+    { op: "local.get", index: V },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: strRef },
+      then: emptyInstrs,
+      else: [
+        // len = v.length (field 0); data = v.data (field 1)
+        { op: "local.get", index: V },
+        { op: "ref.as_non_null" } as Instr,
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        { op: "local.set", index: LEN },
+        { op: "local.get", index: V },
+        { op: "ref.as_non_null" } as Instr,
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        { op: "local.set", index: DATA },
+        // result = ""
+        ...litStr(""),
+        { op: "local.set", index: RESULT },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: I },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody } as Instr],
+        } as Instr,
+        { op: "local.get", index: RESULT },
+      ],
+    } as Instr,
+  ];
+
+  const typeIdx = addFuncType(ctx, [{ kind: "ref_null", typeIdx: vecTypeIdx }], [strRef]);
+  const joinFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.nativeStrHelpers.set(cacheKey, joinFuncIdx);
+  ctx.funcMap.set(cacheKey, joinFuncIdx);
+  ctx.mod.functions.push({
+    name: cacheKey,
+    typeIdx,
+    locals: [
+      { name: "data", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
+      { name: "len", type: { kind: "i32" } },
+      { name: "i", type: { kind: "i32" } },
+      { name: "result", type: strRef },
+    ],
+    body,
+    exported: false,
+  });
+  return joinFuncIdx;
+}
+
+/**
+ * #2007 — call-site entry point for the standalone `+`/template concat path.
+ * When a concat operand is a statically-known WasmGC vec (array) ref, emit the
+ * Array.prototype.join lowering **inline into `fctx.body`** and leave a
+ * `ref $AnyString` on the stack. Returns true if it handled the operand.
+ *
+ * The operand value is assumed already on the stack with the given
+ * `vecValType` (a `ref`/`ref_null` to a registered vec struct).
+ *
+ * **Why inline, not a cached helper (#1448).** Emitting into the current
+ * function body is the proven-safe pattern (cf. `compileArrayJoinNative`):
+ * `number_toString` / `__str_concat` indices are read here and the resulting
+ * `call`s live in `fctx.body`, which the late-import `shiftFuncIndices` pass
+ * always walks — so a closure-method operand (`[...].map(fn)`, whose late
+ * import registration desyncs a *separate cached helper's* baked indices) can
+ * no longer produce an invalid module. Nested-array elements (a ref to another
+ * registered vec, common in `[[1,2],[3]]` literals which are closure-free)
+ * recurse into the cached per-vec join helper, which is consistent there.
+ */
+export function tryCompileNativeVecConcatOperand(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  vecValType: ValType,
+): boolean {
+  if (vecValType.kind !== "ref" && vecValType.kind !== "ref_null") return false;
+  const vecTypeIdx = (vecValType as { typeIdx: number }).typeIdx;
+  if (vecTypeIdx === undefined) return false;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return false;
+  // Confirm this typeIdx is actually a registered vec (not some other struct
+  // that happens to have an array in field 1).
+  let isVec = false;
+  for (const idx of ctx.vecTypeMap.values()) {
+    if (idx === vecTypeIdx) {
+      isVec = true;
+      break;
+    }
+  }
+  if (!isVec) return false;
+
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  if (anyStrTypeIdx < 0) return false;
+  const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
+  const strConcatIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (strConcatIdx === undefined) return false;
+
+  const arrDef = ctx.mod.types[arrTypeIdx];
+  const elemType: ValType = arrDef && arrDef.kind === "array" ? (arrDef.element as ValType) : { kind: "f64" };
+  const isNumeric =
+    elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "i8" || elemType.kind === "i16";
+  const isNativeStrElem =
+    (elemType.kind === "ref" || elemType.kind === "ref_null") &&
+    (elemType as { typeIdx: number }).typeIdx === anyStrTypeIdx;
+  // nested array element → recurse into the cached join helper for the inner vec.
+  let nestedElemKind: string | undefined;
+  if ((elemType.kind === "ref" || elemType.kind === "ref_null") && !isNativeStrElem) {
+    const elemTypeIdx = (elemType as { typeIdx: number }).typeIdx;
+    for (const [k, idx] of ctx.vecTypeMap.entries()) {
+      if (idx === elemTypeIdx) {
+        nestedElemKind = k;
+        break;
+      }
+    }
+  }
+
+  // Only element kinds we can stringify by value qualify for the join fast-path:
+  // numeric, native-string, or a nested vec. An `externref`-element vec is what a
+  // closure array method (`[...].map(fn)`) produces — its elements are opaque
+  // boxed `any`s, and such operands stringified as "[object Object]" on baseline.
+  // Routing them here would (a) need a host/ToString bridge the standalone lane
+  // lacks and (b) re-introduce the closure index-desync, so fall back to
+  // `$__any_to_string` (the existing "[object Object]" behaviour — no regression).
+  if (!isNumeric && !isNativeStrElem && nestedElemKind === undefined) return false;
+
+  // (#1448) If a closure-allocating array method (`map`/`filter`/…) was already
+  // lowered in this function, the native array-join lowering corrupts the
+  // closure's emitted code (a pre-existing hazard `a.join(",")` exhibits too —
+  // see the issue analysis). Fall back to `$__any_to_string` ("[object Object]",
+  // the baseline behaviour) in that case rather than emit an invalid module —
+  // no regression. The headline `"" + [1,2]` / template cases compile in plain
+  // functions that never set this flag, so they keep the join fast-path.
+  if (fctx.emittedClosureArrayMethod) return false;
+
+  // Ensure dependencies (these may shift indices — fine, fctx.body is walked).
+  let numToStrIdx: number | undefined;
+  if (isNumeric) {
+    if (ctx.funcMap.get("number_toString") === undefined) {
+      emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+    }
+    numToStrIdx = ctx.funcMap.get("number_toString");
+    if (numToStrIdx === undefined) return false;
+  }
+  let nestedJoinIdx: number | undefined;
+  if (nestedElemKind !== undefined) {
+    const nestedVecTypeIdx = ctx.vecTypeMap.get(nestedElemKind)!;
+    const nestedArrTypeIdx = getArrTypeIdxFromVec(ctx, nestedVecTypeIdx);
+    if (nestedArrTypeIdx >= 0) {
+      nestedJoinIdx = ensureNativeVecJoinHelper(ctx, nestedElemKind, nestedVecTypeIdx, nestedArrTypeIdx);
+    }
+  }
+
+  // Locals: the vec ref (tee'd from the stack), data array, length, index, result.
+  const vecTmp = allocLocal(fctx, `__vcat_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const dataTmp = allocLocal(fctx, `__vcat_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__vcat_len_${fctx.locals.length}`, { kind: "i32" });
+  const iTmp = allocLocal(fctx, `__vcat_i_${fctx.locals.length}`, { kind: "i32" });
+  const resultTmp = allocLocal(fctx, `__vcat_res_${fctx.locals.length}`, strRef);
+
+  const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
+  const elemToStr: Instr[] = [
+    { op: "local.get", index: dataTmp },
+    { op: "local.get", index: iTmp },
+    { op: getOp, typeIdx: arrTypeIdx } as Instr,
+  ];
+  if (isNumeric && numToStrIdx !== undefined) {
+    if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" });
+    elemToStr.push({ op: "call", funcIdx: numToStrIdx });
+    elemToStr.push({ op: "any.convert_extern" } as Instr);
+    elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+  } else if (isNativeStrElem) {
+    elemToStr.push({ op: "ref.as_non_null" } as Instr);
+  } else if (nestedJoinIdx !== undefined) {
+    elemToStr.push({ op: "call", funcIdx: nestedJoinIdx });
+  } else {
+    // any other ref / externref element → residual "[object Object]".
+    elemToStr.length = 0;
+    elemToStr.push(...nativeStringLiteralInstrs(ctx, "[object Object]"));
+  }
+
+  // The vec ref is on the stack — tee into vecTmp, guard null → "".
+  fctx.body.push({ op: "local.tee", index: vecTmp });
+  // (a null vec stringifies as "" here — concat callers never pass null vecs)
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: strRef },
+    then: nativeStringLiteralInstrs(ctx, ""),
+    else: [
+      { op: "local.get", index: vecTmp },
+      { op: "ref.as_non_null" } as Instr,
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: lenTmp },
+      { op: "local.get", index: vecTmp },
+      { op: "ref.as_non_null" } as Instr,
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+      { op: "local.set", index: dataTmp },
+      ...nativeStringLiteralInstrs(ctx, ""),
+      { op: "local.set", index: resultTmp },
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: iTmp },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: iTmp },
+              { op: "local.get", index: lenTmp },
+              { op: "i32.ge_s" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: iTmp },
+              { op: "i32.const", value: 0 },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [...elemToStr, { op: "local.set", index: resultTmp } as Instr],
+                else: [
+                  { op: "local.get", index: resultTmp } as Instr,
+                  ...nativeStringLiteralInstrs(ctx, ","),
+                  { op: "call", funcIdx: strConcatIdx } as Instr,
+                  ...elemToStr,
+                  { op: "call", funcIdx: strConcatIdx } as Instr,
+                  { op: "local.set", index: resultTmp } as Instr,
+                ],
+              } as Instr,
+              { op: "local.get", index: iTmp },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: iTmp },
+              { op: "br", depth: 0 },
+            ],
+          } as Instr,
+        ],
+      } as Instr,
+      { op: "local.get", index: resultTmp },
+    ],
+  } as Instr);
+  return true;
 }
 
 /**

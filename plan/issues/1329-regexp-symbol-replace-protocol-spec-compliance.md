@@ -1,7 +1,8 @@
 ---
 id: 1329
 title: "RegExp host-mode: Symbol.replace / replaceAll protocol spec compliance (110 fails)"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-08
 updated: 2026-05-28
 priority: medium

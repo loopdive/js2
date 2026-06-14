@@ -1,7 +1,8 @@
 ---
 id: 1747
 title: "Array.prototype.pop() on an empty array traps instead of returning undefined (compiled WasmGC)"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-30
 updated: 2026-06-02
 priority: medium

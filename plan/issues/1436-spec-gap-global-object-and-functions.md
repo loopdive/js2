@@ -1,7 +1,8 @@
 ---
 id: 1436
 title: "spec gap: global object descriptors and global function coercion/URI semantics"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-11
 updated: 2026-05-11
 priority: medium

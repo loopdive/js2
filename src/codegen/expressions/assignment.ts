@@ -2388,6 +2388,28 @@ function compilePropertyAssignment(
   if (ctx.classAccessorSet.has(accessorKey)) {
     const setterName = `${typeName}_set_${fieldName}`;
     const funcIdx = ctx.funcMap.get(setterName);
+    // (#2024) `classAccessorSet` records a class that declares EITHER a getter
+    // or a setter for this prop (class-bodies.ts adds the key for both). A
+    // get-only accessor — `class B extends A { get v() {…} }` over a parent
+    // with `set v` — therefore lands here with NO `${type}_set_${field}`
+    // function. Per §10.1.5.3 OrdinarySetWithOwnDescriptor, the own get-only
+    // accessor SHADOWS the inherited setter: strict-mode writes throw TypeError
+    // and the parent's setter must NOT run. Without this, control fell through
+    // to the struct-field path, which found no field named `<field>` and
+    // silently dropped the write. Emit the spec TypeError instead.
+    if (funcIdx === undefined && ctx.funcMap.has(`${typeName}_get_${fieldName}`)) {
+      // Evaluate the RHS for its side effects (spec: GetValue(rhs) is performed
+      // before the [[Set]]), drop its value, then throw. `emitThrowTypeError`
+      // emits an `unreachable`, so the assignment expression's stack effect is
+      // satisfied by divergence — we report the RHS type so any wrapping
+      // expression type-checks consistently.
+      const rhsResult = compileExpression(ctx, fctx, value);
+      if (rhsResult !== null) {
+        fctx.body.push({ op: "drop" });
+      }
+      emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${fieldName}' of object`);
+      return rhsResult ?? { kind: "f64" };
+    }
     if (funcIdx !== undefined) {
       // `C.prototype.<setter> = v` and `C.<static setter> = v` both write
       // through a receiver that is an externref (the prototype singleton or the

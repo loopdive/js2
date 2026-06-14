@@ -1,7 +1,8 @@
 ---
 id: 1482
 title: "wasi: wire process.env to environ_get / environ_sizes_get"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: high

@@ -8,6 +8,7 @@
 import type { Instr, StructTypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringType } from "./native-strings.js";
+import { emitNativeParseNumber } from "./parse-number-native.js";
 import { addFuncType } from "./registry/types.js";
 import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
 
@@ -382,6 +383,22 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
 
   // String content comparison via wasm:js-string equals (tag 5)
   const strEqualsIdx = ctx.jsStringImports.get("equals") ?? -1;
+
+  // (#2081) StringToNumber scanner (§7.1.4.1) for the cross-tag String⇄Number
+  // loose-equality arm in `__any_eq`. Only the standalone/WASI native-string
+  // path has it (signature `(externref) -> f64`; converts the externref back to
+  // `ref $AnyString` internally — NaN for unparseable, 0 for empty, hex/inf
+  // handled). Host mode uses `__host_loose_eq`, so leave this -1 there and the
+  // arm stays a conservative `0` (no regression — host never reaches __any_eq).
+  // Mirrors the static-type lowering at binary-ops.ts:881-889; deliberately NOT
+  // `parseFloat` (Number("0xff")=255 but parseFloat("0xff")=NaN — §7.1.4.1).
+  let strToNumIdx = -1;
+  if ((ctx.standalone === true || ctx.wasi === true) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    if (!ctx.funcMap.has("__str_to_number")) {
+      emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
+    }
+    strToNumIdx = ctx.funcMap.get("__str_to_number") ?? -1;
+  }
 
   // Helper to register a helper function
   function addHelper(
@@ -1018,7 +1035,84 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                       { op: "call", funcIdx: toF64Idx },
                       { op: "f64.eq" },
                     ],
-                    else: [{ op: "i32.const", value: 0 }],
+                    // (#2081) §7.2.15 steps 4-7: String(tag 5) ⇄ Number/Boolean
+                    // (tags 2,3,4) ⇒ compare ToNumber(both). Today this returned
+                    // a wrong `false` (`"1" == 1`). Gate on EXACTLY one side being
+                    // a string and the other numeric-coercible — never pull
+                    // null/undefined (tag<2) or object (tag 6) into coercion. Only
+                    // available with the native StringToNumber scanner (standalone
+                    // /WASI nativeStrings); else fall through to the prior `0`.
+                    else:
+                      strToNumIdx >= 0
+                        ? [
+                            // (tagA==5 && tagB in {2..4}) || (tagB==5 && tagA in {2..4})
+                            { op: "local.get", index: 2 },
+                            { op: "i32.const", value: 5 },
+                            { op: "i32.eq" },
+                            { op: "local.get", index: 3 },
+                            { op: "i32.const", value: 2 },
+                            { op: "i32.ge_s" },
+                            { op: "local.get", index: 3 },
+                            { op: "i32.const", value: 4 },
+                            { op: "i32.le_s" },
+                            { op: "i32.and" },
+                            { op: "i32.and" },
+                            { op: "local.get", index: 3 },
+                            { op: "i32.const", value: 5 },
+                            { op: "i32.eq" },
+                            { op: "local.get", index: 2 },
+                            { op: "i32.const", value: 2 },
+                            { op: "i32.ge_s" },
+                            { op: "local.get", index: 2 },
+                            { op: "i32.const", value: 4 },
+                            { op: "i32.le_s" },
+                            { op: "i32.and" },
+                            { op: "i32.and" },
+                            { op: "i32.or" },
+                            {
+                              op: "if",
+                              blockType: { kind: "val", type: { kind: "i32" } },
+                              then: [
+                                // ToNumber(a): tag5 → __str_to_number(externval), else __any_to_f64
+                                { op: "local.get", index: 2 },
+                                { op: "i32.const", value: 5 },
+                                { op: "i32.eq" },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "val", type: { kind: "f64" } },
+                                  then: [
+                                    { op: "local.get", index: 0 },
+                                    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                                    { op: "call", funcIdx: strToNumIdx },
+                                  ],
+                                  else: [
+                                    { op: "local.get", index: 0 },
+                                    { op: "call", funcIdx: toF64Idx },
+                                  ],
+                                },
+                                // ToNumber(b)
+                                { op: "local.get", index: 3 },
+                                { op: "i32.const", value: 5 },
+                                { op: "i32.eq" },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "val", type: { kind: "f64" } },
+                                  then: [
+                                    { op: "local.get", index: 1 },
+                                    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                                    { op: "call", funcIdx: strToNumIdx },
+                                  ],
+                                  else: [
+                                    { op: "local.get", index: 1 },
+                                    { op: "call", funcIdx: toF64Idx },
+                                  ],
+                                },
+                                { op: "f64.eq" },
+                              ],
+                              else: [{ op: "i32.const", value: 0 }],
+                            },
+                          ]
+                        : [{ op: "i32.const", value: 0 }],
                   },
                 ],
               },

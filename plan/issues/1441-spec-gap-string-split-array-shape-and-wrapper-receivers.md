@@ -1,7 +1,8 @@
 ---
 id: 1441
 title: "spec gap: String.prototype.split — Array result shape + String wrapper receivers"
-status: in-review
+status: done
+completed: 2026-06-12
 created: 2026-05-20
 updated: 2026-05-20
 priority: high

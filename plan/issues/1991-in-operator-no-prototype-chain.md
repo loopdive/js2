@@ -1,7 +1,8 @@
 ---
 id: 1991
 title: "in operator never consults the prototype chain — inherited class methods and Object.prototype members invisible"
-status: ready
+status: done
+completed: 2026-06-12
 sprint: 62
 created: 2026-06-10
 updated: 2026-06-12

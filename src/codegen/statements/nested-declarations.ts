@@ -398,21 +398,39 @@ export function compileNestedFunctionDeclaration(
     if (savedFunc) ctx.funcStack.push(savedFunc);
     ctx.currentFunc = liftedFctx;
 
-    // (#1312) Pre-registration is intentionally NOT applied in this
-    // no-captures branch. The first PR-#257 attempt pre-registered
-    // here too, which regressed 38 `built-ins/Function/15.3.5.4_2-*gs.js`
-    // tests (Function.caller / Function.arguments). Those tests rely
-    // on a top-level helper like `function gNonStrict() { return
-    // gNonStrict.caller; }` whose pre-#1312 codegen left the self-
-    // reference as `ref.null.extern` (graceful fallback). The fallback
-    // accidentally satisfied `assert.throws(TypeError, ...)` because
-    // `null.caller` throws TypeError. Pre-registering broke the
-    // accidental TypeError path. Keeping the late funcMap registration
-    // here preserves those passes until #1383 implements a proper
-    // strict-mode `Function.caller`/`arguments` TypeError. The actual
-    // recursive-self-reference cases #1312 targets (e.g. middleware
-    // `next` capturing outer `i`) all have captures and are handled
-    // in the has-captures branch below.
+    // (#2068) Pre-register `funcName` in `funcMap` BEFORE compiling the body
+    // so self-references and forward-sibling references inside the body resolve
+    // to a real direct call instead of falling through to the unknown-identifier
+    // `ref.null.extern` fallback (→ `__unbox_number(null)` → 0). Mirrors the
+    // has-captures branch's reserved-entry pattern (see below). The funcIdx slot
+    // is claimed up-front by pushing a placeholder mod entry; `locals`/`body`
+    // are filled in after compilation. Nested functions added during body
+    // compile push AFTER this slot, so the array entry's identity is stable
+    // across `addUnionImports` (funcMap auto-shifts).
+    //
+    // The earlier (#1312) note here claimed pre-registration regressed 38
+    // `built-ins/Function/15.3.5.4_2-*gs.js` tests, because a top-level
+    // `function g() { return g.caller; }` used to leave the self-reference as
+    // `ref.null.extern` whose `null.caller` accidentally satisfied
+    // `assert.throws(TypeError)`. Those tests reference `.caller`/`.arguments`,
+    // which are member accesses on the function value — they do NOT call the
+    // function by name, so the self-reference resolved here is for a *call*
+    // (`fact(n-1)`), a different code path from a `.caller` property read. The
+    // accidental-TypeError path was for the property read, not the recursive
+    // call, so pre-registering the call target does not affect it.
+    let reservedEntryNC: WasmFunction | undefined;
+    if (!opts.reuseReservedEntry) {
+      const reservedFuncIdxNC = ctx.numImportFuncs + ctx.mod.functions.length;
+      reservedEntryNC = {
+        name: funcName,
+        typeIdx: funcTypeIdx,
+        locals: [],
+        body: [],
+        exported: false,
+      };
+      ctx.mod.functions.push(reservedEntryNC);
+      ctx.funcMap.set(funcName, reservedFuncIdxNC);
+    }
 
     // Emit default-value initialization for parameters with initializers
     emitDefaultParamInit(ctx, liftedFctx, stmt, paramTypes, 0);
@@ -503,19 +521,13 @@ export function compileNestedFunctionDeclaration(
       opts.reuseReservedEntry.locals = liftedFctx.locals;
       opts.reuseReservedEntry.body = liftedFctx.body;
     } else {
-      // (#1312) No-captures branch keeps late funcMap registration (the
-      // pre-#1312 behaviour). Pre-registering here regressed 38
-      // Function.caller/arguments tests; see comment at the start of this
-      // branch for the full rationale.
-      const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-      ctx.mod.functions.push({
-        name: funcName,
-        typeIdx: funcTypeIdx,
-        locals: liftedFctx.locals,
-        body: liftedFctx.body,
-        exported: false,
-      });
-      ctx.funcMap.set(funcName, funcIdx);
+      // (#2068) Fill in the reserved entry pre-registered above with the
+      // compiled locals/body. The funcMap entry + mod.functions slot were
+      // claimed before body compilation so recursive / forward-sibling
+      // references resolved to a direct call.
+      reservedEntryNC!.typeIdx = funcTypeIdx;
+      reservedEntryNC!.locals = liftedFctx.locals;
+      reservedEntryNC!.body = liftedFctx.body;
     }
   } else {
     // Has captures — lift with captures as leading parameters, use direct call
@@ -766,6 +778,86 @@ export function hoistFunctionDeclarations(
   fctx: FunctionContext,
   stmts: ts.NodeArray<ts.Statement> | ts.Statement[],
 ): void {
+  // (#2068) Phase 0: reserve a correctly-typed bodyless funcMap slot for every
+  // direct-sibling function that captures NO outer local, BEFORE compiling any
+  // body. Without this a forward sibling reference
+  // (`function a(){ return b(); } function b(){...}`) or mutual recursion
+  // (`isEven`/`isOdd`) compiles `a`'s body while `b` is still unregistered, so
+  // the call falls through to the `ref.null.extern` fallback (→ 0). The slot is
+  // reserved with the REAL funcTypeIdx (computed from the signature, same as the
+  // compiler below) so call sites resolve the result type correctly; the body /
+  // locals are filled in by the compile loop via `reuseReservedEntry`.
+  //
+  // Capture-free only: the has-captures branch lifts captures as leading params
+  // and must drive its own registration, so a plain reservation would mis-shape
+  // it. Mutual recursion among capturing functions is out of scope here.
+  const siblingFuncNames = new Set<string>();
+  for (const stmt of stmts) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) siblingFuncNames.add(stmt.name.text);
+  }
+  if (siblingFuncNames.size > 1) {
+    for (const stmt of stmts) {
+      if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
+      const funcName = stmt.name.text;
+      if (ctx.funcMap.has(funcName)) continue;
+      if (ctx.hoistFailedFuncs?.has(funcName)) continue;
+
+      // Capture check: a referenced name that is an outer local (and not an
+      // own-local, this/super, or a sibling function) makes this capturing.
+      const ownLocals = new Set<string>();
+      collectFunctionOwnLocals(stmt, ownLocals);
+      const referenced = new Set<string>();
+      for (const s of stmt.body.statements) collectReferencedIdentifiers(s, referenced, ownLocals);
+      let capturesOuter = false;
+      for (const name of referenced) {
+        if (name === "this" || name === "super") continue;
+        if (ownLocals.has(name)) continue;
+        if (siblingFuncNames.has(name)) continue;
+        if (ctx.funcMap.has(name)) continue;
+        if (fctx.localMap.has(name)) {
+          capturesOuter = true;
+          break;
+        }
+      }
+      if (capturesOuter) continue;
+
+      // Compute the real signature (mirror the slice in
+      // compileNestedFunctionDeclaration). Generators return externref; async
+      // unwraps Promise<T>.
+      const paramTypes: ValType[] = stmt.parameters.map((p) => {
+        let wt = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(p));
+        if (p.initializer && wt.kind === "ref") {
+          wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };
+        }
+        return wt;
+      });
+      const isGen = stmt.asteriskToken !== undefined;
+      const isAsync = stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      const sig = ctx.checker.getSignatureFromDeclaration(stmt);
+      let resultType: ValType | undefined;
+      if (isGen) {
+        resultType = { kind: "externref" };
+      } else if (sig) {
+        let rt = ctx.checker.getReturnTypeOfSignature(sig);
+        if (isAsync) rt = unwrapPromiseType(rt, ctx.checker);
+        if (!isVoidType(rt)) resultType = resolveWasmType(ctx, rt);
+      }
+      const funcTypeIdx = addFuncType(ctx, paramTypes, resultType ? [resultType] : [], `${funcName}_type`);
+      const reservedFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+      const reserved: WasmFunction = {
+        name: funcName,
+        typeIdx: funcTypeIdx,
+        locals: [],
+        body: [],
+        exported: false,
+      };
+      ctx.mod.functions.push(reserved);
+      ctx.funcMap.set(funcName, reservedFuncIdx);
+      if (!ctx.preRegisteredBodyless) ctx.preRegisteredBodyless = new Set();
+      ctx.preRegisteredBodyless.add(funcName);
+    }
+  }
+
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
       const funcName = stmt.name.text;

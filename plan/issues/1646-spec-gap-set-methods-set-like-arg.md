@@ -1,7 +1,7 @@
 ---
 id: 1646
 title: "spec gap: Set methods (union/intersection/etc.) accept any set-like argument (101 test262 fails)"
-status: in-review
+status: done
 created: 2026-05-08
 updated: 2026-05-27
 completed: 2026-05-27

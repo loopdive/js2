@@ -1,10 +1,11 @@
 ---
 id: 2037
 title: "standalone: NamedEvaluation `.name` wrong for functions/classes bound via destructuring defaults (683 tests)"
-status: ready
-sprint: Backlog
+status: done
+sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-13
+completed: 2026-06-13
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -81,3 +82,37 @@ cover-parenthesized initializers) through the same SetFunctionName logic.
   ~0; host mode unchanged.
 - Equivalence test covering ≥3 binding contexts (for-head var pattern, try-catch
   param, generator-method param) × {function, arrow, generator, cover} names.
+
+## Resolution (2026-06-13) — already fixed on main, locked with a guard
+
+Smoke-tested on current main (≈100 commits past the `936d1ac51` verification
+point): the bug **no longer reproduces** for the path the real (untyped)
+test262 `.js` files take. A faithful standalone repro — `target: "wasi"` (pure
+WasmGC, no JS host), real string runtime, instantiated with a correct
+`__extern_is_undefined` so the default initializer genuinely fires — returns
+the correct `.name` for every pattern family:
+
+- for-head `cover.name === "cover"` ✓
+- for-head cover-comma `xCover` correctly anonymous (`""`) ✓
+- `var { fn, arrow, gen } = {}` all named ✓
+- `let { fn, arrow } = {}` named ✓
+- `let { C = class {} } = {}` → `C.name === "C"` ✓
+
+The likely fixing commit is **#1970 (`4c14a0256`, "reset destructure conversion
+buffer per execution")** — the same per-iteration destructuring-state class of
+bug as #2037's for-head binding-initialization path.
+
+Landed `tests/issue-2037.test.ts` (5 standalone guards across for-head /
+var-multi / let-multi / let-class shapes) to lock the behaviour. The guards
+deliberately use **untyped** sources (no `as any`), exactly mirroring the
+test262 `.js` shape, since `{}` infers as a typed empty-object struct and takes
+the (now-correct) typed destructuring path.
+
+### Separate bug found (NOT #2037 — filing separately)
+While probing, the **`{} as any` / externref** destructuring-default path was
+found to **TRAP** (`WebAssembly.Exception`) in standalone for the same
+`{ cover = (function(){}) } = {} as any` shape — distinct from the `.name`
+issue #2037 tracks (wrong name vs. a trap). The real `.js` test262 files do not
+hit this (their `{}` is typed), so it does not block #2037, but it is a genuine
+standalone defect on the externref destructuring-default path worth its own
+issue.

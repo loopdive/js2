@@ -1,10 +1,10 @@
 ---
 id: 2042
 title: "standalone: Object.defineProperty/defineProperties residual — __obj_insert illegal cast + descriptor semantics over $Object (~340 tests)"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-14
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -73,3 +73,36 @@ slice and re-measure.
 - TypeError thrown (catchable) on invalid redefinitions — no traps.
 - Host mode unchanged; equivalence test for numeric + symbol keys through
   `Object.defineProperty` in standalone.
+
+## Progress
+
+### PR-A — key cast fix (2026-06-14, dev-b) — DONE
+
+ToPropertyKey the `Object.defineProperty` key at the call site so a numeric /
+boxed key reaches the string-keyed `$Object` runtime as a `$AnyString`,
+eliminating the `illegal cast` trap (class A, 37+ rows).
+
+- New helper `emitStandaloneDefinePropertyKeyToString` in
+  `src/codegen/object-ops.ts` routes the compiled key externref through
+  `__extern_toString` (host import in JS mode; native runtime helper in
+  standalone), gated on `ctx.standalone` so host output stays byte-identical
+  (the host `__defineProperty_value` JS import ToPropertyKeys the key itself and
+  would alias a pre-stringified Symbol).
+- Applied symmetrically in both the value path
+  (`emitExternDefinePropertyValue`) and the accessor path
+  (`emitExternDefinePropertyNoValue`).
+- Verified: `Object.defineProperty(o, 0, {value:5})` no longer traps in
+  standalone (was `illegal cast`); string-key define round-trips unchanged
+  (`o.foo`); host mode untouched. Tests in `tests/issue-2042.test.ts`.
+- Symbol keys: out of scope for Part A (the string-keyed runtime cannot
+  represent them); the `15.2.3.6-4-*` illegal-cast rows are numeric, not symbol.
+
+### Remaining (PR-B — senior follow-up)
+
+- ValidateAndApplyPropertyDescriptor / CompletePropertyDescriptor over the
+  `$PropEntry` flag word (class B, ~300 rows): attribute defaults, redefinition
+  rules, catchable TypeError. Out of scope for this PR.
+- Standalone defineProperty value readback via numeric/computed member access
+  (`o[0]`) and enumeration (`Object.keys` / `getOwnPropertyNames`) over
+  defineProperty'd keys are separate pre-existing gaps (the latter is refused
+  loud under #1472 Phase B) — not introduced by PR-A.

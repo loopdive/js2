@@ -97,3 +97,26 @@ describe("#1712 — in-ctor prototype-method calls on this", () => {
     expect(exp.parse("x")).toBe("CTX-x");
   });
 });
+
+describe("#1712 — fnctor two-shape unification (checker shape never synthesized)", () => {
+  it("prototype method RETURNING an instance of the same fnctor (was: null-deref trap)", async () => {
+    const exp = await run(`
+      var Parser = function Parser(input) { this.input = String(input); };
+      Parser.prototype.parse = function parse() { return new Parser("inner"); };
+      export function parse(input) { return new Parser(input).parse(); }
+    `);
+    expect(exp.parse("x")).toEqual({ input: "inner" });
+  });
+
+  it("checker-typed member call routes through the dynamic prototype path", async () => {
+    const exp = await run(`
+      var Node = function Node(t) { this.type = t; };
+      var Parser = function Parser(input) { this.input = String(input); };
+      Parser.prototype.startNode = function startNode() { return new Node("Program"); };
+      Parser.prototype.finishNode = function finishNode(node) { node.end = 1; return node; };
+      Parser.prototype.parse = function parse() { var n = this.startNode(); return this.finishNode(n).type; };
+      export function parse(input) { return new Parser(input).parse(); }
+    `);
+    expect(exp.parse("x")).toBe("Program");
+  });
+});

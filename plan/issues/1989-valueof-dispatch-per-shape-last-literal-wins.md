@@ -1,10 +1,11 @@
 ---
 id: 1989
 title: "ToPrimitive valueOf dispatch keyed by struct type name, not object identity — last same-shape literal's valueOf wins for ALL coercions"
-status: ready
+status: done
 sprint: 62
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-14
+completed: 2026-06-14
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -177,3 +178,76 @@ building new dispatch. PR-1 is small and high-leverage. Developer-claimable
 struct construction in literals.ts (different concerns — field NAMES vs field
 TYPE for valueOf — low conflict risk, but sequence #2009 PR-1 and #1989 PR-1 to
 avoid overlapping edits at literals.ts:9314/9348).
+
+## Resolution (2026-06-14, sdev2) — status: done
+
+Fixed by per-instance method-func dispatch for same-shape ToPrimitive literals.
+All acceptance criteria pass; both headline repros + the cross-method and
+mixed-hint variants match Node. PR: `issue-1989-per-instance-valueof`.
+
+### What landed (the WHY behind each change)
+
+The root cause was deeper than the spec's PR-1 sketch — verified by source
+tracing. Three stacked defects, all addressed:
+
+1. **Collapse (literals.ts).** Same-shape literals deduped to one struct type AND
+   one name-keyed method func `${typeName}_valueOf`. The #1557 per-literal fork
+   only triggered on a *signature* mismatch, so same-signature siblings (the
+   exact repro) collapsed onto the last-compiled body. Fix: fork a per-literal
+   method func for the **2nd+** same-shape `valueOf`/`toString`/`@@toPrimitive`
+   literal even when the signature matches, and mark the struct in
+   `ctx.toPrimitiveForkedStructs`. The **first** literal stays entirely on the
+   base path (keeps the shared `${typeName}_valueOf`) — forking it would record a
+   STALE funcIdx, because `emitObjectMethodAsClosure` for an earlier field pushes
+   a trampoline during construction and shifts later method funcs (a
+   valueOf+toString literal hit exactly this: toString's body landed in the
+   pre-pass index while `funcMap` advanced, leaving the dispatched func empty).
+   This sidesteps the architect's "TIMING blocker" rather than fighting it.
+
+2. **`any`-operand `+` never reached in-module dispatch (runtime.ts).** The
+   headline `a + 1` (an `any`/externref operand) routes to the host `__host_add`,
+   which ran native JS `a + b` — V8 cannot reach a WasmGC struct's compiled
+   valueOf, so it threw "Cannot convert object to primitive value". Fix: run
+   `_toPrimitiveSync` on **un-proxied** WasmGC struct operands inside `host_add`
+   (mirrors `host_loose_eq`), which dispatches the per-instance compiled method
+   in-module. Proxied structs and primitives still take native `+` (preserving
+   the existing TypeError-propagation path).
+
+3. **Host ToPrimitive exports were name-keyed (index.ts) + a latent re-entrancy
+   bug (type-coercion.ts).** `__call_valueOf`/`__call_toString` (consulted by the
+   runtime ToPrimitive proxy, hence by `host_add` / `String()` / loose-eq) read
+   the name-keyed standalone func. Fix: for **forked** structs only, dispatch
+   through the per-instance struct field — added a `closure-extern` mode for the
+   `any`-object externref-field case (`extern.convert_any` → `ref.cast
+   closureType` → field-0 funcref → `call_ref`). Also restored the `cleanup()`
+   re-entrancy-guard reset in the eqref valueOf coercion path so coercing the
+   first of two struct operands (`a < b`) doesn't leave the second yielding NaN.
+
+### Deliberate scoping (avoids regressions)
+
+Single-literal structs stay on the well-tested name-keyed standalone path. This
+preserves the §7.1.1.1 step-6 TypeError walk (both valueOf+toString return
+objects → TypeError) and avoids the same-shape-closure `ref.test` ambiguity the
+spec warned about. Only the genuine same-shape COLLISION opts into per-instance
+dispatch.
+
+### Verified
+
+- `tests/issue-1989.test.ts` (new, 8 cases): all three property forms,
+  cross-method, mixed-hint, 3-object, two-toString, and the step-6 TypeError.
+- Zero regressions across issue-1525/1525b/866/1253/1319/1990/2058 + the
+  object-to-primitive / comparison-coercion / string-arithmetic equivalence
+  suites (these went from 5 pre-existing failures → 0). Merged clean over #1988
+  (`__any_add`) and #2015; typecheck clean.
+
+### Known residual (NOT in this issue's acceptance criteria)
+
+Two same-shape **typed-nominal** struct literals (`type O = {valueOf():number}`,
+not `any`) still collapse in the **in-module numeric coercion** path, because for
+a nominal struct the first literal's method func is not pre-registered at
+construction time, so its per-instance closure field is never stored (the
+architect's timing blocker). The `any`-typed repros — which are what this issue
+filed — all work. The nominal-typed collision is a narrower follow-up; it shares
+the same per-literal-funcref mechanism but needs the construction-time func
+reservation problem solved without the index-shift hazard (track in #2009's
+orbit).

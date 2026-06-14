@@ -20,7 +20,7 @@ import { coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { emitGuardedFuncRefCast, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
-import { emitClosureCallArgcExtras, emitResetArgcExtras } from "./calls.js";
+import { emitClosureCallArgcExtras, emitResetArgcExtras, emitWrapperDynamicMethodCall } from "./calls.js";
 
 /** Compile a call to a closure variable: closureVar(args...) */
 export function compileClosureCall(
@@ -456,6 +456,36 @@ export function compileCallablePropertyCall(
   const methodName = ts.isPrivateIdentifier(propAccess.name)
     ? "__priv_" + propAccess.name.text.slice(1)
     : propAccess.name.text;
+
+  // (#1712) Function-style-constructor instances NEVER carry their prototype
+  // methods as struct fields: compileFnctorNew synthesizes the runtime
+  // instance struct from ctor `this.*` writes only, while the TS checker's
+  // shape (className here) models prototype-assigned methods as instance
+  // members. The guarded receiver cast below can therefore never match (the
+  // two shapes have no subtype relation) — the cast nulls out and the
+  // `struct.get` traps "dereferencing a null pointer" (acorn:
+  // `new this(options, input).parse()` in the static `Parser.parse`). Route
+  // the call through the dynamic host bridge instead, which resolves the
+  // method on the closure's vivified prototype (__register_fnctor_instance
+  // + _fnctorProtoLookup). JS-host mode only; the funcConstructorMap check
+  // covers already-compiled fnctors and the declaration check covers
+  // compile-order races (member call compiled before the first `new`).
+  if (!ctx.standalone && !ctx.wasi && !ts.isPrivateIdentifier(propAccess.name)) {
+    const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
+    const recvSym = recvTsType?.symbol;
+    const decl = recvSym?.valueDeclaration;
+    const isFnCtorInstance =
+      ctx.funcConstructorMap.has(className) ||
+      (recvSym?.name !== undefined && ctx.funcConstructorMap.has(recvSym.name)) ||
+      (!!decl &&
+        (ts.isFunctionDeclaration(decl) ||
+          ts.isFunctionExpression(decl) ||
+          (ts.isVariableDeclaration(decl) && !!decl.initializer && ts.isFunctionExpression(decl.initializer))));
+    if (isFnCtorInstance) {
+      const dyn = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
+      if (dyn !== null) return dyn;
+    }
+  }
 
   // Check if this property name is a struct field
   const structTypeIdx = ctx.structMap.get(className);

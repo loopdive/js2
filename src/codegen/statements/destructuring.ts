@@ -40,6 +40,7 @@ import {
 import { collectInstrs } from "./shared.js";
 import { emitLocalTdzInit, emitTdzInitForBindingPattern } from "./tdz.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../expressions/proto-override.js";
+import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 
 /**
  * (#1719 S1) Gate predicate for the array object-value representation track.
@@ -370,11 +371,30 @@ export function emitNullGuard(
 }
 
 /**
- * Ensure __async_iterator import is available.
- * Returns the function index, or undefined if registration failed.
- * JS impl: (obj) => obj[Symbol.asyncIterator]?.() ?? obj[Symbol.iterator]()
+ * Ensure __async_iterator is available; return its function index.
+ *
+ * JS-host mode: register `env.__async_iterator`
+ *   (obj) => obj[Symbol.asyncIterator]?.() ?? obj[Symbol.iterator]()
+ *
+ * (#2038) Standalone / WASI: there is no JS host to satisfy that import, and
+ * feeding the host carrier to the native `__iterator_next` traps `illegal cast`.
+ * Per §7.4.3 GetIterator(async) + §27.1.4.1 CreateAsyncFromSyncIterator, for a
+ * **sync-backed** async iterable (the dominant test262 shape — `for await (x of
+ * [literals])` and `for await (x of syncIterable)`) the async iterator is the
+ * sync iterator with each value `Await`-ed; for an already-settled value
+ * `Await(v) = v`, so the async wrapper degenerates to the *identity* native
+ * iterator. So in standalone we return the SAME native `__iterator` the sync
+ * for-of consumer uses (now USER-`{next()}`-carrier aware). The per-element
+ * `Await` is layered by the for-await CPS lowering around the loop body and is a
+ * no-op for settled values — no `env.__async_iterator` / `env.Promise_resolve`
+ * leak. Genuinely-pending-Promise async iterables stay deferred to the standalone
+ * Promise runtime (PR-C).
  */
 export function ensureAsyncIterator(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
+  if (ctx.standalone || ctx.wasi) {
+    ensureNativeIteratorRuntime(ctx);
+    return ctx.funcMap.get("__iterator");
+  }
   const idx = ctx.funcMap.get("__async_iterator");
   if (idx !== undefined) return idx;
   const importsBefore = ctx.numImportFuncs;

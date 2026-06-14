@@ -609,18 +609,23 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     // externref → __gen_push_ref). Same dispatch logic as `lowerYield`
     // except we get a `ts.Expression` already, not a YieldExpression.
     if (cx.funcKind === "generator") {
+      // #2035: a generator's `return <value>` value belongs ONLY to the
+      // terminal `{value, done:true}` IteratorResult — it must NOT be pushed
+      // into the eager yield buffer (where spread / for-of / Array.from would
+      // surface it as a yielded `done:false` element). The legacy return path
+      // (`compileReturnStatement` in `codegen/statements/control-flow.ts`)
+      // routes the value through `__gen_set_return`, which stashes it on the
+      // buffer as a side property for the host drain to emit once with
+      // `done:true`. The IR has no number-box primitive (so it cannot coerce a
+      // numeric return to the `externref` that `__gen_set_return` expects), so
+      // rather than re-emit the buffer-leak bug here we defer any generator
+      // carrying a `return <expr>` to the already-correct legacy path. Bare
+      // `return;` (no value) has nothing to leak and stays on the IR path.
       if (stmt.expression) {
-        const v = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
-        const vt = cx.builder.typeOf(v);
-        const valTy = asVal(vt);
-        if (valTy?.kind === "f64" || valTy?.kind === "i32") {
-          cx.builder.emitGenPush(v);
-        } else {
-          // Reference-shaped — coerce to externref upstream so the
-          // lowerer's `__gen_push_ref` arm sees the right Wasm type.
-          const vExt = coerceYieldValueToExternref(v, cx);
-          cx.builder.emitGenPush(vExt);
-        }
+        throw new Error(
+          `ir/from-ast: generator 'return <value>' must route through __gen_set_return ` +
+            `(needs the number-box helper) — deferring to legacy in ${cx.funcName} (#2035)`,
+        );
       }
       const generatorObj = cx.builder.emitGenEpilogue();
       cx.builder.terminate({ kind: "return", values: [generatorObj] });

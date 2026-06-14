@@ -237,3 +237,138 @@ Resume steps: enter the worktree, `git diff` to review, run
 tests/issue-2009.test.ts, complete per the plan's PR-1 acceptance, commit
 (✓), push `--no-verify`, PR with `-R loopdive/js2 --head ttraenkler:...`.
 Do NOT discard — review and continue.
+
+## Root-cause correction (2026-06-14, sdev2 — WAT-traced on current main 7afa431d7)
+
+The spec's root-cause #2 ("the compiler ITSELF merges shapes at
+`fieldsHashKey`+`anonStructHash`, both `{aa:1}` and `{bb:2}` reuse one
+`__anon_N` typeIdx") is **STALE / wrong on current main**. Verified by WAT:
+
+```
+(type $__anon_0 (struct (field $aa (mut f64))))
+(type $__anon_1 (struct (field $bb (mut f64))))   ; DISTINCT compiler types
+```
+
+`fieldsHashKey` (index.ts:9422) keys on field NAME+type (`"aa:f64"` vs
+`"bb:f64"`), so the two shapes get DISTINCT typeIdxs and DISTINCT name-CSV
+globals, and `__struct_field_names` emits a correct two-arm `ref.test` chain
+(`ref 11`→"aa", `ref 12`→"bb"). The bug is purely **WasmGC iso-recursive
+canonicalization at RUNTIME**: `$__anon_0` and `$__anon_1` are structurally
+identical (`struct (field (mut f64))`), so `ref.test (ref $__anon_0)` matches a
+`$__anon_1` instance too — the first arm wins for both, so `b` (a `{bb}`)
+stringifies with `a`'s names. Confirmed: `{bb:2}` ALONE → `{"bb":2}` (correct);
+`{aa:1}`+`{bb:2}` together → `{"aa":1}|{"aa":2}` (b mislabeled).
+
+**Consequence for the `$shape` fix:** appending `$shape:i32` to both makes them
+`struct (f64)(i32)` — STILL canonically equal (so `ref.test` still matches
+either), but the per-instance `$shape` VALUE (0 vs 1) selects the right name
+list. The field disambiguates by VALUE, not by type — exactly as the plan's B′
+relative (#1989) does for funcrefs. So the design holds; only the "dedup
+collapses them" justification was wrong. shape-id is keyed by the ordered
+name-CSV (so two `{aa}` literals share id 0), matching the plan.
+
+R3 spread on current main is WORSE than the spec recorded:
+`{...{x:1,y:2},...{y:3,z:4},x:9}` → `{"x":9,"y":null,"z":null}` (null values,
+not `{"x":3,"y":4}`) — the spread-source value resolution also regressed; PR-2
+(source-order lastWriter rewrite) must restore the values too.
+
+## PR-1 landed (2026-06-14, sdev2) — names fix ($shape per-instance)
+
+Implemented PR-1 of the plan: hidden trailing `$shape` i32 field on every
+host-enumerable anon object-literal struct, stamped at construction with a
+shape-id keyed by the ordered field-name list; `__struct_field_names` reads
+`struct.get $shape` and selects the field-name CSV by VALUE.
+
+**Fixed:** R1 (`JSON.stringify({aa:1})|JSON.stringify({bb:2})` →
+`{"aa":1}|{"bb":2}`), Object.keys/values/entries/for-in per-instance, nested
+same-shape collision. `$shape` excluded from all host enumeration (`$`-filter).
+Same-name literals still share one shape-id (no bloat). Named classes stay on
+the legacy typeIdx arm. Zero regressions in json/keys/spread/object equiv suites
+(the one `setter stores value` failure is pre-existing on base).
+
+Files: `context/types.ts` + `create-context.ts` (`shapeNames`,
+`shapeIdByNameKey`, `structNameToShapeId`); `index.ts` (`registerAnonStruct`
+appends `$shape`; `emitStructFieldNamesExport` rewritten to shape-id dispatch);
+`literals.ts` (both anon struct.new sites stamp the shape-id). Test:
+`tests/issue-2009.test.ts` (6 cases).
+
+**Remaining (PR-2 / follow-up, NOT in this PR):**
+- R2 `Object.assign({a:1},{b:2})` → now `{"a":2,"b":2}` (names fixed, both keys
+  present) but VALUES wrong (should be `{"a":1,"b":2}`) — the native
+  `__object_assign` source merge (#20's territory).
+- R3 `{...{x:1,y:2},...{y:3,z:4},x:9}` → `{"x":9,"y":null,"z":null}` (names
+  fixed) but spread-sourced VALUES are lost — the struct-path spread-source
+  resolution (`compileObjectLiteralForStruct` line ~1664) fails to find the
+  inline spread sources' fields, defaulting `y`/`z` to the undefined sentinel.
+  Needs the `lastWriter` source-order rewrite (plan PR-2). Separate concern from
+  the names collision; sequence after PR-1 merges.
+
+## PR-1b (2026-06-14, sdev2) — IR-path $shape stamp + writeback shape-guard
+
+PR-1's first push broke CI: the spec MISSED that there are TWO struct-registration
+systems. The IR path (`src/ir/integration.ts` ObjectStructRegistry) REUSES the
+legacy `$shape`-bearing struct type via `anonStructHash` but its `object.new`
+emitted `struct.new` with only the real-field operands → one short of the 3-field
+type → INVALID WASM (broke refcast-regression, reverse-struct-map,
+null-destructuring + test262). Root-caused via `function makePoint(){return {x:1,y:2}}`
+(IR path) emitting a 2-operand struct.new for a 3-field type.
+
+Fix (PR-1b, same #1462):
+- `IrObjectStructLowering.shapeId` (handles.ts) carried from integration.ts when
+  the reused struct has a `$shape` field; lower.ts `object.new` pushes
+  `i32.const shapeId` as the final struct.new operand. makePoint now emits
+  `f64 f64 i32.const 0 struct.new` (valid).
+- Writeback shape-guard (unblocks #20): `__sset_<name>` had the same
+  canonicalization collision — `__sset_b(target {a:1})` wrote slot 0 of the
+  target (its `a`!). Gated each store on `struct.get $shape === entry.shapeId`;
+  mismatch no-ops, sidecar carries it. Fixes `Object.assign({a:1},{b:2})` →
+  `{"a":1,"b":2}` (R2 value bug, was `{"a":2,"b":2}`).
+
+Status now: R1 (names) + R2 (Object.assign values) FIXED. All 3 CI-failing equiv
+tests restored; no new regressions. R3 (spread source-order value resolution)
+still pending — separate concern (inline spread sources don't get struct types,
+resolveStructName→undefined), the plan's PR-2 `lastWriter` rewrite.
+
+Note: IR-FRESH structs (registered by ObjectStructRegistry, NOT reused from
+legacy) don't get `$shape` — they're a separate same-shape-collision gap if two
+IR-fresh different-name shapes collide. Not observed in tests; flag for follow-up
+if it surfaces (would need `$shape` in the IR-fresh registration branch too,
+integration.ts:1415).
+
+## FINAL approach (2026-06-14, sdev2) — option (B): opt-in $shape on real collisions only
+
+PR-1's first design (always-append $shape to EVERY anon struct) bricked the IR
+path (makePoint) — TWO struct-registration systems (legacy ensureStructForType +
+IR ObjectStructRegistry) over shared ctx.structFields/mod.types. Tech-lead chose
+(B): touch ONLY genuinely-colliding structs, zero blast radius elsewhere.
+
+Implementation (all in `src/codegen/index.ts`, one post-pass +
+context fields; literals.ts/IR untouched):
+
+- `resolveSameShapeFieldNameCollisions(ctx)` — a post-pass run AFTER all bodies
+  (legacy + IR) are final, BEFORE the getter/setter/name exporters. Groups anon
+  object-literal structs by structural-shape key (field TYPES only). A group
+  "collides" iff it has 2+ DISTINCT field-NAME lists. For colliding members only:
+  append a hidden `$shape` i32 field, assign a shape-id keyed by name-CSV (same
+  names → same id, no bloat), and retro-patch every `struct.new <typeIdx>` in
+  every compiled body via `patchStructNewWithShapeId` to insert
+  `i32.const <shapeId>` (backend-agnostic — walks the emitted Instr stream, so it
+  covers BOTH legacy and IR construction uniformly; the (A) IR-path/emitter-trait
+  change is NOT needed).
+- `emitStructFieldNamesExport` — colliding structs (have `$shape`,
+  `ctx.shapeIdByStructName`) read `struct.get $shape` and dispatch the CSV by
+  shape-id VALUE; non-colliding keep the legacy `ref.test typeIdx → own CSV` arm.
+- `emitStructFieldSetters` — colliding `__sset_<name>` gate the store on
+  `struct.get $shape === entry.shapeId` (the #20 writeback fix); non-colliding
+  setters are byte-identical.
+
+Result: R1 (names) + R2 (Object.assign value merge, = #20) FIXED. Non-colliding
+structs — incl. ALL makePoint-style IR construction — are byte-identical to main
+(verified: no `$shape` emitted, no `ref.test`/struct.new change). The 3
+IR-path equiv tests that the (A) attempt broke (refcast-regression,
+reverse-struct-map, null-destructuring) pass unchanged. tests/issue-2009.test.ts
+adds a non-colliding sanity case + the writeback case.
+
+R3 (spread source-order value resolution) remains — separate PR-2 (inline spread
+sources don't get struct types → resolveStructName undefined → values lost; needs
+the plan's lastWriter rewrite). Names + Object.assign values done here.

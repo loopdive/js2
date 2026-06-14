@@ -2,7 +2,7 @@
 id: 1997
 title: "Array.prototype.toString() returns '[object Array]' instead of join() (method call only; String(a) works)"
 status: ready
-sprint: 61
+sprint: 62
 created: 2026-06-10
 updated: 2026-06-10
 priority: medium

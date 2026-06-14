@@ -134,6 +134,12 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // string-if-either-is-string rule come free from JS `+`. (#2058)
   if (name === "__host_add") return { type: "host_add" };
 
+  // Host relational compare for two externref operands (§7.2.13 IsLessThan).
+  // Returns a 4-way result -1/0/1/2 (2 = NaN/undefined-incomparable) so the
+  // four relational operators (<,<=,>,>=) map without separate imports, and
+  // string operands compare lexicographically rather than coercing to NaN. (#2059)
+  if (name === "__host_compare") return { type: "host_compare" };
+
   // SameValueZero comparison (§7.2.11) — like === except NaN equals NaN.
   // Used by Array.prototype.includes on array-like receivers (#1360).
   if (name === "__same_value_zero") return { type: "same_value_zero" };

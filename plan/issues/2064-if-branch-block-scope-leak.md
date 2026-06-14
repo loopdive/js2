@@ -1,10 +1,11 @@
 ---
 id: 2064
 title: "let/const declared in if/else branch blocks leak into the enclosing scope (shadow not restored, const-ness leaks)"
-status: ready
+status: done
 sprint: 61
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
+completed: 2026-06-11
 priority: critical
 feasibility: easy
 reasoning_effort: medium
@@ -83,3 +84,22 @@ Grepped `shadow`, `block scop`, `leak`, `compileIfStatement`: #968 (done —
 different cause: locals dedup), #462 (null-narrowing save/restore — different
 state). Not covered. Survives test262 because block-scope tests there use bare
 blocks/loops and TS flags many shadow patterns.
+
+## Resolution (2026-06-11)
+
+In `compileIfStatement` (`src/codegen/statements/control-flow.ts`), the four
+spots that iterated branch-block statements directly — the const-fold then/else
+paths and the regular then/else branches — now call
+`compileStatement(ctx, fctx, branch)` instead. That routes a branch `Block`
+through the generic Block case in `statements.ts`, which already runs
+`saveBlockScopedShadows`/`restoreBlockScopedShadows` (saving and restoring
+`localMap`, `constBindings`, TDZ flags, and null-guard aliases for the inner
+`let`/`const` names). `compileStatement` also handles the brace-less
+single-statement form. No new state introduced; loops/try/catch already did
+this — `if` was simply missed.
+
+Verified: all four repros + nested-if / else-if-chain + used-then-restored
+cases match Node (`tests/equivalence/if-branch-block-scope.test.ts`, 6 green).
+The narrowing/typeof-narrowing buffer (`pushBody`/`thenInstrs`) and `#1712`
+else-branch parking are untouched — the branch body is still captured from
+`fctx.body` after the call.
