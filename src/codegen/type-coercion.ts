@@ -7,6 +7,7 @@
  */
 
 import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
+import { boxToAny } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
@@ -1005,12 +1006,10 @@ export function coerceType(
       const fromIdx = (from as { typeIdx: number }).typeIdx;
       const toIdx = (to as { typeIdx: number }).typeIdx;
       if (fromIdx === toIdx) return;
-      // Boxing: non-any ref → any ref
+      // Boxing: non-any ref → any ref (#2104: via boxToAny → __any_box_ref)
       if (isAnyValue(to, ctx) && !isAnyValue(from, ctx)) {
         ensureAnyHelpers(ctx);
-        const funcIdx = ctx.funcMap.get("__any_box_ref");
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
+        if (boxToAny(ctx, fctx, from, "unknown")) {
           return;
         }
       }
@@ -1094,12 +1093,10 @@ export function coerceType(
   }
   // ref is a subtype of ref_null — no coercion needed for same typeIdx
   if (from.kind === "ref" && to.kind === "ref_null") {
-    // But check for any-value boxing (ref $X → ref_null $AnyValue)
+    // But check for any-value boxing (ref $X → ref_null $AnyValue) (#2104)
     if (isAnyValue(to, ctx) && !isAnyValue(from, ctx)) {
       ensureAnyHelpers(ctx);
-      const funcIdx = ctx.funcMap.get("__any_box_ref");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
+      if (boxToAny(ctx, fctx, from, "unknown")) {
         return;
       }
     }
@@ -1205,54 +1202,19 @@ export function coerceType(
   }
 
   // ── Boxing: primitive → ref $AnyValue ──
+  // #2104: tag-selection policy now lives in `boxToAny` (value-tags.ts) — the
+  // single home so the type-aware boxing fix (#2072/#2080 P0) can't erode. This
+  // arm keeps the `addUnionImports`/`ensureAnyHelpers` setup (helper
+  // registration is the caller's job, so resolution+call stays shift-safe) and
+  // delegates the kind-keyed dispatch. `jsType: "unknown"` reproduces the
+  // historical externref→tag-5 (#1888) / ref→tag-6 behaviour exactly.
   if (isAnyValue(to, ctx)) {
     if (from.kind === "externref" && (ctx.standalone || ctx.wasi)) {
       addUnionImports(ctx);
     }
     ensureAnyHelpers(ctx);
-    if (from.kind === "i32") {
-      const funcIdx = ctx.funcMap.get("__any_box_i32");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
-    }
-    if (from.kind === "f64") {
-      const funcIdx = ctx.funcMap.get("__any_box_f64");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
-    }
-    if (from.kind === "i64") {
-      // i64 → AnyValue: convert to f64 first, then box as f64
-      const funcIdx = ctx.funcMap.get("__any_box_f64");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "f64.convert_i64_s" });
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
-    }
-    if (from.kind === "externref") {
-      // NOTE (#1888 regression −788): do NOT route this generic boxing through
-      // __any_from_extern. The test262 harness comparator (`isSameValue` with
-      // `any` params over the externref ABI) depends on main's tag-5
-      // box-the-externref behavior; honest tag recovery here flipped ~794
-      // baseline standalone passes. Numeric honesty for the open-any dispatch
-      // is provided downstream by the $BoxedNumber recovery arm in
-      // __any_to_f64 (any-helpers.ts) instead.
-      const funcIdx = ctx.funcMap.get("__any_box_string");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
-    }
-    if (from.kind === "ref" || from.kind === "ref_null") {
-      const funcIdx = ctx.funcMap.get("__any_box_ref");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
+    if (boxToAny(ctx, fctx, from, "unknown")) {
+      return;
     }
   }
 
