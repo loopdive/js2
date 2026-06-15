@@ -98,3 +98,80 @@ perf/size blast-radius measurement as the acceptance criteria require.
 
 Symptom issues filed; the representation phase is unfiled. New (analysis
 program).
+
+## Implementation Plan — 4 slices (sdev1, 2026-06-15)
+
+Decomposed per the #2142 authoritative reconcile (3 disjoint pieces + the
+flag-gated reversal). Each slice is an independently green-mergeable PR. Built
+on #2104's `value-tags.ts` (`JsTag.Undefined`, `boxToAny`). Slice order is
+risk-ascending.
+
+### S1 — standalone `$undefined` singleton (so undefined ≠ null in standalone)
+
+- **Today**: `emitUndefined` (`src/codegen/expressions/late-imports.ts:563`)
+  falls back to `ref.null.extern` in `nativeStrings`/standalone — undefined and
+  null share the bit pattern. `ensureGetUndefined` (:553) returns undefined in
+  standalone; `__extern_is_undefined` standalone convention is bare
+  `ref.is_null` (so it can't tell them apart).
+- **Change**: add an immutable module global `$undefined : ref $AnyValue` (tag 1,
+  built via the tag-1 box / `JsTag.Undefined`), emitted once lazily (like
+  `ensureAnyValueType`). Standalone `emitUndefined` returns `global.get
+  $undefined` instead of `ref.null.extern`. Standalone `__extern_is_undefined`
+  becomes "ref.eq against `$undefined`" (or tag==1 check) rather than
+  `ref.is_null`. `null` stays `ref.null.extern`.
+- **HAZARD (#329, documented at late-imports.ts:545)**: introducing a
+  standalone undefined value that is NOT `ref.null.extern` must NOT add a late
+  import *after* the native-string helpers are emitted — that drives
+  `reconcileNativeStrFinalizeShift` an extra time and off-by-ones the baked
+  `__str_flatten`→`__str_copy_tree` call. Mitigation: the `$undefined` global is
+  a GLOBAL (not a func import) and must be reserved up-front (at
+  `ensureAnyValueType` time), so no late func-index shift. Verify with the #329
+  repro (`let g: any; g = function(){…}; g()`) standalone.
+- **Blast radius**: `emitUndefined` callers (28 `__get_undefined` sites) +
+  standalone `__extern_is_undefined` consumers (~10 files). Gate every change on
+  `ctx.standalone`/`nativeStrings` so host mode is byte-identical.
+- **Test gate**: `(undefined === null)` → false, `(undefined == null)` → true,
+  `typeof undefined` → "undefined" vs `typeof null` → "object", all standalone.
+
+### S2 — codify the sNaN sentinel carve-out (erasure stays)
+
+- Document + guard the existing `0x7FF00000DEADC0DE` sentinel
+  (`type-coercion.ts:2672`, `emitDefaultValueCheck` at `shared.ts:418`,
+  consumers at `destructuring-params.ts:830`, `literals.ts:1759/2317/2886`) as
+  the ONE sanctioned f64-undefined channel — sole consumer
+  `emitDefaultValueCheck`. Route it through `value-tags.ts`'s `UNDEF_F64_BITS` /
+  `pushUndefF64` / `emitIsUndefF64` (P1 already centralized these). No behaviour
+  change — consolidation + a comment/invariant that these f64 carriers are
+  default-check-only and must not be widened. Small.
+
+### S3 — general `number|undefined` → externref widening (NON-optional-chain)
+
+- For `number|undefined` carriers consumed by `===`/`!==`/`typeof`/ToString/`??`
+  (NOT optional-chain — those are **#2051-owned**, externref-widened already),
+  widen to externref + host `undefined` (host) / `$undefined` tag-1 (standalone),
+  composing with #2072/#2104 `boxToAny`. Producers: the non-optional-chain
+  maybe-undefined-number sites (e.g. exhausted `.value`, map/find returning
+  `T|undefined`). Reuse #2051's externref-widening mechanism
+  (`variables.ts:100-102` `isNullablePrimitiveType` binding slot). Medium.
+- **Decision rule (from #2142)**: widen when observable to the general
+  nullish/identity/stringify set; sentinel only for the S2 default-check carriers.
+
+### S4 — flag-gated union-collapse reversal (RISKY, last)
+
+- The blanket `T|undefined`/`T|null` → bare `T` collapse at
+  `index.ts:9108-9117` (`resolveWasmType`) / `type-mapper.ts:79-99`
+  (`mapTsTypeToWasm`) is the erasure factory. Reverse it **behind a feature
+  flag**, only for Null/undefined-bearing unions where observability is needed
+  (rule §2.4(3)), and **measure perf/size + test262 blast radius before
+  default-on** (acceptance criterion). This is the only slice with uncertain
+  test262 delta — flag + measure-first protocol is mandatory.
+
+### Sequencing / notes
+
+- All slices need #2104 (`value-tags.ts`) merged. Build stacked on the #2104
+  branch until #1503 lands, then branch from origin/main.
+- S1 + S2 are clean/self-contained; S3 is medium; S4 is the risky flagged one
+  and should land last with measurements. Recommend S3/S4 get fresh
+  max-reasoning context.
+- `codePointAt(oob) ?? rhs` is already done (#2004, `logical-ops.ts:208`) —
+  do NOT re-represent it. Optional-chain sites are #2051 — do NOT touch.
