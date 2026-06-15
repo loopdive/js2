@@ -144,15 +144,33 @@ risk-ascending.
   change — consolidation + a comment/invariant that these f64 carriers are
   default-check-only and must not be widened. Small.
 
-### S3 — general `number|undefined` → externref widening (NON-optional-chain)
+### S3 — general `number|undefined` → externref widening (NON-optional-chain)  ← HIGHEST IMPACT, host-reproducible
 
-- For `number|undefined` carriers consumed by `===`/`!==`/`typeof`/ToString/`??`
-  (NOT optional-chain — those are **#2051-owned**, externref-widened already),
-  widen to externref + host `undefined` (host) / `$undefined` tag-1 (standalone),
-  composing with #2072/#2104 `boxToAny`. Producers: the non-optional-chain
-  maybe-undefined-number sites (e.g. exhausted `.value`, map/find returning
-  `T|undefined`). Reuse #2051's externref-widening mechanism
-  (`variables.ts:100-102` `isNullablePrimitiveType` binding slot). Medium.
+**Concrete failing cases (host mode, verified on the #2104 branch @ 2026-06-16)
+— these are the S3 test gates:**
+
+| Repro | Got | Expect | Why |
+|---|---|---|---|
+| `[1,2,3].find(x=>x>5) === undefined` | `0` (false) | `1` | `find` miss returns the f64 NaN-sentinel, not observable undefined |
+| `function f(x?: number){return x ?? -1} f()` | `NaN` | `-1` | optional numeric param absent → f64 NaN-sentinel; `??` short-circuits "never nullish" on f64 (`logical-ops.ts:188-191`) |
+| `typeof [1].find(x=>x>5) === "undefined"` | `0` | `1` | typeof of the f64 carrier can't observe undefined |
+
+`Map.get` miss already works (returns externref). So the broken producers are
+the ones carrying `T|undefined` as **bare f64**: `Array.find`/`findLast`-family
+(`array-methods.ts`) and **optional numeric parameters** (param prologue /
+`destructuring-params.ts`). NOT optional-chain (#2051), NOT default-check
+carriers (S2 keeps the sentinel there).
+
+- **Fix (per #2142 rule)**: widen these carriers to externref + host `undefined`
+  (host) / `$undefined` tag-1 (standalone, needs S1), composing with
+  #2072/#2104 `boxToAny`. Producers emit `emitUndefined` (externref) for the
+  absent case instead of `f64.const NaN`; their result ValType becomes externref
+  so the existing externref-aware `===`/`??`/`typeof` observers (already
+  discriminate, #2142 fact 1) light up with zero new observer code. Reuse
+  #2051's widening mechanism (`variables.ts:100-102` `isNullablePrimitiveType`).
+- **Watch**: changes `find`/optional-param result type f64→externref — measure
+  the test262 delta (arithmetic-on-find-result may need an unbox). Medium-risk;
+  gate carefully.
 - **Decision rule (from #2142)**: widen when observable to the general
   nullish/identity/stringify set; sentinel only for the S2 default-check carriers.
 
