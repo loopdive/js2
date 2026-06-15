@@ -3226,10 +3226,19 @@ export function compileArrayConstructorCall(
   let elemWasm: ValType;
   const rawTypeArgs = ctx.checker.getTypeArguments(exprType as ts.TypeReference);
   const elemTsType = rawTypeArgs?.[0];
-  if (elemTsType && !(elemTsType.flags & ts.TypeFlags.Any)) {
-    elemWasm = resolveWasmType(ctx, elemTsType);
+  const untypedElem = !elemTsType || (elemTsType.flags & ts.TypeFlags.Any) !== 0;
+  if (!untypedElem) {
+    elemWasm = resolveWasmType(ctx, elemTsType!);
+  } else if (args.length === 1 && !ts.isSpreadElement(args[0]!)) {
+    // #1998: `Array(n)` with an untyped element type is a *sparse* array of `n`
+    // holes (§23.1.1.1 step 4) — every slot is `undefined`. An f64 backing
+    // (`array.new_default`) defaults those holes to `0`, so `Array(3).join(",")`
+    // wrongly rendered "0,0,0". Mirror the `new Array(n)` path (new-super.ts):
+    // back untyped sparse arrays with externref, whose default is `ref.null`,
+    // which `join`/`toString` render as "" (§23.1.3.18 step 7.c/d) → ",,".
+    elemWasm = { kind: "externref" };
   } else {
-    // Default to f64 for untyped arrays
+    // Default to f64 for untyped dense arrays (`Array()`, `Array(a, b, c)`).
     elemWasm = { kind: "f64" };
   }
 
