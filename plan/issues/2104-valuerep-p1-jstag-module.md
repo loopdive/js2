@@ -108,3 +108,48 @@ fast-paths). Growth fails; `--update-on-decrease` ratchets. Same model as
 
 Unblocks P2 (#2105 boolean brand) and P3 (#2106 undefined observability),
 which now have `boxToAny`'s `jsType` seam + `value-tags.ts` to build on.
+
+## Root-cause finding for the value-rep lane — the `(any)+(any)` upstream interceptor (sdev1, 2026-06-15)
+
+While investigating the #1988 string-concat residual (the 8 baselined
+`coercion-arithmetic-add` `bug:1988` probe rows: `(x as any) + (y as any)`
+string-concat / string+number), I traced the failure and it bottoms out in
+exactly the representation gap this lane (#2104-#2107) exists to close.
+Capturing it here so P2/P3/P4 can target it directly:
+
+**Symptom**: `(x as any) + (y as any)` where both are strings, consumed as
+`string`, lowers (standalone) to `f64.const NaN; drop; ref.null 5;
+ref.as_non_null` — the add **never loads its operands**, NaN-collapses, then the
+f64→string-ref coercion does a lossy `ref.null; ref.as_non_null` (the
+"dereferencing a null pointer" trap). Host mode returns `null`. The numeric
+`(any)+(any)` case works (returns the sum), so only the string/ref tag path is
+broken.
+
+**Where it is NOT**: instrumentation confirmed the `(any)+(any)`-as-string path
+**never reaches** `compileBinaryExpression`'s any-dispatch gate
+(`binary-ops.ts:951`, the `leftIsAny && rightIsAny` → `compileAnyBinaryDispatch`
+→ `__any_add` route) NOR `emitAnyAdd` (`binary-ops.ts:2807`). Both have working
+string-concat arms (`__any_add` concat arm gated on `anyAddCanConcat`;
+`emitAnyAdd` standalone §13.15.3 path). They simply aren't invoked for this
+shape. So the in-flight #1988 work on the `__any_add` helper arms (sdev3's
+object/array-ToPrimitive arm) cannot fix the string+string rows — the operands
+are intercepted **upstream** of `compileBinaryExpression`, in the IR front-end /
+a pre-lowering pass, which compiles `a + b` over `any` operands to the
+NaN-collapse.
+
+**Deeper root (this lane's territory)**: in standalone, `any` lowers to
+`externref` (a boxed native string / host value), but `__any_add` expects
+`ref_null $AnyValue`. The externref→`$AnyValue` coercion at the dispatch
+boundary doesn't produce a tagged AnyValue carrying the string, so any path that
+does reach a helper has nothing to recover the string tag from. **This is the
+"standalone `any` = externref vs the tagged-`$AnyValue` representation"
+mismatch** the value-rep migration fixes: once `any` carries a real `JsTag`
+(tag 5 with the string payload) instead of a representation-erased externref,
+the `+` path has a tagged value to dispatch on instead of NaN-collapsing.
+
+**Action for P2/P3/P4**: the IR `+`-over-`any` lowering (find the pre-pass that
+intercepts before `compileBinaryExpression`) must obtain its operands as
+`boxToAny`-tagged AnyValues (this module's API) and route through
+`emitAnyAdd`/`__any_add`, rather than ToNumber-collapsing. That closes the 8
+baselined `bug:1988` string-concat rows as a value-rep row, not an eighth
+`__any_add` patch.
