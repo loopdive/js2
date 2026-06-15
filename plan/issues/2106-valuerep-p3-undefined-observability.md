@@ -106,6 +106,34 @@ flag-gated reversal). Each slice is an independently green-mergeable PR. Built
 on #2104's `value-tags.ts` (`JsTag.Undefined`, `boxToAny`). Slice order is
 risk-ascending.
 
+### S0 — array-element boolean tag-recovery (cleanest first slice; tag-recovery root)  ← START HERE
+
+Per the tech-lead's reframe (own the `any`=externref / tag-recovery root, not the
+literal "undefined" text), the cleanest highest-leverage entry point is a pure
+`boxToAny(jsStaticType)` application — no representation widening, no flag.
+
+**Concrete bug (host mode, verified @ 2026-06-16):** a boolean stored in `any[]`
+loses its tag on read-back —
+- `const a: any[] = [true]; typeof a[0]` → `"number"` (should be `"boolean"`)
+- `const a: any[] = [true]; "" + a[0]` → `"1"` (should be `"true"`)
+- string/number elements are fine; `a[0] === true` is fine (so the value is
+  stored, only the TAG is wrong).
+
+**Root cause (WAT-confirmed):** the array-literal `[true]` builds an i32 array,
+then the typed-array→`any[]` promotion copy-loop boxes each element by **Wasm
+kind**: `array.get; f64.convert_i32_s; call __box_f64` → tag-3 **number** instead
+of tag-4 boolean. This is the §1.1 "i32 boxes as number" disease at the
+**vec→any-vec coercion** site (a `coerceType(elem→AnyValue)` inside the array
+promotion, NOT the literal fast-paths).
+
+**Fix:** thread the source array's **element static type** into that box site and
+call `boxToAny(ctx, fctx, from, jsStaticType(elemType))` (#2104 API) — `[true]`'s
+element type is `boolean` → `__box_bool` (tag 4). Find the vec→any-vec promotion
+copy-loop emitter (grep the `array.new_default` + per-element box near the
+typed-array→`any[]` coercion in `type-coercion.ts`/`literals.ts`); pass the TS
+element type already available at the coercion call site. Smallest, safest
+tag-recovery slice; pure #2104 composition; host-reproducible test gate.
+
 ### S1 — standalone `$undefined` singleton (so undefined ≠ null in standalone)
 
 - **Today**: `emitUndefined` (`src/codegen/expressions/late-imports.ts:563`)
