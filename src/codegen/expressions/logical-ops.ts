@@ -12,6 +12,7 @@ import { ensureI32Condition } from "../index.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { defaultValueInstrs } from "../type-coercion.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { emitIsUndefF64 } from "../value-tags.js";
 
 export function compileLogicalAnd(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
   // JS semantics: a && b → if a is falsy, return a; else return b
@@ -190,6 +191,27 @@ function isCodePointAtCall(expr: ts.Expression): boolean {
   );
 }
 
+/**
+ * #2106 S3 — `Array.prototype.find` / `findLast` return `undefined` on a miss
+ * (§23.1.3.8). Over a numeric array js2wasm lowers the result to f64, encoding
+ * the miss as the DISTINGUISHED `UNDEF_F64` sentinel (0x7FF00000DEADC0DE; see
+ * array-methods.ts). For `arr.find(...) ?? rhs`, recognise the LHS and branch on
+ * that exact sentinel via `emitIsUndefF64` — NOT on plain NaN, so a genuine NaN
+ * element (`[NaN].find(Number.isNaN)` is a real hit, never nullish) is preserved.
+ * Without this, an f64 LHS is treated as never-nullish and `?? rhs` never fires.
+ */
+function isFindFamilyCall(expr: ts.Expression): boolean {
+  let inner: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isNonNullExpression(inner)) {
+    inner = inner.expression;
+  }
+  return (
+    ts.isCallExpression(inner) &&
+    ts.isPropertyAccessExpression(inner.expression) &&
+    (inner.expression.name.text === "find" || inner.expression.name.text === "findLast")
+  );
+}
+
 export function compileNullishCoalescing(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -212,6 +234,15 @@ export function compileNullishCoalescing(
     // isNaN(lhs): a value is NaN iff it is not equal to itself.
     fctx.body.push({ op: "local.get", index: tmp });
     fctx.body.push({ op: "f64.ne" });
+    return finishNullishBranch(ctx, fctx, expr, resultKind, tmp);
+  }
+
+  // #2106 S3 — `arr.find(...) ?? rhs` / `findLast`. The f64 miss carries the
+  // distinguished UNDEF_F64 sentinel; branch on it (not plain NaN) so a genuine
+  // NaN element survives `??` while a true miss yields `rhs`.
+  if (resultKind.kind === "f64" && isFindFamilyCall(expr.left)) {
+    fctx.body.push({ op: "local.get", index: tmp });
+    emitIsUndefF64(fctx.body);
     return finishNullishBranch(ctx, fctx, expr, resultKind, tmp);
   }
 

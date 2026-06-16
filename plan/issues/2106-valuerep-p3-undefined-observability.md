@@ -1,10 +1,11 @@
 ---
 id: 2106
 title: "value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton"
-status: ready
+status: in-progress
+assignee: ttraenkler/sdev7
 sprint: 62
 created: 2026-06-11
-updated: 2026-06-15
+updated: 2026-06-16
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -259,3 +260,42 @@ carriers (S2 keeps the sentinel there).
   max-reasoning context.
 - `codePointAt(oob) ?? rhs` is already done (#2004, `logical-ops.ts:208`) —
   do NOT re-represent it. Optional-chain sites are #2051 — do NOT touch.
+
+## S3 increment 1 — find/findLast miss observability through `??` (sdev7, 2026-06-16) — SHIPPED
+
+First bounded increment of S3, zero arithmetic blast radius (keeps the f64
+result type). Reproduced + fixed `[1,2,3].find(x=>x>5) ?? -1` → `NaN` (should be
+`-1`): a numeric-array `find`/`findLast` miss is lowered to f64, and `??` treats
+any f64 as never-nullish.
+
+**Fix** (two spots, composing with #2104's `value-tags.ts`):
+1. `array-methods.ts` (find `:6526`, findLast `:6717`): the f64 miss now uses
+   `pushUndefF64` (the DISTINGUISHED `UNDEF_F64` sentinel `0x7FF00000DEADC0DE`)
+   instead of a plain `0/0` NaN — so a genuine NaN ELEMENT
+   (`[NaN].find(Number.isNaN)` is a real hit, never nullish) stays distinct from
+   a miss.
+2. `expressions/logical-ops.ts` `compileNullishCoalescing`: added
+   `isFindFamilyCall` (mirrors the existing `isCodePointAtCall` #2004 case); for
+   an f64 find/findLast LHS, branch on `emitIsUndefF64` (the exact sentinel, NOT
+   plain NaN) so `find(miss) ?? rhs` yields `rhs`.
+
+**Scope / honest limits:**
+- Covers the **inline** `find(...) ?? rhs` form (syntactic recognition, like
+  #2004). The **bound-variable** form (`const v = find(...); v ?? rhs`) is NOT
+  covered — the `??` LHS is an identifier, not the call. Unchanged from before
+  (still f64-never-nullish → NaN); needs the f64→externref result-type widening
+  (S3 increment 2).
+- `=== undefined` / `typeof` on a numeric find result still need the externref
+  widening too (an f64 can never be `=== undefined`). Increment 2.
+- No regression: the sentinel is still a NaN bit pattern, so `Number.isNaN`,
+  truthiness, and arithmetic propagation on a miss are byte-identical to the old
+  plain-NaN behavior; only inline `??` improved.
+
+**Validated**: `tests/issue-2106-find-nullish.test.ts` (7/7); `tsc`,
+`ir-nullish-coalesce` (4/4), `issue-1136-findlast` (6/6), `check:any-box-sites`
+all clean.
+
+**S3 increment 2 (next)**: f64→externref widening for find/optional-param so the
+bound-variable `??`, `=== undefined`, and `typeof` cases light up — measure-first
+(arithmetic-on-result needs unbox; test262 blast radius). Optional-param producer
+also still open (absent `x?: number` → f64 sentinel; `f() ?? -1` → NaN).

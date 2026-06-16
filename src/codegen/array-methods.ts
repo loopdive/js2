@@ -14,6 +14,7 @@ import { allocLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { addArrayIteratorImports, addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
+import { pushUndefF64 } from "./value-tags.js";
 import { compileStringLiteral } from "./shared.js";
 import { getArrTypeIdxFromVec, getOrRegisterArrayType, getOrRegisterVecType } from "./registry/types.js";
 import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterator-native.js";
@@ -6518,15 +6519,18 @@ function compileArrayFind(
     "truthy",
   );
 
-  // Result local -- NaN (not found) or element value
+  // Result local -- undefined-sentinel (not found) or element value.
+  // (#2106 S3) The miss case is a JS `undefined`. For the f64 carrier, use the
+  // DISTINGUISHED UNDEF_F64 sentinel (0x7FF00000DEADC0DE) rather than a plain
+  // `0/0` NaN, so observers (`?? rhs`) can tell a genuine NaN ELEMENT
+  // (`[NaN].find(isNaN)` → a real NaN hit, not nullish) apart from a miss. Plain
+  // NaN would conflate the two.
   const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_find_res_${fctx.locals.length}`, findResType);
   if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
-    fctx.body.push({ op: "f64.const", value: 0 });
-    fctx.body.push({ op: "f64.const", value: 0 });
-    fctx.body.push({ op: "f64.div" }); // NaN
+    pushUndefF64(fctx.body);
   }
   fctx.body.push({ op: "local.set", index: findResTmp });
 
@@ -6709,14 +6713,13 @@ function compileArrayFindLast(
     "truthy",
   );
 
+  // (#2106 S3) Miss → distinguished UNDEF_F64 sentinel (see find above).
   const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_findLast_res_${fctx.locals.length}`, findResType);
   if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
-    fctx.body.push({ op: "f64.const", value: 0 });
-    fctx.body.push({ op: "f64.const", value: 0 });
-    fctx.body.push({ op: "f64.div" }); // NaN (undefined sentinel)
+    pushUndefF64(fctx.body);
   }
   fctx.body.push({ op: "local.set", index: findResTmp });
 
