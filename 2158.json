@@ -1,8 +1,9 @@
 {
   "id": "2158",
   "assignee": "ttraenkler/sd1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2158-class-prototype-residual",
   "claimed_at": "2026-06-16T01:34:05Z",
-  "updated_at": "2026-06-16T01:34:05Z"
+  "updated_at": "2026-06-16T03:28:10Z",
+  "released_at": "2026-06-16T03:28:10Z"
 }
