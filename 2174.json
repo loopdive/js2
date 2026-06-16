@@ -2,7 +2,7 @@
   "id": "2174",
   "assignee": "ttraenkler/sendev-args-closure",
   "status": "in-progress",
-  "branch": "issue-2174-async-arguments-closure",
-  "claimed_at": "2026-06-16T04:46:04Z",
-  "updated_at": "2026-06-16T04:46:04Z"
+  "branch": "issue-2174-standalone-async-args-closure",
+  "claimed_at": "2026-06-16T04:57:58Z",
+  "updated_at": "2026-06-16T04:57:58Z"
 }
