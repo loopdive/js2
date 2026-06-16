@@ -1,8 +1,9 @@
 {
   "id": "2098",
   "assignee": "ttraenkler/dev-b",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2098-flake-classification",
   "claimed_at": "2026-06-16T08:08:42Z",
-  "updated_at": "2026-06-16T08:08:42Z"
+  "updated_at": "2026-06-16T08:17:00Z",
+  "released_at": "2026-06-16T08:17:00Z"
 }
