@@ -1,8 +1,9 @@
 {
   "id": "2180",
   "assignee": "ttraenkler/se2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2180-host-proxy-completion",
   "claimed_at": "2026-06-16T04:45:28Z",
-  "updated_at": "2026-06-16T04:45:28Z"
+  "updated_at": "2026-06-16T06:29:51Z",
+  "released_at": "2026-06-16T06:29:51Z"
 }
