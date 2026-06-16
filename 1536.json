@@ -1,9 +1,9 @@
 {
   "id": "1536",
   "assignee": "ttraenkler/dv3",
-  "status": "done",
+  "status": "released",
   "branch": "issue-1536-wasm-native-exception-types",
   "claimed_at": "2026-06-16T05:43:08Z",
-  "updated_at": "2026-06-16T05:51:40Z",
-  "released_at": "2026-06-16T05:51:40Z"
+  "updated_at": "2026-06-16T05:53:35Z",
+  "released_at": "2026-06-16T05:53:35Z"
 }
