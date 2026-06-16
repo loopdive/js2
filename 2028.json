@@ -1,9 +1,8 @@
 {
   "id": "2028",
   "assignee": "ttraenkler/sen-b",
-  "status": "released",
+  "status": "in-progress",
   "branch": "issue-2028-host-callable-param",
-  "claimed_at": "2026-06-16T09:06:57Z",
-  "updated_at": "2026-06-16T09:54:34Z",
-  "released_at": "2026-06-16T09:54:34Z"
+  "claimed_at": "2026-06-16T09:55:28Z",
+  "updated_at": "2026-06-16T09:55:28Z"
 }
