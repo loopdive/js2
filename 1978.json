@@ -1,8 +1,9 @@
 {
   "id": "1978",
   "assignee": "ttraenkler/d1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1978-reconcile-status",
   "claimed_at": "2026-06-16T03:49:05Z",
-  "updated_at": "2026-06-16T03:49:05Z"
+  "updated_at": "2026-06-16T03:50:53Z",
+  "released_at": "2026-06-16T03:50:53Z"
 }
