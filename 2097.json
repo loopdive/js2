@@ -1,8 +1,9 @@
 {
   "id": "2097",
   "assignee": "ttraenkler/dv2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2097-standalone-pass-highwater",
   "claimed_at": "2026-06-16T05:59:24Z",
-  "updated_at": "2026-06-16T05:59:24Z"
+  "updated_at": "2026-06-16T06:18:46Z",
+  "released_at": "2026-06-16T06:18:46Z"
 }
