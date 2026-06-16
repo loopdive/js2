@@ -1,8 +1,9 @@
 {
   "id": "2148",
   "assignee": "ttraenkler/dv3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2148-reconcile-sprint62",
   "claimed_at": "2026-06-16T04:45:43Z",
-  "updated_at": "2026-06-16T04:45:43Z"
+  "updated_at": "2026-06-16T05:02:59Z",
+  "released_at": "2026-06-16T05:02:59Z"
 }
