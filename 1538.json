@@ -1,8 +1,9 @@
 {
   "id": "1538",
   "assignee": "ttraenkler/dv2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1538-json-runtime-stringify",
   "claimed_at": "2026-06-16T06:30:43Z",
-  "updated_at": "2026-06-16T06:30:43Z"
+  "updated_at": "2026-06-16T06:32:46Z",
+  "released_at": "2026-06-16T06:32:46Z"
 }
