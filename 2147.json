@@ -1,8 +1,9 @@
 {
   "id": "2147",
   "assignee": "ttraenkler/dev-b",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2147-reconciler-ready-merged-prs",
   "claimed_at": "2026-06-16T08:25:55Z",
-  "updated_at": "2026-06-16T08:25:55Z"
+  "updated_at": "2026-06-16T08:31:44Z",
+  "released_at": "2026-06-16T08:31:44Z"
 }
