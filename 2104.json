@@ -1,8 +1,9 @@
 {
   "id": "2104",
   "assignee": "ttraenkler/sdev7",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2104-jstag-module",
   "claimed_at": "2026-06-16T00:19:45Z",
-  "updated_at": "2026-06-16T00:19:45Z"
+  "updated_at": "2026-06-16T00:50:42Z",
+  "released_at": "2026-06-16T00:50:42Z"
 }
