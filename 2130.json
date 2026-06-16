@@ -1,9 +1,8 @@
 {
   "id": "2130",
-  "assignee": "ttraenkler/sdev5",
-  "status": "released",
-  "branch": "",
-  "claimed_at": "2026-06-16T00:38:27Z",
-  "updated_at": "2026-06-16T01:43:38Z",
-  "released_at": "2026-06-16T01:43:38Z"
+  "assignee": "ttraenkler/d1",
+  "status": "in-progress",
+  "branch": "issue-2130-delete-in-presence-predicate",
+  "claimed_at": "2026-06-16T01:53:05Z",
+  "updated_at": "2026-06-16T01:53:05Z"
 }
