@@ -1,8 +1,9 @@
 {
   "id": "2106",
   "assignee": "ttraenkler/sdev7",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2106-s3-num-undef-externref",
   "claimed_at": "2026-06-16T01:08:59Z",
-  "updated_at": "2026-06-16T01:08:59Z"
+  "updated_at": "2026-06-16T03:37:10Z",
+  "released_at": "2026-06-16T03:37:10Z"
 }
