@@ -1,8 +1,9 @@
 {
   "id": "1975",
   "assignee": "ttraenkler/tech-lead",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1975-linear-truthiness",
   "claimed_at": "2026-06-16T16:05:00Z",
-  "updated_at": "2026-06-16T16:05:00Z"
+  "updated_at": "2026-06-16T16:09:44Z",
+  "released_at": "2026-06-16T16:09:44Z"
 }
