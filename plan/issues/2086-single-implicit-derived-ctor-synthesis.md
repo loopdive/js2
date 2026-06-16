@@ -83,11 +83,13 @@ braces. Folding both onto the shared helper removes the chance they diverge,
 which is the point — but it confirms the body-emission phase is where the real
 behaviour lives.
 
-**Carried forward (follow-up, not done here).** The deeper unification — a
-single `synthesizeImplicitDerivedCtor(repr)` that also owns the *body-emission*
-divergence (struct-default fill vs externref host-alloc vs standalone zeroed
-base fields, ~1340–1530) — is a high-blast-radius refactor of the most fragile
-class-construction code and was scoped out to avoid a class-ctor regression
-mid-sprint. The param-prefix consolidation + the cross-lane guard close the
+**Carried forward → #2181 (follow-up, sprint 63, senior-dev).** The deeper
+unification — a single `synthesizeImplicitDerivedCtorBody(repr)` that also owns
+the *body-emission* divergence (struct-default fill vs externref host-alloc vs
+standalone zeroed base fields, ~1340–1530) — is a high-blast-radius refactor of
+the most fragile class-construction code and was scoped out to avoid a class-ctor
+regression mid-sprint. It is filed as **#2181** (feasibility:hard, routed to
+senior-dev), protected by the #2086 cross-lane guard. The param-prefix
+consolidation + the cross-lane guard close the
 named drift pair and lock the three lanes; the body-emit unification can land
 later against the guard now in place.
