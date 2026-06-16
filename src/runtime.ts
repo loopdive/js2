@@ -3901,6 +3901,19 @@ function _safeSet(
     // #2180 — writing to a revoked proxy throws TypeError; propagate it
     // instead of silently diverting to the sidecar.
     if (_isRevokedProxyError(e)) throw e;
+    // #2017 — assignment to a getter-only accessor property must throw a
+    // catchable strict-mode TypeError (§13.15.2 → §10.1.9 [[Set]] failure),
+    // not silently fall through to the sidecar. The strict `obj[key] = val`
+    // above already throws V8's "Cannot set property … which has only a
+    // getter"; rethrow it (re-worded to the spec phrasing) when the own/
+    // inherited descriptor is an accessor with a getter and no setter, so
+    // the compiled program observes a real TypeError instead of a no-op.
+    // (TS modules compile in strict mode, so this is the conformant path.)
+    if (e instanceof TypeError && _isGetterOnlyAccessor(obj, key)) {
+      throw new TypeError(
+        `Cannot set property ${String(key)} of #<Object> which has only a getter`,
+      );
+    }
     // For non-WasmGC objects (frozen/sealed JS objects),
     // fall through to sidecar set — preserves original behavior for non-strict callers.
     _sidecarSet(obj, key, val);
@@ -4715,6 +4728,35 @@ function _isObjectLike(v: any): boolean {
  */
 function _isRevokedProxyError(e: any): boolean {
   return e instanceof TypeError && typeof e.message === "string" && e.message.includes("proxy that has been revoked");
+}
+
+/**
+ * #2017 — true when `key` resolves (own or inherited) to an accessor property
+ * descriptor that has a getter but no setter. Writing to such a property is a
+ * [[Set]] failure that must throw a TypeError in strict mode rather than be
+ * silently swallowed by `_safeSet`'s sidecar fallback. Walks the prototype
+ * chain because a getter-only accessor inherited from a prototype also makes
+ * the write fail (§10.1.9.2 OrdinarySetWithOwnDescriptor). Defensive: any host
+ * error during the descriptor lookup means "not a known getter-only accessor".
+ */
+function _isGetterOnlyAccessor(obj: any, key: any): boolean {
+  if (obj == null || (typeof obj !== "object" && typeof obj !== "function")) return false;
+  if (typeof key === "object") return false;
+  try {
+    let cur: any = obj;
+    while (cur != null) {
+      const desc = Object.getOwnPropertyDescriptor(cur, key);
+      if (desc) {
+        // Data property anywhere on the chain shadows accessor semantics.
+        if ("value" in desc || "writable" in desc) return false;
+        return typeof desc.get === "function" && typeof desc.set !== "function";
+      }
+      cur = Object.getPrototypeOf(cur);
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 /**
