@@ -1,8 +1,9 @@
 {
   "id": "2118",
   "assignee": "ttraenkler/sendev-closures",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2118-const-arrow-recursion",
   "claimed_at": "2026-06-16T22:53:39Z",
-  "updated_at": "2026-06-16T22:53:39Z"
+  "updated_at": "2026-06-16T23:23:24Z",
+  "released_at": "2026-06-16T23:23:24Z"
 }
