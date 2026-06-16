@@ -1,8 +1,9 @@
 {
   "id": "1853",
   "assignee": "ttraenkler/tld-2108",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1853-hard-error-bucket",
   "claimed_at": "2026-06-16T15:14:21Z",
-  "updated_at": "2026-06-16T15:14:21Z"
+  "updated_at": "2026-06-16T15:38:00Z",
+  "released_at": "2026-06-16T15:38:00Z"
 }
