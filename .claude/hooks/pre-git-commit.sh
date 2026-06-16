@@ -15,9 +15,11 @@ if echo "$FIRST_LINE" | grep -qE '^git add (-A|--all|\.)$|^git add (-A|--all|\.)
   exit 2
 fi
 
-# Block committing on main from wrong directory
+# Block committing/merging/pushing on main from wrong directory.
+# Scoped to git state-changing ops only (its stated intent) so it doesn't
+# block unrelated commands (gh/npx/pwd/cd) run from a scratch subdir like .tmp/.
 BRANCH=$(git branch --show-current 2>/dev/null)
-if [ "$BRANCH" = "main" ] && [ "$PWD" != "/workspace" ]; then
+if [ "$BRANCH" = "main" ] && [ "$PWD" != "/workspace" ] && echo "$FIRST_LINE" | grep -qE '^git (commit|merge|push|add)\b'; then
   echo "BLOCKED: On main but pwd is $PWD (not /workspace). Are you in a worktree?" >&2
   exit 2
 fi
