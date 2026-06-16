@@ -2,7 +2,7 @@
   "id": "2028",
   "assignee": "ttraenkler/sen-b",
   "status": "in-progress",
-  "branch": "issue-2028-promise-executor-host-param",
-  "claimed_at": "2026-06-16T09:06:10Z",
-  "updated_at": "2026-06-16T09:06:10Z"
+  "branch": "issue-2028-host-callable-param",
+  "claimed_at": "2026-06-16T09:06:57Z",
+  "updated_at": "2026-06-16T09:06:57Z"
 }
