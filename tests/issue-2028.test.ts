@@ -47,7 +47,9 @@ describe("#2028 — Promise executor resolve/reject dispatch", () => {
   });
 
   it("resolve with a number value fulfils to that number", async () => {
-    const ex = await instantiate(`export function f(): any { return new Promise<number>((resolve) => { resolve(42); }); }`);
+    const ex = await instantiate(
+      `export function f(): any { return new Promise<number>((resolve) => { resolve(42); }); }`,
+    );
     await expect(ex.f() as Promise<unknown>).resolves.toBe(42);
   });
 

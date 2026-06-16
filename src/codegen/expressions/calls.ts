@@ -9300,8 +9300,7 @@ function compileCallExpression(
             // trap on the closure-struct `call_ref` path. Scoped to the executor
             // params (not all callable externref params) to preserve the #1941
             // dual-mode guarantee — see the helper's doc.
-            (calleeMayBeHostCallable(ctx, expr.expression) ||
-              calleeIsPromiseExecutorParam(ctx, expr.expression));
+            (calleeMayBeHostCallable(ctx, expr.expression) || calleeIsPromiseExecutorParam(ctx, expr.expression));
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;
