@@ -1,9 +1,8 @@
 {
   "id": "2088",
-  "assignee": "ttraenkler/dv1",
-  "status": "released",
-  "branch": "issue-2088-standalone",
-  "claimed_at": "2026-06-16T05:23:14Z",
-  "updated_at": "2026-06-16T05:25:15Z",
-  "released_at": "2026-06-16T05:25:15Z"
+  "assignee": "ttraenkler/dv3",
+  "status": "in-progress",
+  "branch": "issue-2088-per-builtin-rep-scaffold",
+  "claimed_at": "2026-06-16T05:32:05Z",
+  "updated_at": "2026-06-16T05:32:05Z"
 }
