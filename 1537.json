@@ -1,9 +1,8 @@
 {
   "id": "1537",
-  "assignee": "ttraenkler/dv2",
-  "status": "released",
-  "branch": "issue-1537-ryu-number-fmt",
-  "claimed_at": "2026-06-16T06:28:25Z",
-  "updated_at": "2026-06-16T06:29:41Z",
-  "released_at": "2026-06-16T06:29:41Z"
+  "assignee": "ttraenkler/tld-2139",
+  "status": "in-progress",
+  "branch": "issue-1537-ryu-number-format",
+  "claimed_at": "2026-06-16T17:58:04Z",
+  "updated_at": "2026-06-16T17:58:04Z"
 }
