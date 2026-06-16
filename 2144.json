@@ -1,8 +1,9 @@
 {
   "id": "2144",
   "assignee": "ttraenkler/dev-b",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2144-linear-mod-fmod",
   "claimed_at": "2026-06-16T08:39:25Z",
-  "updated_at": "2026-06-16T08:39:25Z"
+  "updated_at": "2026-06-16T08:55:35Z",
+  "released_at": "2026-06-16T08:55:35Z"
 }
