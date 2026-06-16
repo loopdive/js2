@@ -1,8 +1,9 @@
 {
   "id": "1950",
   "assignee": "ttraenkler/tld-1921",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1950-default-on-optimization",
   "claimed_at": "2026-06-16T16:00:50Z",
-  "updated_at": "2026-06-16T16:00:50Z"
+  "updated_at": "2026-06-16T16:31:10Z",
+  "released_at": "2026-06-16T16:31:10Z"
 }
