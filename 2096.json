@@ -1,8 +1,9 @@
 {
   "id": "2096",
   "assignee": "ttraenkler/dev-b",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2096-oracle-version-stamp",
   "claimed_at": "2026-06-16T07:59:16Z",
-  "updated_at": "2026-06-16T07:59:16Z"
+  "updated_at": "2026-06-16T08:08:37Z",
+  "released_at": "2026-06-16T08:08:37Z"
 }
