@@ -25,6 +25,7 @@
  * pushes/pops through a linear instruction sequence, plus type inference
  * for the last value-producing instruction to detect type mismatches.
  */
+import { coercionPlan } from "./coercion-plan.js";
 import type { BlockType, FuncTypeDef, Instr, TypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 
 /** Sentinel: the instruction sequence is unreachable (after return/br/throw/unreachable). */
@@ -675,7 +676,39 @@ function typesCompatible(produced: string, expected: ValType): boolean {
  * Insert type coercion instructions at the end of a branch body to match the expected type.
  * Returns the number of fixups applied.
  */
-function fixBranchType(body: Instr[], blockType: BlockType, types: TypeDef[], sigs: FuncSigInfo): number {
+/**
+ * Map the `inferLastType` kind-name string to a synthetic ValType so the branch
+ * fixup can consult the single `coercionPlan` table. `inferLastType` only knows
+ * the kind (no struct typeIdx); the plan's scalar/box-unbox rows never need the
+ * `from` typeIdx, so a placeholder (0) is safe for ref/ref_null `from`.
+ */
+function syntheticValType(kind: string): ValType | null {
+  switch (kind) {
+    case "i32":
+    case "i64":
+    case "f64":
+    case "f32":
+    case "externref":
+    case "anyref":
+    case "eqref":
+    case "funcref":
+      return { kind } as ValType;
+    case "ref":
+    case "ref_null":
+      return { kind, typeIdx: 0 } as ValType;
+    default:
+      return null;
+  }
+}
+
+function fixBranchType(
+  body: Instr[],
+  blockType: BlockType,
+  types: TypeDef[],
+  sigs: FuncSigInfo,
+  boxNumberIdx: number | null,
+  unboxNumberIdx: number | null,
+): number {
   if (blockType.kind !== "val") return 0;
   const expectedType = blockType.type;
 
@@ -684,18 +717,21 @@ function fixBranchType(body: Instr[], blockType: BlockType, types: TypeDef[], si
 
   if (typesCompatible(produced, expectedType)) return 0; // types match
 
-  const fixups = 0;
-
-  // ref/anyref → externref: insert extern.convert_any
-  // Guard: extern.convert_any takes anyref, NOT externref — skip if already externref
-  if (
-    (expectedType.kind === "externref" || expectedType.kind === "ref_extern") &&
-    produced !== "externref" &&
-    (produced === "ref" || produced === "eqref" || produced === "funcref" || produced === "anyref")
-  ) {
-    body.push({ op: "extern.convert_any" } as Instr);
-    return 1;
+  // #1917 Step 0: route scalar / numeric / box-unbox conversions through the
+  // single coercion table so a branch result is coerced IDENTICALLY to a call
+  // argument or a local.set. Previously this function emitted lossy
+  // `drop; f64.const 0` for externref→f64 and ref→f64 (the headline #1917
+  // divergence) while the call-arg path correctly unboxed via __unbox_number.
+  const fromVT = syntheticValType(produced);
+  if (fromVT) {
+    const plan = coercionPlan(fromVT, expectedType, { boxNumberIdx, unboxNumberIdx });
+    if (plan) {
+      body.push(...plan.instrs);
+      return 1;
+    }
   }
+
+  // ── rows that need the expected struct typeIdx (not coercionPlan rows) ──
 
   // externref → ref/ref_null: any.convert_extern + ref.cast_null
   // Uses ref.cast_null unconditionally — passes null through instead of trapping.
@@ -706,61 +742,7 @@ function fixBranchType(body: Instr[], blockType: BlockType, types: TypeDef[], si
     return 1;
   }
 
-  // f64 → externref: drop + ref.null.extern (lossy but valid)
-  // Better: we can't easily box without import, so use drop + null
-  if ((expectedType.kind === "externref" || expectedType.kind === "ref_extern") && produced === "f64") {
-    body.push({ op: "drop" });
-    body.push({ op: "ref.null.extern" });
-    return 1;
-  }
-
-  // i32 → externref: drop + ref.null.extern
-  if ((expectedType.kind === "externref" || expectedType.kind === "ref_extern") && produced === "i32") {
-    body.push({ op: "drop" });
-    body.push({ op: "ref.null.extern" });
-    return 1;
-  }
-
-  // externref → f64: drop + f64.const 0 (lossy but valid)
-  if (expectedType.kind === "f64" && produced === "externref") {
-    body.push({ op: "drop" });
-    body.push({ op: "f64.const", value: 0 });
-    return 1;
-  }
-
-  // i64 → f64: convert
-  if (expectedType.kind === "f64" && produced === "i64") {
-    body.push({ op: "f64.convert_i64_s" });
-    return 1;
-  }
-
-  // ref → f64: drop + f64.const 0 (lossy but valid)
-  if (expectedType.kind === "f64" && produced === "ref") {
-    body.push({ op: "drop" });
-    body.push({ op: "f64.const", value: 0 });
-    return 1;
-  }
-
-  // i32 → f64: convert
-  if (expectedType.kind === "f64" && produced === "i32") {
-    body.push({ op: "f64.convert_i32_s" });
-    return 1;
-  }
-
-  // ref → i32: drop + i32.const 0
-  if (expectedType.kind === "i32" && (produced === "ref" || produced === "externref")) {
-    body.push({ op: "drop" });
-    body.push({ op: "i32.const", value: 0 });
-    return 1;
-  }
-
-  // externref → ref_null for anyref-like: any.convert_extern
-  if (expectedType.kind === "anyref" && produced === "externref") {
-    body.push({ op: "any.convert_extern" } as Instr);
-    return 1;
-  }
-
-  return fixups;
+  return 0;
 }
 
 /**
@@ -770,7 +752,15 @@ function fixBranchType(body: Instr[], blockType: BlockType, types: TypeDef[], si
  * Mutates the body array in place.
  * Returns the number of fixups applied.
  */
-function fixBranch(body: Instr[], expected: number, types: TypeDef[], sigs: FuncSigInfo, blockType: BlockType): number {
+function fixBranch(
+  body: Instr[],
+  expected: number,
+  types: TypeDef[],
+  sigs: FuncSigInfo,
+  blockType: BlockType,
+  boxNumberIdx: number | null,
+  unboxNumberIdx: number | null,
+): number {
   const actual = sequenceDelta(body, types, sigs);
   if (actual === UNREACHABLE) return 0; // unreachable branch -- validator accepts anything
 
@@ -827,7 +817,7 @@ function fixBranch(body: Instr[], expected: number, types: TypeDef[], sigs: Func
     // Re-check delta after fixups
     const newDelta = sequenceDelta(body, types, sigs);
     if (newDelta === expected && newDelta > 0) {
-      fixups += fixBranchType(body, blockType, types, sigs);
+      fixups += fixBranchType(body, blockType, types, sigs, boxNumberIdx, unboxNumberIdx);
     }
   }
 
@@ -850,7 +840,14 @@ function getTagArity(tagIdx: number, tags: Array<{ typeIdx: number }>, types: Ty
  * Recursively fix stack mismatches in a body of instructions.
  * Returns the total number of fixups applied.
  */
-function fixBody(body: Instr[], types: TypeDef[], sigs: FuncSigInfo, tags: Array<{ typeIdx: number }>): number {
+function fixBody(
+  body: Instr[],
+  types: TypeDef[],
+  sigs: FuncSigInfo,
+  tags: Array<{ typeIdx: number }>,
+  boxNumberIdx: number | null,
+  unboxNumberIdx: number | null,
+): number {
   let fixups = 0;
 
   for (const instr of body) {
@@ -859,28 +856,28 @@ function fixBody(body: Instr[], types: TypeDef[], sigs: FuncSigInfo, tags: Array
       const expected = blockTypeExpected(ifInstr.blockType, types);
 
       // Recurse into branches first
-      fixups += fixBody(ifInstr.then, types, sigs, tags);
+      fixups += fixBody(ifInstr.then, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
       if (ifInstr.else) {
-        fixups += fixBody(ifInstr.else, types, sigs, tags);
+        fixups += fixBody(ifInstr.else, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
       }
 
       // Fix then branch
-      fixups += fixBranch(ifInstr.then, expected, types, sigs, ifInstr.blockType);
+      fixups += fixBranch(ifInstr.then, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx);
 
       // Fix else branch (or create one if needed for valued blocks)
       if (ifInstr.else) {
-        fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType);
+        fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx);
       } else if (expected > 0) {
         // Valued block with no else -- need to add an else branch with default values
         ifInstr.else = [];
-        fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType);
+        fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx);
       }
     } else if (instr.op === "block" || instr.op === "loop") {
       const blockInstr = instr as { op: string; blockType: BlockType; body: Instr[] };
-      fixups += fixBody(blockInstr.body, types, sigs, tags);
+      fixups += fixBody(blockInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
 
       const expected = blockTypeExpected(blockInstr.blockType, types);
-      fixups += fixBranch(blockInstr.body, expected, types, sigs, blockInstr.blockType);
+      fixups += fixBranch(blockInstr.body, expected, types, sigs, blockInstr.blockType, boxNumberIdx, unboxNumberIdx);
     } else if (instr.op === "try") {
       const tryInstr = instr as {
         op: "try";
@@ -892,27 +889,27 @@ function fixBody(body: Instr[], types: TypeDef[], sigs: FuncSigInfo, tags: Array
       const expected = blockTypeExpected(tryInstr.blockType, types);
 
       // Recurse into all branches
-      fixups += fixBody(tryInstr.body, types, sigs, tags);
+      fixups += fixBody(tryInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
       for (const c of tryInstr.catches || []) {
-        fixups += fixBody(c.body, types, sigs, tags);
+        fixups += fixBody(c.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
       }
       if (tryInstr.catchAll) {
-        fixups += fixBody(tryInstr.catchAll, types, sigs, tags);
+        fixups += fixBody(tryInstr.catchAll, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
       }
 
       // Fix the do body
-      fixups += fixBranch(tryInstr.body, expected, types, sigs, tryInstr.blockType);
+      fixups += fixBranch(tryInstr.body, expected, types, sigs, tryInstr.blockType, boxNumberIdx, unboxNumberIdx);
 
       // Fix catch bodies. Each catch clause pushes the tag's parameter values
       // onto the stack before the body executes.
       for (const c of tryInstr.catches || []) {
         const tagArity = getTagArity(c.tagIdx, tags, types);
-        fixups += fixBranch(c.body, expected - tagArity, types, sigs, tryInstr.blockType);
+        fixups += fixBranch(c.body, expected - tagArity, types, sigs, tryInstr.blockType, boxNumberIdx, unboxNumberIdx);
       }
 
       // Fix catch_all body (no values pushed by catch_all)
       if (tryInstr.catchAll) {
-        fixups += fixBranch(tryInstr.catchAll, expected, types, sigs, tryInstr.blockType);
+        fixups += fixBranch(tryInstr.catchAll, expected, types, sigs, tryInstr.blockType, boxNumberIdx, unboxNumberIdx);
       }
     }
   }
@@ -1222,86 +1219,18 @@ function callArgCoercionInstrs(
   const expectedIsExternref = expected.kind === "externref" || expected.kind === "ref_extern";
   if (actualIsExternref && expectedIsExternref) return [];
 
-  // ref/ref_null → externref: extern.convert_any (lossless, always safe)
-  // Note: actual is already guarded to be ref/ref_null/anyref/eqref (never externref)
-  // by the actualIsExternref early-return above.
-  if (
-    (actual.kind === "ref" || actual.kind === "ref_null" || actual.kind === "anyref" || actual.kind === "eqref") &&
-    (expected.kind === "externref" || expected.kind === "ref_extern")
-  ) {
-    return [{ op: "extern.convert_any" } as Instr];
-  }
+  // #1917 Step 0: scalar / numeric / box-unbox rows come from the single
+  // coercion table so call-arg, branch, and local.set contexts agree exactly.
+  const plan = coercionPlan(actual, expected, { boxNumberIdx, unboxNumberIdx });
+  if (plan) return plan.instrs;
 
-  // f64 → externref: __box_number
-  if (actual.kind === "f64" && expected.kind === "externref" && boxNumberIdx !== null) {
-    return [{ op: "call", funcIdx: boxNumberIdx }];
-  }
-
-  // i32 → externref: f64.convert_i32_s + __box_number
-  if (actual.kind === "i32" && expected.kind === "externref" && boxNumberIdx !== null) {
-    return [{ op: "f64.convert_i32_s" } as Instr, { op: "call", funcIdx: boxNumberIdx }];
-  }
-
-  // i64 → externref: f64.convert_i64_s + __box_number
-  if (actual.kind === "i64" && expected.kind === "externref" && boxNumberIdx !== null) {
-    return [{ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx }];
-  }
-
-  // externref → f64: __unbox_number
-  if (actual.kind === "externref" && expected.kind === "f64" && unboxNumberIdx !== null) {
-    return [{ op: "call", funcIdx: unboxNumberIdx }];
-  }
-
-  // ref/ref_null → f64: extern.convert_any + __unbox_number
-  if ((actual.kind === "ref" || actual.kind === "ref_null") && expected.kind === "f64" && unboxNumberIdx !== null) {
-    return [{ op: "extern.convert_any" } as Instr, { op: "call", funcIdx: unboxNumberIdx }];
-  }
-
-  // i64 → i32: i32.wrap_i64
-  if (actual.kind === "i64" && expected.kind === "i32") {
-    return [{ op: "i32.wrap_i64" }];
-  }
-
-  // f64 → i32: i32.trunc_sat_f64_s (#822)
-  if (actual.kind === "f64" && expected.kind === "i32") {
-    return [{ op: "i32.trunc_sat_f64_s" } as Instr];
-  }
-
-  // i32 → f64: f64.convert_i32_s
-  if (actual.kind === "i32" && expected.kind === "f64") {
-    return [{ op: "f64.convert_i32_s" } as Instr];
-  }
-
-  // i64 → f64: f64.convert_i64_s
-  if (actual.kind === "i64" && expected.kind === "f64") {
-    return [{ op: "f64.convert_i64_s" }];
-  }
-
-  // i32 → i64: i64.extend_i32_s
-  if (actual.kind === "i32" && expected.kind === "i64") {
-    return [{ op: "i64.extend_i32_s" }];
-  }
-
-  // externref → ref/ref_null: any.convert_extern + ref.cast_null
+  // externref → ref/ref_null: any.convert_extern + ref.cast_null (needs typeIdx;
+  // not a coercionPlan row because it requires the expected struct typeIdx).
   if (actualIsExternref && (expected.kind === "ref" || expected.kind === "ref_null")) {
     const typeIdx = (expected as any).typeIdx;
     if (typeIdx !== undefined) {
       return [{ op: "any.convert_extern" } as Instr, { op: "ref.cast_null", typeIdx } as Instr];
     }
-  }
-
-  // ref/ref_null → i32: extern.convert_any + __unbox_number + i32.trunc_sat_f64_s
-  if ((actual.kind === "ref" || actual.kind === "ref_null") && expected.kind === "i32" && unboxNumberIdx !== null) {
-    return [
-      { op: "extern.convert_any" } as Instr,
-      { op: "call", funcIdx: unboxNumberIdx },
-      { op: "i32.trunc_sat_f64_s" } as Instr,
-    ];
-  }
-
-  // externref → i32: __unbox_number + i32.trunc_sat_f64_s
-  if (actualIsExternref && expected.kind === "i32" && unboxNumberIdx !== null) {
-    return [{ op: "call", funcIdx: unboxNumberIdx }, { op: "i32.trunc_sat_f64_s" } as Instr];
   }
 
   return [];
@@ -2365,7 +2294,7 @@ export function stackBalance(mod: WasmModule): number {
     );
 
     // Fix nested structured blocks
-    totalFixups += fixBody(func.body, mod.types, sigs, tags);
+    totalFixups += fixBody(func.body, mod.types, sigs, tags, boxNumberIdx, unboxNumberIdx);
 
     // Fix function-level body: the body must produce exactly as many values
     // as the function's result type declares.
@@ -2378,7 +2307,15 @@ export function stackBalance(mod: WasmModule): number {
           : expectedResults === 1
             ? { kind: "val", type: ft.results[0]! }
             : { kind: "type", typeIdx: func.typeIdx };
-      totalFixups += fixBranch(func.body, expectedResults, mod.types, sigs, funcBlockType);
+      totalFixups += fixBranch(
+        func.body,
+        expectedResults,
+        mod.types,
+        sigs,
+        funcBlockType,
+        boxNumberIdx,
+        unboxNumberIdx,
+      );
     }
   }
   return totalFixups;

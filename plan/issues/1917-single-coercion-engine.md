@@ -1,11 +1,11 @@
 ---
 id: 1917
 title: "One coercion engine — four divergent coercion matrices disagree about lossiness"
-status: ready
+status: in-progress
 sprint: 62
 model: opus
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-15
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -87,3 +87,64 @@ plan/log/analysis-2026-06/03-coercion-engine-spec.md and
 Sequencing: Step 0 (ValType table) is dependency-safe now; Steps 1+ land
 AFTER the type-aware boxing P0 (#2072/#2080) so the engine consumes
 correct tags. Drift gate: #2108.
+
+## Implementation — Step 0 landed (sdev1, 2026-06-15)
+
+**Scope: Step 0 only** (the ValType `coercionPlan` table). Steps 1-4 (the
+JS-semantic `emitToString`/`emitToPrimitive`/`emitStrictEq`/`emitLooseEq`
+engine) remain — they land after value-rep P0 (#2072/#2080, now done) per the
+spec's migration order; this issue stays `in-progress` until they do.
+
+### What landed
+
+- **New `src/codegen/coercion-plan.ts`** — a single **pure** function
+  `coercionPlan(from: ValType, to: ValType, {boxNumberIdx, unboxNumberIdx})`
+  returning the exact instruction sequence for the **scalar / numeric /
+  box-unbox** rows the three ValType matrices shared, plus a `lossy` flag for
+  the genuine no-bridge rows (funcref→externref; ref→number with no unbox
+  helper available → NaN/0 per §7.1.4).
+- **`callArgCoercionInstrs` (stack-balance.ts)** delegates its scalar rows to
+  `coercionPlan`; keeps only the externref→ref/ref_null guarded cast (needs the
+  expected struct typeIdx).
+- **`fixBranchType` (stack-balance.ts)** now routes scalar/box-unbox
+  conversions through `coercionPlan`, threading `boxNumberIdx`/`unboxNumberIdx`
+  down through `fixBranch`/`fixBody` from `stackBalance`. **This kills the
+  headline divergence**: it previously emitted lossy `drop; f64.const 0` for
+  externref→f64 and ref→f64 (silently zeroing the value during a stack-balance
+  fixup) while the call-arg path correctly unboxed via `__unbox_number`. It
+  also fixed a latent funcref→externref bug (old code emitted an INVALID
+  `extern.convert_any` on a funcref; the table now uses the lossy null
+  fallback, matching `coercionInstrs`).
+- **`coercionInstrs` (type-coercion.ts)** delegates its non-ref scalar rows to
+  `coercionPlan` (kept its own `ref→f64=NaN` / AnyValue→externref helper /
+  guarded ref.cast arms, which need `ctx`/`fctx` and a deliberately different
+  ref ToNumber policy — those are Step 2 engine concerns, not Step 0).
+
+### Why ref→f64 differs between consumers (intentional, for now)
+
+`callArgCoercionInstrs`/`fixBranchType` unbox a `ref` carrying a boxed number
+(`extern.convert_any; __unbox_number`); `coercionInstrs` NaNs a bare GC ref
+(ToNumber of an object without valueOf). Step 0 unifies the **box-unbox** rows
+that were genuinely divergent-by-accident; the ref→f64 *policy* split is real
+JS semantics that the Step 2 `emitToPrimitive` engine will own with a
+`staticJsType` hint (boxed-number-ref vs object-ref). Step 0 does not force
+them together to avoid changing array-callback-loop ToNumber behavior.
+
+### Validation
+
+- `tests/issue-1917-coercion-plan.test.ts` — 10 table-driven unit cases
+  (asserting the exact sequence per `(from,to)` incl. the non-lossy externref→f64
+  / ref→f64 guarantee) + 4 end-to-end any→number regression cases (host +
+  standalone). All pass.
+- Behavior-neutral: full `tests/equivalence/` dir green (exit 0); coercion +
+  stack-balance suites unchanged (the 2 pre-existing `stack-balance.test.ts`
+  failures and the IR-fallback/void-NaN equivalence failures reproduce
+  identically on unmodified HEAD).
+- `tsc --noEmit` clean; lint/format clean; `check:ir-fallbacks` OK.
+
+### Next (Steps 1-4, separate PRs, now unblocked by #2072/#2080)
+
+`coercion-engine.ts` skeleton + `emitToString` (Step 1, fixes #2005/#2006/
+#1998/#2074), `emitToPrimitive` (Step 2, #1989/#2022/#1990/#1988),
+`emitStrictEq`/`emitLooseEq` (Step 3, #1986/#1987/#2081), `emitToNumber`/
+`emitToBoolean` (Step 4), then the drift gate (Step 5, #2108).

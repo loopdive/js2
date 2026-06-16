@@ -64,7 +64,15 @@ type StateTerminator =
   | { kind: "return"; expr: ts.Expression | undefined }
   | { kind: "done" }
   | { kind: "jump"; next: number }
-  | { kind: "branch"; cond: ts.Expression; negate: boolean; thenState: number; elseState: number };
+  | { kind: "branch"; cond: ts.Expression; negate: boolean; thenState: number; elseState: number }
+  // (#2170) `yield* <inner-generator-call>` — delegate to an inner native
+  // generator. `subject` is the inner generator call expression; `innerName` is
+  // the callee's source name (resolved to a `NativeGeneratorInfo` at emit time).
+  // `siteIndex` keys the per-delegation `ref null $InnerState` slot allocated in
+  // the state struct (see `delegationSites`). This is a SELF-suspending state:
+  // each `.next()` re-enters it, driving the inner's resume until the inner is
+  // done, then control transfers to `next`.
+  | { kind: "yield-star"; subject: ts.Expression; innerName: string; siteIndex: number; next: number };
 
 interface NativeGeneratorState {
   /** Straight-line, yield-free statements to run on entering this state. */
@@ -87,6 +95,14 @@ interface NativeGeneratorPlan {
   spills: string[];
   /** (#2171) Uniform yield element ValType — f64 (numeric) or native string. */
   elemValType: ValType;
+  /**
+   * (#2170) One entry per `yield*` delegation site, in `siteIndex` order. The
+   * inner generator's source name lets the resume emitter resolve its
+   * `NativeGeneratorInfo` at emit time; `buildResumeInfo` allocates one
+   * `ref null $InnerState` field per entry to persist the inner iterator across
+   * the outer generator's host re-entries.
+   */
+  delegationSites: { innerName: string }[];
 }
 
 function noJsHostTarget(ctx: CodegenContext): boolean {
@@ -236,6 +252,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: ts.FunctionDeclarat
 
   const states: NativeGeneratorState[] = [];
   const spills: string[] = [];
+  // (#2170) `yield*` delegation sites, allocated in source order; index into
+  // this array is the terminator's `siteIndex`.
+  const delegationSites: { innerName: string }[] = [];
   const spillSet = new Set<string>();
   const addSpill = (name: string): void => {
     if (spillSet.has(name)) return;
@@ -408,12 +427,76 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: ts.FunctionDeclarat
     bindSentTo: string | undefined,
     activeFinalizers: readonly ts.Statement[][],
   ): boolean {
-    if (yieldExpr.asteriskToken || !yieldValueOk(yieldExpr.expression)) return fail();
+    // (#2170) `yield* <inner-generator-call>` — delegate to an inner native
+    // generator. Slice-1 supports a direct call to a native-generator function
+    // declaration (`yield* inner()`); anything else (arbitrary iterable, the
+    // value of `yield*` consumed, a non-native inner) still bails to the host
+    // path / scoped diagnostic.
+    if (yieldExpr.asteriskToken) {
+      const subject = yieldExpr.expression;
+      const innerName = subject ? nativeGeneratorDelegationName(subject) : undefined;
+      if (!subject || innerName === undefined) return fail();
+      // The successor after delegation finishes. Like a yield successor it may
+      // carry a resume binding (`x = yield* inner()` binds the inner's return
+      // value); slice-1 supports only the unbound expression-statement form, so
+      // require `bindSentTo === undefined`.
+      if (bindSentTo !== undefined) return fail();
+      const siteIndex = delegationSites.length;
+      delegationSites.push({ innerName });
+      const nextId = startStateAfterYield(undefined, activeFinalizers);
+      finishState(curId, {
+        kind: "yield-star",
+        subject,
+        innerName,
+        siteIndex,
+        next: nextId,
+      });
+      // Create the successor and make it current (mirrors finishCurrentAsYield).
+      curId = reserveState();
+      curStatements = [];
+      curResumeBindings = pendingResumeBindings;
+      curAbrupt = pendingAbrupt;
+      pendingResumeBindings = [];
+      pendingAbrupt = undefined;
+      return ok;
+    }
+    // (#2171) yieldValueOk admits the f64 numeric path AND the uniform
+    // native-string path; mixed/object yields still bail.
+    if (!yieldValueOk(yieldExpr.expression)) return fail();
     const next = startStateAfterYield(bindSentTo, activeFinalizers);
     // The state we were filling (curIdBefore) is finished by startStateAfterYield's
     // caller — handled inside helper to keep ids tidy.
     finishCurrentAsYield(yieldExpr.expression, next, activeFinalizers, bindSentTo);
     return ok;
+  }
+
+  /**
+   * (#2170) If `expr` is a direct call to a native-generator function
+   * declaration (`inner()` where `function* inner(){…}`), return the callee's
+   * source name; else undefined. Resolution to the inner's `NativeGeneratorInfo`
+   * is deferred to emit time (the inner may not be registered yet during the
+   * candidate pre-pass), so here we only confirm the callee is a zero-host
+   * native generator declaration.
+   */
+  function nativeGeneratorDelegationName(expr: ts.Expression): string | undefined {
+    if (!ts.isCallExpression(expr)) return undefined;
+    if (expr.arguments.length !== 0) return undefined; // slice-1: no-arg inner call
+    // TS CallExpression's callee is `.expression`.
+    const callee = expr.expression;
+    if (!ts.isIdentifier(callee)) return undefined;
+    const sym = ctx.checker.getSymbolAtLocation(callee);
+    const innerDecl = sym?.declarations?.find((d): d is ts.FunctionDeclaration => ts.isFunctionDeclaration(d));
+    if (!innerDecl || !innerDecl.asteriskToken || !innerDecl.body) return undefined;
+    if (!isNativeGeneratorCandidate(ctx, innerDecl)) return undefined;
+    // (#2170 slice-1 / #2171 interop) Only numeric (f64) inner generators are
+    // delegated. The per-elemType result struct (#2171) means a string inner
+    // (`__NativeGeneratorResult_str`) and a numeric outer
+    // (`__NativeGeneratorResult_f64`) would mismatch when the yield-star arm
+    // re-yields `innerRes.value` through the OUTER result struct. Same-elemType
+    // string delegation is a follow-up; for now bail to the host path.
+    const innerElem = generatorElemValType(ctx, innerDecl);
+    if (innerElem === null || innerElem.kind !== "f64") return undefined;
+    return callee.text;
   }
 
   // Reserve the successor of a yield and set up its resume binding/abrupt
@@ -659,13 +742,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: ts.FunctionDeclarat
   // Final fallthrough state completes the generator.
   finishState(curId, { kind: "done" });
 
-  // Reject if there is no actual yield (then it's not a generator worth the
-  // native path) or the state count is too large.
-  const yieldCount = states.filter((s) => s.terminator.kind === "yield").length;
-  if (yieldCount === 0) return null;
+  // Reject if there is no actual suspension point (then it's not a generator
+  // worth the native path) or the state count is too large. (#2170) A
+  // `yield*` delegation state is a suspension point too.
+  const suspendCount = states.filter((s) => s.terminator.kind === "yield" || s.terminator.kind === "yield-star").length;
+  if (suspendCount === 0) return null;
   if (states.length > MAX_NATIVE_GENERATOR_STATES) return null;
 
-  return { states, spills, elemValType };
+  return { states, spills, elemValType, delegationSites };
 }
 
 /** A `break`/`continue` inside a yield-loop body is not modeled in this slice. */
@@ -718,7 +802,7 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: ts.Functio
     if (param.dotDotDotToken || !ts.isIdentifier(param.name)) return false;
   }
   const plan = buildNativeGeneratorPlan(ctx, decl);
-  return plan !== null && plan.states.some((s) => s.terminator.kind === "yield");
+  return plan !== null && plan.states.some((s) => s.terminator.kind === "yield" || s.terminator.kind === "yield-star");
 }
 
 export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
@@ -838,6 +922,23 @@ export function registerNativeGenerator(
     });
   }
 
+  // (#2170) `yield*` delegation slots — appended AFTER spills so the f64
+  // spillFieldOffset indexing is unaffected. Each holds the inner generator's
+  // state ref across the outer generator's host re-entries. The inner is a
+  // native generator (the candidate check confirmed it); register it first so
+  // its state struct typeIdx exists, then type the slot as `ref null
+  // $InnerState`.
+  const delegationSlots: { fieldIdx: number; innerName: string }[] = [];
+  for (const site of plan.delegationSites) {
+    const innerInfo = ensureRegisteredNativeGenerator(ctx, site.innerName);
+    // Fall back to a nullable eqref slot if the inner cannot be resolved to a
+    // concrete state type (defensive — the candidate gate makes this unlikely).
+    const slotType: ValType =
+      innerInfo !== null ? { kind: "ref_null", typeIdx: innerInfo.stateTypeIdx } : { kind: "eqref" };
+    delegationSlots.push({ fieldIdx: stateFields.length, innerName: site.innerName });
+    stateFields.push({ name: `deleg_${delegationSlots.length - 1}`, type: slotType, mutable: true });
+  }
+
   const stateName = `__GenState_${sanitizeTypeName(functionName)}`;
   const stateTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name: stateName, fields: stateFields });
@@ -862,9 +963,21 @@ export function registerNativeGenerator(
     yieldCount,
     doneState: plan.states.length - 1, // the final `done` state id
     elemValType,
+    delegationSlots: delegationSlots.length > 0 ? delegationSlots : undefined,
   };
   ctx.nativeGenerators.set(functionName, info);
   return info;
+}
+
+/**
+ * (#2170) Resolve a native-generator info by source name (already-registered
+ * lookup). The inner of a `yield*` is usually declared before the outer (source
+ * order) and already in `ctx.nativeGenerators`. Returns null if not registered.
+ */
+function ensureRegisteredNativeGenerator(ctx: CodegenContext, name: string): NativeGeneratorInfo | null {
+  const existing = ctx.nativeGenerators.get(name);
+  if (existing) return existing;
+  return null;
 }
 
 // (#2171) The default `value` for a done/empty result: f64 0 for numeric
@@ -1241,6 +1354,94 @@ function compileState(
       // br), then `block $exit` ends and the caller reads $__result.
       break;
     }
+    case "yield-star": {
+      // (#2170) Delegate to the inner native generator. §27.5.3.7:
+      //   if (deleg == null) deleg = <inner>();           ; first entry
+      //   innerRes = __gen_resume_<inner>(deleg);
+      //   if (innerRes.done == 0) {                        ; inner yielded
+      //     store spills; state = THIS; mode = 0;
+      //     result = { innerRes.value, done: 0 }; br exit; ; re-enter here next .next()
+      //   } else {                                         ; inner done
+      //     deleg = null; state = next; br loop;           ; resume outer machine
+      //   }
+      const slot = info.delegationSlots?.[term.siteIndex];
+      const innerInfo = slot ? ctx.nativeGenerators.get(slot.innerName) : undefined;
+      if (!slot || !innerInfo) {
+        // Defensive: the plan recorded a delegation site the struct/registry
+        // did not back. Complete the generator rather than emit invalid wasm.
+        body.push(...storeSpills(info, fctx, selfLocal));
+        body.push(...setStateInstrs(info, selfLocal, info.doneState));
+        body.push(...emptyResult(info));
+        body.push({ op: "local.set", index: resultLocal });
+        break;
+      }
+      const innerResumeIdx = ensureNativeGeneratorResumeFunction(ctx, innerInfo);
+      const innerStateRef: ValType = { kind: "ref", typeIdx: innerInfo.stateTypeIdx };
+      const innerResRef: ValType = { kind: "ref", typeIdx: innerInfo.resultTypeIdx };
+      const delegLocal = allocLocal(fctx, `__gen_deleg_${fctx.locals.length}`, innerStateRef);
+      const innerResLocal = allocLocal(fctx, `__gen_innerres_${fctx.locals.length}`, innerResRef);
+
+      // Spill any straight-line locals computed in this state's prelude BEFORE
+      // suspending; the delegation slot itself lives in the struct already.
+      body.push(...storeSpills(info, fctx, selfLocal));
+
+      // Lazily materialize the inner generator on first entry: if the slot is
+      // null, construct `<inner>()` and store it.
+      const constructInner: Instr[] = [];
+      {
+        const savedC = fctx.body;
+        fctx.body = constructInner;
+        compileNativeGeneratorFunction(ctx, fctx, innerInfo.decl, innerInfo);
+        fctx.body = savedC;
+      }
+      body.push({ op: "local.get", index: selfLocal });
+      body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx });
+      body.push({ op: "ref.is_null" });
+      body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: selfLocal },
+          ...constructInner,
+          { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx } as Instr,
+        ],
+        else: [],
+      });
+
+      // deleg (non-null) → local; drive its resume once.
+      body.push({ op: "local.get", index: selfLocal });
+      body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx });
+      body.push({ op: "ref.as_non_null" } as Instr);
+      body.push({ op: "local.set", index: delegLocal });
+      body.push({ op: "local.get", index: delegLocal });
+      body.push({ op: "call", funcIdx: innerResumeIdx });
+      body.push({ op: "local.set", index: innerResLocal });
+
+      // if (innerRes.done == 0) re-yield innerRes.value (stay in THIS state)
+      const doneArm: Instr[] = [
+        // inner done — clear the slot, advance to the successor state, re-enter.
+        { op: "local.get", index: selfLocal },
+        { op: "ref.null", typeIdx: innerInfo.stateTypeIdx },
+        { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx } as Instr,
+        ...setStateInstrs(info, selfLocal, term.next),
+        { op: "br", depth: loopDepth + 1 }, // +1 for the inner `if`
+      ];
+      const yieldArm: Instr[] = [
+        // inner yielded — stay in THIS state so the next .next() re-drives it.
+        ...setStateInstrs(info, selfLocal, stateId),
+        ...setModeInstrs(info, selfLocal, 0),
+        { op: "local.get", index: innerResLocal },
+        { op: "struct.get", typeIdx: innerInfo.resultTypeIdx, fieldIdx: RESULT_VALUE_FIELD },
+        { op: "i32.const", value: 0 },
+        { op: "struct.new", typeIdx: info.resultTypeIdx },
+        { op: "local.set", index: resultLocal },
+        { op: "br", depth: exitDepth + 1 }, // +1 for the inner `if`
+      ];
+      body.push({ op: "local.get", index: innerResLocal });
+      body.push({ op: "struct.get", typeIdx: innerInfo.resultTypeIdx, fieldIdx: RESULT_DONE_FIELD });
+      body.push({ op: "if", blockType: { kind: "empty" }, then: doneArm, else: yieldArm });
+      break;
+    }
   }
 
   fctx.body = saved;
@@ -1353,6 +1554,16 @@ export function compileNativeGeneratorFunction(
   }
   for (let i = 0; i < info.spillNames.length; i++) {
     fctx.body.push({ op: "f64.const", value: NaN });
+  }
+  // (#2170) `yield*` delegation slots start null — the inner generator is
+  // materialized lazily on first entry into the yield-star state.
+  for (const slot of info.delegationSlots ?? []) {
+    const innerInfo = ctx.nativeGenerators.get(slot.innerName);
+    if (innerInfo) {
+      fctx.body.push({ op: "ref.null", typeIdx: innerInfo.stateTypeIdx });
+    } else {
+      fctx.body.push({ op: "ref.null.eq" });
+    }
   }
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 }

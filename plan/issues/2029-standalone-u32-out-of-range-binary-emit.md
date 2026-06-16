@@ -1,10 +1,10 @@
 ---
 id: 2029
 title: "standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests)"
-status: ready
-sprint: Backlog
+status: in-progress
+sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-15
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -134,3 +134,39 @@ sentinel check — the Object.create / Iterator.prototype / DisposableStack
 clusters in this bucket are likely the same pattern. `grep -n
 "stringGlobalMap.get" src/codegen/` and check each use site emits
 `global.get` only for `idx >= 0`.
+
+## PR-1 landed (2026-06-15, sdev3) — builtin-subclass cluster
+
+Applied the prescribed fix shape to the confirmed producer. `emitSetSubclassProto`
+(`src/codegen/class-bodies.ts`) now skips the prototype-adjustment arm when
+either class-name string global is the `-1` sentinel (standalone/`nativeStrings`),
+in addition to the existing `=== undefined` guard. The arm exists only to feed
+the `__set_subclass_proto` HOST import (unavailable standalone anyway), and the
+WasmGC instance `__tag` already carries class identity for `instanceof`, so
+skipping is semantically correct standalone.
+
+**Fixed (compile-time emit crash gone):** `class X extends Error/TypeError/
+Uint8Array {}` and `extends`-builtin with own field / explicit `super()` /
+implicit ctor / 3-level hierarchy / class-expression — all the
+`language/{statements,expressions}/class` + `subclass-builtins/*` clusters
+(≈128 of the 497) now COMPILE under `--target standalone` instead of dying with
+`u32 out of range: -1`. Test: `tests/issue-2029-subclass-builtin-standalone-emit.test.ts`
+(8 compile-success cases). Zero host-mode regressions (the new branch only fires
+on the `-1` sentinel, which never occurs in gc/host mode where globals are real).
+
+**Audit of other `stringGlobalMap.get` consumers:** the remaining clusters in
+the bucket — `built-ins/Object/create` (74), `Iterator/prototype` (44),
+`DisposableStack`/`AsyncDisposableStack` (44), `for-await-of` (23) — all COMPILE
+in standalone on current main now (probed: no `-1`/`u32-out-of-range` emit), so
+they were either already resolved by later work or never shared this exact
+`emitSetSubclassProto` site. The other `stringGlobalMap.get` use sites that
+push `global.get` with a `!` non-null assertion (string-ops.ts, object-ops.ts,
+literals.ts) are reached only on the **legacy/host** string path (their callers
+gate on `!ctx.nativeStrings` or route through `compileNativeStringLiteral` /
+`stringConstantExternrefInstrs` in standalone), so they don't hit the sentinel.
+
+**Remaining (separate, NOT this PR):** runtime behaviour of `extends Error`
+standalone still leaks the `__new_<Builtin>` HOST import (`class-bodies.ts:1423/2187`)
+— a host-import-retirement concern, not the emit crash. Kept #2029 `in-progress`:
+the emit-crash cluster (the headline) is fixed; the `__new_<Builtin>` standalone
+runtime path is the residual. Reassess closing once that lands.

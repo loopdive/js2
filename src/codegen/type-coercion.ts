@@ -7,6 +7,7 @@
  */
 
 import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
+import { coercionPlan } from "./coercion-plan.js";
 import { boxToAny } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
@@ -2717,38 +2718,27 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     if (fromKind === "f64" && toKind === "i32") return [{ op: "i32.trunc_sat_f64_s" } as Instr];
   }
   if (from.kind === to.kind) return [];
-  // f64 → externref: box number
-  if (from.kind === "f64" && to.kind === "externref") {
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__box_number");
-    if (funcIdx !== undefined) {
-      return [{ op: "call", funcIdx } as Instr];
-    }
+
+  // #1917 Step 0: scalar / numeric / box-unbox rows come from the single
+  // coercion table. Excluded here (kept as the original rows below): `from`
+  // ref/ref_null — coercionInstrs intentionally NaNs/0s a bare GC ref ToNumber
+  // (object without valueOf, §7.1.4) and has its own AnyValue→externref helper
+  // + guarded ref.cast arms that need `ctx`/`fctx`.
+  if (from.kind !== "ref" && from.kind !== "ref_null") {
+    const needsBox =
+      (to.kind === "externref" || to.kind === "ref_extern") &&
+      (fromKind === "f64" || fromKind === "i32" || fromKind === "i64");
+    const needsUnbox =
+      (from.kind === "externref" || from.kind === "ref_extern") &&
+      (toKind === "f64" || toKind === "i32" || toKind === "i64");
+    if (needsBox || needsUnbox) addUnionImports(ctx);
+    const plan = coercionPlan(from, to, {
+      boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
+      unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+    });
+    if (plan && !plan.lossy) return plan.instrs;
   }
-  // i32 → externref: convert to f64 then box
-  if (from.kind === "i32" && to.kind === "externref") {
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__box_number");
-    if (funcIdx !== undefined) {
-      return [{ op: "f64.convert_i32_s" } as Instr, { op: "call", funcIdx } as Instr];
-    }
-  }
-  // i32 → f64
-  if (from.kind === "i32" && to.kind === "f64") {
-    return [{ op: "f64.convert_i32_s" } as Instr];
-  }
-  // f64 → i32
-  if (from.kind === "f64" && to.kind === "i32") {
-    return [{ op: "i32.trunc_sat_f64_s" } as Instr];
-  }
-  // externref → f64: unbox number
-  if (from.kind === "externref" && to.kind === "f64") {
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__unbox_number");
-    if (funcIdx !== undefined) {
-      return [{ op: "call", funcIdx } as Instr];
-    }
-  }
+
   // ref_null → ref: assert non-null
   if (from.kind === "ref_null" && to.kind === "ref") {
     return [{ op: "ref.as_non_null" } as Instr];

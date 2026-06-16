@@ -328,8 +328,19 @@ function emitSetSubclassProto(
   addStringConstantGlobal(ctx, parentName);
   const subNameGlobal = ctx.stringGlobalMap.get(subName);
   const parentNameGlobal = ctx.stringGlobalMap.get(parentName);
-  if (subNameGlobal === undefined || parentNameGlobal === undefined) {
-    // String pool not available (very unusual) — skip silently.
+  // (#2029) In `--target standalone`/`nativeStrings`, `addStringConstantGlobal`
+  // stores the documented `-1` sentinel ("no host `string_constants` global —
+  // materialize the literal inline at use sites", see registry/imports.ts).
+  // The class-name strings here exist only to feed the `__set_subclass_proto`
+  // HOST import — which is itself unavailable standalone — so a `global.get -1`
+  // would be baked and crash binary emit (`u32 out of range: -1`). Guarding only
+  // `=== undefined` (a missing key) missed this in-pool `-1` value, the
+  // builtin-subclass cluster of the #2029 emit bucket. Skip the proto adjustment
+  // when either name resolves to the sentinel (or is absent): there is no host to
+  // call, and the WasmGC instance tag already carries class identity for
+  // `instanceof`.
+  if (subNameGlobal === undefined || parentNameGlobal === undefined || subNameGlobal < 0 || parentNameGlobal < 0) {
+    // String pool not available, or the standalone `-1` sentinel — skip silently.
     return;
   }
   // Skip when the instance is null (e.g. standalone `__new_<Parent>` fallback);
