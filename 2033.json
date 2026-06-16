@@ -1,8 +1,9 @@
 {
   "id": "2033",
   "assignee": "ttraenkler/tld-1921",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2033-custom-iterable-spread-destructure",
   "claimed_at": "2026-06-16T16:58:14Z",
-  "updated_at": "2026-06-16T16:58:14Z"
+  "updated_at": "2026-06-16T17:41:30Z",
+  "released_at": "2026-06-16T17:41:30Z"
 }
