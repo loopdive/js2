@@ -1,9 +1,8 @@
 {
   "id": "1899",
-  "assignee": "ttraenkler/sd1",
-  "status": "released",
+  "assignee": "ttraenkler/arch1",
+  "status": "in-progress",
   "branch": "issue-1899-funcidx-contract",
-  "claimed_at": "2026-06-16T03:29:41Z",
-  "updated_at": "2026-06-16T03:43:11Z",
-  "released_at": "2026-06-16T03:43:11Z"
+  "claimed_at": "2026-06-16T08:10:23Z",
+  "updated_at": "2026-06-16T08:10:23Z"
 }
