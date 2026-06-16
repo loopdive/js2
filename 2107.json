@@ -1,8 +1,1 @@
-{
-  "id": "2107",
-  "assignee": "ttraenkler/d3",
-  "status": "in-progress",
-  "branch": "issue-2107-value-rep-any-helper",
-  "claimed_at": "2026-06-16T03:30:00Z",
-  "updated_at": "2026-06-16T03:30:00Z"
-}
+{"id":"2107","assignee":"ttraenkler/d3","status":"done","branch":"issue-2107-value-rep-any-helper","claimed_at":"2026-06-16T03:30:00Z","updated_at":"2026-06-16T04:20:00Z","released_at":"2026-06-16T04:20:00Z"}
