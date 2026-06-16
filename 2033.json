@@ -1,8 +1,9 @@
 {
   "id": "2033",
   "assignee": "ttraenkler/dev-a",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2033-custom-iterable-spread",
   "claimed_at": "2026-06-16T08:27:07Z",
-  "updated_at": "2026-06-16T08:27:07Z"
+  "updated_at": "2026-06-16T08:36:05Z",
+  "released_at": "2026-06-16T08:36:05Z"
 }
