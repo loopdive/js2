@@ -1,8 +1,9 @@
 {
   "id": "2119",
   "assignee": "ttraenkler/tld-1921",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2119-module-strict-arguments",
   "claimed_at": "2026-06-16T21:20:04Z",
-  "updated_at": "2026-06-16T21:20:04Z"
+  "updated_at": "2026-06-16T21:40:25Z",
+  "released_at": "2026-06-16T21:40:25Z"
 }
