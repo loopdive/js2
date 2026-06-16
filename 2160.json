@@ -2,7 +2,7 @@
   "id": "2160",
   "assignee": "ttraenkler/d1",
   "status": "in-progress",
-  "branch": "issue-2160-standalone-number-parse",
-  "claimed_at": "2026-06-16T01:38:36Z",
-  "updated_at": "2026-06-16T01:38:36Z"
+  "branch": "issue-2160-number-parse-namespace",
+  "claimed_at": "2026-06-16T01:39:12Z",
+  "updated_at": "2026-06-16T01:39:12Z"
 }
