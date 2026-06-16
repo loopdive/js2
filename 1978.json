@@ -1,8 +1,9 @@
 {
   "id": "1978",
   "assignee": "ttraenkler/d1",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1978-wasi-start-user-main",
   "claimed_at": "2026-06-16T03:27:54Z",
-  "updated_at": "2026-06-16T03:27:54Z"
+  "updated_at": "2026-06-16T03:33:00Z",
+  "released_at": "2026-06-16T03:33:00Z"
 }
