@@ -1,8 +1,9 @@
 {
   "id": "1538",
   "assignee": "ttraenkler/dv2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1538-host-native-json-impl",
   "claimed_at": "2026-06-16T06:24:02Z",
-  "updated_at": "2026-06-16T06:24:02Z"
+  "updated_at": "2026-06-16T06:27:16Z",
+  "released_at": "2026-06-16T06:27:16Z"
 }
