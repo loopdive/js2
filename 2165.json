@@ -1,9 +1,1 @@
-{
-  "id": "2165",
-  "assignee": "ttraenkler/se1",
-  "status": "done",
-  "branch": "issue-2165-standalone-promise-residual",
-  "claimed_at": "2026-06-16T06:00:20Z",
-  "updated_at": "2026-06-16T06:34:51Z",
-  "released_at": "2026-06-16T06:34:51Z"
-}
+{"id":"2165","assignee":"ttraenkler/d3","status":"released","branch":"issue-2165-standalone-promise-async-residual","claimed_at":"2026-06-16T05:20:00Z","updated_at":"2026-06-16T11:55:00Z","released_at":"2026-06-16T11:55:00Z"}
