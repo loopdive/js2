@@ -138,6 +138,14 @@ export interface CompileError {
   severity: "error" | "warning";
   /** TS diagnostic code (if from TypeScript diagnostics) */
   code?: number;
+  /**
+   * Source file the diagnostic originated in (#1929). Populated from
+   * `diag.file.fileName` for TypeScript diagnostics; absent for diagnostics
+   * with no associated file (global/options errors). Essential for the
+   * multi-file / files APIs where `line`/`column` alone can't say *which*
+   * file. Additive — existing single-file callers can ignore it.
+   */
+  file?: string;
 }
 
 export interface DomContainmentOptions {

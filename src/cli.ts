@@ -252,7 +252,10 @@ const result = await compile(source, {
 if (!result.success) {
   for (const e of result.errors) {
     const severity = e.severity === "warning" ? "warning" : "error";
-    console.error(`${absInput}:${e.line}:${e.column} - ${severity}: ${e.message}`);
+    // #1929 — prefer the diagnostic's own source file when present (multi-file
+    // compiles report errors from imported files, not just the entry).
+    const where = e.file ?? absInput;
+    console.error(`${where}:${e.line}:${e.column} - ${severity}: ${e.message}`);
   }
   process.exit(1);
 }

@@ -557,11 +557,14 @@ export function compileSourceSync(
           ? "warning"
           : "error";
       errors.push({
-        message: typeof diag.messageText === "string" ? diag.messageText : diag.messageText.messageText,
+        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+        // elaboration) instead of only the head .messageText.
+        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
         line: pos.line + 1,
         column: pos.character + 1,
         severity: severity as "error" | "warning",
         code: diag.code,
+        ...(diag.file ? { file: diag.file.fileName } : {}),
       });
     }
   }
@@ -931,11 +934,14 @@ export async function compileMultiSource(
           ? "warning"
           : "error";
       errors.push({
-        message: typeof diag.messageText === "string" ? diag.messageText : diag.messageText.messageText,
+        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+        // elaboration) and attribute the source file for multi-file compiles.
+        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
         line: pos.line + 1,
         column: pos.character + 1,
         severity,
         code: diag.code,
+        ...(diag.file ? { file: diag.file.fileName } : {}),
       });
     }
   }
@@ -1215,11 +1221,14 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
           ? "warning"
           : "error";
       errors.push({
-        message: typeof diag.messageText === "string" ? diag.messageText : diag.messageText.messageText,
+        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+        // elaboration) and attribute the source file for multi-file compiles.
+        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
         line: pos.line + 1,
         column: pos.character + 1,
         severity,
         code: diag.code,
+        ...(diag.file ? { file: diag.file.fileName } : {}),
       });
     }
   }
