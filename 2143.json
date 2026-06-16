@@ -1,8 +1,9 @@
 {
   "id": "2143",
   "assignee": "ttraenkler/tech-lead",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2143-validate-lane",
   "claimed_at": "2026-06-16T16:22:32Z",
-  "updated_at": "2026-06-16T16:22:32Z"
+  "updated_at": "2026-06-16T16:23:08Z",
+  "released_at": "2026-06-16T16:23:08Z"
 }
