@@ -1,8 +1,9 @@
 {
   "id": "2025",
   "assignee": "ttraenkler/tld-2108",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2025-extracted-method-typeerror",
   "claimed_at": "2026-06-16T14:52:05Z",
-  "updated_at": "2026-06-16T14:52:05Z"
+  "updated_at": "2026-06-16T15:31:39Z",
+  "released_at": "2026-06-16T15:31:39Z"
 }
