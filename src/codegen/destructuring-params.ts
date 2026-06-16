@@ -255,7 +255,47 @@ function boxToExternref(ctx: CodegenContext, elemKey: string): Instr[] {
 }
 
 export function buildDestructureNullThrow(ctx: CodegenContext, fctx?: FunctionContext): Instr[] {
-  const msg = "Cannot destructure 'null' or 'undefined'";
+  return buildTypeErrorThrow(ctx, "Cannot destructure 'null' or 'undefined'", fctx);
+}
+
+/**
+ * (#2025) Pre-register the imports `buildTypeErrorThrow` will resolve, WITHOUT
+ * emitting any body. Call this once before a pass that may emit several throws
+ * (e.g. `finalizeMethodTrampolines`, which forwards `call methodFuncIdx` at
+ * pre-shift indices): adding a NEW late import mid-pass shifts every function
+ * index, but only the body whose `fctx` is flushed gets reshifted, leaving the
+ * other already-built forwarding `call`s pointing at the wrong function. Ensuring
+ * the import up front makes each in-loop `ensureLateImport` a no-op lookup (the
+ * name is already in `funcMap`), so no shift happens during the pass.
+ *
+ * Idempotent: `emitWasiErrorConstructor` / `ensureLateImport` no-op when the
+ * name already exists.
+ */
+export function ensureTypeErrorThrowImports(ctx: CodegenContext): void {
+  if (ctx.wasi || ctx.standalone) {
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    ensureLateImport(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
+  } else {
+    ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
+  }
+}
+
+/**
+ * #2025 — Build a catchable JS `TypeError` throw as a standalone `Instr[]`
+ * (does not push into `fctx.body`). Generalises `buildDestructureNullThrow`'s
+ * proven late-import-safe throw lowering so other null/undefined-receiver sites
+ * (e.g. the method-extraction trampoline's null-`this` slot) can throw a
+ * catchable TypeError instead of trapping on a later `struct.get`.
+ *
+ * Pass `fctx` whenever the instructions are emitted into a function body whose
+ * later `call` indices must stay in lockstep with import additions — the helper
+ * calls `flushLateImportShifts(ctx, fctx)` before snapshotting the resolved
+ * `__new_TypeError` / `__throw_type_error` funcIdx (a raw `funcMap.get` snapshot
+ * goes stale when a subsequent import shifts the index). Without an `fctx`, it
+ * degrades to a bare `throw` of the message string under the shared `$exc` tag
+ * (still observable / catchable, just not constructor-matching).
+ */
+export function buildTypeErrorThrow(ctx: CodegenContext, msg: string, fctx?: FunctionContext): Instr[] {
   addStringConstantGlobal(ctx, msg);
   // #1623 — in nativeStrings mode (wasi / standalone) `stringGlobalMap` holds a
   // `-1` sentinel rather than a real import-global index, so a bare

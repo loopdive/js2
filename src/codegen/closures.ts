@@ -57,7 +57,12 @@ import {
   compileStatement,
 } from "./statements.js";
 import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
-import { buildDestructureNullThrow, isNullOrUndefinedLiteral } from "./destructuring-params.js";
+import {
+  buildDestructureNullThrow,
+  buildTypeErrorThrow,
+  ensureTypeErrorThrowImports,
+  isNullOrUndefinedLiteral,
+} from "./destructuring-params.js";
 import {
   cacheParamDefaultArgc,
   emitF64ParamSentinelCheck,
@@ -67,6 +72,7 @@ import {
   paramDefaultNeedsArgc,
 } from "./statements/nested-declarations.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
+import { walkInstructions } from "./walk-instructions.js";
 
 // ── Arrow function callbacks ──────────────────────────────────────────
 
@@ -3442,6 +3448,35 @@ export function emitFuncRefAsClosure(
 }
 
 /**
+ * (#2025) Does the compiled method body read its `this` param (local index 0)?
+ *
+ * Method bodies always carry `this` as param 0 (`self_obj`); user params start
+ * at 1. Locals are function-scoped in Wasm, so a `local.get 0` anywhere in the
+ * body — including nested block/if/loop/try arms (walked recursively) — is a
+ * read of `this`. If the body never reads it, an unbound-extraction null `this`
+ * is harmless and must be forwarded as-is; if it does, a null `this` would trap
+ * on the eventual `struct.get`, so the trampoline must throw a catchable
+ * TypeError instead (see `buildTrampolineThisSlot`). Inner closures that capture
+ * `this` read `local.get 0` in THIS body before boxing it, so they are covered.
+ *
+ * `methodFuncIdx` is a global function index; the defined-function body lives at
+ * `methodFuncIdx - numImportFuncs`. Returns `false` (forward null) when the
+ * target is an import or the body is unavailable.
+ */
+function methodReadsThisParam(ctx: CodegenContext, methodFuncIdx: number): boolean {
+  const localIdx = methodFuncIdx - ctx.numImportFuncs;
+  if (localIdx < 0) return false; // import target — no body to inspect.
+  const func = ctx.mod.functions[localIdx];
+  if (!func || !Array.isArray(func.body)) return false;
+  let reads = false;
+  walkInstructions(func.body, (instr) => {
+    const a = instr as { op?: string; index?: number };
+    if (a.op === "local.get" && a.index === 0) reads = true;
+  });
+  return reads;
+}
+
+/**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
  *
  * Object-literal / cached method trampolines bridge the closure-value ABI
@@ -3455,19 +3490,44 @@ export function emitFuncRefAsClosure(
  * trap (the issue's bare `WebAssembly.Exception`).
  *
  * Read `__current_this` instead and use it as `this` when it `ref.test`s as the
- * method's object struct; otherwise fall back to `ref.null` (preserving the
- * unbound-extraction semantics, since plain `__call_fn_N` dispatch leaves the
- * global null). This mirrors the null-guarded `__current_this` read that lifted
+ * method's object struct; otherwise the receiver is the spec's `undefined`
+ * (unbound method extraction `var f = o.m; f()` in strict/module code).
+ *
+ * (#2025) When the method body actually dereferences `this` (`methodUsesThis`),
+ * the `else` arm — the null-receiver case — throws a catchable JS `TypeError`
+ * instead of forwarding `ref.null` into the body, where the subsequent
+ * `struct.get` would TRAP uncatchably ("dereferencing a null pointer") and
+ * escape the user's `try/catch`. This matches `this.x` on `undefined` in Node.
+ * When the method NEVER reads `this` (`methodUsesThis === false`, e.g. the
+ * test262 yield-star pattern or `const f = obj.m` where `m` ignores `this`), the
+ * null receiver is harmless, so the `else` arm keeps forwarding `ref.null` and
+ * the extracted call succeeds — throwing there would be a spec-incorrect
+ * regression.
+ *
+ * The `then` arm mirrors the null-guarded `__current_this` read that lifted
  * closure bodies already use for `ThisKeyword` (`expressions.ts`, #1702).
  *
  * `anyTempLocalIdx` must reference a spare `anyref` local appended to the
- * trampoline. Emits a sequence leaving exactly one `(ref null objStructTypeIdx)`
- * on the stack.
+ * trampoline. `fctx` (when present) keeps the throw's late-import `call` indices
+ * in lockstep with subsequent import additions. Emits a sequence leaving exactly
+ * one `(ref null objStructTypeIdx)` on the stack on the non-throwing arm.
  */
-function buildTrampolineThisSlot(ctx: CodegenContext, objStructTypeIdx: number, anyTempLocalIdx: number): Instr[] {
+function buildTrampolineThisSlot(
+  ctx: CodegenContext,
+  objStructTypeIdx: number,
+  anyTempLocalIdx: number,
+  methodUsesThis: boolean,
+  fctx?: FunctionContext,
+): Instr[] {
   const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
   const nullThis: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx } as Instr];
-  if (currentThisGlobalIdx < 0) return nullThis;
+  // #2025 — unbound extraction with a `this`-dereferencing body: throw a
+  // catchable TypeError rather than letting the body trap on `struct.get` of a
+  // null `this`. A body that never reads `this` keeps the harmless null.
+  const undefinedThis: Instr[] = methodUsesThis
+    ? buildTypeErrorThrow(ctx, "Cannot read properties of undefined (reading 'this')", fctx)
+    : nullThis;
+  if (currentThisGlobalIdx < 0) return undefinedThis;
   return [
     { op: "global.get", index: currentThisGlobalIdx } as Instr,
     { op: "any.convert_extern" } as Instr,
@@ -3480,7 +3540,10 @@ function buildTrampolineThisSlot(ctx: CodegenContext, objStructTypeIdx: number, 
         { op: "local.get", index: anyTempLocalIdx } as Instr,
         { op: "ref.cast", typeIdx: objStructTypeIdx } as Instr,
       ],
-      else: nullThis,
+      // When `methodUsesThis`, the throw is stack-polymorphic, so the `if`
+      // block's declared `(ref null objStruct)` result is satisfied on this arm
+      // without pushing a value; otherwise it pushes the harmless `ref.null`.
+      else: undefinedThis,
     } as unknown as Instr,
   ];
 }
@@ -3537,7 +3600,11 @@ export function emitObjectMethodAsClosure(
   const trampolineName = `__obj_meth_tramp_${methodName}_${ctx.closureCounter++}`;
   // anyref temp at the first slot past the params (closure_self + userParams).
   const anyTempLocalIdx = 1 + userParams.length;
-  const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx);
+  // (#2025) Placeholder body: pass `methodUsesThis=false` so this initial emit
+  // stays a simple `ref.null` slot. `finalizeMethodTrampolines` rebuilds the
+  // authoritative body (with the throw, if the method reads `this`) once the
+  // method's final signature and compiled body are available.
+  const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx, false);
   for (let i = 0; i < userParams.length; i++) {
     // Skip closure_self at param 0; user params start at index 1
     trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
@@ -3596,6 +3663,15 @@ export function emitObjectMethodAsClosure(
  * coercion the call needs is applied by mirroring the method's param types.
  */
 export function finalizeMethodTrampolines(ctx: CodegenContext): void {
+  // (#2025) If any method trampoline reads `this`, its null-receiver arm throws
+  // a catchable TypeError. Pre-register that throw's imports ONCE here, before
+  // the loop forwards `call methodFuncIdx` at pre-shift indices — adding the
+  // import mid-loop would shift indices and corrupt already-built forwarding
+  // calls. After this, the in-loop `ensureLateImport` is a no-op lookup.
+  const anyMethodReadsThis = ctx.pendingMethodTrampolines.some(
+    (t) => !t.noThisParam && methodReadsThisParam(ctx, t.methodFuncIdx),
+  );
+  if (anyMethodReadsThis) ensureTypeErrorThrowImports(ctx);
   for (const t of ctx.pendingMethodTrampolines) {
     // (#1525b / #1809) If the captured methodFuncIdx resolves to an IMPORT at
     // finalize (< ctx.numImportFuncs), there are two distinct cases:
@@ -3689,17 +3765,25 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     };
 
     // (#1340) Function-decl trampolines have no `this` prologue; method
-    // trampolines resolve the receiver from `__current_this` (#2015, falling
-    // back to `ref.null` for the unbound method-extraction case) before
-    // forwarding user params. The anyref scratch local is allocated through
-    // `tFctx` so it lands in `localDefs` (attached to the registered function
-    // below) and any later coercion temps allocate after it.
+    // trampolines resolve the receiver from `__current_this` (#2015), and
+    // (#2025) throw a catchable TypeError on the unbound-extraction null-`this`
+    // arm rather than letting the body trap, before forwarding user params. The
+    // anyref scratch local is allocated through `tFctx` so it lands in
+    // `localDefs` (attached to the registered function below) and any later
+    // coercion temps allocate after it. `tFctx` is passed so the throw's
+    // late-import `call` indices stay in lockstep with import additions — this
+    // finalize pass is the authoritative body, run after method signatures
+    // resolve (the initial emit's body is a placeholder it overwrites).
     let newBody: Instr[];
     if (t.noThisParam) {
       newBody = [];
     } else {
       const anyTempLocalIdx = allocTempLocal(tFctx, { kind: "anyref" });
-      newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx);
+      // (#2025) Inspect the now-final method body: only throw on a null `this`
+      // when the body actually reads it (`local.get 0`); a body that ignores
+      // `this` keeps forwarding the harmless null so extraction still works.
+      const methodUsesThis = methodReadsThisParam(ctx, t.methodFuncIdx);
+      newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, methodUsesThis, tFctx);
     }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 } as Instr);
@@ -3835,13 +3919,14 @@ export function emitCachedMethodClosureAccess(
   let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
   if (trampolineFuncIdx === undefined) {
     // Trampoline body: drop the closure-self arg (param 0), resolve the
-    // method's `this` from `__current_this` (#2015 — falls back to
-    // `ref.null` for the unbound method-extraction case `var fn = c.m;
-    // fn();` where JS strict mode calls with `this = undefined`, so the
-    // null receiver propagates the spec-mandated TypeError on `this.field`
-    // access), then forward user params, then call the method.
+    // method's `this` from `__current_this` (#2015 — for the unbound
+    // method-extraction case `var fn = c.m; fn();` where JS strict mode calls
+    // with `this = undefined`). (#2025) `finalizeMethodTrampolines` rebuilds
+    // this body and, if the method reads `this`, swaps the null arm for a
+    // catchable TypeError throw (a null receiver would otherwise trap on
+    // `struct.get`); this initial placeholder passes `methodUsesThis=false`.
     const anyTempLocalIdx = 1 + userParams.length;
-    const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx);
+    const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx, false);
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
     }
