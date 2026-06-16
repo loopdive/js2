@@ -1,8 +1,9 @@
 {
   "id": "1537",
   "assignee": "ttraenkler/sdev-1537",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1537-ryu-number-format",
   "claimed_at": "2026-06-16T18:20:36Z",
-  "updated_at": "2026-06-16T18:20:36Z"
+  "updated_at": "2026-06-16T19:16:31Z",
+  "released_at": "2026-06-16T19:16:31Z"
 }
