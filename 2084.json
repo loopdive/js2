@@ -1,8 +1,9 @@
 {
   "id": "2084",
   "assignee": "ttraenkler/dv3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2084-module-global-write-guard",
   "claimed_at": "2026-06-16T05:04:33Z",
-  "updated_at": "2026-06-16T05:04:33Z"
+  "updated_at": "2026-06-16T05:21:56Z",
+  "released_at": "2026-06-16T05:21:56Z"
 }
