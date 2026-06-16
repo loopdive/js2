@@ -1096,6 +1096,21 @@ export interface CodegenContext {
   classMethodsCsvGlobal: Map<string, number>;
   /** Map from class name → global index of the class-object externref singleton (#1395). Used so `C` resolves to a real object whose static-method descriptors are queryable. */
   classObjectGlobals: Map<string, number>;
+  /**
+   * (#2101 P0 / #2158) The single module-level `$ClassMeta` struct type idx, or
+   * undefined until the first class registers one. ONE shared heap type carries
+   * every class's reflective metadata (tag/parentTag/ctorFunc/proto/methodCsv/
+   * name/isClass); per-class identity rides the `$tag` field *value* (#2009),
+   * never a `ref.test` on this type.
+   */
+  classMetaTypeIdx?: number;
+  /**
+   * (#2101 P0 / #2158) Map class name → global idx of its `$ClassMeta`-bearing
+   * (anyref) singleton, lazily initialized like `protoGlobals` /
+   * `classObjectGlobals`. `__class_<Name>` / `__proto_<Name>` link to this; no
+   * reader exists until P1 (byte-identical in P0).
+   */
+  classMetaGlobals: Map<string, number>;
   /** Map from class name → own static method names (for the static method allowlist; #1395) */
   classStaticMethodNames: Map<string, string[]>;
   /** Map from class name → global idx of the static-method-name CSV string constant (#1395) */

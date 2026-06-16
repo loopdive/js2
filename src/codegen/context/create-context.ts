@@ -178,6 +178,7 @@ export function createCodegenContext(
     classMethodNames: new Map(),
     classMethodsCsvGlobal: new Map(),
     classObjectGlobals: new Map(),
+    classMetaGlobals: new Map(), // (#2101 P0 / #2158) per-class $ClassMeta singleton globals
     classStaticMethodNames: new Map(),
     classStaticMethodsCsvGlobal: new Map(),
     builtinObjectGlobals: new Map(),
