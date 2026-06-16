@@ -1,8 +1,9 @@
 {
   "id": "2143",
   "assignee": "ttraenkler/tld-1921",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2143-validate-unoptimized-lane",
   "claimed_at": "2026-06-16T21:01:51Z",
-  "updated_at": "2026-06-16T21:01:51Z"
+  "updated_at": "2026-06-16T21:15:18Z",
+  "released_at": "2026-06-16T21:15:18Z"
 }
