@@ -1,8 +1,9 @@
 {
   "id": "2183",
   "assignee": "ttraenkler/se2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2181-proxy-traps-harness",
   "claimed_at": "2026-06-16T06:54:51Z",
-  "updated_at": "2026-06-16T06:54:51Z"
+  "updated_at": "2026-06-16T07:07:48Z",
+  "released_at": "2026-06-16T07:07:48Z"
 }
