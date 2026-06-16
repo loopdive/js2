@@ -1,8 +1,9 @@
 {
   "id": "2086",
   "assignee": "ttraenkler/dv3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2086-derived-ctor-synthesis",
   "claimed_at": "2026-06-16T05:17:25Z",
-  "updated_at": "2026-06-16T05:17:25Z"
+  "updated_at": "2026-06-16T05:51:12Z",
+  "released_at": "2026-06-16T05:51:12Z"
 }
