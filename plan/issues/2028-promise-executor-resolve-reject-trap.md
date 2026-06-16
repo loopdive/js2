@@ -1,10 +1,12 @@
 ---
 id: 2028
 title: "new Promise(executor): invoking the host-provided resolve/reject from wasm traps null deref — executor pattern fully broken in JS-host mode"
-status: ready
-sprint: 62
+status: done
+assignee: ttraenkler/sen-b
+completed: 2026-06-16
+sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-16
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -359,3 +361,56 @@ resolve/reject §27.2.1.3.2 / §27.2.1.3.1.
 **Dispatchable to senior-dev.** Single, well-isolated codegen change with a
 verified WAT-level root cause. Lower risk than the prior analyses suggested —
 no `__make_callback` bridge surgery required.
+
+---
+
+## Implementation (sen-b, 2026-06-16) — DONE
+
+Confirmed arch1's WAT diagnosis with a live repro on main (gate now ON post-#1796):
+`new Promise<string>((resolve) => resolve("ok"))` rejected with
+`RuntimeError: dereferencing a null pointer` at `$__cb_0` — the host `resolve`
+param went down the closure-struct `ref.test`/`ref.cast`/`struct.get`/`call_ref`
+path, the cast nulled on the foreign callable, and `struct.get` trapped.
+
+### Fix (one helper + one disjunct, `src/codegen/expressions/calls.ts`)
+Rather than widen `calleeMayBeHostCallable` (which is `(ctx, expr)` only and
+keyed on `VariableDeclaration`), I added a sibling predicate
+**`calleeIsPromiseExecutorParam(ctx, expr)`** and OR'd it into the existing
+`hostCallFallback` computation. It returns `true` only when the callee is a
+parameter of the arrow/function-expression passed **directly as arg 0 to
+`new Promise(...)`** and whose declared type is callable. On a match the call
+takes the already-wired `__call_function(fn, undefined, argsArray)` host arm
+(JS-host only — gated `!ctx.standalone && !ctx.wasi` at the dispatch site).
+
+### Scope decision — why executor-param, not "any externref callable param"
+arch1's spec suggested "any externref-typed callable param." I implemented that
+first and it **regressed the #1941 dual-mode guarantee**: an ordinary
+local-closure callback (`function apply(cb,v){return cb(v)}`) ALSO lowers its
+`cb` param to a bare `externref` local (verified in WAT: `$apply (param externref
+f64)`), so the broad predicate fired on it and pulled `__call_function` /
+`__js_array_new` into a self-contained module. The discriminator is not the
+lowered type — it's provenance: `apply`'s `cb` receives a **wasm closure** at the
+call site (so `ref.test $closure` succeeds, fast path taken; the host arm is dead
+code that only leaks imports), whereas a Promise executor's `resolve`/`reject`
+receive **host functions** from native `new Promise`. Scoping the predicate to
+the executor-param shape keeps the host arm exactly where a foreign callable can
+arrive and restores the #1941 guard (verified: no `__call_function`/`__js_array_new`
+for the local-closure case, `main()` still returns 11).
+
+### Verified
+- `tests/issue-2028.test.ts` (6 cases): sync resolve → "ok"; reject → reason;
+  resolve-twice → first wins; resolve(number); `.then` chain → 11; **#1941
+  dual-mode guard** (no host imports for a pure local-closure callback param).
+- tsc clean; IR fallback budget unchanged (the #1941 guard holds).
+- Net new regressions: 0. Pre-existing-on-main failures unaffected
+  (`promise-combinators` ×2, `optional-direct-closure-call` ×2,
+  `accessor-side-effects` ×3 — all verified identical on the `/workspace` main
+  checkout).
+
+### Out of scope (separate follow-up)
+The `promise-combinators` ×2 failures (`await Promise.all(src.getPromises())`)
+are a **different** defect: the host `declare`-class **method** `getPromises()`
+returns `__get_undefined`, unrelated to the resolve/reject param dispatch this
+issue fixes. That host-method-return marshaling gap is what blocks dropping the
+`awaitedExprIsPromiseCombinator` exclusion in #1796 — it remains a separate
+follow-up (host-method value marshaling), not addressed here.

@@ -1007,6 +1007,45 @@ function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression): bool
 }
 
 /**
+ * (#2028) Is `expr` a call to a `resolve`/`reject` **parameter of a Promise
+ * executor** — i.e. a parameter of the arrow/function-expression passed directly
+ * as the sole argument to `new Promise(...)`? At runtime native `new Promise`
+ * invokes the compiled executor body with **real host functions** for those
+ * params, so the in-body call `resolve("ok")` must dispatch through the host
+ * `__call_function` arm. Without this it goes down the closure-struct
+ * `ref.test`/`ref.cast`/`struct.get`/`call_ref` path, the cast nulls on the
+ * foreign callable, and `struct.get` traps "dereferencing a null pointer" — the
+ * promise rejects with a RuntimeError instead of fulfilling.
+ *
+ * Scoped narrowly to the executor-parameter case ON PURPOSE: an ordinary
+ * closure-callback param (e.g. `apply(cb, v) { return cb(v); }`) also lowers to
+ * an `externref` local, but it receives a **wasm closure** at the call site, so
+ * `ref.test $closure` succeeds and the fast `call_ref` path is taken. Emitting
+ * the host arm for those would be dead code that needlessly pulls
+ * `__call_function` / `__js_array_new` host imports into otherwise self-contained
+ * modules — the #1941 dual-mode regression. Restricting to executor params keeps
+ * the host arm exactly where a foreign callable can actually arrive.
+ */
+function calleeIsPromiseExecutorParam(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isIdentifier(expr)) return false;
+  const sym = ctx.checker.getSymbolAtLocation(expr);
+  const decl = sym?.valueDeclaration;
+  if (!decl || !ts.isParameter(decl)) return false;
+  // The parameter's declared type must be callable (resolve/reject are fns).
+  const t = ctx.checker.getTypeAtLocation(expr);
+  if ((t?.getCallSignatures?.()?.length ?? 0) === 0) return false;
+  // The owning function must be the executor passed directly to `new Promise(...)`:
+  //   new Promise((resolve, reject) => { ... })  /  new Promise(function (resolve) { ... })
+  const owner = decl.parent;
+  if (!owner || !(ts.isArrowFunction(owner) || ts.isFunctionExpression(owner))) return false;
+  const callOrNew = owner.parent;
+  if (!callOrNew || !ts.isNewExpression(callOrNew)) return false;
+  if (callOrNew.arguments?.[0] !== owner) return false; // executor must be arg 0
+  const ctor = callOrNew.expression;
+  return ts.isIdentifier(ctor) && ctor.text === "Promise";
+}
+
+/**
  * (#1337) Emit a call to a host bound-function externref via the
  * `__call_function(fn, thisArg, argsArray)` host helper. The bound function
  * already carries [[BoundThis]] and [[BoundArguments]], so `thisArg` is passed
@@ -9254,7 +9293,15 @@ function compileCallExpression(
             // function params are always wrapped into the closure struct, so the
             // arm would be dead code and only serve to pull host imports
             // (__js_array_new/…) into otherwise self-contained modules.
-            calleeMayBeHostCallable(ctx, expr.expression);
+            //
+            // (#2028) ALSO emit it for a `resolve`/`reject` parameter of a
+            // `new Promise(executor)` — those arrive as foreign host functions,
+            // and calling them must take the `__call_function` arm rather than
+            // trap on the closure-struct `call_ref` path. Scoped to the executor
+            // params (not all callable externref params) to preserve the #1941
+            // dual-mode guarantee — see the helper's doc.
+            (calleeMayBeHostCallable(ctx, expr.expression) ||
+              calleeIsPromiseExecutorParam(ctx, expr.expression));
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;
