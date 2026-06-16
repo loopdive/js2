@@ -1,9 +1,8 @@
 {
   "id": "1373b",
   "assignee": "ttraenkler/sen-b",
-  "status": "released",
+  "status": "in-progress",
   "branch": "issue-1373b-ir-async-cps",
-  "claimed_at": "2026-06-16T08:59:52Z",
-  "updated_at": "2026-06-16T09:06:34Z",
-  "released_at": "2026-06-16T09:06:34Z"
+  "claimed_at": "2026-06-16T10:07:07Z",
+  "updated_at": "2026-06-16T10:07:07Z"
 }
