@@ -134,6 +134,44 @@ typed-array→`any[]` coercion in `type-coercion.ts`/`literals.ts`); pass the TS
 element type already available at the coercion call site. Smallest, safest
 tag-recovery slice; pure #2104 composition; host-reproducible test gate.
 
+#### S0 fix-site correction (sdev7, 2026-06-16 — investigated before #1503 merged)
+
+The plan's "thread the TS element type into the vec→any-vec copy-loop
+(`emitVecToVecBody`)" is **not viable at that site** — I traced it end to end:
+
+- The actual lossy box is at `type-coercion.ts:887`, inside `emitVecToVecBody`,
+  reached via `coerceType → emitSafeStructConversion (type-coercion.ts:680-704)`.
+  That whole path is **purely Wasm-type-driven** (it works from `fromTypeIdx`/
+  `toTypeIdx` and `getVecInfo`'s `ValType` element only). The TS `boolean` type is
+  already fully erased there.
+- **WAT-confirmed the disease**: `[true]` builds `__vec_i32` (`array.new_fixed
+  10 1`), then the copy-loop does `array.get 10; f64.convert_i32_s; call 1`
+  (`__box_number`, tag 3). And critically: **`boolean[]` and `number[]` SHARE
+  `__vec_i32`** — the vec types are named by Wasm kind (`__vec_i32`/`__vec_f64`/
+  `__vec_externref`), there is NO `__vec_boolean`. So the boolean tag is
+  irrecoverable from the source vec type alone at `emitVecToVecBody`.
+
+**Correct fix site = `compileArrayLiteral` (`literals.ts:2691`), not the
+coercion.** The literal already calls `getContextualType(expr)` and the
+per-element TS types are available there (`getTypeAtLocation(el)`). For `[true]`
+the contextual type IS `any[]`, but the element-type selection at
+`literals.ts:2872-2933` only adopts the contextual element type when the first
+element resolves to a **ref** (`:2886` guard) — `boolean→i32` is not a ref, so
+the `any` context is dropped and `elemWasm` stays `i32`, building `__vec_i32` and
+deferring the lossy coercion. **Fix:** when the contextual element type is `any`
+(`isAnyValue` of the resolved contextual element, or `getContextualType` element
+= `any`), set `elemWasm` to the `$AnyValue` ref type and, in the non-spread
+element loop (`:2942-2961`), box each element with
+`boxToAny(ctx, fctx, <elemWasm-of-el>, jsStaticType(getTypeAtLocation(el)))`
+instead of `compileExpression(…, elemWasm)` + a downstream Wasm-kind coerce. This
+builds an AnyValue-vec directly with the right per-element tag (`true`→tag-4),
+eliminating the i32-vec→any-vec coercion for this shape entirely. It is the spec
+§2.2 literal-fast-path pattern #2104 already preserves, extended to the `any[]`
+target. Scope strictly to `contextual elem === any` so number[]/string[]/struct[]
+vecs are byte-identical (no blast radius outside `any[]` literals). Test gate:
+the host repros above + a standalone variant; guard the heterogeneous mixed case
+`[true,1,"x"]` (each element boxed by its own `jsStaticType`).
+
 ### S1 — standalone `$undefined` singleton (so undefined ≠ null in standalone)
 
 - **Today**: `emitUndefined` (`src/codegen/expressions/late-imports.ts:563`)
