@@ -1,8 +1,9 @@
 {
   "id": "2105",
   "assignee": "ttraenkler/d2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2105-bool-brand",
   "claimed_at": "2026-06-16T01:37:30Z",
-  "updated_at": "2026-06-16T01:37:30Z"
+  "updated_at": "2026-06-16T02:51:15Z",
+  "released_at": "2026-06-16T02:51:15Z"
 }
