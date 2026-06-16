@@ -1,8 +1,9 @@
 {
   "id": "1925",
   "assignee": "ttraenkler/sdev-1537",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1925-ir-hygiene-nested-buffers",
   "claimed_at": "2026-06-16T20:45:43Z",
-  "updated_at": "2026-06-16T20:45:43Z"
+  "updated_at": "2026-06-16T21:28:48Z",
+  "released_at": "2026-06-16T21:28:48Z"
 }
