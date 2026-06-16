@@ -16,6 +16,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
+import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { popBody } from "./context/bodies.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -1294,7 +1295,7 @@ export function compileOptionalPropertyAccess(
         // Check for accessor first
         const accessorKey = `${structName}_${propName}`;
         const getterName = `${structName}_get_${propName}`;
-        const getterIdx = ctx.funcMap.get(getterName);
+        const getterIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
         const closureAccGet =
           S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone
             ? ctx.structAccessorClosure.get(accessorKey)?.getGlobal
@@ -1772,7 +1773,8 @@ export function compilePropertyAccess(
     ) {
       const structTypeIdx = ctx.structMap.get(cls.className);
       const getterName = `${cls.className}_get_${cls.fieldName}`;
-      const canEmit = structTypeIdx !== undefined && (cls.kind === "method" || ctx.funcMap.has(getterName));
+      const canEmit =
+        structTypeIdx !== undefined && (cls.kind === "method" || ctx.funcMap.has(classMemberFuncKey(ctx, getterName)));
       if (canEmit) {
         const objResult = compileExpression(ctx, fctx, expr.expression);
         const tmpAny = allocTempLocal(fctx, { kind: "anyref" });
@@ -1810,7 +1812,7 @@ export function compilePropertyAccess(
           resultKind = { kind: "externref" };
         } else {
           // Resolve the getter funcIdx AFTER the throw branch settled imports.
-          const getterIdx = ctx.funcMap.get(getterName)!;
+          const getterIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName))!;
           successInstrs.push({ op: "call", funcIdx: getterIdx });
           const funcDef = ctx.mod.functions[getterIdx - ctx.numImportFuncs];
           const typeDef = funcDef ? ctx.mod.types[funcDef.typeIdx] : undefined;
@@ -2090,7 +2092,7 @@ export function compilePropertyAccess(
       const accessorKey = `${enclosingClass}_${propName}`;
       if (ctx.staticAccessorSet.has(accessorKey)) {
         const getterName = `${enclosingClass}_get_${propName}`;
-        const funcIdx = ctx.funcMap.get(getterName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
         if (funcIdx !== undefined) {
           const retType = emitGetterCallWithDummy(ctx, fctx, enclosingClass, getterName, funcIdx);
           if (retType) return retType;
@@ -2101,7 +2103,7 @@ export function compilePropertyAccess(
       // (same as ClassName.method path at line 992) — avoids generic
       // fallthrough cast of undefined.
       if (ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(fullName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "ref.null.extern" });
           return { kind: "externref" };
@@ -2195,7 +2197,7 @@ export function compilePropertyAccess(
       // unblocking 273 test262 cases for class async-generator yield-star
       // tests that follow this exact extraction pattern.
       if (ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(fullName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
         if (funcIdx !== undefined) {
           const closureRef = emitFuncRefAsClosure(ctx, fctx, fullName, funcIdx);
           if (closureRef) {
@@ -2210,7 +2212,7 @@ export function compilePropertyAccess(
       // Instance method accessed as `ClassName.method` (without prototype) —
       // unusual; keep the legacy null placeholder to preserve existing behavior.
       if (ctx.classMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(fullName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "ref.null.extern" });
           return { kind: "externref" };
@@ -2220,7 +2222,7 @@ export function compilePropertyAccess(
       const accessorKey = `${resolvedClass}_${propName}`;
       if (ctx.classAccessorSet.has(accessorKey)) {
         const getterName = `${resolvedClass}_get_${propName}`;
-        const funcIdx = ctx.funcMap.get(getterName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
         if (funcIdx !== undefined) {
           const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
           return retType ?? { kind: "externref" };
@@ -2250,7 +2252,7 @@ export function compilePropertyAccess(
       // (they live on the constructor, not the prototype) and
       // accessors (handled by the existing accessor path below).
       if (ctx.classMethodSet.has(fullName) && !ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(fullName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
         const structTypeIdx = ctx.structMap.get(className);
         if (funcIdx !== undefined && structTypeIdx !== undefined) {
           if (emitCachedMethodClosureAccess(ctx, fctx, fullName, funcIdx, structTypeIdx)) {
@@ -2968,7 +2970,7 @@ export function compilePropertyAccess(
     }
     if (ctx.classAccessorSet.has(accessorKey)) {
       const getterName = `${typeName}_get_${propName}`;
-      const funcIdx = ctx.funcMap.get(getterName);
+      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
       if (funcIdx !== undefined) {
         compileExpression(ctx, fctx, expr.expression);
         fctx.body.push({ op: "call", funcIdx });
@@ -3036,7 +3038,7 @@ export function compilePropertyAccess(
       const owner = ownerNameForChain(typeName);
       const methodFullName = `${owner}_${propName}`;
       if (ctx.classMethodSet.has(methodFullName) || ctx.staticMethodSet.has(methodFullName)) {
-        const funcIdx = ctx.funcMap.get(methodFullName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
         if (funcIdx !== undefined) {
           // #1118: Object literal — read the struct field which holds the closure.
           // Detected by: typeName is a registered struct AND the struct has a
@@ -4024,7 +4026,7 @@ export function compileElementAccess(
         const accessorKey = `${resolvedClass}_${key}`;
         if (ctx.classAccessorSet.has(accessorKey)) {
           const getterName = `${resolvedClass}_get_${key}`;
-          const funcIdx = ctx.funcMap.get(getterName);
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
           if (funcIdx !== undefined) {
             const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
             return retType ?? { kind: "externref" };
@@ -4043,7 +4045,7 @@ export function compileElementAccess(
         // externref instead of the legacy `ref.null.extern` so that
         // `const f = C['method']; f()` actually invokes the method.
         if (ctx.staticMethodSet.has(fullName)) {
-          const funcIdx = ctx.funcMap.get(fullName);
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
           if (funcIdx !== undefined) {
             const closureRef = emitFuncRefAsClosure(ctx, fctx, fullName, funcIdx);
             if (closureRef) {
@@ -4055,7 +4057,7 @@ export function compileElementAccess(
           }
         }
         if (ctx.classMethodSet.has(fullName)) {
-          const funcIdx = ctx.funcMap.get(fullName);
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
           if (funcIdx !== undefined) {
             fctx.body.push({ op: "ref.null.extern" });
             return { kind: "externref" };
@@ -4081,7 +4083,7 @@ export function compileElementAccess(
         const accessorKey = `${className}_${key}`;
         if (ctx.classAccessorSet.has(accessorKey) && !ctx.staticAccessorSet.has(accessorKey)) {
           const getterName = `${className}_get_${key}`;
-          const funcIdx = ctx.funcMap.get(getterName);
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
           if (funcIdx !== undefined) {
             const retType = emitGetterCallWithDummy(ctx, fctx, className, getterName, funcIdx);
             return retType ?? { kind: "externref" };
@@ -4093,7 +4095,7 @@ export function compileElementAccess(
         // dot-access path at property-access.ts:1361–1383.
         const methodFullName = `${className}_${key}`;
         if (ctx.classMethodSet.has(methodFullName) && !ctx.staticMethodSet.has(methodFullName)) {
-          const funcIdx = ctx.funcMap.get(methodFullName);
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
           const structTypeIdx = ctx.structMap.get(className);
           if (funcIdx !== undefined && structTypeIdx !== undefined) {
             if (emitCachedMethodClosureAccess(ctx, fctx, methodFullName, funcIdx, structTypeIdx)) {
@@ -4302,7 +4304,7 @@ export function compileElementAccessBody(
           const accessorKey = `${sName}_${fieldName}`;
           if (ctx.classAccessorSet.has(accessorKey)) {
             const getterName = `${sName}_get_${fieldName}`;
-            const funcIdx = ctx.funcMap.get(getterName);
+            const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
             if (funcIdx !== undefined) {
               fctx.body.push({ op: "call", funcIdx });
               // Use actual Wasm return type of the getter

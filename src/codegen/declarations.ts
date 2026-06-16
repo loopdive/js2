@@ -2730,6 +2730,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const name = stmt.name ? stmt.name.text : "default";
       // Register the function's .name value for ES-spec compliance
       ctx.functionNameMap.set(name, name);
+      // (#1983) Record the top-level user-function name so class-member funcMap
+      // keys (`${className}_${member}`) that would collide with it can relocate.
+      // Only real `function` declarations participate — class names are tracked
+      // separately and must NOT poison the collision set.
+      if (stmt.name) ctx.topLevelFunctionNames.add(name);
       // #1463 — capture source text for Function.prototype.toString() so that
       // `someFn.toString()` returns the original declaration text instead of
       // the `function () { [native code] }` placeholder. Only top-level

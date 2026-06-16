@@ -26,6 +26,7 @@ import { ts } from "../ts-api.js";
 
 import { getOrRegisterPromiseType } from "../codegen/async-scheduler.js";
 import { addGeneratorImports, addIteratorImports, addStringImports } from "../codegen/index.js";
+import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
@@ -1692,7 +1693,14 @@ class ClassRegistry {
       fieldIdxByName.set(legacyFields[i]!.name, i);
     }
 
-    const constructorFuncName = `${shape.className}_new`;
+    // (#1983) Route synthetic class-member names through `classMemberFuncKey`
+    // so the IR backend resolves the SAME (possibly relocated) funcMap key the
+    // legacy pass registered. Without this, a class whose `${className}_new` /
+    // `${className}_${method}` key collided with a user function resolves to the
+    // user function's funcIdx (wrong signature → validation trap). Identical to
+    // the legacy name for every non-colliding class.
+    const ctx = this.ctx;
+    const constructorFuncName = classMemberFuncKey(ctx, `${shape.className}_new`);
 
     const lowering: IrClassLowering = {
       structTypeIdx,
@@ -1707,8 +1715,8 @@ class ClassRegistry {
       methodFuncName: (name: string): string => {
         // Returns a NAME — the resolver's `resolveFunc` maps it to the
         // funcIdx via `ctx.funcMap`, which the legacy collection pass
-        // populated with stable indices.
-        return `${shape.className}_${name}`;
+        // populated with stable indices. (#1983) collision-free key.
+        return classMemberFuncKey(ctx, `${shape.className}_${name}`);
       },
     };
     this.cache.set(shape.className, lowering);

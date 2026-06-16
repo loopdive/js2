@@ -17,6 +17,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
+import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
@@ -1204,7 +1205,7 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
     // Check if the constructor is a user-defined class — if so, NOT a host callback
     if (ts.isIdentifier(parent.expression)) {
       const ctorName = parent.expression.text;
-      const newFuncIdx = ctx.funcMap.get(`${ctorName}_new`);
+      const newFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${ctorName}_new`)); // (#1983)
       if (newFuncIdx !== undefined && newFuncIdx >= ctx.numImportFuncs) {
         return false;
       }

@@ -89,6 +89,7 @@ import {
   collectDeclaredFuncRefs,
   compileClassBodies,
 } from "./class-bodies.js";
+import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983)
 import {
   applyShapeInference,
   collectDeclarations,
@@ -957,6 +958,16 @@ export function generateModule(
 } {
   const mod = createEmptyModule();
   const ctx = createCodegenContext(mod, ast.checker, options);
+  // (#1983) Pre-scan top-level user `function` declaration names BEFORE any
+  // class member registers a funcMap key, so `classMemberFuncKey` can detect a
+  // `${className}_${member}` ↔ user-function collision (e.g. `class A { m() {} }`
+  // + `function A_m() {}`) and relocate the class member's key. Must run here —
+  // ahead of class collection/compile — because the producers query this set.
+  for (const stmt of ast.sourceFile.statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
+      ctx.topLevelFunctionNames.add(stmt.name.text);
+    }
+  }
   try {
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
@@ -2662,7 +2673,7 @@ function emitToPrimitiveMethodExport(ctx: CodegenContext): void {
     )
       continue;
 
-    const funcIdx = ctx.funcMap.get(`${structName}_${methodSuffix}`);
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${structName}_${methodSuffix}`)); // (#1983)
     if (funcIdx === undefined) continue;
 
     const funcDef = mod.functions[funcIdx - ctx.numImportFuncs];
@@ -10108,7 +10119,8 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     if (declSourceFile && declSourceFile.isDeclarationFile) continue;
 
     const fullName = `${structName}_${prop.name}`;
-    if (ctx.funcMap.has(fullName)) continue; // already registered
+    const methodKey = classMemberFuncKey(ctx, fullName); // (#1983) collision-free key + display name
+    if (ctx.funcMap.has(methodKey)) continue; // already registered
 
     const sig = callSigs[0]!;
     // Build parameter types: self (ref $structTypeIdx) + declared params.
@@ -10154,10 +10166,10 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
 
     const methodTypeIdx = addFuncType(ctx, methodParams, methodResults, `${fullName}_type`);
     const methodFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-    ctx.funcMap.set(fullName, methodFuncIdx);
+    ctx.funcMap.set(methodKey, methodFuncIdx); // (#1983) relocated key
 
     const methodFunc: WasmFunction = {
-      name: fullName,
+      name: methodKey, // (#1983) display name matches relocated funcMap key for body-fill
       typeIdx: methodTypeIdx,
       locals: [],
       body: [],

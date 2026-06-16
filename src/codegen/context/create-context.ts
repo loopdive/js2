@@ -68,6 +68,7 @@ export function createCodegenContext(
     capturedGlobalsWidened: new Set(),
     classSet: new Set(),
     classThrowsOnEval: new Set(),
+    topLevelFunctionNames: new Set(), // (#1983) for class-member funcMap key collision detection
     classMethodSet: new Set(),
     deferredClassBodies: new Set(),
     classAccessorSet: new Set(),

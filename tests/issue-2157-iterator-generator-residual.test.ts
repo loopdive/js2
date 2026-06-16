@@ -95,7 +95,7 @@ export function test(): number { const [a,b]=g(); return a+b; }`),
   });
 
   // SF-3 (#2170) — yield* delegation.
-  it.todo("SF-3 #2170: yield* delegation sums to 6", async () => {
+  it("SF-3 #2170: yield* delegation sums to 6", async () => {
     expect(
       await runStandalone(`function* inner(){ yield 1; yield 2; }
 function* g(){ yield* inner(); yield 3; }

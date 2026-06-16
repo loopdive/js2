@@ -7,6 +7,8 @@
  */
 
 import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
+import { coercionPlan } from "./coercion-plan.js";
+import { boxToAny } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
@@ -1005,12 +1007,10 @@ export function coerceType(
       const fromIdx = (from as { typeIdx: number }).typeIdx;
       const toIdx = (to as { typeIdx: number }).typeIdx;
       if (fromIdx === toIdx) return;
-      // Boxing: non-any ref → any ref
+      // Boxing: non-any ref → any ref (#2104: via boxToAny → __any_box_ref)
       if (isAnyValue(to, ctx) && !isAnyValue(from, ctx)) {
         ensureAnyHelpers(ctx);
-        const funcIdx = ctx.funcMap.get("__any_box_ref");
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
+        if (boxToAny(ctx, fctx, from, "unknown")) {
           return;
         }
       }
@@ -1094,12 +1094,10 @@ export function coerceType(
   }
   // ref is a subtype of ref_null — no coercion needed for same typeIdx
   if (from.kind === "ref" && to.kind === "ref_null") {
-    // But check for any-value boxing (ref $X → ref_null $AnyValue)
+    // But check for any-value boxing (ref $X → ref_null $AnyValue) (#2104)
     if (isAnyValue(to, ctx) && !isAnyValue(from, ctx)) {
       ensureAnyHelpers(ctx);
-      const funcIdx = ctx.funcMap.get("__any_box_ref");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
+      if (boxToAny(ctx, fctx, from, "unknown")) {
         return;
       }
     }
@@ -1205,54 +1203,19 @@ export function coerceType(
   }
 
   // ── Boxing: primitive → ref $AnyValue ──
+  // #2104: tag-selection policy now lives in `boxToAny` (value-tags.ts) — the
+  // single home so the type-aware boxing fix (#2072/#2080 P0) can't erode. This
+  // arm keeps the `addUnionImports`/`ensureAnyHelpers` setup (helper
+  // registration is the caller's job, so resolution+call stays shift-safe) and
+  // delegates the kind-keyed dispatch. `jsType: "unknown"` reproduces the
+  // historical externref→tag-5 (#1888) / ref→tag-6 behaviour exactly.
   if (isAnyValue(to, ctx)) {
     if (from.kind === "externref" && (ctx.standalone || ctx.wasi)) {
       addUnionImports(ctx);
     }
     ensureAnyHelpers(ctx);
-    if (from.kind === "i32") {
-      const funcIdx = ctx.funcMap.get("__any_box_i32");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
-    }
-    if (from.kind === "f64") {
-      const funcIdx = ctx.funcMap.get("__any_box_f64");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
-    }
-    if (from.kind === "i64") {
-      // i64 → AnyValue: convert to f64 first, then box as f64
-      const funcIdx = ctx.funcMap.get("__any_box_f64");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "f64.convert_i64_s" });
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
-    }
-    if (from.kind === "externref") {
-      // NOTE (#1888 regression −788): do NOT route this generic boxing through
-      // __any_from_extern. The test262 harness comparator (`isSameValue` with
-      // `any` params over the externref ABI) depends on main's tag-5
-      // box-the-externref behavior; honest tag recovery here flipped ~794
-      // baseline standalone passes. Numeric honesty for the open-any dispatch
-      // is provided downstream by the $BoxedNumber recovery arm in
-      // __any_to_f64 (any-helpers.ts) instead.
-      const funcIdx = ctx.funcMap.get("__any_box_string");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
-    }
-    if (from.kind === "ref" || from.kind === "ref_null") {
-      const funcIdx = ctx.funcMap.get("__any_box_ref");
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-        return;
-      }
+    if (boxToAny(ctx, fctx, from, "unknown")) {
+      return;
     }
   }
 
@@ -2755,38 +2718,27 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     if (fromKind === "f64" && toKind === "i32") return [{ op: "i32.trunc_sat_f64_s" } as Instr];
   }
   if (from.kind === to.kind) return [];
-  // f64 → externref: box number
-  if (from.kind === "f64" && to.kind === "externref") {
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__box_number");
-    if (funcIdx !== undefined) {
-      return [{ op: "call", funcIdx } as Instr];
-    }
+
+  // #1917 Step 0: scalar / numeric / box-unbox rows come from the single
+  // coercion table. Excluded here (kept as the original rows below): `from`
+  // ref/ref_null — coercionInstrs intentionally NaNs/0s a bare GC ref ToNumber
+  // (object without valueOf, §7.1.4) and has its own AnyValue→externref helper
+  // + guarded ref.cast arms that need `ctx`/`fctx`.
+  if (from.kind !== "ref" && from.kind !== "ref_null") {
+    const needsBox =
+      (to.kind === "externref" || to.kind === "ref_extern") &&
+      (fromKind === "f64" || fromKind === "i32" || fromKind === "i64");
+    const needsUnbox =
+      (from.kind === "externref" || from.kind === "ref_extern") &&
+      (toKind === "f64" || toKind === "i32" || toKind === "i64");
+    if (needsBox || needsUnbox) addUnionImports(ctx);
+    const plan = coercionPlan(from, to, {
+      boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
+      unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+    });
+    if (plan && !plan.lossy) return plan.instrs;
   }
-  // i32 → externref: convert to f64 then box
-  if (from.kind === "i32" && to.kind === "externref") {
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__box_number");
-    if (funcIdx !== undefined) {
-      return [{ op: "f64.convert_i32_s" } as Instr, { op: "call", funcIdx } as Instr];
-    }
-  }
-  // i32 → f64
-  if (from.kind === "i32" && to.kind === "f64") {
-    return [{ op: "f64.convert_i32_s" } as Instr];
-  }
-  // f64 → i32
-  if (from.kind === "f64" && to.kind === "i32") {
-    return [{ op: "i32.trunc_sat_f64_s" } as Instr];
-  }
-  // externref → f64: unbox number
-  if (from.kind === "externref" && to.kind === "f64") {
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__unbox_number");
-    if (funcIdx !== undefined) {
-      return [{ op: "call", funcIdx } as Instr];
-    }
-  }
+
   // ref_null → ref: assert non-null
   if (from.kind === "ref_null" && to.kind === "ref") {
     return [{ op: "ref.as_non_null" } as Instr];

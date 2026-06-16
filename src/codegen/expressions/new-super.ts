@@ -25,6 +25,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { ensureMapHelpers } from "../map-runtime.js";
+import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { resolveComputedKeyExpression } from "../literals.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import {
@@ -933,7 +934,7 @@ function compileNewFunctionDeclaration(
   const ctorResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
   const ctorTypeIdx = addFuncType(ctx, ctorParams, ctorResults, `${ctorName}_type`);
   const ctorFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-  ctx.funcMap.set(ctorName, ctorFuncIdx);
+  ctx.funcMap.set(classMemberFuncKey(ctx, ctorName), ctorFuncIdx); // (#1983) collision-free key
 
   const ctorFunc = {
     name: ctorName,
@@ -1097,7 +1098,7 @@ function compileNewFunctionDeclaration(
     }
   }
   // Re-lookup funcIdx in case addUnionImports shifted indices
-  const finalCtorIdx = ctx.funcMap.get(ctorName) ?? ctorFuncIdx;
+  const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? ctorFuncIdx; // (#1983)
   maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
   fctx.body.push({ op: "call", funcIdx: finalCtorIdx });
   return { kind: "ref", typeIdx: structTypeIdx };
@@ -1565,7 +1566,7 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
 
   if (syntheticName) {
     const ctorName = `${syntheticName}_new`;
-    const funcIdx = ctx.funcMap.get(ctorName);
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
     if (funcIdx !== undefined) {
       return emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
     }
@@ -1576,7 +1577,7 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
     const className = expr.name.text;
     if (ctx.classSet.has(className)) {
       const ctorName = `${className}_new`;
-      const funcIdx = ctx.funcMap.get(ctorName);
+      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
       if (funcIdx !== undefined) {
         return emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
       }
@@ -1685,7 +1686,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const syntheticName = ctx.anonClassExprNames.get(unwrappedExpr);
       if (syntheticName) {
         const ctorName = `${syntheticName}_new`;
-        const funcIdx = ctx.funcMap.get(ctorName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
         if (funcIdx === undefined) {
           reportError(ctx, expr, `Missing constructor for anonymous class`);
           return null;
@@ -3000,7 +3001,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // Handle local class constructors
   if (ctx.classSet.has(className)) {
     const ctorName = `${className}_new`;
-    const funcIdx = ctx.funcMap.get(ctorName);
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
     if (funcIdx === undefined) {
       reportError(ctx, expr, `Missing constructor for class: ${className}`);
       return null;
@@ -3072,7 +3073,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
 
     // Re-lookup funcIdx: argument compilation may trigger addUnionImports
     // which shifts defined-function indices, making the earlier lookup stale.
-    const finalCtorIdx = ctx.funcMap.get(ctorName) ?? funcIdx;
+    const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? funcIdx; // (#1983)
     maybeSetArgcForKnownCall(ctx, fctx, ctorName, ctorActualArgCount, paramTypes?.length ?? ctorActualArgCount);
     fctx.body.push({ op: "call", funcIdx: finalCtorIdx });
     // (#1366a) Externref-backed subclass instances (extends Error / TypeError

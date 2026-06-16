@@ -166,6 +166,13 @@ export interface NativeGeneratorInfo {
    * bails before a generator with disagreeing yield types is registered).
    */
   elemValType: ValType;
+  /**
+   * (#2170) `yield*` delegation slots, in source `siteIndex` order. Each slot is
+   * a mutable `ref null $InnerState` field in the state struct that persists the
+   * inner generator's state across the outer generator's host re-entries.
+   * `innerName` resolves to the inner's `NativeGeneratorInfo` at emit time.
+   */
+  delegationSlots?: { fieldIdx: number; innerName: string }[];
 }
 
 export type NullishExclusion = "null" | "undefined" | "nullish";
@@ -573,6 +580,15 @@ export interface CodegenContext {
   classSet: Set<string>;
   /** Classes that must throw TypeError at evaluation time */
   classThrowsOnEval: Set<string>;
+  /**
+   * (#1983) Names of top-level user `function` declarations in the source. Used
+   * by `classMemberFuncKey` to detect when a synthetic class-member key
+   * (`${className}_${member}`) would collide with a user function of the same
+   * name (e.g. `class A { m() {} }` + `function A_m() {}`), so the class
+   * member's **funcMap** entry can take a collision-free key. Populated in
+   * `collectDeclarations` (runs before any class body compiles).
+   */
+  topLevelFunctionNames: Set<string>;
   /** Map from "ClassName_methodName" → method info for local classes */
   classMethodSet: Set<string>;
   /** Classes inside function bodies whose body compilation is deferred */
