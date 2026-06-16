@@ -1,8 +1,9 @@
 {
   "id": "1935",
   "assignee": "ttraenkler/tld-2139",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1935-retire-undefined-sentinel",
   "claimed_at": "2026-06-16T18:00:08Z",
-  "updated_at": "2026-06-16T18:00:08Z"
+  "updated_at": "2026-06-16T18:30:58Z",
+  "released_at": "2026-06-16T18:30:58Z"
 }
