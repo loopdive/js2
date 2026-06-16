@@ -1,8 +1,9 @@
 {
   "id": "2139",
   "assignee": "ttraenkler/tld-2139",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2139-linear-tests",
   "claimed_at": "2026-06-16T14:42:59Z",
-  "updated_at": "2026-06-16T14:42:59Z"
+  "updated_at": "2026-06-16T15:29:22Z",
+  "released_at": "2026-06-16T15:29:22Z"
 }
