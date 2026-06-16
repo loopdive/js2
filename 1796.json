@@ -1,8 +1,9 @@
 {
   "id": "1796",
   "assignee": "ttraenkler/sen-b",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1796-async-cps-flip",
   "claimed_at": "2026-06-16T08:00:48Z",
-  "updated_at": "2026-06-16T08:00:48Z"
+  "updated_at": "2026-06-16T08:56:09Z",
+  "released_at": "2026-06-16T08:56:09Z"
 }
