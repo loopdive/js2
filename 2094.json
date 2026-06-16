@@ -1,8 +1,9 @@
 {
   "id": "2094",
   "assignee": "ttraenkler/dv2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2094-import-leak-budget-assert",
   "claimed_at": "2026-06-16T04:45:54Z",
-  "updated_at": "2026-06-16T04:45:54Z"
+  "updated_at": "2026-06-16T05:58:15Z",
+  "released_at": "2026-06-16T05:58:15Z"
 }
