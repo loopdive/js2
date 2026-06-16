@@ -1,9 +1,8 @@
 {
   "id": "1537",
-  "assignee": "ttraenkler/tld-2139",
-  "status": "released",
+  "assignee": "ttraenkler/sdev-1537",
+  "status": "in-progress",
   "branch": "issue-1537-ryu-number-format",
-  "claimed_at": "2026-06-16T17:58:04Z",
-  "updated_at": "2026-06-16T17:59:22Z",
-  "released_at": "2026-06-16T17:59:22Z"
+  "claimed_at": "2026-06-16T18:20:36Z",
+  "updated_at": "2026-06-16T18:20:36Z"
 }
