@@ -2855,7 +2855,17 @@ function compileElementAssignment(
       reportError(ctx, target, "Failed to compile element value");
       return null;
     }
-    const valLocal = allocLocal(fctx, `__val_${fctx.locals.length}`, arrDef.element);
+    // #2159 — `i8`/`i16` are *packed storage* types, valid only inside array
+    // elements / struct fields. The value temp holds the unpacked Wasm value
+    // (an `i32`) that `array.set` re-packs; allocating the local with the raw
+    // packed `arrDef.element` leaked an `i8`/`i16` into a local (value position),
+    // which Wasm has no encoding for and the binary emitter rejects. This is the
+    // standalone Uint8Array/Int8Array/Int16Array/Uint16Array element-write CE.
+    // The matching read path already unpacks via array.get_u/_s → i32
+    // (property-access.ts). Mirror it here for the store value local.
+    const valLocalType: ValType =
+      arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
+    const valLocal = allocLocal(fctx, `__val_${fctx.locals.length}`, valLocalType);
     fctx.body.push({ op: "local.set", index: valLocal });
 
     // #1196: Bounds-check elimination on writes — when the for-loop pattern

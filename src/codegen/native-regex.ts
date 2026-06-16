@@ -2432,6 +2432,230 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
   return funcIdx;
 }
 
+/** Element type of the matchAll outer vec: each element is a full match-vec
+ *  (`$__regexp_match_vec` carrying [0]+captures, index, input) — nullable so a
+ *  null can never appear (matchAll yields capture-arrays, never null) but the
+ *  vec/array machinery uses the same ref_null element convention as the
+ *  native-string vecs. (#2161 matchAll) */
+const REGEXP_MATCHALL_VEC_KEY = "ref_matchall";
+
+/** The matchAll outer-vec type idx (`$vec<$__regexp_match_vec>`). Consumers use
+ *  it as the result ValType of `__regex_match_all_arrays`. (#2161) */
+export function ensureRegexMatchAllVecType(ctx: CodegenContext): number {
+  const elemType: ValType = { kind: "ref_null", typeIdx: ensureRegexMatchVecType(ctx) };
+  return getOrRegisterVecType(ctx, REGEXP_MATCHALL_VEC_KEY, elemType);
+}
+
+/**
+ * Emit `__regex_match_all_arrays(prog, classTable, nGroups, strData, strOff,
+ * strLen, subject, nScratch) -> ref $vec<$__regexp_match_vec>` (#2161).
+ *
+ * `String.prototype.matchAll` (§22.2.6.9 / RegExpStringIterator §22.2.9.2) must
+ * yield the **full match array** for every match — each with [0], capture
+ * groups, `.index`, `.input` — i.e. a sequence of capture-ARRAYS, not the [0]
+ * substrings that `__regex_match_all` (the global `match` path) collects.
+ *
+ * This clones the eager `__regex_match_all` AdvanceStringIndex loop verbatim,
+ * but per match calls `__regex_capture_array(nGroups, subject, caps)` (the same
+ * builder `exec`/non-global `match` use) and pushes that match-vec ref into a
+ * growable vec-of-(match-vec-refs). The result is ALWAYS a non-null vec (empty
+ * when there are no matches — matchAll returns an empty iterator, never null),
+ * which the native-vec for-of / spread consumers (#2169) iterate directly,
+ * yielding each indexable match array.
+ */
+export function ensureRegexMatchAllArrays(ctx: CodegenContext): number {
+  const existing = ctx.nativeRegexHelpers.get("__regex_match_all_arrays");
+  if (existing !== undefined) return existing;
+
+  const searchIdx = ensureRegexSearch(ctx);
+  const captureArrIdx = ensureRegexCaptureArray(ctx);
+  const i32Arr = regexI32ArrayType(ctx);
+  const strDataIdx = ctx.nativeStrDataTypeIdx;
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
+  const strDataRef: ValType = { kind: "ref", typeIdx: strDataIdx };
+  const i32ArrRef: ValType = { kind: "ref", typeIdx: i32Arr };
+
+  const matchVecTypeIdx = ensureRegexMatchVecType(ctx);
+  // Outer vec element = ref null $__regexp_match_vec; data array + vec struct.
+  const elemType: ValType = { kind: "ref_null", typeIdx: matchVecTypeIdx };
+  const elemArrTypeIdx = getOrRegisterArrayType(ctx, REGEXP_MATCHALL_VEC_KEY, elemType);
+  const outerVecTypeIdx = getOrRegisterVecType(ctx, REGEXP_MATCHALL_VEC_KEY, elemType);
+  const outerVecRef: ValType = { kind: "ref", typeIdx: outerVecTypeIdx };
+
+  const typeIdx = addFuncType(
+    ctx,
+    [
+      i32ArrRef, // prog
+      i32ArrRef, // classTable
+      { kind: "i32" }, // nGroups
+      strDataRef, // strData
+      { kind: "i32" }, // strOff
+      { kind: "i32" }, // strLen
+      strRef, // subject (flattened)
+      { kind: "i32" }, // nScratch (#1959 PROGRESS guard slots)
+    ],
+    [outerVecRef],
+  );
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.nativeRegexHelpers.set("__regex_match_all_arrays", funcIdx);
+
+  // params
+  const PROG = 0,
+    CTAB = 1,
+    NGROUPS = 2,
+    SDATA = 3,
+    SOFF = 4,
+    SLEN = 5,
+    SUBJ = 6,
+    NSCRATCH = 7;
+  // locals
+  const NSLOTS = 8;
+  const CAPS = 9;
+  const POS = 10;
+  const RARR = 11; // ref-array of match-vecs
+  const RLEN = 12;
+  const RCAP = 13;
+  const NEWARR = 14;
+  const MSTART = 15;
+  const MEND = 16;
+
+  const body: Instr[] = [
+    // nSlots = 2 * nGroups + nScratch (caps carries the scratch slots).
+    { op: "local.get", index: NGROUPS },
+    { op: "i32.const", value: 2 },
+    { op: "i32.mul" },
+    { op: "local.get", index: NSCRATCH },
+    { op: "i32.add" },
+    { op: "local.set", index: NSLOTS },
+    { op: "local.get", index: NSLOTS },
+    { op: "array.new_default", typeIdx: i32Arr },
+    { op: "local.set", index: CAPS },
+    { op: "i32.const", value: 4 },
+    { op: "array.new_default", typeIdx: elemArrTypeIdx },
+    { op: "local.set", index: RARR },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: RLEN },
+    { op: "i32.const", value: 4 },
+    { op: "local.set", index: RCAP },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: POS },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            // if pos > slen: break
+            { op: "local.get", index: POS },
+            { op: "local.get", index: SLEN },
+            { op: "i32.gt_s" },
+            { op: "br_if", depth: 1 },
+            // if !search(pos): break
+            { op: "local.get", index: PROG },
+            { op: "local.get", index: CTAB },
+            { op: "local.get", index: NSLOTS },
+            { op: "local.get", index: SDATA },
+            { op: "local.get", index: SOFF },
+            { op: "local.get", index: SLEN },
+            { op: "local.get", index: POS },
+            { op: "i32.const", value: 0 },
+            { op: "local.get", index: CAPS },
+            { op: "call", funcIdx: searchIdx },
+            { op: "i32.eqz" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: CAPS },
+            { op: "i32.const", value: 0 },
+            { op: "array.get", typeIdx: i32Arr },
+            { op: "local.set", index: MSTART },
+            { op: "local.get", index: CAPS },
+            { op: "i32.const", value: 1 },
+            { op: "array.get", typeIdx: i32Arr },
+            { op: "local.set", index: MEND },
+            // Grow ref-array if needed.
+            { op: "local.get", index: RLEN },
+            { op: "local.get", index: RCAP },
+            { op: "i32.ge_s" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: RCAP },
+                { op: "i32.const", value: 2 },
+                { op: "i32.mul" },
+                { op: "local.set", index: RCAP },
+                { op: "local.get", index: RCAP },
+                { op: "array.new_default", typeIdx: elemArrTypeIdx },
+                { op: "local.set", index: NEWARR },
+                { op: "local.get", index: NEWARR },
+                { op: "i32.const", value: 0 },
+                { op: "local.get", index: RARR },
+                { op: "i32.const", value: 0 },
+                { op: "local.get", index: RLEN },
+                { op: "array.copy", dstTypeIdx: elemArrTypeIdx, srcTypeIdx: elemArrTypeIdx },
+                { op: "local.get", index: NEWARR },
+                { op: "local.set", index: RARR },
+              ],
+            },
+            // result[rlen] = __regex_capture_array(nGroups, subject, caps)
+            { op: "local.get", index: RARR },
+            { op: "local.get", index: RLEN },
+            { op: "local.get", index: NGROUPS },
+            { op: "local.get", index: SUBJ },
+            { op: "local.get", index: CAPS },
+            { op: "call", funcIdx: captureArrIdx },
+            { op: "array.set", typeIdx: elemArrTypeIdx },
+            { op: "local.get", index: RLEN },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: RLEN },
+            // pos = mend + (empty match ? 1 : 0) — AdvanceStringIndex
+            { op: "local.get", index: MEND },
+            { op: "local.get", index: MEND },
+            { op: "local.get", index: MSTART },
+            { op: "i32.gt_s" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [{ op: "i32.const", value: 0 }],
+              else: [{ op: "i32.const", value: 1 }],
+            },
+            { op: "i32.add" },
+            { op: "local.set", index: POS },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+    // struct.new $vec<$matchVec>(length=rlen, data=RARR) — always non-null.
+    { op: "local.get", index: RLEN },
+    { op: "local.get", index: RARR },
+    { op: "ref.as_non_null" },
+    { op: "struct.new", typeIdx: outerVecTypeIdx },
+  ];
+
+  ctx.mod.functions.push({
+    name: "__regex_match_all_arrays",
+    typeIdx,
+    locals: [
+      { name: "nslots", type: { kind: "i32" } },
+      { name: "caps", type: i32ArrRef },
+      { name: "pos", type: { kind: "i32" } },
+      { name: "resultArr", type: { kind: "ref_null", typeIdx: elemArrTypeIdx } },
+      { name: "resultLen", type: { kind: "i32" } },
+      { name: "resultCap", type: { kind: "i32" } },
+      { name: "newArr", type: { kind: "ref_null", typeIdx: elemArrTypeIdx } },
+      { name: "mstart", type: { kind: "i32" } },
+      { name: "mend", type: { kind: "i32" } },
+    ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
 /** Build inline instructions that materialize a `number[]` as a fixed
  *  `array i32` on the stack (used for prog + classTable literals). */
 export function i32ArrayLiteralInstrs(ctx: CodegenContext, values: number[]): Instr[] {

@@ -28,6 +28,8 @@ import {
   ensureRegexCaptureArray,
   ensureRegexFlagsStr,
   ensureRegexMatchAll,
+  ensureRegexMatchAllArrays,
+  ensureRegexMatchAllVecType,
   ensureRegexMatchVecType,
   ensureRegexReplace,
   ensureRegexSearch,
@@ -1154,6 +1156,99 @@ export function tryCompileStandaloneStringMatch(
   return emitRegexExecArrayCall(ctx, fctx, argExpr, propAccess.expression, {
     gyLastIndex: flagsHaveGlobalOrSticky(flags),
   });
+}
+
+/**
+ * `String.prototype.matchAll(/re/g)` in standalone mode (#2161).
+ *
+ * §22.1.3.13 / §22.2.6.9: returns a RegExpStringIterator yielding the **full
+ * match array** (with capture groups, `.index`, `.input`) for every match. The
+ * native engine already builds per-match arrays via `__regex_capture_array`
+ * (used by `exec` / non-global `match`); `__regex_match_all_arrays` drives the
+ * eager AdvanceStringIndex loop collecting those capture-arrays into a vec. The
+ * vec is iterable by the native-vec for-of / spread consumers (#2169), so
+ * `for (const m of s.matchAll(re))` and `[...s.matchAll(re)]` both work without
+ * a JS host.
+ *
+ * Narrowed slice: requires a static global (`g`) RegExp value. matchAll on a
+ * non-global regex is a runtime TypeError (§22.1.3.13 step 4.a) — left to the
+ * host/refusal path rather than mis-modelled. String-arg coercion
+ * (`s.matchAll("x")` → `new RegExp("x","g")`) and dynamic flags fall through.
+ */
+export function tryCompileStandaloneStringMatchAll(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): ValType | null | undefined {
+  if (!ctx.standalone || propAccess.name.text !== "matchAll") return undefined;
+
+  if (!isStringLikeArg(ctx, propAccess.expression)) return undefined;
+  if (expr.arguments.length !== 1) return undefined;
+  const argExpr = expr.arguments[0]!;
+  const argType = ctx.checker.getTypeAtLocation(argExpr);
+  if (!isGlobalRegExpType(argType) && !isKnownBackendCreatedRegExpReceiver(ctx, argExpr)) {
+    return undefined; // string-arg / non-RegExp form → generic / refusal path
+  }
+
+  const flags = staticRegExpFlags(ctx, argExpr);
+  if (flags === null) {
+    reportStandaloneRegExpUnsupported(ctx, argExpr, "String.prototype.matchAll with dynamic RegExp flags");
+    return null;
+  }
+  // matchAll REQUIRES a global regex (non-global throws TypeError); only the
+  // well-formed `/…/g` form is handled here — others fall through to refusal.
+  if (!flags.includes("g")) return undefined;
+
+  if (!hasStandaloneRegExpEngine(ctx)) {
+    reportStandaloneRegExpUnsupported(ctx, expr, "String.prototype.matchAll without an enabled standalone engine");
+    return null;
+  }
+
+  ensureNativeStringHelpers(ctx);
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  if (flattenIdx === undefined) {
+    reportError(ctx, expr, "Codegen error: standalone RegExp backend missing native string helpers (#682).");
+    return null;
+  }
+  const matchAllArraysIdx = ensureRegexMatchAllArrays(ctx);
+  const outerVecTypeIdx = ensureRegexMatchAllVecType(ctx);
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+
+  const loaded = loadStandaloneRegExpStruct(ctx, fctx, argExpr);
+  if (loaded === null) return null;
+  const { regexpLocal, structTypeIdx } = loaded;
+
+  const subjType = compileExpression(ctx, fctx, propAccess.expression, nativeStringType(ctx));
+  if (subjType?.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" } as Instr);
+  fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  const subjLocal = allocLocal(fctx, `__re_gma_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
+  fctx.body.push({ op: "local.set", index: subjLocal });
+
+  // __regex_match_all_arrays(prog, classTable, nGroups, subjData, subjOff, subjLen, subject, nScratch)
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_PROG });
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_CLASS_TABLE });
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NGROUPS });
+  fctx.body.push({ op: "local.get", index: subjLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }); // data
+  fctx.body.push({ op: "local.get", index: subjLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }); // off
+  fctx.body.push({ op: "local.get", index: subjLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }); // len
+  fctx.body.push({ op: "local.get", index: subjLocal });
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSCRATCH });
+  fctx.body.push({ op: "call", funcIdx: matchAllArraysIdx });
+  // matchAll spawns a fresh iterator; the regex's own lastIndex is unaffected
+  // by the eager walk (the iterator holds its own cursor). Reset to 0 to match
+  // the global-match net effect and keep a subsequent reuse well-defined.
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "f64.const", value: 0 });
+  fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX } as Instr);
+  return { kind: "ref", typeIdx: outerVecTypeIdx };
 }
 
 /**

@@ -60,8 +60,21 @@ describe("#1474/#1539 --target standalone still refuses (narrowed)", () => {
     expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
   });
 
-  it("rejects s.matchAll(regexLiteral) — Phase 2c", async () => {
-    await expectRefused(`export function f(s: string): number { return [...s.matchAll(/\\d/g)].length; }`);
+  // #2161 landed global String.matchAll(/re/g) on the pure-WasmGC matcher as an
+  // iterable vec of capture-arrays — the for-of form now compiles instead of
+  // refusing. (Behavior coverage lives in tests/issue-2161-matchall.test.ts.)
+  it("compiles global s.matchAll(/re/g) for-of — iterable of capture arrays (#2161)", async () => {
+    const r = await compile(
+      `export function f(s: string): number { let n = 0; for (const m of s.matchAll(/\\d/g)) n++; return n; }`,
+      { target: "standalone" },
+    );
+    expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
+  });
+
+  it("rejects non-global s.matchAll(/re/) — runtime TypeError per §22.1.3.13 (#2161 narrowed)", async () => {
+    await expectRefused(
+      `export function f(s: string): number { let n = 0; for (const m of s.matchAll(/\\d/)) n++; return n; }`,
+    );
   });
 
   // #1539 Phase 2b landed `String.prototype.search(/re/)` on the pure-WasmGC

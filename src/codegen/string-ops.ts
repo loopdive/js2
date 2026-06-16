@@ -24,6 +24,7 @@ import {
 } from "./native-strings.js";
 import {
   tryCompileStandaloneStringMatch,
+  tryCompileStandaloneStringMatchAll,
   tryCompileStandaloneStringReplace,
   tryCompileStandaloneStringSearch,
   tryCompileStandaloneStringSplit,
@@ -2756,6 +2757,15 @@ export function compileNativeStringMethodCall(
     if (matchResult !== undefined) return matchResult;
   }
 
+  // #2161 — `String.prototype.matchAll(/re/g)` against a global static RegExp
+  // routes to the native engine, returning an iterable vec of capture-arrays
+  // (for-of / spread consume it via the #2169 native-vec path). Non-global,
+  // string-arg, and dynamic-flags forms fall through to the refusal below.
+  if (ctx.standalone && method === "matchAll") {
+    const matchAllResult = tryCompileStandaloneStringMatchAll(ctx, fctx, expr, propAccess);
+    if (matchAllResult !== undefined) return matchAllResult;
+  }
+
   // #1539 Phase 2b — `String.prototype.search(/re/)` against a backend-created
   // static RegExp routes to the pure-WasmGC matcher (returns the match index or
   // -1) instead of the host regex engine. The string-coercion form (string
@@ -2783,6 +2793,9 @@ export function compileNativeStringMethodCall(
   }
 
   if (ctx.standalone) {
+    // (#2161) `matchAll` is no longer blanket-refused: the global `/re/g` slice
+    // routes through tryCompileStandaloneStringMatchAll above. Only the
+    // non-global / string-arg / dynamic-flags forms reach this refusal.
     const alwaysRegExp = method === "match" || method === "matchAll" || method === "search";
     const symbolProtocolArgForm =
       (method === "replace" || method === "replaceAll" || method === "split") &&

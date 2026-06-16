@@ -104,3 +104,37 @@ compile_errors remain the separate Symbol.match-protocol harness bucket (needs
 the CI standalone-shard breakdown), tracked under #2161 still.
 
 Status kept in-progress; matchAll is the first dispatch-ready slice.
+
+## matchAll slice — LANDED (2026-06-15, sdev5)
+
+Implemented per the spec above. `String.prototype.matchAll(/re/g)` in standalone
+now compiles to the native engine — **zero host imports**.
+
+- `src/codegen/native-regex.ts`: new `ensureRegexMatchAllArrays` (clones the
+  `__regex_match_all` AdvanceStringIndex loop but per match calls
+  `__regex_capture_array(nGroups, subject, caps)` and pushes the capture-array
+  ref into a growable vec-of-(match-vec-refs)); `ensureRegexMatchAllVecType`
+  exposes the outer-vec type to consumers.
+- `src/codegen/regexp-standalone.ts`: `tryCompileStandaloneStringMatchAll`
+  (mirrors the global `match` branch; requires a static `g` RegExp).
+- `src/codegen/string-ops.ts`: routes `matchAll` to the new path before the
+  `alwaysRegExp` refusal.
+- Tests: `tests/issue-2161-matchall.test.ts` (7 cases, all standalone +
+  empty-importObject: count, capture groups `m[1]`, full match `m[0]`,
+  `m.index`, empty iterator (not null), empty-match advance, non-global refusal).
+  Updated `tests/issue-1474-standalone-regex-refuse.test.ts` to assert the new
+  narrowed behavior (global for-of compiles; non-global refuses).
+
+**Verified working:** `for (const m of s.matchAll(/re/g))` (the
+RegExpStringIterator consumption form), capture groups, `.index`, empty/no-match.
+
+**Deferred (still narrowed-refuse, NOT silently wrong):** non-global matchAll
+(spec TypeError), string-arg coercion, dynamic flags, AND `[...s.matchAll(re)]`
+spread **into an array literal** — that hits a generic native-vec-of-refs →
+externref-array element-coercion gap (the spread-into-`[]` consumer expects
+externref elements; not matchAll-specific — affects any ref-element native vec).
+Tracked as a follow-up.
+
+**#2161 stays open** for the dominant ~425 `(none)` Symbol.match-protocol harness
+bucket (needs the CI standalone-shard compile_error breakdown to scope), which
+is independent of this matchAll wiring.

@@ -1,10 +1,11 @@
 ---
 id: 2106
 title: "value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton"
-status: ready
+status: in-progress
+assignee: ttraenkler/sdev7
 sprint: 62
 created: 2026-06-11
-updated: 2026-06-15
+updated: 2026-06-16
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -259,3 +260,47 @@ carriers (S2 keeps the sentinel there).
   max-reasoning context.
 - `codePointAt(oob) ?? rhs` is already done (#2004, `logical-ops.ts:208`) —
   do NOT re-represent it. Optional-chain sites are #2051 — do NOT touch.
+
+## S3 producer map (sdev7, 2026-06-16) — exact sites, verified on main @ 24e520df8
+
+Confirmed the S3 host repros still fail and pinned the producers, so S3 is
+turnkey for its own focused (measure-first) PR:
+
+**Repros (host, all reproduce):**
+- `[1,2,3].find(x=>x>5) === undefined` → `0` (want `1`)
+- `typeof [1].find(x=>x>5)` → `"number"` (want `"undefined"`)
+- `function f(x?:number){return x ?? -1} f()` → `NaN` (want `-1`)
+- `function f(x?:number){return typeof x} f()` → `"number"` (want `"undefined"`)
+- `function f(x?:number){return x === undefined} f()` → `0` (want `1`)
+- Working (keep green): `f(5)`→5, `f(0) ?? -1`→0 (0 is not nullish), `find` HIT
+  cases, the generic externref-array `find` (already `ref.null.extern`).
+
+**Producer 1 — typed/numeric `find`/`findLast` fast-path.** The GENERIC array
+`find` (`array-methods.ts:856`) already returns `externref` with a
+`ref.null.extern` miss — but the numeric/typed fast-path returns an **f64 NaN
+sentinel**: `array-methods.ts:6522-6529` (`find`) and `:6712-6719` (`findLast`):
+`findResType = ctx.fast ? elemType : { kind: "f64" }`, miss = `f64.const 0;
+f64.const 0; f64.div` (NaN). For `number[]` the result local is f64
+(WAT-confirmed: `$__arr_find_res_9 f64`), so the miss is unobservable to
+`===`/`typeof`/`??`. Widen the **non-fast** branch's miss to `emitUndefined`
+(externref) and the result type to externref; the `ctx.fast` i32 branch is a
+separate (native-int) story — scope carefully.
+
+**Producer 2 — absent optional numeric parameter.** `f(x?: number)` called with
+no arg materializes `x` as an f64 NaN sentinel (param prologue /
+`destructuring-params.ts` default-fill), so `x ?? -1`→NaN, `typeof x`→"number",
+`x === undefined`→false. Widen the absent-optional-numeric-param carrier to
+externref + host `undefined` (standalone needs S1's `$undefined`).
+
+**Mechanism (per #2142 rule):** both producers emit `emitUndefined` (externref)
+for the absent case instead of `f64.const NaN`; result ValType becomes externref
+so the existing externref-aware `===`/`??`/`typeof` observers light up with zero
+new observer code (#2142 fact 1). Reuse #2051's widening helper
+(`variables.ts` `isNullablePrimitiveType`).
+
+**RISK / measure-first (why this is its own PR):** changing `find`/optional-param
+result type f64→externref means any **arithmetic** on the result needs an unbox
+(`arr.find(...) + 1`, `f() * 2`). Must measure the test262 delta before
+default-on; gate carefully and check the arithmetic-on-result paths. Standalone
+correctness depends on S1 (`$undefined` ≠ `null`). Recommend: land S1 first (or
+concurrently), then S3 with a CI-measured blast radius.
