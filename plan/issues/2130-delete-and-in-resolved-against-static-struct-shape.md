@@ -1,10 +1,10 @@
 ---
 id: 2130
 title: "delete o.prop is a no-op and `in` answers against the static struct shape — post-delete / dynamic-key / object-rest all wrong"
-status: ready
+status: in-progress
 sprint: 62
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-16
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -365,3 +365,53 @@ In the `__extern_has` rewrite, the plain-JS sidecar check must be key-based
 value-based `_sidecarGet(obj, key) !== undefined` (`runtime.ts:6357`) —
 HasProperty (§7.3.12) is value-independent, so `o.x = undefined; "x" in o`
 must be true.
+
+## Implementation — Stage A + Stage B LANDED (2026-06-16, sdev5)
+
+All runtime-side fixes from the spec (A1–A8) implemented in `src/runtime.ts`.
+
+- **Stage A (the `in` false-positive fix):** new shared `_wasmStructHasOwn(obj,
+  key, exports)` — tombstone + sidecar (key-based, A8) + descriptors +
+  proto/static methods + per-receiver struct fields. `__hasOwnProperty` and
+  `__extern_has` (`in`) both route through it. The `__sget_<key>`
+  getter-doesn't-throw probe is **deleted** (A1) — it was the module-global
+  field-name test causing the false positives. Object-rest is fixed with zero
+  codegen (A2 — rest is a plain JS object; the plain-JS arm now has no
+  `__sget_` fallthrough).
+- **Stage B (delete removes the property):** read-path tombstone gate in
+  `__extern_get` (before the `__sget_` fallthrough) AND `_safeGet` (top of the
+  WasmGC-struct branch) — A5; `_safeSet` clears the tombstone on re-add (A3, the
+  single choke point for both sidecar and `__sset_` arms); `__delete_property`
+  coerces a WasmGC-struct/native-string key to a primitive before the tombstone
+  key (fast/nativeStrings safety + consistency with the read gates).
+- **A4:** `_enumerableOwnStructKeys` (tombstone-filtered shape fields + enumerable
+  sidecar union) backs `Object.keys` / `values` / `entries`.
+
+**Verified (`tests/issue-2130-delete-in-presence.test.ts`, 10 cases, JS-host,
+`buildImports`+`setExports`):** `delete o.a; "a" in o` → false; `"b" in o`
+stays true; dynamic-key delete; object-rest `"e"/"f" in rest`; delete-then-
+re-add `in`; `Object.keys` drops the deleted key; `Object.keys(rest)===["f"]`;
+present-prop control; **opaque (param `any`) receiver `o.a` reads undefined
+after delete**. No regression: hasOwnProperty / delete-fastpath / #2066 /
+class-method-delete suites stay green.
+
+### KNOWN RESIDUAL (out of stage — needs codegen read/delete symmetry)
+
+Reading `o.a` after `delete o.a` on a **statically-struct-shaped LOCAL `any`
+var** (`const o:any={a:1}; delete o.a; o.a`) still returns the stale field
+value, NOT `undefined`. The read takes the compiler's `ref.test (ref N)` /
+`struct.get` fast path (the deleted field is physically still in the struct;
+the `ref.test` passes), bypassing the runtime tombstone gate, which only fires
+on the `__extern_get` else-branch. Same root affects `delete o.a; o.a=5; o.a`
+(the re-add writes the sidecar but the read still struct.gets the field).
+
+This is exactly spec §A5/A6's flagged residual: the struct.get read "remains
+number-typed NaN by design", and the static-shape receiver folds at the codegen
+level — it requires the **delete sentinel and the read to agree on the struct
+type** (the delete arm's `widenedVarStructMap`/`resolveStructName` resolution
+does NOT cover the var whose read resolves via the literal's runtime `ref.test`
+type), a codegen front-end change distinct from the runtime presence model this
+stage fixes. The **opaque-receiver case (param/cast `any`) IS fixed** (routes
+through `__extern_get` → tombstone gate). This stage lands the full runtime
+presence model + `in`/`hasOwnProperty`/`Object.keys` correctness; the codegen
+read/delete symmetry is a scoped follow-up.
