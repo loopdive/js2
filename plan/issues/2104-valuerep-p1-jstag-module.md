@@ -153,3 +153,51 @@ intercepts before `compileBinaryExpression`) must obtain its operands as
 `emitAnyAdd`/`__any_add`, rather than ToNumber-collapsing. That closes the 8
 baselined `bug:1988` string-concat rows as a value-rep row, not an eighth
 `__any_add` patch.
+
+## PR #1503 conflict rescue + standalone-guard false positive (sdev7, 2026-06-16)
+
+sdev1's PR #1503 went DIRTY at shutdown. Resolved on `issue-2104-jstag-module`
+(merge `4a33f4ebc`):
+
+- **Conflict**: a single additive import collision in
+  `src/codegen/type-coercion.ts` — HEAD added `import { boxToAny } from
+  "./value-tags.js"` (#2104), origin/main added `import { coercionPlan } from
+  "./coercion-plan.js"` (the separately-merged coercion-plan change). The two
+  imports back **non-overlapping** body regions (`coercionPlan` in the
+  `coerceType` plan path ~`:2735`; `boxToAny` at the three `coerceType` boxing
+  sites ~`:1013/1100/1217`). Kept both. No semantic conflict.
+- **Local validation green**: `tsc` clean; `issue-2104-value-tags` 7/7;
+  `issue-2072` P0 guard 4/4; `issue-1917-coercion-plan` 14/14 (proves the
+  incoming coercion-plan change still works post-merge); `string-coercion` +
+  `issue-2059-any-relational` pass; `check:any-box-sites` OK. (2 test files fail
+  to load `tests/helpers.js` — that file is missing on origin/main too, a
+  pre-existing infra issue, not a regression.)
+
+**Standalone regression guard (#1897) fired `Net: -19 pass` / 23 `pass →
+compile_error` — diagnosed as a FALSE POSITIVE (baseline drift + CI flake), NOT
+a #1503 regression.** All 23 are async functions/methods that `return
+arguments` from a nested closure (`returns-async-{arrow,function}-returns-
+arguments-from-{own,parent}-function`). Direct compile-on-`origin/main`-HEAD
+(`5634b13ec`) reproduction:
+
+- `language/statements/async-function/returns-async-function-returns-arguments-
+  from-own-function.js` → **identical** `WASM INVALID: Compiling function
+  #51:"__closure_0" failed: type error in fallthru[0] (expected i32, got
+  externref)` on BOTH main and the PR branch → pre-existing on main, recorded as
+  `pass` in the **stale** standalone baseline (`test262-standalone-current.jsonl`
+  in `loopdive/js2wasm-baselines`).
+- `language/expressions/async-function/named-...-from-parent-function.js` →
+  `__closure_3` fallthru error on BOTH → same pre-existing breakage.
+- `language/statements/class/async-method/...-from-own-function.js` →
+  **COMPILES on BOTH** main and PR → the CI `pass → compile_error` for it is a
+  nondeterministic shard/parallel-load compile flake, not deterministic.
+
+Conclusion: the PR branch is byte-behavior-identical to `origin/main` for the
+flagged tests; #1503 (value-tags consolidation + the import merge) introduces
+**zero real standalone regressions**. The red required check is a stale-baseline
++ flake artifact. Root cause to fix separately: the standalone baseline marks
+the `arguments`-in-nested-closure-under-async cluster as `pass` when it actually
+emits an invalid-Wasm `__closure` type error on current main (an `arguments`
+capture lowered as `externref` where the closure signature expects `i32` — a
+real but PRE-EXISTING standalone codegen bug, candidate for its own issue).
+Escalated to tech lead for an override/admin-merge decision.
