@@ -1,8 +1,9 @@
 {
   "id": "1923",
   "assignee": "ttraenkler/tld-2108",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1923-meter-ir-demotions",
   "claimed_at": "2026-06-16T15:35:06Z",
-  "updated_at": "2026-06-16T15:35:06Z"
+  "updated_at": "2026-06-16T16:02:11Z",
+  "released_at": "2026-06-16T16:02:11Z"
 }
