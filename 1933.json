@@ -1,8 +1,9 @@
 {
   "id": "1933",
   "assignee": "ttraenkler/tld-2108",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1933-multi-instance-isolation",
   "claimed_at": "2026-06-16T16:27:37Z",
-  "updated_at": "2026-06-16T16:27:37Z"
+  "updated_at": "2026-06-16T17:16:14Z",
+  "released_at": "2026-06-16T17:16:14Z"
 }
