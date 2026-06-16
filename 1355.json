@@ -1,9 +1,8 @@
 {
   "id": "1355",
-  "assignee": "ttraenkler/arch1",
-  "status": "released",
-  "branch": "",
-  "claimed_at": "2026-06-16T08:10:19Z",
-  "updated_at": "2026-06-16T08:27:40Z",
-  "released_at": "2026-06-16T08:27:40Z"
+  "assignee": "ttraenkler/sen-a",
+  "status": "in-progress",
+  "branch": "issue-1355-proxy-traps",
+  "claimed_at": "2026-06-16T10:17:18Z",
+  "updated_at": "2026-06-16T10:17:18Z"
 }
