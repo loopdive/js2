@@ -1,8 +1,9 @@
 {
   "id": "1976",
   "assignee": "ttraenkler/tld-1921",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1976-linear-utf16-length",
   "claimed_at": "2026-06-16T16:32:48Z",
-  "updated_at": "2026-06-16T16:32:48Z"
+  "updated_at": "2026-06-16T16:57:26Z",
+  "released_at": "2026-06-16T16:57:26Z"
 }
