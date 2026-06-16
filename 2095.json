@@ -1,8 +1,9 @@
 {
   "id": "2095",
   "assignee": "ttraenkler/dv2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2095-baseline-validator-standalone",
   "claimed_at": "2026-06-16T05:14:13Z",
-  "updated_at": "2026-06-16T05:14:13Z"
+  "updated_at": "2026-06-16T05:58:23Z",
+  "released_at": "2026-06-16T05:58:23Z"
 }
