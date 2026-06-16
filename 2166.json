@@ -1,8 +1,9 @@
 {
   "id": "2166",
   "assignee": "ttraenkler/d2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2166-standalone-json",
   "claimed_at": "2026-06-16T03:45:02Z",
-  "updated_at": "2026-06-16T03:45:02Z"
+  "updated_at": "2026-06-16T11:55:24Z",
+  "released_at": "2026-06-16T11:55:24Z"
 }
