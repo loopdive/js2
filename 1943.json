@@ -1,8 +1,9 @@
 {
   "id": "1943",
   "assignee": "ttraenkler/dev-a",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1943-regression-thresholds-ci",
   "claimed_at": "2026-06-16T08:37:31Z",
-  "updated_at": "2026-06-16T08:37:31Z"
+  "updated_at": "2026-06-16T11:55:28Z",
+  "released_at": "2026-06-16T11:55:28Z"
 }
