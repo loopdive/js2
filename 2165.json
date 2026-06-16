@@ -1,8 +1,9 @@
 {
   "id": "2165",
   "assignee": "ttraenkler/se1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2165-standalone-promise-residual",
   "claimed_at": "2026-06-16T06:00:20Z",
-  "updated_at": "2026-06-16T06:00:20Z"
+  "updated_at": "2026-06-16T06:22:40Z",
+  "released_at": "2026-06-16T06:22:40Z"
 }
