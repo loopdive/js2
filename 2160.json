@@ -1,9 +1,8 @@
 {
   "id": "2160",
-  "assignee": "ttraenkler/dev3",
-  "status": "released",
-  "branch": "",
-  "claimed_at": "2026-06-16T00:41:42Z",
-  "updated_at": "2026-06-16T00:52:38Z",
-  "released_at": "2026-06-16T00:52:38Z"
+  "assignee": "ttraenkler/d1",
+  "status": "in-progress",
+  "branch": "issue-2160-standalone-number-parse",
+  "claimed_at": "2026-06-16T01:38:36Z",
+  "updated_at": "2026-06-16T01:38:36Z"
 }
