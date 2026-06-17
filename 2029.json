@@ -1,8 +1,9 @@
 {
   "id": "2029",
   "assignee": "ttraenkler/dev-1",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2029-extends-error-new-builtin-leak",
   "claimed_at": "2026-06-17T03:53:20Z",
-  "updated_at": "2026-06-17T03:53:20Z"
+  "updated_at": "2026-06-17T04:11:27Z",
+  "released_at": "2026-06-17T04:11:27Z"
 }
