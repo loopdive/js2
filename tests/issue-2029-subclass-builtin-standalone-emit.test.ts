@@ -83,3 +83,72 @@ describe("#2029 — builtin subclass compiles under --target standalone", () => 
     await compilesStandalone(`class A { x: number = 5; } export function test(): number { return new A().x; }`);
   });
 });
+
+/**
+ * #2029 residual — `extends Error` standalone RUNTIME path must not leak the
+ * `env.__new_<Builtin>` / `env.__tag_user_class` HOST imports (the emit crash
+ * was the prior slice). The subclass ctor now registers the Wasm-native
+ * `__new_<Parent>` (`emitWasiErrorConstructor`, $Error_struct) instead of the
+ * host import, the dead `__tag_user_class` tagging is skipped standalone, and
+ * `e.message`/`.name` on a user error subclass read the native struct field.
+ *
+ * These instantiate with a TRULY empty import object ({}) — any leaked
+ * `env.*` import would make `WebAssembly.instantiate(binary, {})` throw, so a
+ * passing run proves zero host imports.
+ */
+describe("#2029 — extends Error runs standalone with zero host imports", () => {
+  async function runStandalone(src: string): Promise<number | string> {
+    const r = await compile(src, { fileName: "repro-2029.ts", target: "standalone" });
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    const mod = await WebAssembly.compile(r.binary);
+    const envImports = WebAssembly.Module.imports(mod)
+      .filter((i) => i.module === "env")
+      .map((i) => i.name);
+    expect(envImports, `leaked host imports: ${envImports.join(", ")}`).toEqual([]);
+    // Empty import object — proves true standalone instantiability.
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    return (instance.exports as Record<string, () => number | string>).test();
+  }
+
+  it("class extends Error — instance is instanceof the subclass (implicit ctor)", async () => {
+    expect(
+      await runStandalone(
+        `class MyErr extends Error {} export function test(): number { const e = new MyErr("x"); return e instanceof MyErr ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("class extends TypeError — instance is instanceof the subclass", async () => {
+    expect(
+      await runStandalone(
+        `class MyTE extends TypeError {} export function test(): number { const e = new MyTE("x"); return e instanceof MyTE ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("class extends Error (explicit super) — instance is instanceof Error", async () => {
+    expect(
+      await runStandalone(
+        `class E extends Error { constructor(m: string){ super(m); } } export function test(): number { const e = new E("hi"); return e instanceof Error ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("class extends RangeError — instanceof the subclass", async () => {
+    expect(
+      await runStandalone(
+        `class R extends RangeError {} export function test(): number { const e = new R("y"); return e instanceof R ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("user error subclass `.message` reads the native struct field", async () => {
+    // Compare in-Wasm (returns i32) — a raw string export marshals to {} under
+    // an empty import object, so assert the native string equality instead.
+    expect(
+      await runStandalone(
+        `class E extends Error { constructor(m: string){ super(m); } } export function test(): number { const e = new E("hi"); return e.message === "hi" ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+});

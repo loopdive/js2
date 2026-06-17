@@ -33,6 +33,7 @@ import {
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
+import { emitWasiErrorConstructor, isWasiErrorName } from "./registry/error-types.js";
 import {
   cacheParamDefaultArgc,
   emitF64ParamSentinelCheck,
@@ -1507,6 +1508,19 @@ function compileClassBodiesInner(
       const parentName = ctx.classBuiltinParentMap.get(className);
       if (parentName) {
         const importName = `__new_${parentName}`;
+        // (#2029) Standalone/WASI: a `extends Error/TypeError/…` subclass with no
+        // explicit ctor previously leaked `env.__new_<Parent>` here. Register the
+        // Wasm-native `__new_<Parent>` (builds a $Error_struct, no host import)
+        // so the `ensureLateImport` lookup below resolves to it instead of adding
+        // an unsatisfiable host import. Mirrors new-super.ts:1981 for direct
+        // `new Error(...)`. Host mode is unchanged (isWasiErrorName-gated on the
+        // no-JS-host flags).
+        if ((ctx.wasi || ctx.standalone) && isWasiErrorName(parentName)) {
+          // The native ctor's Wasm signature must match the args the call site
+          // below pushes (exactly `implicitForwarderArity` externref locals); the
+          // ctor reads arg 0 as the message and handles a 0-arg signature.
+          emitWasiErrorConstructor(ctx, parentName, implicitForwarderArity);
+        }
         const forwardParams = externrefParams(implicitForwarderArity);
         const funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
@@ -1656,7 +1670,18 @@ function compileClassBodiesInner(
     // `instance instanceof Sub` by walking the registered tag chain. The
     // direct user-class parent (or null when the direct parent is a builtin)
     // is registered idempotently on first call.
-    if (isExternrefBacked) {
+    //
+    // (#2029) Skipped under --target standalone/wasi: the `__tag_user_class`
+    // registration ONLY feeds the `__instanceof` HOST import, which is itself
+    // unavailable with no JS host. Standalone `instance instanceof Sub` resolves
+    // at compile time (tryStaticInstanceOf, identifiers.ts) for these
+    // externref-backed error subclasses, and `instanceof Error`/`<WasiError>`
+    // reads the native `$Error_struct` $tag field (identifiers.ts #1473 path) —
+    // neither consults the runtime tag chain. Emitting the call here only leaked
+    // an unsatisfiable `env.__tag_user_class` host import (the residual after the
+    // `__new_<Parent>` fix above). Mirrors the emitSetSubclassProto standalone
+    // skip from #2029 PR-1.
+    if (isExternrefBacked && !(ctx.wasi || ctx.standalone)) {
       const builtinParent = ctx.classBuiltinParentMap.get(className);
       // Direct user-class parent: classParentMap[className] is set to the
       // immediate parent name; if it equals the builtin parent, the user
@@ -2271,6 +2296,14 @@ export function compileSuperCall(
     const hasSpread = args.some((a) => ts.isSpreadElement(a));
     const importName = `__new_${builtinParent}`;
     const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
+    // (#2029) Standalone/WASI: an explicit `super(msg)` into a builtin-error
+    // parent previously leaked `env.__new_<Parent>`. Register the Wasm-native
+    // `__new_<Parent>` (builds a $Error_struct, no host import) so the lookup
+    // below resolves to it. Signature matches the `forwardArity` args the call
+    // site pushes. Host mode unchanged (isWasiErrorName-gated on no-JS-host).
+    if ((ctx.wasi || ctx.standalone) && isWasiErrorName(builtinParent)) {
+      emitWasiErrorConstructor(ctx, builtinParent, forwardArity);
+    }
     const forwardParams = externrefParams(forwardArity);
     const funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);

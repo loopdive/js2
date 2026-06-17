@@ -1826,11 +1826,33 @@ export function compilePropertyAccess(
   // (`null.message` throws), so the trap is acceptable Phase 1/2 semantics.
   if ((ctx.wasi || ctx.standalone) && (propName === "message" || propName === "name" || propName === "stack")) {
     const lhsTsName = objType.getSymbol()?.name;
+    // (#2029) A user error subclass (`class E extends Error {}`) has an instance
+    // that IS the native `$Error_struct` (super() sets __self = __new_<Parent>),
+    // so `e.message`/`.name`/`.stack` must read the struct field directly — but
+    // the static type name `E` is not a builtin, so the builtin-name gate below
+    // misses it. Resolve the user class to its builtin error ancestor by walking
+    // classBuiltinParentMap (direct) then the classParentMap chain (transitive,
+    // for `class B extends A extends Error`). Returns the WasiErrorName ancestor
+    // or undefined.
+    const resolveUserErrorParent = (name: string | undefined): string | undefined => {
+      if (name === undefined || !ctx.classTagMap?.has(name)) return undefined;
+      const seen = new Set<string>();
+      let cur: string | undefined = name;
+      while (cur !== undefined && !seen.has(cur)) {
+        seen.add(cur);
+        const bp = ctx.classBuiltinParentMap?.get(cur);
+        if (bp !== undefined && (bp === "Error" || isWasiErrorName(bp))) return bp;
+        cur = ctx.classParentMap?.get(cur);
+      }
+      return undefined;
+    };
+    const userErrorParent = resolveUserErrorParent(lhsTsName);
     const isErrorLhs =
-      lhsTsName !== undefined &&
-      isBuiltinTypeName(lhsTsName) &&
-      isWasiErrorName(lhsTsName) &&
-      isBuiltinSubtype(lhsTsName, "Error");
+      (lhsTsName !== undefined &&
+        isBuiltinTypeName(lhsTsName) &&
+        isWasiErrorName(lhsTsName) &&
+        isBuiltinSubtype(lhsTsName, "Error")) ||
+      userErrorParent !== undefined;
     // #2077: a `catch (e)` binding is typed `any` (or `unknown`), so the static
     // `isErrorLhs` gate above never fires even though the caught value IS the
     // `$Error` struct at runtime — the field read then fell through to the

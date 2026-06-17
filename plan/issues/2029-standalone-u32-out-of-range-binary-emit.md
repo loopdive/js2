@@ -4,7 +4,7 @@ title: "standalone: `Binary emit error: u32 out of range: -1` on builtin subclas
 status: in-progress
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-15
+updated: 2026-06-17
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -170,3 +170,40 @@ standalone still leaks the `__new_<Builtin>` HOST import (`class-bodies.ts:1423/
 — a host-import-retirement concern, not the emit crash. Kept #2029 `in-progress`:
 the emit-crash cluster (the headline) is fixed; the `__new_<Builtin>` standalone
 runtime path is the residual. Reassess closing once that lands.
+
+## PR-2 landed (2026-06-17, dev-1) — `extends Error` runtime host-import retirement
+
+Retired the `__new_<Builtin>` + `__tag_user_class` host-import leaks for
+`extends Error/TypeError/RangeError/…` subclasses under `--target standalone`
+(and `wasi`). The subclass instance now constructs, satisfies `instanceof`, and
+reads `.message`/`.name`/`.stack` natively with ZERO `env.*` imports — the module
+instantiates with a truly empty `{}` import object.
+
+Three coordinated fixes (`src/codegen/class-bodies.ts` + `property-access.ts`):
+1. **Both subclass ctor sites** (implicit-ctor `isExternrefBacked` path ~1506,
+   explicit `super(msg)` path ~2272) now call `emitWasiErrorConstructor` (native
+   `$Error_struct` builder, registers `__new_<Parent>` as a DEFINED func) before
+   the `ensureLateImport(ctx, "__new_<Parent>", …)` lookup when
+   `(ctx.wasi||ctx.standalone) && isWasiErrorName(parent)`. The lookup then
+   resolves to the native func — no host import added. Mirrors new-super.ts:1981
+   for direct `new Error(...)`. Host mode unchanged.
+2. **`__tag_user_class` registration skipped** under no-JS-host: it only feeds the
+   `__instanceof` HOST import (itself unavailable standalone); standalone
+   instanceof resolves at compile time (`tryStaticInstanceOf`) or via the native
+   `$Error_struct` `$tag` field, so the call was pure dead-weight leak. Mirrors
+   the emitSetSubclassProto standalone-skip from PR-1.
+3. **`.message`/`.name`/`.stack` read** (property-access.ts ~1827) now recognises
+   a user error subclass (`class E extends Error`) by walking
+   classBuiltinParentMap → classParentMap to a builtin-error ancestor, so the
+   field read hits the native struct instead of the null `__extern_get` path.
+
+Test: `tests/issue-2029-subclass-builtin-standalone-emit.test.ts` (new
+"runs standalone with zero host imports" block — empty-`{}` instantiation
+proves no `env.*` leak). tsc + prettier clean; no host-mode change.
+
+**Still-residual (pre-existing, NOT introduced — separate follow-up):** a
+**multi-level** user error subclass (`class B extends A extends Error`) returns
+`b instanceof Error === false` (the `tryStaticInstanceOf` transitive
+builtin-ancestor walk doesn't climb `classParentMap` past the direct parent).
+Confirmed 0 on main pre-fix too; only the leak differs (PR-2 removes it, the
+static-instanceof gap remains). Direct (1-level) `instanceof Error` is correct.
