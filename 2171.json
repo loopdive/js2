@@ -1,8 +1,9 @@
 {
   "id": "2171",
   "assignee": "ttraenkler/sendev-closures",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2171-generator-nonnumeric-yields",
   "claimed_at": "2026-06-17T00:22:49Z",
-  "updated_at": "2026-06-17T00:22:49Z"
+  "updated_at": "2026-06-17T00:40:26Z",
+  "released_at": "2026-06-17T00:40:26Z"
 }
