@@ -1,8 +1,9 @@
 {
   "id": "1910-s2",
   "assignee": "ttraenkler/sdev-standalone",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1910-s2-boxed-primitive-toprimitive",
   "claimed_at": "2026-06-17T03:38:18Z",
-  "updated_at": "2026-06-17T03:38:18Z"
+  "updated_at": "2026-06-17T04:35:31Z",
+  "released_at": "2026-06-17T04:35:31Z"
 }
