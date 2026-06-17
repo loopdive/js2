@@ -128,8 +128,8 @@
   {
     "edition": "Proposals",
     "pass": 1453,
-    "fail": 3202,
-    "ce": 231,
+    "fail": 3201,
+    "ce": 232,
     "skip": 96,
     "total": 4982,
     "pct": 29

@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-06-17T07:13:09.506Z",
-  "baseline_generated_at": "2026-06-17T07:13:09.506Z",
+  "timestamp": "2026-06-17T07:22:25.835Z",
+  "baseline_generated_at": "2026-06-17T07:22:25.835Z",
   "baseline_sha": "",
   "oracle_version": 1,
   "mode": {
@@ -43,11 +43,11 @@
       "proposal": {
         "total": 4982,
         "pass": 1453,
-        "fail": 3202,
+        "fail": 3201,
         "compile_error": 230,
-        "compile_timeout": 1,
+        "compile_timeout": 2,
         "skip": 96,
-        "compilable": 4655,
+        "compilable": 4654,
         "stale": 0,
         "label": "TC39 proposals"
       },
@@ -65,11 +65,11 @@
       "full": {
         "total": 48117,
         "pass": 32810,
-        "fail": 13995,
+        "fail": 13994,
         "compile_error": 1115,
-        "compile_timeout": 83,
+        "compile_timeout": 84,
         "skip": 114,
-        "compilable": 46805,
+        "compilable": 46804,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -88,11 +88,11 @@
   "full_summary": {
     "total": 48117,
     "pass": 32810,
-    "fail": 13995,
+    "fail": 13994,
     "compile_error": 1115,
-    "compile_timeout": 83,
+    "compile_timeout": 84,
     "skip": 114,
-    "compilable": 46805,
+    "compilable": 46804,
     "stale": 0
   },
   "strict_summary": {
@@ -119,11 +119,11 @@
     "proposal": {
       "total": 4982,
       "pass": 1453,
-      "fail": 3202,
+      "fail": 3201,
       "compile_error": 230,
-      "compile_timeout": 1,
+      "compile_timeout": 2,
       "skip": 96,
-      "compilable": 4655,
+      "compilable": 4654,
       "stale": 0
     },
     "standard": {
@@ -712,9 +712,9 @@
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
       "pass": 1257,
-      "fail": 3188,
+      "fail": 3187,
       "compile_error": 78,
-      "compile_timeout": 1,
+      "compile_timeout": 2,
       "skip": 0,
       "total": 4524
     },
@@ -1087,7 +1087,7 @@
     "oob": 38,
     "other": 4048,
     "promise_error": 89,
-    "range_error": 38,
+    "range_error": 37,
     "runtime_error": 1125,
     "type_error": 383,
     "unreachable": 26,

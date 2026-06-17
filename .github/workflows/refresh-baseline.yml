@@ -419,6 +419,22 @@ jobs:
               cp "$PROMOTE_SNAPSHOT/$f" "$f"
               git add -f "$f"
             done <<< "$PROMOTE_FILES"
+            # #2179 / task #40 — the promote-baseline job syncs the prose docs
+            # that embed the conformance number ATOMICALLY with the JSON, but the
+            # forced-refresh path (this step) historically committed only the JSON
+            # with [skip ci] and ran no CI. That left README/ROADMAP/CLAUDE/
+            # goal-graph drifted on main, which then FAILED the REQUIRED `quality`
+            # gate's "Conformance numbers in sync (#1522)" sub-check on every
+            # conformance-touching PR (blocked #1620/#1633). Regenerate the docs
+            # here, against the freshly re-anchored main + new JSON, and stage them
+            # so the JSON and its derived docs can NEVER land in separate commits.
+            # Run inside the loop (after re-anchor) so a push-race retry regenerates
+            # the docs against the advanced main rather than reusing stale output.
+            if [ -f scripts/sync-conformance-numbers.mjs ]; then
+              node scripts/sync-conformance-numbers.mjs || \
+                echo "WARN: sync-conformance-numbers failed (non-fatal) — docs may drift"
+              git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md 2>/dev/null || true
+            fi
             if git diff --cached --quiet; then
               echo "Baseline already current on main after re-anchor — nothing to push."
               PUSHED=1

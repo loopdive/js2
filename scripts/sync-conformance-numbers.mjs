@@ -90,8 +90,12 @@ function renderBlock(report) {
   const totalStr = fmtNumber(report.total);
   const pct = fmtPercent(report.pass, report.total);
   const sha = shortSha(report.sha);
-  const ts = report.generatedAt || "unknown";
-  return `**test262 conformance**: ${passStr} / ${totalStr} (${pct} %) — baseline ${sha}, ${ts}`;
+  // Intentionally omit the volatile baseline-generated timestamp from the
+  // rendered block: the forced-baseline-refresh bot bumps that timestamp
+  // ~hourly with no change to pass/total, which made `sync:conformance:check`
+  // flag drift on every open PR and perpetually block the merge queue (#1522).
+  // The meaningful numbers (pass/total/percentage + baseline sha) stay.
+  return `**test262 conformance**: ${passStr} / ${totalStr} (${pct} %) — baseline ${sha}`;
 }
 
 /**
