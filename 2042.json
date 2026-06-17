@@ -1,8 +1,9 @@
 {
   "id": "2042",
   "assignee": "ttraenkler/dev-2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2042-s3-descriptor-reflection-natives",
   "claimed_at": "2026-06-17T04:43:24Z",
-  "updated_at": "2026-06-17T04:43:24Z"
+  "updated_at": "2026-06-17T04:43:49Z",
+  "released_at": "2026-06-17T04:43:49Z"
 }
