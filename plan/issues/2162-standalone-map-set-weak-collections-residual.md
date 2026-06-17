@@ -104,9 +104,24 @@ tombstone skip, SameValueZero dedupe, empty, string elements.
 
 ### Remaining slices (issue stays in-progress)
 
-- `keys()`/`values()`/`entries()` + `for-of` over Map/Set — needs a JS-iterable
-  iterator object; `new Map(iterable)` / `new Set(iterable)` — needs
-  `__map_new_from_arr`. (Next slice.)
+- **Slice 4 — Map/Set `keys()`/`values()`/`entries()` + `for-of` (NEXT, scoped 2026-06-17).**
+  Current standalone state (probed on main @330b3cb66): `for (const v of set)` →
+  0 (driver not wired); `set.values()`/`map.keys()` for-of → invalid Wasm /0;
+  `for (const [k,v] of map)` → CE "for-of array destructuring: element is not an
+  array type". **Good news: the runtime primitives already exist** —
+  `map-runtime.ts` has `__map_iter_new(m, kind)` (kind 0=keys/1=values/2=entries)
+  and `__map_iter_next(it) -> $MapIterResult`. The slice is WIRING, not new
+  runtime: (a) intercept `keys()`/`values()`/`entries()` method calls (Map: all
+  three; Set: values===keys, entries=[v,v]) to `__map_iter_new` with the right
+  kind, returning an iterator object; (b) make the collection (and the returned
+  iterator) expose `Symbol.iterator` so the standalone for-of driver
+  (`iterator-native.ts` / `custom-iterable.ts`) calls `__map_iter_next`; (c) the
+  entries/2-elt for-of array-destructuring needs the iterator result element
+  typed as a 2-tuple. Medium; self-contained on the existing iter helpers.
+- **`new Map(iterable)` / `new Set(iterable)`** — needs a `__map_new_from_arr`
+  (or drive the generic iterator) at the `new`-expression site (new-super.ts);
+  currently `new Set([...])` → "object is not iterable", `new Map([[...]])` →
+  "Unsupported new expression for class: Map". Pairs naturally with slice 4.
 - ES2025 set-algebra: `union`/`intersection`/`difference`/
   `symmetricDifference`/`isSubsetOf`/`isSupersetOf`/`isDisjointFrom`.
 - The `Set === literal` / collection-of-`any` comparison confounds depend on the
