@@ -1,9 +1,8 @@
 {
   "id": "2017",
-  "assignee": "ttraenkler/dev-a",
-  "status": "released",
-  "branch": "issue-2017-getter-only-assign",
-  "claimed_at": "2026-06-16T08:03:31Z",
-  "updated_at": "2026-06-16T08:21:04Z",
-  "released_at": "2026-06-16T08:21:04Z"
+  "assignee": "ttraenkler/sd-b",
+  "status": "in-progress",
+  "branch": "issue-2017-getter-only-assignment-typeerror",
+  "claimed_at": "2026-06-17T00:38:15Z",
+  "updated_at": "2026-06-17T00:38:15Z"
 }
