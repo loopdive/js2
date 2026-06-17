@@ -11,6 +11,7 @@ import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, ExternClassInfo, FunctionContext, RestParamInfo } from "../context/types.js";
 import { addUnionImports, getArrTypeIdxFromVec } from "../index.js";
 import { tryCompileNativeMapMethodCall } from "../map-runtime.js";
+import { tryCompileNativeSetMethodCall } from "../set-runtime.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
@@ -61,6 +62,16 @@ function compileExternMethodCall(
     addUnionImports(ctx);
     const mapResult = tryCompileNativeMapMethodCall(ctx, fctx, propAccess, callExpr);
     if (mapResult !== undefined) return mapResult;
+  }
+
+  // (#2162) Native Set method dispatch in standalone / nativeStrings mode.
+  // Without this, `s.add(...)` etc. emit `Set_add` host imports the standalone
+  // runtime can't satisfy. Route to the WasmGC-native Set runtime (which reuses
+  // the Map backing store). Same up-front addUnionImports rationale as Map.
+  if (className === "Set" && ctx.nativeStrings) {
+    addUnionImports(ctx);
+    const setResult = tryCompileNativeSetMethodCall(ctx, fctx, propAccess, callExpr);
+    if (setResult !== undefined) return setResult;
   }
 
   if (!className) return null;

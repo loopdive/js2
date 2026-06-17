@@ -912,6 +912,14 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
  * assume); native strings and other GC refs are already anyref subtypes;
  * externrefs externalize via `any.convert_extern`.
  */
+/**
+ * (#2162) Re-exported for the Set runtime, which reuses the Map backing store
+ * and needs the identical key/value → anyref boxing for its element arg.
+ */
+export function coerceSetArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValType | null): void {
+  coerceArgToAnyref(ctx, fctx, t);
+}
+
 function coerceArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValType | null): void {
   if (t === null) {
     // Absent value (e.g. compileExpression produced nothing) — push a null

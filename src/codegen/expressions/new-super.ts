@@ -25,6 +25,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { ensureMapHelpers } from "../map-runtime.js";
+import { ensureSetHelpers } from "../set-runtime.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import {
@@ -1654,6 +1655,25 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   ) {
     addUnionImports(ctx);
     ensureMapHelpers(ctx);
+    const mapNewIdx = ctx.mapHelpers.get("__map_new");
+    if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
+      fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+      return { kind: "ref", typeIdx: ctx.mapTypeIdx };
+    }
+  }
+
+  // (#2162) `new Set()` in standalone / nativeStrings mode → the WasmGC-native
+  // Set runtime, which reuses the Map backing store (`__map_new` yields the
+  // same empty `$Map` a Set wraps). No-arg form only; `new Set(iterable)` needs
+  // the iterator drive (follow-up slice) and falls through.
+  if (
+    ctx.nativeStrings &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Set" &&
+    (expr.arguments?.length ?? 0) === 0
+  ) {
+    addUnionImports(ctx);
+    ensureSetHelpers(ctx);
     const mapNewIdx = ctx.mapHelpers.get("__map_new");
     if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
       fctx.body.push({ op: "call", funcIdx: mapNewIdx });

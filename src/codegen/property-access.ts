@@ -28,6 +28,7 @@ import { patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { addUnionImports, resolveWasmType } from "./index.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
+import { tryCompileNativeSetSizeGet } from "./set-runtime.js";
 import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8-codegen.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import {
@@ -3504,6 +3505,15 @@ function compileExternPropertyGet(
   if (className === "Map" && propName === "size" && ctx.nativeStrings) {
     addUnionImports(ctx);
     const sizeResult = tryCompileNativeMapSizeGet(ctx, fctx, expr.expression);
+    if (sizeResult !== undefined) return sizeResult as ValType;
+  }
+
+  // (#2162) Native Set `.size` accessor in standalone / nativeStrings mode →
+  // `__map_size` (the Set reuses the Map backing store) instead of the
+  // `Set_get_size` host import.
+  if (className === "Set" && propName === "size" && ctx.nativeStrings) {
+    addUnionImports(ctx);
+    const sizeResult = tryCompileNativeSetSizeGet(ctx, fctx, expr.expression);
     if (sizeResult !== undefined) return sizeResult as ValType;
   }
 
