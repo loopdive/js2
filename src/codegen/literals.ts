@@ -50,6 +50,7 @@ import {
 } from "./index.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "./generators-native.js";
+import { emitSymbolDescStore } from "./symbol-native.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -1238,10 +1239,42 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
     flushLateImportShifts(ctx, fctx);
     fctx.body.push({ op: "call", funcIdx: regIdx });
   } else if (args.length > 0) {
-    // Standalone-mode: still evaluate the description for side effects.
-    const argType = compileExpression(ctx, fctx, args[0]!);
-    if (argType !== null) {
+    // (#2163) Standalone / no-JS-host mode: store the description in the native
+    // id→string side table so `sym.description` can read it back without a host
+    // import. §20.4.1.1: if the description argument is `undefined`, the symbol
+    // has NO description (`.description === undefined`), so a literal
+    // `Symbol(undefined)` must NOT register a description — but it still
+    // evaluates the argument for side effects.
+    const argExpr = args[0]!;
+    const isUndefinedLiteral =
+      ts.isIdentifier(argExpr) &&
+      argExpr.text === "undefined" &&
+      ctx.checker.getSymbolAtLocation(argExpr) === undefined;
+    const argType = compileExpression(ctx, fctx, argExpr, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+    if (argType === null) {
+      // expression produced no value — nothing to store.
+    } else if (isUndefinedLiteral) {
+      // Per spec, no description; discard the evaluated value.
+      if (argType.kind !== "ref_null" || argType.typeIdx !== ctx.anyStrTypeIdx) {
+        // value left on stack in some other type — drop it directly.
+      }
       fctx.body.push({ op: "drop" });
+    } else {
+      // Coerce the description to a `ref_null $AnyString` and store it at the
+      // reserved id: `store(id, desc)` consumes both off the stack.
+      if (argType.kind !== "ref_null" || argType.typeIdx !== ctx.anyStrTypeIdx) {
+        coerceType(ctx, fctx, argType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+      }
+      // emitSymbolDescStore wants `[id, desc]`; the desc is on top, so push id
+      // BELOW it via a temp.
+      const descTmp = allocLocal(fctx, `__symdesc_arg_${fctx.locals.length}`, {
+        kind: "ref_null",
+        typeIdx: ctx.anyStrTypeIdx,
+      });
+      fctx.body.push({ op: "local.set", index: descTmp });
+      fctx.body.push({ op: "global.get", index: counterIdx });
+      fctx.body.push({ op: "local.get", index: descTmp });
+      emitSymbolDescStore(ctx, fctx);
     }
   }
   // Push the symbol id (the counter) as the result.

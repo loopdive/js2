@@ -71,6 +71,7 @@ import {
   paramDefaultNeedsArgc,
 } from "./statements/nested-declarations.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
+import { addFunctionOwnLocals, registerOwnLocalsCollector } from "./binding-info.js"; // (#2103) shared, memoized per-function binding-info oracle
 
 // ── Arrow function callbacks ──────────────────────────────────────────
 
@@ -171,6 +172,12 @@ export function collectFunctionOwnLocals(funcLike: ts.Node, out: Set<string>): v
   }
 }
 
+// (#2103) Back the shared binding-info oracle with the own-locals collector
+// above. Registered once at module load; the oracle memoizes per function node
+// so the repeated per-scope-boundary calls inside the identifier walks below
+// (and across all other lowerings) reuse a single computed set.
+registerOwnLocalsCollector(collectFunctionOwnLocals);
+
 /**
  * Recursively collect `var` declarations (function-scoped) and top-level
  * `function`/`class` declarations from a node tree, without crossing nested
@@ -261,7 +268,7 @@ export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, 
     // expr's own name) to the inner shadow so self-references aren't treated
     // as outer captures.
     const merged = new Set<string>(shadowed ?? []);
-    collectFunctionOwnLocals(node, merged);
+    addFunctionOwnLocals(node, merged); // (#2103) memoized own-locals
     if (ts.isFunctionExpression(node) && node.name) merged.add(node.name.text);
     forEachChild(node, (child) => collectReferencedIdentifiers(child, names, merged));
     return;
@@ -312,7 +319,7 @@ export function collectWrittenIdentifiers(node: ts.Node, names: Set<string>, sha
   }
   if (isFunctionScopeBoundary(node)) {
     const merged = new Set<string>(shadowed ?? []);
-    collectFunctionOwnLocals(node, merged);
+    addFunctionOwnLocals(node, merged); // (#2103) memoized own-locals
     if (ts.isFunctionExpression(node) && node.name) merged.add(node.name.text);
     forEachChild(node, (child) => collectWrittenIdentifiers(child, names, merged));
     return;
@@ -1454,7 +1461,7 @@ export function compileArrowAsClosure(
   //    outer references — otherwise a closure with its own `var i;` would be
   //    treated as capturing the outer `i` (#995/#996).
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(arrow, ownLocals);
+  addFunctionOwnLocals(arrow, ownLocals); // (#2103) memoized own-locals
   if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
 
   // (#2118) Self-recursive const/let arrow: `const f = (n) => ... f(n-1)`.
@@ -2550,7 +2557,7 @@ export function collectMutatedCaptureNames(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
 ): Set<string> {
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(arrow, ownLocals);
+  addFunctionOwnLocals(arrow, ownLocals); // (#2103) memoized own-locals
   if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
   const written = new Set<string>();
   const body = arrow.body;
@@ -2598,7 +2605,7 @@ export function compileArrowAsCallback(
 
   // 1. Analyze captured variables (scope-aware so own params/var-decls shadow)
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(arrow, ownLocals);
+  addFunctionOwnLocals(arrow, ownLocals); // (#2103) memoized own-locals
   if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
 
   const referencedNames = new Set<string>();

@@ -64,3 +64,27 @@ null is then erased). `emitBoundsCheckedArrayGetUndef`
 (`src/codegen/destructuring-params.ts:141-190`) only yields JS
 undefined for externref element types. Fold into the same
 representation decision as the hole semantics above (#1852/#1931).
+
+## Re-validation (2026-06-17, dev-1, against origin/main @330b3cb66)
+
+RE-VALIDATED per the s63 verify-still-repros-first discipline. The repro is
+**still live** — all four documented cases reproduce on current main
+(sprint-62 value-rep work did NOT fix it):
+
+| Case | wasm (got) | node (exp) |
+|---|---|---|
+| `[1,,3].forEach(()=>c++)` count | `3` | `2` |
+| `b=[1]; b[5]=9; b.join(",")` | `"1,0,0,0,0,9"` | `"1,,,,,9"` |
+| `const [p,q]=[1]; String(q)` | `"0"` | `"undefined"` |
+| `const [a=5,b=6]=[undefined,null]; String(b)` | `"0"` | `"null"` |
+
+**Disposition: NOT a developer point-fix despite the task framing.** The
+issue's "Fix direction" gates this behind a representation decision (hole
+sentinel vs side bitmap vs accept-divergence for typed arrays) and states
+"Architect input recommended before dev dispatch; intersects #1852
+per-backend value representation." That gate is unmet, blast radius is the
+whole dense-WasmGC-vec representation (every array program), and
+feasibility is `hard` / reasoning_effort `high`. Routing back to
+architect for the representation ratification (as #2001/#1852/#1931) before
+any dev implementation — dev-1 is moving to standalone-priority work per
+tech-lead direction.

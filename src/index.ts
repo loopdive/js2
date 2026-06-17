@@ -221,8 +221,10 @@ export interface CompileOptions {
   };
   /** Packages to keep as host imports (not resolved/bundled) */
   externals?: string[];
-  /** Enable tree-shaking to eliminate unused exports (default: false) */
-  treeshake?: boolean;
+  // NOTE: there is no `treeshake` compile option. The standalone `treeshake()`
+  // helper (exported below) is used directly by callers/tests; no compile path
+  // ever read a `CompileOptions.treeshake` flag, so the dead option was removed
+  // (#1931) rather than left as documented-but-inert API surface.
   /** ABI for exported functions: "default" (normal) or "c" (C-compatible calling conventions).
    *  C ABI is only supported with target: "linear". Strings/arrays become (ptr, len) pairs. */
   abi?: "default" | "c";

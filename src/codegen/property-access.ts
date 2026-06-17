@@ -31,6 +31,7 @@ import {
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
+import { emitSymbolDescLoad } from "./symbol-native.js";
 import { addUnionImports, resolveWasmType } from "./index.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
@@ -1826,11 +1827,20 @@ export function compilePropertyAccess(
   // (`null.message` throws), so the trap is acceptable Phase 1/2 semantics.
   if ((ctx.wasi || ctx.standalone) && (propName === "message" || propName === "name" || propName === "stack")) {
     const lhsTsName = objType.getSymbol()?.name;
+    // (#1536c) A user subclass of a built-in Error (`class MyError extends
+    // Error {}`) is externref-backed; its instance is the parent's
+    // `$Error_struct` (created natively by `__new_<Parent>`). Treat it as an
+    // Error LHS so `.message`/`.name`/`.stack` read the struct field directly
+    // instead of the generic `__extern_get` host path (unavailable standalone,
+    // returns null). The struct field layout is the parent's.
+    const lhsUserErrorParent =
+      lhsTsName !== undefined && !isBuiltinTypeName(lhsTsName) ? ctx.classBuiltinParentMap.get(lhsTsName) : undefined;
     const isErrorLhs =
-      lhsTsName !== undefined &&
-      isBuiltinTypeName(lhsTsName) &&
-      isWasiErrorName(lhsTsName) &&
-      isBuiltinSubtype(lhsTsName, "Error");
+      (lhsTsName !== undefined &&
+        isBuiltinTypeName(lhsTsName) &&
+        isWasiErrorName(lhsTsName) &&
+        isBuiltinSubtype(lhsTsName, "Error")) ||
+      (lhsUserErrorParent !== undefined && (lhsUserErrorParent === "Error" || isWasiErrorName(lhsUserErrorParent)));
     // #2077: a `catch (e)` binding is typed `any` (or `unknown`), so the static
     // `isErrorLhs` gate above never fires even though the caught value IS the
     // `$Error` struct at runtime — the field read then fell through to the
@@ -3123,6 +3133,19 @@ export function compilePropertyAccess(
   // Generic __extern_get works for plain JS hosts but bypasses the spec
   // accessor (which V8 implements specially), so we route directly.
   if (propName === "description" && (objType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
+    // (#2163) No-JS-host mode: the symbol is a bare i32 id and there is no host
+    // accessor — read the description from the native id→string side table
+    // (populated by `compileSymbolCall`). A null slot / out-of-range id reads as
+    // `undefined`, matching `Symbol().description === undefined`.
+    if (noJsHost(ctx)) {
+      const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "i32" });
+      if (recvType && recvType.kind !== "i32") {
+        coerceType(ctx, fctx, recvType, { kind: "i32" });
+      }
+      emitSymbolDescLoad(ctx, fctx);
+      // Result is `ref_null $AnyString` — a native string (or null⇒undefined).
+      return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    }
     const symDescIdx = ensureLateImport(ctx, "__symbol_description", [{ kind: "externref" }], [{ kind: "externref" }]);
     if (symDescIdx !== undefined) {
       const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });

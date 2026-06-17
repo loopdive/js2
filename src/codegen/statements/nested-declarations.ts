@@ -11,11 +11,11 @@ import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 import { isStrictFunction } from "../helpers/is-strict-function.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import {
-  collectFunctionOwnLocals,
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
   promoteAccessorCapturesToGlobals,
 } from "../closures.js";
+import { addFunctionOwnLocals } from "../binding-info.js"; // (#2103) memoized own-locals oracle
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
@@ -228,7 +228,7 @@ export function compileNestedFunctionDeclaration(
   // function body shadow outer references — otherwise a function with its own
   // `var i;` would be treated as capturing the outer `i` (#995).
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(stmt, ownLocals);
+  addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
 
   const referencedNames = new Set<string>();
   for (const s of stmt.body.statements) {
@@ -855,7 +855,7 @@ export function hoistFunctionDeclarations(
       // Capture check: a referenced name that is an outer local (and not an
       // own-local, this/super, or a sibling function) makes this capturing.
       const ownLocals = new Set<string>();
-      collectFunctionOwnLocals(stmt, ownLocals);
+      addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
       const referenced = new Set<string>();
       for (const s of stmt.body.statements) collectReferencedIdentifiers(s, referenced, ownLocals);
       let capturesOuter = false;

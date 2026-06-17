@@ -36,6 +36,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
+import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
 import { coerceType, coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 
@@ -4796,10 +4797,12 @@ function compileArrayJoinNative(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
-  ensureNativeStringHelpers(ctx);
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
-  const strConcatIdx = ctx.nativeStrHelpers.get("__str_concat");
-  if (strConcatIdx === undefined || anyStrTypeIdx < 0) {
+  // #2088 — native-string representation; the fold loop + separator + empty
+  // handling are shared with the host lane via `emitStringJoinFold`. This lane
+  // supplies only the native repr and the element-type-specific `elemToStr`.
+  const repr = nativeStringRepr(ctx);
+  if (repr === undefined || anyStrTypeIdx < 0) {
     reportError(ctx, callExpr, "join requires native string helpers (__str_concat)");
     return null;
   }
@@ -4820,13 +4823,10 @@ function compileArrayJoinNative(
     }
   }
 
-  const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
   const vecTmp = allocLocal(fctx, `__njoin_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__njoin_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
-  const lenTmp = allocLocal(fctx, `__njoin_len_${fctx.locals.length}`, { kind: "i32" });
-  const iTmp = allocLocal(fctx, `__njoin_i_${fctx.locals.length}`, { kind: "i32" });
-  const resultTmp = allocLocal(fctx, `__njoin_res_${fctx.locals.length}`, strRef);
-  const sepTmp = allocLocal(fctx, `__njoin_sep_${fctx.locals.length}`, strRef);
+  const foldLocals = allocJoinFoldLocals(fctx, repr, "njoin");
+  const { lenTmp, iTmp, resultTmp, sepTmp } = foldLocals;
 
   // Receiver vec → length + data array.
   compileExpression(ctx, fctx, propAccess.expression);
@@ -4890,42 +4890,8 @@ function compileArrayJoinNative(
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: iTmp });
 
-  const loopBody: Instr[] = [
-    { op: "local.get", index: iTmp },
-    { op: "local.get", index: lenTmp },
-    { op: "i32.ge_s" },
-    { op: "br_if", depth: 1 },
-
-    // result = (i == 0) ? elem : __str_concat(__str_concat(result, sep), elem)
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 0 },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [...elemToStr, { op: "local.set", index: resultTmp } as Instr],
-      else: [
-        { op: "local.get", index: resultTmp } as Instr,
-        { op: "local.get", index: sepTmp } as Instr,
-        { op: "call", funcIdx: strConcatIdx } as Instr,
-        ...elemToStr,
-        { op: "call", funcIdx: strConcatIdx } as Instr,
-        { op: "local.set", index: resultTmp } as Instr,
-      ],
-    } as Instr,
-
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.set", index: iTmp },
-    { op: "br", depth: 0 },
-  ];
-
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody } as Instr],
-  });
+  // #2088 — shared fold (host + native lanes route through this).
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr);
 
   // Return the joined native string as externref for the caller.
   fctx.body.push({ op: "local.get", index: resultTmp });
@@ -5024,6 +4990,16 @@ function compileArrayJoin(
     return null;
   }
 
+  // #2088 — the fold loop + separator + empty-string handling are shared with
+  // the native lane via `emitStringJoinFold`; this lane supplies only the
+  // host-string representation and the element-type-specific `elemToStr`
+  // matrix below. A bug in the shared fold regresses both lanes at once.
+  const repr = hostStringRepr(ctx);
+  if (repr === undefined) {
+    reportError(ctx, callExpr, "join requires string support (wasm:js-string concat)");
+    return null;
+  }
+
   // #1968 — the empty-join result must be "" not a null externref (which every
   // downstream string consumer stringifies as "null"). Pre-register the ""
   // string constant *before* any body instructions so the eventual fixup of
@@ -5032,10 +5008,8 @@ function compileArrayJoin(
 
   const vecTmp = allocLocal(fctx, `__arr_join_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_join_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
-  const lenTmp = allocLocal(fctx, `__arr_join_len_${fctx.locals.length}`, { kind: "i32" });
-  const iTmp = allocLocal(fctx, `__arr_join_i_${fctx.locals.length}`, { kind: "i32" });
-  const resultTmp = allocLocal(fctx, `__arr_join_res_${fctx.locals.length}`, { kind: "externref" });
-  const sepTmp = allocLocal(fctx, `__arr_join_sep_${fctx.locals.length}`, { kind: "externref" });
+  const foldLocals = allocJoinFoldLocals(fctx, repr, "arr_join");
+  const { lenTmp, iTmp, resultTmp, sepTmp } = foldLocals;
 
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
@@ -5128,41 +5102,8 @@ function compileArrayJoin(
     elemToStr.push({ op: "call", funcIdx: joinStrIdx });
   }
 
-  const loopBody: Instr[] = [
-    { op: "local.get", index: iTmp },
-    { op: "local.get", index: lenTmp },
-    { op: "i32.ge_s" },
-    { op: "br_if", depth: 1 },
-
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 0 },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [...elemToStr, { op: "local.set", index: resultTmp } as Instr],
-      else: [
-        { op: "local.get", index: resultTmp } as Instr,
-        { op: "local.get", index: sepTmp } as Instr,
-        { op: "call", funcIdx: concatIdx } as Instr,
-        ...elemToStr,
-        { op: "call", funcIdx: concatIdx } as Instr,
-        { op: "local.set", index: resultTmp } as Instr,
-      ],
-    } as Instr,
-
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.set", index: iTmp },
-    { op: "br", depth: 0 },
-  ];
-
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody } as Instr],
-  });
+  // #2088 — shared fold (host + native lanes route through this).
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr);
 
   // An empty array leaves `resultTmp` as the initial null. join/toString of `[]`
   // is the empty String "", not null — substitute it so the result is a real

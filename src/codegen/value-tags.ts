@@ -184,6 +184,19 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
     // downstream by the $BoxedNumber recovery arm in `__any_to_f64`. Keep tag-5.
     return emit("__any_box_string");
   }
+  // (#42) A native WasmGC string is a `ref $AnyString` (nativeStrings/standalone),
+  // not an externref — without this arm it fell through to `__any_box_ref` below
+  // and was boxed as a tag-6 OBJECT (refval), so `const s: any = "x"; s + s`
+  // mis-dispatched `__any_add` (object-ToString, not string concat). Recover the
+  // string by wrapping the ref to externref and boxing it as a tag-5 STRING, the
+  // same representation `const s: any = "x"` carries on a direct read.
+  if (
+    (from.kind === "ref" || from.kind === "ref_null") &&
+    ctx.anyStrTypeIdx >= 0 &&
+    (from as { typeIdx: number }).typeIdx === ctx.anyStrTypeIdx
+  ) {
+    return emit("__any_box_string", [{ op: "extern.convert_any" } as Instr]);
+  }
   if (from.kind === "ref" || from.kind === "ref_null") return emit("__any_box_ref");
   return false;
 }

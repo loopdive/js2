@@ -194,3 +194,33 @@ the Slice 1 0-arg path (`next()`=7) intact. Test: `tests/issue-2151-nary.test.ts
   function") — pre-existing host limitation (verified on main), out of scope
   (this fix is gated on standalone/wasi).
 - Spread-arg method calls (`o.m(...xs)`).
+
+## Slice 3 RESULT (2026-06-17, dev-3) — spread-of-array-literal — IMPLEMENTED & GREEN
+
+The any-receiver dispatch site (`calls.ts` ~`:8276`) previously bailed to the
+generic host-import path whenever ANY arg was a spread, so `o.m(...[2,3])`
+returned 0 standalone. A spread of an **array literal** has a
+statically-known argument list, so it can use the same arity-specialized
+dispatcher: the gate now runs `flattenCallArgs(expr.arguments)` (the existing
+helper that expands `...[a,b]` into `a, b`, returning null for a dynamic
+spread). When it returns a flat list, the dispatch arity + per-arg compilation
+use that list; a dynamic spread (`o.m(...xs)`) still returns null → falls
+through to the generic path (would need runtime variable-arity dispatch).
+
+Re-validation on main also confirmed Slices 1–2 are landed and the previously
+"deferred" **built-in-method-name collision** cases (`o.add(5)`→25,
+`o.push(3)`→6) now pass too — only spread args remained.
+
+### Test Results
+
+- `tests/issue-2151-spread-literal.test.ts` — 5/5, zero host imports:
+  two-element / `this`-threading / mixed `m(1, ...[2,3])` / single-element /
+  empty `...[]`.
+- No regression: `issue-2151-nary` + `issue-2025` + `object-methods` +
+  `object-literals` — 46/46. Host mode unaffected (gated `standalone||wasi`).
+  `npm run typecheck` + Biome lint clean (no warnings on edited lines).
+
+### Still carried forward (issue stays in-progress)
+
+- Dynamic-spread method calls `o.m(...xs)` (runtime variable-arity dispatch).
+- Host-mode any-method on a closed object literal (pre-existing host limitation).

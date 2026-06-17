@@ -1107,7 +1107,28 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     return emitConstantInstanceOf(ctx, fctx, expr, staticResult);
   }
 
-  if (ts.isIdentifier(expr.right) && !isBuiltinTypeName(ctorName) && identifierHasSourceDeclaration(ctx, expr.right)) {
+  // (#1536c) Standalone / WASI: `instance instanceof MyError` where
+  // `class MyError extends Error {}` is an externref-backed user subclass. The
+  // instance is the parent's `$Error_struct` (created natively by
+  // `__new_<Parent>`, #1536c), so discriminate by the parent error's `$tag`
+  // set — natively, no `__instanceof`/`__tag_user_class` host import. Run this
+  // BEFORE the generic `emitDynamicInstanceOf` route below, which would emit a
+  // host import. Precision note: this resolves `instanceof MyError` to "is an
+  // Error-family struct compatible with MyError's builtin parent" — exact for a
+  // single subclass; distinguishing sibling subclasses needs a per-user-class
+  // brand (broader $ClassMeta work, #2101). Captured in #1536c's resolution.
+  let userErrorParent: string | undefined;
+  if (noJsHost(ctx) && !isBuiltinTypeName(ctorName)) {
+    const bp = ctx.classBuiltinParentMap.get(ctorName);
+    if (bp && (bp === "Error" || isWasiErrorName(bp))) userErrorParent = bp;
+  }
+
+  if (
+    ts.isIdentifier(expr.right) &&
+    !isBuiltinTypeName(ctorName) &&
+    identifierHasSourceDeclaration(ctx, expr.right) &&
+    userErrorParent === undefined
+  ) {
     return emitDynamicInstanceOf(ctx, fctx, expr);
   }
 
@@ -1116,8 +1137,10 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // `$Error_struct` externref produced by emitWasiErrorConstructor; discriminate
   // by reading its `$tag` field (fieldIdx 0) and comparing against the set of
   // tags compatible with `ctorName`. No `__instanceof` host import.
-  if (noJsHost(ctx) && (ctorName === "Error" || isWasiErrorName(ctorName))) {
-    const compatTags = collectErrorInstanceOfTags(ctorName);
+  // (#1536c) `userErrorParent` extends this to externref-backed user Error
+  // subclasses: discriminate against the *parent* error's compatible tag set.
+  if (noJsHost(ctx) && (ctorName === "Error" || isWasiErrorName(ctorName) || userErrorParent !== undefined)) {
+    const compatTags = collectErrorInstanceOfTags(userErrorParent ?? ctorName);
     const structIdx = getOrRegisterErrorStructType(ctx);
     const leftType = compileExpression(ctx, fctx, expr.left);
     if (leftType && leftType.kind !== "externref") {

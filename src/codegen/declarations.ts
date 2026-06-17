@@ -21,7 +21,8 @@ import { collectShapes } from "../shape-inference.js";
 import { ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { collectClassDeclaration, compileClassBodies } from "./class-bodies.js";
-import { collectFunctionOwnLocals, collectReferencedIdentifiers } from "./closures.js";
+import { collectReferencedIdentifiers } from "./closures.js";
+import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
 import { reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, registerInlinableFunction } from "./function-body.js";
@@ -2280,7 +2281,7 @@ function functionDeclarationCapturesEnclosingLocal(ctx: CodegenContext, stmt: ts
   if (!stmt.body) return false;
   const referenced = new Set<string>();
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(stmt, ownLocals);
+  addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
   for (const s of stmt.body.statements) {
     collectReferencedIdentifiers(s, referenced, ownLocals);
   }

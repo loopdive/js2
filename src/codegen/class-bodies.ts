@@ -32,6 +32,7 @@ import {
 } from "./index.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { emitWasiErrorConstructor, isWasiErrorName } from "./registry/error-types.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   cacheParamDefaultArgc,
@@ -1508,8 +1509,20 @@ function compileClassBodiesInner(
       if (parentName) {
         const importName = `__new_${parentName}`;
         const forwardParams = externrefParams(implicitForwarderArity);
-        const funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
-        flushLateImportShifts(ctx, fctx);
+        // (#1536c) Standalone / WASI: route the parent instance creation through
+        // the native `__new_<Parent>` internal function (a real `$Error_struct`
+        // with the parent's `$tag`, `.message`, `.name`) instead of a host
+        // import, so `class MyError extends Error {}` instantiates with zero
+        // env:: imports. The native function is emitted idempotently and
+        // registered in `ctx.funcMap`. JS-host mode keeps the host import.
+        let funcIdx: number | undefined;
+        if ((ctx.wasi || ctx.standalone) && isWasiErrorName(parentName)) {
+          emitWasiErrorConstructor(ctx, parentName, implicitForwarderArity);
+          funcIdx = ctx.funcMap.get(importName);
+        } else {
+          funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
+          flushLateImportShifts(ctx, fctx);
+        }
         if (funcIdx !== undefined) {
           for (let i = 0; i < implicitForwarderArity; i++) {
             fctx.body.push({ op: "local.get", index: i });
@@ -1656,7 +1669,12 @@ function compileClassBodiesInner(
     // `instance instanceof Sub` by walking the registered tag chain. The
     // direct user-class parent (or null when the direct parent is a builtin)
     // is registered idempotently on first call.
-    if (isExternrefBacked) {
+    // (#1536c) Skipped under standalone / WASI: `__tag_user_class` is a JS host
+    // import (it would leak `env::__tag_user_class` and fail to instantiate).
+    // Standalone resolves `instance instanceof Sub`/`Parent` natively via the
+    // `$Error_struct` `$tag` discrimination (identifiers.ts) — no host tagging
+    // needed.
+    if (isExternrefBacked && !(ctx.wasi || ctx.standalone)) {
       const builtinParent = ctx.classBuiltinParentMap.get(className);
       // Direct user-class parent: classParentMap[className] is set to the
       // immediate parent name; if it equals the builtin parent, the user
@@ -2272,8 +2290,17 @@ export function compileSuperCall(
     const importName = `__new_${builtinParent}`;
     const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
     const forwardParams = externrefParams(forwardArity);
-    const funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
+    // (#1536c) Standalone / WASI: emit the native `__new_<Parent>` internal
+    // function (real `$Error_struct`) and call it instead of a host import, so
+    // `super(msg)` in a user Error subclass works with zero env:: imports.
+    let funcIdx: number | undefined;
+    if ((ctx.wasi || ctx.standalone) && isWasiErrorName(builtinParent)) {
+      emitWasiErrorConstructor(ctx, builtinParent, forwardArity);
+      funcIdx = ctx.funcMap.get(importName);
+    } else {
+      funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+    }
     if (funcIdx !== undefined) {
       const flatArgs = hasSpread ? flattenStaticallyKnownArgs(args) : [...args];
       if (flatArgs) {

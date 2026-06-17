@@ -1,10 +1,12 @@
 ---
 id: 1931
 title: "Decompose detectEarlyErrors (3,350-line function) and run it on every path; wire or delete the dead treeshake option"
-status: ready
+status: done
+completed: 2026-06-17
+assignee: ttraenkler/cs-1931
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-17
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -58,3 +60,45 @@ goal: conformance
 ## Source
 
 Compiler quality review 2026-06. Related: #1927.
+
+## Resolution (2026-06-17)
+
+Decomposed `detectEarlyErrors` into per-concern modules under
+`src/compiler/early-errors/`, sharing one AST walk via an `EarlyErrorContext`:
+
+- `context.ts` — `EarlyErrorContext` (sourceFile, errors, pos, addError) + factory.
+- `predicates.ts` — 34 pure, stateless predicate/collection helpers (strict-mode,
+  assignment-target, inside-iteration/function, binding-name collection, …),
+  each individually unit-testable.
+- `assignment.ts` — AssignmentPattern validators.
+- `duplicates.ts` — duplicate params/lexical/private-name/switch-case rules.
+- `labels.ts` — duplicate-label rules.
+- `tdz.ts` — temporal-dead-zone reference checks.
+- `node-checks.ts` — the per-node dispatch (the former `visit` walk).
+- `module-rules.ts` — export-default, duplicate-export-names, module-item
+  position, reserved yield/await, HTML close comments, duplicate constructors.
+- `index.ts` — thin orchestrator (the new `detectEarlyErrors`).
+
+`validation.ts` shrank from 3,647 → 283 lines; the largest remaining function
+there is `validateSafeMode` (117 lines). `detectEarlyErrors` is re-exported from
+`validation.ts` so existing import sites are unchanged.
+
+**Behaviour-preserving**: a 447-case oracle (snippets covering each rule + 400
+test262 `negative.phase: parse` files) produces byte-identical output before and
+after the refactor.
+
+**Run on every path**: `compileMultiSource` and `compileFilesSource` now run
+`detectEarlyErrors` on every user source file (skipping allowJs deps), so a
+duplicate-`let` is rejected in multi-file compiles too (was previously skipped).
+The single-source `compile()` path used by test262 is unchanged.
+
+**treeshake**: the dead `CompileOptions.treeshake` flag (never read by any
+compile path) was removed. The standalone `treeshake()` helper stays exported
+and is still exercised by `tests/resolve.test.ts`.
+
+Also fixed the stale `isStrictMode` doc comment that claimed modules are treated
+as strict ("we add export {} so all are modules") — they are not.
+
+Tests: `tests/issue-1931.test.ts` — 20 unit/integration tests covering
+predicates, rule modules, full `detectEarlyErrors`, and the multi-source
+duplicate-`let` rejection.
