@@ -434,6 +434,48 @@ export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyNam
 // re-exported here for callers that already import from `class-bodies.js`.
 export { classMemberFuncKey } from "./class-member-keys.js";
 
+/**
+ * (#2101 P0 / #2158) Register the single, module-shared `$ClassMeta` struct type
+ * once and cache its heap-type index on `ctx.classMetaTypeIdx`. Idempotent.
+ *
+ * Per the #2101 spec there is exactly ONE `$ClassMeta` heap type for the whole
+ * module — class identity rides the per-instance `$tag` VALUE, never a
+ * `ref.test` on this type (which iso-recursive canonicalization would make
+ * unsound, #2009). Because there is only one such type, it has nothing to
+ * collide with, so canonicalization is a non-issue for the metadata itself.
+ *
+ * Field layout (spec §"Recommended backing"):
+ *   0 $tag       i32       classTagMap value — unique per class
+ *   1 $parentTag i32       parent's tag, -1 if none
+ *   2 $ctorFunc  funcref   `${Name}_new`
+ *   3 $proto     externref the `__proto_<Name>` object (Name.prototype)
+ *   4 $methodCsv externref transitive method-name CSV string
+ *   5 $name      externref class .name string
+ *   6 $isClass   i32       1 = class ctor, 0 = function ctor
+ *
+ * P0 only registers the type + a per-class null-initialized singleton global
+ * (mirroring the existing `__proto_<Name>`/`__class_<Name>` globals, which are
+ * also null until lazily populated). Nothing reads or populates the fields yet
+ * — the populator + readers land in P1 alongside their first consumer, keeping
+ * P0 byte-identical on every existing code path.
+ */
+export function ensureClassMetaType(ctx: CodegenContext): number {
+  if (ctx.classMetaTypeIdx !== undefined) return ctx.classMetaTypeIdx;
+  const typeIdx = ctx.mod.types.length;
+  const fields: FieldDef[] = [
+    { name: "tag", type: { kind: "i32" }, mutable: true },
+    { name: "parentTag", type: { kind: "i32" }, mutable: true },
+    { name: "ctorFunc", type: { kind: "funcref" }, mutable: true },
+    { name: "proto", type: { kind: "externref" }, mutable: true },
+    { name: "methodCsv", type: { kind: "externref" }, mutable: true },
+    { name: "name", type: { kind: "externref" }, mutable: true },
+    { name: "isClass", type: { kind: "i32" }, mutable: true },
+  ];
+  ctx.mod.types.push({ kind: "struct", name: "$ClassMeta", fields });
+  ctx.classMetaTypeIdx = typeIdx;
+  return typeIdx;
+}
+
 /** Collect all function declarations and interfaces */
 /** Collect a class declaration or class expression: register struct type, constructor, and methods */
 export function collectClassDeclaration(
@@ -661,6 +703,35 @@ export function collectClassDeclaration(
       init: [{ op: "ref.null.extern" }],
     });
     ctx.classObjectGlobals.set(className, classObjectGlobalIdx);
+  }
+
+  // (#2101 P0 / #2158) Reserve the per-class `$ClassMeta` singleton slot as an
+  // externref (matching `__class_`/`__proto_` above), null until the P1 lazy
+  // populator `struct.new $ClassMeta`s it. Mirrors the `__proto_`/`__class_`
+  // globals: a P1 reader (`.constructor`/`.prototype` identity, standalone
+  // descriptor enumeration, dynamic `new`) demands it and runs the populator.
+  //
+  // The `$ClassMeta` STRUCT TYPE is deliberately NOT registered here. Pushing an
+  // extra type into `ctx.mod.types` mid-class-collection shifts the
+  // placeholder→fill class struct-type indices and desyncs already-computed
+  // `struct.get`/`struct.new` typeidx baked into sibling class method bodies
+  // ("struct.get expected (ref null N), found (ref null M)"). The single shared
+  // `$ClassMeta` type is registered once by `ensureClassMetaType` at the FIRST
+  // P1 reader — after every class struct type is final, where adding one type is
+  // shift-safe (same invariant the object-runtime helpers rely on). The
+  // populator casts this externref to `(ref $ClassMeta)` at that point. Leaving
+  // the slot externref also lets dead-elimination prune it when no P1 reader
+  // demands it, keeping P0 byte-identical on the static fast path. Skipped for
+  // externref-backed builtin subclasses (no `$ClassName` struct).
+  if (!ctx.classBuiltinParentMap.has(className)) {
+    const classMetaGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: `__classmeta_${className}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.classMetaGlobals.set(className, classMetaGlobalIdx);
   }
 
   // Register constructor function: takes ctor params, returns (ref $structTypeIdx)

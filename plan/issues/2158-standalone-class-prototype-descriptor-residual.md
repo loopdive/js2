@@ -1,7 +1,7 @@
 ---
 id: 2158
 title: "Standalone class/prototype/private-name/descriptor conformance residual (~1,388 tests)"
-status: in-progress
+status: suspended
 assignee: ttraenkler/sdev-standalone
 sprint: 63
 created: 2026-06-15
@@ -75,17 +75,17 @@ Nothing registers or reads them yet — the next agent picks up here.
      standalone struct readers replacing the host-Proxy `__register_*`.
 2. **P0 (byte-identical):** register the `$ClassMeta` struct type once (set
    `ctx.classMetaTypeIdx`); at `class-bodies.ts:546-573` (where `__proto_<Name>`
-   + `__class_<Name>` externref globals register today) allocate one
-   meta-singleton global per class into `classMetaGlobals`, and add a **lazy**
-   populator (mirror `emitLazyProtoGet`, `expressions/extern.ts:132`) that
-   `struct.new $ClassMeta`s the fields: `$tag`=classTagMap, `$parentTag`=parent
-   via classParentMap→tag (-1 if none), `$ctorFunc`=`ref.func` of
-   `classMemberFuncKey(ctx, "${Name}_new")` (#1983 helper, `class-member-keys.ts`
-   — use it; #1983 is merged), `$name`/`$methodCsv` strings, `$isClass`=1.
-   Build the transitive `$methodCsv` once (own `classMethodNames` ∪ ancestors via
-   `classParentMap`) and reuse the existing `classMethodsCsvGlobal`. Lazy ⇒
-   byte-identical (no instructions on the hot path until a reader demands it).
-   **Acceptance: existing class tests green; only the new type+globals appear.**
+   - `__class_<Name>` externref globals register today) allocate one
+     meta-singleton global per class into `classMetaGlobals`, and add a **lazy**
+     populator (mirror `emitLazyProtoGet`, `expressions/extern.ts:132`) that
+     `struct.new $ClassMeta`s the fields: `$tag`=classTagMap, `$parentTag`=parent
+     via classParentMap→tag (-1 if none), `$ctorFunc`=`ref.func` of
+     `classMemberFuncKey(ctx, "${Name}_new")` (#1983 helper, `class-member-keys.ts`
+     — use it; #1983 is merged), `$name`/`$methodCsv` strings, `$isClass`=1.
+     Build the transitive `$methodCsv` once (own `classMethodNames` ∪ ancestors via
+     `classParentMap`) and reuse the existing `classMethodsCsvGlobal`. Lazy ⇒
+     byte-identical (no instructions on the hot path until a reader demands it).
+     **Acceptance: existing class tests green; only the new type+globals appear.**
 3. **P1:** re-point `.constructor`/`.prototype` (`property-access.ts:3068-3099`,
    `2138-2139`) at `__class_<Name>`/`__proto_<Name>`; add standalone struct
    readers for these links.
@@ -118,6 +118,35 @@ sdev5 flagged at the P0 boundary rather than splitting mid-lane.
 > the inert P0 `$ClassMeta` scaffolding onto that and continues the P0→P1
 > `$ClassMeta` lane (parent/ctor-funcref/method-CSV links the merged slice does
 > not yet carry).
+>
+> **P0 landed on this branch (commit forthcoming) + two findings the next**
+> **resumer MUST heed:**
+>
+> 1. **Type-registration timing (hazard, verified).** Do NOT register the
+>    `$ClassMeta` struct type inside the per-class `collectClassDeclaration`
+>    loop. Pushing an extra type into `ctx.mod.types` mid-collection shifts the
+>    placeholder→fill class struct-type indices and desyncs `struct.get`/
+>    `struct.new` typeidx baked into sibling class method bodies — reproduced as
+>    `struct.get expected (ref null 16), found (ref null 10)` across ~24 class
+>    tests. P0 therefore reserves ONLY the per-class `__classmeta_<Name>`
+>    externref global (null, prunable). `ensureClassMetaType(ctx)`
+>    (class-bodies.ts) registers the single shared type, but must be CALLED FIRST
+>    by the P1 reader/populator — after every class struct type is final, where
+>    adding one type is shift-safe (same invariant the object-runtime helpers
+>    use). The P1 populator `struct.new $ClassMeta`s and stores into the
+>    externref slot via `extern.convert_any`; readers `any.convert_extern` +
+>    `ref.cast (ref $ClassMeta)`.
+> 2. **The ~615 "genuinely-class FAIL" estimate is STALE — re-measure first.**
+>    It predates sd1's merged slice 1. Spot-checks on current `main` of the
+>    headline buckets now PASS standalone: private field read, private method
+>    call, computed method name, `#x in o` brand check, static private. Before
+>    implementing the P1 standalone descriptor readers (the real remaining
+>    value), pull the CURRENT host-vs-standalone JSONL and re-bucket — the
+>    residual is likely concentrated in `Object.getOwnPropertyNames`/
+>    `getOwnPropertyDescriptor`/`Object.keys` ON CLASS OBJECTS (still
+>    `#1472 Phase B` hard-errors in standalone per the slice-1 notes), not in the
+>    class language features that slice 1 already fixed. Don't implement against
+>    the stale 232/96/287 split.
 
 ## Implementation notes — slice 1 (2026-06-16, sd1)
 
