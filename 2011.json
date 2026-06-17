@@ -1,9 +1,8 @@
 {
   "id": "2011",
-  "assignee": "ttraenkler/dev-a",
-  "status": "released",
+  "assignee": "ttraenkler/cs-2161",
+  "status": "in-progress",
   "branch": "issue-2011-accessor-closures",
-  "claimed_at": "2026-06-16T08:00:04Z",
-  "updated_at": "2026-06-16T08:03:22Z",
-  "released_at": "2026-06-16T08:03:22Z"
+  "claimed_at": "2026-06-17T02:14:38Z",
+  "updated_at": "2026-06-17T02:14:38Z"
 }
