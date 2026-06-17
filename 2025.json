@@ -1,8 +1,9 @@
 {
   "id": "2025",
   "assignee": "ttraenkler/sd-b",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2025-extracted-method-typeerror",
   "claimed_at": "2026-06-16T23:51:25Z",
-  "updated_at": "2026-06-16T23:51:25Z"
+  "updated_at": "2026-06-17T01:02:12Z",
+  "released_at": "2026-06-17T01:02:12Z"
 }
