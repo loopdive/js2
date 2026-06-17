@@ -1,8 +1,9 @@
 {
   "id": "2151",
   "assignee": "ttraenkler/dev-4",
-  "status": "in-progress",
+  "status": "released",
   "branch": "probe-2151",
   "claimed_at": "2026-06-17T03:46:36Z",
-  "updated_at": "2026-06-17T03:46:36Z"
+  "updated_at": "2026-06-17T03:46:59Z",
+  "released_at": "2026-06-17T03:46:59Z"
 }
