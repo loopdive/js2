@@ -1,9 +1,8 @@
 {
   "id": "2088",
-  "assignee": "ttraenkler/probe",
-  "status": "released",
-  "branch": "x",
-  "claimed_at": "2026-06-16T05:41:03Z",
-  "updated_at": "2026-06-16T05:42:25Z",
-  "released_at": "2026-06-16T05:42:25Z"
+  "assignee": "ttraenkler/cs-2088",
+  "status": "in-progress",
+  "branch": "issue-2088-per-builtin-rep-scaffold",
+  "claimed_at": "2026-06-17T02:37:21Z",
+  "updated_at": "2026-06-17T02:37:21Z"
 }
