@@ -1,9 +1,8 @@
 {
   "id": "2102",
-  "assignee": "ttraenkler/dv1",
-  "status": "released",
-  "branch": "issue-2102-standalone",
-  "claimed_at": "2026-06-16T05:23:19Z",
-  "updated_at": "2026-06-16T05:23:39Z",
-  "released_at": "2026-06-16T05:23:39Z"
+  "assignee": "ttraenkler/sd-b",
+  "status": "in-progress",
+  "branch": "issue-2102-shared-throwjserror",
+  "claimed_at": "2026-06-17T01:03:22Z",
+  "updated_at": "2026-06-17T01:03:22Z"
 }
