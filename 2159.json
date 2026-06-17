@@ -1,9 +1,8 @@
 {
   "id": "2159",
   "assignee": "ttraenkler/dev-1",
-  "status": "released",
-  "branch": "issue-2159-standalone-typedarray-residual",
-  "claimed_at": "2026-06-17T03:29:01Z",
-  "updated_at": "2026-06-17T03:37:41Z",
-  "released_at": "2026-06-17T03:37:41Z"
+  "status": "in-progress",
+  "branch": "issue-2159-byteLength-slice2",
+  "claimed_at": "2026-06-17T03:39:49Z",
+  "updated_at": "2026-06-17T03:39:49Z"
 }
