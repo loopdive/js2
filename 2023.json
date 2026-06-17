@@ -1,8 +1,9 @@
 {
   "id": "2023",
   "assignee": "ttraenkler/sendev-recur",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2023-new-target-constant-one",
   "claimed_at": "2026-06-16T22:54:39Z",
-  "updated_at": "2026-06-16T22:54:39Z"
+  "updated_at": "2026-06-17T01:02:17Z",
+  "released_at": "2026-06-17T01:02:17Z"
 }
