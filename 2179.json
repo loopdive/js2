@@ -1,8 +1,9 @@
 {
   "id": "2179",
   "assignee": "ttraenkler/sendev-closures",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2179-delete-struct-read",
   "claimed_at": "2026-06-16T23:24:54Z",
-  "updated_at": "2026-06-16T23:24:54Z"
+  "updated_at": "2026-06-17T00:20:49Z",
+  "released_at": "2026-06-17T00:20:49Z"
 }
