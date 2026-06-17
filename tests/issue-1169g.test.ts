@@ -29,6 +29,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { irFallbacks } from "./helpers/ir-fallbacks.js";
 import { planIrCompilation } from "../src/ir/select.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 
@@ -363,10 +364,7 @@ describe("#1169g — slice 8a functions reach the IR path without errors", () =>
     it(`no IR-path errors: ${tc.name}`, async () => {
       const r = await compile(tc.source, { experimentalIR: true });
       expect(r.success).toBe(true);
-      const irErrors = r.errors.filter(
-        (e) => e.message.startsWith("IR path failed") || e.message.startsWith("IR path: could not resolve"),
-      );
-      expect(irErrors).toEqual([]);
+      expect(irFallbacks(r)).toEqual([]);
     });
   }
 });

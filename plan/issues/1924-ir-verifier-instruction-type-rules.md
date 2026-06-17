@@ -1,10 +1,12 @@
 ---
 id: 1924
 title: "Instruction-level type rules in the IR verifier — operands, branch-arg types, and resultType validation"
-status: ready
+status: done
+assignee: ttraenkler/tld-2139
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -63,3 +65,61 @@ per-instruction operand typing at all**:
 
 Compiler quality review 2026-06. Extends #1850 (in-review). Related: #1923,
 #1857 (attributes vs operands).
+
+## Resolution (2026-06-16)
+
+Instruction-level type rules added to `src/ir/verify.ts`, all O(n).
+
+### Implementation
+
+- **`buildDefTypeMap(func)`** — builds the SSA value → `IrType` map **once**
+  per function (params + `blockArgTypes` + each instr's denormalized
+  `resultType`, via the existing `forEachInstrDeep`). The rules consult this
+  O(1) map instead of `operandIrType`, which re-scanned the whole function per
+  query — the issue's quadratic-perf note. One build keeps total verify O(n).
+- **`verifyInstrTypeRules(func, typeOf, errors)`** — a single linear walk
+  applying per-`instr.kind` rules:
+  - **binary**: operand `ValType.kind` must match the op domain (`f64.*` →
+    f64, `i32.*` → i32; `js.bit*` left unconstrained — the lowerer's Stage-3
+    fast path accepts i32 *or* f64). `resultType` validated against the op's
+    fixed result kind (f64 arithmetic → f64; comparisons/logical → i32;
+    `js.bit*` skipped — result may be f64 or i32 after Stage-3 narrowing).
+  - **unary**: `f64.neg`/`i32.trunc_sat_f64_s` → f64 operand; `i32.eqz` → i32;
+    result-kind validated likewise (`ref.is_null` operand left unconstrained).
+  - **string.len / vec.len** → f64 result; **string.const / string.concat** →
+    string result; **string.eq** → i32 result.
+  - **slot.read / slot.write**: `slotIndex` must be within `func.slots` bounds.
+- **`checkBranchArgTypes`** — branch args' `ValType.kind` matched against the
+  target block's `blockArgTypes` (previously only arity was checked).
+
+**Conservatism (key to AC #2):** every rule fires ONLY on a *definite*
+mismatch — the operand/result type is KNOWN and its kind contradicts the op.
+Unknown / null / non-scalar types are skipped (mirrors `operandIrType`'s
+contract). A fired rule demotes the function to legacy (integration.ts skips
+verify-erroring functions), so the bar for firing is "provably wrong" — a real
+program never demotes on a missing annotation.
+
+### Acceptance criteria — verified
+
+- ✅ **Injected wrong-resultType and i32-into-f64.add IR are rejected** —
+  `tests/issue-1924.test.ts` (11 tests): i32 operands into `f64.add` flagged
+  (`lhs/rhs must be f64`); `f64.add` with `resultType: i32` flagged
+  (`resultType must be f64`); plus branch-arg mismatch + slot-OOB rejection,
+  and well-formed / unknown-operand / `js.bit*` cases verify clean.
+- ✅ **No new post-claim demotions on the corpus** — `check:ir-fallbacks` clean
+  (no bucket growth); `test:ir:alloc` 14/14; the IR test suite shows the
+  **same** 8 pre-existing `duplicate SSA def` failures (an unrelated inline-pass
+  bug) with AND without this change — verified by swapping in `origin/main`'s
+  `verify.ts` (identical 140 pass / 8 fail). None of the failures carry a
+  rule message from this change.
+- ✅ **Verify within 1.5× wall-time** — replaced the per-query O(n)
+  `operandIrType` scans with a single O(n) def-type-map build + one linear
+  rules walk; no per-instruction full-function rescans added.
+
+### Scope note
+
+Phase-1 rules are kind-level (scalar domain) and conservative by design, per
+the issue's "start permissive and tighten" guidance. Tightening (e.g.
+slot.write *declared-type* matching beyond bounds, ref-typeIdx matching, object
+field-type checks) is left to follow-ups so this lands without risking corpus
+demotions.

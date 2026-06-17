@@ -33,6 +33,7 @@ import {
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
 import { ensureFmod } from "./fmod.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
+import { emitNewTargetClassId, getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from "./expressions/logical-ops.js";
 import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
@@ -339,6 +340,20 @@ export function compileBinaryExpression(
   ) {
     const typeofResult = compileTypeofComparison(ctx, fctx, expr);
     if (typeofResult !== null) return typeofResult;
+  }
+
+  // (#2023) `new.target === SomeClass` / `new.target !== SomeClass` (either
+  // operand order). `new.target` is the class-id of the outermost `new` site;
+  // compare it against the named class's stable id. Must run before the operands
+  // are compiled (a bare class identifier `SomeClass` does not lower to a value).
+  if (
+    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    op === ts.SyntaxKind.EqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsToken
+  ) {
+    const ntResult = compileNewTargetClassComparison(ctx, fctx, expr, op);
+    if (ntResult !== null) return ntResult;
   }
 
   // Null comparison shortcut: x === null, x !== null, null === x, null !== x
@@ -3572,4 +3587,62 @@ function compileBooleanBinaryOp(ctx: CodegenContext, fctx: FunctionContext, op: 
     default:
       return { kind: "i32" };
   }
+}
+
+/**
+ * (#2023) `new.target === SomeClass` / `!==` (either operand order). Returns an
+ * i32 (0/1) when one operand is the `new.target` meta-property and the other is
+ * an identifier naming a local class; otherwise null (let the generic path run).
+ *
+ * Inside a constructor, `new.target` is the class-id of the outermost `new`
+ * site, so the comparison reduces to `globalNewTargetId (==|!=) classId`.
+ * Outside a constructor `new.target` is `undefined`, so it never equals a class:
+ * `===` folds to const 0, `!==` to const 1 (operands have no side effects — a
+ * bare identifier and a meta-property).
+ */
+function compileNewTargetClassComparison(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+): InnerResult | null {
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    let cur = e;
+    while (ts.isParenthesizedExpression(cur) || ts.isAsExpression(cur) || ts.isNonNullExpression(cur)) {
+      cur = cur.expression;
+    }
+    return cur;
+  };
+  const isNewTarget = (e: ts.Expression): boolean =>
+    ts.isMetaProperty(e) && e.keywordToken === ts.SyntaxKind.NewKeyword && e.name.text === "target";
+
+  const left = unwrap(expr.left);
+  const right = unwrap(expr.right);
+  let classIdent: ts.Expression | undefined;
+  if (isNewTarget(left) && !isNewTarget(right)) classIdent = right;
+  else if (isNewTarget(right) && !isNewTarget(left)) classIdent = left;
+  else return null;
+
+  if (!ts.isIdentifier(classIdent)) return null;
+  // Resolve to a concrete local class name (handle class-expression aliasing).
+  let className: string | undefined = classIdent.text;
+  if (!ctx.classSet.has(className)) {
+    const mapped = ctx.classExprNameMap.get(className);
+    className = mapped && ctx.classSet.has(mapped) ? mapped : undefined;
+  }
+  if (!className) return null;
+
+  const isNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
+
+  // Outside a constructor, new.target is undefined — never a class.
+  if (!fctx.isConstructor || !ctx.usesNewTarget) {
+    fctx.body.push({ op: "i32.const", value: isNeq ? 1 : 0 });
+    return { kind: "i32" };
+  }
+
+  const classId = getOrAssignClassNewTargetId(ctx, className);
+  emitNewTargetClassId(ctx, fctx.body);
+  fctx.body.push({ op: "i32.const", value: classId });
+  fctx.body.push({ op: isNeq ? "i32.ne" : "i32.eq" });
+  return { kind: "i32" };
 }

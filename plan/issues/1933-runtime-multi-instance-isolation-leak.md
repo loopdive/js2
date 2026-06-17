@@ -1,10 +1,12 @@
 ---
 id: 1933
 title: "Runtime multi-instance isolation — module-level mutable state bleeds across instances and retains them forever"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/tld-2108
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -56,3 +58,61 @@ instances on a page:
 
 Compiler quality review 2026-06. Related: #1934 (decomposition makes this
 easier — coordinate ordering).
+
+## Implementation (2026-06-16)
+
+The four module-level mutable states are now per-instance fields on
+`InstanceState`, threaded through `resolveImport` (which already received
+`instanceState`) and `buildImports`:
+
+- **`symbolCache` / `symbolDescRegistry`** — the `__box_symbol` /
+  `__symbol_register_desc` handlers read/write `instanceState.symbolCache` /
+  `.symbolDescRegistry` (seeded with the well-known symbols on first use). The
+  old `_symbolCache = undefined; _symbolDescRegistry.clear()` reset in
+  `buildImports` (which clobbered concurrent instances) is removed.
+- **`subclassCtors` / `userClassParents`** — the `__instanceof` /
+  `__set_subclass_proto` / parent-register handlers use the per-instance maps.
+  Per-instance `subclassCtors` fixes the retention leak: synthetic subclass
+  ctors close over their instance, so a shared module-level map pinned every
+  instance forever.
+- **`legacyRegExpState`** — `_updateLegacyRegExpState(input, m, state)` and
+  `_installLegacyRegExpAccessors(C, state)` now take the per-instance state
+  (`instanceState.legacyRegExpState`), threaded at the 5 update sites + the
+  install site. The module-level `_legacyRegExpState` remains only as the
+  default fallback for legacy callers without an `instanceState`.
+  Caveat: when two instances share the SAME realm `RegExp` object, the legacy
+  statics (`RegExp.$1` etc.) are spec-shared on that one constructor — the
+  install is idempotent per RegExp identity, so the first installer's state
+  wins; true isolation there would need per-instance RegExp constructors (out
+  of scope). The update path and per-instance-RegExp (`deps.RegExp`) case are
+  isolated.
+- `lastCaughtException` (concern #4) is already a `buildImports`-local `let`
+  (per-instance); left as-is — it pins only the most-recent exception until the
+  next throw, not a cross-instance bug.
+
+The module-level `_symbolCache`/`_subclassCtors`/etc. are retained ONLY as
+fallbacks for any caller that resolves imports without an `instanceState`; the
+live per-instance store is `InstanceState`.
+
+### Acceptance criteria — met
+- [x] No module-level mutable state holds the live per-instance data — the live
+      store is the per-instance `InstanceState`; the module-level maps are
+      fallback-only. (Full removal of the fallbacks would require every
+      `resolveImport` caller to pass `instanceState`, tracked with #1934.)
+- [x] Two-instance test green; WeakRef-collection test green
+      (`tests/issue-1933.test.ts`).
+
+## Test Results (2026-06-16)
+
+`tests/issue-1933.test.ts` — 5/5:
+- (a) symbol descriptions independent across two concurrent instances;
+- basic compile/run unaffected;
+- subclass-of-builtin works per instance;
+- (b) WeakRef to a dropped instance (that registered subclasses) is GC-collected
+  after `--expose-gc` (subprocess) — proving the retention leak is fixed;
+- allowlist guard: the per-instance `InstanceState` fields exist.
+
+Existing symbol tests (20/20), regexp, subclass tests pass. The
+`instanceof.test.ts` failures (7) reproduce IDENTICALLY on clean origin/main —
+pre-existing harness-stub issues, not caused by this change. typecheck / lint /
+format clean.

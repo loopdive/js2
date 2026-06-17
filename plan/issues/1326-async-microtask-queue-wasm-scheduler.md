@@ -1,9 +1,11 @@
 ---
 id: 1326
 title: "Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host"
-status: in-review
+status: done
 created: 2026-05-07
-updated: 2026-06-03
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/se1
 priority: low
 feasibility: hard
 reasoning_effort: max
@@ -11,7 +13,7 @@ task_type: feature
 area: codegen, runtime
 language_feature: async, promises, generators
 goal: standalone-mode
-sprint: 58
+sprint: 62
 required_by: [1326c, 1766, 1774]
 ---
 # #1326 — Async standalone: Wasm microtask queue + CPS desugaring
@@ -329,3 +331,39 @@ flip to `done` is defensible. Not flipped here only because the issue body
 still carries a "~70% done" implementation note and this is a hard,
 multi-phase issue — confirm the Phase-1 test passes on current main, then
 flip to `done` (or split Phase 2+ into a follow-up and flip this).
+
+## Phase 1 confirmation + flip to done (2026-06-16, se1, sprint 62)
+
+CONFIRM-THEN-FLIP **executed**. The async keystone (Phase 1A/1B/1C-A/1C-B/1D)
+has fully landed on `main` — confirmed by running the suite on current
+`main` HEAD (`e424a7d3a`):
+
+- `pnpm exec vitest run tests/issue-1326.test.ts` → **14/14 pass**, covering
+  every Phase 1 acceptance criterion:
+  - **1B** — `Promise.resolve(42)` / `Promise.reject('err')` compile to the
+    Wasm-native `$Promise` struct in WASI mode (no `Promise_resolve` /
+    `Promise_reject` host import).
+  - **1C** — microtask queue: a fulfilled `.then` callback runs only after
+    `__drain_microtasks`; chained `.then` callbacks drain in microtask order;
+    rejected promises route through the `onRejected` continuation.
+  - **1D** — `__drain_microtasks` export + WASI `_start` auto-drain wiring.
+- `src/codegen/async-scheduler.ts` (1,170 LoC on main) carries **no throwing
+  stubs** — `emitMicrotaskEnqueue` / `emitDrainMicrotasks` /
+  `emitStandalonePromiseResolve` / `emitStandalonePromiseReject` /
+  `emitStandalonePromiseThen` all have real Wasm bodies.
+- `.then` standalone dispatch (incl. two-arg `onRejected`) is wired at
+  `src/codegen/expressions/calls.ts:6513`, gated on
+  `isStandalonePromiseActive(ctx)`.
+
+The "~70% done" note in §Problem predates the landed work and is stale.
+
+**Phase 2+ remains scoped to existing follow-up issues** (no work lost by
+flipping this):
+- **#1936** — async contract migration / enable the built-but-disabled CPS
+  lowering (host chain head; precedes #1796).
+- **#1373b** — IR async CPS lowering.
+- **#2165** — standalone Promise/async conformance residual (~223 tests).
+- **#2028** — `new Promise(executor)` standalone (resolve/reject capture).
+- Promise combinators (`all`/`race`/`allSettled`/`any`) standalone and async
+  generators remain explicitly out-of-scope here, tracked under the
+  standalone-mode goal.

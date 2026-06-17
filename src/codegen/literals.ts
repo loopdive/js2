@@ -62,6 +62,7 @@ import {
   valTypesMatch,
 } from "./shared.js";
 import { buildVecFromExternref, getVecInfo, pushDefaultValue } from "./type-coercion.js";
+import { emitDrainCustomIterableToVec, isCustomIterable } from "./custom-iterable.js";
 import {
   S5C_STRUCT_ACCESSOR_CLOSURE,
   buildAccessorClosure,
@@ -170,7 +171,7 @@ export function ensureComputedPropertyFields(
  *
  * Returns externref, or null if the host import is unavailable.
  */
-function compileObjectLiteralAsExternref(
+export function compileObjectLiteralAsExternref(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
@@ -1209,7 +1210,19 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
   // Standalone-mode fallback: if the host import isn't available, the symbol
   // is still constructed (with the legacy `wasm_<id>` description); only the
   // `.description` accessor in JS-host mode benefits.
-  const regIdx = ensureLateImport(ctx, "__symbol_register_desc", [{ kind: "i32" }, { kind: "externref" }], []);
+  //
+  // (#2163) In no-JS-host mode (`--target standalone` / `--target wasi`) there
+  // is no host to register the description with, so emitting the
+  // `env::__symbol_register_desc` import leaves it unsatisfiable and the module
+  // fails to instantiate — making EVERY `Symbol()` call a runtime failure
+  // standalone. The symbol value itself is just the i32 counter id (which is
+  // all `typeof s === "symbol"` and symbol identity/distinctness need), so the
+  // host registration is a pure JS-host fast path. Skip it standalone and only
+  // evaluate the description argument for side effects.
+  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+  const regIdx = noJsHost
+    ? undefined
+    : ensureLateImport(ctx, "__symbol_register_desc", [{ kind: "i32" }, { kind: "externref" }], []);
   if (regIdx !== undefined) {
     fctx.body.push({ op: "global.get", index: counterIdx });
     if (args.length > 0) {
@@ -3092,6 +3105,39 @@ export function compileArrayLiteral(
       if (srcType.kind !== "ref" && srcType.kind !== "ref_null") {
         // The compiled expression left a value on the stack — drop it so we
         // don't corrupt the running total (i32) that sits underneath.
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
+      // (#2033) Spread of a user-defined iterable — an object literal / value
+      // whose struct carries a `[Symbol.iterator]()` returning a Wasm-native
+      // iterator struct. Without this it fell into the generic vec-struct path
+      // below, which reads `struct.get field 0` (the iterator-closure externref)
+      // as an i32 length → `i32.add expected i32, found externref` (invalid
+      // wasm). Spec §12.2.5.3: spread is a GetIterator consumer, same as for-of.
+      // Drain the iterator protocol into a vec of the result element type, then
+      // treat it as a normal materialized vec spread (same shape as the
+      // externref / generator paths above).
+      if (isCustomIterable(ctx, srcType)) {
+        const matVecInfo = getVecInfo(ctx, vecTypeIdx);
+        if (matVecInfo) {
+          const iterableLocal = allocLocal(fctx, `__spread_citer_src_${fctx.locals.length}`, srcType);
+          fctx.body.push({ op: "local.set", index: iterableLocal });
+          if (emitDrainCustomIterableToVec(ctx, fctx, iterableLocal, srcType, vecTypeIdx)) {
+            const srcLocal = allocLocal(fctx, `__spread_citer_${fctx.locals.length}`, {
+              kind: "ref_null",
+              typeIdx: vecTypeIdx,
+            });
+            fctx.body.push({ op: "local.tee", index: srcLocal });
+            fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+            fctx.body.push({ op: "i32.add" });
+            spreadLocals.push({ local: srcLocal, elemIdx: i, srcVecTypeIdx: vecTypeIdx });
+            continue;
+          }
+          // Drain unavailable — the value is consumed into iterableLocal; fall
+          // through with nothing contributed (drop is implicit, no stack value).
+          continue;
+        }
+        // No fillable vec — drop the source and skip.
         fctx.body.push({ op: "drop" });
         continue;
       }

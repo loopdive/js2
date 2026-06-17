@@ -30,11 +30,6 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
-interface CompileWarning {
-  message: string;
-  severity: string;
-}
-
 async function runTest(src: string): Promise<unknown> {
   const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
   if (!r.success) throw new Error(`compile failed: ${r.errors[0]?.message}`);
@@ -43,11 +38,13 @@ async function runTest(src: string): Promise<unknown> {
   return (instance.exports as Record<string, () => unknown>).test!();
 }
 
+// #2137 — read IR-path fallbacks from the structured `irPostClaimErrors`
+// channel instead of string-matching the diagnostics array. Each entry is
+// flattened to `${func}: ${message}` so the existing `.includes(...)` reason /
+// function checks below keep working.
 async function irFallbacks(src: string): Promise<string[]> {
   const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
-  return ((r.errors ?? []) as CompileWarning[])
-    .filter((e) => e.message.includes("IR path failed"))
-    .map((e) => e.message);
+  return (r.irPostClaimErrors ?? []).map((e) => `${e.func}: ${e.message}`);
 }
 
 describe("issue #1374: IR inline-small handles callees with body-buffer instrs", () => {

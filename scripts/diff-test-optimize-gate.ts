@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
-type Outcome = "match" | "mismatch" | "compile_error" | "runtime_error" | "v8_error";
+type Outcome = "match" | "mismatch" | "compile_error" | "runtime_error" | "v8_error" | "malformed_wasm";
 interface FileResult {
   file: string;
   outcome: Outcome;

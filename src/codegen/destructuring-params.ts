@@ -7,6 +7,7 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
+import { reportSilentFallback } from "./fallback-telemetry.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { shiftLateImportIndices } from "./expressions/late-imports.js";
@@ -336,6 +337,18 @@ export function destructureParamObjectExternref(
   if (shouldEnsureLetConstFlags(opts)) {
     ensureLetConstBindingPatternTdzFlags(ctx, fctx, pattern);
   }
+  // (#1151) RequireObjectCoercible — destructuring a binding pattern against
+  // null/undefined must throw a synchronous TypeError (ECMA-262 §8.6.2 step 1,
+  // BindingPattern : ObjectBindingPattern). The array param helper and
+  // `destructureParamObject`'s own externref arm already emit this guard, but
+  // the `compileFunctionExpression` arrow / function-expression path
+  // (closures.ts) calls THIS helper directly for an `any`/externref object
+  // pattern with no struct to ref.test against, so without the guard
+  // `(({a}) => a)(null)` silently returned undefined. The guard only fires for
+  // null/undefined; valid objects (and `destructureParamObject` callers that
+  // already guarded) pass through unchanged (a second guard on a non-null value
+  // is a no-op).
+  emitExternrefDestructureGuard(ctx, fctx, paramIdx);
   // Ensure __extern_get is available (#1866: ensureLateImport routes to the
   // native object-runtime impl under --target standalone — no leaked
   // `env::__extern_get` host import — and to the host import in JS-host mode).
@@ -783,7 +796,10 @@ export function destructureParamObject(
       // Nested pattern — recurse
       if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         const fieldIdx = fields.findIndex((f) => f.name === propKey);
-        if (fieldIdx === -1) continue;
+        if (fieldIdx === -1) {
+          reportSilentFallback(ctx, "lookup-miss-skip", "destructuring-params:nested-pattern-field-miss", element);
+          continue;
+        }
         const fieldType = fields[fieldIdx]!.type;
         const tmpLocal = allocLocal(fctx, `__dparam_${fctx.locals.length}`, fieldType);
         fctx.body.push({ op: "local.get", index: paramIdx });

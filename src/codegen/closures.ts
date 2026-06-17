@@ -18,8 +18,13 @@ import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
+import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
+import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
+import { noJsHost } from "./expressions/helpers.js"; // (#2025)
+import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
+import { reportSilentFallback } from "./fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -531,7 +536,10 @@ export function emitArrowParamDestructuring(
           if (!ts.isIdentifier(propNameNode) && !ts.isStringLiteral(propNameNode)) continue;
           const propName = propNameNode.text;
           const fieldIdx = fields.findIndex((f) => f.name === propName);
-          if (fieldIdx === -1) continue;
+          if (fieldIdx === -1) {
+            reportSilentFallback(ctx, "lookup-miss-skip", "closures:capture-object-pattern-field-miss", element);
+            continue;
+          }
           const fieldType = fields[fieldIdx]!.type;
           const localIdx = allocLocal(fctx, localName, fieldType);
           fctx.body.push({ op: "local.get", index: convertedIdx });
@@ -575,7 +583,10 @@ export function emitArrowParamDestructuring(
       const localName = element.name.text;
 
       const fieldIdx = fields.findIndex((f) => f.name === propName.text);
-      if (fieldIdx === -1) continue;
+      if (fieldIdx === -1) {
+        reportSilentFallback(ctx, "lookup-miss-skip", "closures:capture-binding-element-field-miss", element);
+        continue;
+      }
 
       const fieldType = fields[fieldIdx]!.type;
       const localIdx = allocLocal(fctx, localName, fieldType);
@@ -1446,6 +1457,30 @@ export function compileArrowAsClosure(
   collectFunctionOwnLocals(arrow, ownLocals);
   if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
 
+  // (#2118) Self-recursive const/let arrow: `const f = (n) => ... f(n-1)`.
+  // The closure references its own binding `f`. Without special handling the
+  // binding is captured as an ordinary variable; but the outer slot for `f` is
+  // typed `externref` (function types resolve to externref) and is still
+  // uninitialized at the moment the closure is constructed, so the capture is
+  // boxed into a `__ref_cell_externref` and the construction path emits an
+  // invalid `ref.cast` between the ref-cell struct and the closure struct
+  // (struct.get type-mismatch validation failure). Detect the self-binding and
+  // route the self-reference through `__self` (lifted param 0) — exactly the
+  // mechanism named function expressions already use — so the recursive call
+  // dispatches through the closure's own struct and the name is NOT captured.
+  let selfBindingName: string | undefined;
+  if (ts.isArrowFunction(arrow) || (ts.isFunctionExpression(arrow) && !arrow.name)) {
+    const declParent = arrow.parent;
+    if (
+      declParent &&
+      ts.isVariableDeclaration(declParent) &&
+      declParent.initializer === arrow &&
+      ts.isIdentifier(declParent.name)
+    ) {
+      selfBindingName = declParent.name.text;
+    }
+  }
+
   const referencedNames = new Set<string>();
   if (ts.isBlock(body)) {
     for (const stmt of body.statements) {
@@ -1588,6 +1623,8 @@ export function compileArrowAsClosure(
     if (isOwnParamName(arrow, name)) continue;
     // Skip if the name is a named function expression's own name (self-reference)
     if (ts.isFunctionExpression(arrow) && arrow.name && arrow.name.text === name) continue;
+    // (#2118) Skip the self-recursive const/let arrow binding — routed via __self.
+    if (selfBindingName !== undefined && name === selfBindingName) continue;
     // #1177: Also fall back to scanning for a `__tdz_<name>` slot when
     // tdzFlagLocals was cleared by block-scope shadow management.
     if (!fctx.tdzFlagLocals?.has(name)) {
@@ -1899,6 +1936,16 @@ export function compileArrowAsClosure(
     liftedFctx.readOnlyBindings.add(funcExprName);
   }
 
+  // (#2118) Self-recursive const/let arrow binding: map the binding name to the
+  // __self param so recursive `f(...)` calls inside the body dispatch through
+  // the closure's own struct via call_ref (mirrors the named-funcexpr path).
+  // The name is NOT registered as read-only — unlike a funcexpr's own name, a
+  // `let f` binding may legitimately be reassigned in the outer scope; inside
+  // the closure body, however, the reference is the recursive self.
+  if (selfBindingName !== undefined && !liftedFctx.localMap.has(selfBindingName)) {
+    liftedFctx.localMap.set(selfBindingName, 0);
+  }
+
   const savedFunc = ctx.currentFunc;
   if (savedFunc) ctx.parentBodiesStack.push(savedFunc.body);
   if (savedFunc) ctx.funcStack.push(savedFunc);
@@ -1914,6 +1961,26 @@ export function compileArrowAsClosure(
   };
   if (funcExprName) {
     ctx.closureMap.set(funcExprName, closureInfoForSelf);
+  }
+
+  // (#2118) Register the self-recursive const/let arrow binding so recursive
+  // calls compile as closure calls dispatched through __self. The struct.get
+  // that fetches the funcref runs against __self's *actual* param type
+  // (selfTypeIdx — the wrapper base struct when capture-subtyping is used, else
+  // the specific struct), not necessarily the concrete subtype, so use
+  // selfTypeIdx as the call-site struct type. Field 0 (funcref) is inherited
+  // from the wrapper base, so the lifted func type still drives call_ref.
+  let savedSelfBindingClosureInfo: ClosureInfo | undefined;
+  let hadSavedSelfBindingClosureInfo = false;
+  if (selfBindingName !== undefined && selfBindingName !== funcExprName) {
+    hadSavedSelfBindingClosureInfo = ctx.closureMap.has(selfBindingName);
+    savedSelfBindingClosureInfo = ctx.closureMap.get(selfBindingName);
+    ctx.closureMap.set(selfBindingName, {
+      structTypeIdx: selfTypeIdx,
+      funcTypeIdx: liftedFuncTypeIdx,
+      returnType: closureReturnType,
+      paramTypes: arrowParams,
+    });
   }
 
   // Emit default-value initialization for simple params with defaults
@@ -2320,6 +2387,17 @@ export function compileArrowAsClosure(
   // Clean up the temporary closure map entry for named function expressions
   if (funcExprName) {
     ctx.closureMap.delete(funcExprName);
+  }
+
+  // (#2118) Restore the outer closureMap entry for the self-recursive binding —
+  // the temporary self entry must not leak into the enclosing scope's view of
+  // the name (where the binding still resolves to the local/global slot).
+  if (selfBindingName !== undefined && selfBindingName !== funcExprName) {
+    if (hadSavedSelfBindingClosureInfo) {
+      ctx.closureMap.set(selfBindingName, savedSelfBindingClosureInfo!);
+    } else {
+      ctx.closureMap.delete(selfBindingName);
+    }
   }
 
   // Ensure return value for non-void functions (skip if concise body already left a value)
@@ -3457,10 +3535,115 @@ export function emitFuncRefAsClosure(
  * trampoline. Emits a sequence leaving exactly one `(ref null objStructTypeIdx)`
  * on the stack.
  */
-function buildTrampolineThisSlot(ctx: CodegenContext, objStructTypeIdx: number, anyTempLocalIdx: number): Instr[] {
+/**
+ * (#2025) Message thrown when an extracted method (`const f = a.m; f()`) is
+ * called with no receiver — `this` is `undefined`. Matches the spirit of
+ * Node's "Cannot read properties of undefined".
+ */
+const NULL_THIS_TYPEERROR_MSG = "Cannot read properties of undefined (reading a class field)";
+
+/**
+ * (#2025) Eagerly register the `__new_TypeError` import + the message string
+ * the first time an extractable method-as-closure trampoline is built, so the
+ * trampoline's null-`this` arm can emit a CATCHABLE TypeError throw with
+ * stable, shift-tracked indices (no late-import registration during the
+ * fragile finalize rebuild). Idempotent. Requires a live `fctx` so the flush
+ * lands the deferred index shift onto the surrounding function being compiled.
+ */
+export function ensureNullThisTypeError(ctx: CodegenContext, fctx: FunctionContext | null): void {
+  if (ctx.nullThisTypeErrorReady) return;
+  // In no-JS-host mode, define `__new_TypeError` in-module (no env import).
+  if (noJsHost(ctx)) {
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+  }
+  addStringConstantGlobal(ctx, NULL_THIS_TYPEERROR_MSG);
+  ensureLateImportShared(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShiftsShared(ctx, fctx);
+  ensureExnTag(ctx);
+  ctx.nullThisTypeErrorReady = true;
+}
+
+/**
+ * (#2025) The catchable-TypeError throw sequence for a genuinely-absent
+ * receiver, or `null` when the helpers were not eagerly registered (in which
+ * case the trampoline falls back to the legacy `ref.null` passthrough rather
+ * than risk an unregistered call). Pure lookups — no registration, so it is
+ * safe to call from the finalize rebuild (post-body, pre-freeze).
+ */
+function buildNullThisTypeErrorThrow(ctx: CodegenContext): Instr[] | null {
+  if (!ctx.nullThisTypeErrorReady) return null;
+  const newTypeErrorIdx = ctx.funcMap.get("__new_TypeError");
+  if (newTypeErrorIdx === undefined || ctx.exnTagIdx < 0) return null;
+  return [
+    ...stringConstantExternrefInstrs(ctx, NULL_THIS_TYPEERROR_MSG),
+    { op: "call", funcIdx: newTypeErrorIdx } as Instr,
+    { op: "throw", tagIdx: ctx.exnTagIdx } as Instr,
+  ];
+}
+
+/**
+ * (#2025) Does the method's compiled body read its receiver (`this` = param 0)?
+ * A method that never touches `this` is safely callable with a null receiver
+ * (no struct.get on null), so the trampoline must NOT throw for it. We detect a
+ * `local.get 0` anywhere in the body (including nested blocks). Conservative:
+ * if the body isn't available yet (idx out of range), assume it does use `this`
+ * so we don't silently regress the trap→TypeError fix.
+ */
+function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean {
+  const localIdx = methodFuncIdx - ctx.numImportFuncs;
+  const fn = localIdx >= 0 ? ctx.mod.functions[localIdx] : undefined;
+  if (!fn || !Array.isArray(fn.body)) return true;
+  const walk = (instrs: Instr[]): boolean => {
+    for (const instr of instrs) {
+      if (instr.op === "local.get" && (instr as { index?: number }).index === 0) return true;
+      for (const key of ["body", "then", "else", "catchAll"] as const) {
+        const nested = (instr as Record<string, unknown>)[key];
+        if (Array.isArray(nested) && walk(nested as Instr[])) return true;
+      }
+      const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+      if (Array.isArray(catches)) {
+        for (const c of catches) if (Array.isArray(c.body) && walk(c.body)) return true;
+      }
+    }
+    return false;
+  };
+  return walk(fn.body);
+}
+
+function buildTrampolineThisSlot(
+  ctx: CodegenContext,
+  objStructTypeIdx: number,
+  anyTempLocalIdx: number,
+  methodUsesThis: boolean,
+): Instr[] {
   const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
   const nullThis: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx } as Instr];
   if (currentThisGlobalIdx < 0) return nullThis;
+  // (#2025) When the resolved `this` isn't the method's struct, distinguish a
+  // GENUINELY-ABSENT receiver (`__current_this` null — the unbound extraction
+  // `const f = a.m; f()`) from a merely structurally-different receiver (e.g. a
+  // subclass/boxed instance, where `__current_this` is non-null but doesn't
+  // `ref.test` as THIS exact struct). The first case is a spec TypeError; throw
+  // a CATCHABLE one instead of passing `ref.null` (which traps inside the
+  // method body on the first `this`-deref). The second case is left UNCHANGED
+  // (`ref.null` passthrough) — throwing there is what regressed PR #1571 (it
+  // fired for legitimate non-exact-struct receivers). Also only when the method
+  // actually READS `this` — a method that ignores its receiver (`m(){return 7}`)
+  // is callable with a null `this` (no deref, no trap), matching JS. Finally,
+  // only when the throw helpers were eagerly registered; else legacy passthrough.
+  const throwInstrs = methodUsesThis ? buildNullThisTypeErrorThrow(ctx) : null;
+  const elseArm: Instr[] = throwInstrs
+    ? [
+        { op: "local.get", index: anyTempLocalIdx } as Instr,
+        { op: "ref.is_null" } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "ref_null", typeIdx: objStructTypeIdx } },
+          then: throwInstrs, // genuinely no receiver → catchable TypeError
+          else: nullThis, // different struct → unchanged passthrough
+        } as unknown as Instr,
+      ]
+    : nullThis;
   return [
     { op: "global.get", index: currentThisGlobalIdx } as Instr,
     { op: "any.convert_extern" } as Instr,
@@ -3473,7 +3656,7 @@ function buildTrampolineThisSlot(ctx: CodegenContext, objStructTypeIdx: number, 
         { op: "local.get", index: anyTempLocalIdx } as Instr,
         { op: "ref.cast", typeIdx: objStructTypeIdx } as Instr,
       ],
-      else: nullThis,
+      else: elseArm,
     } as unknown as Instr,
   ];
 }
@@ -3530,7 +3713,24 @@ export function emitObjectMethodAsClosure(
   const trampolineName = `__obj_meth_tramp_${methodName}_${ctx.closureCounter++}`;
   // anyref temp at the first slot past the params (closure_self + userParams).
   const anyTempLocalIdx = 1 + userParams.length;
-  const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx);
+  // (#2025) Decide whether the method reads `this` BEFORE registering the
+  // TypeError helpers — `ensureNullThisTypeError` adds a late import that shifts
+  // defined-function indices, which would make `methodFuncIdx` stale for the
+  // body lookup. Then register the helpers (with a live fctx so the import-index
+  // flush lands here) so the null-`this` arm throws instead of trapping and
+  // finalize never registers an import mid-rebuild.
+  // (#2025) Capture this-usage, then register the TypeError throw helpers. The
+  // registration may add a late import that shifts every DEFINED function index
+  // up by `ntShift`; the forwarding `call methodFuncIdx` we emit just below is in
+  // a body not yet attached to `ctx.mod.functions`, so the import-shift walker
+  // can't reach it — bump the captured index by the delta ourselves (import
+  // targets, < the pre-shift import count, are never shifted).
+  const methodUsesThis = methodBodyReadsThis(ctx, methodFuncIdx);
+  const importsBeforeNT = ctx.numImportFuncs;
+  ensureNullThisTypeError(ctx, fctx);
+  const ntShift = ctx.numImportFuncs - importsBeforeNT;
+  if (ntShift > 0 && methodFuncIdx >= importsBeforeNT) methodFuncIdx += ntShift;
+  const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx, methodUsesThis);
   for (let i = 0; i < userParams.length; i++) {
     // Skip closure_self at param 0; user params start at index 1
     trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
@@ -3560,6 +3760,7 @@ export function emitObjectMethodAsClosure(
     userParamCount: userParams.length,
     wrapperUserParams: userParams,
     wrapperResult: results[0],
+    methodUsesThis, // (#2025) captured pre-shift; finalize reuses it
     // (#1809) Record whether the target is already an import at registration.
     // Import indices stay stable across late-import batches (new imports append
     // at the end, so indices < importsBefore are never shifted), so an import
@@ -3692,7 +3893,12 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       newBody = [];
     } else {
       const anyTempLocalIdx = allocTempLocal(tFctx, { kind: "anyref" });
-      newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx);
+      // (#2025) Reuse the registration-time `methodUsesThis` (captured before
+      // the TypeError-helper import shifted function indices, so it is reliable
+      // here where `t.methodFuncIdx` may be stale). Fall back to a fresh body
+      // scan only when it wasn't recorded.
+      const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
+      newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
     }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 } as Instr);
@@ -3834,7 +4040,20 @@ export function emitCachedMethodClosureAccess(
     // null receiver propagates the spec-mandated TypeError on `this.field`
     // access), then forward user params, then call the method.
     const anyTempLocalIdx = 1 + userParams.length;
-    const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx);
+    // (#2025) Capture this-usage, register the throw helpers, then adjust the
+    // forwarding index by any import-shift the registration caused (see the
+    // matching note in emitObjectMethodAsClosure).
+    const methodUsesThisCached = methodBodyReadsThis(ctx, methodFuncIdx);
+    const importsBeforeNT = ctx.numImportFuncs;
+    ensureNullThisTypeError(ctx, fctx);
+    const ntShift = ctx.numImportFuncs - importsBeforeNT;
+    if (ntShift > 0 && methodFuncIdx >= importsBeforeNT) methodFuncIdx += ntShift;
+    const trampolineBody: Instr[] = buildTrampolineThisSlot(
+      ctx,
+      objStructTypeIdx,
+      anyTempLocalIdx,
+      methodUsesThisCached,
+    );
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 } as Instr);
     }
@@ -3869,6 +4088,7 @@ export function emitCachedMethodClosureAccess(
       userParamCount: userParams.length,
       wrapperUserParams: userParams,
       wrapperResult: results[0],
+      methodUsesThis: methodUsesThisCached, // (#2025) captured pre-shift
       // (#1809) See the per-call-site push for rationale.
       methodTargetsImport: methodFuncIdx < ctx.numImportFuncs,
     });

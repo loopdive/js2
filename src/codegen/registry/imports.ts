@@ -32,15 +32,39 @@ import { addFuncType } from "./types.js";
  * dedicated error pointing the user at the nativeStrings option.
  */
 export function addImport(ctx: CodegenContext, module: string, name: string, desc: Import["desc"]): void {
+  // #1984 — freeze-point discipline. Once the module's index spaces are
+  // declared final (set right before `stackBalance` in generateModule/
+  // generateMultiModule), any further import mutation is a producer bug:
+  // it shifts indices that downstream code already emitted as final, the
+  // #2043-class poisoning. Throw HERE so the offending producer self-identifies
+  // with its own stack, instead of #2043's emit-time validation only naming the
+  // downstream symptom. The throw is caught by the generate* try/catch and
+  // surfaced as a `Codegen error:` (the compile fails loudly, never ships a
+  // poisoned binary).
+  if (ctx.indexSpaceFrozen) {
+    throw new Error(
+      `import space frozen (#1984): '${module}.${name}' added after finalize — ` +
+        `this producer must register its import before the freeze point or refuse loudly`,
+    );
+  }
   if (ctx.strictNoHostImports) {
     const decision = isHostImportAllowed(module, name);
     if (!decision.allowed) {
       const message = buildStrictHostImportError(module, name);
-      ctx.errors.push({ message, line: 0, column: 0 });
-      // Skip registration. The caller will record a stale funcMap index if
-      // it tries to look the import up by name; `result.success` will be
-      // false thanks to the error above, and downstream emit/link will
-      // refuse to produce a final binary.
+      // #1921 — this per-call gate *drops* the import and lets codegen
+      // continue, so the diagnostic is a deliberate `"degrade"`, not a hard
+      // error: the binary is still produced (dropped imports degrade to no-op
+      // / stale-index sites). The authoritative fatal backstop is the
+      // emit-time import-section scan (`assertNoLeakedHostImports` →
+      // `buildLeakedHostImportError`, severity "error"), which fires only if
+      // an unsupported host import actually *survived* into the finished
+      // binary. Classifying this as "error" instead would fail builds that
+      // legitimately drop-and-degrade unsupported host APIs under WASI (e.g.
+      // examples/native-messaging/nm_js2wasm.ts: setTimeout/fetch/…).
+      ctx.errors.push({ message, line: 0, column: 0, severity: "degrade" });
+      // Skip registration. The caller may record a stale funcMap index if it
+      // looks the import up by name; if that index is ever emitted into the
+      // binary the emit-time leak scan / link step catches it.
       return;
     }
   }
@@ -135,6 +159,12 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   // in a saved body via a manual swap pattern). Without per-call dedup, each
   // additional reachability path applies an extra +delta, over-shifting the
   // index past the declared global range (#1302 — lodash flow.js).
+  // (#2023) Keep the cached new.target global index in step with the shift, so
+  // call sites compiled after a later string-constant import still target it.
+  if (ctx.newTargetGlobalIdx !== undefined && ctx.newTargetGlobalIdx >= threshold) {
+    ctx.newTargetGlobalIdx += delta;
+  }
+
   const visitedInstrs = new WeakSet<object>();
   const visitedArrays = new WeakSet<Instr[]>();
   function shiftGlobalIndices(instrs: Instr[]): void {

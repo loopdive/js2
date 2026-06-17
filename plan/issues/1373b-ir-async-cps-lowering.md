@@ -1,19 +1,19 @@
 ---
 id: 1373b
 title: "IR async Phase C: CPS lowering for await + async-return + async-throw"
-status: blocked
+status: ready
 created: 2026-05-09
-updated: 2026-05-21
-priority: medium
+updated: 2026-06-16
+priority: top
 feasibility: hard
 reasoning_effort: max
 task_type: feature
 area: ir, codegen
 language_feature: async
 goal: ir-full-coverage
-sprint: 52
+sprint: 63
 depends_on: [1326c]
-note: "Verified 2026-05-21: src/codegen/async-scheduler.ts exists; src/codegen/async-cps.ts does NOT exist yet (still pending #1042 introducing it). async-cluster-architect-spec.md exists."
+note: "Verified 2026-05-21: src/codegen/async-scheduler.ts exists; src/codegen/async-cps.ts does NOT exist yet (still pending #1042 introducing it). async-cluster-architect-spec.md exists. Unblocked 2026-06-16 (se1): sole dependency #1326c flipped done — Phase 1C microtask queue + chained .then landed on main."
 ---
 # #1373b — IR async Phase C: CPS lowering
 
@@ -144,13 +144,50 @@ Each sub-slice is independently shippable.
 
 ---
 
+## Refresh (arch1, 2026-06-16 — against upstream/main 319d43460): UNBLOCKED, line numbers re-anchored
+
+**Dependency #1326c is DONE** (se1, completed 2026-06-16). The Phase 1C-B
+substrate the S53 plan below blocks on is now live in
+`src/codegen/async-scheduler.ts`:
+- `emitStandalonePromiseThen` — **line 1132** (the gating helper; no longer a
+  throwing stub).
+- `emitStandalonePromiseResolve` (1089) / `emitStandalonePromiseReject` (1103).
+- `__microtask_enqueue` registration (~326), `__drain_microtasks` (~341),
+  `getOrRegisterPromiseType` (144).
+
+So **Slice 2 and Slice 1b can begin now.** Slice 3 (gate flip) follows.
+
+**Line-number corrections (the S53 plan below cites pre-drift values — use these):**
+
+| S53 plan says | Current (319d43460) | Symbol |
+|---|---|---|
+| `select.ts:163` / `:190` / `:194` | `select.ts:190-200` | `isAsyncIrReady` (body is 6 lines; the `return false;` to flip in Slice 3 is **line 200**, after the `if (!options?.supportsAsyncIr) return false;` short-circuit at 191) |
+| `lower.ts:1819` | `lower.ts:2107` | `case "async.return"` |
+| (—) | `lower.ts:2125` | `case "async.throw"` |
+| `lower.ts:1850` | `lower.ts:2143` | `case "await"` |
+| `create-context.ts:130` | `create-context.ts:198` | `supportsAsyncIr: false` default |
+| `types.ts:588` | `types.ts:1202` | `CodegenContext.supportsAsyncIr` |
+| `integration.ts:582` | `integration.ts:577` | `readyForLower.some(... funcKind === "generator")` — the analogous async-state split hook goes adjacent to this generator check |
+| `integration.ts:92` | `integration.ts:109` | `planIrCompilation(... { experimentalIR: true })` — add `supportsAsyncIr: ctx.supportsAsyncIr` here for Slice 3 |
+| `integration.ts:178` | `compileIrPathFunctions` body (start `integration.ts:102`) | Phase-1 build loop where `splitAsyncIntoStates` is invoked |
+
+Everything else in the S53 plan (the frame-struct strategy, uniform-arity
+`(externref, externref) -> void` continuations, liveness sweep, per-state
+emission, entry rewrite, slice sequencing) is **still correct** — re-read it as
+written below; only the line anchors above have moved. The `select.ts`
+`isAsyncIrReady` body currently has the Slice-2 TODO marker inline (lines
+192-199) and still `return false`s — confirming Slice 1b/2/3 are all still open.
+
+---
+
 ## Implementation Plan (S53 architect — joint spec for #1042 / #1373 / #1373b)
 
 This plan covers the remaining slices (2, 1b, 3) on top of the Slice 1
 scaffolding that landed in PR #441 (commit `3ea48c20c`). It is the
 single source of truth for the async-model cluster — see #1042 and
 #1373 for the upstream framing; this file is where devs read the IR
-patterns and file:line targets.
+patterns and file:line targets. **NOTE: file:line targets below are
+pre-drift — see the Refresh table above for current anchors.**
 
 ### Slice 1 recap (already on main as of `3ea48c20c`)
 

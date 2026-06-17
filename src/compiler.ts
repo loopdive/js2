@@ -11,6 +11,7 @@ import { getNullablePrimitiveInfo } from "./checker/type-mapper.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
 import { generateModule, generateMultiModule } from "./codegen/index.js";
+import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
 import {
   buildImportManifest,
@@ -30,9 +31,10 @@ import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from
 import { WasmEncoder } from "./emit/encoder.js";
 import { generateSourceMap } from "./emit/sourcemap.js";
 import { emitWat } from "./emit/wat.js";
-import { applyDefineSubstitutions } from "./compiler/define-substitution.js";
-import { rewriteCjsRequire } from "./cjs-rewrite.js";
+import { applyDefineSubstitutions, applyDefineSubstitutionsWithMap } from "./compiler/define-substitution.js";
+import { rewriteCjsRequire, rewriteCjsRequireWithMap } from "./cjs-rewrite.js";
 import { preprocessImports } from "./import-resolver.js";
+import { PositionMap } from "./position-map.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
@@ -56,18 +58,31 @@ export type { ObjectCompileResult } from "./compiler/output.js";
  * `errors`), telling the caller to bail with `success: false` instead of
  * emitting the invalid binary.
  */
+const CODEGEN_ERROR_PREFIX = "Codegen error:";
+
+/**
+ * Cosmetic-only: prefix a linear-backend diagnostic with `"Codegen error:"`
+ * for human readability when it isn't already so prefixed. The compile-failure
+ * gate keys on severity (#1921), not on this prefix.
+ */
+function withCodegenPrefix(message: string): string {
+  return message.startsWith(CODEGEN_ERROR_PREFIX) ? message : `${CODEGEN_ERROR_PREFIX} ${message}`;
+}
+
 function collectLinearCodegenErrors(mod: WasmModule, errors: CompileError[]): boolean {
+  let fatal = false;
   const diags = mod.codegenErrors;
   if (!diags || diags.length === 0) return false;
   for (const err of diags) {
+    if (isFatalCodegenDiagnostic(err)) fatal = true;
     errors.push({
-      message: err.message.startsWith("Codegen error:") ? err.message : `Codegen error: ${err.message}`,
+      message: withCodegenPrefix(err.message),
       line: err.line,
       column: err.column,
-      severity: "error",
+      severity: isFatalCodegenDiagnostic(err) ? "error" : "warning",
     });
   }
-  return true;
+  return fatal;
 }
 
 const HARD_TS_DIAG_CODES = new Set([
@@ -372,6 +387,39 @@ function identifierHasNonNullProofInAncestor(id: ts.Identifier, checker: ts.Type
   return false;
 }
 
+/**
+ * #1928 — compute a diagnostic's `(line, character)` in the USER's original
+ * source. `diag.start` is an offset in the rewritten `processedSource`; map it
+ * back through the composed pre-parse `PositionMap`, then resolve the line and
+ * column from the original `source` text. When the map is identity (no rewrite
+ * fired) this is equivalent to the old direct
+ * `diag.file.getLineAndCharacterOfPosition` lookup. Falls back to the processed
+ * position if `diag.file` is somehow absent.
+ */
+function remapDiagnosticPosition(
+  diag: ts.Diagnostic,
+  originalSource: string,
+  positionMap: PositionMap,
+): { line: number; character: number } {
+  if (!diag.file) return { line: 0, character: 0 };
+  const processedStart = diag.start ?? 0;
+  if (positionMap.isIdentity) {
+    return diag.file.getLineAndCharacterOfPosition(processedStart);
+  }
+  const origOffset = Math.min(Math.max(0, positionMap.toInputOffset(processedStart)), originalSource.length);
+  // Resolve line/column from the original text. Counting newlines is O(offset)
+  // but diagnostics are few; a shared line-start index would be premature here.
+  let line = 0;
+  let lastNewline = -1;
+  for (let i = 0; i < origOffset; i++) {
+    if (originalSource.charCodeAt(i) === 10 /* \n */) {
+      line++;
+      lastNewline = i;
+    }
+  }
+  return { line, character: origOffset - lastNewline - 1 };
+}
+
 function isGuardedNullablePrimitiveDiagnostic(diag: ts.Diagnostic, checker: ts.TypeChecker): boolean {
   if (diag.code !== 2322 && diag.code !== 2345) return false;
   const file = diag.file;
@@ -479,14 +527,21 @@ export function compileSourceSync(
   const emitWatOutput = options.emitWat !== false;
 
   // Step 0a: Apply compile-time define substitutions (#1043)
-  const definedSource = options.define ? applyDefineSubstitutions(source, options.define) : source;
+  // #1928 — each pre-parse rewrite returns a PositionMap (output → its input);
+  // we compose them so diagnostics computed against `processedSource` can be
+  // reported at the user's ORIGINAL line/column instead of the rewritten one.
+  const defineResult = options.define
+    ? applyDefineSubstitutionsWithMap(source, options.define)
+    : { source, positionMap: PositionMap.identity() };
+  const definedSource = defineResult.source;
 
   // Step 0a.5: Rewrite CommonJS `const X = require('Y')` patterns to ESM `import`
   // declarations (#1279). This must run before preprocessImports so the resulting
   // import statements get the same declare-stub treatment as user-written imports,
   // and before `detectNodeFsImports` so `const fs = require('node:fs')` is picked
   // up as a node:fs import for WASI mode.
-  const cjsRewritten = rewriteCjsRequire(definedSource);
+  const cjsResult = rewriteCjsRequireWithMap(definedSource);
+  const cjsRewritten = cjsResult.source;
 
   // Step 0b: Pre-process imports (replace import * as X with declare namespace)
   // #1054: rewrite eval("...super()...") to a throwing IIFE so early-error
@@ -497,9 +552,16 @@ export function compileSourceSync(
   // #1491 — detect named fs imports for both WASI (#1035 syscall path) and the
   // new JS-host imports (non-WASI). Detection is identical; the codegen branch
   // is selected based on `ctx.wasi` + `ctx.allowFs`.
+  // #1928 — `rewriteEvalSuperCall` only rewrites `eval("…super()…")` to a
+  // same-line throwing IIFE (a rare early-error edge); it never shifts lines, so
+  // it contributes an identity map and is omitted from the composition.
+  const cjsRewritten2 = rewriteEvalSuperCall(cjsRewritten);
   const wasiNodeFsFuncs = detectNodeFsImports(cjsRewritten);
-  const preprocessed = preprocessImports(rewriteEvalSuperCall(cjsRewritten));
+  const preprocessed = preprocessImports(cjsRewritten2);
   const processedSource = preprocessed.source;
+  // Composed map: processedSource → original source. Pipeline output order is
+  // define → cjs → (eval/super, identity) → imports, so compose outermost-first.
+  const positionMap = preprocessed.positionMap.compose(cjsResult.positionMap).compose(defineResult.positionMap);
 
   // Step 1: Parse and type-check
   let isJsMode = options.allowJs === true || (options.fileName?.endsWith(".js") ?? false);
@@ -551,17 +613,25 @@ export function compileSourceSync(
   for (const diag of ast.diagnostics) {
     if (diag.category === 1) {
       // Error
-      const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
+      // #1928 — `diag.start` is an offset in `processedSource`. Map it back to
+      // the user's original source (through the composed pre-parse rewrite map)
+      // and compute the line/column there, so reported positions match what the
+      // user wrote rather than the rewritten text. A no-op when no rewrite fired
+      // (identity map) — same result as the old direct lookup.
+      const pos = remapDiagnosticPosition(diag, source, positionMap);
       const severity =
         DOWNGRADE_DIAG_CODES.has(diag.code) || isGuardedNullablePrimitiveDiagnostic(diag, ast.checker)
           ? "warning"
           : "error";
       errors.push({
-        message: typeof diag.messageText === "string" ? diag.messageText : diag.messageText.messageText,
+        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+        // elaboration) instead of only the head .messageText.
+        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
         line: pos.line + 1,
         column: pos.character + 1,
         severity: severity as "error" | "warning",
         code: diag.code,
+        ...(diag.file ? { file: diag.file.fileName } : {}),
       });
     }
   }
@@ -678,6 +748,8 @@ export function compileSourceSync(
 
   // Step 2: Generate IR
   let mod;
+  let capturedFallbackCounts: import("./index.js").CompileResult["fallbackCounts"];
+  let capturedIrPostClaimErrors: import("./index.js").CompileResult["irPostClaimErrors"];
   try {
     if (useLinear) {
       mod = generateLinearModule(ast, { exposeArenaReset: options.allocator === "arena-reset" });
@@ -719,16 +791,21 @@ export function compileSourceSync(
         jsxRuntime: preprocessed.jsxRuntime,
       });
       mod = result.module;
-      // Propagate codegen errors with source locations
+      capturedFallbackCounts = result.fallbackCounts;
+      capturedIrPostClaimErrors = result.irPostClaimErrors;
+      // Propagate codegen errors with source locations. #1921 — a deliberate
+      // "degrade" diagnostic is surfaced as a non-fatal "warning"; the fatal
+      // decision is made by isFatalCodegenDiagnostic on the raw severity.
       for (const err of result.errors) {
         errors.push({
           message: err.message,
           line: err.line,
           column: err.column,
-          severity: err.severity ?? "error",
+          severity: isFatalCodegenDiagnostic(err) ? "error" : "warning",
         });
       }
-      if (result.errors.some((err) => err.message.startsWith("Codegen error:"))) {
+      // #1921 — gate on severity, not a "Codegen error:" message prefix.
+      if (result.errors.some(isFatalCodegenDiagnostic)) {
         return {
           binary: new Uint8Array(0),
           wat: "",
@@ -884,6 +961,8 @@ export function compileSourceSync(
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
     hasTopLevelStatements: mod.hasTopLevelStatements === true,
     exportSignatures: mod.exportSignatures,
+    fallbackCounts: capturedFallbackCounts,
+    irPostClaimErrors: capturedIrPostClaimErrors,
   };
 }
 
@@ -928,11 +1007,14 @@ export async function compileMultiSource(
           ? "warning"
           : "error";
       errors.push({
-        message: typeof diag.messageText === "string" ? diag.messageText : diag.messageText.messageText,
+        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+        // elaboration) and attribute the source file for multi-file compiles.
+        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
         line: pos.line + 1,
         column: pos.character + 1,
         severity,
         code: diag.code,
+        ...(diag.file ? { file: diag.file.fileName } : {}),
       });
     }
   }
@@ -990,6 +1072,8 @@ export async function compileMultiSource(
   const useLinear = options.target === "linear";
 
   let mod;
+  let capturedFallbackCounts: import("./index.js").CompileResult["fallbackCounts"];
+  let capturedIrPostClaimErrors: import("./index.js").CompileResult["irPostClaimErrors"];
   try {
     if (useLinear) {
       mod = generateLinearMultiModule(multiAst, { exposeArenaReset: options.allocator === "arena-reset" });
@@ -1021,16 +1105,21 @@ export async function compileMultiSource(
         standalone: options.target === "standalone",
       });
       mod = result.module;
-      // Propagate codegen errors with source locations
+      capturedFallbackCounts = result.fallbackCounts;
+      capturedIrPostClaimErrors = result.irPostClaimErrors;
+      // Propagate codegen errors with source locations. #1921 — a deliberate
+      // "degrade" diagnostic is surfaced as a non-fatal "warning"; the fatal
+      // decision is made by isFatalCodegenDiagnostic on the raw severity.
       for (const err of result.errors) {
         errors.push({
           message: err.message,
           line: err.line,
           column: err.column,
-          severity: err.severity ?? "error",
+          severity: isFatalCodegenDiagnostic(err) ? "error" : "warning",
         });
       }
-      if (result.errors.some((err) => err.message.startsWith("Codegen error:"))) {
+      // #1921 — gate on severity, not a "Codegen error:" message prefix.
+      if (result.errors.some(isFatalCodegenDiagnostic)) {
         return {
           binary: new Uint8Array(0),
           wat: "",
@@ -1184,6 +1273,8 @@ export async function compileMultiSource(
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
     hasTopLevelStatements: mod.hasTopLevelStatements === true,
     exportSignatures: mod.exportSignatures,
+    fallbackCounts: capturedFallbackCounts,
+    irPostClaimErrors: capturedIrPostClaimErrors,
   };
 }
 
@@ -1209,11 +1300,14 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
           ? "warning"
           : "error";
       errors.push({
-        message: typeof diag.messageText === "string" ? diag.messageText : diag.messageText.messageText,
+        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+        // elaboration) and attribute the source file for multi-file compiles.
+        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
         line: pos.line + 1,
         column: pos.character + 1,
         severity,
         code: diag.code,
+        ...(diag.file ? { file: diag.file.fileName } : {}),
       });
     }
   }
@@ -1264,6 +1358,8 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
   const useLinear = options.target === "linear";
 
   let mod;
+  let capturedFallbackCounts: import("./index.js").CompileResult["fallbackCounts"];
+  let capturedIrPostClaimErrors: import("./index.js").CompileResult["irPostClaimErrors"];
   try {
     if (useLinear) {
       mod = generateLinearMultiModule(multiAst, { exposeArenaReset: options.allocator === "arena-reset" });
@@ -1295,15 +1391,20 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
         standalone: options.target === "standalone",
       });
       mod = result.module;
+      capturedFallbackCounts = result.fallbackCounts;
+      capturedIrPostClaimErrors = result.irPostClaimErrors;
+      // #1921 — a deliberate "degrade" diagnostic is surfaced as a non-fatal
+      // "warning"; the fatal decision is made by isFatalCodegenDiagnostic.
       for (const err of result.errors) {
         errors.push({
           message: err.message,
           line: err.line,
           column: err.column,
-          severity: err.severity ?? "error",
+          severity: isFatalCodegenDiagnostic(err) ? "error" : "warning",
         });
       }
-      if (result.errors.some((err) => err.message.startsWith("Codegen error:"))) {
+      // #1921 — gate on severity, not a "Codegen error:" message prefix.
+      if (result.errors.some(isFatalCodegenDiagnostic)) {
         return {
           binary: new Uint8Array(0),
           wat: "",
@@ -1450,5 +1551,7 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
     hasTopLevelStatements: mod.hasTopLevelStatements === true,
     exportSignatures: mod.exportSignatures,
+    fallbackCounts: capturedFallbackCounts,
+    irPostClaimErrors: capturedIrPostClaimErrors,
   };
 }

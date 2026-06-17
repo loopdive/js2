@@ -1,10 +1,12 @@
 ---
 id: 1918
 title: "Stack-balance strict mode + fixup ratchet — stop silently patching emitter bugs into wrong runtime values"
-status: ready
+status: done
+assignee: ttraenkler/tld-2139
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -60,3 +62,82 @@ Phase 2 (M — burn-down):
 
 Compiler quality review 2026-06. Direct child of #1858 (fail-loud audit).
 Related: #1917 (the lossy arms it instruments), #1921.
+
+## Resolution (2026-06-16) — Phase 1 complete
+
+Phase 1 (instrumentation) is implemented. Phase 2 (per-emitter burn-down of
+the top buckets to zero + flipping the repair arms to `throw`) is intentionally
+deferred to follow-up issues — the ratchet now *protects* the current floor and
+makes every future regression visible, which is the gating prerequisite for the
+burn-down work.
+
+### What landed
+
+**`src/codegen/stack-balance.ts`** — fixup telemetry:
+- New `FixupKind` union (7 kinds) + `FixupEvent` (`kind`, `func`, `detail`,
+  `lossy`). A module-scoped `fixupEvents` collector (mirrors the existing
+  `#2090` `inventedValueSites` pattern), reset per `stackBalance(mod)` run.
+- `recordFixup(kind, detail, lossy?)` instrumented at all 7 leaf
+  body-mutating sites: `drop-excess`, `default-value-lossy` (the LOSSY
+  const/null-default arms — flagged `lossy: true`), `branch-type-coerce`,
+  `branch-type-cast`, `call-arg-coerce`, `struct-field-coerce`,
+  `local-set-coerce`.
+- Exposed `getFixupEvents()`, `summarizeFixups(events)`, and
+  `strictBalanceDiagnostics(events)`.
+
+**`JS2WASM_STRICT_BALANCE`** env (read in `strictBalanceDiagnostics`):
+- unset/`0`/`off` → silent (default; no behaviour change)
+- `1`/`true`/`warn` → each fixup becomes a located severity-`warning`
+- `error`/`strict` → each fixup becomes a severity-`error` prefixed
+  `Codegen error:` so the WasmGC success gate (compiler.ts:736) actually
+  fails the compile. (Necessary because `mod.codegenErrors` is NOT read on
+  the WasmGC path — only `ctx.errors` is — so the diagnostics are pushed onto
+  `ctx.errors` from `index.ts`, where `ctx` is in scope.)
+
+**`src/codegen/index.ts`** — `drainStackBalanceTelemetry(ctx, fileLabel)`
+called immediately after both `stackBalance(mod)` sites (`generateModule` and
+`generateMultiModule`). Logs a one-line per-kind histogram under
+`JS2WASM_LOG_STACK_BALANCE=1` (per-compile debug visibility) and pushes
+strict-mode diagnostics onto `ctx.errors`.
+
+**`scripts/check-stack-balance.ts`** + **`scripts/stack-balance-baseline.json`**
+— corpus ratchet over `website/playground/examples/` (same corpus as
+`check:ir-fallbacks`), mechanics mirror `check-ir-fallbacks.ts`
+(`--update` / `--update-on-decrease` / `--json` / `--verbose`). Baseline at
+landing: `default-value-lossy=78, call-arg-coerce=6, drop-excess=2` (86 total).
+Wired into `ci.yml` `quality` job as **"Stack-balance fixup ratchet (#1918)"**;
+`pnpm run check:stack-balance`.
+
+### Acceptance criteria — verified
+
+- **Fixup counts visible per compile (debug) and per corpus (CI artifact)** ✓
+  — `JS2WASM_LOG_STACK_BALANCE=1` prints `[stack-balance] file=… fixups=N …`
+  per compile; `check:stack-balance` prints/ratchets the per-corpus table.
+- **`scripts/stack-balance-baseline.json` ratchet wired into ci.yml quality
+  job** ✓ — new gate step; verified locally it PASSES at baseline and FAILS
+  (exit 1) when a bucket exceeds baseline.
+- **At least the lossy `drop; const-default` branch arms are warning-visible**
+  ✓ — the `default-value-lossy` arms carry `lossy: true` and surface as
+  located warnings under `JS2WASM_STRICT_BALANCE=1` / errors under `=error`.
+
+### Tests — `tests/issue-1918.test.ts` (7 tests, all pass)
+
+Unit: `getFixupEvents` records a located lossy event; resets per run;
+`summarizeFixups` zero-fills every kind and counts by kind. E2E via `compile`:
+default mode silent (`success:true`, no stack-balance diagnostics);
+`=1` surfaces warnings without failing; `=error` fails the compile with
+`Codegen error:`-prefixed error-severity diagnostics.
+
+### Regression check
+
+The instrumentation is behaviour-neutral on the default (silent) path — only
+`recordFixup` calls were added; no body-mutation logic changed. Verified the 2
+pre-existing failures in `tests/stack-balance.test.ts` (try/catch/finally) and
+the 4 pre-existing `tests/equivalence/` IR-path "duplicate SSA def" failures
+reproduce identically on `origin/main` source, so they are not introduced here.
+
+### Deferred to follow-up (Phase 2)
+
+Burn down the top buckets at the producing emitter and, once a kind hits zero,
+replace its repair arm with a `throw` (strict by construction). The
+`default-value-lossy=78` bucket (#1917 territory) is the highest-value target.

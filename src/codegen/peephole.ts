@@ -90,6 +90,12 @@ function optimizeBody(body: Instr[], localTypes?: ValType[]): number {
             if (c.body) removed += optimizeBody(c.body, localTypes);
           }
         }
+        // #1920 — the `catchAll` body was previously skipped, so instruction
+        // bodies built by e.g. wrapAsyncCallInTryCatch (expressions.ts) never
+        // got peephole-optimized (redundant ref.as_non_null after ref.cast left
+        // in). stack-balance's eliminateDeadCode walker handles catchAll; the
+        // two walkers had diverged. Recurse into it too.
+        if (instr.catchAll) removed += optimizeBody(instr.catchAll, localTypes);
         break;
     }
   }

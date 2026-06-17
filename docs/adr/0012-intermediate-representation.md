@@ -1,14 +1,21 @@
 # ADR-012 — Intermediate representation: multi-stage typed IR over lightweight codegen-oriented IR
 
-**Status**: Accepted
+**Status**: Accepted — _high-level/lowered IR split superseded in practice by [ADR-018](./0018-structured-ir-nested-buffers.md)_
 **Date**: 2026-04-27
+
+> **Note (2026-06-16, #1925):** the multi-stage _split_ below — a separate
+> high-level semantic IR and a distinct lowered IR — was never built. What
+> exists is a single structured typed IR with control flow in nested
+> instruction buffers, optimized in place; see [ADR-018](./0018-structured-ir-nested-buffers.md).
+> The rest of this record (typed IR over a codegen-oriented IR; SSA-inspired,
+> not strict SSA; annotations as inference seeds) still holds.
 
 ## Context
 
 A compiler needs an IR to bridge the AST and Wasm emission. Two broad
 strategies exist.
 
-A *lightweight, codegen-oriented IR* couples analysis tightly to emission:
+A _lightweight, codegen-oriented IR_ couples analysis tightly to emission:
 type tags live on IR nodes and emission logic infers lowering decisions
 inline. This is fast to implement and sufficient for compilation
 strategies that accept fully boxed output for any value whose type cannot
@@ -23,7 +30,7 @@ boundaries separating proven-static regions from boxed fallbacks. These
 requirements are difficult to satisfy when analysis and emission are
 interleaved in a single pass.
 
-A *multi-stage IR* separates concerns: a high-level semantic IR preserves
+A _multi-stage IR_ separates concerns: a high-level semantic IR preserves
 full JS semantics; analysis passes annotate and refine it; a typed
 lowered IR makes lowering decisions explicit; and a final Wasm emission
 pass reads the lowered IR without re-deriving types.

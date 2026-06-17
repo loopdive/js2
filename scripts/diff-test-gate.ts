@@ -21,7 +21,11 @@ const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
 interface FileResult {
   file: string;
-  outcome: "match" | "mismatch" | "compile_error" | "runtime_error" | "v8_error";
+  // #2143 — `malformed_wasm`: compiler reported success but WebAssembly.validate
+  // rejected the binary. The per-file delta below treats it like any other
+  // non-match outcome, so a corpus program that regresses from `match` to
+  // `malformed_wasm` fails the gate loudly.
+  outcome: "match" | "mismatch" | "compile_error" | "runtime_error" | "v8_error" | "malformed_wasm";
   error?: string;
 }
 

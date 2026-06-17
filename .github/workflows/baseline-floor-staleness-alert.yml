@@ -1,0 +1,171 @@
+name: Baseline floor staleness alert (#2178)
+
+# #2178 — surface (and optionally auto-heal) a STALE standalone/host baseline
+# FLOOR before it silently blocks the whole merge queue.
+#
+# The standalone regression guard (#1897) and the host regression gate diff
+# every PR against a *floor* stored in `loopdive/js2wasm-baselines`
+# (test262-standalone-current.json / test262-current.json, each carrying a
+# `baseline_sha` = the main commit it was promoted for). The floor is supposed
+# to advance on every push to main via test262-sharded.yml's promote-baseline.
+# When a rapid burst of main pushes (the merge-queue "thrash") drops the
+# promote run for a standalone-shifting change, the floor stops advancing and
+# every PR on current main fails the guard against a stale floor — the queue
+# deadlocks with no obvious signal (the per-PR delta looks like a phantom
+# regression identical across unrelated PRs).
+#
+# The per-SHA push concurrency group added to test262-sharded.yml (#2178) stops
+# push:main runs from cancelling each other, which removes the root cause. This
+# workflow is the BACKSTOP / observability layer required by #2178 acceptance
+# criterion 3: it independently measures how far the floor lags main (counting
+# only test262-RELEVANT commits) and, on a breach, (a) alerts loudly and
+# (b) optionally auto-heals by dispatching the emergency baseline refresh
+# (refresh-baseline.yml — its own non-cancellable group, unconditional promote;
+# the same lever the runbook says to pull by hand).
+#
+# Triggers:
+#   - schedule: hourly (offset) — catches a stale floor even with no activity
+#   - workflow_run: after "Test262 Sharded" completes on a push to main — so a
+#     thrash deadlock is surfaced within ~one sharded-run latency, not an hour
+#   - workflow_dispatch: manual check / forced auto-heal
+
+on:
+  schedule:
+    - cron: "23 * * * *" # hourly, offset from the top-of-hour Actions rush
+  workflow_run:
+    workflows: ["Test262 Sharded"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      max_behind:
+        description: "Floor staleness threshold (test262-relevant commits behind main) before this is a breach"
+        required: false
+        default: "25"
+        type: string
+      auto_heal:
+        description: "On breach, dispatch refresh-baseline.yml to force-promote a fresh floor"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: write # gh workflow run refresh-baseline.yml (auto-heal)
+
+concurrency:
+  # Serialize the check; never cancel an in-flight one. Cheap job, so a queued
+  # backlog collapses to the latest (which is what we want — latest-wins).
+  group: baseline-floor-staleness-alert
+  cancel-in-progress: false
+
+jobs:
+  check-floor:
+    # On workflow_run, only act on the push:main completions of the sharded run
+    # (the runs that are SUPPOSED to promote a floor). Ignore pull_request /
+    # merge_group sharded runs — they never promote, so their completion says
+    # nothing about floor freshness. schedule/workflow_dispatch always run.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main (deep enough to reach the floor SHA)
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          # The floor can legitimately trail main by tens of commits; fetch
+          # enough history that the floor SHA is reachable for the drift count.
+          # check-baseline-floor-staleness.mjs reports "undetermined" (never a
+          # false breach) if the SHA is still out of range.
+          fetch-depth: 400
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+
+      - name: Compute floor staleness
+        id: staleness
+        env:
+          MAX_FLOOR_COMMITS_BEHIND: ${{ github.event_name == 'workflow_dispatch' && inputs.max_behind || '25' }}
+        run: |
+          set +e
+          OUT=$(node scripts/check-baseline-floor-staleness.mjs --json --ref main 2>staleness.log)
+          CODE=$?
+          set -e
+          cat staleness.log
+          echo "$OUT" > floor-staleness.json
+          echo "--- floor-staleness.json ---"
+          cat floor-staleness.json || true
+          BREACH=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('floor-staleness.json','utf8')).breach)}catch{console.log('false')}")
+          echo "breach=$BREACH" >> "$GITHUB_OUTPUT"
+          echo "exit_code=$CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Baseline floor staleness (#2178)"
+            echo ""
+            if [ -f floor-staleness.json ]; then
+              node -e "
+                const j=JSON.parse(require('fs').readFileSync('floor-staleness.json','utf8'));
+                console.log('- breach: **'+j.breach+'**  (threshold '+j.maxBehind+' test262-relevant commits)');
+                for(const l of j.lanes||[]){
+                  if(l.reachable){
+                    console.log('- '+l.lane+': floor '+String(l.floorSha).slice(0,8)+' is '+l.commitsBehindRelevant+' relevant ('+l.commitsBehindTotal+' total) commit(s) behind main'+(l.breach?' — **STALE**':''));
+                  } else {
+                    console.log('- '+l.lane+': staleness undetermined ('+(l.error||'floor SHA unreachable')+')');
+                  }
+                }
+              " 2>/dev/null || cat floor-staleness.json
+            else
+              echo "_(no staleness output produced)_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Auto-heal — dispatch emergency baseline refresh
+        # On a breach, force-promote a fresh floor via the emergency refresh
+        # workflow. It has its OWN non-cancellable concurrency group and an
+        # unconditional promote (no regression gate), so it always reaches the
+        # baselines-repo push — exactly the manual recovery lever from the
+        # #2178 runbook, automated. Skipped when auto_heal is explicitly false
+        # on a manual dispatch.
+        if: >-
+          steps.staleness.outputs.breach == 'true' &&
+          (github.event_name != 'workflow_dispatch' || inputs.auto_heal)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "::warning::Baseline floor is STALE (#2178) — dispatching emergency baseline refresh to force-promote a fresh floor."
+          gh workflow run refresh-baseline.yml --ref main \
+            -f force_baseline_refresh=true \
+            -f confirm_force=YES \
+            && echo "Dispatched refresh-baseline.yml (emergency floor refresh)." \
+            || echo "::error::Failed to dispatch refresh-baseline.yml — force-promote the floor manually (see #2178 runbook)."
+
+      - name: Notify on breach (ntfy)
+        if: steps.staleness.outputs.breach == 'true'
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+        run: |
+          [ -z "${NTFY_URL:-}" ] && exit 0
+          MSG=$(node -e "
+            const j=JSON.parse(require('fs').readFileSync('floor-staleness.json','utf8'));
+            const stale=(j.lanes||[]).filter(l=>l.breach).map(l=>l.lane+' +'+l.commitsBehindRelevant).join(', ');
+            console.log('STALE baseline floor (#2178): '+stale+' commit(s) behind main — every PR may be blocked. Auto-heal dispatched.');
+          " 2>/dev/null || echo "STALE baseline floor (#2178) — every PR may be blocked. Auto-heal dispatched.")
+          curl -s --max-time 10 \
+            -H "Title: js2wasm CI" \
+            -H "Priority: high" \
+            -H "Tags: warning" \
+            -d "$MSG" \
+            "$NTFY_URL" >/dev/null 2>&1 || true
+
+      - name: Fail the run on breach (visible red signal)
+        if: steps.staleness.outputs.breach == 'true'
+        run: |
+          echo "::error::Baseline floor is stale beyond the threshold (#2178). See the job summary. Auto-heal has been dispatched; re-run any standalone-guard-blocked PRs once the floor refreshes."
+          exit 1

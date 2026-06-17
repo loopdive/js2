@@ -13,7 +13,7 @@ import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowTypeError, getFuncParamTypes, noJsHost } from "./expressions/helpers.js";
-import { addStringImports, flatStringType, nativeStringType, resolveWasmType } from "./index.js";
+import { addStringImports, flatStringType, nativeStringType, resolveIdentifierType, resolveWasmType } from "./index.js";
 import {
   ensureAnyToStringHelper,
   ensureNativeStringExternBridge,
@@ -39,6 +39,20 @@ import {
   pushParamSentinel,
   tryStructToString,
 } from "./type-coercion.js";
+
+/**
+ * (#2176) Type of a value expression for stringification decisions, preferring
+ * the user's own declaration when a bare identifier collides with an ambient
+ * lib global. In script mode `const name = …` does not shadow lib.dom's
+ * `var name: string`, so `getTypeAtLocation` on a `` `${name}` `` /`"x" + name`
+ * operand returns the ambient type (`void`), which mis-fires the
+ * undefined/void stringification branch and drops the real value. For a bare
+ * identifier, route through `resolveIdentifierType`; everything else is
+ * unchanged.
+ */
+function valueExprTsType(ctx: CodegenContext, node: ts.Expression): ts.Type {
+  return ts.isIdentifier(node) ? resolveIdentifierType(ctx, node) : ctx.checker.getTypeAtLocation(node);
+}
 
 /**
  * (#2124) An explicit `undefined` (or `void 0`) passed for an optional string
@@ -115,7 +129,7 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
   // externref result wraps a native `$AnyString` (so `any.convert_extern` +
   // `ref.cast $AnyString` is valid), and dynamic refs route through the
   // in-module `$__any_to_string` dispatcher. No JS-host bridge is involved.
-  const tsType = ctx.checker.getTypeAtLocation(operand);
+  const tsType = valueExprTsType(ctx, operand); // #2176 ambient-shadow safe
   const opType = compileExpression(ctx, fctx, operand);
   if (!opType) {
     // void result → "undefined"
@@ -307,7 +321,12 @@ export function compileTemplateExpression(
     // booleans stringify to "true"/"false" (#2005) and null/undefined spans
     // produce "null"/"undefined" rather than tripping the js-string concat
     // cast (#2006).
-    const spanTsType = ctx.checker.getTypeAtLocation(span.expression);
+    // #2176: a bare-identifier span (`` `${name}` ``) whose name collides with
+    // an ambient lib global (e.g. lib.dom's `var name: string`) resolves, in
+    // script mode, to the ambient symbol (`void`), which would mis-fire the
+    // undefined/void branch below and drop the real value. valueExprTsType
+    // re-derives from the user binding when it shadows the ambient.
+    const spanTsType = valueExprTsType(ctx, span.expression);
     // #1931: `undefined`/`null` literals lower to a type-default scalar (i32 0)
     // rather than an externref, so detect them by static type before codegen
     // and substitute the spec stringification instead of running the scalar
@@ -432,7 +451,7 @@ export function compileNativeTemplateExpression(
   for (let i = 0; i < expr.templateSpans.length; i++) {
     const span = expr.templateSpans[i]!;
 
-    const spanNativeTsType = ctx.checker.getTypeAtLocation(span.expression);
+    const spanNativeTsType = valueExprTsType(ctx, span.expression); // #2176 ambient-shadow safe
     // #1931: `undefined`/`null` lower to a type-default scalar (i32 0), so
     // resolve them from the static type before codegen and emit the spec
     // stringification rather than "0" (parallels the JS-host path).
@@ -456,7 +475,7 @@ export function compileNativeTemplateExpression(
       !spanIsBool &&
       spanType &&
       (spanType.kind === "ref" || spanType.kind === "ref_null") &&
-      isStringType(ctx.checker.getTypeAtLocation(span.expression));
+      isStringType(spanNativeTsType); // #2176 ambient-shadow safe
     if (spanIsScalarNullish || spanIsBool) {
       // value already on stack — fall through to the concat tail
     } else if (spanIsString) {
@@ -501,9 +520,8 @@ export function compileNativeTemplateExpression(
       // helper (bridge externref→anyref first). In JS-host mode coerce to an
       // externref string via the @@toPrimitive("string") walker as before.
       if (standaloneNativeStrings) {
-        const isNull = (ctx.checker.getTypeAtLocation(span.expression).flags & ts.TypeFlags.Null) !== 0;
-        const isUndef =
-          (ctx.checker.getTypeAtLocation(span.expression).flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
+        const isNull = (spanNativeTsType.flags & ts.TypeFlags.Null) !== 0; // #2176 ambient-shadow safe
+        const isUndef = (spanNativeTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
         if (isNull) {
           fctx.body.push({ op: "drop" });
           compileStringLiteral(ctx, fctx, "null", span.expression);
@@ -605,7 +623,7 @@ function compileStringRaw(
 
   for (let i = 0; i < substitutions.length; i++) {
     const sub = substitutions[i]!;
-    const subTsType = ctx.checker.getTypeAtLocation(sub);
+    const subTsType = valueExprTsType(ctx, sub); // #2176 ambient-shadow safe
     const subIsUndef = (subTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
     const subIsNull = (subTsType.flags & ts.TypeFlags.Null) !== 0;
     const subType = compileExpression(ctx, fctx, sub);
@@ -1308,7 +1326,7 @@ function createSyntheticStringLiteral(value: string, positionSource: ts.Node): t
 function compileAndCoerceConcatOperand(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): void {
   // §7.1.17 ToString(Symbol) throws — `"x" + sym` must throw TypeError.
   if (tryThrowOnSymbolStringCoercion(ctx, fctx, operand)) return;
-  const tsType = ctx.checker.getTypeAtLocation(operand);
+  const tsType = valueExprTsType(ctx, operand); // #2176 ambient-shadow safe
   const valType = compileExpression(ctx, fctx, operand);
 
   if (!valType) {
@@ -1645,7 +1663,7 @@ export function compileStringBinaryOp(
   // context, inject appropriate toString conversion.
   // Booleans → "true"/"false" string constants (not number_toString which gives "1"/"0")
   // Numbers → number_toString
-  const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
+  const leftTsType = valueExprTsType(ctx, expr.left); // #2176 ambient-shadow safe
   const leftType = compileExpression(ctx, fctx, expr.left);
   if (op === ts.SyntaxKind.PlusToken && !leftType) {
     // Void function return used in string concat → push "undefined"
@@ -1738,7 +1756,7 @@ export function compileStringBinaryOp(
     const finalUnboxIdx = ctx.funcMap.get("__unbox_string") ?? unboxIdx;
     if (finalUnboxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: finalUnboxIdx });
   }
-  const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
+  const rightTsType = valueExprTsType(ctx, expr.right); // #2176 ambient-shadow safe
   const rightType = compileExpression(ctx, fctx, expr.right);
   if (op === ts.SyntaxKind.PlusToken && !rightType) {
     // Void function return used in string concat → push "undefined"

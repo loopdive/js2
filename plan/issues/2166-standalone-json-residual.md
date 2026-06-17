@@ -2,7 +2,7 @@
 id: 2166
 title: "Standalone JSON conformance residual (~76 tests)"
 status: ready
-sprint: 62
+sprint: 63
 created: 2026-06-15
 updated: 2026-06-15
 priority: low
@@ -79,4 +79,35 @@ value-rep work), not a point fix.
 
 PR #1488 fixed one slice (standalone `JSON.stringify` of a boolean-typed value).
 Stays `ready`: the ~75-test bulk is dynamic object-graph stringify/parse, needing
+the #1599 Phase-2 pure-Wasm JSON codec + dynamic value rep (architect/senior).
+
+## Progress (2026-06-16, d2) — `JSON.stringify(value, null, space)` indentation slice
+
+**Status stays `ready`** — another increment of the bucket, not the whole residual.
+
+Probing standalone JSON against `upstream/main` @ `cc833a2c9` surfaced a concrete
+compile-error gap independent of the dynamic-graph bulk: the common pretty-print
+form **`JSON.stringify(obj, null, 2)`** (and any call with a `space` argument) hit
+the #1599 refusal. The static-fold caller in `src/codegen/expressions/calls.ts`
+was gated on `expr.arguments.length === 1`, so a `space` argument was never
+threaded into the compile-time fold.
+
+**Fix (this PR):**
+- `src/codegen/json-standalone.ts` — `tryEmitJsonStringifyStatic` now accepts the
+  optional `replacer` and `space` args. A `null`/`undefined`/omitted replacer is
+  honoured; a static numeric/string `space` is resolved (`staticSpaceValue`) and
+  forwarded to JS's own `JSON.stringify(value, null, space)`, which applies the
+  §25.5.2 clamping/indentation. A function/array replacer or a dynamic space
+  returns `undefined` → the caller keeps the #1599 refusal (no silent wrong
+  output).
+- `src/codegen/expressions/calls.ts` — relaxed the gate to `>= 1` arg and pass
+  args 1 (replacer) and 2 (space) through.
+
+Regression test: `tests/issue-2166.test.ts` (+10 cases: numeric/string space,
+nested, space 0, `null` replacer, `--target wasi`, 1-arg compact regression
+guard, and refusal for function/array replacer + dynamic space). No `JSON_*`
+host-import leak. Existing 8 boolean-slice cases + #1599/#1636 suites stay green.
+
+**Still open (the bulk of the 76):** dynamic object-graph `JSON.stringify` /
+`JSON.parse` (runtime-built objects, runtime JSON text → object/array) — needs
 the #1599 Phase-2 pure-Wasm JSON codec + dynamic value rep (architect/senior).

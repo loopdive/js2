@@ -13,6 +13,7 @@
  */
 import { ts } from "../ts-api.js";
 import { isBooleanType, isPromiseType, mapTsTypeToWasm } from "../checker/type-mapper.js";
+import { classifyAsyncConsumer } from "./async-cps.js";
 import type { Instr, ValType } from "../ir/types.js";
 import {
   emitStandalonePromiseReject,
@@ -52,6 +53,7 @@ import { compilePostfixUnary, compilePrefixUnary } from "./expressions/unary.js"
 import { compileCallExpression } from "./expressions/calls.js";
 
 import { compileClassExpression, compileNewExpression } from "./expressions/new-super.js";
+import { emitNewTargetClassId } from "./new-target.js"; // (#2023)
 
 import { compileConditionalExpression, compileYieldExpression } from "./expressions/misc.js";
 
@@ -167,7 +169,13 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
   if (
     isStandalonePromiseActive(ctx) &&
     ts.isPropertyAccessExpression(expr.expression) &&
-    expr.expression.name.text === "then"
+    (expr.expression.name.text === "then" ||
+      // (#2165) `.catch` lowers to the same native `$Promise` then-machinery
+      // in standalone mode (`.catch(f)` ≡ `.then(undefined, f)`); it already
+      // returns a `$Promise`, so it must NOT be re-wrapped by `wrapAsyncReturn`
+      // (double-wrapping yields a Promise-of-Promise → illegal cast / NaN when
+      // the chained result is consumed).
+      expr.expression.name.text === "catch")
   ) {
     const receiverType = ctx.checker.getTypeAtLocation(expr.expression.expression);
     const receiverSym = receiverType.getSymbol()?.name;
@@ -250,28 +258,13 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
  * minimal-diff variant — scope 2).
  */
 function asyncResultConsumedAsValue(ctx: CodegenContext, expr: ts.CallExpression): boolean {
-  let sawNonPromiseCast = false;
-  let parent: ts.Node | undefined = expr.parent;
-  while (
-    parent &&
-    (ts.isParenthesizedExpression(parent) ||
-      ts.isAsExpression(parent) ||
-      ts.isNonNullExpression(parent) ||
-      ts.isTypeAssertionExpression(parent))
-  ) {
-    if (ts.isAsExpression(parent) || ts.isNonNullExpression(parent) || ts.isTypeAssertionExpression(parent)) {
-      // The cast/assertion's resolved type. For `f() as unknown as number`,
-      // each layer is inspected; the value-consumer signal is that at least one
-      // cast in the chain targets a non-Promise type.
-      const castType = ctx.checker.getTypeAtLocation(parent);
-      if (!isPromiseType(castType)) sawNonPromiseCast = true;
-    }
-    parent = parent.parent;
-  }
-  // (case 1) await consumer — raw-T passthrough (folds in the existing skip).
-  if (parent && ts.isAwaitExpression(parent)) return true;
-  // (case 2) non-Promise cast/assertion sink — raw value wanted.
-  return sawNonPromiseCast;
+  // (#1936) Single source of truth: the three-state census classifier lives in
+  // async-cps.ts so the offline census script reuses the same logic. The legacy
+  // boolean is exactly `kind !== "thenable"` — `await` and `value` consumers
+  // both take the raw-T passthrough today; only the `thenable` consumer wraps.
+  // This stays behaviour-identical until #1796 changes the value/thenable
+  // dispatch. The rich rationale for each case is documented above.
+  return classifyAsyncConsumer(ctx.checker, expr) !== "thenable";
 }
 
 /**
@@ -1250,6 +1243,15 @@ function compileExpressionInner(
 
   if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.NewKeyword && expr.name.text === "target") {
     if (fctx.isConstructor) {
+      // (#2023) Read the live new.target class-id (set at the outermost `new`
+      // site, preserved through super()). Non-zero inside a construction, so
+      // truthiness uses (`if (new.target)`) stay correct; identity comparisons
+      // (`new.target === SomeClass`) are handled in compileBinaryExpression and
+      // never reach here.
+      if (ctx.usesNewTarget) {
+        emitNewTargetClassId(ctx, fctx.body);
+        return { kind: "i32" };
+      }
       fctx.body.push({ op: "i32.const", value: 1 });
       return { kind: "i32" };
     } else {

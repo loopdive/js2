@@ -2,7 +2,7 @@
 id: 2169
 title: "standalone: spread / Array.from / array-destructure don't drive a native generator (treat the state struct as a __vec)"
 status: in-progress
-sprint: 62
+sprint: 63
 created: 2026-06-15
 updated: 2026-06-15
 priority: high

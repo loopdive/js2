@@ -1,9 +1,11 @@
 ---
 id: 1537
 title: "Wasm-native number formatting (Ryū port): toString/toFixed/toPrecision/toExponential"
-status: backlog
+status: done
+assignee: ttraenkler/sdev-1537
+completed: 2026-06-16
 created: 2026-05-20
-updated: 2026-06-03
+updated: 2026-06-16
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -11,7 +13,7 @@ task_type: feature
 area: runtime
 language_feature: number
 goal: standalone-wasm
-sprint: Backlog
+sprint: 63
 related: [1535, 1321, 1335, 1759]
 ---
 # #1537 — Wasm-native number formatting: shortest-roundtrip Ryū core (#1335 Phase 2)
@@ -169,3 +171,103 @@ Boundary values to pin in the focused unit test:
 - Start CLEAN-CONTEXT: this is a numeric-correctness port where small errors
   silently fail boundary tests; pair it with the oracle test from the first
   commit and grow the value set as each case passes.
+
+## Implementation Notes (sdev-1537, 2026-06-16)
+
+**Delivered.** Shortest-roundtrip Ryū `d2d` core replaces the fixed-6-digit
+fractional branch of `number_toString` in standalone/WASI mode. New file
+`src/codegen/number-ryu.ts`; `emitToString` (number-format-native.ts) now calls
+`__num_ryu_to_buf` for the fractional / unsafe-magnitude branch. The non-finite
+prologue + safe-integer fast path + radix formatter are untouched.
+
+### Key decisions (the WHY)
+
+1. **Validate the algorithm in JS BigInt *before* writing any Wasm.** The
+   architect warned the failure mode is silent. I transcribed `ryu-ecmascript`
+   `d2d` to a BigInt reference (`.tmp/ryu-ref.mjs`) and ran it against
+   `String(x)` over 200k random f64 + the boundary set until 0 mismatches. The
+   Wasm is a mechanical translation of *that validated reference*, not of the C
+   source from memory. The single bug this caught: `computeInvPow5`'s shift was
+   off by one (`b - 1 + BITCOUNT` vs the correct `b + BITCOUNT`), which produced
+   exactly-half values for all large numbers — invisible on small inputs.
+
+2. **`mulShift` via 32-bit limbs (`umul128` + `shiftright128`), validated
+   separately.** No i128 in Wasm. A second probe (`.tmp/ryu-limbs.mjs`) proved
+   the limb-based `mulShift` is bit-identical to the BigInt `(m*factor)>>j` over
+   300k cases AND that the shift `j` is always in [118,125] (≥64), so the
+   optimized `shiftright128(_, _, j-64)` (dist ∈ [54,61], a valid 0<dist<64
+   shift) is always taken. Unsigned-overflow carry in `b0.hi + b2.lo` is
+   detected with `i64.lt_u` (the sum wrapping below an addend ⇒ carry).
+
+3. **Full (not compact) pow5 tables, generated at codegen time.** I use the full
+   `DOUBLE_POW5_INV_SPLIT` (291 entries, q∈[0,290]) and `DOUBLE_POW5_SPLIT`
+   (326 entries) — byte-identical to dtolnay's `d2s_full_table.h`. The compact
+   variant trades table size for extra runtime bignum work and more places to
+   get wrong; correctness > ~6 KB. Tables are computed by the same BigInt
+   `computePow5`/`computeInvPow5` the reference uses (so they cannot drift from
+   the validated algorithm) and emitted as two immutable `(array i64)` globals
+   via `array.new_fixed` init exprs, interleaved `[lo,hi,...]`.
+
+4. **New i64 ops added to the IR.** The digit loop and `mulShift` need unsigned
+   i64 division/remainder/compare: added `i64.{div_u,rem_u,lt_u,le_u,gt_u,ge_u}`
+   to the `Instr` union (`src/ir/types.ts`), the binary emitter
+   (`src/emit/binary.ts` — opcodes already existed in `opcodes.ts`), and
+   `src/codegen/stack-balance.ts` (net delta + type producers). `i64.clz` is NOT
+   needed — the ecmascript variant uses the integer `pow5bits`/`log10Pow*`
+   multiply-shift formulas, no count-leading-zeros.
+
+5. **Formatter writes digits to a scratch region of the same buffer.** Digits of
+   the i64 mantissa are extracted LSB-first into `buf[200..200+k)` (BUF_CAP=256,
+   k≤17, never overlaps the ≤24-char output that starts near pos 0), then emitted
+   MSB-first via `dig[k-1-j]`. §6.1.6.1.13 framing chooses integer / fixed /
+   leading-zero-fixed / exponential by the decimal point position n=exp+k.
+
+### Scope honored
+Only the shortest-significand path (`toString` default radix) was rerouted, per
+the plan. `toFixed(d)`/`toExponential(d)`/`toPrecision(p)` with explicit digit
+counts keep the existing fixed expansion (no boundary test required them to
+change). `(7.7).toFixed(20)` (needs bignum) remains the documented gap.
+
+### Validation
+- `tests/issue-1537.test.ts`: 33 tests — boundary set (0.1+0.2, 1/3, 1e21, 1e-7,
+  1e20, 2^53+1, min/max/subnormal, negatives) + a seeded 30k-value property test
+  (random bit patterns + scaled magnitudes + subnormals) asserting
+  `Wasm === String(x)`. All green.
+- Out-of-band sweep through the compiled Wasm: **152,997** random f64 matched V8
+  exactly (`.tmp/probe-random.mjs`, gitignored).
+- Existing `issue-1321-standalone`, `issue-49-number-format-nonfinite`,
+  `native-strings-*`, `issue-1759`, `bigint` suites still pass; full `tsc` and
+  `npm run lint` clean.
+- Binary-size delta: +~15.6 KB, emitted only when `number_toString` is used in a
+  standalone/WASI module (zero impact otherwise; verified no `__ryu_*` globals in
+  a module that doesn't stringify numbers).
+
+## Implementation Plan — Architect addendum (2026-06-16)
+
+(The issue may already carry a `#1335 Phase 2 — Ryū core swap` plan. This addendum confirms it against current source, sharpens the seam, and pins the i64-primitive plan.)
+
+### Confirmation
+- Host-import elimination is DONE: all five formatters Wasm-native in `src/codegen/number-format-native.ts`, wired via `emitNativeNumberFormat` (`declarations.ts:~946-959`), gated `ctx.wasi || ctx.standalone`.
+- Gap stands: `emitToString` (number-format-native.ts:410, "Algorithm strategy (no Ryu)") + `emitExponential` (~432, `SIG_DIGITS=15`) use fixed ~15-digit f64 expansion → non-round-tripping shortest output (`String(0.1)`, `0.1+0.2`) and ~50 boundary fails.
+- All Wasm primitives present: `i64.reinterpret_f64` (0xbd) for bit decomposition; `i64.mul/shr_u/shl/and/or` for hand-rolled 128-bit `mulShift` (no i128 — limb-split).
+
+### Integration seam
+Keep untouched: `emitNonFinitePrologue` (NaN/±Inf/sign), safe-integer fast path (`abs==floor && abs<=2^53-1` → `number_toString_radix`), `emitIntegerDigits`, `__num_fmt_finalize`. Replace ONLY the fractional/unsafe-magnitude branch of `emitToString` with a call into new `__num_ryu_digits`. Put the port in a new `src/codegen/number-ryu.ts` (imported by number-format-native.ts) to avoid growing the 1704-line file.
+
+### `__num_ryu_digits` contract
+`(value:f64, outBuf:ref $__str_data, outOffset:i32) -> (i32 k, i32 n)` (multi-value return): writes shortest decimal digits (ASCII, no sign/dot) at outOffset, returns digit count `k` and decimal exponent `n` (§6.1.6.1.13). `emitToString` keeps the fixed-vs-exponential framing (fixed when `-6 < n <= 21`, else `D.DDDe±N`) and calls `__num_fmt_finalize`. No extra allocation — operate on the caller's buf.
+
+### Ryū core — i64 limb plan (highest risk)
+Port `dtolnay/ryu` `ryu-ecmascript` variant line-for-line (do NOT reconstruct from memory): (1) `bits=i64.reinterpret_f64`; extract mantissa/exponent; build `(m2,e2)`. (2) halfway bounds mv/mp/mm. (3) `mulShift` via `umul128` = split each i64 into two 32-bit limbs, four 32×32→64 partials, recombine, `shiftright128`. (4) pow5 tables `DOUBLE_POW5_SPLIT`/`DOUBLE_POW5_INV_SPLIT` as a WasmGC `(array i64)` global (~2KB) indexed by `q`. (5) digit loop with vr/vm trailing-zero round-to-even tie-break.
+
+### Other formatters
+Route only shortest-significand needs (`toExponential()` no-arg, `toPrecision` auto) through Ryū. Explicit-count `toFixed(d)`/`toExponential(d)`/`toPrecision(p)` keep the fixed expansion unless a boundary test fails. `(7.7).toFixed(20)` (needs bignum) is an accepted documented gap unless forced.
+
+### Edge cases (tests/issue-1537.test.ts)
+`0`,`-0`→"0", NaN, ±Infinity, `0.1`,`0.2`,`0.3`, `0.1+0.2`→"0.30000000000000004", `1/3`, `1.005`, `5e-324`, `1.7976931348623157e308`, `1e21`→"1e+21", `1e-7`→"1e-7", `1e20`→fixed, `9007199254740993`.
+
+### Validation
+Unit oracle: compile `{target:"standalone",testRuntime:true}`, decode via `__test_str_to_externref`, assert `=== String(value)`. Property test ~10k random f64 (fixed seed): round-trip + shortest.
+
+### test262 gate
+`built-ins/Number/prototype/{toString,toFixed,toExponential,toPrecision}/`, `language/types/number/`, String(n) coercion. Est. +200-400 standalone passes. All gated `ctx.wasi || ctx.standalone`; JS-host keeps host imports (V8 does shortest correctly).

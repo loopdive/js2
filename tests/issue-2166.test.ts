@@ -76,3 +76,94 @@ describe("#2166 — standalone JSON.stringify of a boolean-typed value", () => {
     });
   }
 });
+
+/**
+ * #2166 (space slice) — `JSON.stringify(value, replacer, space)` with a `space`
+ * argument. The standalone static-fold path was gated on `arguments.length === 1`
+ * and hit the #1599 refusal for the common pretty-print form
+ * `JSON.stringify(obj, null, 2)`. Thread a `null`/`undefined` replacer + a static
+ * numeric/string space through the compile-time fold (forwarding to JS's own
+ * JSON.stringify for §25.5.2 clamping). A function/array replacer or dynamic space
+ * still refuses. No `JSON_*` host import leaks in standalone/wasi.
+ */
+async function standaloneNum(body: string, target: "standalone" | "wasi" = "standalone"): Promise<number> {
+  const r = await compile(body, { target });
+  expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+  const labels = r.imports.map((i) => `${i.module}::${i.name}`);
+  expect(labels.some((l) => /JSON_stringify|JSON_parse/.test(l))).toBe(false);
+  const { instance } = await WebAssembly.instantiate(r.binary, {});
+  return (instance.exports as { test: () => number }).test();
+}
+
+async function expectRefused(body: string): Promise<void> {
+  const r = await compile(body, { target: "standalone" });
+  expect(r.success, `expected compile failure for:\n${body}`).toBe(false);
+  expect(r.errors.some((e) => /#1599/.test(e.message))).toBe(true);
+}
+
+describe("#2166 — standalone JSON.stringify with space (indentation)", () => {
+  it("indents an object with numeric space (length proof matches host)", async () => {
+    const expected = JSON.stringify({ a: 1 }, null, 2).length;
+    expect(
+      await standaloneNum(`export function test(): number { return JSON.stringify({ a: 1 }, null, 2).length; }`),
+    ).toBe(expected);
+  });
+
+  it("indents a nested object/array with numeric space", async () => {
+    const expected = JSON.stringify({ a: 1, b: [1, 2] }, null, 2).length;
+    expect(
+      await standaloneNum(
+        `export function test(): number { return JSON.stringify({ a: 1, b: [1, 2] }, null, 2).length; }`,
+      ),
+    ).toBe(expected);
+  });
+
+  it("indents with a string space (tab)", async () => {
+    const expected = JSON.stringify({ a: 1 }, null, "\t").length;
+    expect(
+      await standaloneNum(`export function test(): number { return JSON.stringify({ a: 1 }, null, "\\t").length; }`),
+    ).toBe(expected);
+  });
+
+  it("space 0 produces the compact form", async () => {
+    expect(
+      await standaloneNum(`export function test(): number { return JSON.stringify({ a: 1 }, null, 0).length; }`),
+    ).toBe(JSON.stringify({ a: 1 }, null, 0).length);
+  });
+
+  it("a null replacer with no space stays compact", async () => {
+    expect(
+      await standaloneNum(`export function test(): number { return JSON.stringify({ a: 1 }, null).length; }`),
+    ).toBe(JSON.stringify({ a: 1 }, null).length);
+  });
+
+  it("works under --target wasi too", async () => {
+    const expected = JSON.stringify({ a: 1 }, null, 2).length;
+    expect(
+      await standaloneNum(
+        `export function test(): number { return JSON.stringify({ a: 1 }, null, 2).length; }`,
+        "wasi",
+      ),
+    ).toBe(expected);
+  });
+
+  it("does not regress the 1-arg compact form", async () => {
+    expect(
+      await standaloneNum(`export function test(): number { return JSON.stringify({ a: 1, b: 2 }).length; }`),
+    ).toBe(13);
+  });
+});
+
+describe("#2166 — replacer / dynamic space still refuse (no silent wrong output)", () => {
+  it("refuses a function replacer", async () => {
+    await expectRefused(`export function test(): number { return JSON.stringify({ a: 1 }, (k, v) => v, 2).length; }`);
+  });
+
+  it("refuses an array replacer", async () => {
+    await expectRefused(`export function test(): number { return JSON.stringify({ a: 1, b: 2 }, ["a"], 2).length; }`);
+  });
+
+  it("refuses a dynamic (non-static) space", async () => {
+    await expectRefused(`export function test(s: number): number { return JSON.stringify({ a: 1 }, null, s).length; }`);
+  });
+});

@@ -62,21 +62,38 @@ js2wasm api.ts --wit
 
 ## Optimization flags
 
+Optimization is **on by default** (`-O3`): a bare `js2wasm build.ts` runs
+Binaryen's `wasm-opt` over the compiled binary. If `wasm-opt` is not available
+in your environment, the compiler emits a one-line warning and ships the
+unoptimized binary — it never fails.
+
+> The default flip applies to the **CLI only**. The programmatic `compile()`
+> API still defaults to no optimization (pass `{ optimize: 3 }` to opt in), so
+> embedding js2wasm has no surprise behaviour change.
+
 ### `-O, --optimize`
 
-Run Binaryen's `wasm-opt` over the compiled binary at the default level (`-O3`).
+Explicitly request optimization at the default level (`-O3`). Redundant now
+that optimization is on by default, but kept for clarity and scripts.
 
 ```bash
 js2wasm add.ts -O
 ```
 
-If `wasm-opt` is not available in your environment, the compiler emits a
-warning and skips optimization.
+### `--no-optimize`, `-O0`
+
+Disable the optimizer and emit raw codegen output (the pre-default-on
+behaviour). Useful for inspecting unoptimized codegen or for byte-stable
+diffs.
+
+```bash
+js2wasm add.ts --no-optimize
+```
 
 ### `-O1` .. `-O4`
 
 Pick an explicit optimization level. `-O1` is fastest to compile; `-O4` is the
-most aggressive. `-O3` is the default level used by bare `-O`.
+most aggressive. `-O3` is the default level used by bare `-O` and by default.
 
 ```bash
 js2wasm add.ts -O2

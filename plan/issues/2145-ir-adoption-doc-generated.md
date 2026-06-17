@@ -1,10 +1,11 @@
 ---
 id: 2145
 title: "Generate plan/log/ir-adoption.md adoption table + bucket counts from source"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
 priority: low
 feasibility: easy
 reasoning_effort: low

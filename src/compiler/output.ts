@@ -5,6 +5,7 @@ import { analyzeSource } from "../checker/index.js";
 import type { CabiExportInfo, ParamDef, TsSemanticType } from "../codegen-linear/c-abi.js";
 import { emitCabiWrappers, inferSemantic, mapParamsToCabi, mapResultToCabi } from "../codegen-linear/c-abi.js";
 import { generateModule } from "../codegen/index.js";
+import { isFatalCodegenDiagnostic } from "../codegen/context/errors.js";
 import { extractCHeaderExports, generateCHeader } from "../emit/c-header.js";
 import { emitObject } from "../emit/object.js";
 import { preprocessImports } from "../import-resolver.js";
@@ -298,15 +299,18 @@ export function compileToObjectSource(source: string, options: CompileOptions = 
   try {
     const result = generateModule(ast);
     mod = result.module;
+    // #1921 — surface each diagnostic with its real severity (a deliberate
+    // "degrade" becomes a non-fatal "warning"); gate on severity, not on a
+    // "Codegen error:" message prefix.
     for (const err of result.errors) {
       errors.push({
         message: err.message,
         line: err.line,
         column: err.column,
-        severity: "error",
+        severity: isFatalCodegenDiagnostic(err) ? "error" : "warning",
       });
     }
-    if (result.errors.some((err) => err.message.startsWith("Codegen error:"))) {
+    if (result.errors.some(isFatalCodegenDiagnostic)) {
       return { object: new Uint8Array(0), success: false, errors };
     }
   } catch (e) {

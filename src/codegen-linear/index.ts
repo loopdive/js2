@@ -9,6 +9,7 @@ import type { ClassLayout } from "./layout.js";
 import { computeClassLayout } from "./layout.js";
 import {
   addArrayRuntime,
+  addFmodRuntime,
   addMapRuntime,
   addNumericMapRuntime,
   addNumericSetRuntime,
@@ -16,6 +17,7 @@ import {
   addSetRuntime,
   addStringRuntime,
   addUint8ArrayRuntime,
+  FMOD_FN,
 } from "./runtime.js";
 
 /** Type tag for class instances in linear memory */
@@ -81,6 +83,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
   addNumericSetRuntime(mod);
+  addFmodRuntime(mod); // #2144 — exact f64 remainder for the `%` arm
 
   // Add __closure_env global (mutable i32, init 0) for closure support
   const closureEnvGlobalIdx = mod.globals.length;
@@ -215,6 +218,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
   addNumericSetRuntime(mod);
+  addFmodRuntime(mod); // #2144 — exact f64 remainder for the `%` arm
 
   // Add __closure_env global for closure support
   const closureEnvGlobalIdx = mod.globals.length;
@@ -2159,30 +2163,90 @@ function compileBinaryExpression(ctx: LinearContext, fctx: LinearFuncContext, ex
     }
   }
 
-  // Logical AND / OR: short-circuit evaluation producing f64
+  // Logical AND / OR: short-circuit evaluation yielding the OPERAND value
+  // (#2184). JS `a || b` ⇒ `ToBoolean(a) ? a : b`; `a && b` ⇒
+  // `ToBoolean(a) ? b : a`. The result is an *operand*, not a 0/1 boolean —
+  // earlier lowering coerced to f64 and pushed `0`/`1` constants on the
+  // short-circuit arm, which discarded the value (`"" || "x"` returned `0`
+  // instead of `"x"`, `0 || 42` returned `1` instead of `42`).
+  //
+  // The boolean-context use (`if (a || b)`, `while`, `?:` condition) is handled
+  // by callers that run emitTruthyCoercion on the result, so yielding the real
+  // operand value stays correct there too (ToBoolean(operand) is what JS does).
   if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
-    compileExpression(ctx, fctx, expr.left);
     const leftType = inferExprType(ctx, fctx, expr.left);
+    const rightType = inferExprType(ctx, fctx, expr.right);
+
+    // Mixed-type operands (e.g. string `i32` vs number `f64`) can't share a
+    // single `if` result ValType without a boxed/`any` representation: coercing
+    // a string POINTER to f64 would corrupt both the value and its downstream
+    // truthiness (a nonzero pointer reads as truthy even for `""`). This is the
+    // documented same-typed-first scope (#2184) — for mixed types keep the
+    // legacy boolean-producing lowering, which is correct in boolean context
+    // (the dominant mixed-type use; #1975). A follow-up covers mixed values.
+    if (leftType.kind !== rightType.kind) {
+      compileExpression(ctx, fctx, expr.left);
+      emitTruthyCoercion(fctx, leftType, { ctx, expr: expr.left });
+      const thenBodyM: Instr[] = [];
+      const elseBodyM: Instr[] = [];
+      const savedBodyM = fctx.body;
+      if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
+        fctx.body = thenBodyM;
+        compileExprToF64(ctx, fctx, expr.right);
+        fctx.body = savedBodyM;
+        elseBodyM.push({ op: "f64.const", value: 0 });
+      } else {
+        thenBodyM.push({ op: "f64.const", value: 1 });
+        fctx.body = elseBodyM;
+        compileExprToF64(ctx, fctx, expr.right);
+        fctx.body = savedBodyM;
+      }
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "f64" } },
+        then: thenBodyM,
+        else: elseBodyM,
+      });
+      return;
+    }
+
+    // Same-typed operands carry their native value type (string i32-pointer,
+    // f64, bool i32). Hold the LHS in a temp so its value is available on the
+    // short-circuit arm after it has been consumed by the truthiness test.
+    const resultType: ValType = leftType;
+    const leftTemp = addLocal(fctx, `__logical_lhs_${fctx.locals.length}`, leftType);
+    compileExpression(ctx, fctx, expr.left);
+    fctx.body.push({ op: "local.tee", index: leftTemp });
     emitTruthyCoercion(fctx, leftType, { ctx, expr: expr.left });
+
+    const emitLeftAsResult = () => {
+      fctx.body.push({ op: "local.get", index: leftTemp });
+    };
+    const emitRightAsResult = () => {
+      compileExpression(ctx, fctx, expr.right);
+    };
+
     const thenBody: Instr[] = [];
     const elseBody: Instr[] = [];
     const savedBody = fctx.body;
     if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
-      // &&: if left truthy → evaluate right; else → 0
+      // &&: left truthy → right; else → left
       fctx.body = thenBody;
-      compileExprToF64(ctx, fctx, expr.right);
-      fctx.body = savedBody;
-      elseBody.push({ op: "f64.const", value: 0 });
-    } else {
-      // ||: if left truthy → 1; else → evaluate right
-      thenBody.push({ op: "f64.const", value: 1 });
+      emitRightAsResult();
       fctx.body = elseBody;
-      compileExprToF64(ctx, fctx, expr.right);
+      emitLeftAsResult();
+      fctx.body = savedBody;
+    } else {
+      // ||: left truthy → left; else → right
+      fctx.body = thenBody;
+      emitLeftAsResult();
+      fctx.body = elseBody;
+      emitRightAsResult();
       fctx.body = savedBody;
     }
     fctx.body.push({
       op: "if",
-      blockType: { kind: "val", type: { kind: "f64" } },
+      blockType: { kind: "val", type: resultType },
       then: thenBody,
       else: elseBody,
     });
@@ -2243,24 +2307,16 @@ function compileBinaryExpression(ctx: LinearContext, fctx: LinearFuncContext, ex
       fctx.body.push({ op: "f64.div" });
       break;
     case ts.SyntaxKind.PercentToken: {
-      // #1937 — this arm used to be EMPTY: `a % b` compiled both operands and
-      // no operator, leaving two values on the stack (the expression's
-      // "result" was just `b`, and the leftover `a` broke stack arity).
-      // Wasm has no f64.rem; emit a - trunc(a/b) * b via temp locals, which
-      // matches JS % (sign of the dividend) for finite operands. Known
-      // divergence: b = ±Infinity yields NaN instead of a (0*Inf = NaN).
-      const bLocal = addLocal(fctx, `__mod_b_${fctx.locals.length}`, { kind: "f64" });
-      const aLocal = addLocal(fctx, `__mod_a_${fctx.locals.length}`, { kind: "f64" });
-      fctx.body.push({ op: "local.set", index: bLocal });
-      fctx.body.push({ op: "local.set", index: aLocal });
-      fctx.body.push({ op: "local.get", index: aLocal });
-      fctx.body.push({ op: "local.get", index: aLocal });
-      fctx.body.push({ op: "local.get", index: bLocal });
-      fctx.body.push({ op: "f64.div" });
-      fctx.body.push({ op: "f64.trunc" });
-      fctx.body.push({ op: "local.get", index: bLocal });
-      fctx.body.push({ op: "f64.mul" });
-      fctx.body.push({ op: "f64.sub" });
+      // #2144 — call the `__fmod` runtime helper (exact IEEE-754 remainder,
+      // shared algorithm with the WasmGC backend's #2056 work). The previous
+      // inline `a - trunc(a/b)*b` formula (#1937) diverged from JS / the GC
+      // backend: it produced `±Infinity` for extreme ratios (ratio ≳ 1e308,
+      // e.g. `1e308 % 1e-308`), `NaN` for `x % Infinity` (0*Inf), and drifted
+      // by ULPs / collapsed to 0 when the intermediate rounded. `__fmod`
+      // handles all those cases exactly. Operands are already on the stack in
+      // (a, b) order — the helper's signature is `(f64 a, f64 b) -> f64`.
+      const fmodIdx = ctx.funcMap.get(FMOD_FN)!;
+      fctx.body.push({ op: "call", funcIdx: fmodIdx });
       break;
     }
     case ts.SyntaxKind.LessThanToken:
@@ -2886,10 +2942,14 @@ function compilePropertyAccess(ctx: LinearContext, fctx: LinearFuncContext, expr
     return;
   }
 
-  // string.length → call __str_len(str) → i32, convert to f64
+  // string.length → number of UTF-16 code units (JS semantics), NOT the
+  // UTF-8 byte count (#1976). Linear strings are stored as UTF-8, so route the
+  // user-facing `.length` through __str_length_utf16, which scans the bytes and
+  // counts code units (astral code points = 2). __str_len (byte count) stays
+  // the internal primitive for slice/indexOf, which index by byte offset.
   if (propName === "length" && isStringExpr(ctx, fctx, expr.expression)) {
     compileExpression(ctx, fctx, expr.expression);
-    const strLenIdx = ctx.funcMap.get("__str_len")!;
+    const strLenIdx = ctx.funcMap.get("__str_length_utf16")!;
     fctx.body.push({ op: "call", funcIdx: strLenIdx });
     fctx.body.push({ op: "f64.convert_i32_s" });
     return;
@@ -3888,6 +3948,21 @@ function inferExprType(ctx: LinearContext, fctx: LinearFuncContext, expr: ts.Exp
     if (isStringExpr(ctx, fctx, expr.left) || isStringExpr(ctx, fctx, expr.right)) {
       return { kind: "i32" };
     }
+  }
+
+  // #2184: `&&`/`||` yield an OPERAND value, not a 0/1 boolean. The codegen
+  // emits an `if` whose result ValType is the unified operand type (same-typed
+  // operands carry their native type; mixed i32/f64 falls back to f64). This
+  // inference MUST mirror the `resultType` computed in the lowering above so
+  // callers (variable declaration, return) allocate a matching local.
+  if (
+    ts.isBinaryExpression(expr) &&
+    (expr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      expr.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  ) {
+    const lt = inferExprType(ctx, fctx, expr.left);
+    const rt = inferExprType(ctx, fctx, expr.right);
+    return lt.kind === rt.kind ? lt : { kind: "f64" };
   }
 
   // `this` is always an i32 pointer

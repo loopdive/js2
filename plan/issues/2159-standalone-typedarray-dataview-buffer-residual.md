@@ -2,7 +2,7 @@
 id: 2159
 title: "Standalone TypedArray/DataView/ArrayBuffer conformance residual (~1,308 tests)"
 status: in-progress
-sprint: 62
+sprint: 63
 created: 2026-06-15
 updated: 2026-06-16
 priority: high

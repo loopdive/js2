@@ -461,3 +461,83 @@ export function buildStrictHostImportError(module: string, name: string): string
     `add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include "[allowlist-grow]" in your PR description.`
   );
 }
+
+/**
+ * (#2094) A single leaked host import found by the emit-time scan: a
+ * `module.name` pair that survived into the finished binary's import section
+ * but is not on the dual-mode allowlist.
+ */
+export interface LeakedHostImport {
+  module: string;
+  name: string;
+  reason: "non-env-host-module" | "env-not-on-allowlist";
+}
+
+/**
+ * (#2094) Emit-time import-section scan: the backstop for the `addImport`
+ * gate.
+ *
+ * The per-call `addImport` gate (`src/codegen/registry/imports.ts`) is
+ * bypassable — it only fires under `strictNoHostImports`, and even then can be
+ * defeated by call sites that push onto `ctx.mod.imports` directly or that
+ * record a stale `funcMap` index. The result was host imports leaking past the
+ * gate into standalone binaries and surfacing as *instantiation* failures
+ * (#2073/#2075) rather than structured compile errors.
+ *
+ * This scan inspects the FINISHED module's import list (after dead-import
+ * elimination, so only live imports remain) and returns every `env` import not
+ * on the dual-mode allowlist plus any non-`env`/non-WASI host-namespace import.
+ * The caller (`generateModule` finalize) turns each leak into a structured
+ * compile error via {@link buildLeakedHostImportError}, so `result.success` is
+ * `false` and the bad binary is never handed to a consumer.
+ *
+ * `imports` is the module's import descriptor list (`mod.imports`); only the
+ * `module` / `name` fields are read, so the caller may pass any shape carrying
+ * those two strings. Duplicate `module.name` pairs are de-duplicated.
+ */
+export function scanForLeakedHostImports(imports: ReadonlyArray<{ module: string; name: string }>): LeakedHostImport[] {
+  const leaks: LeakedHostImport[] = [];
+  const seen = new Set<string>();
+  for (const imp of imports) {
+    const key = `${imp.module} ${imp.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const decision = isHostImportAllowed(imp.module, imp.name);
+    if (!decision.allowed) {
+      leaks.push({ module: imp.module, name: imp.name, reason: decision.reason });
+    }
+  }
+  return leaks;
+}
+
+/**
+ * (#2094) Build the structured compile error for a host import that leaked
+ * into a finished standalone/strict binary. Distinct from
+ * {@link buildStrictHostImportError} (which fires at `addImport` time): this
+ * message names the emit-time scan as the source so the diagnostic points at
+ * the post-link invariant, not the registration gate.
+ */
+export function buildLeakedHostImportError(leak: LeakedHostImport): string {
+  // The `Codegen error:` prefix is the compiler's hard-fail marker (see
+  // collectLinearCodegenErrors / the per-path bail check in compiler.ts):
+  // it flips `result.success` to false so the leaking binary is never
+  // handed to a consumer, rather than surfacing as an instantiation failure.
+  const base =
+    `Codegen error: leaked host import "${leak.module}.${leak.name}" found in the finished standalone binary ` +
+    `(post-link import-section scan, #2094). This import bypassed the addImport gate ` +
+    `(e.g. via a stale funcMap index or a direct mod.imports push) and would fail instantiation ` +
+    `in a runtime with no JS host (#2073/#2075). `;
+  if (leak.reason === "non-env-host-module") {
+    return (
+      base +
+      `The "${leak.module}" namespace is a JS-host binding unavailable in standalone mode; ` +
+      `ensure nativeStrings mode is enabled so the wasm:js-string / string_constants namespaces are not requested.`
+    );
+  }
+  return (
+    base +
+    `The name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). ` +
+    `Add a Wasm-native fallback for this feature, or — for a transitional host import — add an allowlist entry ` +
+    `citing the tracking issue and include "[allowlist-grow]" in your PR description.`
+  );
+}

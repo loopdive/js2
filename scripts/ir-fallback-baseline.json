@@ -1,5 +1,5 @@
 {
-  "generated": "2026-05-20",
+  "generated": "2026-06-16",
   "unintended": {
     "body-shape-rejected": 31,
     "param-type-not-resolvable": 1,
@@ -8,5 +8,11 @@
   },
   "deferred": {
     "async-function": 4
+  },
+  "postClaim": {
+    "build": {},
+    "verify": {},
+    "lower": {},
+    "backend-legality": {}
   }
 }

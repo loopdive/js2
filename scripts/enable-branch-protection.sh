@@ -70,6 +70,7 @@ REQUIRED_CHECKS=(
   "merge shard reports"                  # test262-sharded.yml — authoritative test262 gate (host + standalone, #1897)
   "quality"                              # ci.yml — lint, format, typecheck, IR budget
   "equivalence-gate"                     # ci.yml — merged equivalence shard gate
+  "linear-tests"                         # ci.yml — linear-backend + C-ABI + SIMD suites (#2139)
   "check for test262 regressions"        # test262-sharded.yml — full rolling-baseline regression diff
   "cla-check"                            # cla-check.yml — external contributor CLA acceptance
 )

@@ -25,6 +25,9 @@
 
 import {
   asBlockId,
+  collectUses,
+  forEachNestedBuffer,
+  mapNestedBuffers,
   type IrBlock,
   type IrBranch,
   type IrFunction,
@@ -47,13 +50,25 @@ export function deadCode(fn: IrFunction, registry?: AllocSiteRegistry): IrFuncti
   // --- Phase 2: compute live values within reachable blocks. -------------
   const live = computeLiveValues(fn, reachable);
 
+  // (#1925) Does this instr or anything inside its nested buffers get removed?
+  // The `live` set is already deep (#1922), so an interior instr's keep-status
+  // is globally correct; we just have to look inside buffers to detect it.
+  const removesAnything = (instr: IrInstr): boolean => {
+    if (!shouldKeep(instr, live)) return true;
+    let found = false;
+    forEachNestedBuffer(instr, (buffer) => {
+      for (const sub of buffer) if (removesAnything(sub)) found = true;
+    });
+    return found;
+  };
+
   // --- Phase 3: detect whether we actually changed anything. -------------
   const willRemoveBlocks = reachable.size !== fn.blocks.length;
   let willRemoveInstrs = false;
   for (const id of reachable) {
     const block = fn.blocks[id]!;
     for (const instr of block.instrs) {
-      if (!shouldKeep(instr, live)) {
+      if (removesAnything(instr)) {
         willRemoveInstrs = true;
         break;
       }
@@ -63,19 +78,49 @@ export function deadCode(fn: IrFunction, registry?: AllocSiteRegistry): IrFuncti
   if (!willRemoveBlocks && !willRemoveInstrs) return fn;
 
   // Rule 3 (retire): inform the registry of every allocation we are about to
-  // delete — both whole unreachable blocks and individually dead instrs — so
-  // downstream passes / the provenance checker do not see stale ids.
+  // delete — whole unreachable blocks, and dead instrs at top level OR inside
+  // any nested buffer (#1925) — so downstream passes / the provenance checker
+  // do not see stale ids.
   if (registry) {
+    const retireDead = (instr: IrInstr): void => {
+      if (!shouldKeep(instr, live)) {
+        retireAllocsIn(instr, registry); // retires the instr + everything nested
+        return;
+      }
+      forEachNestedBuffer(instr, (buffer) => {
+        for (const sub of buffer) retireDead(sub);
+      });
+    };
     for (let id = 0; id < fn.blocks.length; id++) {
       const block = fn.blocks[id]!;
       const blockReachable = reachable.has(id);
       for (const instr of block.instrs) {
-        if (!blockReachable || !shouldKeep(instr, live)) {
+        if (!blockReachable) {
           retireAllocsIn(instr, registry);
+        } else {
+          retireDead(instr);
         }
       }
     }
   }
+
+  // Recursively drop dead instrs inside a buffer, then recurse into the buffers
+  // of the kept instrs. Returns the same array reference when nothing changed
+  // (so mapNestedBuffers preserves instr identity and the fixpoint terminates).
+  const filterBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => {
+    let changed = false;
+    const kept: IrInstr[] = [];
+    for (const instr of buffer) {
+      if (!shouldKeep(instr, live)) {
+        changed = true;
+        continue;
+      }
+      const rebuilt = mapNestedBuffers(instr, filterBuffer);
+      if (rebuilt !== instr) changed = true;
+      kept.push(rebuilt);
+    }
+    return changed ? kept : buffer;
+  };
 
   // --- Phase 4: rebuild blocks. ------------------------------------------
   // Sort reachable block IDs ascending, then remap old → new index.
@@ -85,7 +130,7 @@ export function deadCode(fn: IrFunction, registry?: AllocSiteRegistry): IrFuncti
 
   const newBlocks: IrBlock[] = sortedReachable.map((oldId) => {
     const block = fn.blocks[oldId]!;
-    const newInstrs = block.instrs.filter((i) => shouldKeep(i, live));
+    const newInstrs = filterBuffer(block.instrs);
     return {
       id: asBlockId(oldToNew.get(oldId)!),
       blockArgs: block.blockArgs,
@@ -144,7 +189,12 @@ function computeLiveValues(fn: IrFunction, reachable: ReadonlySet<number>): Set<
     for (const v of collectTerminatorUses(block.terminator)) live.add(v);
     for (const instr of block.instrs) {
       if (isSideEffecting(instr)) {
-        for (const u of collectInstrUses(instr)) live.add(u);
+        // Deep: a side-effecting control-flow instr (loop / try / for-of)
+        // executes its nested buffers, so values referenced only inside
+        // those buffers are live. (#1922 — the per-kind ad-hoc walkers used
+        // to miss while.loop/for.loop buffers, silently demoting the most
+        // ordinary loop shape off the IR path.)
+        for (const u of collectUses(instr, { deep: true })) live.add(u);
       }
     }
   }
@@ -158,7 +208,10 @@ function computeLiveValues(fn: IrFunction, reachable: ReadonlySet<number>): Set<
       const block = fn.blocks[id]!;
       for (const instr of block.instrs) {
         if (instr.result !== null && live.has(instr.result)) {
-          for (const u of collectInstrUses(instr)) {
+          // Deep: a live value-producing control-flow instr (e.g. an `if`
+          // used by optional-chain) keeps the values referenced inside its
+          // arm buffers live too.
+          for (const u of collectUses(instr, { deep: true })) {
             if (!live.has(u)) {
               live.add(u);
               changed = true;
@@ -247,6 +300,14 @@ export function isSideEffecting(i: IrInstr): boolean {
     // (control flow). DCE must always preserve them.
     i.kind === "throw" ||
     i.kind === "try" ||
+    // Slice 12 (#1280): while.loop / for.loop are statement-level control
+    // flow (result: null). They must always run AND their cond/body/update
+    // buffers must be use-walked so a value referenced only inside the loop
+    // stays live. They are seeded here (not merely kept by the null-result
+    // rule) so `collectUses(_, { deep: true })` runs over their buffers.
+    // (#1922 — fixes the ordinary `while (i < limit)` IR demotion.)
+    i.kind === "while.loop" ||
+    i.kind === "for.loop" ||
     // Slice 10 (#1169i): extern class ops invoke host imports with
     // arbitrary side effects. Conservatively keep all five live so DCE
     // never strips a `RegExp_new` or `Uint8Array_set` whose result is
@@ -276,233 +337,6 @@ function shouldKeep(i: IrInstr, live: ReadonlySet<IrValueId>): boolean {
   if (isSideEffecting(i)) return true;
   if (i.result === null) return true; // void-producing but not side-effecting — keep to be safe
   return live.has(i.result);
-}
-
-// ---------------------------------------------------------------------------
-// Use collection (local copies — see lower.ts for the canonical pattern)
-// ---------------------------------------------------------------------------
-
-function collectInstrUses(instr: IrInstr): readonly IrValueId[] {
-  switch (instr.kind) {
-    case "const":
-      return [];
-    case "call":
-      return instr.args;
-    case "global.get":
-      return [];
-    case "global.set":
-      return [instr.value];
-    case "binary":
-      return [instr.lhs, instr.rhs];
-    case "unary":
-      return [instr.rand];
-    case "select":
-      return [instr.condition, instr.whenTrue, instr.whenFalse];
-    case "if": {
-      // (#1392) Walk both arm buffers so DCE pins any outer SSA value
-      // referenced inside. Mirrors the `try` / `forof.*` handling.
-      const result: IrValueId[] = [instr.cond, instr.thenValue, instr.elseValue];
-      const walk = (instrs: readonly IrInstr[]): void => {
-        for (const sub of instrs) {
-          for (const u of collectInstrUses(sub)) result.push(u);
-          if (sub.kind === "forof.vec" || sub.kind === "forof.iter" || sub.kind === "forof.string") walk(sub.body);
-          if (sub.kind === "try") {
-            walk(sub.body);
-            if (sub.catchClause) walk(sub.catchClause.body);
-            if (sub.finallyBody) walk(sub.finallyBody);
-          }
-          if (sub.kind === "if") {
-            walk(sub.then);
-            walk(sub.else);
-          }
-        }
-      };
-      walk(instr.then);
-      walk(instr.else);
-      return result;
-    }
-    case "raw.wasm":
-      return [];
-    case "box":
-    case "unbox":
-    case "tag.test":
-      return [instr.value];
-    case "string.const":
-      return [];
-    case "string.concat":
-    case "string.eq":
-      return [instr.lhs, instr.rhs];
-    case "string.len":
-      return [instr.value];
-    case "object.new":
-      return instr.values;
-    case "object.get":
-      return [instr.value];
-    case "object.set":
-      return [instr.value, instr.newValue];
-    // Slice 3 (#1169c): closure / ref-cell ops.
-    case "closure.new":
-      return instr.captures;
-    case "closure.cap":
-      return [instr.self];
-    case "closure.call":
-      return [instr.callee, ...instr.args];
-    case "refcell.new":
-      return [instr.value];
-    case "refcell.get":
-      return [instr.cell];
-    case "refcell.set":
-      return [instr.cell, instr.value];
-    // Slice 4 (#1169d): class ops.
-    case "class.new":
-      return instr.args;
-    case "class.get":
-      return [instr.value];
-    case "class.set":
-      return [instr.value, instr.newValue];
-    case "class.call":
-      return [instr.receiver, ...instr.args];
-    // Slice 6 (#1169e): slot / vec / for-of ops.
-    case "slot.read":
-      return [];
-    case "slot.write":
-      return [instr.value];
-    case "vec.len":
-      return [instr.vec];
-    case "vec.get":
-      return [instr.vec, instr.index];
-    case "forof.vec": {
-      // Body uses count too — DCE must keep outer values referenced
-      // inside a for-of body. Walk recursively.
-      const result: IrValueId[] = [instr.vec];
-      const walk = (instrs: readonly IrInstr[]): void => {
-        for (const sub of instrs) {
-          for (const u of collectInstrUses(sub)) result.push(u);
-          if (sub.kind === "forof.vec" || sub.kind === "forof.iter" || sub.kind === "forof.string") walk(sub.body);
-          // (#1392) `if` arms may contain references to outer SSA values
-          // — recurse so DCE pins them. Same rationale as `try` recursion.
-          if (sub.kind === "if") {
-            walk(sub.then);
-            walk(sub.else);
-          }
-        }
-      };
-      walk(instr.body);
-      return result;
-    }
-    // Slice 6 part 3 (#1182) — coercion + iterator protocol ops.
-    case "coerce.to_externref":
-      return [instr.value];
-    case "iter.new":
-      return [instr.iterable];
-    case "iter.next":
-      return [instr.iter];
-    case "iter.done":
-      return [instr.resultObj];
-    case "iter.value":
-      return [instr.resultObj];
-    case "iter.return":
-      return [instr.iter];
-    case "forof.iter": {
-      const result: IrValueId[] = [instr.iterable];
-      const walk = (instrs: readonly IrInstr[]): void => {
-        for (const sub of instrs) {
-          for (const u of collectInstrUses(sub)) result.push(u);
-          if (sub.kind === "forof.vec" || sub.kind === "forof.iter" || sub.kind === "forof.string") walk(sub.body);
-          // (#1392) `if` arms may contain references to outer SSA values
-          // — recurse so DCE pins them. Same rationale as `try` recursion.
-          if (sub.kind === "if") {
-            walk(sub.then);
-            walk(sub.else);
-          }
-        }
-      };
-      walk(instr.body);
-      return result;
-    }
-    // Slice 6 part 4 (#1183) — string for-of.
-    case "forof.string": {
-      const result: IrValueId[] = [instr.str];
-      const walk = (instrs: readonly IrInstr[]): void => {
-        for (const sub of instrs) {
-          for (const u of collectInstrUses(sub)) result.push(u);
-          if (sub.kind === "forof.vec" || sub.kind === "forof.iter" || sub.kind === "forof.string") walk(sub.body);
-          // (#1392) `if` arms may contain references to outer SSA values
-          // — recurse so DCE pins them. Same rationale as `try` recursion.
-          if (sub.kind === "if") {
-            walk(sub.then);
-            walk(sub.else);
-          }
-        }
-      };
-      walk(instr.body);
-      return result;
-    }
-    // Slice 7a (#1169f): generator ops.
-    case "gen.push":
-      return [instr.value];
-    case "gen.epilogue":
-      return [];
-    // Slice 7b (#1169f): yield* delegation.
-    case "gen.yieldStar":
-      return [instr.inner];
-    // Slice 9 (#1169h): exception handling.
-    case "throw":
-      return [instr.value];
-    case "try": {
-      // Recurse through body / catch / finally buffers so DCE pins any
-      // SSA value referenced inside.
-      const result: IrValueId[] = [];
-      const walk = (instrs: readonly IrInstr[]): void => {
-        for (const sub of instrs) {
-          for (const u of collectInstrUses(sub)) result.push(u);
-          if (sub.kind === "forof.vec" || sub.kind === "forof.iter" || sub.kind === "forof.string") walk(sub.body);
-          if (sub.kind === "try") {
-            walk(sub.body);
-            if (sub.catchClause) walk(sub.catchClause.body);
-            if (sub.finallyBody) walk(sub.finallyBody);
-          }
-          // (#1392) recurse into nested if arms for the same reason.
-          if (sub.kind === "if") {
-            walk(sub.then);
-            walk(sub.else);
-          }
-        }
-      };
-      walk(instr.body);
-      if (instr.catchClause) walk(instr.catchClause.body);
-      if (instr.finallyBody) walk(instr.finallyBody);
-      return result;
-    }
-    // Slice 10 (#1169i): extern class ops.
-    case "extern.new":
-      return instr.args;
-    case "extern.call":
-      return [instr.receiver, ...instr.args];
-    case "extern.prop":
-      return [instr.receiver];
-    case "extern.propSet":
-      return [instr.receiver, instr.value];
-    case "extern.regex":
-      return [];
-    // Slice 12 (#1280): while.loop / for.loop. The cond / body / update
-    // buffers are already walked separately by the dead-code analysis
-    // walker (see the forof.* pattern above); the instr itself reports
-    // the condValue as a use so that the SSA def survives DCE.
-    case "while.loop":
-    case "for.loop":
-      return [instr.condValue];
-    // (#1373 Phase B) Async / await IR nodes — Phase C wires real
-    // analysis. For now, surface the single operand so DCE pins the
-    // SSA def; the wrapping IrInstr is side-effecting (control-flow)
-    // and must always be kept.
-    case "await":
-      return [instr.operand];
-    case "async.return":
-      return [instr.value];
-    case "async.throw":
-      return [instr.reason];
-  }
 }
 
 function collectTerminatorUses(t: IrTerminator): readonly IrValueId[] {

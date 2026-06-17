@@ -271,6 +271,8 @@ const scopeCounts: Record<Test262Scope, StatusCounts> = {
 };
 const errorCategoryCounts: Record<string, number> = {};
 const skipReasonCounts: Record<string, number> = {};
+// #1853 — hard-error stability bucket counts (malformed_wasm / missing_test_export).
+const hardErrorCounts: Record<string, number> = {};
 
 class ConformanceError extends Error {
   constructor(status: string, detail?: string) {
@@ -312,6 +314,11 @@ function recordResult(
   timing?: { compileMs?: number; execMs?: number },
   scopeInfo?: { scope: Test262Scope; official: boolean; reason?: string; strict?: "only" | "no" | "both" },
   wasmSha?: string | null,
+  // (#1853) Hard-error stability bucket. Set only where the outcome is
+  // unambiguously a compiler BUG (compiler claimed success, engine rejected the
+  // output, or the required `test` export is missing) — NOT for the compiler
+  // explicitly refusing (that is the coverage signal).
+  hardErrorKind?: "malformed_wasm" | "missing_test_export",
 ) {
   const errorCategory = status === "fail" || status === "compile_error" ? classifyError(error) : undefined;
 
@@ -333,8 +340,15 @@ function recordResult(
     // regression-gate compares wasm_sha across base & branch; matching hashes
     // imply byte-identical Wasm and any pass→fail flip is CI noise.
     wasm_sha: wasmSha ?? null,
+    // #1853: hard-error stability bucket (malformed Wasm / missing test export).
+    // Omitted (undefined → absent from JSON) for normal coverage outcomes.
+    hard_error: hardErrorKind ? true : undefined,
+    hard_error_kind: hardErrorKind,
   });
   fdWrite(jsonlFd, entry + "\n");
+  if (hardErrorKind) {
+    hardErrorCounts[hardErrorKind] = (hardErrorCounts[hardErrorKind] || 0) + 1;
+  }
   summary.total++;
   (summary as any)[status]++;
   if (!catCounts[category]) catCounts[category] = createEmptyCounts();
@@ -373,6 +387,8 @@ function recordResult(
         .sort((a, b) => a.name.localeCompare(b.name)),
       error_categories: { ...errorCategoryCounts },
       skip_reasons: { ...skipReasonCounts },
+      // #1853 — hard-error stability bucket, surfaced separately from coverage.
+      hard_errors: { ...hardErrorCounts },
     };
     try {
       writeSync(REPORT_PATH, JSON.stringify(report, null, 2));
@@ -711,12 +727,26 @@ for (const category of TEST_CATEGORIES) {
                 enriched = `${msg} [in ${fname}()]`;
               }
             }
-            recordResult(relPath, category, "compile_error", enriched, timing, scopeInfo, wasmSha);
+            // #1853 — compile reported success but the engine rejected the
+            // binary at instantiate: malformed Wasm (a bug), routed to the
+            // hard-error stability bucket, not the unsupported-feature count.
+            recordResult(relPath, category, "compile_error", enriched, timing, scopeInfo, wasmSha, "malformed_wasm");
             return;
           }
 
           if (workerResult.noTestExport) {
-            recordResult(relPath, category, "compile_error", "no test export", timing, scopeInfo, wasmSha);
+            // #1853 — compile + instantiate succeeded but codegen dropped the
+            // required `test` export: a bug → hard-error bucket.
+            recordResult(
+              relPath,
+              category,
+              "compile_error",
+              "no test export",
+              timing,
+              scopeInfo,
+              wasmSha,
+              "missing_test_export",
+            );
             return;
           }
 

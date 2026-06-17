@@ -31,6 +31,133 @@ import type { BlockType, FuncTypeDef, Instr, TypeDef, ValType, WasmFunction, Was
 /** Sentinel: the instruction sequence is unreachable (after return/br/throw/unreachable). */
 const UNREACHABLE = -999;
 
+// #2090 — the stack-repair pass exists to fix *known* count/type mismatches by
+// adding `drop`s or typed zero-defaults. But two arms below patched an
+// UNKNOWN-typed missing slot with an invented `ref.null.extern` "safe default".
+// That masks the producing codegen bug twice (once at the producer, once in the
+// pass that should have flagged it) and ships a silent null. Report 04 §2a/§5
+// concluded there is no legitimate trigger. We now record any such site and
+// `stackBalance` converts it into a structured hard compile error instead of
+// inventing a value. The collector is module-scoped (the recursive fix* helpers
+// don't thread `mod`); `stackBalance` resets it per run and drains it at the end.
+let inventedValueSites: { func: string; detail: string }[] = [];
+let currentDiagFunc = "<unknown>";
+
+// #1918 — Stack-balance fixup telemetry.
+//
+// Every fixup this pass applies is a *repair of the emitter's own output*: a
+// masked codegen bug. Historically the per-function fixup count was summed,
+// returned by `stackBalance`, and then discarded by both call sites
+// (`src/codegen/index.ts`). Nothing reported, gated, or ratcheted it, so the
+// safety net silently absorbed new emitter regressions — and some repairs are
+// *lossy* (a wrong-typed/missing branch value patched with a `const` default
+// becomes a silently-wrong runtime value).
+//
+// We now classify each leaf fixup by `FixupKind` and collect a located event
+// per occurrence. `stackBalance` resets the collector per run and exposes it
+// via `getFixupEvents()`; `src/codegen/index.ts` drains it into a per-compile
+// summary and, under `JS2WASM_STRICT_BALANCE`, into compiler warnings (=1) or
+// hard errors (=error). The `scripts/check-stack-balance.ts` corpus gate
+// aggregates the kinds into `scripts/stack-balance-baseline.json` and fails CI
+// when any bucket grows (ratchet mechanics mirror `check-ir-fallbacks.ts`).
+export type FixupKind =
+  // count repairs
+  | "drop-excess" // branch left too many values; surplus dropped
+  | "default-value-lossy" // branch left too few values; missing slot filled with a typed const/null default (LOSSY)
+  // type repairs
+  | "branch-type-coerce" // branch result coerced to the block type via the coercion table
+  | "branch-type-cast" // branch result externref→ref/ref_null via any.convert_extern + ref.cast_null
+  | "call-arg-coerce" // call argument coerced to the callee's declared param type
+  | "struct-field-coerce" // struct.new field value coerced to the field's declared type
+  | "local-set-coerce"; // local.set/local.tee value coerced to the local's declared type
+
+/** A single located fixup the pass applied while repairing emitter output. */
+export interface FixupEvent {
+  readonly kind: FixupKind;
+  /** Name of the function (or `func#N`) the fixup was applied in. */
+  readonly func: string;
+  /** Human-readable detail (e.g. `f64 default for missing branch value`). */
+  readonly detail: string;
+  /** True for repairs that can change runtime semantics (currently the const-default arm). */
+  readonly lossy: boolean;
+}
+
+let fixupEvents: FixupEvent[] = [];
+
+/** Record a fixup the pass just applied, attributed to the current function. */
+function recordFixup(kind: FixupKind, detail: string, lossy = false): void {
+  fixupEvents.push({ kind, func: currentDiagFunc, detail, lossy });
+}
+
+/**
+ * Events collected during the most recent `stackBalance(mod)` run (#1918).
+ * Returns a copy so callers can't mutate the collector. `stackBalance` resets
+ * it at the start of every run, so this reflects exactly one module's repairs.
+ */
+export function getFixupEvents(): FixupEvent[] {
+  return fixupEvents.slice();
+}
+
+/** Aggregate fixup events into per-kind counts (#1918). Always includes every kind. */
+export function summarizeFixups(events: readonly FixupEvent[]): Record<FixupKind, number> {
+  const counts: Record<FixupKind, number> = {
+    "drop-excess": 0,
+    "default-value-lossy": 0,
+    "branch-type-coerce": 0,
+    "branch-type-cast": 0,
+    "call-arg-coerce": 0,
+    "struct-field-coerce": 0,
+    "local-set-coerce": 0,
+  };
+  for (const e of events) counts[e.kind]++;
+  return counts;
+}
+
+/** A strict-balance diagnostic ready to push onto a codegen error sink (#1918). */
+export interface StrictBalanceDiagnostic {
+  readonly message: string;
+  readonly line: 0;
+  readonly column: 0;
+  readonly severity: "error" | "warning";
+}
+
+/**
+ * Strict-balance mode (#1918). Controlled by `JS2WASM_STRICT_BALANCE`:
+ *
+ *   unset / "0" / "off"  — silent (default; preserves existing behaviour)
+ *   "1" / "true" / "warn" — every fixup becomes a located severity-"warning"
+ *   "error" / "strict"    — every fixup becomes a severity-"error" (fails the
+ *                            compile); for CI experiments and new code that
+ *                            should never need a repair.
+ *
+ * Returns the diagnostics to surface. The caller (`src/codegen/index.ts`,
+ * which holds `ctx`) pushes them onto `ctx.errors` — strict errors then fail
+ * the WasmGC compile through the existing `severity === "error"` gate, which
+ * `mod.codegenErrors` does NOT reach on the WasmGC path (see #2090).
+ */
+export function strictBalanceDiagnostics(events: readonly FixupEvent[]): StrictBalanceDiagnostic[] {
+  const mode = (process.env.JS2WASM_STRICT_BALANCE ?? "").toLowerCase();
+  const enabled = mode === "1" || mode === "true" || mode === "warn" || mode === "error" || mode === "strict";
+  if (!enabled || events.length === 0) return [];
+  const severity: "error" | "warning" = mode === "error" || mode === "strict" ? "error" : "warning";
+  return events.map((e) => {
+    const body =
+      `Stack-balance fixup [${e.kind}]${e.lossy ? " (LOSSY)" : ""} in function "${e.func}": ${e.detail}. ` +
+      `This repairs an emitter bug; the producing codegen should emit a balanced, correctly-typed stack ` +
+      `instead of relying on the stack-balance pass. (#1918)`;
+    // For severity "error" prefix with "Codegen error:" so the compiler's
+    // existing WasmGC success gate (compiler.ts: `message.startsWith("Codegen
+    // error:")`) actually fails the compile. Warnings stay unprefixed so they
+    // remain visible diagnostics without affecting `success`.
+    return {
+      message: severity === "error" ? `Codegen error: ${body}` : body,
+      line: 0 as const,
+      column: 0 as const,
+      severity,
+    };
+  });
+}
+
 /**
  * Check if an instruction is a terminator (makes subsequent code unreachable).
  */
@@ -248,7 +375,9 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
     op === "i64.sub" ||
     op === "i64.mul" ||
     op === "i64.div_s" ||
+    op === "i64.div_u" ||
     op === "i64.rem_s" ||
+    op === "i64.rem_u" ||
     op === "i64.and" ||
     op === "i64.or" ||
     op === "i64.xor" ||
@@ -258,9 +387,13 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
     op === "i64.eq" ||
     op === "i64.ne" ||
     op === "i64.lt_s" ||
+    op === "i64.lt_u" ||
     op === "i64.le_s" ||
+    op === "i64.le_u" ||
     op === "i64.gt_s" ||
+    op === "i64.gt_u" ||
     op === "i64.ge_s" ||
+    op === "i64.ge_u" ||
     op === "f64.add" ||
     op === "f64.sub" ||
     op === "f64.mul" ||
@@ -537,7 +670,15 @@ function inferLastType(body: Instr[], types: TypeDef[], sigs: FuncSigInfo): stri
       op === "f64.gt" ||
       op === "f64.ge" ||
       op === "i64.eq" ||
-      op === "i64.ne"
+      op === "i64.ne" ||
+      op === "i64.lt_s" ||
+      op === "i64.lt_u" ||
+      op === "i64.le_s" ||
+      op === "i64.le_u" ||
+      op === "i64.gt_s" ||
+      op === "i64.gt_u" ||
+      op === "i64.ge_s" ||
+      op === "i64.ge_u"
     ) {
       return "i32";
     }
@@ -548,6 +689,10 @@ function inferLastType(body: Instr[], types: TypeDef[], sigs: FuncSigInfo): stri
       op === "i64.add" ||
       op === "i64.sub" ||
       op === "i64.mul" ||
+      op === "i64.div_s" ||
+      op === "i64.div_u" ||
+      op === "i64.rem_s" ||
+      op === "i64.rem_u" ||
       op === "i64.and" ||
       op === "i64.or" ||
       op === "i64.xor" ||
@@ -727,6 +872,7 @@ function fixBranchType(
     const plan = coercionPlan(fromVT, expectedType, { boxNumberIdx, unboxNumberIdx });
     if (plan) {
       body.push(...plan.instrs);
+      recordFixup("branch-type-coerce", `coerced branch result ${produced} → ${expectedType.kind}`); // #1918
       return 1;
     }
   }
@@ -739,6 +885,7 @@ function fixBranchType(
   if ((expectedType.kind === "ref" || expectedType.kind === "ref_null") && produced === "externref") {
     body.push({ op: "any.convert_extern" } as Instr);
     body.push({ op: "ref.cast_null", typeIdx: expectedType.typeIdx });
+    recordFixup("branch-type-cast", `cast branch result externref → ${expectedType.kind} #${expectedType.typeIdx}`); // #1918
     return 1;
   }
 
@@ -770,6 +917,7 @@ function fixBranch(
     // Too many values -- add drops
     for (let i = 0; i < actual - expected; i++) {
       body.push({ op: "drop" });
+      recordFixup("drop-excess", `dropped 1 surplus value (had ${actual}, block expects ${expected})`); // #1918
       fixups++;
     }
   } else if (actual < expected) {
@@ -781,31 +929,57 @@ function fixBranch(
         switch (t.kind) {
           case "i32":
             body.push({ op: "i32.const", value: 0 });
+            // #1918 — LOSSY: a missing branch value is filled with a typed
+            // const default. If the producer was *supposed* to push a value,
+            // this silently substitutes 0 at runtime. AC #3: warning-visible.
+            recordFixup("default-value-lossy", "i32.const 0 default for a missing branch value", true);
             break;
           case "i64":
             body.push({ op: "i64.const", value: 0n });
+            recordFixup("default-value-lossy", "i64.const 0 default for a missing branch value", true);
             break;
           case "f64":
             body.push({ op: "f64.const", value: 0 });
+            recordFixup("default-value-lossy", "f64.const 0 default for a missing branch value", true);
             break;
           case "f32":
             body.push({ op: "f32.const", value: 0 });
+            recordFixup("default-value-lossy", "f32.const 0 default for a missing branch value", true);
             break;
           case "externref":
             body.push({ op: "ref.null.extern" });
+            recordFixup("default-value-lossy", "ref.null.extern default for a missing branch value", true);
             break;
           case "ref":
           case "ref_null":
             body.push({ op: "ref.null", typeIdx: t.typeIdx });
+            recordFixup(
+              "default-value-lossy",
+              `ref.null (type #${t.typeIdx}) default for a missing branch value`,
+              true,
+            );
             break;
           default:
-            // Unknown type -- push ref.null.extern as safe default
+            // #2090 — unknown value type: we cannot pick a correct default, so
+            // inventing one would mask a real producer bug. Record the site;
+            // stackBalance turns it into a hard compile error. Still push a
+            // placeholder so the rest of the pass can finish walking (the
+            // compile fails via the recorded error regardless).
+            inventedValueSites.push({
+              func: currentDiagFunc,
+              detail: `missing value of unknown valtype kind "${(t as { kind?: string }).kind ?? "?"}" in a val-typed block`,
+            });
             body.push({ op: "ref.null.extern" } as Instr);
             break;
         }
       } else {
-        // For type-indexed block types, we can't easily determine individual value types.
-        // Push ref.null.extern as a safe default (avoids runtime trap).
+        // #2090 — type-indexed block type: individual value types aren't
+        // recoverable here, so a default is necessarily a guess. Record it as a
+        // hard error rather than inventing a ref.null.extern (see above).
+        inventedValueSites.push({
+          func: currentDiagFunc,
+          detail: "missing value in a type-indexed (multi-value) block whose element types are not recoverable",
+        });
         body.push({ op: "ref.null.extern" } as Instr);
       }
       fixups++;
@@ -1627,6 +1801,7 @@ function fixCallArgTypesInBody(
       for (let k = insertions.length - 1; k >= 0; k--) {
         const { afterPos, instrs } = insertions[k]!;
         body.splice(afterPos + 1, 0, ...instrs);
+        recordFixup("call-arg-coerce", `coerced a call argument (${instrs.length} instr(s))`); // #1918
         ci += instrs.length;
         fixups += instrs.length;
       }
@@ -1752,6 +1927,7 @@ function fixStructNewFieldCoercion(
               // Insert save+restore before the struct.new
               const insertedInstrs = [...saveInstrs, ...restoreInstrs];
               body.splice(ci, 0, ...insertedInstrs);
+              recordFixup("struct-field-coerce", `coerced ${numFields} struct.new field value(s)`); // #1918
               ci += insertedInstrs.length; // skip past inserted + struct.new
               fixups += insertedInstrs.length;
             }
@@ -2216,6 +2392,11 @@ export function stackBalance(mod: WasmModule): number {
   const tags = mod.tags || [];
   let totalFixups = 0;
 
+  // #2090 — reset the invented-value collector for this run.
+  inventedValueSites = [];
+  // #1918 — reset the fixup-telemetry collector for this run.
+  fixupEvents = [];
+
   // Count import functions and find __box_number/__unbox_number indices
   let numImports = 0;
   let boxNumberIdx: number | null = null;
@@ -2241,6 +2422,8 @@ export function stackBalance(mod: WasmModule): number {
 
   for (let fi = 0; fi < mod.functions.length; fi++) {
     const func = mod.functions[fi]!;
+    // #2090 — attribute any invented-value site to this function in diagnostics.
+    currentDiagFunc = func.name || `func#${numImports + fi}`;
     // Build local types array (params + locals)
     const ft = resolveFuncType(mod.types, func.typeIdx);
     const localTypes: ValType[] = [];
@@ -2318,6 +2501,29 @@ export function stackBalance(mod: WasmModule): number {
       );
     }
   }
+
+  // #2090 — drain the invented-value collector into structured compile errors.
+  // Any entry means the repair pass hit a missing slot of unrecoverable type:
+  // a real producing-codegen bug that must NOT ship as a silent null. We fail
+  // the compile here instead. Report 04 §5 Phase 1 concluded there is no
+  // legitimate trigger, so in practice this list is empty for every module the
+  // equivalence suite + playground examples compile.
+  if (inventedValueSites.length > 0) {
+    if (!mod.codegenErrors) mod.codegenErrors = [];
+    for (const site of inventedValueSites) {
+      mod.codegenErrors.push({
+        message:
+          `stack-balance (#2090): cannot supply a missing stack value in function "${site.func}" — ` +
+          `${site.detail}. The repair pass refuses to invent a value here because doing so would ` +
+          `mask a producing codegen bug as a silent null. This is a compiler defect at the value ` +
+          `producer; report the failing input.`,
+        line: 0,
+        column: 0,
+      });
+    }
+    inventedValueSites = [];
+  }
+
   return totalFixups;
 }
 
@@ -2452,6 +2658,7 @@ function fixLocalSetCoercion(
     if (coercion.length > 0) {
       // Insert coercion instructions before the local.set
       body.splice(i, 0, ...coercion);
+      recordFixup("local-set-coerce", `coerced ${instr.op} value ${stackType.kind} → ${localType.kind}`); // #1918
       i += coercion.length;
       fixups += coercion.length;
     }

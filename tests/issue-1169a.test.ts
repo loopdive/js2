@@ -14,6 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile, type CompileResult } from "../src/index.js";
+import { irFallbacks } from "./helpers/ir-fallbacks.js";
 import { buildImports } from "../src/runtime.js";
 
 // Minimal env stub for compiled modules that don't need any host imports.
@@ -351,18 +352,12 @@ describe("#1169a — slice 1 functions reach the IR path without errors", () => 
     it(`host: ${label}`, async () => {
       const r = await compile(src, { experimentalIR: true, nativeStrings: false });
       expect(r.success).toBe(true);
-      const irErrors = r.errors.filter(
-        (e) => e.message.startsWith("IR path failed") || e.message.startsWith("IR path: could not resolve"),
-      );
-      expect(irErrors).toEqual([]);
+      expect(irFallbacks(r)).toEqual([]);
     });
     it(`native: ${label}`, async () => {
       const r = await compile(src, { experimentalIR: true, nativeStrings: true });
       expect(r.success).toBe(true);
-      const irErrors = r.errors.filter(
-        (e) => e.message.startsWith("IR path failed") || e.message.startsWith("IR path: could not resolve"),
-      );
-      expect(irErrors).toEqual([]);
+      expect(irFallbacks(r)).toEqual([]);
     });
   }
 });

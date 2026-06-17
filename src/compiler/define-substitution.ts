@@ -9,6 +9,7 @@
  * Also handles `typeof <identifier>` forms: `typeof process` can be replaced
  * with `"undefined"` to eliminate environment-detection branches.
  */
+import { PositionMap, type SourceEdit } from "../position-map.js";
 
 /**
  * Apply compile-time define substitutions to source text.
@@ -19,33 +20,59 @@
  * @returns Source with substitutions applied
  */
 export function applyDefineSubstitutions(source: string, defines: Record<string, string>): string {
-  if (!defines || Object.keys(defines).length === 0) return source;
+  return applyDefineSubstitutionsWithMap(source, defines).source;
+}
 
-  let result = source;
+/**
+ * #1928 — like {@link applyDefineSubstitutions} but also returns a `PositionMap`
+ * from the substituted output back to the input. Define replacements
+ * (`process.env.NODE_ENV` → `"production"`) change length, so positions after a
+ * match on the same line shift; multi-line replacements shift lines below.
+ * Tracking the exact match spans keeps diagnostics anchored to the user's
+ * original positions.
+ */
+export function applyDefineSubstitutionsWithMap(
+  source: string,
+  defines: Record<string, string>,
+): { source: string; positionMap: PositionMap } {
+  if (!defines || Object.keys(defines).length === 0) {
+    return { source, positionMap: PositionMap.identity() };
+  }
 
-  // Sort keys by length (longest first) to avoid partial matches
+  // Sort keys by length (longest first) to avoid partial matches.
   const keys = Object.keys(defines).sort((a, b) => b.length - a.length);
+
+  // Each pass rewrites `current` and produces a per-pass PositionMap
+  // (current-output → current-input); compose them so the final map runs
+  // straight back to the original source.
+  let current = source;
+  let composed = PositionMap.identity();
 
   for (const key of keys) {
     const replacement = defines[key]!;
+    const pattern = key.startsWith("typeof ")
+      ? new RegExp(`(?<![.\\w$])typeof\\s+${escapeRegExp(key.slice(7))}(?![\\w$])`, "g")
+      : new RegExp(`(?<![.\\w$])${escapeRegExp(key)}(?![\\w$])`, "g");
 
-    // Handle typeof forms: "typeof process" → replacement
-    if (key.startsWith("typeof ")) {
-      const ident = key.slice(7); // "typeof process" → "process"
-      // Match `typeof <ident>` not preceded by a dot or alphanumeric
-      const typeofPattern = new RegExp(`(?<![.\\w$])typeof\\s+${escapeRegExp(ident)}(?![\\w$])`, "g");
-      result = result.replace(typeofPattern, replacement);
-      continue;
+    const edits: SourceEdit[] = [];
+    let out = "";
+    let last = 0;
+    for (const m of current.matchAll(pattern)) {
+      const start = m.index ?? 0;
+      const end = start + m[0].length;
+      out += current.slice(last, start) + replacement;
+      edits.push({ origStart: start, origEnd: end, newLength: replacement.length });
+      last = end;
     }
-
-    // Build a regex that matches the dotted path as a standalone expression.
-    // Must not be preceded by a dot, alphanumeric, $, or _ (to avoid matching
-    // e.g. `foo.process.env.NODE_ENV`), and must not be followed by alphanumeric/$/_.
-    const pattern = new RegExp(`(?<![.\\w$])${escapeRegExp(key)}(?![\\w$])`, "g");
-    result = result.replace(pattern, replacement);
+    if (edits.length === 0) continue; // no match this pass — map unchanged
+    out += current.slice(last);
+    current = out;
+    // This pass maps current-output → its input; the prior `composed` maps that
+    // input → original. compose() chains them.
+    composed = new PositionMap(edits).compose(composed);
   }
 
-  return result;
+  return { source: current, positionMap: composed };
 }
 
 /**

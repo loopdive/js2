@@ -22,8 +22,8 @@ function analyze(src: string): AsyncCpsPlan {
 }
 
 describe("#1042 PR1 — async CPS analysis surface", () => {
-  it("the gate is OFF (synchronous-consumption contract regresses on a global flip — see async-cps.ts)", () => {
-    expect(ASYNC_CPS_ENABLED).toBe(false);
+  it("the gate is ON (#1796 — per-function asyncFnNeedsCps resolves the sync-consumption contract)", () => {
+    expect(ASYNC_CPS_ENABLED).toBe(true);
   });
 
   it("no await ⇒ zero await points (function-body hook keeps legacy path)", () => {
@@ -138,14 +138,13 @@ describe("#1042 PR1 — async CPS analysis surface", () => {
 // ---------------------------------------------------------------------------
 // Slice 2A — end-to-end resolved-value tests.
 //
-// These validate the state machine when ASYNC_CPS_ENABLED is on: a JS-host
-// async fn matching one of the three canonical single-tail-await shapes returns
-// a real Promise that resolves to the right value through
-// `Promise_resolve` → `Promise_then2` → continuation. They are gated on the
-// flag because it ships OFF (a global flip regresses the synchronous-consumption
-// contract — see async-cps.ts and the #1042 issue file); flip the flag locally
-// to exercise them. They pinned the machinery as correct-when-run during Slice
-// 2A development.
+// These validate the state machine with ASYNC_CPS_ENABLED on (#1796): a JS-host
+// async fn that genuinely suspends and matches one of the canonical
+// single-tail-await shapes returns a real Promise that resolves to the right
+// value through `Promise_resolve` → `Promise_then2` → continuation. The
+// `skipIf` is retained as a guard so the block self-disables if the gate is
+// ever turned back off; with the gate on (the shipped state since #1796) the
+// block always runs.
 //
 // Awaited sources are INTERNAL compiled async functions and literals — these
 // marshal a real number across the await boundary. (Host `declare function` /

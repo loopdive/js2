@@ -54,6 +54,30 @@ function staticStringValue(ctx: CodegenContext, expr: ts.Expression, seen = new 
   return undefined;
 }
 
+/**
+ * #2166 — resolve a `JSON.stringify` `space` argument (3rd parameter) to a
+ * compile-time number or string, so the static stringify path can produce the
+ * indented form. Returns `undefined` when the value isn't statically known
+ * (caller then refuses / keeps the compact form gate). Per §25.5.2 only the
+ * first 10 characters of a string space (or `min(10, floor(n))` for a number)
+ * are used; JS's own `JSON.stringify` applies that, so we just forward.
+ */
+function staticSpaceValue(ctx: CodegenContext, expr: ts.Expression): number | string | undefined {
+  const cur = unwrapTransparentExpression(expr);
+  if (ts.isNumericLiteral(cur)) return Number(cur.text.replace(/_/g, ""));
+  if (ts.isPrefixUnaryExpression(cur) && ts.isNumericLiteral(cur.operand)) {
+    const n = Number(cur.operand.text.replace(/_/g, ""));
+    if (cur.operator === ts.SyntaxKind.MinusToken) return -n;
+    if (cur.operator === ts.SyntaxKind.PlusToken) return n;
+  }
+  if (ts.isStringLiteral(cur) || ts.isNoSubstitutionTemplateLiteral(cur)) return cur.text;
+  if (ts.isIdentifier(cur)) {
+    const init = constInitializerForIdentifier(ctx, cur);
+    if (init) return staticSpaceValue(ctx, init);
+  }
+  return undefined;
+}
+
 function staticPropertyName(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
   if (ts.isNumericLiteral(name)) return String(Number(name.text));
@@ -159,10 +183,31 @@ export function tryEmitJsonStringifyStatic(
   ctx: CodegenContext,
   fctx: FunctionContext,
   arg: ts.Expression,
+  replacerArg?: ts.Expression,
+  spaceArg?: ts.Expression,
 ): ValType | null | undefined {
   const value = staticJsonValue(ctx, arg);
   if (value === UNSUPPORTED) return undefined;
-  const serialized = JSON.stringify(value);
+
+  // #2166: only a `null`/`undefined`/omitted replacer is supported statically
+  // (a function/array replacer needs runtime observation). Bail otherwise so
+  // the caller keeps its refusal path rather than silently ignoring it.
+  if (replacerArg !== undefined) {
+    const r = unwrapTransparentExpression(replacerArg);
+    const isNullish = r.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(r) && r.text === "undefined");
+    if (!isNullish) return undefined;
+  }
+
+  // #2166: resolve a static `space` (number or string) and forward to JS's own
+  // JSON.stringify, which applies the §25.5.2 clamping/indentation rules. A
+  // dynamic space falls back to the caller's refusal.
+  let space: number | string | undefined;
+  if (spaceArg !== undefined) {
+    space = staticSpaceValue(ctx, spaceArg);
+    if (space === undefined) return undefined;
+  }
+
+  const serialized = space === undefined ? JSON.stringify(value) : JSON.stringify(value, null, space);
   if (serialized === undefined) return undefined;
   return compileStringLiteral(ctx, fctx, serialized);
 }

@@ -104,6 +104,16 @@ export interface BackendEmitter<S = Instr[]> {
   emitVecDataPtr(layout: VecLayout, out: S): void;
   /** data-region handle + i32 index on stack -> element value. */
   emitElemGet(layout: VecLayout, out: S): void;
+  /**
+   * #1804 — N element values on the stack (e0 deepest … eN top) -> a fully
+   * built vec ref. WasmGC: `array.new_fixed $arr N`, stash the data ref in
+   * `dataScratchLocal`, push `i32.const N` (length, field 0), re-load the data
+   * ref (field 1), `struct.new $vec`. Linear: bump-allocate
+   * `[header][len=N][cap=N][e0…eN]` and leave the base i32 (or `notImplemented`).
+   * `dataScratchLocal` is a function-local index of the array's ValType,
+   * allocated lazily by `lower.ts`.
+   */
+  emitVecNewFixed(layout: VecLayout, count: number, dataScratchLocal: number, out: S): void;
 
   // ---- scalars / locals / globals / control flow (Phase-1 stage 1) ----
   /** Emit a `const` IR instr's literal op(s). Delegates to the shared free fn. */

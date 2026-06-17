@@ -58,3 +58,23 @@ Also cheap peephole wins identified while reviewing:
 ## Source
 
 Compiler quality review 2026-06. Related: #957 (peephole corpus), #1530.
+
+## Resolution (2026-06-16, dev-b) — catchAll gap fixed (item 3)
+
+The load-bearing **bug** — `peephole.ts` `optimizeBody` recursed into
+`try.body` and `try.catches` but NOT `try.catchAll`, so bodies built by e.g.
+`wrapAsyncCallInTryCatch` never got peephole-optimized — is fixed: the `try`
+arm now also recurses into `instr.catchAll`.
+
+Scope note: items 1 (single `walkInstructions`), 2 (port the 4 walkers onto
+it), and 4 (NaN-const / set-get→tee patterns) are a larger refactor and remain
+open as follow-up — this PR lands the actual defect (item 3) with a focused,
+low-risk change. The remaining unification stays tracked here.
+
+Tests: `tests/issue-1920.test.ts` drives `peepholeOptimize` on a hand-built
+module with the redundant `ref.cast; ref.as_non_null` pair inside a `catchAll`
+body and asserts it's collapsed (it was NOT before); plus catch-body and
+no-pattern cases. All pass. (The pre-existing `ref-cast-peephole.test.ts`
+closure failures are an unrelated test-harness import-shape issue —
+`string_constants` import missing from the test's `{ env: {} }` — present on
+main before this change.)

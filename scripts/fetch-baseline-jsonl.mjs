@@ -49,8 +49,16 @@ const REPO_ROOT = resolve(__dirname, "..");
 export const BASELINE_REMOTE_URL =
   "https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-current.jsonl";
 
+// (#2095) The STANDALONE lane has its own baseline JSONL in the same baselines
+// repo, refreshed by the `promote-baseline` job alongside the host JSONL. The
+// validator (#2095) samples it so a rotted standalone baseline can't silently
+// weaken the #1897 standalone regression floor.
+export const STANDALONE_BASELINE_REMOTE_URL =
+  "https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-standalone-current.jsonl";
+
 export const BASELINE_CACHE_DIR = resolve(REPO_ROOT, ".test262-cache");
 export const BASELINE_CACHE_PATH = resolve(BASELINE_CACHE_DIR, "test262-current.jsonl");
+export const STANDALONE_BASELINE_CACHE_PATH = resolve(BASELINE_CACHE_DIR, "test262-standalone-current.jsonl");
 
 // Sanity-check thresholds — a healthy baseline has ~43k entries and is ~15 MB.
 // Smaller than this almost certainly means a partial download or a corrupted
@@ -66,21 +74,20 @@ const MIN_REASONABLE_LINES = 5_000; // ~43k entries today
  * @param {string} targetPath absolute path to write to
  * @returns {Promise<{ bytes: number; lines: number }>}
  */
-async function downloadTo(targetPath) {
-  const res = await fetch(BASELINE_REMOTE_URL, {
+async function downloadTo(targetPath, url = BASELINE_REMOTE_URL) {
+  const res = await fetch(url, {
     redirect: "follow",
     headers: { "User-Agent": "js2wasm-baseline-fetcher/1.0" },
   });
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText} fetching ${BASELINE_REMOTE_URL}`);
+    throw new Error(`HTTP ${res.status} ${res.statusText} fetching ${url}`);
   }
   const text = await res.text();
   const lines = text.split("\n").filter((l) => l.trim().length > 0).length;
   const bytes = Buffer.byteLength(text, "utf-8");
   if (bytes < MIN_REASONABLE_BYTES || lines < MIN_REASONABLE_LINES) {
     throw new Error(
-      `Downloaded baseline looks truncated (bytes=${bytes}, lines=${lines}). ` +
-        `Refusing to write. Source: ${BASELINE_REMOTE_URL}`,
+      `Downloaded baseline looks truncated (bytes=${bytes}, lines=${lines}). ` + `Refusing to write. Source: ${url}`,
     );
   }
   mkdirSync(dirname(targetPath), { recursive: true });
@@ -100,39 +107,72 @@ async function downloadTo(targetPath) {
  * @returns {Promise<string>} absolute path to a JSONL file ready to read
  */
 export async function ensureBaselineJsonl(opts = {}) {
+  return ensureLaneBaselineJsonl(BASELINE_REMOTE_URL, BASELINE_CACHE_PATH, "test262-current", opts);
+}
+
+/**
+ * (#2095) Standalone-lane analog of {@link ensureBaselineJsonl}. Fetches
+ * `test262-standalone-current.jsonl` from the baselines repo to
+ * `STANDALONE_BASELINE_CACHE_PATH`. Same idempotent + graceful-fallback
+ * semantics as the host fetch.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.force]
+ * @param {boolean} [opts.noCache]
+ * @returns {Promise<string>} absolute path to a standalone JSONL ready to read
+ */
+export async function ensureStandaloneBaselineJsonl(opts = {}) {
+  return ensureLaneBaselineJsonl(
+    STANDALONE_BASELINE_REMOTE_URL,
+    STANDALONE_BASELINE_CACHE_PATH,
+    "test262-standalone-current",
+    opts,
+  );
+}
+
+/**
+ * Shared fetch+cache core for a single lane's baseline JSONL.
+ *
+ * @param {string} remoteUrl   raw.githubusercontent URL of the lane's JSONL
+ * @param {string} cachePath   absolute local cache path for the lane
+ * @param {string} stem        cache-file stem, used for the --no-cache tmp name
+ * @param {{force?: boolean, noCache?: boolean}} [opts]
+ * @returns {Promise<string>}
+ */
+async function ensureLaneBaselineJsonl(remoteUrl, cachePath, stem, opts = {}) {
   const { force = false, noCache = false } = opts;
 
   if (noCache) {
-    const tmpPath = resolve(BASELINE_CACHE_DIR, `test262-current.${process.pid}.tmp.jsonl`);
-    await downloadTo(tmpPath);
+    const tmpPath = resolve(BASELINE_CACHE_DIR, `${stem}.${process.pid}.tmp.jsonl`);
+    await downloadTo(tmpPath, remoteUrl);
     return tmpPath;
   }
 
-  if (!force && existsSync(BASELINE_CACHE_PATH)) {
-    const sz = statSync(BASELINE_CACHE_PATH).size;
+  if (!force && existsSync(cachePath)) {
+    const sz = statSync(cachePath).size;
     if (sz >= MIN_REASONABLE_BYTES) {
-      return BASELINE_CACHE_PATH;
+      return cachePath;
     }
     // Cached file exists but looks suspicious — fall through and re-download.
     console.warn(`[fetch-baseline-jsonl] cached file is suspiciously small (${sz} bytes); re-downloading.`);
   }
 
   try {
-    const { bytes, lines } = await downloadTo(BASELINE_CACHE_PATH);
+    const { bytes, lines } = await downloadTo(cachePath, remoteUrl);
     console.log(
-      `[fetch-baseline-jsonl] downloaded ${BASELINE_REMOTE_URL} -> ${BASELINE_CACHE_PATH} ` +
+      `[fetch-baseline-jsonl] downloaded ${remoteUrl} -> ${cachePath} ` +
         `(${bytes.toLocaleString()} bytes, ${lines.toLocaleString()} entries).`,
     );
-    return BASELINE_CACHE_PATH;
+    return cachePath;
   } catch (e) {
     // If we already have a cached copy, fall back to it — better stale than
     // nothing. Callers that need fresh data should pass `force: true`.
-    if (existsSync(BASELINE_CACHE_PATH)) {
+    if (existsSync(cachePath)) {
       console.warn(
         `[fetch-baseline-jsonl] download failed (${e instanceof Error ? e.message : e}); ` +
-          `using existing cache at ${BASELINE_CACHE_PATH}.`,
+          `using existing cache at ${cachePath}.`,
       );
-      return BASELINE_CACHE_PATH;
+      return cachePath;
     }
     throw e;
   }
@@ -144,20 +184,25 @@ if (process.argv[1] && resolve(process.argv[1]) === __filename) {
   const force = args.includes("--force");
   const noCache = args.includes("--no-cache");
   const printPath = args.includes("--print-path");
+  const standalone = args.includes("--standalone"); // (#2095) fetch the standalone lane JSONL
+
+  const cachePath = standalone ? STANDALONE_BASELINE_CACHE_PATH : BASELINE_CACHE_PATH;
+  const ensure = standalone ? ensureStandaloneBaselineJsonl : ensureBaselineJsonl;
+  const remoteUrl = standalone ? STANDALONE_BASELINE_REMOTE_URL : BASELINE_REMOTE_URL;
 
   if (printPath) {
-    process.stdout.write(`${BASELINE_CACHE_PATH}\n`);
+    process.stdout.write(`${cachePath}\n`);
     process.exit(0);
   }
 
-  ensureBaselineJsonl({ force, noCache })
+  ensure({ force, noCache })
     .then((path) => {
       if (force || noCache) process.stdout.write(`${path}\n`);
       process.exit(0);
     })
     .catch((e) => {
       console.error(`[fetch-baseline-jsonl] fatal: ${e instanceof Error ? e.message : e}`);
-      console.error(`[fetch-baseline-jsonl] upstream: ${BASELINE_REMOTE_URL}`);
+      console.error(`[fetch-baseline-jsonl] upstream: ${remoteUrl}`);
       console.error(`[fetch-baseline-jsonl] if the upstream URL has changed, update scripts/fetch-baseline-jsonl.mjs.`);
       process.exit(1);
     });

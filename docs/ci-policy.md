@@ -35,6 +35,7 @@ case-sensitive and whitespace-sensitive.
 | `merge shard reports` | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
 | `quality` | `.github/workflows/ci.yml` | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen |
 | `equivalence-gate` | `.github/workflows/ci.yml` | merges the equivalence shards and fails if the shard baseline regresses |
+| `linear-tests` | `.github/workflows/ci.yml` | runs the linear-backend (`tests/linear-*.test.ts`), C-ABI (`tests/c-abi.test.ts`), and SIMD (`tests/simd*.test.ts`) suites — the 20 files that previously had no CI job, so every linear-memory lowering change landed ungated (#2139) |
 | `check for test262 regressions` | `.github/workflows/test262-sharded.yml` | full rolling-baseline test262 diff; required so pass→fail regressions cannot merge just because the aggregate hard guards stayed below threshold |
 | `cla-check` | `.github/workflows/cla-check.yml` | self-hosted CLA-acceptance gate (#1660): internal authors and bots are exempt; external humans must have affirmative CLA acceptance recorded |
 
@@ -333,6 +334,7 @@ behaviour can be flipped without touching the JS script.
 | `merge shard reports` | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
 | `quality` | `ci.yml` | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches. |
 | `equivalence-gate` | `ci.yml` | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged. |
+| `linear-tests` | `ci.yml` | linear-memory backend regressions: the 20 `tests/linear-*.test.ts` / `tests/c-abi.test.ts` / `tests/simd*.test.ts` files that no CI job executed before #2139, which is why the #1974–#1977 linear-backend bug class shipped silently. |
 | `check for test262 regressions` | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds. |
 | `cla-check` | `cla-check.yml` | CLA acceptance for external contributors while preserving internal and bot exemptions. |
 

@@ -1,10 +1,12 @@
 ---
 id: 2090
 title: "stack-balance self-repair must not invent values — null patch becomes a hard compile error"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-11
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/dev-b
 priority: high
 feasibility: easy
 reasoning_effort: low
@@ -44,3 +46,31 @@ standalone.
 ## Dupe check
 
 No issue covers the repair pass. New (analysis program).
+
+## Resolution (2026-06-16, dev-b)
+
+`src/codegen/stack-balance.ts` `fixBranch` had two arms that patched a missing
+stack slot of **unrecoverable** type with an invented `ref.null.extern` "safe
+default" (the `default:` case for an unknown valtype kind, and the
+type-indexed/multi-value `else`). Those masked the producing codegen bug as a
+silent null. The **typed-zero** arms (i32/i64/f64/f32/externref/ref → push that
+type's zero) are legitimate and untouched — they fill a *known*-type slot.
+
+- A module-scoped `inventedValueSites` collector + `currentDiagFunc` (set per
+  function in `stackBalance`'s loop) records any hit on the two unknown-type
+  arms with the function name + detail. `stackBalance` drains it into
+  `mod.codegenErrors` as a structured hard compile error ("refuses to invent a
+  value … would mask a producing codegen bug"), which `compiler.ts` surfaces as
+  a failed compile (#1868 channel). A placeholder is still pushed so the pass
+  finishes its walk; the recorded error fails the compile regardless.
+
+**Acceptance:**
+- [x] The unknown-type null-patch arms now produce a structured CE
+- [x] Playground examples all compile clean (`pnpm run check:ir-fallbacks` OK —
+  no #2090 trigger), proving no legitimate trigger on the example corpus; the
+  full equivalence suite runs green in CI (sharded). The legitimate typed-zero
+  arms are unaffected.
+
+Tests: `tests/issue-2090.test.ts` — drives the type-indexed unknown arm via a
+hand-built module (asserts the #2090 structured error) and confirms the
+known-type (i32) arm does NOT error.

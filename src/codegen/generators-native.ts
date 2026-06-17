@@ -1245,6 +1245,12 @@ function compileState(
   const saved = fctx.body;
   const body: Instr[] = [];
   fctx.body = body;
+  // (#2182) `saved` is detached for the whole resume-state build, which runs
+  // `compileStatement` / `emitYieldValueAsElem` — both can trigger a late
+  // import. The shifter walks `fctx.body` (= body) but not this raw local, so
+  // register `saved` in liveBodies for the swap's lifetime; otherwise a late
+  // import would over-shift any `call` funcIdx already in the outer body.
+  ctx.liveBodies.add(saved);
 
   // Abrupt-resume (.return()) handling: if we resumed into this state in mode 1
   // (return), run finalizers, store spills, and complete with the abrupt value.
@@ -1445,6 +1451,7 @@ function compileState(
   }
 
   fctx.body = saved;
+  ctx.liveBodies.delete(saved);
   return body;
 }
 

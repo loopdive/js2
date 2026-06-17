@@ -62,8 +62,13 @@ Options:
   --wit             Generate WIT interface file for Component Model
   --wit-package <p> Package name for --wit output (ns:name[@version]).
                     Implies --wit. Defaults to js2wasm:<input-basename>.
-  -O, --optimize    Run Binaryen wasm-opt optimizer (default: -O3)
+  -O, --optimize    Run Binaryen wasm-opt optimizer (on by default at -O3)
   -O1..-O4          Set optimization level (1-4)
+  --no-optimize, -O0
+                    Disable the optimizer; emit raw codegen output. Optimization
+                    is ON by default; this restores the pre-#1950 behaviour.
+                    (No-op when binaryen/wasm-opt is unavailable — that path
+                    already degrades to a one-line note, never a failure.)
   --no-host-imports Strict dual-mode: reject JS-host 'env' imports not on
                     the allowlist (#1524). Implied by --target wasi.
   --allow-host-imports
@@ -99,7 +104,15 @@ const emitWasm = true;
 let emitWat = true;
 let emitDts = true;
 let watOnly = false;
-let optimize: boolean | 1 | 2 | 3 | 4 = false;
+// #1950 — default-on optimization for the CLI. Binaryen wasm-opt does
+// materially valuable, safe work the in-compiler passes don't (small-function
+// inlining, array.len-into-local, post-inline null-check cleanup, dead
+// convert/drop removal). Builds opt in by default at -O3; `--no-optimize`
+// restores raw output. Absence of binaryen/wasm-opt degrades gracefully to a
+// one-line note (optimize.ts), never a failure. The programmatic `compile()`
+// API keeps its opt-out default (no surprise behaviour change for library
+// users) — only the CLI flips.
+let optimize: boolean | 1 | 2 | 3 | 4 = 3;
 let target: "gc" | "linear" | "wasi" | "standalone" | undefined;
 let allocator: "bump" | "arena-reset" | undefined;
 let emitWit = false;
@@ -171,6 +184,9 @@ for (let i = 0; i < args.length; i++) {
     strictNoHostImports = false;
   } else if (arg === "-O" || arg === "--optimize") {
     optimize = true;
+  } else if (arg === "--no-optimize" || arg === "-O0") {
+    // #1950 — explicit opt-out of the default-on optimizer.
+    optimize = false;
   } else if (/^-O[1-4]$/.test(arg)) {
     optimize = parseInt(arg.slice(2)) as 1 | 2 | 3 | 4;
   } else if (arg === "--define") {
@@ -252,7 +268,10 @@ const result = await compile(source, {
 if (!result.success) {
   for (const e of result.errors) {
     const severity = e.severity === "warning" ? "warning" : "error";
-    console.error(`${absInput}:${e.line}:${e.column} - ${severity}: ${e.message}`);
+    // #1929 — prefer the diagnostic's own source file when present (multi-file
+    // compiles report errors from imported files, not just the entry).
+    const where = e.file ?? absInput;
+    console.error(`${where}:${e.line}:${e.column} - ${severity}: ${e.message}`);
   }
   process.exit(1);
 }

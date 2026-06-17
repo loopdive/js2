@@ -7,7 +7,7 @@
  * shared.ts (NOT expressions.ts) to avoid circular dependencies.
  */
 import { ts } from "../ts-api.js";
-import { isStringType } from "../checker/type-mapper.js";
+import { isBooleanType, isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
@@ -32,6 +32,7 @@ import { ensureAnyHelpers, isAnyValue } from "./any-helpers.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
+  nativeStringType,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
@@ -204,6 +205,22 @@ function shouldReturnUndefinedCapableResult(
   if (parent && ts.isExpressionStatement(parent)) return false;
   if (expectedType && expectedType.kind !== "externref" && expectedType.kind !== "ref_extern") return false;
   return typeIncludesUndefined(ctx.checker.getTypeAtLocation(callExpr));
+}
+
+/**
+ * #2105 — value-rep P2 boolean-brand rollout for `Array.prototype.join` /
+ * `toString`. A boolean array lowers to an i32 WasmGC element array, but the
+ * `{ kind: "i32", boolean: true }` brand is structural-only and does not
+ * survive into `arrDef.element` (arrays dedupe by structure). So the join
+ * element-stringify path otherwise renders booleans numerically ("1"/"0").
+ * Recover the boolean-ness from the receiver's TS element type instead:
+ * `boolean[]`/`(true|false)[]` → number-index type is `boolean`.
+ */
+function arrayElementIsBoolean(ctx: CodegenContext, receiverExpr: ts.Expression): boolean {
+  const recvTsType = ctx.checker.getTypeAtLocation(receiverExpr);
+  if (!recvTsType) return false;
+  const elemTsType = recvTsType.getNumberIndexType();
+  return elemTsType ? isBooleanType(elemTsType) : false;
 }
 
 function arrayElementToExternrefInstrs(ctx: CodegenContext, fctx: FunctionContext, elemType: ValType): Instr[] {
@@ -4787,8 +4804,12 @@ function compileArrayJoinNative(
     return null;
   }
 
+  // #2105: a boolean element array stringifies as "true"/"false". The brand is
+  // lost in arrDef.element, so derive boolean-ness from the receiver TS type.
+  const elemIsBoolean = elemType.kind === "i32" && arrayElementIsBoolean(ctx, propAccess.expression);
   const isNumeric =
-    elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "i8" || elemType.kind === "i16";
+    !elemIsBoolean &&
+    (elemType.kind === "f64" || elemType.kind === "i32" || elemType.kind === "i8" || elemType.kind === "i16");
   let numToStrIdx: number | undefined;
   if (isNumeric) {
     emitNativeNumberFormat(ctx, new Set(["number_toString"]));
@@ -4845,7 +4866,17 @@ function compileArrayJoinNative(
     { op: "local.get", index: iTmp } as Instr,
     { op: getOp, typeIdx: arrTypeIdx } as Instr,
   ];
-  if (isNumeric && numToStrIdx !== undefined) {
+  if (elemIsBoolean) {
+    // #2105: i32 element on the stack → native "true"/"false" string, then
+    // cast up to ref $AnyString for the concat loop (NativeString <: AnyString).
+    elemToStr.push({
+      op: "if",
+      blockType: { kind: "val", type: nativeStringType(ctx) },
+      then: nativeStringLiteralInstrs(ctx, "true"),
+      else: nativeStringLiteralInstrs(ctx, "false"),
+    } as Instr);
+    elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+  } else if (isNumeric && numToStrIdx !== undefined) {
     if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" } as Instr);
     elemToStr.push({ op: "call", funcIdx: numToStrIdx } as Instr);
     // number_toString returns the native string boxed as externref.
@@ -4935,6 +4966,9 @@ function compileArrayJoin(
   // externref at runtime is handled in compileArrayMethodCall via the
   // `receiverIsExternref` flag set by the probe. By the time we get here, the
   // receiver is known to be a vec struct.
+
+  // #2105: boolean[] joins/toStrings as "true"/"false", not "1"/"0".
+  const elemIsBoolean = elemType.kind === "i32" && arrayElementIsBoolean(ctx, propAccess.expression);
 
   // #1998: when the element type is externref/ref, each element must be
   // stringified via the `__extern_join_str` host import (undefined/null → "",
@@ -5063,6 +5097,20 @@ function compileArrayJoin(
         { op: "local.get", index: elemF64Tmp },
         { op: "call", funcIdx: toStrIdx },
       ],
+    } as Instr);
+  } else if (elemType.kind === "i32" && elemIsBoolean) {
+    // #2105: a boolean element array stringifies as "true"/"false", not the
+    // numeric "1"/"0" produced by number_toString. The boolean brand is lost
+    // in arrDef.element (structural array dedup), so derive boolean-ness from
+    // the receiver's TS element type. Select the "true"/"false" string-constant
+    // global from the i32 element on the stack (JS-host externref form).
+    addStringConstantGlobal(ctx, "true");
+    addStringConstantGlobal(ctx, "false");
+    elemToStr.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "global.get", index: ctx.stringGlobalMap.get("true")! } as Instr],
+      else: [{ op: "global.get", index: ctx.stringGlobalMap.get("false")! } as Instr],
     } as Instr);
   } else if (elemType.kind === "i32" && toStrIdx !== undefined) {
     elemToStr.push({ op: "f64.convert_i32_s" });

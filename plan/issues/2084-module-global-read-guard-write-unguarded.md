@@ -1,10 +1,12 @@
 ---
 id: 2084
 title: "module-global object access: reads re-emit null-check+throw per access (survives -O); writes have NO check and trap instead of TypeError"
-status: ready
-sprint: 63
+status: done
+completed: 2026-06-16
+assignee: ttraenkler/dv3
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-12
+updated: 2026-06-16
 priority: low
 feasibility: medium
 reasoning_effort: medium
@@ -50,12 +52,30 @@ read guards entirely.
 #2017 (getter-only write), #581 (trap catchability family) — the
 store-path gap and the guard redundancy aren't covered. New (low).
 
-## Suspended Work (2026-06-11, infra incident)
+## Resolution (2026-06-16, dv3) — write-path null guard (acceptance (a))
 
-The implementing dev was terminated by a team-store wipe near completion.
-State preserved in worktree `/workspace/.claude/worktrees/issue-2084-global-guard`
-(branch `issue-2084-global-guard`): UNCOMMITTED 38 insertions in
-src/codegen/expressions/assignment.ts (write-path null guard) plus
-tests/issue-2084.test.ts. Likely close to done — review the diff, run the
-test, finish acceptance (read-guard elimination half may be unstarted),
-commit (✓), push `--no-verify`, PR with `-R loopdive/js2`.
+Recovered the suspended write-path fix and re-applied it against current
+`upstream/main` (the suspended worktree's `assignment.ts` had drifted off an
+older main and could not be copied wholesale). In `compilePropertyAssignment`
+(`src/codegen/expressions/assignment.ts`), the struct-field store path now
+null-guards the receiver: when the receiver is a nullable `(ref null $T)` and
+not statically provably non-null, it stashes the RHS, `ref.is_null`-checks the
+receiver, and emits `typeErrorThrowInstrs(ctx, target)` on null — otherwise the
+direct `local.tee` / `struct.set` is preserved. The guard predicate
+(`structObjResult.kind === "ref_null" && !isProvablyNonNull(...)`) mirrors the
+array-element write guard already in this file, so `new Foo()` / `this` writes
+keep their unguarded fast path.
+
+A null-receiver write now throws a **catchable** `TypeError` instead of trapping
+uncatchably — closing the error-model divergence (family #581/#2025).
+
+Tests: `tests/issue-2084.test.ts` (4 cases) — catchable TypeError on null write,
+normal module-global write, class instance-field write, compound + nested
+writes. All green; `tsc --noEmit` clean.
+
+**Carried forward (acceptance (b), separate follow-up):** eliminating the
+per-access READ null guard for statically-non-null module objects (non-nullable
+globals initialised in the start function) is an efficiency optimisation with a
+high blast radius (start-function init ordering, every member-read site). It is
+*not* a correctness bug — left for a dedicated issue. This PR closes the
+correctness half (the error-model bug named by the title/#581 family).

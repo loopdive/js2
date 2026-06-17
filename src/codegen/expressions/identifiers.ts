@@ -34,6 +34,7 @@ import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { BUILTIN_TYPE_TAGS, isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error-types.js";
 import { allocLocal } from "../context/locals.js";
+import { reportSilentFallback } from "../fallback-telemetry.js";
 import { emitThrowReferenceError, noJsHost } from "./helpers.js";
 import { emitWithBindingGet, findWithBinding } from "../with-scope.js";
 import { emitBuiltinNamespaceObject, isSupportedBuiltinNamespace } from "../builtin-static-globals.js";
@@ -820,6 +821,7 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
 
   // Graceful fallback for known but unimplemented globals (Symbol, Object,
   // Reflect, etc.) — emit a type-appropriate default so compilation continues.
+  reportSilentFallback(ctx, "const-fallback", "identifiers:unimplemented-global-default", id, id.text);
   const tsType = ctx.checker.getTypeAtLocation(id);
   const wasmType = resolveWasmType(ctx, tsType);
   if (wasmType.kind === "f64") {

@@ -57,6 +57,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { buildTypeMap } from "../src/ir/propagate.js";
 import { planIrCompilation, type IrFallbackReason } from "../src/ir/select.js";
+import { compile } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
@@ -97,10 +98,43 @@ const DEFERRED: ReadonlySet<IrFallbackReason> = new Set([
   "unnamed",
 ]);
 
+// #1923 — post-claim demotion kinds (IrIntegrationError.kind). These are
+// functions the selector CLAIMED that then failed *after* claiming and fell
+// back to legacy through the warning channel — invisible to the selector-level
+// `IrFallbackReason` buckets above. Target = 0 for every kind: a claimed
+// function must compile via IR.
+type PostClaimKind = "build" | "verify" | "lower" | "backend-legality";
+const POST_CLAIM_KINDS: readonly PostClaimKind[] = ["build", "verify", "lower", "backend-legality"];
+// Per kind, a map of normalized message class → count.
+type PostClaimBuckets = Record<PostClaimKind, Record<string, number>>;
+
+function emptyPostClaim(): PostClaimBuckets {
+  return { build: {}, verify: {}, lower: {}, "backend-legality": {} };
+}
+
+/**
+ * Normalize a post-claim error message into a stable class so unrelated
+ * identifier/number noise doesn't fragment the buckets: take the first line,
+ * strip quoted identifiers and bare integers, collapse whitespace, cap length.
+ */
+function normalizeMessageClass(message: string): string {
+  return (message.split("\n")[0] ?? "")
+    .replace(/'[^']*'/g, "'…'")
+    .replace(/"[^"]*"/g, '"…"')
+    .replace(/\b\d+\b/g, "N")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
 interface Baseline {
   readonly generated: string;
   readonly unintended: Partial<Record<IrFallbackReason, number>>;
   readonly deferred: Partial<Record<IrFallbackReason, number>>;
+  // #1923 — post-claim demotion buckets (build/verify/lower/backend-legality).
+  // Optional for backward compatibility with pre-#1923 baselines (treated as
+  // all-empty, which is the desired target).
+  readonly postClaim?: PostClaimBuckets;
 }
 
 function listTsFiles(root: string): string[] {
@@ -122,17 +156,22 @@ function listTsFiles(root: string): string[] {
   return out.sort();
 }
 
-function aggregate(): {
+async function aggregate(): Promise<{
   unintended: Partial<Record<IrFallbackReason, number>>;
   deferred: Partial<Record<IrFallbackReason, number>>;
+  postClaim: PostClaimBuckets;
   perFile: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }>;
-} {
+}> {
   const corpus = CORPUS_ROOTS.flatMap(listTsFiles);
 
   // One in-memory program per file is fine for a 10-file corpus and keeps the
   // checker scope local. Each file's TypeMap is independent.
   const unintended: Partial<Record<IrFallbackReason, number>> = {};
   const deferred: Partial<Record<IrFallbackReason, number>> = {};
+  // #1923 — post-claim demotions, collected from a real `compile()` of each
+  // corpus file (the selector-level `planIrCompilation` below cannot see them
+  // — they happen during build/verify/lower AFTER the selector claims).
+  const postClaim = emptyPostClaim();
   const perFile: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }> = [];
 
   const compilerOptions: ts.CompilerOptions = {
@@ -190,8 +229,22 @@ function aggregate(): {
       fileReasons[fb.reason] = (fileReasons[fb.reason] ?? 0) + 1;
     }
     perFile.push({ file: relative(REPO_ROOT, filePath), reasons: fileReasons });
+
+    // #1923 — post-claim demotions: compile the file for real and aggregate
+    // `irPostClaimErrors` by kind + normalized message class. A compile that
+    // throws contributes nothing (same tolerance as the selector pass above).
+    try {
+      const result = await compile(source, { fileName: filePath, experimentalIR: true });
+      for (const e of result.irPostClaimErrors ?? []) {
+        const kind = (POST_CLAIM_KINDS as readonly string[]).includes(e.kind) ? (e.kind as PostClaimKind) : "lower";
+        const cls = normalizeMessageClass(e.message);
+        postClaim[kind][cls] = (postClaim[kind][cls] ?? 0) + 1;
+      }
+    } catch {
+      // ignore — example-file compile failures are not the gate's concern
+    }
   }
-  return { unintended, deferred, perFile };
+  return { unintended, deferred, postClaim, perFile };
 }
 
 function loadBaseline(): Baseline | undefined {
@@ -249,7 +302,29 @@ function formatPerFile(perFile: Array<{ file: string; reasons: Partial<Record<Ir
   return lines.join("\n") + "\n";
 }
 
-function main(): void {
+// #1923 — flatten the per-kind post-claim buckets into `kind/messageClass` rows
+// and diff against the baseline. Any increase fails (target = 0 for all).
+function diffPostClaim(
+  base: PostClaimBuckets | undefined,
+  cur: PostClaimBuckets,
+): { rows: Array<{ reason: string; base: number; cur: number; delta: number }>; anyIncrease: boolean } {
+  const b = base ?? emptyPostClaim();
+  const rows: Array<{ reason: string; base: number; cur: number; delta: number }> = [];
+  let anyIncrease = false;
+  for (const kind of POST_CLAIM_KINDS) {
+    const classes = new Set<string>([...Object.keys(b[kind] ?? {}), ...Object.keys(cur[kind] ?? {})]);
+    for (const cls of [...classes].sort()) {
+      const bn = b[kind]?.[cls] ?? 0;
+      const cn = cur[kind]?.[cls] ?? 0;
+      const delta = cn - bn;
+      rows.push({ reason: `${kind}: ${cls}`, base: bn, cur: cn, delta });
+      if (delta > 0) anyIncrease = true;
+    }
+  }
+  return { rows, anyIncrease };
+}
+
+async function main(): Promise<void> {
   const args = new Set(process.argv.slice(2));
   // Mode precedence: --update > --update-on-decrease > --json > gate.
   const mode: "gate" | "update" | "update-on-decrease" | "json" = args.has("--update")
@@ -261,21 +336,24 @@ function main(): void {
         : "gate";
   const verbose = args.has("--verbose");
 
-  const { unintended, deferred, perFile } = aggregate();
+  const { unintended, deferred, postClaim, perFile } = await aggregate();
 
   if (mode === "json") {
-    process.stdout.write(JSON.stringify({ unintended, deferred, perFile }, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({ unintended, deferred, postClaim, perFile }, null, 2) + "\n");
     return;
   }
 
   const generated = new Date().toISOString().slice(0, 10);
-  const next: Baseline = { generated, unintended, deferred };
+  const next: Baseline = { generated, unintended, deferred, postClaim };
 
   if (mode === "update") {
     writeFileSync(BASELINE_PATH, JSON.stringify(next, null, 2) + "\n", "utf-8");
     process.stdout.write(`Updated ${relative(REPO_ROOT, BASELINE_PATH)}\n`);
     process.stdout.write(formatTable("Unintended (target = 0)", diffTable({}, unintended).rows));
-    process.stdout.write(formatTable("Deferred (informational)", diffTable({}, deferred).rows) + "\n");
+    process.stdout.write(formatTable("Deferred (informational)", diffTable({}, deferred).rows));
+    process.stdout.write(
+      formatTable("Post-claim demotions (target = 0)", diffPostClaim(undefined, postClaim).rows) + "\n",
+    );
     if (verbose) process.stdout.write(formatPerFile(perFile));
     return;
   }
@@ -288,13 +366,34 @@ function main(): void {
 
   const unDiff = diffTable(baseline.unintended, unintended);
   const defDiff = diffTable(baseline.deferred, deferred);
+  const pcDiff = diffPostClaim(baseline.postClaim, postClaim);
   process.stdout.write(formatTable("Unintended (gated; must not increase)", unDiff.rows));
-  process.stdout.write(formatTable("Deferred (informational)", defDiff.rows) + "\n");
+  process.stdout.write(formatTable("Deferred (informational)", defDiff.rows));
+  process.stdout.write(formatTable("Post-claim demotions (gated; must not increase)", pcDiff.rows) + "\n");
 
   if (unDiff.anyIncrease) {
     process.stderr.write(
       `\nIR fallback gate: at least one unintended bucket grew vs. baseline.\n` +
         `If the change was intentional (e.g. new IR-claimable feature added in a separate PR), ` +
+        `run \`pnpm run check:ir-fallbacks -- --update\` and commit the refreshed baseline.\n`,
+    );
+    if (verbose) process.stderr.write(formatPerFile(perFile));
+    process.exit(1);
+  }
+
+  // #1923 — post-claim demotions are a hard regression: a function the selector
+  // CLAIMED now fails build/verify/lower and silently falls back to legacy
+  // (the #1922 while-loop defect was exactly this, and no gate caught it).
+  // Growth fails CI; the legitimate ways to clear it are to FIX the IR path so
+  // the claimed function compiles, or — if a shape genuinely shouldn't be
+  // claimed — to make the selector reject it (which moves the count into a
+  // selector-level `IrFallbackReason` bucket instead).
+  if (pcDiff.anyIncrease) {
+    process.stderr.write(
+      `\nIR fallback gate: post-claim demotions grew vs. baseline (#1923).\n` +
+        `A function the selector claimed now fails build/verify/lower and falls back to legacy.\n` +
+        `Fix the IR path so the claimed function compiles, or make the selector reject the\n` +
+        `shape (moving it into a selector-level bucket). If the growth is genuinely intended,\n` +
         `run \`pnpm run check:ir-fallbacks -- --update\` and commit the refreshed baseline.\n`,
     );
     if (verbose) process.stderr.write(formatPerFile(perFile));
@@ -316,7 +415,9 @@ function main(): void {
   // dirtying the working tree.
   const totalBase = Object.values(baseline.unintended).reduce((a: number, b) => a + (b ?? 0), 0);
   const totalCur = Object.values(unintended).reduce((a: number, b) => a + (b ?? 0), 0);
-  const anyDecrease = unDiff.rows.some((r) => r.delta < 0);
+  // #1923 — bank post-claim decreases too, so a PR that fixes an IR-path
+  // demotion ratchets the bucket down and the next PR can't reintroduce it.
+  const anyDecrease = unDiff.rows.some((r) => r.delta < 0) || pcDiff.rows.some((r) => r.delta < 0);
 
   if (mode === "update-on-decrease" && anyDecrease) {
     writeFileSync(BASELINE_PATH, JSON.stringify(next, null, 2) + "\n", "utf-8");
@@ -330,8 +431,11 @@ function main(): void {
 
   // All decreases or equal — silently refresh on local runs is unsafe (would
   // cause main to drift). Just succeed; CI doesn't auto-update either.
-  process.stdout.write("\nIR fallback gate: OK (no unintended increases vs. baseline).\n");
+  process.stdout.write("\nIR fallback gate: OK (no unintended/post-claim increases vs. baseline).\n");
   if (verbose) process.stdout.write(formatPerFile(perFile));
 }
 
-main();
+main().catch((err) => {
+  process.stderr.write(`check-ir-fallbacks failed: ${err instanceof Error ? err.stack : String(err)}\n`);
+  process.exit(2);
+});

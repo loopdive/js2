@@ -1,10 +1,12 @@
 ---
 id: 1804
 title: "feat(IR): vec.new_fixed — lower fixed-length array literals through the IR path"
-status: ready
+status: done
+assignee: ttraenkler/tld-2139
 sprint: 63
 created: 2026-06-03
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
 priority: medium
 feasibility: medium
 task_type: feature
@@ -277,3 +279,71 @@ Carved from task #278 (`refactor(IR): reduce body-shape-rejected 31→<20`)
 root-cause analysis: the dominant fixable rejection category is array-literal
 construction, which has no IR node. This issue schedules that node so #278 can
 land afterward as the ratchet step.
+
+## Resolution (2026-06-16)
+
+Implemented per the 8-step plan. The IR Phase-1 path now CONSTRUCTS
+fixed-length, non-spread, non-sparse, same-typed array literals via a new
+first-class `vec.new_fixed` node (through the `BackendEmitter` trait, not a
+desugar), unblocking the array-literal `body-shape-rejected`/`call-graph-closure`
+group.
+
+### What landed
+
+1. **`src/ir/nodes.ts`** — `IrInstrVecNewFixed` (`elements`, `elementType`),
+   added to the `IrInstr` union.
+2. **`src/ir/from-ast.ts`** — `lowerArrayLiteral(expr, cx, hint)` replaces the
+   throw: rejects spread/sparse, recovers the element type from the hint
+   (`resolveVec(hint).elementValType`) or infers it from the first element and
+   requires uniformity (`irTypeEquals`), coerces each element, and emits via the
+   builder. `IrFromAstResolver` gained `resolveVecForElement`.
+3. **`src/ir/select.ts`** — array literals are now selector-accepted (shape:
+   no spread/sparse, all elements Phase-1), keeping `f([1,2,3])`'s callee in the
+   claim set.
+4. **`src/ir/integration.ts`** — `resolveVecForElement(elementValType)` (shared
+   helper) get-or-creates the `$arr`/`$vec` types via the legacy
+   `getOrRegisterVecType`/`getArrTypeIdxFromVec` so the constructed vec shares
+   identity with `compileArrayLiteral` output. Wired into both resolvers.
+5. **Backend trait + impls** — `emitVecNewFixed(layout, count, dataScratchLocal,
+   out)` on `emitter.ts`; **WasmGC** impl (`array.new_fixed` → stash data in a
+   scratch local → `i32.const N` → reload → `struct.new`, matching the legacy
+   (length, data) field order); **linear** + **bytecode** loud stubs (WasmGC is
+   the gate-tested target).
+6. **`src/ir/lower.ts`** — `case "vec.new_fixed"` arm + a lazy per-array-typeIdx
+   scratch local (`ensureVecDataScratch`); plus the parallel arms in the
+   scheduling-effect classifier (pure, like `object.new`) and the use-collector.
+   Parallel `vec.new_fixed` arms also added to `verify.ts` (collectUses),
+   `dead-code.ts`, `monomorphize.ts`, `inline-small.ts`. (propagate.ts is
+   AST-level — no IR arm needed; ownership.ts treats it as a pure alloc via
+   `default`, like `object.new`.)
+7. **`plan/log/ir-adoption.md`** — `ArrayLiteralExpression` row updated.
+8. **Baseline** — no ratchet needed: the playground corpus's
+   `body-shape-rejected` count is unchanged (those examples use spread/methods/
+   mixed-type literals that stay out of scope), so `check:ir-fallbacks` passes
+   with no growth and the baseline is untouched. The feature IS live: a function
+   whose only non-Phase-1 construct is `[1,2,3,4,5]` now logs
+   `claimed=1 fallback=0` and its WAT contains `array.new_fixed` (previously
+   `fallback=1 body-shape-rejected`).
+
+### Acceptance criteria — verified (tests/ir-vec-new-fixed.test.ts, 8 tests)
+
+- ✅ `vec.new_fixed` node + WasmGC lowering; linear/bytecode stubs.
+- ✅ Construction cases compile through IR and run correctly (number literal +
+  for-of=6; `f([10,20,30])`=60; `return [a,b]` indexed=9; round-trip
+  `.length`/`vec.get`=35) — each asserts legacy==IR AND `array.new_fixed` in the
+  IR WAT (proof the IR path was used, not demoted).
+- ✅ Fallback shapes (spread / sparse / hintless-empty) cleanly revert to legacy
+  and still run.
+- ✅ `check:ir-fallbacks` passes (no growth).
+- ✅ No equivalence regression — 28 array equivalence tests pass; the IR test
+  suite shows the SAME 8 pre-existing `duplicate SSA def` failures (inline-small
+  + passes) with AND without this change (verified by swapping in `origin/main`
+  for all 14 touched src files — identical 130 pass / 8 fail), so none are new.
+
+### Scope note
+
+Empty-literal IR claiming depends on the hint resolving to a vec ref (full type
+propagation); when it doesn't, it cleanly falls back (still correct, value 0).
+Spread/sparse/mixed-type/non-scalar-element literals remain legacy follow-ups.
+The linear `emitVecNewFixed` is a `notImplemented` stub (WasmGC is the
+gate-tested default; the linear store sequence is a follow-up).

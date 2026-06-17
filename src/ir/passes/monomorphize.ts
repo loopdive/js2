@@ -692,6 +692,8 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.vec];
     case "vec.get":
       return [instr.vec, instr.index];
+    case "vec.new_fixed":
+      return [...instr.elements]; // #1804
     case "forof.vec": {
       const result: IrValueId[] = [instr.vec];
       const walk = (instrs: readonly IrInstr[]): void => {

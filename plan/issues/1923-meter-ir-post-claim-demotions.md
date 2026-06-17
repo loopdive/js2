@@ -1,10 +1,12 @@
 ---
 id: 1923
 title: "Meter IR post-claim demotions in the fallback ratchet — build/verify/lower failures are invisible to CI"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/tld-2108
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -60,3 +62,59 @@ unmetered.
 
 Compiler quality review 2026-06. Related: #1376 (ratchet), #1530 (phase-out),
 #1922 (the defect this would have caught).
+
+## Implementation (2026-06-16)
+
+Post-claim demotions are now surfaced and gated, mirroring the #2089
+`fallbackCounts` plumbing.
+
+- **Surface** `CompileResult.irPostClaimErrors` (`src/index.ts`): each entry is
+  `{ kind, func, message }` from `IrIntegrationReport.errors` (kind =
+  build/verify/lower/backend-legality). Always collected on the WasmGC path
+  (cheap — the errors are already iterated in `codegen/index.ts` where they
+  demote to the warning channel), `undefined` for the linear backend.
+  `ctx.irPostClaimErrors` accumulator added in `context/types.ts` +
+  `create-context.ts`; populated in `codegen/index.ts`'s `report.errors` loop;
+  returned from both `generateModule` return sites; captured/forwarded through
+  all three `compiler.ts` entry points alongside `fallbackCounts`.
+- **Gate** (`scripts/check-ir-fallbacks.ts`): `aggregate()` now also runs a real
+  `compile()` per corpus file and buckets `irPostClaimErrors` by
+  `kind → normalized message class` (`normalizeMessageClass` strips quoted
+  identifiers + bare integers). New `postClaim` family in
+  `ir-fallback-baseline.json` (`{ build, verify, lower, backend-legality }`).
+  Same semantics as the selector ratchet: growth fails CI;
+  `--update-on-decrease` banks improvements (now also fires on a post-claim
+  decrease); `--verbose`/`--json` include it. The gate output shows BOTH the
+  selector buckets and the post-claim buckets.
+- **Baseline**: `postClaim` is all-empty on current main (the corpus has zero
+  claimed-then-failed functions — the #1922 defect is fixed), so the committed
+  ceiling is 0 for every kind. Any future regression that demotes a claimed
+  function trips the gate.
+- **Phase-out hook**: `STRICT_IR_BUILD_ERRORS` (codegen/index.ts) remains the
+  per-message-class promotion point — as a post-claim bucket hits/stays zero,
+  add the class there to make its regression a hard compile error (#1530).
+- **Test seam**: `JS2WASM_TEST_INJECT_IR_BUILD_THROW` (integration.ts) forces a
+  build-time demotion on every claimed function — off in all normal builds,
+  used only by the test to exercise the metering + gate end to end.
+
+### Acceptance criteria — met
+- [x] `check:ir-fallbacks` output shows selector buckets AND post-claim buckets.
+- [x] A deliberate injected `from-ast`/build throw on a claimed shape fails the
+      gate (`tests/issue-1923.test.ts` runs the real gate with the injection on
+      → exit 1, "post-claim demotions grew").
+- [x] Baseline committed (`ir-fallback-baseline.json` gains `postClaim`); the
+      `ci.yml` `quality` job is unchanged (same `pnpm run check:ir-fallbacks`
+      command).
+
+## Test Results (2026-06-16)
+
+`tests/issue-1923.test.ts` — 4/4:
+- cleanly-claimed `fib` → no post-claim demotions;
+- injected build throw on a claimed fn → metered on `irPostClaimErrors`
+  (`kind:"build"`, `func:"fib"`), compile still succeeds (legacy fallback);
+- ratchet gate FAILS with the injection (post-claim bucket grows above 0);
+- ratchet gate PASSES on the clean corpus.
+
+`check:ir-fallbacks` (clean) and `check:codegen-fallbacks` both green (the
+shared `CompileResult`/`fallbackCounts` plumbing still works). typecheck / lint
+/ format clean.

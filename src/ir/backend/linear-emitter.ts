@@ -121,6 +121,15 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
     } as Instr);
   }
 
+  // #1804 — vec construction is not yet implemented for the linear backend.
+  // The read side (len/elem-get) is #1714 scope; the bump-allocated
+  // `[header][len][cap][elements…]` store sequence is a follow-up. WasmGC is
+  // the gate-tested default target, so a loud stub is acceptable here (matches
+  // the other out-of-scope linear stubs).
+  emitVecNewFixed(): void {
+    notImplemented("emitVecNewFixed");
+  }
+
   // ---- everything else: out of #1714 scope, fail loudly -------------------
 
   emitConst(): void {

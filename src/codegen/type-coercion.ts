@@ -2449,8 +2449,14 @@ export function tryStructToString(ctx: CodegenContext, fctx: FunctionContext, fr
           const savedBody = fctx.body;
           const scratch: Instr[] = [];
           fctx.body = scratch;
+          // (#2182) Register the detached outer body in liveBodies so a late
+          // import triggered inside `normaliseToString` shifts its accumulated
+          // `call` funcIdxs too (the shifter only walks fctx.body = scratch
+          // here, not this raw local).
+          ctx.liveBodies.add(savedBody);
           normaliseToString(info.returnType?.kind);
           fctx.body = savedBody;
+          ctx.liveBodies.delete(savedBody);
           thenInstrs.push(...scratch);
           return [
             { op: "local.get", index: eqLocal } as Instr,

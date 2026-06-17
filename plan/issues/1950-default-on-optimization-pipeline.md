@@ -1,10 +1,12 @@
 ---
 id: 1950
 title: "Default-on optimization — default builds ship unoptimized; add -O default where Binaryen is present plus tiny always-on cleanups"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/tld-1921
 priority: medium
 feasibility: easy
 reasoning_effort: medium
@@ -54,6 +56,54 @@ goal: performance
 - Playground binary sizes/perf sidebar reflect the change (expect
   improvement); benchmark gate green.
 - Blocked-by relationship to #1941 recorded and respected.
+
+## Resolution (2026-06-16)
+
+Flipped the **CLI** default to optimized output (approach step 1, the headline
+acceptance criterion). Dependency #1941 (differential testing of `--optimize`
+output) is **done** (PR #1323), so the blast-radius prerequisite is satisfied.
+
+- **`src/cli.ts`**:
+  - `optimize` now defaults to `3` (was `false`) — a bare `js2 build foo.ts`
+    runs `wasm-opt` at `-O3` when binaryen is present.
+  - Added `--no-optimize` / `-O0` to opt out (raw codegen output).
+  - Updated `--help` text.
+- **`src/compiler.ts` / programmatic `compile()` API**: unchanged. The library
+  default stays opt-out (`options.optimize` falsy ⇒ no wasm-opt) so embedding
+  js2wasm has no surprise behaviour change, per the approach. Library users opt
+  in with `{ optimize: 3 }`.
+- **`docs/cli.md`**: documents default-on + `--no-optimize`, and the
+  CLI-vs-API distinction.
+
+Graceful degradation already handled (`optimize.ts`): when neither npm binaryen
+nor system `wasm-opt` is present, the build emits a one-line warning and ships
+the unoptimized binary — default-on never turns absence into a failure.
+
+### Scope notes
+
+- **Acceptance criterion 2 (playground sizes / perf sidebar)** is already
+  satisfied by existing infrastructure: the benchmark/size generators
+  (`scripts/generate-playground-benchmark-sidebar*.mjs`,
+  `scripts/generate-size-benchmarks.ts`) already run `optimizeBinaryAsync`
+  (level 4) before measuring, so the published sidebar/size figures already
+  reflect optimized output. No change needed there.
+- **Approach step 3 (always-on in-compiler const-folding + dead convert/drop
+  removal)** is deliberately deferred to a follow-up: it is orthogonal to the
+  default-on flip (it helps only the no-binaryen path), and adding new
+  always-on codegen passes carries its own correctness risk that warrants a
+  separate, focused PR. This PR delivers the headline value (default builds
+  are now optimized) cleanly.
+
+## Test Results
+
+- `tests/issue-1950-default-optimization.test.ts` — 2/2 pass:
+  - Default CLI build (standalone target) is smaller than `--no-optimize`
+    (2,690 vs 9,754 bytes locally) and both compute `test(5) === 20` — optimized
+    output stays correct.
+  - `-O0` produces byte-identical output to `--no-optimize`.
+- Existing CLI suites (`issue-1554`, `issue-1590`, `issue-1775`, `issue-1580`)
+  pass with the new default (16/16).
+- `npm run typecheck` and `npm run lint` (Biome) clean.
 
 ## Source
 

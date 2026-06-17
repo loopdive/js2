@@ -68,6 +68,7 @@ import {
   type IrTypeRef,
   type IrValueId,
   asVal,
+  forEachNestedBuffer,
 } from "./nodes.js";
 import { isSideEffecting } from "./passes/dead-code.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
@@ -155,6 +156,16 @@ export interface IrLowerResolver {
    * (selector should have rejected the for-of).
    */
   resolveVec?(valType: ValType): IrVecLowering | null;
+  /**
+   * #1804 — resolve (registering if needed) the vec struct for an *element*
+   * ValType, used by `vec.new_fixed` construction where a fresh literal has no
+   * vec typeIdx yet. Unlike `resolveVec` (read-only — recognizes an existing
+   * `(ref $vec)`), this get-or-creates the `$arr`/`$vec` types for the element
+   * via the legacy registry so the constructed vec shares identity with the
+   * legacy `compileArrayLiteral` output (===, instanceof Array, the for-of fast
+   * path). Returns the same `IrVecLowering` shape as `resolveVec`.
+   */
+  resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
   /**
    * Resolve the Wasm value type used for `IrType.string` in the active
    * backend.
@@ -354,36 +365,12 @@ export function lowerIrFunctionBody<S>(
       defBy.set(instr.result, instr);
       defBlockOf.set(instr.result, blockId);
     }
-    if (instr.kind === "forof.vec" || instr.kind === "forof.iter" || instr.kind === "forof.string") {
-      for (const sub of instr.body) registerInstrDefs(sub, blockId);
-    }
-    // Slice 9 (#1169h): walk into try / catch / finally buffers so SSA
-    // defs inside any of them register in the def maps.
-    if (instr.kind === "try") {
-      for (const sub of instr.body) registerInstrDefs(sub, blockId);
-      if (instr.catchClause) {
-        for (const sub of instr.catchClause.body) registerInstrDefs(sub, blockId);
-      }
-      if (instr.finallyBody) {
-        for (const sub of instr.finallyBody) registerInstrDefs(sub, blockId);
-      }
-    }
-    // Slice 12 (#1280): walk into while/for loop cond + body + update buffers.
-    if (instr.kind === "while.loop") {
-      for (const sub of instr.cond) registerInstrDefs(sub, blockId);
-      for (const sub of instr.body) registerInstrDefs(sub, blockId);
-    }
-    if (instr.kind === "for.loop") {
-      for (const sub of instr.cond) registerInstrDefs(sub, blockId);
-      for (const sub of instr.body) registerInstrDefs(sub, blockId);
-      for (const sub of instr.update) registerInstrDefs(sub, blockId);
-    }
-    // (#1392) walk into if's then/else buffers so SSA defs inside an arm
-    // register in the def maps.
-    if (instr.kind === "if") {
-      for (const sub of instr.then) registerInstrDefs(sub, blockId);
-      for (const sub of instr.else) registerInstrDefs(sub, blockId);
-    }
+    // Descend into every nested buffer (if arms, loop cond/body/update, for-of
+    // bodies, try/catch/finally) so SSA defs inside register in the def maps.
+    // (#1922) The buffer list is now the single authority in nodes.ts.
+    forEachNestedBuffer(instr, (buffer) => {
+      for (const sub of buffer) registerInstrDefs(sub, blockId);
+    });
   };
   for (const block of func.blocks) {
     for (const instr of block.instrs) {
@@ -723,6 +710,19 @@ export function lowerIrFunctionBody<S>(
   // lazily on the first await in the function; reused across subsequent
   // awaits in the same function body.
   let awaitScratchPromiseIdx: number | null = null;
+  // #1804 — scratch locals for `vec.new_fixed`: one per (array typeIdx) to stash
+  // the `array.new_fixed` data ref while the length is pushed below it for the
+  // (length, data) struct.new field order. Keyed by arrayTypeIdx so distinct
+  // element types get distinctly-typed data locals; reused across literals.
+  const vecNewFixedDataScratch = new Map<number, number>();
+  const ensureVecDataScratch = (arrayTypeIdx: number): number => {
+    const existing = vecNewFixedDataScratch.get(arrayTypeIdx);
+    if (existing !== undefined) return existing;
+    const idx = func.params.length + locals.length;
+    locals.push({ name: `$vec_data_${arrayTypeIdx}`, type: { kind: "ref_null", typeIdx: arrayTypeIdx } });
+    vecNewFixedDataScratch.set(arrayTypeIdx, idx);
+    return idx;
+  };
   const ensureJsBitwiseScratch = (rhsIsI32: boolean): { rhs: number; tmp: number } => {
     if (jsBitwiseTmpIdx === null) {
       jsBitwiseTmpIdx = func.params.length + locals.length;
@@ -1406,6 +1406,24 @@ export function lowerIrFunctionBody<S>(
         emitter.emitVecDataPtr(vec, out);
         emitValue(instr.index, out);
         emitter.emitElemGet(vec, out);
+        return;
+      }
+      case "vec.new_fixed": {
+        // #1804 — build a fixed-length vec from its element SSA values.
+        const elemVT = asVal(instr.elementType);
+        if (!elemVT) {
+          throw new Error(`ir/lower: vec.new_fixed elementType must be a val IrType (${func.name})`);
+        }
+        const vec = resolver.resolveVecForElement?.(elemVT);
+        if (!vec) {
+          throw new Error(`ir/lower: resolver cannot lower vec for vec.new_fixed (${func.name})`);
+        }
+        // Push e0…eN in order (deepest first), then build the data array +
+        // wrap in the vec struct via a scratch local for the (length, data)
+        // field order.
+        for (const el of instr.elements) emitValue(el, out);
+        const dataScratch = ensureVecDataScratch(vec.arrayTypeIdx);
+        emitter.emitVecNewFixed(vec, instr.elements.length, dataScratch, out);
         return;
       }
       // Slice 7a/7b (#1169f): generator ops.
@@ -2438,6 +2456,7 @@ function schedFxOf(instr: IrInstr, cache: Map<IrInstr, SchedFx>): SchedFx {
     case "string.eq":
     case "string.len":
     case "object.new":
+    case "vec.new_fixed": // #1804 — fresh vec allocation, pure (like object.new)
     case "refcell.new":
     case "closure.new":
     case "extern.regex":
@@ -2657,6 +2676,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.vec];
     case "vec.get":
       return [instr.vec, instr.index];
+    case "vec.new_fixed":
+      return instr.elements; // #1804
     case "forof.vec":
       // Body uses are collected separately and merged in by
       // `lowerIrFunctionToWasm`.
@@ -2735,38 +2756,26 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
 export function collectForOfBodyUses(body: readonly IrInstr[]): IrValueId[] {
   const uses: IrValueId[] = [];
   for (const instr of body) {
+    // Direct operands first. `collectIrUses` keeps the lowering-specific
+    // semantics (the intentional `closure.call` callee double-count for
+    // Wasm-local materialisation), so it is NOT replaced by the shared
+    // `directUses`.
     for (const u of collectIrUses(instr)) uses.push(u);
-    if (instr.kind === "forof.vec" || instr.kind === "forof.iter" || instr.kind === "forof.string") {
-      for (const u of collectForOfBodyUses(instr.body)) uses.push(u);
-    }
-    // Slice 9 (#1169h) — recurse into try / catch / finally buffers.
-    if (instr.kind === "try") {
-      for (const u of collectForOfBodyUses(instr.body)) uses.push(u);
-      if (instr.catchClause) {
-        for (const u of collectForOfBodyUses(instr.catchClause.body)) uses.push(u);
-      }
-      if (instr.finallyBody) {
-        for (const u of collectForOfBodyUses(instr.finallyBody)) uses.push(u);
-      }
-    }
-    // Slice 12 (#1280) — recurse into while / for loop buffers.
-    if (instr.kind === "while.loop") {
-      for (const u of collectForOfBodyUses(instr.cond)) uses.push(u);
-      for (const u of collectForOfBodyUses(instr.body)) uses.push(u);
+    // Recurse into every nested buffer via the single shared authority
+    // (#1922 — was five hand-rolled per-kind walkers). Buffer order matches
+    // the previous code (loop cond→body→update; if then→else; try
+    // body→catch→finally; for-of body).
+    forEachNestedBuffer(instr, (buffer) => {
+      for (const u of collectForOfBodyUses(buffer)) uses.push(u);
+    });
+    // `collectIrUses` deliberately omits the loop condValue and the if
+    // arm-result values (they are emission-internal, surfaced only here so
+    // the cross-block use counter materialises outer SSA values referenced
+    // by a loop's condition or an if arm). Push them after the buffer walk,
+    // preserving the original ordering.
+    if (instr.kind === "while.loop" || instr.kind === "for.loop") {
       uses.push(instr.condValue);
-    }
-    if (instr.kind === "for.loop") {
-      for (const u of collectForOfBodyUses(instr.cond)) uses.push(u);
-      for (const u of collectForOfBodyUses(instr.body)) uses.push(u);
-      for (const u of collectForOfBodyUses(instr.update)) uses.push(u);
-      uses.push(instr.condValue);
-    }
-    // (#1392) Recurse into if's then/else arms so outer SSA values
-    // referenced inside an arm are correctly counted as cross-block
-    // uses (driving Wasm-local materialisation).
-    if (instr.kind === "if") {
-      for (const u of collectForOfBodyUses(instr.then)) uses.push(u);
-      for (const u of collectForOfBodyUses(instr.else)) uses.push(u);
+    } else if (instr.kind === "if") {
       uses.push(instr.thenValue);
       uses.push(instr.elseValue);
     }

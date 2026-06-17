@@ -12,6 +12,7 @@ import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { reportError } from "../context/errors.js";
+import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addUnionImports, ensureStructForType, getArrTypeIdxFromVec, localGlobalIdx } from "../index.js";
@@ -218,6 +219,7 @@ function compileMemberIncDec(
     if (!typeName) {
       // Unresolvable type (e.g. this.x in module scope, new Object().prop)
       // Gracefully emit NaN — incrementing an unresolvable property is NaN in JS
+      reportSilentFallback(ctx, "const-fallback", "unary-updates:incdec-unresolvable-receiver-type", operand);
       fctx.body.push({ op: "f64.const", value: NaN });
       return { kind: "f64" };
     }
@@ -305,6 +307,7 @@ function compileMemberIncDec(
     const fields = ctx.structFields.get(typeName);
     if (structTypeIdx === undefined || !fields) {
       // Struct not found — gracefully emit NaN
+      reportSilentFallback(ctx, "const-fallback", "unary-updates:incdec-struct-not-found", operand);
       fctx.body.push({ op: "f64.const", value: NaN });
       return { kind: "f64" };
     }
@@ -312,6 +315,7 @@ function compileMemberIncDec(
     const fieldIdx = fields.findIndex((f) => f.name === propName);
     if (fieldIdx === -1) {
       // Unknown field — gracefully emit NaN (reading undefined property in numeric context)
+      reportSilentFallback(ctx, "const-fallback", "unary-updates:member-incdec-unknown-field", operand);
       fctx.body.push({ op: "f64.const", value: NaN });
       return { kind: "f64" };
     }
@@ -449,6 +453,7 @@ function compileMemberIncDec(
       const thenBody = fctx.body.splice(throwStart);
       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenBody });
       // Non-null externref base: incrementing a dynamic property yields NaN.
+      reportSilentFallback(ctx, "const-fallback", "unary-updates:incdec-dynamic-property-externref", operand);
       fctx.body.push({ op: "f64.const", value: NaN });
       return { kind: "f64" };
     }
@@ -460,6 +465,7 @@ function compileMemberIncDec(
       fctx.body.push({ op: "drop" });
       const keyResult = compileExpression(ctx, fctx, operand.argumentExpression);
       if (keyResult) fctx.body.push({ op: "drop" });
+      reportSilentFallback(ctx, "const-fallback", "unary-updates:incdec-nonref-element-access", operand);
       fctx.body.push({ op: "f64.const", value: NaN });
       return { kind: "f64" };
     }
@@ -597,6 +603,7 @@ function compileMemberIncDec(
   }
 
   // Unsupported operand kind — gracefully emit NaN instead of hard error
+  reportSilentFallback(ctx, "const-fallback", "unary-updates:incdec-unsupported-operand", operand);
   fctx.body.push({ op: "f64.const", value: NaN });
   return { kind: "f64" };
 }
@@ -1318,6 +1325,7 @@ function compilePrefixIncrementProperty(
   const fieldIdx = fields.findIndex((f) => f.name === propName);
   if (fieldIdx === -1) {
     // Unknown field — gracefully emit NaN (reading undefined property in numeric context)
+    reportSilentFallback(ctx, "const-fallback", "unary-updates:prefix-incr-property-unknown-field", target);
     fctx.body.push({ op: "f64.const", value: NaN });
     return { kind: "f64" };
   }
@@ -1512,6 +1520,7 @@ function compilePostfixIncrementProperty(
   const fieldIdx = fields.findIndex((f) => f.name === propName);
   if (fieldIdx === -1) {
     // Unknown field — gracefully emit NaN (reading undefined property in numeric context)
+    reportSilentFallback(ctx, "const-fallback", "unary-updates:postfix-incr-property-unknown-field", target);
     fctx.body.push({ op: "f64.const", value: NaN });
     return { kind: "f64" };
   }

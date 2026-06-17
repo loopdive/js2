@@ -9,9 +9,12 @@
  *     module (the concat result is an i32 pointer but was typed/added as f64).
  *     String `+=` now calls `__str_concat`, and `inferExprType` treats a string
  *     `+` as an i32 result so the local/global gets the right type.
- *
- * (The UTF-8→UTF-16 `.length` divergence for non-ASCII is a separate, larger
- * storage-strategy change tracked in the issue; ASCII lengths are correct.)
+ *  3. `.length` returned the UTF-8 BYTE count, not the JS UTF-16 code-unit
+ *     count (`"é世😀".length` → 9, Node → 4). The user-facing `.length` property
+ *     now routes through a new `__str_length_utf16` runtime fn that scans the
+ *     UTF-8 bytes and counts code units (astral code points = 2). The internal
+ *     `__str_len` (byte count) is unchanged — slice/indexOf still index by
+ *     byte. (Full code-unit-offset slice/charCodeAt is the larger follow-up.)
  *
  * Validated on `target: "linear"` against Node.
  */
@@ -67,7 +70,29 @@ describe("#1976 linear backend string relationals and concat typing", () => {
     });
   });
 
-  it("ASCII .length is unaffected", async () => {
-    expect(await runLinear(`return "hello".length;`)).toBe(5);
+  describe(".length returns UTF-16 code units, not UTF-8 bytes", () => {
+    // [source string, expected JS .length]. Each expected value === the same
+    // string's `.length` in Node (UTF-16 code units).
+    const cases: Array<[string, number]> = [
+      ["hello", 5], // ASCII: 1 byte = 1 code unit (unchanged)
+      ["", 0], // empty
+      ["é", 1], // U+00E9: 2 UTF-8 bytes, 1 code unit
+      ["世", 1], // U+4E16: 3 UTF-8 bytes, 1 code unit
+      ["😀", 2], // U+1F600: 4 UTF-8 bytes, astral → surrogate pair (2 units)
+      ["é世😀", 4], // 1 + 1 + 2 (the issue's headline repro: was 9)
+      ["😀😀", 4], // 2 astral code points → 4 code units (was 8)
+      ["a😀b", 4], // mixed ASCII + astral: 1 + 2 + 1
+    ];
+    for (const [s, want] of cases) {
+      it(`${JSON.stringify(s)}.length -> ${want}`, async () => {
+        // The literal is embedded directly; the linear string stores it as UTF-8.
+        expect(await runLinear(`const s = ${JSON.stringify(s)}; return s.length;`)).toBe(want);
+      });
+    }
+
+    it(".length of a concatenated multi-byte string counts code units", async () => {
+      // "é" (1) + "😀" (2) → 3 code units; exercises length-after-__str_concat.
+      expect(await runLinear(`const a = "é" + "😀"; return a.length;`)).toBe(3);
+    });
   });
 });

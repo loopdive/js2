@@ -26,6 +26,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { irFallbacks } from "./helpers/ir-fallbacks.js";
 import { buildImports } from "../src/runtime.js";
 import { planIrCompilation } from "../src/ir/select.js";
 import ts from "typescript";
@@ -238,17 +239,11 @@ describe("#1181 — IR compile produces no IR-fallback errors for for-of cases",
     it(`compiles "${tc.name}" cleanly under experimentalIR`, async () => {
       const r = await compile(tc.source, { experimentalIR: true });
       expect(r.success).toBe(true);
-      // Errors prefixed with "IR path failed" / "ir/from-ast" / "ir/lower"
-      // mean the selector claimed the function but the lowerer threw.
-      // The function would still fall back to legacy, so compile would
-      // succeed — but the noisy error indicates a slice-6-bridge bug.
-      const irErrors = r.errors.filter(
-        (e) =>
-          e.message.startsWith("IR path failed") ||
-          e.message.startsWith("ir/from-ast") ||
-          e.message.startsWith("ir/lower"),
-      );
-      expect(irErrors).toEqual([]);
+      // An IR-path fallback means the selector claimed the function but the
+      // lowerer threw. The function would still fall back to legacy, so compile
+      // would succeed — but the fallback indicates a slice-6-bridge bug. Read
+      // the structured channel (#2137) instead of string-matching diagnostics.
+      expect(irFallbacks(r)).toEqual([]);
     });
   }
 });

@@ -224,4 +224,49 @@ describe("#1326 Phase 1C-B — WASI microtask queue + Promise.then", () => {
     (exports.__drain_microtasks as () => void)();
     expect((exports.value as () => number)()).toBe(7);
   });
+
+  // (#2165) Standalone `.catch(onRejected)` ≡ `.then(undefined, onRejected)`.
+  // Removes the `Promise_catch` / `__make_callback` host-import leak in WASI
+  // mode (the `instantiateWasi` helper asserts no `Promise_then` import, which
+  // also covers the catch lowering since it routes through the same native
+  // then-machinery).
+  it("routes a rejected promise through .catch in WASI mode", async () => {
+    const exports = await instantiateWasi(`
+      let out = 0;
+      export function schedule(): number {
+        Promise.reject(5).catch((reason: number) => {
+          out = reason + 3;
+          return out;
+        });
+        return out;
+      }
+      export function value(): number { return out; }
+    `);
+
+    expect((exports.schedule as () => number)()).toBe(0);
+    (exports.__drain_microtasks as () => void)();
+    expect((exports.value as () => number)()).toBe(8);
+  });
+
+  it("a fulfilled promise skips its .catch handler in WASI mode", async () => {
+    const exports = await instantiateWasi(`
+      let out = 0;
+      export function schedule(): number {
+        Promise.resolve(10).catch((_reason: number) => {
+          out = 999;
+          return out;
+        }).then((v: number) => {
+          out = v;
+          return out;
+        });
+        return out;
+      }
+      export function value(): number { return out; }
+    `);
+
+    expect((exports.schedule as () => number)()).toBe(0);
+    (exports.__drain_microtasks as () => void)();
+    // catch is skipped (no rejection); the fulfilled value (10) flows through.
+    expect((exports.value as () => number)()).toBe(10);
+  });
 });

@@ -13,6 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { irFallbacks } from "./helpers/ir-fallbacks.js";
 import { buildImports } from "../src/runtime.js";
 import { planIrCompilation } from "../src/ir/select.js";
 import ts from "typescript";
@@ -88,13 +89,7 @@ describe("#1185 — slot-binding asType widening (native-strings string for-of)"
     // confirm Wasm is valid.
     const r = await compile(source, { experimentalIR: true, nativeStrings: true });
     expect(r.success).toBe(true);
-    const irErrors = r.errors.filter(
-      (e) =>
-        e.message.startsWith("IR path failed") ||
-        e.message.startsWith("ir/from-ast") ||
-        e.message.startsWith("ir/lower"),
-    );
-    expect(irErrors).toEqual([]);
+    expect(irFallbacks(r)).toEqual([]);
     // Verify the Wasm at least validates.
     await WebAssembly.compile(r.binary);
   });

@@ -10,6 +10,7 @@ import { tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32 } from "../binary-ops.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
+import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
@@ -27,7 +28,12 @@ import {
 } from "../index.js";
 import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
-import { emitNullGuardedStructGet, isProvablyNonNull, isSafeBoundsEliminated } from "../property-access.js";
+import {
+  emitNullGuardedStructGet,
+  isProvablyNonNull,
+  isSafeBoundsEliminated,
+  typeErrorThrowInstrs,
+} from "../property-access.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, skipTransparentExpressions, valTypesMatch } from "../shared.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
@@ -871,7 +877,10 @@ function compileDestructuringAssignment(
       }
       if (!propName) continue; // truly unresolvable property name — skip
       const fieldIdx = fields.findIndex((f) => f.name === propName);
-      if (fieldIdx === -1) continue;
+      if (fieldIdx === -1) {
+        reportSilentFallback(ctx, "lookup-miss-skip", "assignment:destructure-assign-property-field-miss", prop);
+        continue;
+      }
       const fieldType = fields[fieldIdx]!.type;
 
       // Determine the target and optional default value
@@ -1876,7 +1885,10 @@ function emitObjectDestructureFromLocal(
     if (ts.isShorthandPropertyAssignment(prop)) {
       const propName = prop.name.text;
       const fieldIdx = fields.findIndex((f) => f.name === propName);
-      if (fieldIdx === -1) continue;
+      if (fieldIdx === -1) {
+        reportSilentFallback(ctx, "lookup-miss-skip", "assignment:object-destructure-shorthand-field-miss", prop);
+        continue;
+      }
 
       let localIdx = fctx.localMap.get(propName);
       if (localIdx === undefined) {
@@ -1905,7 +1917,15 @@ function emitObjectDestructureFromLocal(
       }
       if (!propName) continue; // truly unresolvable property name — skip
       const fieldIdx = fields.findIndex((f) => f.name === propName);
-      if (fieldIdx === -1) continue;
+      if (fieldIdx === -1) {
+        reportSilentFallback(
+          ctx,
+          "lookup-miss-skip",
+          "assignment:object-destructure-from-local-property-field-miss",
+          prop,
+        );
+        continue;
+      }
       const fieldType = fields[fieldIdx]!.type;
 
       const targetExpr = prop.initializer;
@@ -2467,12 +2487,39 @@ function compilePropertyAssignment(
     reportError(ctx, target, "Failed to compile struct field receiver");
     return null;
   }
+  // (#2084) Null-guard the write. The read path already throws a catchable
+  // TypeError on a null receiver, but the store path emitted `struct.set`
+  // directly — a null receiver then trapped uncatchably ("dereferencing a null
+  // pointer") instead of throwing `TypeError: Cannot set properties of null`
+  // (error-model divergence, family #581/#2025). Skip the guard when the
+  // receiver is a non-nullable `ref` or is statically provably non-null (e.g.
+  // `new Foo()`, `this`) — no trap is possible there and the check is dead
+  // weight. Mirrors the array-element write guard below (`isProvablyNonNull`).
+  const guardNull = structObjResult.kind === "ref_null" && !isProvablyNonNull(target.expression, ctx.checker);
   const valType = compileExpression(ctx, fctx, value, fields[fieldIdx]!.type);
   if (!valType) return null;
-  // Save value so assignment expression returns the RHS
+  // Save value so the assignment expression returns the RHS.
   const tmpVal = allocLocal(fctx, `__prop_assign_${fctx.locals.length}`, valType);
-  fctx.body.push({ op: "local.tee", index: tmpVal });
-  fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+  if (guardNull) {
+    // stack: [receiver, value] — stash value, then null-check the receiver.
+    fctx.body.push({ op: "local.set", index: tmpVal });
+    const tmpRecv = allocLocal(fctx, `__prop_recv_${fctx.locals.length}`, structSelfType);
+    fctx.body.push({ op: "local.tee", index: tmpRecv });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: typeErrorThrowInstrs(ctx, target),
+      else: [
+        { op: "local.get", index: tmpRecv } as Instr,
+        { op: "local.get", index: tmpVal } as Instr,
+        { op: "struct.set", typeIdx: structTypeIdx, fieldIdx } as Instr,
+      ],
+    } as Instr);
+  } else {
+    fctx.body.push({ op: "local.tee", index: tmpVal });
+    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+  }
   fctx.body.push({ op: "local.get", index: tmpVal });
 
   return valType;

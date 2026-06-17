@@ -1,14 +1,16 @@
 ---
 id: 1257
 title: "async-gen + obj-ptrn default-init throws: funcIdx shift misses detached thenInstrs"
-status: backlog
+status: done
+assignee: ttraenkler/dv1
+completed: 2026-06-16
 created: 2026-04-19
-updated: 2026-05-21
+updated: 2026-06-16
 priority: medium
 feasibility: hard
 reasoning_effort: high
 goal: error-model
-sprint: Backlog
+sprint: 62
 ---
 ## Problem
 
@@ -170,3 +172,41 @@ Acceptance: 12 regressions from PR #225 fully resolved (currently
   run a stress test that triggers many late imports during nested
   detached-array compilation, verify all funcIdx targets resolve to
   the expected names.
+
+## Resolution (dv1, 2026-06-16) — symptom verified CLOSED; Option-A mechanism already in tree
+
+Re-verified on current main (`e424a7d3` lineage): the observable bug is **gone**.
+All four spec regression scenarios — plus aggressive variants (default-init
+calling `Math.floor`/`parseInt`/a user fn; multiple nested null-throws in one
+function; async-gen `yield ({} = null)` then a later host call) — compile to
+**valid Wasm**, instantiate, and throw a **catchable TypeError** with no
+recursion or funcIdx corruption.
+
+**The architectural fix the spec calls for (Option A: a `ctx.detachedBodies`
+stack walked by `shiftLateImportIndices`) is already realized in tree as
+`ctx.liveBodies`** — a `Set<Instr[]>` that `shiftLateImportIndices` walks
+(`src/codegen/expressions/late-imports.ts:212`). The hazard sites that hold a
+detached array across a potential late import already register it with the
+established balanced `ctx.liveBodies.add(...)` / `.delete(...)` discipline:
+`closures.ts` (lifted/cb bodies), `destructuring-params.ts` (then/else arms),
+`statements/loops.ts` (cond/incr/then/else arms), `expressions/calls.ts`. The
+PR #225 `emitNullGuard` case is additionally covered by pre-registering its
+`__throw_type_error` / `__extern_is_undefined` late imports BEFORE the
+`collectInstrs` window. So the symptom-level fix (PR #225's 9/12) plus the
+subsequent `liveBodies` wiring closed the remaining 3.
+
+**This PR** lands `tests/issue-1257.test.ts` (8 cases, green) as the
+verified-closed regression net: each asserts valid Wasm + a caught TypeError
+(return 1), the property the issue's "Risks → mitigate with a stress test" note
+asks for.
+
+**Deferred to sprint-63 follow-up #2182** (`feasibility: medium`,
+`related: [1257]`): the *completeness* half of the
+acceptance criteria — (a) a full audit of every `collectInstrs` caller /
+body-swap site to confirm each detached array is `liveBodies`-registered for
+its late-import window, and (b) a defensive end-of-compilation assertion that
+`ctx.liveBodies` is empty (catches a missing `.delete`). These are
+hazard-hardening, not a live bug; doing the broad audit-and-wrap refactor now
+was deprioritized against the active async/Proxy/standalone work and the box's
+load cap. The regression net guards against re-introduction of the known
+shapes in the meantime.

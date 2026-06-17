@@ -176,6 +176,13 @@ export function emitBuiltinNamespaceObject(
 
   const savedBody = fctx.body;
   fctx.body = initBody;
+  // (#2182) `savedBody` is the outer body, detached for the duration of the
+  // swap. `emitBuiltinStaticMethodValue` below can trigger a late import (e.g.
+  // a host builtin), and `shiftLateImportIndices` only walks `fctx.body` (=
+  // initBody here) plus the registered body sets — NOT this raw local. Register
+  // it in `liveBodies` so any `call` funcIdx already accumulated in the outer
+  // body is shifted too; otherwise a late import here would over-shift it.
+  ctx.liveBodies.add(savedBody);
   try {
     for (const prop of props) {
       fctx.body.push({ op: "local.get", index: objLocal });
@@ -189,6 +196,7 @@ export function emitBuiltinNamespaceObject(
     fctx.body.push({ op: "global.set", index: globalIdx });
   } finally {
     fctx.body = savedBody;
+    ctx.liveBodies.delete(savedBody);
   }
 
   fctx.body.push({ op: "global.get", index: globalIdx });

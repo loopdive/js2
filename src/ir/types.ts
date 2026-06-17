@@ -59,7 +59,7 @@ export interface WasmModule {
    * emitting a structurally invalid binary (e.g. a stack-underflowing
    * `local.set` after an unhandled `String.prototype.repeat`).
    */
-  codegenErrors?: { message: string; line: number; column: number }[];
+  codegenErrors?: { message: string; line: number; column: number; severity?: "error" | "warning" | "degrade" }[];
 }
 
 /** TS-level kind hint for a single export parameter or result (#1700). */
@@ -158,13 +158,19 @@ type InstrBase =
   | { op: "i64.sub" }
   | { op: "i64.mul" }
   | { op: "i64.div_s" }
+  | { op: "i64.div_u" }
   | { op: "i64.rem_s" }
+  | { op: "i64.rem_u" }
   | { op: "i64.eq" }
   | { op: "i64.ne" }
   | { op: "i64.lt_s" }
+  | { op: "i64.lt_u" }
   | { op: "i64.le_s" }
+  | { op: "i64.le_u" }
   | { op: "i64.gt_s" }
+  | { op: "i64.gt_u" }
   | { op: "i64.ge_s" }
+  | { op: "i64.ge_u" }
   | { op: "i64.eqz" }
   | { op: "i64.and" }
   | { op: "i64.or" }

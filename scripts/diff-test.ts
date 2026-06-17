@@ -61,7 +61,7 @@ interface FileResult {
   /** Compile-error or runtime-error message (only set on `error` outcome) */
   error?: string;
   /** Outcome bucket */
-  outcome: "match" | "mismatch" | "compile_error" | "runtime_error" | "v8_error";
+  outcome: "match" | "mismatch" | "compile_error" | "runtime_error" | "v8_error" | "malformed_wasm";
   /** Wall-clock millis spent on each lane (for triage) */
   ms_v8: number;
   ms_js2wasm: number;
@@ -74,6 +74,8 @@ interface Summary {
   compile_error: number;
   runtime_error: number;
   v8_error: number;
+  /** #2143 — compiler reported success but WebAssembly.validate rejected the binary. */
+  malformed_wasm: number;
   /** Mismatches bucketed by top-level category */
   by_category: Record<string, { total: number; match: number; mismatch: number; error: number }>;
   /** Wall-clock seconds */
@@ -130,9 +132,12 @@ function runV8(file: string): { stdout: string; error?: string; ms: number } {
 }
 
 /** Compile a JS file with js2wasm, instantiate, capture console.log output. */
-async function runJs2wasm(
-  file: string,
-): Promise<{ stdout: string; error?: string; ms: number; outcome: "match" | "compile_error" | "runtime_error" }> {
+async function runJs2wasm(file: string): Promise<{
+  stdout: string;
+  error?: string;
+  ms: number;
+  outcome: "match" | "compile_error" | "runtime_error" | "malformed_wasm";
+}> {
   const t0 = Date.now();
   let source: string;
   try {
@@ -147,6 +152,22 @@ async function runJs2wasm(
       error: `compile: ${r.errors[0]?.message ?? "unknown"}`,
       ms: Date.now() - t0,
       outcome: "compile_error",
+    };
+  }
+  // #2143 — validate the compiled binary BEFORE instantiating. Previously a
+  // malformed binary (compiler reported success but the engine rejects it)
+  // surfaced only as a `runtime_error` at instantiate time, indistinguishable
+  // from a genuine trap and only when this program happened to be executed.
+  // Classify it as a distinct `malformed_wasm` outcome so the gate buckets it
+  // as a hard-error-stability signal (#1853) rather than burying it in runtime
+  // noise. Both lanes (default + `-O3`) run this — the optimizer already
+  // validates its own output (optimize.ts), but the DEFAULT pipeline did not.
+  if (!WebAssembly.validate(r.binary)) {
+    return {
+      stdout: "",
+      error: `malformed_wasm: js2wasm reported success but WebAssembly.validate rejected the ${OPTIMIZE ? "-O3" : "default-pipeline"} binary`,
+      ms: Date.now() - t0,
+      outcome: "malformed_wasm",
     };
   }
   // Monkey-patch console.log so we capture the side effects of top-level code
@@ -261,6 +282,7 @@ async function main(): Promise<void> {
     compile_error: 0,
     runtime_error: 0,
     v8_error: 0,
+    malformed_wasm: 0,
     by_category: {},
     duration_s: 0,
     results,
@@ -287,6 +309,7 @@ async function main(): Promise<void> {
   console.log(`  Mismatch:        ${summary.mismatch.toString().padStart(4)}`);
   console.log(`  Compile error:   ${summary.compile_error.toString().padStart(4)}`);
   console.log(`  Runtime error:   ${summary.runtime_error.toString().padStart(4)}`);
+  console.log(`  Malformed wasm:  ${summary.malformed_wasm.toString().padStart(4)}`);
   console.log(`  V8 error:        ${summary.v8_error.toString().padStart(4)}`);
   console.log("");
   console.log("By category:");

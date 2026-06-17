@@ -17,6 +17,7 @@ import { availableParallelism } from "os";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
 import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
 import { findNthAssert } from "./test262-assert-locator.js";
+import { ORACLE_VERSION } from "./test262-oracle-version.js";
 import {
   buildNegativeCompileSource,
   classifyError,
@@ -325,6 +326,11 @@ function recordResult(
 
   const entry = JSON.stringify({
     timestamp: new Date().toLocaleString("de-DE", { timeZone: "Europe/Berlin" }),
+    // #2096: oracle identity. Every row carries the version of the verdict
+    // logic that produced its status so diff-test262 can refuse cross-version
+    // comparisons (which would read oracle skew as regressions). Bump in
+    // tests/test262-oracle-version.ts when the oracle tightens (e.g. #1945).
+    oracle_version: ORACLE_VERSION,
     file,
     category,
     status,

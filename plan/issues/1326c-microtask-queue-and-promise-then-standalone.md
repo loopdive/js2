@@ -1,9 +1,11 @@
 ---
 id: 1326c
 title: "Async standalone Phase 1C: microtask queue + Promise.then chained-resolution (follow-up to #1326 Phase 1B)"
-status: in-progress
+status: done
 created: 2026-05-08
-updated: 2026-05-20
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/se1
 priority: medium
 feasibility: hard
 reasoning_effort: max
@@ -11,7 +13,7 @@ task_type: feature
 area: codegen, runtime
 language_feature: async, promises
 goal: standalone-mode
-sprint: 52
+sprint: 62
 depends_on: [1326]
 required_by: [1373b]
 ---
@@ -986,7 +988,25 @@ unchanged.
   passthrough still works after .then plumbing
 
 
-## Suspended Work
+## Completion (2026-06-16, se1, sprint 62)
+
+Both Phase 1C-A (queue infra) and Phase 1C-B (`emitStandalonePromiseThen`
+chained resolution + rejection routing) have **landed on `main`** (PRs
+#405 + follow-ups). Confirmed on current `main` HEAD (`e424a7d3a`):
+
+- `pnpm exec vitest run tests/issue-1326.test.ts` → **14/14 pass**, including
+  the Phase 1C-B acceptance cases: "drains chained `.then` callbacks in
+  microtask order" and "routes rejected promises through the `onRejected`
+  continuation".
+- `src/codegen/async-scheduler.ts` has a real `emitStandalonePromiseThen`
+  body (no throwing stub); `.then` standalone dispatch incl. two-arg
+  `onRejected` is wired at `src/codegen/expressions/calls.ts:6513`.
+
+The Suspended Work below (PR #405, "Phase 1C-B remaining") is historical —
+that follow-up work has since merged. Flipped `in-progress` → `done`.
+`#1373b` (the `required_by` dependent) is now unblocked.
+
+## Suspended Work (historical — completed; see Completion note above)
 
 - **PR**: https://github.com/loopdive/js2/pull/405
 - **Branch**: `issue-1326c-microtask-standalone`

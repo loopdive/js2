@@ -1,10 +1,11 @@
 ---
 id: 1975
 title: "linear backend: NaN and \"\" are truthy (f64.ne 0 / raw i32 pointer truthiness); &&/|| return 0/1 instead of operand values"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-16
+completed: 2026-06-16
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -12,7 +13,7 @@ task_type: bugfix
 area: codegen
 language_feature: type-coercion
 goal: core-semantics
-related: [1974, 1976]
+related: [1974, 1976, 2184]
 origin: "2026-06-10 deep-audit sweep (optimizer agent): verified on main, target linear"
 ---
 
@@ -80,3 +81,13 @@ the ToBoolean fix and is left for a dedicated issue. The boolean-context use
 - `src/codegen-linear/index.ts` — `emitTruthyCoercion` string branch + threaded
   the source expression through all call sites (`if`/`while`/`for`/ternary/
   unary-`!`/`&&`/`||`).
+
+## Closure (2026-06-16)
+
+**Done.** The ToBoolean correctness fix shipped in PR #1412 (commit
+`248195e2b`); both problem-table repros (`NaN`/`""` falsy) now match Node and
+`tests/issue-1975.test.ts` (8 cases) passes on main (re-verified 2026-06-16).
+The deferred `&&`/`||` *operand-value* half (yields `0`/`1` instead of the
+operand; needs result-type unification in the linear backend) is split out to
+**#2184** — the issue itself carved it out as "a dedicated issue." Closing
+#1975 as done; the value-producing `&&`/`||` work continues under #2184.

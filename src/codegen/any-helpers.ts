@@ -1658,9 +1658,34 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                       blockType: { kind: "val", type: anyStrRef },
                       then: nativeStrConstInstrs("boolean"),
                       else: [
-                        // tag == 5 (string/externref) or tag == 6 (gcref) — default to "object"
-                        // (In practice tag 5 would be "string" but we don't use it in fast mode)
-                        ...nativeStrConstInstrs("object"),
+                        // (#2107) Canonical JsTag (#2104) tag arms: 5 String,
+                        // 7 Function; everything else (6 Object, plus the null
+                        // tag-0 which already resolved to "object" above) →
+                        // "object". Before this, tag 5 wrongly returned
+                        // "object" in the standalone native-string path, so
+                        // `typeof (s: any-string)` mis-reported as "object".
+                        // tag == 5 (string) → "string"
+                        { op: "local.get", index: 1 },
+                        { op: "i32.const", value: 5 },
+                        { op: "i32.eq" },
+                        {
+                          op: "if",
+                          blockType: { kind: "val", type: anyStrRef },
+                          then: nativeStrConstInstrs("string"),
+                          else: [
+                            // tag == 7 (function) → "function"
+                            { op: "local.get", index: 1 },
+                            { op: "i32.const", value: 7 },
+                            { op: "i32.eq" },
+                            {
+                              op: "if",
+                              blockType: { kind: "val", type: anyStrRef },
+                              then: nativeStrConstInstrs("function"),
+                              // tag 6 (object) / unknown → "object"
+                              else: nativeStrConstInstrs("object"),
+                            },
+                          ],
+                        },
                       ],
                     },
                   ],

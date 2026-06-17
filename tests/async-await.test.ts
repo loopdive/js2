@@ -38,7 +38,10 @@ describe("async/await support", () => {
     expect(exports.getNum()).toBe(42);
   });
 
-  it("await on an internal async value", async () => {
+  it("await on an internal async value (#1796 — genuine suspension returns a real Promise)", async () => {
+    // `getValue` awaits `fetchValue()` (a non-static async call) so it
+    // genuinely suspends and is CPS-lowered to return a real Promise — no
+    // longer the legacy synchronous fakery. Await it through a microtask tick.
     const exports = await instantiate(`
       async function fetchValue(): Promise<number> { return 99; }
       export async function getValue(): Promise<number> {
@@ -46,7 +49,7 @@ describe("async/await support", () => {
         return val;
       }
     `);
-    expect(exports.getValue()).toBe(99);
+    await expect(exports.getValue()).resolves.toBe(99);
   });
 
   it("async function with multiple sequential awaits", async () => {

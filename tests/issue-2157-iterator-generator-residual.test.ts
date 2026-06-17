@@ -103,11 +103,30 @@ export function test(): number { let s=0; for (const v of g()) s+=v; return s; }
     ).toBe(6);
   });
 
-  // SF-4 (#2171) — non-numeric (string) yields.
-  it.todo("SF-4 #2171: string yields iterate 2 times", async () => {
+  // SF-4 (#2171) — non-numeric (string) yields. Landed in c3eb18936; the
+  // generator result/value slot is typed per the yield elem type (the native
+  // `$AnyString` ref for all-string generators), so string yields iterate and
+  // concatenate correctly with zero host imports.
+  it("SF-4 #2171: string yields iterate 2 times", async () => {
     expect(
       await runStandalone(`function* g(){ yield "a"; yield "b"; }
 export function test(): number { let n=0; for (const v of g()) n++; return n; }`),
     ).toBe(2);
+  });
+
+  it("SF-4 #2171: string yields concatenate to the right length", async () => {
+    // Value-correctness, not just count: "a"+"b" → "ab" (length 2). Exercises
+    // the per-yield string value flowing through the result `value` slot.
+    expect(
+      await runStandalone(`function* g(){ yield "a"; yield "b"; }
+export function test(): number { let s=""; for (const v of g()) s+=v; return s.length; }`),
+    ).toBe(2);
+  });
+
+  it("SF-4 #2171: first yielded char code is preserved", async () => {
+    expect(
+      await runStandalone(`function* g(){ yield "a"; yield "b"; }
+export function test(): number { let s=""; for (const v of g()) s+=v; return s.charCodeAt(0); }`),
+    ).toBe(97); // 'a'
   });
 });

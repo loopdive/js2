@@ -1666,8 +1666,18 @@ function _toPropertyDescriptorValidate(
 }
 
 /** Return true when `obj` is a WasmGC struct (opaque to JS). */
+// #2180 — user `new Proxy` / `Proxy.revocable` objects we construct. A Proxy
+// over a WasmGC-struct target otherwise trips `_isWasmStruct`'s probe: it has a
+// null prototype (inherited from the struct target) and a property set on it
+// forwards to the opaque struct and throws "opaque" — so the heuristic
+// misclassifies the Proxy AS a struct, routing `delete`/`in`/etc. to the
+// sidecar instead of letting the host fire the user trap. Excluding registered
+// user proxies keeps them on the host MOP path.
+const _userProxies = new WeakSet<object>();
+
 function _isWasmStruct(obj: any): boolean {
   if (obj == null || typeof obj !== "object") return false;
+  if (_userProxies.has(obj)) return false;
   // WasmGC structs have a null prototype and no own keys — quick heuristic
   // that avoids try/catch on normal objects.
   try {
@@ -2303,7 +2313,18 @@ function _sidecarDelete(obj: any, key: any): boolean {
  * real `undefined` return is wrongly treated as "absent" and the next method is
  * consulted (#1826). Per §7.1.1.1 steps 5-6, any non-Object return is the result.
  */
-const _PRIM_ABSENT: unique symbol = Symbol("toPrimitive-method-absent");
+// #1935 — single in-band "absent" sentinel for the host runtime. Returning
+// `undefined` to signal "no such getter / method / property" is a bug: user
+// code can legitimately return `undefined`, and the in-band signal then
+// misreads that as absence (a getter returning `undefined` shadowed by the
+// underlying field; a `valueOf` returning `undefined` treated as "no valueOf").
+// `_MISS` is a unique symbol that user code can never produce, so it
+// unambiguously means absence. (Was `_PRIM_ABSENT`, scoped to ToPrimitive;
+// unified here and now also used by the property-getter lookup path.)
+const _MISS: unique symbol = Symbol("runtime-absent-sentinel");
+// Back-compat alias so the existing ToPrimitive call sites keep reading
+// naturally; both names refer to the same unique symbol.
+const _PRIM_ABSENT: typeof _MISS = _MISS;
 
 /**
  * ToPrimitive for WasmGC structs (#850).
@@ -2819,6 +2840,49 @@ function _getStructFieldNames(obj: any, exports: Record<string, Function> | unde
   const csv = fn(obj);
   if (csv == null || typeof csv !== "string" || csv === "") return null;
   return csv.split(",");
+}
+
+/**
+ * (#2130) Shared own-property presence predicate for a WasmGC struct receiver.
+ * This is the single source of truth for "does `obj` have its OWN property
+ * `key`", combining — in spec order — the runtime delete tombstone, the sidecar
+ * store, the descriptor table (accessor-only properties), registered class
+ * proto/static method names, and finally the static struct field shape. It is
+ * the WasmGC branch of `__hasOwnProperty` extracted verbatim so that
+ * `__extern_has` (the `in` operator) and `__hasOwnProperty` answer identically
+ * and BOTH consult the tombstone (`delete o.a; "a" in o` → false).
+ *
+ * The caller must have already established `_isWasmStruct(obj)` is true.
+ * `key` may be a string or a symbol; tombstone/sidecar comparisons preserve
+ * symbol identity (a symbol key is never stringified).
+ */
+function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function> | undefined): boolean {
+  // (#1334) Property explicitly deleted — treat as absent regardless of the
+  // struct shape having the field name.
+  const tomb = _wasmStructDeletedKeys.get(obj);
+  if (tomb && tomb.has(typeof key === "symbol" ? key : String(key))) return false;
+  // Sidecar properties (user-assigned dynamic props). Key-based — HasProperty
+  // (§7.3.12) is value-independent, so `o.x = undefined; "x" in o` is true (A8).
+  const sc = _wasmStructProps.get(obj);
+  if (sc && key in sc) return true;
+  // Descriptor map (accessor properties set via Object.defineProperty, #929).
+  const descs = _wasmPropDescs.get(obj);
+  if (descs && descs.has(String(key))) return true;
+  // (#1047) registered class prototype — only allowlisted methods qualify.
+  const protoMethods = _prototypeMethodNames.get(obj);
+  if (protoMethods !== undefined) {
+    const prop = String(key);
+    return protoMethods.includes(prop) && !_isDeletedClassProp(obj, prop);
+  }
+  const staticMethods = _staticMethodNames.get(obj);
+  if (staticMethods !== undefined) {
+    const prop = String(key);
+    return staticMethods.includes(prop) && !_isDeletedClassProp(obj, prop);
+  }
+  // Static struct field shape (the per-receiver oracle, A1 — NOT a module-global
+  // `__sget_<key>` existence probe).
+  const fieldNames = _getStructFieldNames(obj, exports) ?? [];
+  return fieldNames.includes(String(key));
 }
 
 /**
@@ -3471,42 +3535,55 @@ const _legacyRegExpState: LegacyRegExpState = {
 };
 const _legacyRegExpInstalledOn: WeakSet<object> = new WeakSet();
 
-function _updateLegacyRegExpState(input: string, m: RegExpExecArray | RegExpMatchArray | null): void {
+function _makeLegacyRegExpState(): LegacyRegExpState {
+  return { input: "", lastMatch: "", lastParen: "", leftContext: "", rightContext: "", parens: new Array(9).fill("") };
+}
+
+// #1933 — update the legacy RegExp static state. `state` is the per-instance
+// slot (threaded from `instanceState.legacyRegExpState`); falls back to the
+// shared module-level slot for legacy callers without an instanceState.
+function _updateLegacyRegExpState(
+  input: string,
+  m: RegExpExecArray | RegExpMatchArray | null,
+  state: LegacyRegExpState = _legacyRegExpState,
+): void {
   if (m == null) return;
   const idx = m.index ?? 0;
   const matchStr = m[0] ?? "";
-  _legacyRegExpState.input = input;
-  _legacyRegExpState.lastMatch = matchStr;
-  _legacyRegExpState.leftContext = input.substring(0, idx);
-  _legacyRegExpState.rightContext = input.substring(idx + matchStr.length);
+  state.input = input;
+  state.lastMatch = matchStr;
+  state.leftContext = input.substring(0, idx);
+  state.rightContext = input.substring(idx + matchStr.length);
   let lastNonEmptyParen = "";
   for (let i = 0; i < 9; i++) {
     const cap = m[i + 1];
     const v = cap == null ? "" : String(cap);
-    _legacyRegExpState.parens[i] = v;
+    state.parens[i] = v;
     if (cap != null) lastNonEmptyParen = v;
   }
-  _legacyRegExpState.lastParen = lastNonEmptyParen;
+  state.lastParen = lastNonEmptyParen;
 }
 
-function _installLegacyRegExpAccessors(C: unknown): void {
+function _installLegacyRegExpAccessors(C: unknown, state: LegacyRegExpState = _legacyRegExpState): void {
   if (C == null || (typeof C !== "function" && typeof C !== "object")) return;
   if (_legacyRegExpInstalledOn.has(C as object)) return;
   _legacyRegExpInstalledOn.add(C as object);
+  // #1933 — the accessors read/write the per-instance `state` (threaded from
+  // instanceState), so `RegExp.$1`/`$_` etc. don't cross instances.
   type Slot = readonly [string, readonly string[], () => string, ((v: unknown) => void)?];
   const slots: Slot[] = [
     [
       "input",
       ["$_"],
-      () => _legacyRegExpState.input,
+      () => state.input,
       (v) => {
-        _legacyRegExpState.input = String(v);
+        state.input = String(v);
       },
     ],
-    ["lastMatch", ["$&"], () => _legacyRegExpState.lastMatch],
-    ["lastParen", ["$+"], () => _legacyRegExpState.lastParen],
-    ["leftContext", ["$`"], () => _legacyRegExpState.leftContext],
-    ["rightContext", ["$'"], () => _legacyRegExpState.rightContext],
+    ["lastMatch", ["$&"], () => state.lastMatch],
+    ["lastParen", ["$+"], () => state.lastParen],
+    ["leftContext", ["$`"], () => state.leftContext],
+    ["rightContext", ["$'"], () => state.rightContext],
   ];
   for (const [name, aliases, getter, setter] of slots) {
     // (#1333) Note: `set` must be explicitly `undefined` for read-only slots.
@@ -3550,7 +3627,7 @@ function _installLegacyRegExpAccessors(C: unknown): void {
       Object.defineProperty(C, `$${i}`, {
         get(this: unknown) {
           if (this !== C) throw new TypeError(`RegExp.$${i} getter requires the RegExp constructor as this`);
-          return _legacyRegExpState.parens[idx];
+          return state.parens[idx];
         },
         set: undefined,
         enumerable: false,
@@ -3661,6 +3738,13 @@ function _safeGet(obj: any, key: any, callbackState?: { getExports: () => Record
     }
   }
   if (_isWasmStruct(obj)) {
+    // (#2130) A deleted property reads as `undefined` even when the static
+    // struct shape still carries the field (the `__sget_<key>` getter would
+    // otherwise return the stale field value). The tombstone is cleared by
+    // `_safeSet` on re-add, so a re-added key never reaches here as tombstoned.
+    // Symbol keys preserve identity; everything else compares stringified.
+    const tomb = _wasmStructDeletedKeys.get(obj);
+    if (tomb && tomb.has(typeof key === "symbol" ? key : String(key))) return undefined;
     // For WasmGC structs, user-assigned properties live in the sidecar.
     // Check sidecar FIRST — native JS property access on WasmGC structs can return
     // built-in artifacts (e.g. `obj.constructor` returns the Wasm struct constructor),
@@ -3736,6 +3820,16 @@ function _safeSet(
     const cbState = callbackState ?? (exports ? { getExports: () => exports } : undefined);
     const prim = _toPrimitiveSync(key, "string", cbState);
     if (prim != null && typeof prim !== "object") key = prim;
+  }
+  // (#2130) Re-adding a previously-deleted property clears its tombstone, so
+  // `delete o.a; o.a = 5; o.a` reads `5` and `"a" in o` is `true` again. This
+  // is the single choke point for every WasmGC write arm (sidecar setter,
+  // descriptor write, symbol-id, struct field) — placing the clear here rather
+  // than only in `_sidecarSet` covers the `__sset_<name>`/native-write paths
+  // that bypass the sidecar (A3).
+  if (_isWasmStruct(obj)) {
+    const tomb = _wasmStructDeletedKeys.get(obj);
+    if (tomb) tomb.delete(typeof key === "symbol" ? key : String(key));
   }
   // Well-known symbol ID (i32 from compiler): store under both real Symbol and "@@name".
   // ONLY apply this remapping to WasmGC structs — for regular JS objects/arrays,
@@ -3828,6 +3922,9 @@ function _safeSet(
   try {
     obj[key] = val;
   } catch (e) {
+    // #2180 — writing to a revoked proxy throws TypeError; propagate it
+    // instead of silently diverting to the sidecar.
+    if (_isRevokedProxyError(e)) throw e;
     // For non-WasmGC objects (frozen/sealed JS objects),
     // fall through to sidecar set — preserves original behavior for non-strict callers.
     _sidecarSet(obj, key, val);
@@ -3867,6 +3964,11 @@ function _safeSet(
  */
 const _hostProxyCache = new WeakMap<object, any>();
 const _hostProxyReverse = new WeakMap<object, any>();
+// (#1694 A.i / #1632b-1) Per-closure cache of the callable+constructible
+// host wrapper produced by `_wrapCallableForHost`, so repeated wraps of the
+// same closure return the same Proxy (constructor identity / @@species stays
+// stable).
+const _hostCallableCache = new WeakMap<object, any>();
 
 /**
  * #1047 — registered prototype refs → method-only own-key list. Populated by
@@ -4236,27 +4338,32 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
     // function under `__get_<k>` (string) or in `_wasmStructAccessors` (symbol).
     // Note: getters defined in a TS object literal compile to a Wasm closure
     // (typeof === "object"); call those via __call_fn_0 export.
-    const invokeGetter = (g: any): any | undefined => {
-      if (g == null) return undefined;
+    // #1935 — return `_MISS` ONLY when no getter is actually callable. When a
+    // getter runs, its result (even `undefined`) is a genuine HIT and is
+    // returned as-is; the caller must distinguish `_MISS` from `undefined` so a
+    // getter that returns `undefined` shadows the underlying field per spec,
+    // instead of silently falling through to the sidecar/struct value.
+    const invokeGetter = (g: any): any => {
+      if (g == null) return _MISS;
       if (typeof g === "function") return (g as Function).call(obj);
       if (typeof g === "object" && _isWasmStruct(g) && exports) {
         const callFn0 = exports["__call_fn_0"];
         if (typeof callFn0 === "function") return callFn0(g);
       }
-      return undefined;
+      return _MISS;
     };
     if (typeof key === "string") {
       const wasmSc = _wasmStructProps.get(obj);
       const getter = wasmSc?.[`__get_${key}` as string];
       if (getter !== undefined) {
         const v = invokeGetter(getter);
-        if (v !== undefined) return v;
+        if (v !== _MISS) return v;
       }
     } else if (typeof key === "symbol") {
       const accessor = _wasmStructAccessors.get(obj)?.get(key);
       if (accessor?.get !== undefined) {
         const v = invokeGetter(accessor.get);
-        if (v !== undefined) return v;
+        if (v !== _MISS) return v;
       }
     }
     // Sidecar first (handles both string and symbol keys)
@@ -4587,6 +4694,304 @@ function _unwrapForHost(v: any): any {
   return orig ?? v;
 }
 
+// (#1694 A.i / #1632b-1) Host-callable/constructible representation of a
+// compiled Wasm closure.
+//
+// `_wrapForHost` wraps an opaque WasmGC struct in a Proxy whose target is
+// `Object.create(null)` — a plain, NON-callable object. A JS Proxy is
+// `[[Call]]`-able / `[[Construct]]`-able only when its *target* is itself
+// callable, so a closure wrapped that way is neither callable nor
+// constructible. When such a value reaches a host built-in that must call or
+// construct it — the canonical case is `Promise.all.call(NotPromise, …)`,
+// where V8's NewPromiseCapability(C) performs `Construct(C, «executor»)` — V8
+// rejects it with "… is not a constructor".
+//
+// `_wrapCallableForHost` wraps the closure in a Proxy whose target is a real
+// `function`, so the Proxy may legally carry `apply` and `construct` traps and
+// `typeof proxy === "function"` holds (required for V8's IsCallable /
+// IsConstructor checks). All property operations (.prototype, .name, static
+// members, has, ownKeys, …) delegate to the SAME `_wrapForHost(closure)` proxy,
+// reusing its read/has/enumerate machinery verbatim — no logic is duplicated or
+// extracted. Cached per closure so repeated wraps return the same Proxy
+// (constructor identity / @@species comparisons stay stable) and mirrored into
+// `_hostProxyReverse` so `_unwrapForHost` round-trips the value back to the raw
+// struct when it flows back into Wasm.
+//
+// This is the ordinary-`[[Construct]]` representation (#1632b-1, runtime-only):
+// the `construct` trap emulates ECMA-262 §10.2.2 OrdinaryCallEvaluateBody for a
+// plain compiled function used with `new` — invoke the closure body with a
+// fresh ordinary object as the implicit receiver, then return the body's value
+// if it is an object, else the fresh receiver. The compiled-*class*-as-dynamic-
+// constructor case (a dedicated `__construct_closure` export) is the separate
+// codegen follow-up #1632b-2 and is intentionally NOT handled here; A.i's
+// `NotPromise` is always an ordinary function, so this fallback closes it.
+function _wrapCallableForHost(
+  closure: any,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): any {
+  if (closure == null || typeof closure !== "object") return closure;
+  if (!_isWasmStruct(closure)) return closure;
+  const cached = _hostCallableCache.get(closure);
+  if (cached) return cached;
+
+  // Reuse the full property-read/has/enumerate proxy unchanged: the callable
+  // wrapper forwards every non-call/construct trap to it.
+  const exports = callbackState?.getExports();
+  const propProxy = _wrapForHost(closure, exports);
+
+  // The Proxy target must itself be callable+constructible for the traps to be
+  // installable and for `typeof proxy === "function"` to hold. A bare
+  // `function(){}` is both [[Call]] and [[Construct]] capable.
+  const fnTarget = function compiledFnTarget() {};
+  // Surface .name / .length when the codegen stamped them on the closure
+  // sidecar, so Function.prototype.toString / .name stay spec-shaped.
+  // Best-effort; non-fatal if absent.
+  const meta = _wasmStructProps.get(closure);
+  if (meta) {
+    if (typeof meta.name === "string") {
+      try {
+        Object.defineProperty(fnTarget, "name", { value: meta.name, configurable: true });
+      } catch {
+        /* Function.name redefinition is best-effort. */
+      }
+    }
+    if (typeof meta.length === "number") {
+      try {
+        Object.defineProperty(fnTarget, "length", { value: meta.length, configurable: true });
+      } catch {
+        /* Function.length redefinition is best-effort. */
+      }
+    }
+  }
+
+  const handler: ProxyHandler<any> = {
+    apply(_t, thisArg, args) {
+      // Dispatch through the dynamic-arity bridge: it selects the highest
+      // emitted `__call_fn_<arity>` and threads `thisArg` via the method
+      // variant exactly like the rest of the host glue.
+      const wrapped = _wrapWasmClosureUnknownArity(closure, callbackState);
+      if (typeof wrapped !== "function") {
+        throw new TypeError("compiled function is not callable (no __call_fn_* export)");
+      }
+      return wrapped.apply(thisArg, args);
+    },
+    construct(_t, args, _newTarget) {
+      // Ordinary [[Construct]] (ECMA-262 §10.2.2) for a compiled function used
+      // with `new` — the case V8 reaches inside NewPromiseCapability(C). Run the
+      // body with a fresh ordinary object as the implicit `this`; return the
+      // body's result if it is an object, else the fresh object. A throw from
+      // the compiled body (e.g. the executor protocol abrupt-completion paths in
+      // `capability-*` tests) MUST propagate so V8 observes spec ordering.
+      const wrapped = _wrapWasmClosureUnknownArity(closure, callbackState);
+      if (typeof wrapped !== "function") {
+        throw new TypeError("compiled function is not a constructor (no __call_fn_* export)");
+      }
+      const self: Record<string, any> = {};
+      const r = wrapped.apply(self, args);
+      return r != null && typeof r === "object" ? r : self;
+    },
+    // Property reads / writes / enumeration delegate to the standard
+    // `_wrapForHost` proxy so `.prototype`, `.name`, static members, `has`,
+    // `ownKeys`, descriptors, etc. behave identically to a non-callable wrap.
+    get(_t, key, _recv) {
+      return (propProxy as any)[key];
+    },
+    set(_t, key, val) {
+      (propProxy as any)[key] = val;
+      return true;
+    },
+    has(_t, key) {
+      return key in (propProxy as any);
+    },
+    getOwnPropertyDescriptor(_t, key) {
+      const d = Object.getOwnPropertyDescriptor(propProxy as any, key);
+      if (d) d.configurable = true; // a Proxy target's non-config props must be reported configurable
+      return d;
+    },
+    defineProperty(_t, key, desc) {
+      return Reflect.defineProperty(propProxy as any, key, desc);
+    },
+    deleteProperty(_t, key) {
+      return Reflect.deleteProperty(propProxy as any, key);
+    },
+    ownKeys() {
+      return Reflect.ownKeys(propProxy as any);
+    },
+    getPrototypeOf() {
+      return Function.prototype;
+    },
+  };
+
+  const proxy = new Proxy(fnTarget, handler);
+  _hostCallableCache.set(closure, proxy);
+  _hostProxyReverse.set(proxy, closure); // so _unwrapForHost round-trips
+  return proxy;
+}
+
+// ── #2180 — host-mode user `new Proxy` / `Proxy.revocable` construction ──────
+//
+// A compiled `new Proxy(target, handler)` reaches the host with `target` and
+// `handler` as raw WasmGC structs (object literals compile to opaque structs).
+// Two problems must be solved for the host's native Proxy MOP to behave per
+// §10.5 / §28.2:
+//
+//  1. **Trap discovery.** The host reads `handler[trapName]` to find each trap.
+//     On a raw struct every read returns `undefined` (opaque), so NO trap ever
+//     fires and every operation silently falls through to the target. We build
+//     a plain-object *bridge handler* whose trap methods forward to the Wasm
+//     closures stored on the struct, invoked via `_wrapForHost`'s closure
+//     bridge (which threads `this` = the original handler struct).
+//
+//  2. **Identity.** Spec trap signatures hand the user `target`/`handler`
+//     identities (`get(t, p, recv)` with `t === target`, `this === handler`).
+//     The user's source holds the *raw* structs, so the values the trap sees
+//     must compare equal to those raw structs. We therefore use the raw struct
+//     as the host `[[ProxyTarget]]` (preserving `t === target`) and re-thread
+//     `this`/the target arg back to the raw handler/target inside each bridge.
+//
+// Construction also enforces the §28.2.1.1 step-1/2 `TypeError`s: both target
+// and handler must be objects (a WasmGC struct counts as an object).
+const _PROXY_TRAP_NAMES = [
+  "apply",
+  "construct",
+  "defineProperty",
+  "deleteProperty",
+  "get",
+  "getOwnPropertyDescriptor",
+  "getPrototypeOf",
+  "has",
+  "isExtensible",
+  "ownKeys",
+  "preventExtensions",
+  "set",
+  "setPrototypeOf",
+] as const;
+
+function _isObjectLike(v: any): boolean {
+  if (v === null || v === undefined) return false;
+  const t = typeof v;
+  return t === "object" || t === "function";
+}
+
+/**
+ * #2180 — a revoked Proxy throws a `TypeError` from EVERY internal method
+ * ("Cannot perform 'get' on a proxy that has been revoked"). The boundary
+ * helpers (`__extern_get` etc.) wrap their host reads in a try/catch that
+ * silently falls through to a struct-getter path — which would swallow this
+ * spec-mandated TypeError and return `undefined` instead. Detect it so callers
+ * can re-throw, letting the user program's `assert.throws(TypeError, …)` see it.
+ */
+function _isRevokedProxyError(e: any): boolean {
+  return e instanceof TypeError && typeof e.message === "string" && e.message.includes("proxy that has been revoked");
+}
+
+/**
+ * #2180 — build a real host Proxy from a user `new Proxy(target, handler)`.
+ * `ctor` is "Proxy" or "Proxy.revocable" for the spec-mandated TypeError text.
+ * Returns the constructed Proxy (revocable=false) — callers that need the
+ * `{proxy, revoke}` pair call `_hostProxyConstructRevocable`.
+ */
+function _hostProxyConstruct(
+  target: any,
+  handler: any,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+  ctor: string,
+): any {
+  if (!_isObjectLike(target)) {
+    throw new TypeError(`Cannot create ${ctor} with a non-object as target`);
+  }
+  if (!_isObjectLike(handler)) {
+    throw new TypeError(`Cannot create ${ctor} with a non-object as handler`);
+  }
+  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState);
+  // Use the raw target as [[ProxyTarget]] so `t === target` holds in traps and
+  // `proxy`-vs-`target` identity probes resolve. WasmGC structs are valid
+  // exotic targets for the host engine; the bridge handler routes every MOP
+  // operation through the user trap (or, when a trap is absent, the host's
+  // default which reads the struct via the same boundary helpers).
+  const proxy = new Proxy(target, bridgeHandler);
+  _userProxies.add(proxy);
+  return proxy;
+}
+
+/** #2180 — `Proxy.revocable(target, handler)` → `{ proxy, revoke }`. */
+function _hostProxyConstructRevocable(
+  target: any,
+  handler: any,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): any {
+  if (!_isObjectLike(target)) {
+    throw new TypeError("Cannot create proxy with a non-object as target");
+  }
+  if (!_isObjectLike(handler)) {
+    throw new TypeError("Cannot create proxy with a non-object as handler");
+  }
+  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState);
+  const rv = Proxy.revocable(target, bridgeHandler);
+  if (rv && typeof rv.proxy === "object" && rv.proxy !== null) _userProxies.add(rv.proxy);
+  return rv;
+}
+
+/**
+ * #2180 — read a (possibly closure-valued) field off a WasmGC struct WITHOUT
+ * routing through `_wrapForHost` (whose mirror double-wraps a closure field
+ * into a non-callable object — the very bug that left every user trap
+ * undiscovered). Prefers the per-shape `__sget_<name>` field getter, then the
+ * sidecar store. Returns `undefined` when the field is absent.
+ */
+function _structFieldRaw(obj: any, name: string, exports: Record<string, Function> | undefined): any {
+  if (exports) {
+    const getter = exports[`__sget_${name}`];
+    if (typeof getter === "function") {
+      try {
+        const v = getter(obj);
+        if (v !== undefined && v !== null) return v;
+      } catch {
+        /* field not present on this struct shape */
+      }
+    }
+  }
+  return _sidecarGet(obj, name);
+}
+
+/**
+ * #2180 — translate a (possibly WasmGC-struct) user handler into a plain-object
+ * handler the host engine can read trap functions from. Each present trap is
+ * read directly off the struct and wrapped into a JS callable that dispatches
+ * the underlying Wasm closure with `this` = the raw handler struct (so the
+ * user-observable `this` inside the trap is identity-equal to the `handler`
+ * value the compiled program holds). A trap the user did not define is omitted,
+ * so the host falls back to its default (ordinary) behavior for that operation
+ * — matching the spec, where a missing trap means "use the target's internal
+ * method".
+ */
+function _buildProxyBridgeHandler(
+  handler: any,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): any {
+  // Plain JS handler (created host-side, not a WasmGC struct) already exposes
+  // its traps directly — use it verbatim so identity/`this` are untouched.
+  if (!_isWasmStruct(handler)) return handler;
+
+  const exports = callbackState?.getExports();
+  const bridge: Record<string, any> = {};
+  for (const name of _PROXY_TRAP_NAMES) {
+    const rawTrap = _structFieldRaw(handler, name, exports);
+    if (rawTrap == null) continue;
+    const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
+    if (typeof callable !== "function") continue;
+    // Forward to the user trap with `this` = the raw handler struct. The
+    // closure bridge installs that struct as `__current_this`, so the trap
+    // body's `this` is the same value the program sees as `handler` and
+    // `assert.sameValue(this, handler)` passes. Spec-correct args (raw target,
+    // property key, receiver = our user Proxy) flow through unchanged.
+    bridge[name] = function (this: any, ...args: any[]): any {
+      return (callable as Function).apply(handler, args);
+    };
+  }
+  return bridge;
+}
+
 // ── #1234 — sparse-aware Array.prototype fast paths ─────────────────────────
 //
 // V8's native `Array.prototype.{unshift,reverse,forEach,…}` walks the index
@@ -4871,6 +5276,19 @@ function _toJsArrayDeep(arr: any, exports: Record<string, Function> | undefined,
  *  mode (Node, Bun, WASI). */
 interface InstanceState {
   webStorage: { local?: any; session?: any };
+  // #1933 — per-instance state that previously lived at module scope and bled
+  // across (or retained) concurrently-live instances. Threaded through
+  // `resolveImport` (which already receives `instanceState`).
+  /** symbol id → boxed symbol (lazily seeded with the well-known symbols). */
+  symbolCache?: Map<number, symbol>;
+  /** symbol id → user-registered description (`null` = Symbol() w/ no desc). */
+  symbolDescRegistry?: Map<number, string | null>;
+  /** legacy RegExp static state (`RegExp.$1` etc.) — per instance, not shared. */
+  legacyRegExpState?: LegacyRegExpState;
+  /** user-class name → registered subclass constructors (#1933 retention leak). */
+  subclassCtors?: Map<string, Function[]>;
+  /** user-class name → parent class name (or null). */
+  userClassParents?: Map<string, string | null>;
 }
 
 function makeWebStoragePolyfill(): any {
@@ -5712,7 +6130,7 @@ function resolveImport(
             const re = args[0] as RegExp;
             const probe = new RegExp(re.source, re.flags.replace(/[gy]/g, ""));
             const m2 = probe.exec(recvStr);
-            if (m2) _updateLegacyRegExpState(recvStr, m2);
+            if (m2) _updateLegacyRegExpState(recvStr, m2, instanceState?.legacyRegExpState);
           } catch {
             // ignore — best-effort
           }
@@ -5983,14 +6401,14 @@ function resolveImport(
           if ((m === "exec" || m === "test") && self instanceof RegExp && typeof callArgs[0] === "string") {
             const input = callArgs[0] as string;
             if (m === "exec" && ret != null) {
-              _updateLegacyRegExpState(input, ret as RegExpExecArray);
+              _updateLegacyRegExpState(input, ret as RegExpExecArray, instanceState?.legacyRegExpState);
             } else if (m === "test" && ret === true) {
               // .test() also updates the slots per spec. Re-run exec on a
               // non-sticky/non-global clone so we don't perturb self.lastIndex.
               try {
                 const clone = new RegExp(self.source, self.flags.replace(/[gy]/g, ""));
                 const m2 = clone.exec(input);
-                if (m2) _updateLegacyRegExpState(input, m2);
+                if (m2) _updateLegacyRegExpState(input, m2, instanceState?.legacyRegExpState);
               } catch {
                 // best-effort — bad source/flags shouldn't break .test()
               }
@@ -6371,8 +6789,11 @@ assert._isSameValue = isSameValue;
           if (obj != null && typeof obj === "object") {
             try {
               if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) return obj[key];
-            } catch {
-              /* fall through to the generic path */
+            } catch (e) {
+              // #2180 — a revoked-proxy TypeError must propagate, not be
+              // swallowed by the struct-getter fallback below.
+              if (_isRevokedProxyError(e)) throw e;
+              /* otherwise fall through to the generic path */
             }
           }
           const val = _safeGet(obj, key, callbackState);
@@ -6398,6 +6819,12 @@ assert._isSameValue = isSameValue;
             if ((sc && key in sc) || descs?.has(_normalizeDescKey(key))) return undefined;
           }
           if (_isWasmStruct(obj) && typeof key === "string") {
+            // (#2179) A deleted key must NOT be resurrected by the struct-field
+            // getter fast-path: `delete o.a` sets the tombstone but cannot clear
+            // the underlying WasmGC field, so `__sget_a` still returns the stale
+            // value. Consult the tombstone before reading the live field.
+            const tomb = _wasmStructDeletedKeys.get(obj);
+            if (tomb && tomb.has(key)) return undefined;
             const exports = callbackState?.getExports();
             const getter = exports?.[`__sget_${key}`];
             if (typeof getter === "function") return getter(obj);
@@ -6573,37 +7000,34 @@ assert._isSameValue = isSameValue;
             const prim = _toPrimitiveSync(key, "string", callbackState);
             if (prim != null && typeof prim !== "object") key = prim;
           }
+          // (#2130) WasmGC struct receivers route through the shared own-property
+          // predicate (tombstone-aware, per-receiver shape oracle) — NOT a
+          // module-global `__sget_<key>` existence probe, which reported every
+          // receiver as having any field name present in any struct type and
+          // never consulted the delete tombstone. So `delete o.a; "a" in o` is
+          // now `false`, and object-rest `"e" in rest` is `false` (rest's plain
+          // object never has `e`; the source struct's shape no longer leaks).
+          if (typeof obj === "object" && _isWasmStruct(obj)) {
+            if (_wasmStructHasOwn(obj, key, callbackState?.getExports())) return 1;
+            // (#1991) `in` walks the [[Prototype]] chain (§13.10.1 → §7.3.12):
+            // every object inherits the Object.prototype members.
+            if (typeof key === "string" && _OBJECT_PROTO_KEYS.has(key)) return 1;
+            return 0;
+          }
+          // Plain JS object (or host-supplied object) — native HasProperty walks
+          // its own prototype chain. HasProperty is value-independent (§7.3.12),
+          // so the sidecar fallback is key-based, not value-based (A8): a
+          // user-assigned `o.x = undefined` must still report present.
           try {
             if (key in obj) return 1;
-          } catch {
+          } catch (e) {
+            // #2180 — `key in revokedProxy` throws TypeError; propagate it.
+            if (_isRevokedProxyError(e)) throw e;
             /* opaque struct or non-object obj */
           }
-          // Fall back to sidecar (user-assigned properties on host objects)
-          if (_sidecarGet(obj, key) !== undefined) return 1;
-          // Wasm struct getter (defineProperty accessor)
-          if (typeof key === "string") {
-            const exports = callbackState?.getExports();
-            if (typeof exports?.[`__sget_${key}`] === "function") {
-              try {
-                // (#1589A) Mirror __extern_has_idx: a getter that returns at
-                // all (even null/undefined) proves the field exists on this
-                // struct shape — HasProperty (§7.3.12) is value-independent.
-                // Only a throw signals "field not defined on this variant".
-                exports[`__sget_${key}`](obj);
-                return 1;
-              } catch {
-                /* getter not defined for this struct variant — fall through */
-              }
-            }
-          }
-          // (#1991) `in` walks the [[Prototype]] chain (§13.10.1 → §7.3.12), so
-          // EVERY object value inherits the Object.prototype members. A WasmGC
-          // struct (object literal / class instance / array) arrives here as an
-          // opaque externref whose `key in obj` above can't see Object.prototype,
-          // so `"toString" in ({} as any)` wrongly returned 0. Recognise the
-          // well-known Object.prototype keys explicitly for any non-null object.
-          // (Inherited *user-class* methods still need a method registry — not
-          // covered here.)
+          const sc = _wasmStructProps.get(obj);
+          if (sc && key in sc) return 1;
+          // Inherited Object.prototype members for any non-null object value.
           if (typeof key === "string" && (typeof obj === "object" || typeof obj === "function") && obj !== null) {
             if (_OBJECT_PROTO_KEYS.has(key)) return 1;
           }
@@ -6806,33 +7230,42 @@ assert._isSameValue = isSameValue;
       // `''` (empty string) marks "Symbol() called with no arg" so
       // `.description === undefined` works distinctly from "uninitialized".
       if (name === "__box_symbol") {
-        if (!_symbolCache) {
-          _symbolCache = new Map<number, symbol>([
-            [1, Symbol.iterator],
-            [2, Symbol.hasInstance],
-            [3, Symbol.toPrimitive],
-            [4, Symbol.toStringTag],
-            [5, Symbol.species],
-            [6, Symbol.isConcatSpreadable],
-            [7, Symbol.match],
-            [8, Symbol.replace],
-            [9, Symbol.search],
-            [10, Symbol.split],
-            [11, Symbol.unscopables],
-            [12, Symbol.asyncIterator],
-            [13, _disposeSym],
-            [14, _asyncDisposeSym],
-          ]);
+        // #1933 — per-instance symbol cache (was module-level `_symbolCache`,
+        // reset per buildImports → clobbered concurrent instances). Falls back
+        // to a local map when no instanceState is threaded (legacy callers).
+        const symbolCache =
+          instanceState?.symbolCache ??
+          (instanceState ? (instanceState.symbolCache = new Map<number, symbol>()) : new Map<number, symbol>());
+        if (symbolCache.size === 0) {
+          symbolCache.set(1, Symbol.iterator);
+          symbolCache.set(2, Symbol.hasInstance);
+          symbolCache.set(3, Symbol.toPrimitive);
+          symbolCache.set(4, Symbol.toStringTag);
+          symbolCache.set(5, Symbol.species);
+          symbolCache.set(6, Symbol.isConcatSpreadable);
+          symbolCache.set(7, Symbol.match);
+          symbolCache.set(8, Symbol.replace);
+          symbolCache.set(9, Symbol.search);
+          symbolCache.set(10, Symbol.split);
+          symbolCache.set(11, Symbol.unscopables);
+          symbolCache.set(12, Symbol.asyncIterator);
+          symbolCache.set(13, _disposeSym);
+          symbolCache.set(14, _asyncDisposeSym);
         }
+        const symbolDescRegistry =
+          instanceState?.symbolDescRegistry ??
+          (instanceState
+            ? (instanceState.symbolDescRegistry = new Map<number, string | null>())
+            : new Map<number, string | null>());
         return (id: number) => {
-          let sym = _symbolCache!.get(id);
+          let sym = symbolCache.get(id);
           if (sym === undefined) {
-            const reg = _symbolDescRegistry.get(id);
+            const reg = symbolDescRegistry.get(id);
             // reg === undefined → caller never registered (use legacy wasm_<id>)
             // reg === null     → Symbol() with no description → undefined
             // reg is a string  → user-supplied description
             sym = reg === undefined ? Symbol(`wasm_${id}`) : reg === null ? Symbol() : Symbol(reg);
-            _symbolCache!.set(id, sym);
+            symbolCache.set(id, sym);
           }
           return sym;
         };
@@ -6841,12 +7274,18 @@ assert._isSameValue = isSameValue;
       // `__box_symbol(id)` calls produce Symbol(desc) preserving Description.
       // Pass `null` (ref.null extern) to mark "Symbol() with no description".
       if (name === "__symbol_register_desc") {
+        // #1933 — per-instance description registry (was module-level).
+        const symbolDescRegistry =
+          instanceState?.symbolDescRegistry ??
+          (instanceState
+            ? (instanceState.symbolDescRegistry = new Map<number, string | null>())
+            : new Map<number, string | null>());
         return (id: number, desc: any): void => {
           if (id <= 15) return; // never override well-known symbols (#1830: 15 = @@matchAll)
           if (desc == null) {
-            _symbolDescRegistry.set(id, null);
+            symbolDescRegistry.set(id, null);
           } else {
-            _symbolDescRegistry.set(id, String(desc));
+            symbolDescRegistry.set(id, String(desc));
           }
         };
       }
@@ -7001,8 +7440,12 @@ assert._isSameValue = isSameValue;
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
+              // (#2179) Drop deleted keys — the static struct shape still carries
+              // the field, but `delete o.k` tombstoned it.
+              const tomb = _wasmStructDeletedKeys.get(obj);
               return _orderOwnKeysSpec(
                 fieldNames.filter((k) => {
+                  if (tomb && tomb.has(k)) return false;
                   if (!descs) return true;
                   const flags = descs.get(k);
                   return flags === undefined || !!(flags & _SC_ENUMERABLE);
@@ -7021,8 +7464,10 @@ assert._isSameValue = isSameValue;
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
+              const tomb = _wasmStructDeletedKeys.get(obj); // (#2179) skip deleted keys
               return _orderOwnKeysSpec(
                 fieldNames.filter((k) => {
+                  if (tomb && tomb.has(k)) return false;
                   if (!descs) return true;
                   const flags = descs.get(k);
                   return flags === undefined || !!(flags & _SC_ENUMERABLE);
@@ -7044,8 +7489,10 @@ assert._isSameValue = isSameValue;
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
+              const tomb = _wasmStructDeletedKeys.get(obj); // (#2179) skip deleted keys
               return _orderOwnKeysSpec(
                 fieldNames.filter((k) => {
+                  if (tomb && tomb.has(k)) return false;
                   if (!descs) return true;
                   const flags = descs.get(k);
                   return flags === undefined || !!(flags & _SC_ENUMERABLE);
@@ -8190,12 +8637,12 @@ assert._isSameValue = isSameValue;
           ) {
             const input = wrappedArgs[0] as string;
             if (method === "exec" && ret != null) {
-              _updateLegacyRegExpState(input, ret as RegExpExecArray);
+              _updateLegacyRegExpState(input, ret as RegExpExecArray, instanceState?.legacyRegExpState);
             } else if (method === "test" && ret === true) {
               try {
                 const clone = new RegExp(wrappedObj.source, wrappedObj.flags.replace(/[gy]/g, ""));
                 const m2 = clone.exec(input);
-                if (m2) _updateLegacyRegExpState(input, m2);
+                if (m2) _updateLegacyRegExpState(input, m2, instanceState?.legacyRegExpState);
               } catch {
                 // ignore
               }
@@ -8431,7 +8878,15 @@ assert._isSameValue = isSameValue;
         return (iterable: any, keyFn: any): any =>
           (Object as any).groupBy(iterable, _maybeWrapCallable(keyFn, 2, callbackState));
       // Proxy.revocable(target, handler) — creates a revocable Proxy (#965)
-      if (name === "__proxy_revocable") return (target: any, handler: any): any => Proxy.revocable(target, handler);
+      if (name === "__proxy_revocable")
+        return (target: any, handler: any): any => {
+          // #2180 — same construction path as `new Proxy`: validate the
+          // target/handler are objects (else TypeError), bridge a WasmGC-struct
+          // handler so the host can read its traps, and keep the raw target as
+          // [[ProxyTarget]] for identity. Host enforces revoked-throws +
+          // revoke idempotence on the returned pair.
+          return _hostProxyConstructRevocable(target, handler, callbackState);
+        };
       // ── Reflect.* host dispatch (#1466) ─────────────────────────────────
       // Each handler delegates to the host's Reflect.X so Proxy targets see
       // their traps fire and boolean returns are preserved. Wasm structs
@@ -9095,7 +9550,9 @@ assert._isSameValue = isSameValue;
             try {
               const k = typeof key === "symbol" ? key : String(key);
               return delete obj[k] ? 1 : 0;
-            } catch {
+            } catch (e) {
+              // #2180 — deleting from a revoked proxy throws TypeError; propagate it.
+              if (_isRevokedProxyError(e)) throw e;
               // Non-configurable in strict mode throws TypeError; report failure.
               return 0;
             }
@@ -9151,33 +9608,9 @@ assert._isSameValue = isSameValue;
               return 0;
             }
           }
-          // (#1334) Property explicitly deleted — treat as absent regardless
-          // of the struct shape having the field name.
-          const tomb = _wasmStructDeletedKeys.get(obj);
-          if (tomb && tomb.has(typeof key === "symbol" ? key : String(key))) return 0;
-          // WasmGC struct: check sidecar properties
-          const sc = _wasmStructProps.get(obj);
-          if (sc && key in sc) return 1;
-          // Check descriptor map (for accessor properties set via Object.defineProperty)
-          // __defineProperty_accessor stores flags in _wasmPropDescs so that
-          // hasOwnProperty returns true for accessor-only properties. (#929)
-          const descs = _wasmPropDescs.get(obj);
-          if (descs && descs.has(String(key))) return 1;
-          // #1047 — registered class prototype: only allowlisted methods qualify
-          const protoMethods = _prototypeMethodNames.get(obj);
-          if (protoMethods !== undefined) {
-            const prop = String(key);
-            return protoMethods.includes(prop) && !_isDeletedClassProp(obj, prop) ? 1 : 0;
-          }
-          const staticMethods = _staticMethodNames.get(obj);
-          if (staticMethods !== undefined) {
-            const prop = String(key);
-            return staticMethods.includes(prop) && !_isDeletedClassProp(obj, prop) ? 1 : 0;
-          }
-          // Check struct field names via exported helpers
-          const exports = callbackState?.getExports();
-          const fieldNames = _getStructFieldNames(obj, exports) ?? [];
-          return fieldNames.includes(String(key)) ? 1 : 0;
+          // (#2130) Single shared own-property predicate — tombstone, sidecar,
+          // descriptor, class methods, struct shape.
+          return _wasmStructHasOwn(obj, key, callbackState?.getExports()) ? 1 : 0;
         };
       // propertyIsEnumerable runtime check for externref/any receivers
       if (name === "__propertyIsEnumerable")
@@ -9442,6 +9875,30 @@ assert._isSameValue = isSameValue;
         // `ctx-non-object.js` / `ctx-non-ctor.js` files exercise for
         // undefined/null/primitive/non-constructor values.
         if (directCall) return Promise;
+        // (#1694 A.i / #1632b-1) When the user passes a COMPILED FUNCTION as the
+        // capability constructor — `Promise.all.call(NotPromise, …)` where
+        // `NotPromise` is an ordinary `function` lowered to a Wasm closure
+        // struct — V8's NewPromiseCapability(C) does `Construct(C, «executor»)`.
+        // A bare `_wrapForHost` proxy is non-constructible, so V8 throws
+        // "… is not a constructor". Wrap it in the callable/constructible proxy
+        // so the construct succeeds and the closure body runs (executor
+        // protocol). Only genuine closures (`__is_closure === 1`) get the
+        // callable wrap; a plain object or non-closure struct stays
+        // non-constructible, so the spec TypeError for `ctx-non-object` /
+        // `ctx-non-ctor` still fires per §27.2.4.X step 2.
+        if (thisArg != null && typeof thisArg === "object" && _isWasmStruct(thisArg)) {
+          const exports = callbackState?.getExports();
+          const isClosureFn = exports?.__is_closure as ((v: any) => number) | undefined;
+          let isClosure = false;
+          if (typeof isClosureFn === "function") {
+            try {
+              isClosure = isClosureFn(thisArg) === 1;
+            } catch {
+              isClosure = false;
+            }
+          }
+          if (isClosure) return _wrapCallableForHost(thisArg, callbackState);
+        }
         return thisArg;
       };
       // (#1116b) Synthesize (and cache) a JS subclass of Promise for a
@@ -10222,7 +10679,11 @@ assert._isSameValue = isSameValue;
             // For a given v, walk its proto chain looking for any registered
             // sub-ctor whose prototype matches — this avoids ambiguity when
             // the same `subName` is used across multiple parents (test fixtures).
-            const bucket = _subclassCtors.get(ctorName);
+            // #1933 — per-instance subclass registry (was module-level
+            // `_subclassCtors`, which leaked instances via retained ctor
+            // closures and crossed instances). Falls back to the module map for
+            // legacy callers without an instanceState.
+            const bucket = (instanceState?.subclassCtors ?? _subclassCtors).get(ctorName);
             if (bucket !== undefined && bucket.length > 0) {
               for (const subCtor of bucket) {
                 if (v instanceof subCtor) return 1;
@@ -10243,7 +10704,7 @@ assert._isSameValue = isSameValue;
             while (tag != null && !guard.has(tag)) {
               if (tag === ctorName) return 1;
               guard.add(tag);
-              tag = _userClassParents.get(tag) ?? null;
+              tag = (instanceState?.userClassParents ?? _userClassParents).get(tag) ?? null;
             }
           }
           // (#1729) `<obj> instanceof Object` is true for every object value
@@ -10297,8 +10758,9 @@ assert._isSameValue = isSameValue;
           _userClassTags.set(instance as object, className);
           // Register the parent edge (idempotent). Null parent indicates the
           // direct parent is a builtin, so the chain terminates.
-          if (!_userClassParents.has(className)) {
-            _userClassParents.set(className, parentName == null ? null : parentName);
+          const userClassParents = instanceState?.userClassParents ?? _userClassParents;
+          if (!userClassParents.has(className)) {
+            userClassParents.set(className, parentName == null ? null : parentName);
           }
         };
       // (#1455) Subclasses of host builtins: after `__new_<Parent>(args)`
@@ -10321,7 +10783,10 @@ assert._isSameValue = isSameValue;
           // Find a cached synthetic ctor whose parent matches. The cache is a
           // small array per `subName` so multiple parents (e.g. across test
           // fixtures that reuse the same class name) don't collide.
-          let bucket = _subclassCtors.get(subName);
+          // #1933 — per-instance registry so the synthetic ctors (which close
+          // over this instance) don't retain it forever across hot-reloads.
+          const subclassCtors = instanceState?.subclassCtors ?? _subclassCtors;
+          let bucket = subclassCtors.get(subName);
           let Sub: any;
           if (bucket !== undefined) {
             for (const candidate of bucket) {
@@ -10343,7 +10808,7 @@ assert._isSameValue = isSameValue;
               }
               if (bucket === undefined) {
                 bucket = [];
-                _subclassCtors.set(subName, bucket);
+                subclassCtors.set(subName, bucket);
               }
               bucket.push(Sub);
             } catch {
@@ -10710,6 +11175,12 @@ assert._isSameValue = isSameValue;
         const descs = _wasmPropDescs.get(obj);
         if ((sc && key in sc) || descs?.has(_normalizeDescKey(key))) return undefined;
         if (typeof key === "string") {
+          // (#2179) A deleted key must NOT be resurrected by the struct-field
+          // getter fast-path: `delete o.a` sets the tombstone but cannot clear
+          // the underlying WasmGC field, so `__sget_a` still returns the stale
+          // value. Consult the tombstone before reading the live field.
+          const tomb = _wasmStructDeletedKeys.get(obj);
+          if (tomb && tomb.has(key)) return undefined;
           const exports = callbackState?.getExports();
           const getter = exports?.[`__sget_${key}`];
           if (typeof getter === "function") return getter(obj);
@@ -11073,20 +11544,7 @@ assert._isSameValue = isSameValue;
       });
     }
     case "proxy_create":
-      return (target: any, handler: any) => {
-        // Wrap the Wasm struct target in a real JS Proxy with the given handler.
-        // If handler is null/undefined, use an empty handler (transparent proxy).
-        // If target is null/undefined, fall back to an empty object as target.
-        const t = target ?? {};
-        const h = handler ?? {};
-        try {
-          return new Proxy(t, h);
-        } catch {
-          // If Proxy construction fails (e.g. handler is not an object),
-          // return target as-is (standalone fallback behavior).
-          return t;
-        }
-      };
+      return (target: any, handler: any) => _hostProxyConstruct(target, handler, callbackState, "Proxy");
     default:
       // #1858 C9a: fail loud instead of silently binding an unhandled import
       // intent to a no-op. A no-op `() => {}` returns `undefined` for every
@@ -11513,6 +11971,19 @@ export function buildImports(
   string_constants: Record<string, WebAssembly.Global>;
   setExports?: (exports: Record<string, Function>) => void;
 } {
+  // (#1933) Per-instance state for stateful imports. Created FIRST so the
+  // RegExp-accessor install below (and every `resolveImport` call) can thread
+  // it. Everything here was previously module-level and bled across / retained
+  // concurrently-live instances; the per-instance Maps/state fix that.
+  const instanceState: InstanceState = {
+    webStorage: {},
+    symbolCache: new Map<number, symbol>(),
+    symbolDescRegistry: new Map<number, string | null>(),
+    legacyRegExpState: _makeLegacyRegExpState(),
+    subclassCtors: new Map<string, Function[]>(),
+    userClassParents: new Map<string, string | null>(),
+  };
+
   // #1464 — install ES2025 Iterator.zip / zipKeyed / concat polyfills on
   // the host's `Iterator` global if missing. Idempotent and safe to call
   // unconditionally; older Node / V8 versions need it, newer hosts skip.
@@ -11525,7 +11996,7 @@ export function buildImports(
   // the spec requires TypeError, so we override. Idempotent per RegExp identity.
   {
     const RegExpCtor = (deps?.RegExp ?? (typeof RegExp !== "undefined" ? RegExp : undefined)) as unknown;
-    if (RegExpCtor) _installLegacyRegExpAccessors(RegExpCtor);
+    if (RegExpCtor) _installLegacyRegExpAccessors(RegExpCtor, instanceState.legacyRegExpState);
   }
 
   const env: Record<string, Function> = {};
@@ -11545,11 +12016,10 @@ export function buildImports(
   let hasCallbacks = false;
   let lastCaughtException: any = undefined;
 
-  // (#1467) Each instantiated module gets its own symbol id space (counter
-  // resets to 14 per module). Reset the shared registry + cache so symbol
-  // ids from a prior module don't leak descriptions into this one.
-  _symbolCache = undefined;
-  _symbolDescRegistry.clear();
+  // (#1467 / #1933) Each instantiated module gets its own symbol id space and
+  // per-instance symbol cache/registry, RegExp legacy state, and subclass/
+  // parent registries — initialized in `instanceState` above (was module-level,
+  // which crossed and retained concurrently-live instances).
 
   // Recursion depth guard: host imports can call back into Wasm exports
   // (e.g. callback_maker, valueOf/toString coercion, iterator protocol),
@@ -11557,9 +12027,6 @@ export function buildImports(
   // Track depth across ALL host imports sharing a single counter.
   const MAX_HOST_RECURSION_DEPTH = 100;
   let hostCallDepth = 0;
-
-  // Per-instance state for stateful imports (e.g. localStorage polyfill).
-  const instanceState: InstanceState = { webStorage: {} };
 
   for (const imp of manifest) {
     if (imp.module !== "env") continue;

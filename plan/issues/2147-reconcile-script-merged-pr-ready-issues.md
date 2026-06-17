@@ -1,10 +1,12 @@
 ---
 id: 2147
 title: "reconcile-tasklist.mjs: flag ready issues whose number appears in a merged PR title"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/dev-b
 priority: medium
 feasibility: easy
 reasoning_effort: low
@@ -43,3 +45,34 @@ output (report-only; flipping stays manual/PO).
 ## Notes
 
 Routine dev, S-size, sprint 63. PO owns the flips.
+
+## Resolution (2026-06-16, dev-b)
+
+Extended `scripts/reconcile-tasklist.mjs` with a second drift check:
+
+- New helpers `listIssues()`, `mergedPrIssueRefs()`, `mergedPrStaleIssues()`.
+  Fetches merged PR titles via `gh pr list --state merged -L 200 --json title`,
+  extracts every `#NNNN` reference, and reports issues still at
+  `ready`/`in-progress` whose number is cited by a merged **code** PR.
+- **Plan/docs exclusion** — `PLAN_DOCS_TITLE_RE` drops `plan:`/`docs:`/
+  `chore(plan)`/`chore(docs)` (and scoped variants) titles so a planning commit
+  that merely *mentions* an issue can't false-flag it (acceptance: zero false
+  flags on plan-only PRs).
+- **At-risk filter** — only `ready`/`in-progress` issues are flagged
+  (`done`/`wont-fix`/`in-review`/`blocked`/`backlog` aren't claimable, so a
+  stale reference can't poison dispatch).
+- Wired into all three output modes (human report, `--quiet` one-liner,
+  `--json`). Report-only — does NOT write frontmatter (PO owns the flips).
+- Resilient: skips silently with a reason when `gh` is unavailable/
+  unauthenticated (CI) or `--no-merged-prs` is passed; never fails the
+  SessionStart hook.
+
+Tests: `tests/issue-2147.test.ts` (4 cases — code PR flags a ready issue;
+plan/docs PR does NOT flag; `done` issue never flagged; in-progress flagged +
+`--no-merged-prs` skip path) all pass via a fixture issues dir and a shimmed
+`gh` on PATH.
+
+**Acceptance:**
+- [x] Running the script after a merge citing #NNNN flags the issue within one
+  session (it runs in the SessionStart hook).
+- [x] Zero false flags on plan-only PRs (plan:/docs: titles excluded).

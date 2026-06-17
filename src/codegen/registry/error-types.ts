@@ -87,6 +87,13 @@ export function getOrRegisterErrorStructType(ctx: CodegenContext): number {
       { name: "tag", type: { kind: "i32" }, mutable: false },
       { name: "message", type: { kind: "externref" }, mutable: true },
       { name: "name", type: { kind: "externref" }, mutable: false },
+      // (#1536) $stack — fieldIdx 3, kept AFTER message(1)/name(2) so their
+      // indices stay stable. `error.stack` is non-standard (no normative
+      // test262 coverage); materializing a real stack trace needs no Wasm
+      // primitive, so standalone constructs it as `ref.null.extern` (reads
+      // back as `undefined`, not a trap). Mutable so a future `err.stack = …`
+      // write can land here without a struct-type change.
+      { name: "stack", type: { kind: "externref" }, mutable: true },
     ],
   });
   ctx.errorStructTypeIdx = idx;
@@ -142,6 +149,9 @@ export function emitWasiErrorConstructor(ctx: CodegenContext, errorName: WasiErr
     // $name — #1536 Phase 2: materialized class-name string ("TypeError" …)
     // as externref, replacing the Phase-1 `ref.null.extern` placeholder.
     ...nameInstrs,
+    // $stack — (#1536) non-standard; standalone has no stack-capture
+    // primitive, so initialize to null (reads back as `undefined`).
+    { op: "ref.null.extern" },
     { op: "struct.new", typeIdx: structIdx },
     { op: "extern.convert_any" },
   ];

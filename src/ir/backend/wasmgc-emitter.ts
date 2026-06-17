@@ -56,6 +56,21 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push({ op: "array.get", typeIdx: layout.arrayTypeIdx });
   }
 
+  // #1804 — build a fixed-length vec from N element values already on the
+  // stack (e0 deepest … eN top). Mirrors the legacy `compileArrayLiteral` fast
+  // path (src/codegen/literals.ts): the vec struct is { length:i32,
+  // data:(ref $arr) }, so the length (field 0) must sit BELOW the data ref
+  // (field 1) for `struct.new`. `array.new_fixed` leaves the data ref on top,
+  // so stash it in `dataScratchLocal`, push the length, re-load the data ref,
+  // then `struct.new`.
+  emitVecNewFixed(layout: IrVecLowering, count: number, dataScratchLocal: number, out: Instr[]): void {
+    out.push({ op: "array.new_fixed", typeIdx: layout.arrayTypeIdx, length: count });
+    out.push({ op: "local.set", index: dataScratchLocal });
+    out.push({ op: "i32.const", value: count });
+    out.push({ op: "local.get", index: dataScratchLocal });
+    out.push({ op: "struct.new", typeIdx: layout.vecStructTypeIdx });
+  }
+
   // ---- scalars / locals / globals / control flow ----------------------
 
   emitConst(instr: Extract<IrInstr, { kind: "const" }>, funcName: string, out: Instr[]): void {

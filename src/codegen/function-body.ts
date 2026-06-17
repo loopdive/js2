@@ -51,7 +51,7 @@ import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-bu
 import { collectI32SpecializedArrays } from "./array-element-typing.js";
 import { detectArrayReduceFusion, applyArrayReduceFusion } from "./array-reduce-fusion.js";
 import { compileNativeGeneratorFunction } from "./generators-native.js";
-import { ASYNC_CPS_ENABLED, analyzeAsyncBody, splitBodyAtAwait, emitAsyncStateMachine } from "./async-cps.js";
+import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps, emitAsyncStateMachine } from "./async-cps.js";
 import {
   functionHasLinearU8Params,
   getLinearU8ParamIndicesForDeclaration,
@@ -651,6 +651,16 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   }
   const retType = ctx.checker.getReturnTypeOfSignature(sig);
 
+  // (#2182) Defensive balance check for the detached-body funcIdx-shift hazard.
+  // Every `ctx.liveBodies.add(...)` during this function's compilation MUST be
+  // matched by a `.delete(...)`. A missing delete leaves a stale detached array
+  // registered, which a LATER late import would over-shift (silent funcIdx
+  // corruption — the #1257 bug class). Snapshot the size here and assert it's
+  // restored at the end. Scoped to the delta (not "must be empty") so it never
+  // false-positives on a parent body legitimately registered by an enclosing
+  // compile while a lifted closure / nested function compiles.
+  const liveBodiesAtEntry = ctx.liveBodies.size;
+
   // For async functions, unwrap Promise<T> to get T
   const isAsync = ctx.asyncFunctions.has(func.name);
   const isGenerator = ctx.generatorFunctions.has(func.name);
@@ -1107,20 +1117,21 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // to be available before their textual position in the enclosing scope.
       hoistFunctionDeclarations(ctx, fctx, bodyStatements);
 
-      // (#1042) Async/await CPS state-machine activation hook. Gated behind
-      // ASYNC_CPS_ENABLED (off by default → byte-identical legacy codegen).
-      // Eligible only for a JS-host async function whose body matches a single
-      // tail-await canonical shape with no try-across-await / nested await. On
-      // a match we rewrite the result type to externref (the fn returns a
-      // Promise object), drive emitAsyncStateMachine, and skip the normal loop.
+      // (#1042/#1796) Async/await CPS state-machine activation hook. Gated by
+      // the per-function `asyncFnNeedsCps` predicate (#1936): a JS-host async
+      // function is CPS-lowered ONLY when it *genuinely suspends* — at least one
+      // await operand is not statically resolved AND the body matches a single
+      // tail-await canonical shape (no try-across-await / nested await). Fully
+      // await-elidable bodies (`return await Promise.resolve(42)`) fall through
+      // to the legacy synchronous path and keep returning the unwrapped value,
+      // preserving the `asyncFn() as any as number` "compile away" idiom
+      // (#1313/#1727). On a match we rewrite the result type to externref (the
+      // fn now returns a real Promise object), drive emitAsyncStateMachine, and
+      // skip the normal statement loop.
       let asyncCpsHandled = false;
       if (ASYNC_CPS_ENABLED && isAsync && !ctx.wasi && !ctx.standalone && ts.isFunctionDeclaration(decl) && decl.body) {
         const asyncPlan = analyzeAsyncBody(ctx, decl);
-        if (
-          asyncPlan.awaitPoints.length === 1 &&
-          !asyncPlan.hasTryAcrossAwait &&
-          splitBodyAtAwait(decl, asyncPlan) !== null
-        ) {
+        if (asyncFnNeedsCps(decl, asyncPlan)) {
           // The async function returns a Promise object (externref), not the
           // unwrapped value. Rewrite the registered signature's result + fctx.
           rewriteFuncResultType(ctx, func, { kind: "externref" });
@@ -1162,6 +1173,18 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   deduplicateLocals(fctx);
   func.locals = fctx.locals;
   func.body = fctx.body;
+
+  // (#2182) See the snapshot at function entry. A non-zero delta means a
+  // detached-body `liveBodies.add` was not balanced by a `.delete` — a
+  // funcIdx-shift hazard. Throw in dev/test builds so it surfaces immediately
+  // rather than corrupting a later late import silently.
+  if (ctx.liveBodies.size !== liveBodiesAtEntry) {
+    throw new Error(
+      `codegen invariant (#2182): liveBodies unbalanced after compiling '${func.name}' ` +
+        `(entry=${liveBodiesAtEntry}, exit=${ctx.liveBodies.size}) — a detached-body ` +
+        `liveBodies.add() is missing its matching .delete(), risking funcIdx over-shift.`,
+    );
+  }
 
   ctx.currentFunc = null;
 }

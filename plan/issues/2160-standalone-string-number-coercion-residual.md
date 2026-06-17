@@ -2,7 +2,7 @@
 id: 2160
 title: "Standalone String/Number method & coercion conformance residual (~635 tests)"
 status: ready
-sprint: 62
+sprint: 63
 created: 2026-06-15
 updated: 2026-06-15
 priority: high
@@ -44,3 +44,38 @@ fail standalone**, attributed to String/Number method and coercion residuals.
 Parent (done): #1470. Sequenced after the coercion engine (#1917) and
 value-rep P1 (#2104). Part of sprint-62 standalone catch-up (rank 4 by gap
 impact).
+
+---
+
+## Progress (2026-06-16, dev3) — `Number.parseInt`/`Number.parseFloat` slice
+
+**Status stays `ready`** — this is one independent slice of the 635-test
+bucket, landable now (not gated on #1917/#2104).
+
+Re-measured against `origin/main` @ `5634b13ec`: the common String/Number
+methods + coercion already pass standalone (padStart/padEnd/repeat/trim/
+includes/startsWith/endsWith/at/codePointAt/replaceAll; toFixed/toPrecision/
+toExponential/toString(radix); Number.isInteger/isNaN/isFinite/isSafeInteger;
+bare parseInt/parseFloat; `+str`/`str*num`/`str+num` coercion; template
+literals; String(num); `-0`/NaN/1e21 formatting). Many were closed by the
+value-rep P0/P1 work that just landed.
+
+**One concrete independent bug fixed (this PR):** `Number.parseInt` /
+`Number.parseFloat` (the §21.1.2.12-13 namespaced aliases — same functions as
+the globals) failed to compile in standalone with a `__get_builtin` codegen
+error, while the bare `parseInt`/`parseFloat` worked. Root cause: the parse
+import-collector (`src/codegen/declarations.ts`) only recognized the *bare
+identifier* call form, so the `Number.`-prefixed property-access form never
+registered the native WasmGC scanner; the call-site routing
+(`calls.ts`, which reads `funcMap.get("parseInt"/"parseFloat")`) then fell
+through to the dynamic-shape `__get_builtin` refusal. Fix: detect the
+`Number.parseInt`/`Number.parseFloat` call shape in the collector and add the
+same helper to `parseNeeded`. Regression test:
+`tests/issue-2160-number-parse.test.ts` (8 cases × host/standalone).
+
+**Still open (the bulk of the 635):** the remaining residuals are the
+**wrapper objects** `new String(...)` / `new Number(...)` (standalone null-deref
+/ wrong `valueOf` — gated on value-rep boxing #2072/#2104, and noted in the
+acceptance criteria's `__new_String`/`__new_Number` leak) plus the harder
+String/Number coercion edges that overlap the coercion engine (#1917). Those
+remain the value-rep / #1917 territory called out in the original notes.

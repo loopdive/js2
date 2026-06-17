@@ -1127,11 +1127,137 @@ export function addStringRuntime(mod: WasmModule): void {
     2,
   ); // 2 extra locals
 
-  // __str_len: load i32 at ptr+8
+  // __str_len: load i32 at ptr+8 — the stored UTF-8 **byte** count. This is the
+  // internal primitive used by slice/indexOf/concat/eq, which all index by byte
+  // offset. It is NOT the JS `.length` (UTF-16 code units) — see
+  // __str_length_utf16 below.
   addRuntimeFunc(mod, "__str_len", [{ kind: "i32" }], [{ kind: "i32" }], [], () => [
     { op: "local.get", index: 0 },
     { op: "i32.load", align: 2, offset: 8 },
   ]);
+
+  // __str_length_utf16: JS `String.prototype.length` = number of UTF-16 code
+  // units (#1976). Linear strings are stored as UTF-8 bytes, so walk the leading
+  // bytes and count code units: a leading byte 0xxxxxxx/110xxxxx/1110xxxx starts
+  // a 1/2/3-byte sequence encoding a BMP code point (1 code unit), while
+  // 11110xxx starts a 4-byte sequence for an astral code point (a surrogate
+  // pair → 2 code units). ASCII strings count == byte length, matching the old
+  // behaviour. Continuation bytes (10xxxxxx) are skipped by advancing past the
+  // whole sequence.
+  // locals: byteLen(1), i(2 = byte cursor), count(3), b(4 = leading byte)
+  addRuntimeFunc(
+    mod,
+    "__str_length_utf16",
+    [{ kind: "i32" }],
+    [{ kind: "i32" }],
+    [],
+    (firstLocalIdx) => {
+      const byteLen = firstLocalIdx;
+      const i = firstLocalIdx + 1;
+      const count = firstLocalIdx + 2;
+      const b = firstLocalIdx + 3;
+      return [
+        // byteLen = mem[ptr+8]
+        { op: "local.get", index: 0 },
+        { op: "i32.load", align: 2, offset: 8 },
+        { op: "local.set", index: byteLen },
+        // i = 0; count = 0
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: i },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: count },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                // break if i >= byteLen
+                { op: "local.get", index: i },
+                { op: "local.get", index: byteLen },
+                { op: "i32.ge_u" },
+                { op: "br_if", depth: 1 },
+                // b = mem[ptr+12+i]
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: i },
+                { op: "i32.add" },
+                { op: "i32.load8_u", align: 0, offset: 12 },
+                { op: "local.set", index: b },
+                // Decide sequence length (advance i) and code units (advance
+                // count) by the leading byte's high bits. The `if` condition is
+                // taken from the stack, so push it just before each `if`.
+                // cond: b < 0x80  (1-byte ASCII)
+                { op: "local.get", index: b },
+                { op: "i32.const", value: 0x80 },
+                { op: "i32.lt_u" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    // 1-byte ASCII: i += 1, count += 1
+                    { op: "local.get", index: i },
+                    { op: "i32.const", value: 1 },
+                    { op: "i32.add" },
+                    { op: "local.set", index: i },
+                    { op: "local.get", index: count },
+                    { op: "i32.const", value: 1 },
+                    { op: "i32.add" },
+                    { op: "local.set", index: count },
+                  ],
+                  else: [
+                    // cond: b < 0xF0  (2- or 3-byte BMP sequence → 1 code unit;
+                    // else 4-byte astral sequence → 2 code units / surrogate pair)
+                    { op: "local.get", index: b },
+                    { op: "i32.const", value: 0xf0 },
+                    { op: "i32.lt_u" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        // BMP: count += 1; i += (b < 0xE0 ? 2 : 3)
+                        { op: "local.get", index: count },
+                        { op: "i32.const", value: 1 },
+                        { op: "i32.add" },
+                        { op: "local.set", index: count },
+                        { op: "local.get", index: i },
+                        { op: "local.get", index: b },
+                        { op: "i32.const", value: 0xe0 },
+                        { op: "i32.lt_u" },
+                        {
+                          op: "if",
+                          blockType: { kind: "val", type: { kind: "i32" } },
+                          then: [{ op: "i32.const", value: 2 }],
+                          else: [{ op: "i32.const", value: 3 }],
+                        },
+                        { op: "i32.add" },
+                        { op: "local.set", index: i },
+                      ],
+                      else: [
+                        // Astral 4-byte: count += 2; i += 4
+                        { op: "local.get", index: count },
+                        { op: "i32.const", value: 2 },
+                        { op: "i32.add" },
+                        { op: "local.set", index: count },
+                        { op: "local.get", index: i },
+                        { op: "i32.const", value: 4 },
+                        { op: "i32.add" },
+                        { op: "local.set", index: i },
+                      ],
+                    },
+                  ],
+                },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        { op: "local.get", index: count },
+      ];
+    },
+    4,
+  );
 
   // __str_eq: compare two strings byte-by-byte
   // extra locals: local 2 = lenA, local 3 = i
@@ -3309,6 +3435,178 @@ function addRuntimeFunc(
     name,
     typeIdx,
     locals,
+    body,
+    exported: false,
+  });
+}
+
+/** Reserved name for the linear-backend f64 remainder helper (#2144). */
+export const FMOD_FN = "__fmod";
+
+/**
+ * (#2144) Add the Wasm-native IEEE-754 remainder (`fmod`) helper to the linear
+ * backend, mirroring the WasmGC `src/codegen/fmod.ts` work (#2056).
+ *
+ * The linear `%` arm previously emitted the naive `a - trunc(a/b)*b` formula
+ * that the GC backend explicitly retired: it drifts by ULPs, collapses to 0
+ * when `trunc(a/b)*b` rounds back to `a`, and produces `±Infinity` when `a/b`
+ * overflows f64 (ratio ≳ 1e308). This is the textbook cross-backend divergence
+ * flagged in docs/architecture/codegen-axes.md — both backends must agree on
+ * `%`.
+ *
+ * Algorithm (exact, no host import — dual-mode standalone): classic binary
+ * long-division remainder operating purely in f64. All intermediates stay
+ * ≤ |a|, so nothing overflows, and every step is an exact f64 op, so there is
+ * zero rounding drift. See fmod.ts for the full derivation and the verified
+ * edge-case set (`x % Inf`, `-0 % x`, `Inf % x`, `x % 0`, `NaN % x`, …).
+ *
+ * Signature: `(f64 a, f64 b) -> f64`. Idempotent — a second call is a no-op.
+ */
+export function addFmodRuntime(mod: WasmModule): void {
+  if (mod.functions.some((f) => f.name === FMOD_FN)) return;
+
+  const typeIdx = mod.types.length;
+  mod.types.push({
+    kind: "func",
+    name: "$type___fmod",
+    params: [{ kind: "f64" }, { kind: "f64" }],
+    results: [{ kind: "f64" }],
+  });
+
+  // Locals: 0=a, 1=b (params); 2=x (|a|, running remainder), 3=y (|b|), 4=t.
+  const A = 0;
+  const B = 1;
+  const X = 2;
+  const Y = 3;
+  const T = 4;
+  const INF = Infinity;
+
+  const body: Instr[] = [
+    // if (b == 0) return NaN
+    { op: "local.get", index: B },
+    { op: "f64.const", value: 0 },
+    { op: "f64.eq" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "f64.const", value: NaN }, { op: "return" }] },
+    // if (|a| == Inf) return NaN  (Inf % x)
+    { op: "local.get", index: A },
+    { op: "f64.abs" },
+    { op: "f64.const", value: INF },
+    { op: "f64.eq" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "f64.const", value: NaN }, { op: "return" }] },
+    // if (a != a) return NaN  (NaN dividend)
+    { op: "local.get", index: A },
+    { op: "local.get", index: A },
+    { op: "f64.ne" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "f64.const", value: NaN }, { op: "return" }] },
+    // if (b != b) return NaN  (NaN divisor)
+    { op: "local.get", index: B },
+    { op: "local.get", index: B },
+    { op: "f64.ne" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "f64.const", value: NaN }, { op: "return" }] },
+    // if (|b| == Inf) return a  (a finite → remainder is a itself)
+    { op: "local.get", index: B },
+    { op: "f64.abs" },
+    { op: "f64.const", value: INF },
+    { op: "f64.eq" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: A }, { op: "return" }] },
+
+    // x = |a|; y = |b|
+    { op: "local.get", index: A },
+    { op: "f64.abs" },
+    { op: "local.set", index: X },
+    { op: "local.get", index: B },
+    { op: "f64.abs" },
+    { op: "local.set", index: Y },
+
+    // if (x < y) return copysign(x, a)  (covers x == 0 → ±0)
+    { op: "local.get", index: X },
+    { op: "local.get", index: Y },
+    { op: "f64.lt" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: X }, { op: "local.get", index: A }, { op: "f64.copysign" }, { op: "return" }],
+    },
+
+    // t = y; while (t * 2 <= x) t *= 2
+    { op: "local.get", index: Y },
+    { op: "local.set", index: T },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: T },
+            { op: "f64.const", value: 2 },
+            { op: "f64.mul" },
+            { op: "local.get", index: X },
+            { op: "f64.le" },
+            { op: "i32.eqz" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: T },
+            { op: "f64.const", value: 2 },
+            { op: "f64.mul" },
+            { op: "local.set", index: T },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+
+    // while (t >= y) { if (x >= t) x -= t; t *= 0.5 }
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: T },
+            { op: "local.get", index: Y },
+            { op: "f64.ge" },
+            { op: "i32.eqz" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: X },
+            { op: "local.get", index: T },
+            { op: "f64.ge" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: X },
+                { op: "local.get", index: T },
+                { op: "f64.sub" },
+                { op: "local.set", index: X },
+              ],
+            },
+            { op: "local.get", index: T },
+            { op: "f64.const", value: 0.5 },
+            { op: "f64.mul" },
+            { op: "local.set", index: T },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+
+    // return copysign(x, a)
+    { op: "local.get", index: X },
+    { op: "local.get", index: A },
+    { op: "f64.copysign" },
+  ];
+
+  mod.functions.push({
+    name: FMOD_FN,
+    typeIdx,
+    locals: [
+      { name: "$x", type: { kind: "f64" } }, // X
+      { name: "$y", type: { kind: "f64" } }, // Y
+      { name: "$t", type: { kind: "f64" } }, // T
+    ],
     body,
     exported: false,
   });

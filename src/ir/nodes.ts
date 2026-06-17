@@ -1088,6 +1088,28 @@ export interface IrInstrVecGet extends IrInstrBase {
 }
 
 /**
+ * #1804 — Construct a vec from a fixed, statically-known set of element SSA
+ * values. All `elements` share the IrType `elementType` (the from-ast lowerer
+ * coerces each element to this type before emitting). `resultType` is the vec
+ * ref IrType (a `ref` to the registered vec struct for `elementType`).
+ *
+ * Lowering (WasmGC): push e0…eN, `array.new_fixed $arr N`, stash the data ref
+ * in a scratch local, push `i32.const N` (length, field 0), re-load the data
+ * ref (field 1), `struct.new $vec`. The backend emitter owns the exact op
+ * sequence (see `emitVecNewFixed`) so the linear backend can realize the same
+ * node over its `[header][len][cap][elements…]` layout.
+ *
+ * Empty literals (`[]`) carry `elements: []`; the `elementType` is supplied by
+ * the from-ast layer from the declared/inferred array type (it cannot be
+ * inferred from zero elements).
+ */
+export interface IrInstrVecNewFixed extends IrInstrBase {
+  readonly kind: "vec.new_fixed";
+  readonly elements: readonly IrValueId[];
+  readonly elementType: IrType;
+}
+
+/**
  * Statement-level `for (const <bind> of <vec>) <body>` loop instruction.
  *
  * Encodes the array fast path declaratively. The lowerer emits:
@@ -1773,6 +1795,7 @@ export type IrInstr =
   | IrInstrSlotWrite
   | IrInstrVecLen
   | IrInstrVecGet
+  | IrInstrVecNewFixed
   | IrInstrForOfVec
   | IrInstrCoerceToExternref
   | IrInstrIterNew
@@ -1979,4 +2002,397 @@ export function isIrGlobalRef(x: unknown): x is IrGlobalRef {
 
 export function isIrTypeRef(x: unknown): x is IrTypeRef {
   return typeof x === "object" && x !== null && (x as { kind?: unknown }).kind === "type";
+}
+
+// ---------------------------------------------------------------------------
+// Shared IR traversal / use-collection (#1922)
+//
+// Single authority on (a) which IrInstr kinds carry nested `IrInstr[]` buffers,
+// and (b) the direct SSA-value operands of an instr. Before this, ≥5 hand-rolled
+// copies of "walk nested buffers / collect uses" lived across verify.ts,
+// lower.ts, passes/dead-code.ts, passes/constant-fold.ts and
+// passes/alloc-discipline.ts, kept in sync only by comments — the failure mode
+// that let `while.loop`/`for.loop` body buffers go unwalked by DCE (#1922), so
+// the most ordinary loop shape silently demoted off the IR path. Consumers now
+// route their structural traversal through `forEachNestedBuffer`; adding a new
+// buffer-bearing instr kind is a single exhaustive-switch edit here that the
+// compiler enforces.
+// ---------------------------------------------------------------------------
+
+/**
+ * Invoke `fn` once per nested `IrInstr[]` buffer carried directly by `instr`
+ * (NOT recursively — see `forEachInstrDeep` for the deep walk). The exhaustive
+ * switch is the authoritative list of buffer-bearing kinds; the trailing
+ * `never` assignment makes a missing case a compile error, so a new
+ * buffer-bearing instr kind cannot be added without extending this one place.
+ *
+ * Buffer order is the lowering/evaluation order (cond before body before
+ * update; then before else; body/catch/finally) so callers that care about
+ * order (def registration) get it for free.
+ */
+export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInstr[]) => void): void {
+  switch (instr.kind) {
+    case "if":
+      fn(instr.then);
+      fn(instr.else);
+      return;
+    case "forof.vec":
+    case "forof.iter":
+    case "forof.string":
+      fn(instr.body);
+      return;
+    case "while.loop":
+      fn(instr.cond);
+      fn(instr.body);
+      return;
+    case "for.loop":
+      fn(instr.cond);
+      fn(instr.body);
+      fn(instr.update);
+      return;
+    case "try":
+      fn(instr.body);
+      if (instr.catchClause) fn(instr.catchClause.body);
+      if (instr.finallyBody) fn(instr.finallyBody);
+      return;
+    // All remaining kinds carry no nested IrInstr[] buffer. The `never`
+    // binding turns a newly-added buffer-bearing kind into a compile error
+    // here — the single point that must know about every buffer.
+    case "const":
+    case "call":
+    case "global.get":
+    case "global.set":
+    case "binary":
+    case "unary":
+    case "select":
+    case "raw.wasm":
+    case "box":
+    case "unbox":
+    case "tag.test":
+    case "string.const":
+    case "string.concat":
+    case "string.eq":
+    case "string.len":
+    case "object.new":
+    case "object.get":
+    case "object.set":
+    case "closure.new":
+    case "closure.cap":
+    case "closure.call":
+    case "refcell.new":
+    case "refcell.get":
+    case "refcell.set":
+    case "class.new":
+    case "class.get":
+    case "class.set":
+    case "class.call":
+    case "slot.read":
+    case "slot.write":
+    case "vec.len":
+    case "vec.get":
+    case "vec.new_fixed":
+    case "coerce.to_externref":
+    case "iter.new":
+    case "iter.next":
+    case "iter.done":
+    case "iter.value":
+    case "iter.return":
+    case "gen.push":
+    case "gen.epilogue":
+    case "gen.yieldStar":
+    case "throw":
+    case "extern.new":
+    case "extern.call":
+    case "extern.prop":
+    case "extern.propSet":
+    case "extern.regex":
+    case "await":
+    case "async.return":
+    case "async.throw":
+      return;
+    default: {
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      return;
+    }
+  }
+}
+
+/**
+ * Visit `instr` and every instruction nested within its buffers, recursively
+ * (pre-order: the containing instr before its buffer contents). The single
+ * deep-walk primitive shared by the verifier (def registration) and the
+ * alloc-discipline pass (allocation retirement).
+ */
+export function forEachInstrDeep(instr: IrInstr, visit: (i: IrInstr) => void): void {
+  visit(instr);
+  forEachNestedBuffer(instr, (buffer) => {
+    for (const sub of buffer) forEachInstrDeep(sub, visit);
+  });
+}
+
+/**
+ * Rebuild `instr` with each nested buffer replaced by `mapBuffer(buffer)` — the
+ * write-side companion to `forEachNestedBuffer`, used by the hygiene passes
+ * (#1925) to fold / DCE *inside* control-flow buffers. Buffers are passed in the
+ * same evaluation order `forEachNestedBuffer` yields them.
+ *
+ * Reference-equality preserving: when `mapBuffer` returns each buffer unchanged
+ * (same array reference), the original `instr` is returned as-is, so callers can
+ * detect "no change" by `===` and keep their fixpoint contract. A non-buffer
+ * instr is always returned unchanged.
+ */
+export function mapNestedBuffers(
+  instr: IrInstr,
+  mapBuffer: (buffer: readonly IrInstr[]) => readonly IrInstr[],
+): IrInstr {
+  switch (instr.kind) {
+    case "if": {
+      const then_ = mapBuffer(instr.then);
+      const else_ = mapBuffer(instr.else);
+      if (then_ === instr.then && else_ === instr.else) return instr;
+      return { ...instr, then: then_, else: else_ };
+    }
+    case "forof.vec":
+    case "forof.iter":
+    case "forof.string": {
+      const body = mapBuffer(instr.body);
+      if (body === instr.body) return instr;
+      return { ...instr, body };
+    }
+    case "while.loop": {
+      const cond = mapBuffer(instr.cond);
+      const body = mapBuffer(instr.body);
+      if (cond === instr.cond && body === instr.body) return instr;
+      return { ...instr, cond, body };
+    }
+    case "for.loop": {
+      const cond = mapBuffer(instr.cond);
+      const body = mapBuffer(instr.body);
+      const update = mapBuffer(instr.update);
+      if (cond === instr.cond && body === instr.body && update === instr.update) return instr;
+      return { ...instr, cond, body, update };
+    }
+    case "try": {
+      const body = mapBuffer(instr.body);
+      const catchBody = instr.catchClause ? mapBuffer(instr.catchClause.body) : undefined;
+      const finallyBody = instr.finallyBody ? mapBuffer(instr.finallyBody) : undefined;
+      const catchUnchanged = !instr.catchClause || catchBody === instr.catchClause.body;
+      const finallyUnchanged = !instr.finallyBody || finallyBody === instr.finallyBody;
+      if (body === instr.body && catchUnchanged && finallyUnchanged) return instr;
+      return {
+        ...instr,
+        body,
+        catchClause: instr.catchClause && catchBody ? { ...instr.catchClause, body: catchBody } : instr.catchClause,
+        finallyBody: instr.finallyBody && finallyBody ? finallyBody : instr.finallyBody,
+      };
+    }
+    // Leaf kinds carry no nested buffer — returned unchanged. (Same exhaustive
+    // set as forEachNestedBuffer; the never-check enforces parity.)
+    case "const":
+    case "call":
+    case "global.get":
+    case "global.set":
+    case "binary":
+    case "unary":
+    case "select":
+    case "raw.wasm":
+    case "box":
+    case "unbox":
+    case "tag.test":
+    case "string.const":
+    case "string.concat":
+    case "string.eq":
+    case "string.len":
+    case "object.new":
+    case "object.get":
+    case "object.set":
+    case "closure.new":
+    case "closure.cap":
+    case "closure.call":
+    case "refcell.new":
+    case "refcell.get":
+    case "refcell.set":
+    case "class.new":
+    case "class.get":
+    case "class.set":
+    case "class.call":
+    case "slot.read":
+    case "slot.write":
+    case "vec.len":
+    case "vec.get":
+    case "vec.new_fixed":
+    case "coerce.to_externref":
+    case "iter.new":
+    case "iter.next":
+    case "iter.done":
+    case "iter.value":
+    case "iter.return":
+    case "gen.push":
+    case "gen.epilogue":
+    case "gen.yieldStar":
+    case "throw":
+    case "extern.new":
+    case "extern.call":
+    case "extern.prop":
+    case "extern.propSet":
+    case "extern.regex":
+    case "await":
+    case "async.return":
+    case "async.throw":
+      return instr;
+    default: {
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      return instr;
+    }
+  }
+}
+
+/**
+ * The direct SSA-value operands of `instr` — the values it reads at its own
+ * level, NOT including operands buried in nested buffers. This is the canonical
+ * single-count mapping used by the verifier and DCE (so e.g. `closure.call`'s
+ * callee is counted once; the lowering use-counter's intentional double-count
+ * for Wasm-local materialisation stays local to lower.ts).
+ *
+ * For buffer-bearing control-flow instrs, the operands surfaced here are only
+ * the ones evaluated at the instr's own level: `if` → cond; `while/for` →
+ * condValue; `forof.*` → the iterable/vec/str; `try` → none. Buffer-interior
+ * uses are reached via `collectUses(instr, { deep: true })`.
+ */
+export function directUses(instr: IrInstr): readonly IrValueId[] {
+  switch (instr.kind) {
+    case "const":
+    case "global.get":
+    case "raw.wasm":
+    case "string.const":
+    case "slot.read":
+    case "gen.epilogue":
+    case "extern.regex":
+      return [];
+    case "call":
+      return instr.args;
+    case "global.set":
+      return [instr.value];
+    case "binary":
+      return [instr.lhs, instr.rhs];
+    case "unary":
+      return [instr.rand];
+    case "select":
+      return [instr.condition, instr.whenTrue, instr.whenFalse];
+    case "if":
+      return [instr.cond, instr.thenValue, instr.elseValue];
+    case "box":
+    case "unbox":
+    case "tag.test":
+      return [instr.value];
+    case "string.concat":
+    case "string.eq":
+      return [instr.lhs, instr.rhs];
+    case "string.len":
+      return [instr.value];
+    case "object.new":
+      return instr.values;
+    case "object.get":
+      return [instr.value];
+    case "object.set":
+      return [instr.value, instr.newValue];
+    case "closure.new":
+      return instr.captures;
+    case "closure.cap":
+      return [instr.self];
+    case "closure.call":
+      return [instr.callee, ...instr.args];
+    case "refcell.new":
+      return [instr.value];
+    case "refcell.get":
+      return [instr.cell];
+    case "refcell.set":
+      return [instr.cell, instr.value];
+    case "class.new":
+      return instr.args;
+    case "class.get":
+      return [instr.value];
+    case "class.set":
+      return [instr.value, instr.newValue];
+    case "class.call":
+      return [instr.receiver, ...instr.args];
+    case "slot.write":
+      return [instr.value];
+    case "vec.len":
+      return [instr.vec];
+    case "vec.get":
+      return [instr.vec, instr.index];
+    case "vec.new_fixed":
+      return instr.elements;
+    case "forof.vec":
+      return [instr.vec];
+    case "coerce.to_externref":
+      return [instr.value];
+    case "iter.new":
+      return [instr.iterable];
+    case "iter.next":
+      return [instr.iter];
+    case "iter.done":
+    case "iter.value":
+      return [instr.resultObj];
+    case "iter.return":
+      return [instr.iter];
+    case "forof.iter":
+      return [instr.iterable];
+    case "gen.push":
+      return [instr.value];
+    case "gen.yieldStar":
+      return [instr.inner];
+    case "forof.string":
+      return [instr.str];
+    case "throw":
+      return [instr.value];
+    case "try":
+      return [];
+    case "extern.new":
+      return instr.args;
+    case "extern.call":
+      return [instr.receiver, ...instr.args];
+    case "extern.prop":
+      return [instr.receiver];
+    case "extern.propSet":
+      return [instr.receiver, instr.value];
+    case "while.loop":
+    case "for.loop":
+      return [instr.condValue];
+    case "await":
+      return [instr.operand];
+    case "async.return":
+      return [instr.value];
+    case "async.throw":
+      return [instr.reason];
+    default: {
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      return [];
+    }
+  }
+}
+
+/**
+ * Collect the SSA-value uses of `instr`. Shallow by default (== `directUses`);
+ * with `{ deep: true }` it also walks every nested buffer via
+ * `forEachNestedBuffer`, surfacing buffer-interior uses too. The deep form is
+ * what DCE needs so values referenced only inside a loop/if/for-of/try buffer
+ * survive liveness — the exact bug (#1922) the per-kind ad-hoc walkers caused
+ * for `while.loop`/`for.loop`.
+ */
+export function collectUses(instr: IrInstr, opts?: { readonly deep?: boolean }): readonly IrValueId[] {
+  if (!opts?.deep) return directUses(instr);
+  const out: IrValueId[] = [];
+  const visit = (i: IrInstr): void => {
+    for (const u of directUses(i)) out.push(u);
+    forEachNestedBuffer(i, (buffer) => {
+      for (const sub of buffer) visit(sub);
+    });
+  };
+  visit(instr);
+  return out;
 }

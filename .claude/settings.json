@@ -39,6 +39,24 @@
             "type": "command",
             "command": "REPO_ROOT=/workspace node /workspace/scripts/reconcile-tasklist.mjs --quiet 2>/dev/null || true",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "bash /workspace/scripts/sync-workspace-main.sh 2>/dev/null || true",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /workspace/scripts/sync-workspace-main.sh 2>/dev/null || true",
+            "timeout": 20,
+            "async": true
           }
         ]
       }

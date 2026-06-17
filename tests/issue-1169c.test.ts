@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile, type CompileResult } from "../src/index.js";
+import { irFallbacks } from "./helpers/ir-fallbacks.js";
 import { buildImports } from "../src/runtime.js";
 
 const ENV_STUB = {
@@ -215,26 +216,12 @@ describe("#1169c — slice 3 functions reach the IR path without errors", () => 
     it(`host: ${label}`, async () => {
       const r = await compile(src, { experimentalIR: true, nativeStrings: false });
       expect(r.success).toBe(true);
-      const irErrors = r.errors.filter(
-        (e) =>
-          e.message.startsWith("IR path failed") ||
-          e.message.startsWith("IR path: could not resolve") ||
-          e.message.startsWith("ir/from-ast") ||
-          e.message.startsWith("ir/lower"),
-      );
-      expect(irErrors).toEqual([]);
+      expect(irFallbacks(r)).toEqual([]);
     });
     it(`native: ${label}`, async () => {
       const r = await compile(src, { experimentalIR: true, nativeStrings: true });
       expect(r.success).toBe(true);
-      const irErrors = r.errors.filter(
-        (e) =>
-          e.message.startsWith("IR path failed") ||
-          e.message.startsWith("IR path: could not resolve") ||
-          e.message.startsWith("ir/from-ast") ||
-          e.message.startsWith("ir/lower"),
-      );
-      expect(irErrors).toEqual([]);
+      expect(irFallbacks(r)).toEqual([]);
     });
   }
 });

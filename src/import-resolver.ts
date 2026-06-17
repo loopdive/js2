@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "./ts-api.js";
+import { PositionMap, type SourceEdit } from "./position-map.js";
 
 interface ClassUsageInfo {
   constructorArgCounts: number[];
@@ -148,6 +149,33 @@ export interface PreprocessResult {
   nodeBuiltins: NodeBuiltinImport[];
   /** JSX runtime import (if any) detected during preprocessing (#1540). */
   jsxRuntime?: JsxRuntimeImport;
+  /**
+   * #1928 — maps an offset in `source` (the processed output) back to an
+   * offset in the input this function consumed, covering the import-stub
+   * replacements and the prepended timer shim. Identity when neither fired.
+   * Lets the diagnostic layer report the user's line numbers, not the
+   * rewritten ones.
+   */
+  positionMap: PositionMap;
+}
+
+/**
+ * #1928 — build the `PositionMap` for `preprocessImports`. The import-stub
+ * `replacements` are expressed in INPUT coordinates as `[start, end) → text`;
+ * a prepended `timerShim` is an edit at offset 0 with an empty original span.
+ */
+function buildPreprocessPositionMap(
+  replacements: { start: number; end: number; text: string }[],
+  timerShimLen: number,
+): PositionMap {
+  const edits: SourceEdit[] = [];
+  if (timerShimLen > 0) {
+    edits.push({ origStart: 0, origEnd: 0, newLength: timerShimLen });
+  }
+  for (const r of replacements) {
+    edits.push({ origStart: r.start, origEnd: r.end, newLength: r.text.length });
+  }
+  return new PositionMap(edits);
 }
 
 /**
@@ -374,7 +402,13 @@ export function preprocessImports(source: string): PreprocessResult {
   const timerShim = buildTimerShim(timerCalls, definedNames);
 
   if (nsImports.size === 0 && otherImports.length === 0 && jsxRuntimeImportRanges.length === 0) {
-    return { source: timerShim ? timerShim + source : source, nodeBuiltins, jsxRuntime };
+    return {
+      source: timerShim ? timerShim + source : source,
+      nodeBuiltins,
+      jsxRuntime,
+      // #1928 — no imports here; only the (optional) timer-shim prepend shifts positions.
+      positionMap: buildPreprocessPositionMap([], timerShim.length),
+    };
   }
 
   // Step 2: Analyze usage for namespace imports
@@ -687,6 +721,11 @@ export function preprocessImports(source: string): PreprocessResult {
     }
   }
 
+  // #1928 — capture the import-stub edits (in INPUT coordinates) for the
+  // position map BEFORE the reverse-order apply mutates `result`. The map
+  // constructor re-sorts ascending, so the apply order here is irrelevant to it.
+  const positionMap = buildPreprocessPositionMap(replacements, timerShim.length);
+
   // Apply replacements in reverse order to preserve positions
   let result = source;
   replacements.sort((a, b) => b.start - a.start);
@@ -694,5 +733,5 @@ export function preprocessImports(source: string): PreprocessResult {
     result = result.substring(0, r.start) + r.text + result.substring(r.end);
   }
 
-  return { source: timerShim ? timerShim + result : result, nodeBuiltins, jsxRuntime };
+  return { source: timerShim ? timerShim + result : result, nodeBuiltins, jsxRuntime, positionMap };
 }

@@ -1430,6 +1430,7 @@ function buildPreamble(
   needsIteratorBinding: boolean,
   needsDetachBuffer: boolean,
   needs262: boolean,
+  needsProxyTraps: boolean,
 ): string {
   let p = `let __fail: number = 0;
 let __assert_count: number = 1;
@@ -1752,6 +1753,39 @@ let $262: any = {
 };`;
   }
 
+  if (needsProxyTraps) {
+    // #2183: test262 harness/proxyTrapsHelper.js. Returns a Proxy handler where
+    // every trap defaults to a stub that throws a Test262Error when invoked
+    // (so a test asserting "trap T must NOT be called" fails if it fires), with
+    // each trap overridable via the `overrides` argument. Mirrors the upstream
+    // helper verbatim; the throwing stubs are function expressions so they
+    // compile to ordinary Wasm closures.
+    p += `
+
+function allowProxyTraps(overrides: any): any {
+  function throwTest262Error(msg: string): any {
+    return function (): any { throw new Test262Error(msg); };
+  }
+  if (!overrides) { overrides = {}; }
+  return {
+    getPrototypeOf: overrides.getPrototypeOf || throwTest262Error("[[GetPrototypeOf]] trap called"),
+    setPrototypeOf: overrides.setPrototypeOf || throwTest262Error("[[SetPrototypeOf]] trap called"),
+    isExtensible: overrides.isExtensible || throwTest262Error("[[IsExtensible]] trap called"),
+    preventExtensions: overrides.preventExtensions || throwTest262Error("[[PreventExtensions]] trap called"),
+    getOwnPropertyDescriptor: overrides.getOwnPropertyDescriptor || throwTest262Error("[[GetOwnProperty]] trap called"),
+    has: overrides.has || throwTest262Error("[[HasProperty]] trap called"),
+    get: overrides.get || throwTest262Error("[[Get]] trap called"),
+    set: overrides.set || throwTest262Error("[[Set]] trap called"),
+    deleteProperty: overrides.deleteProperty || throwTest262Error("[[Delete]] trap called"),
+    defineProperty: overrides.defineProperty || throwTest262Error("[[DefineOwnProperty]] trap called"),
+    enumerate: throwTest262Error("[[Enumerate]] trap called: this trap has been removed"),
+    ownKeys: overrides.ownKeys || throwTest262Error("[[OwnPropertyKeys]] trap called"),
+    apply: overrides.apply || throwTest262Error("[[Call]] trap called"),
+    construct: overrides.construct || throwTest262Error("[[Construct]] trap called"),
+  };
+}`;
+  }
+
   return p;
 }
 
@@ -2049,6 +2083,14 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
   // sets a sidecar `__detached__` marker the runtime DataView dispatch checks.
   const needsDetachBuffer = /\$DETACHBUFFER\b/.test(body);
 
+  // #2183: proxyTrapsHelper.js — `allowProxyTraps(overrides)` returns a Proxy
+  // handler whose every trap defaults to a throwing stub (so a test asserting
+  // "this trap is never called" fails loudly if it fires) and is overridable.
+  // Not injected before, so `allowProxyTraps` was undefined and `new Proxy(t,
+  // allowProxyTraps(...))` got a null handler — every built-ins/Proxy test that
+  // includes this helper failed at construction.
+  const needsProxyTraps = includes.includes("proxyTrapsHelper.js") && /\ballowProxyTraps\b/.test(body);
+
   // #1523: test262 host-object `$262`. Tests use it as a precondition for
   // realm creation, ArrayBuffer detach, agent messaging, and global access.
   // We expose a minimal stub: createRealm returns a fresh global with eval,
@@ -2080,6 +2122,7 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
     needsIteratorBinding,
     needsDetachBuffer,
     needs262,
+    needsProxyTraps,
   ]
     .map((b) => (b ? "1" : "0"))
     .join("");
@@ -2109,6 +2152,7 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
       needsIteratorBinding,
       needsDetachBuffer,
       needs262,
+      needsProxyTraps,
     );
     preambleCache.set(cacheKey, preamble);
   }
@@ -2497,6 +2541,24 @@ export interface TestResult {
    * unchanged between base and branch are CI noise, not real regressions.
    */
   wasm_sha?: string | null;
+  /**
+   * (#1853) Hard-error stability bucket. `true` marks a result as a compiler
+   * BUG — the compiler produced output the Wasm engine rejected, or trapped on
+   * its own malformed codegen — as opposed to an expected coverage gap
+   * ("unsupported feature"). Stability is gated separately from coverage: this
+   * bucket must stay near-zero and any growth is treated as a release-blocking
+   * regression, not absorbed into the not-passing total. `hardErrorKind` names
+   * the sub-bucket. Set ONLY where the signal is unambiguously a bug:
+   *   - `malformed_wasm` — `WebAssembly.CompileError`/`LinkError` instantiating a
+   *     binary the compiler reported as a SUCCESS (the compiler claimed it was
+   *     valid). Includes the #1850 verifier-failure-on-a-claimed-function case.
+   *   - `missing_test_export` — compile succeeded but no `test` export exists
+   *     (the wrapper contract was silently violated by codegen).
+   * Plain `compile_error` (the compiler explicitly refused) is NOT a hard error
+   * — that is the coverage signal and stays out of this bucket.
+   */
+  hardError?: boolean;
+  hardErrorKind?: "malformed_wasm" | "missing_test_export";
 }
 
 /** Default per-test timeout in milliseconds (prevents infinite-loop hangs) */
@@ -2554,6 +2616,7 @@ export async function handleNegativeTest(
       const result = await compile(minimalWrapped, {
         fileName: "test.ts",
         emitWat: false,
+        ...(target ? { target } : {}),
       });
       compileMs = performance.now() - compileStart;
       const totalMs = performance.now() - totalStart;
@@ -2877,6 +2940,12 @@ export async function runTest262File(
   filePath: string,
   category: string,
   timeoutMs = TEST_TIMEOUT_MS,
+  // (#2095) Optional compile target so the baseline validator can exercise the
+  // STANDALONE lane, not just the default JS-host (gc) lane. `undefined` keeps
+  // the historical host-mode behaviour. The instantiation path below is
+  // mode-agnostic — `buildImports` produces an empty import object for a
+  // standalone binary — so only the `compile()` target needs to change.
+  target?: "standalone",
 ): Promise<TestResult> {
   const totalStart = performance.now();
   const relPath = relative(TEST262_ROOT, filePath);
@@ -2973,6 +3042,8 @@ export async function runTest262File(
       fileName: "test.ts",
       sourceMap: true,
       emitWat: false,
+      // (#2095) standalone lane for the baseline validator (default host/gc).
+      ...(target ? { target } : {}),
       // #1251: align with the sharded runner — both `scripts/compiler-fork-worker.mjs`
       // (the production path that records the committed JSONL) and `tests/test262-vitest.test.ts`
       // FIXTURE multi-compile pass `skipSemanticDiagnostics: true`. Without this flag,
@@ -3123,6 +3194,9 @@ export async function runTest262File(
     const testFn = (instance.exports as any).test;
     if (typeof testFn !== "function") {
       const totalMs = performance.now() - totalStart;
+      // (#1853) Compile + instantiate both succeeded but the module is missing
+      // the `test` export the harness contract requires — codegen silently
+      // dropped it. A bug, not a coverage gap → hard-error bucket.
       return {
         file: relPath,
         category,
@@ -3135,6 +3209,8 @@ export async function runTest262File(
           executeMs: 0,
         },
         wasm_sha,
+        hardError: true,
+        hardErrorKind: "missing_test_export",
       };
     }
 
@@ -3261,6 +3337,13 @@ export async function runTest262File(
       err instanceof (WebAssembly as any).LinkError ||
       err?.constructor?.name === "LinkError"
     ) {
+      // (#1853) The compiler reported `result.success` for this binary, yet the
+      // Wasm engine rejected it — that is malformed output (a BUG), not an
+      // unsupported-feature gap. Mark it for the hard-error stability bucket so
+      // it is gated as a regression rather than absorbed into the coverage
+      // count. Subsumes the #1850 verifier-failure-on-a-claimed-function case:
+      // a verifier rejection of a function the compiler claimed valid surfaces
+      // here as a CompileError.
       return {
         file: relPath,
         category,
@@ -3268,6 +3351,8 @@ export async function runTest262File(
         error: enrichErrorMessage(err.message, err, result.sourceMap, bodyLineOffset),
         timing,
         wasm_sha,
+        hardError: true,
+        hardErrorKind: "malformed_wasm",
       };
     }
     // (#1155) Use extractWasmExceptionMessage so a `WebAssembly.Exception`

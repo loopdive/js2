@@ -107,6 +107,12 @@ export interface IrFromAstResolver {
   resolveString?(): ValType;
   resolveVec?(valType: ValType): IrVecLowering | null;
   /**
+   * #1804 — register-or-recover the vec struct for an element ValType so
+   * `lowerArrayLiteral` can type a constructed `vec.new_fixed`'s result SSA
+   * value as `{ kind: "ref", typeIdx: vecStructTypeIdx }`.
+   */
+  resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
+  /**
    * Slice 10 (#1169i) — return metadata for the named extern class, or
    * `undefined` if no such class is registered.
    */
@@ -1296,7 +1302,7 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   // don't drop their callee from the IR claim set via the call-graph
   // closure.
   if (ts.isArrayLiteralExpression(expr)) {
-    throw new Error(`ir/from-ast: ArrayLiteralExpression not in slice 12 (${cx.funcName})`);
+    return lowerArrayLiteral(expr, cx, hint);
   }
   // #1370 Phase B: `this` reference inside an instance method body.
   // The integration loop binds `this` in scope to the synthetic
@@ -1410,6 +1416,71 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     return cx.builder.emitConst({ kind: "f64", value: NaN }, irVal({ kind: "f64" }));
   }
   throw new Error(`ir/from-ast: unsupported expression kind ${ts.SyntaxKind[expr.kind]} in ${cx.funcName}`);
+}
+
+/**
+ * #1804 — lower a fixed-length, non-spread, non-sparse, same-typed array
+ * literal to a `vec.new_fixed` IR node. Out of scope (clean fallback to
+ * legacy): spread elements (`[...xs]`), elision holes (`[1, , 3]`), mixed
+ * element types, and empty literals with no usable element-type hint.
+ *
+ * Element type resolution: prefer the `hint` (a vec ref whose element IrType
+ * the resolver can recover) — covers `const a: number[] = [1,2,3]` and the
+ * empty `const a: number[] = []`; otherwise infer from the first element and
+ * require every element to share that IrType.
+ */
+function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: IrType): IrValueId {
+  // Reject spread / sparse — out of scope, keep on legacy.
+  for (const el of expr.elements) {
+    if (ts.isSpreadElement(el) || ts.isOmittedExpression(el)) {
+      throw new Error(`ir/from-ast: array literal with spread/elision not in #1804 scope (${cx.funcName})`);
+    }
+  }
+
+  // Recover an element IrType from the hint when it is (or wraps) a vec ref.
+  const hintVal = asVal(hint);
+  const hintElem = hintVal ? (cx.resolver?.resolveVec?.(hintVal)?.elementValType ?? null) : null;
+  const hintElemIr: IrType | null = hintElem ? irVal(hintElem) : null;
+
+  if (expr.elements.length === 0) {
+    // Empty literal — element type must come from the hint.
+    if (!hintElemIr) {
+      throw new Error(`ir/from-ast: empty array literal needs a vec-typed hint to infer element type (${cx.funcName})`);
+    }
+    const elemVT = asVal(hintElemIr)!;
+    const vec = cx.resolver?.resolveVecForElement?.(elemVT);
+    if (!vec) {
+      throw new Error(`ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`);
+    }
+    return cx.builder.emitVecNewFixed([], hintElemIr, irVal({ kind: "ref", typeIdx: vec.vecStructTypeIdx }));
+  }
+
+  // Lower each element. Use the hint element type as each element's hint when
+  // we have one (so e.g. number elements stay f64).
+  const elementIds: IrValueId[] = [];
+  for (const el of expr.elements) {
+    elementIds.push(lowerExpr(el as ts.Expression, cx, hintElemIr ?? irVal({ kind: "f64" })));
+  }
+
+  // Determine the shared element IrType: the hint's element type if present,
+  // else the first element's type. Require every element to share it.
+  const elementType = hintElemIr ?? cx.builder.typeOf(elementIds[0]!);
+  for (const id of elementIds) {
+    if (!irTypeEquals(cx.builder.typeOf(id), elementType)) {
+      throw new Error(`ir/from-ast: mixed-type array literal not in #1804 scope (${cx.funcName})`);
+    }
+  }
+
+  const elemVT = asVal(elementType);
+  if (!elemVT) {
+    // Non-scalar (object/closure/...) element types are out of scope for this slice.
+    throw new Error(`ir/from-ast: array literal element type ${elementType.kind} not in #1804 scope (${cx.funcName})`);
+  }
+  const vec = cx.resolver?.resolveVecForElement?.(elemVT);
+  if (!vec) {
+    throw new Error(`ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`);
+  }
+  return cx.builder.emitVecNewFixed(elementIds, elementType, irVal({ kind: "ref", typeIdx: vec.vecStructTypeIdx }));
 }
 
 /**
@@ -3002,24 +3073,52 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
  * the body reassigns as slot-bound, so cross-iteration writes go
  * through `slot.read` / `slot.write` and survive the loop.
  */
+/**
+ * #2136 — coerce a loop condition SSA value to an i32 boolean via ToBoolean.
+ *
+ * The `{while,for}.loop` lowerer emits `<condValue>; i32.eqz; br_if 1`, which
+ * requires an i32 condValue. An f64 (numeric) condition is converted with the
+ * NaN-safe ToBoolean `abs(x) > 0` — `f64.abs` folds `-0` to `0` and `NaN > 0`
+ * is false, so `0`, `-0` and `NaN` are all falsy (matching JS ToBoolean and
+ * the linear backend's `emitTruthyCoercion`, #1937). An i32 value is already a
+ * bool and passes through. Any other value type (ref/string) is out of scope
+ * for this slice and keeps the legacy fallback by throwing the same diagnostic
+ * the loops used before (#1980).
+ *
+ * MUST be called inside the `collectBodyInstrs` closure that builds the cond
+ * buffer so the coercion instructions re-run each iteration.
+ */
+function coerceLoopCondToBool(condValue: IrValueId, cx: LowerCtx, loopKind: "while" | "for"): IrValueId {
+  const kind = asVal(cx.builder.typeOf(condValue))?.kind;
+  if (kind === "i32") return condValue;
+  if (kind === "f64") {
+    // ToBoolean(f64) = abs(x) > 0  (false for 0, -0, NaN; true otherwise).
+    const absV = cx.builder.emitUnary("f64.abs", condValue, irVal({ kind: "f64" }));
+    const zero = cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }));
+    return cx.builder.emitBinary("f64.gt", absV, zero, irVal({ kind: "i32" }));
+  }
+  // ref/string/other — not yet supported; bail to legacy (#2136 scopes numeric).
+  throw new Error(`ir/from-ast: ${loopKind} condition must be bool in ${cx.funcName}`);
+}
+
 function lowerWhileStatement(stmt: ts.WhileStatement, cx: LowerCtx): void {
   // Capture the value id `lowerExpr` returns rather than the cond buffer's
   // last instruction result — the latter is fragile (e.g. a trailing store
   // produces no value). (#1980)
-  let condResult: number | null = null;
+  let condResult: IrValueId | null = null;
   const condInstrs = cx.builder.collectBodyInstrs(() => {
-    condResult = lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
+    const raw = lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
+    // #2136 — an f64 (numeric-truthiness) condition was previously bailed to
+    // legacy (#1980) because the lowerer's unconditional `i32.eqz` on an f64
+    // emitted invalid Wasm. Instead, coerce it to an i32 bool via ToBoolean
+    // INSIDE the cond buffer (so the coercion re-runs each iteration) and use
+    // the coerced value as `condValue`. Non-numeric, non-bool conditions
+    // (ref/string) still bail — those need a different ToBoolean path (#2136
+    // scopes to numeric).
+    condResult = coerceLoopCondToBool(raw, cx, "while");
   });
   if (condResult === null || condResult === undefined) {
     throw new Error(`ir/from-ast: while cond produced no SSA value (${cx.funcName})`);
-  }
-  // `if`/ternary throw a clean fallback when the condition isn't already an
-  // i32 bool; loops skipped that check and the lowerer's unconditional
-  // `i32.eqz` then emitted invalid Wasm (e.g. a numeric-truthiness `while (k)`
-  // with an f64 `k`). Throw the same fallback so the legacy path handles
-  // ToBoolean lowering until the IR grows its own. (#1980)
-  if (asVal(cx.builder.typeOf(condResult))?.kind !== "i32") {
-    throw new Error(`ir/from-ast: while condition must be bool in ${cx.funcName}`);
   }
   const bodyCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
   const bodyInstrs = cx.builder.collectBodyInstrs(() => {
@@ -3065,18 +3164,16 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx): void {
   // 2. Cond — collect its IR into a buffer.
   // Capture the value id `lowerExpr` returns rather than the buffer's last
   // instruction result (fragile — see #1980).
-  let condResult: number | null = null;
+  let condResult: IrValueId | null = null;
   const condInstrs = innerCx.builder.collectBodyInstrs(() => {
-    condResult = lowerExpr(stmt.condition!, innerCx, irVal({ kind: "i32" }));
+    const raw = lowerExpr(stmt.condition!, innerCx, irVal({ kind: "i32" }));
+    // #2136 — coerce a numeric-truthiness `for` cond (e.g. `for (...; k; ...)`
+    // with f64 `k`) to an i32 bool via ToBoolean inside the cond buffer,
+    // instead of bailing to legacy (#1980). Mirrors the while-loop arm.
+    condResult = coerceLoopCondToBool(raw, innerCx, "for");
   });
   if (condResult === null || condResult === undefined) {
     throw new Error(`ir/from-ast: for cond produced no SSA value (${cx.funcName})`);
-  }
-  // Same i32-bool fallback as `if`/ternary — a numeric-truthiness `for` cond
-  // (e.g. `for (...; k; ...)` with f64 `k`) otherwise reaches the lowerer's
-  // unconditional `i32.eqz` and emits invalid Wasm. (#1980)
-  if (asVal(innerCx.builder.typeOf(condResult))?.kind !== "i32") {
-    throw new Error(`ir/from-ast: for condition must be bool in ${cx.funcName}`);
   }
 
   // 3. Body — collect into a buffer.

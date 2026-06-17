@@ -22,7 +22,7 @@ import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getOrCreateFuncRefWrapperTypes } from "./closures.js";
-import { emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
+import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
 import {
   classifyPrivateMember,
   emitPrivateBrandPredicate,
@@ -34,12 +34,20 @@ import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-i
 import { addUnionImports, resolveWasmType } from "./index.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
+import { tryCompileNativeSetSizeGet } from "./set-runtime.js";
 import { tryEmitLinearU8ElementGet, tryEmitLinearU8Length } from "./linear-uint8-codegen.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import {
+  ensureRegExpNativeProtoGlue,
   tryCompileStandaloneRegExpMatchResultRead,
   tryCompileStandaloneRegExpPropertyRead,
 } from "./regexp-standalone.js";
+import {
+  emitLazyNativeProtoGet,
+  ensureStandaloneNativeMethodClosure,
+  getBuiltinBrand,
+  getNativeProtoBuiltinGlue,
+} from "./native-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
@@ -401,6 +409,137 @@ function makeBuiltinClosureFctx(
     fctx.localMap.set(fctx.params[i]!.name, i);
   }
   return fctx;
+}
+
+/**
+ * (#2175 S0) Generalized native-method-closure factory. `kind`:
+ *   - `"static"` — the existing receiver-less builtin-static behaviour
+ *     (`Array.isArray`, `Object.keys`, `Object.getOwnPropertyDescriptor`),
+ *     kept BYTE-IDENTICAL — delegates to the unchanged
+ *     `ensureStandaloneBuiltinStaticMethodClosure` below.
+ *   - `"method"` / `"getter"` — brand-keyed native-method/getter closures with
+ *     an `externref this` first user param + a brand-recovery prologue,
+ *     delegated to `ensureStandaloneNativeMethodClosure` (native-proto.ts).
+ *
+ * S0 reaches only the `"static"` path; S1 wires `"method"`/`"getter"` for
+ * RegExp through the refusal site below.
+ */
+function ensureStandaloneNativeMethodClosureLocal(
+  ctx: CodegenContext,
+  builtinName: string,
+  propName: string,
+  expr: ts.PropertyAccessExpression,
+  kind: "static" | "method" | "getter",
+  brand?: number,
+): { type: { kind: "ref"; typeIdx: number }; funcIdx: number } | null {
+  if (kind !== "static") {
+    if (brand === undefined) return null;
+    return ensureStandaloneNativeMethodClosure(ctx, brand, propName, kind);
+  }
+  return ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName, expr);
+}
+
+/**
+ * (#2175 S1) Register a builtin's `$NativeProto` glue (so its proto object can
+ * materialize and its members resolve to native-method closures) and return its
+ * brand. Returns `undefined` for builtins not yet wired into the native-proto
+ * core (caller falls through to the existing refusal). S1 wires RegExp only;
+ * S3 adds %TypedArray% / the concrete views.
+ */
+function tryEnsureNativeProtoBrand(ctx: CodegenContext, builtinName: string): number | undefined {
+  if (builtinName === "RegExp") {
+    return ensureRegExpNativeProtoGlue(ctx);
+  }
+  // Other builtins: only resolve if some path already registered glue for them.
+  const brand = getBuiltinBrand(ctx, builtinName);
+  if (brand === undefined) return undefined;
+  return getNativeProtoBuiltinGlue(ctx, brand) ? brand : undefined;
+}
+
+/**
+ * (#2175 S1) `<Builtin>.prototype.<member>` value read → a native-method/getter
+ * closure value. Detects the two-level shape (inner is `<Builtin>.prototype`
+ * where `<Builtin>` is an unshadowed registered-brand ctor identifier),
+ * registers the brand glue, classifies the member as getter/method, and emits a
+ * `ref.func` + `struct.new` closure value. Getters are returned as a closure
+ * here too (the descriptor `.get` is the same value); calling them runs the
+ * brand-recovery prologue on `this`.
+ *
+ * Returns `undefined` when the shape doesn't match (caller falls through), or
+ * the closure value's ValType. Standalone-only.
+ */
+/**
+ * (#2175 S1) `<Builtin>.prototype.<member>.length` / `.name` — fold the
+ * native-method-closure value's arity / member name at compile time from the
+ * brand glue. The member is statically known, so this is a constant emit (no
+ * closure materialized). Returns `undefined` when the shape doesn't match.
+ */
+function tryCompileStandaloneBuiltinProtoMemberMeta(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  const metaProp = expr.name.text;
+  if (metaProp !== "length" && metaProp !== "name") return undefined;
+  const memberAccess = skipTransparentExpressions(expr.expression);
+  if (!ts.isPropertyAccessExpression(memberAccess)) return undefined;
+  const inner = skipTransparentExpressions(memberAccess.expression);
+  if (!ts.isPropertyAccessExpression(inner)) return undefined;
+  if (inner.name.text !== "prototype" || !ts.isIdentifier(inner.expression)) return undefined;
+  const builtinName = inner.expression.text;
+  if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
+  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  if (isShadowed) return undefined;
+
+  const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
+  if (brand === undefined) return undefined;
+  const glue = getNativeProtoBuiltinGlue(ctx, brand);
+  if (!glue) return undefined;
+
+  const member = memberAccess.name.text;
+  // Only fold for members the glue actually advertises (so a typo / unknown
+  // member still routes through the normal path rather than fabricating a 0).
+  if (!glue.memberCsv.split(",").includes(member)) return undefined;
+
+  if (metaProp === "length") {
+    const arity = glue.memberKind(member) === "getter" ? 0 : glue.memberLength(member);
+    fctx.body.push({ op: "f64.const", value: arity } as Instr);
+    return { kind: "f64" };
+  }
+  // `.name` — the member's own name (getters are spelled "get <member>" per
+  // §10.2.9, but the test gate reads method names; emit the bare member name).
+  return compileStringLiteral(ctx, fctx, member) ?? undefined;
+}
+
+function tryCompileStandaloneBuiltinProtoMemberRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  const inner = skipTransparentExpressions(expr.expression);
+  if (!ts.isPropertyAccessExpression(inner)) return undefined;
+  if (inner.name.text !== "prototype") return undefined;
+  if (!ts.isIdentifier(inner.expression)) return undefined;
+  const builtinName = inner.expression.text;
+  if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
+  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  if (isShadowed) return undefined;
+
+  const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
+  if (brand === undefined) return undefined;
+  const glue = getNativeProtoBuiltinGlue(ctx, brand);
+  if (!glue) return undefined;
+
+  const member = expr.name.text;
+  const kind = glue.memberKind(member);
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind);
+  if (!closure) return undefined;
+
+  fctx.body.push({ op: "ref.func", funcIdx: closure.funcIdx } as Instr);
+  fctx.body.push({ op: "struct.new", typeIdx: closure.type.typeIdx } as Instr);
+  return closure.type;
 }
 
 function ensureStandaloneBuiltinStaticMethodClosure(
@@ -1434,6 +1573,70 @@ function receiverIsCatchClauseBinding(ctx: CodegenContext, recv: ts.Expression):
   );
 }
 
+/**
+ * (#2179) When the module uses `delete <member>` (JS-host mode only), route an
+ * `any`/`unknown`-typed property READ through the tombstone-aware `__extern_get`
+ * host helper instead of the inline `ref.test`+`struct.get` fast-path. Returns
+ * the emitted result type (always `externref`) when it handled the read, or
+ * `undefined` to let the normal path run.
+ *
+ * Tightly scoped so it never hijacks reads that the fast-path handles correctly:
+ * only `any`/`unknown` receivers, never a method/function-typed access, never a
+ * reserved accessor (`length`/`constructor`/`__proto__`/`prototype`), and never
+ * when the receiver resolves to a concrete (non-`any`) struct/class/array type.
+ */
+function tryEmitDeleteAwareDynamicGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  objType: ts.Type,
+  propName: string,
+): ValType | null | undefined {
+  if (!ctx.moduleUsesDelete || ctx.standalone) return undefined;
+  // Only dynamic (`any`/`unknown`) receivers take the bypassed fast-path that
+  // ignores the tombstone. Concrete struct/class/array receivers are typed and
+  // unaffected by the `any`-read path this guards.
+  const isAnyOrUnknown = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+  if (!isAnyOrUnknown) return undefined;
+  // Reserved accessors have dedicated lowerings (array length, proto walk,
+  // constructor identity) — never reroute them.
+  if (
+    propName === "length" ||
+    propName === "constructor" ||
+    propName === "__proto__" ||
+    propName === "prototype" ||
+    propName === "name"
+  ) {
+    return undefined;
+  }
+  // A method/function-typed access (e.g. `o.fn` where `fn` is callable, or a
+  // built-in method) must keep its closure/funcref lowering — `__extern_get`
+  // would box it as a plain value.
+  const accessType = ctx.checker.getTypeAtLocation(expr);
+  if (accessType.getCallSignatures && accessType.getCallSignatures().length > 0) return undefined;
+
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (getIdx === undefined) return undefined;
+
+  // Evaluate the receiver, coerce to externref, then __extern_get(obj, "prop").
+  const objResult = compileExpression(ctx, fctx, expr.expression);
+  if (objResult && objResult.kind !== "externref") {
+    coerceType(ctx, fctx, objResult, { kind: "externref" });
+  } else if (!objResult) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+  }
+  addStringConstantGlobal(ctx, propName);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  fctx.body.push({ op: "call", funcIdx: getIdx } as Instr);
+  return { kind: "externref" };
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1452,6 +1655,23 @@ export function compilePropertyAccess(
 
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+
+  // (#2179) Tombstone-aware read for `any`/`unknown` receivers in delete-using
+  // JS-host modules. The default `any`-receiver read resolves to an inline
+  // `ref.test`+`struct.get` fast-path that reads the LIVE WasmGC field, ignoring
+  // the runtime delete tombstone — so `delete o.a; o.a` returned the stale
+  // value, and `o.a === undefined` constant-folded to `false` because the
+  // field's static type is `f64` (never undefined). Route the read through the
+  // tombstone-aware `__extern_get` host helper, which returns an `externref`
+  // (real `undefined` when tombstoned, so `=== undefined` is no longer folded)
+  // and re-add via `__extern_set`/`_safeSet` clears the tombstone. Gated on the
+  // `moduleUsesDelete` pre-scan so delete-free modules keep the byte-identical
+  // fast-path; standalone has no `__extern_get` host import (#2179 A7 covers it
+  // via $Object representation steering — separate follow-up).
+  {
+    const dyn = tryEmitDeleteAwareDynamicGet(ctx, fctx, expr, objType, propName);
+    if (dyn !== undefined) return dyn;
+  }
 
   const jsonParsePropertyType = tryEmitJsonParsePropertyAccess(ctx, fctx, expr);
   if (jsonParsePropertyType !== undefined) return jsonParsePropertyType;
@@ -1493,6 +1713,32 @@ export function compilePropertyAccess(
   // BEFORE the extern-class property path, which would otherwise emit an
   // `env.RegExp_get_*` host import (a standalone purity leak), and before the
   // generic struct/vec fallbacks, which silently return 0 for `.index`.
+  // (#2175 S1) `<Builtin>.prototype.<member>.length` / `.name` — the arity/name
+  // of a native-method-closure VALUE, folded at compile time from the glue's
+  // advertised metadata (e.g. `RegExp.prototype.test.length === 1`,
+  // `.name === "test"`). Must precede the closure-value path so the member is
+  // not materialized just to read its arity. Static, zero runtime cost.
+  {
+    const metaRead = tryCompileStandaloneBuiltinProtoMemberMeta(ctx, fctx, expr);
+    if (metaRead !== undefined) return metaRead;
+  }
+
+  // (#2175 S1) `<Builtin>.prototype.<member>` as a value (two-level access whose
+  // inner is a builtin proto): resolve `<member>` to a native-method/getter
+  // closure value via the brand-keyed factory, with a brand-recovery prologue.
+  // This is the reflective tier — `RegExp.prototype.test`, the `.flags`-getter,
+  // etc. — that chained off the inner `RegExp.prototype` refusal pre-#2175.
+  //
+  // MUST run BEFORE the #1914 instance-reflection read: the static type of
+  // `RegExp.prototype` is `RegExp`, so #1914's `isGlobalRegExpType` guard would
+  // otherwise capture `RegExp.prototype.flags` and refuse (the proto object is
+  // not a backend-created RegExp *value*). The proto-member path returns the
+  // member's accessor/method *closure* — the correct reflective semantics.
+  {
+    const protoMember = tryCompileStandaloneBuiltinProtoMemberRead(ctx, fctx, expr);
+    if (protoMember !== undefined) return protoMember;
+  }
+
   {
     const standaloneRegExpRead = tryCompileStandaloneRegExpPropertyRead(ctx, fctx, expr);
     if (standaloneRegExpRead !== undefined) return standaloneRegExpRead;
@@ -1578,7 +1824,7 @@ export function compilePropertyAccess(
   // $Error_struct) + struct.get`. If the receiver is already null at
   // runtime, `ref.cast` traps — but native JS has the same behaviour
   // (`null.message` throws), so the trap is acceptable Phase 1/2 semantics.
-  if ((ctx.wasi || ctx.standalone) && (propName === "message" || propName === "name")) {
+  if ((ctx.wasi || ctx.standalone) && (propName === "message" || propName === "name" || propName === "stack")) {
     const lhsTsName = objType.getSymbol()?.name;
     const isErrorLhs =
       lhsTsName !== undefined &&
@@ -1606,7 +1852,8 @@ export function compilePropertyAccess(
       !isErrorLhs && isCatchBindingReceiver && (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
     if (isErrorLhs || isErrorLikeRuntimeLhs) {
       const structIdx = getOrRegisterErrorStructType(ctx);
-      const fieldIdx = propName === "message" ? 1 : 2;
+      // $Error_struct field layout: 1=message, 2=name, 3=stack (#1536).
+      const fieldIdx = propName === "message" ? 1 : propName === "name" ? 2 : 3;
       // Compile receiver. Mirror the standalone instanceof lowering
       // (identifiers.ts): compile WITHOUT forcing externref, then coerce, so a
       // catch-binding externref holding an `$Error` struct keeps its identity
@@ -1966,6 +2213,18 @@ export function compilePropertyAccess(
     // the later constant handler are observationally identical for these reads).
     const deferToNativeConstant = ctx.standalone && hasNativeBuiltinConstantHandler(builtinName, propName);
     if (ctx.standalone && BUILTIN_CTOR_NAMES.has(builtinName) && !isShadowed && !deferToNativeConstant) {
+      // (#2175 S1) `<Builtin>.prototype` as a value → the native `$NativeProto`
+      // object (host-free), for builtins with a registered brand. This is the
+      // inner read every reflective form (`RegExp.prototype.test`,
+      // `.flags`-getter via descriptor, `[Symbol.match]`) chains off of — it
+      // refused at this exact site pre-#2175. Reaches `emitLazyNativeProtoGet`
+      // instead of the refusal.
+      if (propName === "prototype") {
+        const protoBrand = tryEnsureNativeProtoBrand(ctx, builtinName);
+        if (protoBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, protoBrand)) {
+          return { kind: "externref" };
+        }
+      }
       const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName, expr);
       if (closure) {
         fctx.body.push({ op: "ref.func", funcIdx: closure.funcIdx });
@@ -3100,13 +3359,28 @@ export function compilePropertyAccess(
       }
     }
 
-    // Handle .constructor on class instances — return constructor function ref
+    // Handle .constructor on class instances — return the class VALUE.
+    //
+    // (#2158 P1) `new A().constructor` must be reference-identical to the
+    // class identifier `A` so that `new A().constructor === A` holds. The
+    // class identifier resolves to the `__class_<Name>` singleton via
+    // `emitLazyClassObjectGet` (identifiers.ts:620). Routing `.constructor`
+    // through the SAME singleton makes both sides of the `===` the same
+    // externref — host-free, so it fixes the identity in standalone mode
+    // too (the previous `ref.func` + `extern.convert_any` produced a
+    // funcref-as-externref that never compared equal to the class object).
     if (propName === "constructor" && ctx.classSet.has(typeName)) {
       // Compile and drop the object expression (for side effects)
       const objResult = compileExpression(ctx, fctx, expr.expression);
       if (objResult) {
         fctx.body.push({ op: "drop" });
       }
+      if (emitLazyClassObjectGet(ctx, fctx, typeName)) {
+        return { kind: "externref" };
+      }
+      // No class-object singleton (e.g. externref-backed builtin subclass):
+      // fall back to the constructor funcref so callable identity is at least
+      // stable across reads of the same class.
       const ctorName = `${typeName}_constructor`;
       const funcIdx = ctx.funcMap.get(ctorName);
       if (funcIdx !== undefined) {
@@ -3661,6 +3935,15 @@ function compileExternPropertyGet(
   if (className === "Map" && propName === "size" && ctx.nativeStrings) {
     addUnionImports(ctx);
     const sizeResult = tryCompileNativeMapSizeGet(ctx, fctx, expr.expression);
+    if (sizeResult !== undefined) return sizeResult as ValType;
+  }
+
+  // (#2162) Native Set `.size` accessor in standalone / nativeStrings mode →
+  // `__map_size` (the Set reuses the Map backing store) instead of the
+  // `Set_get_size` host import.
+  if (className === "Set" && propName === "size" && ctx.nativeStrings) {
+    addUnionImports(ctx);
+    const sizeResult = tryCompileNativeSetSizeGet(ctx, fctx, expr.expression);
     if (sizeResult !== undefined) return sizeResult as ValType;
   }
 

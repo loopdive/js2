@@ -15,6 +15,7 @@
 // silently change semantics.
 
 import { ts } from "./ts-api.js";
+import { PositionMap } from "./position-map.js";
 
 /** A single require() call rewrite plan. */
 interface RequireRewrite {
@@ -33,8 +34,19 @@ interface RequireRewrite {
  * Returns the original source unchanged if no top-level require() calls are present.
  */
 export function rewriteCjsRequire(source: string): string {
+  return rewriteCjsRequireWithMap(source).source;
+}
+
+/**
+ * #1928 — like {@link rewriteCjsRequire} but also returns a `PositionMap` from
+ * the rewritten output back to the input, so diagnostics computed against the
+ * rewritten source can report the user's original line numbers. `import`
+ * declarations can be longer (and multi-line) than the `const … = require(…)`
+ * they replace, shifting everything below.
+ */
+export function rewriteCjsRequireWithMap(source: string): { source: string; positionMap: PositionMap } {
   // Cheap pre-check: if the source doesn't even contain `require(`, skip parsing.
-  if (!source.includes("require(")) return source;
+  if (!source.includes("require(")) return { source, positionMap: PositionMap.identity() };
 
   const sf = ts.createSourceFile("__cjs_rewrite__.ts", source, ts.ScriptTarget.Latest, true);
   const rewrites: RequireRewrite[] = [];
@@ -44,7 +56,11 @@ export function rewriteCjsRequire(source: string): string {
     if (rewrite) rewrites.push(rewrite);
   }
 
-  if (rewrites.length === 0) return source;
+  if (rewrites.length === 0) return { source, positionMap: PositionMap.identity() };
+
+  const positionMap = new PositionMap(
+    rewrites.map((r) => ({ origStart: r.start, origEnd: r.end, newLength: r.text.length })),
+  );
 
   // Apply rewrites in reverse order so positions stay valid.
   rewrites.sort((a, b) => b.start - a.start);
@@ -52,7 +68,7 @@ export function rewriteCjsRequire(source: string): string {
   for (const r of rewrites) {
     result = result.substring(0, r.start) + r.text + result.substring(r.end);
   }
-  return result;
+  return { source: result, positionMap };
 }
 
 /**

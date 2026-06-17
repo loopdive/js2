@@ -15,7 +15,7 @@
 // site) rather than sharing the original's id.
 
 import type { AllocSiteRegistry } from "../alloc-registry.js";
-import type { AllocSiteId, IrInstr } from "../nodes.js";
+import { type AllocSiteId, type IrInstr, forEachNestedBuffer } from "../nodes.js";
 
 /**
  * Inline/monomorphize path — a statically-duplicated allocation is a distinct
@@ -38,7 +38,14 @@ export function forkAllocInInstr(instr: IrInstr, registry: AllocSiteRegistry | u
 /** Walk an instr + nested bodies, yielding every `alloc` id present. */
 export function* allocIdsIn(instr: IrInstr): Iterable<AllocSiteId> {
   if (instr.alloc !== undefined) yield instr.alloc;
-  for (const child of nestedInstrs(instr)) yield* allocIdsIn(child);
+  // Descend through every nested buffer via the single shared authority
+  // (#1922 — replaced a reflection-based walker that descended any
+  // array-of-instr property).
+  const children: IrInstr[] = [];
+  forEachNestedBuffer(instr, (buffer) => {
+    for (const sub of buffer) children.push(sub);
+  });
+  for (const child of children) yield* allocIdsIn(child);
 }
 
 /**
@@ -48,36 +55,4 @@ export function* allocIdsIn(instr: IrInstr): Iterable<AllocSiteId> {
 export function retireAllocsIn(instr: IrInstr, registry: AllocSiteRegistry | undefined): void {
   if (!registry) return;
   for (const id of allocIdsIn(instr)) registry.retire(id);
-}
-
-/**
- * Yield nested instruction arrays carried by control-flow instrs (if arms,
- * while/for cond+body+update, for-of bodies, try/catch/finally). Generic: any
- * own array-of-instr-like property, or a nested object holding one, descends.
- */
-function* nestedInstrs(instr: IrInstr): Iterable<IrInstr> {
-  for (const value of Object.values(instr as unknown as Record<string, unknown>)) {
-    yield* fromValue(value);
-  }
-}
-
-function* fromValue(value: unknown): Iterable<IrInstr> {
-  if (Array.isArray(value)) {
-    for (const el of value) if (isInstrLike(el)) yield el as IrInstr;
-  } else if (value !== null && typeof value === "object") {
-    for (const inner of Object.values(value as Record<string, unknown>)) {
-      if (Array.isArray(inner)) {
-        for (const el of inner) if (isInstrLike(el)) yield el as IrInstr;
-      }
-    }
-  }
-}
-
-function isInstrLike(v: unknown): boolean {
-  return (
-    v !== null &&
-    typeof v === "object" &&
-    typeof (v as { kind?: unknown }).kind === "string" &&
-    "result" in (v as object)
-  );
 }

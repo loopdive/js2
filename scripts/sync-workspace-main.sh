@@ -13,6 +13,14 @@
 # touching anything — it never discards local work. (Agents shouldn't be
 # editing /workspace directly anyway; that's what worktrees are for.)
 #
+# EXCEPTION: changes under .claude/memory/ are ignored by the dirty check.
+# That dir is live team-memory the agents write continuously, so it is almost
+# always dirty; incoming code commits never touch it, so a fast-forward stays
+# safe. Without this exclusion the hook refused on every memory edit and
+# /workspace silently rotted behind main (the very thing this script prevents).
+# In the rare case an incoming commit DOES touch .claude/memory/ while the
+# local copy is dirty, the `merge --ff-only` below fails safely and warns.
+#
 # Usage: scripts/sync-workspace-main.sh [workspace_dir]   (default /workspace)
 set -u
 WS="${1:-/workspace}"
@@ -31,9 +39,12 @@ if [ "$cur_branch" != "main" ]; then
   say "checkout is on '$cur_branch', not main — skipping (won't switch branches)"; exit 0
 fi
 
-# Refuse to touch a dirty tree — surface, don't discard.
-if ! git -C "$WS" diff --quiet 2>/dev/null || ! git -C "$WS" diff --cached --quiet 2>/dev/null; then
-  say "WARNING: $WS has uncommitted changes — NOT syncing (commit/clean it, then rerun)."
+# Refuse to touch a dirty tree — surface, don't discard. EXCEPTION: ignore
+# changes under .claude/memory/ (see header) so the hook isn't permanently
+# blocked by live team-memory writes.
+if ! git -C "$WS" diff --quiet -- . ':(exclude).claude/memory' 2>/dev/null \
+   || ! git -C "$WS" diff --cached --quiet -- . ':(exclude).claude/memory' 2>/dev/null; then
+  say "WARNING: $WS has uncommitted changes outside .claude/memory/ — NOT syncing (commit/clean it, then rerun)."
   exit 0
 fi
 

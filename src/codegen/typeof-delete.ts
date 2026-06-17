@@ -865,9 +865,22 @@ export function compileTypeofExpression(
     return compileStringLiteral(ctx, fctx, staticResult);
   }
 
-  // Fast mode: any-typed operand -> runtime typeof via __any_typeof
+  // $AnyValue operand → runtime typeof via __any_typeof, which tag-dispatches
+  // and returns a native `ref $AnyString`. This fires for fast mode AND for
+  // standalone/WASI: the latter previously fell through to the `__typeof` host
+  // helper below, whose standalone native form is a `ref.null.extern` stub
+  // (index.ts registerNative), so `typeof (v: any)` returned null and every
+  // `typeof v === "…"` string compare failed (#2107). __any_typeof needs the
+  // native-string machinery (nativeStrings + a registered $AnyString type), so
+  // it's only consulted when those are present; otherwise we keep the legacy
+  // __typeof path so non-native-string builds stay byte-identical.
   const wasmType = resolveWasmType(ctx, tsType);
-  if (ctx.fast && (wasmType.kind === "ref" || wasmType.kind === "ref_null") && isAnyValue(wasmType, ctx)) {
+  if (
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
+    isAnyValue(wasmType, ctx) &&
+    ctx.nativeStrings &&
+    ctx.anyStrTypeIdx >= 0
+  ) {
     ensureAnyHelpers(ctx);
     const typeofIdx = ctx.funcMap.get("__any_typeof");
     if (typeofIdx !== undefined) {
@@ -995,15 +1008,23 @@ export function compileTypeofComparison(
   // on the $AnyValue struct. This avoids pulling in the full native string helpers.
   if (isAnyValue(resolveWasmType(ctx, tsType), ctx)) {
     ensureAnyHelpers(ctx);
-    // Map the string literal to tag check(s)
+    // Map the string literal to canonical JsTag (#2104) tag check(s):
+    //   0 Null · 1 Undefined · 2 NumberI32 · 3 NumberF64 · 4 Boolean ·
+    //   5 String · 6 Object · 7 Function.
+    // (#2107) Pre-canonical this used `string -> [5,6]` and `object -> [0]`,
+    // which conflated tag 6 (Object) with strings and dropped real objects
+    // from the `object` arm — so `typeof (s: any-string) === "object"` was
+    // true and `typeof (o: any-object) === "object"` was false. Corrected:
+    // string is tag 5 only; object is null (0) or Object (6); function is 7.
     let tagChecks: number[] | null = null;
     if (stringLiteral === "number")
       tagChecks = [2, 3]; // i32 or f64
     else if (stringLiteral === "boolean") tagChecks = [4];
-    else if (stringLiteral === "string")
-      tagChecks = [5, 6]; // externref string or gcref string
+    else if (stringLiteral === "string") tagChecks = [5];
     else if (stringLiteral === "undefined") tagChecks = [1];
-    else if (stringLiteral === "object") tagChecks = [0]; // null -> "object"
+    else if (stringLiteral === "object")
+      tagChecks = [0, 6]; // null -> "object", plain object ref
+    else if (stringLiteral === "function") tagChecks = [7];
 
     if (tagChecks !== null) {
       // Compile the operand

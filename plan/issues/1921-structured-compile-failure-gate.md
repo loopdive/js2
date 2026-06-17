@@ -1,10 +1,12 @@
 ---
 id: 1921
 title: "Replace the 'Codegen error:' string-prefix compile-failure gate with structured severity"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/tld-1921
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -56,6 +58,63 @@ the gate just doesn't use it.
   test) unless explicitly degrade-listed.
 - test262 net impact reviewed and accepted in the PR (some currently-"passing"
   tests may legitimately flip to compile errors — that is the honest result).
+
+## Resolution (2026-06-16)
+
+The compile-failure gate now keys on diagnostic **severity**, not on a
+`"Codegen error:"` message prefix.
+
+- **`src/codegen/context/types.ts`** — `CodegenError.severity` gains a third
+  value `"degrade"` (deliberate compile-with-fallback-value), alongside
+  `"error"` / `"warning"`. Doc-comment spells out the gate contract.
+- **`src/codegen/context/errors.ts`** — `reportError` / `reportErrorNoNode`
+  now stamp `severity` (default `"error"`) on every diagnostic they push, so
+  omitting the magic prefix no longer silently downgrades a real error. New
+  exported helper `isFatalCodegenDiagnostic(err)` — fatal iff
+  `(severity ?? "error") === "error"`; `"warning"` and `"degrade"` are
+  non-fatal. An *omitted* severity is treated as fatal so a forgotten
+  classification fails loudly.
+- **`src/compiler.ts`** (3 gate sites) and **`src/compiler/output.ts`**
+  (1 site) — the four `result.errors.some(err => err.message.startsWith(
+  "Codegen error:"))` gates are replaced with
+  `result.errors.some(isFatalCodegenDiagnostic)`. A deliberate `"degrade"`
+  diagnostic is surfaced to the user as a non-fatal `"warning"` (the
+  external `CompileError.severity` only models `"error" | "warning"`). The
+  linear-backend message normalization keeps the cosmetic `"Codegen error:"`
+  prefix via a named `withCodegenPrefix` helper so the gate-pattern grep is
+  clean.
+- **`src/ir/types.ts`** — `WasmModule.codegenErrors` element type gains the
+  optional `severity` field so the linear backend can carry it through.
+
+The exception catch-all (`index.ts`) already routes through
+`reportErrorNoNode`, which attaches `ctx.lastKnownNode` position instead of a
+locationless line 1 — satisfying approach point 3.
+
+The full 177-site error/degrade reclassification (approach step 2) is left to
+follow-up: this PR flips the *mechanism* (so any omitted/`"error"` diagnostic
+is now fatal) and lets test262 sharded CI quantify the conformance delta.
+Deliberate degrade sites can be opted out incrementally by passing
+`"degrade"` to `reportError`, each with a tracking-issue reference.
+
+## Test Results
+
+- `tests/issue-1921.test.ts` — 3/3 pass:
+  - A `satisfies` expression (hits the `Unsupported expression:
+    SatisfiesExpression` catch-all at `src/codegen/expressions.ts:1302`, the
+    exact site named in the problem statement) now returns `success: false`.
+    On `origin/main` the same input returned `success: true` with the
+    `[error]`-severity diagnostic already present but ignored by the prefix
+    gate — the precise silent-degrade bug.
+  - `isFatalCodegenDiagnostic` unit cases (`error`/omitted → fatal,
+    `warning`/`degrade` → non-fatal).
+  - A well-formed standalone program still compiles, validates, and runs
+    (gate is not over-eager).
+- `git grep 'startsWith("Codegen error'` over `src/` is empty (criterion 1).
+- `npm run typecheck` and `npm run lint` (Biome) clean.
+- Behavioral equivalence suites and the test262 conformance delta are left to
+  CI: this container cannot stub the host-mode `env`/`string_constants`
+  imports, so host-mode instantiation fails identically on `origin/main`
+  (verified) — not a regression from this change.
 
 ## Source
 

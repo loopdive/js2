@@ -541,6 +541,18 @@ function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrVal
       if (v === inst.vec && idx === inst.index) return inst;
       return { ...inst, vec: v, index: idx };
     }
+    case "vec.new_fixed": {
+      // #1804 — rewrite each element operand (mirrors object.new).
+      let changed = false;
+      const newElements: IrValueId[] = [];
+      for (const e of inst.elements) {
+        const n = mapId(rename, e);
+        if (n !== e) changed = true;
+        newElements.push(n);
+      }
+      if (!changed) return inst;
+      return { ...inst, elements: newElements };
+    }
     case "forof.vec": {
       const v = mapId(rename, inst.vec);
       // Body instrs must also have their operands rewritten.

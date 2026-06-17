@@ -2,7 +2,7 @@
 id: 1917
 title: "One coercion engine — four divergent coercion matrices disagree about lossiness"
 status: in-progress
-sprint: 62
+sprint: 63
 model: opus
 created: 2026-06-10
 updated: 2026-06-15

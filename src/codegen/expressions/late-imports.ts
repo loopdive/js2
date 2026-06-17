@@ -325,6 +325,18 @@ export function ensureLateImport(
 ): number | undefined {
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
+  // #1984 — freeze-point discipline. A name already in funcMap is a pure
+  // lookup (handled above, always safe). Reaching here means this call would
+  // REGISTER a new import — which after the index-space freeze is a producer
+  // bug that shifts already-emitted indices. Throw at the producer site (its
+  // own stack) rather than silently poisoning the import space. The throw is
+  // caught by the generate* try/catch and surfaced as a `Codegen error:`.
+  if (ctx.indexSpaceFrozen) {
+    throw new Error(
+      `import space frozen (#1984): late import '${name}' requested after finalize — ` +
+        `this producer must register its import before the freeze point or refuse loudly`,
+    );
+  }
   // #1471: under no-JS-host mode, the box/unbox/typeof/is_truthy helpers have
   // Wasm-native implementations emitted by addUnionImports. Route there so the
   // module needs no unsatisfiable `env::*` host import. addUnionImports is

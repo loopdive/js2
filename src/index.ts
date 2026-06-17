@@ -121,6 +121,27 @@ export interface CompileResult {
    * low-level `compile*Source` helpers in compiler.ts do not attach it.
    */
   readonly importObject?: WebAssembly.Imports;
+  /**
+   * #2089 — silent-fallback telemetry counters captured during codegen
+   * (per class → per site → count). Only populated when the
+   * `trackSilentFallbacks` option is set (the gate
+   * `scripts/check-codegen-fallbacks.ts` sets it); `undefined` otherwise so
+   * normal compiles pay nothing.
+   */
+  fallbackCounts?: import("./codegen/fallback-telemetry.js").FallbackCounts;
+  /**
+   * #1923 — IR post-claim demotions. When the IR selector *claims* a function
+   * but it then fails during build/verify/lower/backend-legality, it demotes to
+   * the legacy path through the warning channel (`codegen/index.ts`) and is
+   * counted by no selector-level metric (`IrFallbackReason` covers only
+   * selector-level rejections). Always collected on the WasmGC path (cheap,
+   * mirrors `fallbackCounts`); empty/absent for the linear backend (no IR path).
+   * Each entry carries the `IrIntegrationError.kind` (build/verify/lower/
+   * backend-legality) and the function/message so the ratchet gate
+   * `scripts/check-ir-fallbacks.ts` can bucket by kind + normalized message
+   * class.
+   */
+  irPostClaimErrors?: { kind: string; func: string; message: string }[];
 }
 
 export interface CompileError {
@@ -130,6 +151,14 @@ export interface CompileError {
   severity: "error" | "warning";
   /** TS diagnostic code (if from TypeScript diagnostics) */
   code?: number;
+  /**
+   * Source file the diagnostic originated in (#1929). Populated from
+   * `diag.file.fileName` for TypeScript diagnostics; absent for diagnostics
+   * with no associated file (global/options errors). Essential for the
+   * multi-file / files APIs where `line`/`column` alone can't say *which*
+   * file. Additive — existing single-file callers can ignore it.
+   */
+  file?: string;
 }
 
 export interface DomContainmentOptions {

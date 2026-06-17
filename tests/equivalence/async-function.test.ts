@@ -27,7 +27,13 @@ describe("Async function support (synchronous compilation)", () => {
     expect(exports.main()).toBe(42);
   });
 
-  it("await expression is identity (pass-through)", async () => {
+  it("await of a genuinely-suspending call resolves through a real Promise (#1796 CPS)", async () => {
+    // `test` awaits another async call (`getValue()`), which is NOT statically
+    // resolved — so `asyncFnNeedsCps` is true and `test` is CPS-lowered to
+    // return a REAL Promise (no longer the legacy synchronous fakery). `main`
+    // is async too and returns that Promise; the test awaits it through a real
+    // microtask tick. (Was "await expression is identity (pass-through)",
+    // asserting the now-removed sync-consumption contract.)
     const src = `
       async function getValue(): Promise<number> {
         return 100;
@@ -36,12 +42,12 @@ describe("Async function support (synchronous compilation)", () => {
         const v = await getValue();
         return v;
       }
-      export function main(): number {
-        return test() as any as number;
+      export async function main(): Promise<number> {
+        return await test();
       }
     `;
     const exports = await compileToWasm(src);
-    expect(exports.main()).toBe(100);
+    await expect(exports.main()).resolves.toBe(100);
   });
 
   it("async function with computation", async () => {

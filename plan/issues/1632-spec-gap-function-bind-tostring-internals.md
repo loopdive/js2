@@ -472,9 +472,20 @@ sentinel — a host-side `try` around `inst.exports.go()` is unreliable.
 
 ## Suggested split
 
-- **#1632b-1** (closes #1694 A.i, dev-appropriate once specced): steps 1–3 +
-  the ordinary-`[[Construct]]` fallback (sub-case 2). No codegen change — pure
-  `src/runtime.ts`. This alone flips the A.i `NotPromise` family.
+- **#1632b-1** ✅ **DONE 2026-06-17** (closes #1694 A.i, shipped with the #1694
+  PR): `_wrapCallableForHost` + `_hostCallableCache` in `src/runtime.ts`
+  (a `Proxy` over a real `function` target with `apply`/`construct` traps that
+  dispatch through `_wrapWasmClosureUnknownArity`; all other traps delegate to
+  the existing `_wrapForHost(closure)` proxy, so no extraction of `_wrapForHost`
+  was needed — lower risk than the spec's step-1 option). The `construct` trap
+  implements the ordinary-`[[Construct]]` fallback (sub-case 2). Hooked into
+  `_resolveCtor` for `directCall === 0` + `__is_closure === 1`. No codegen
+  change. The A.i `NotPromise` capability-constructor family is flipped; the
+  `ctx-non-object`/`ctx-non-ctor` TypeErrors and the B/A.ii subclass paths are
+  preserved. See `plan/issues/1694-promise-subclass-capability.md`
+  "Implemented #1632b-1".
 - **#1632b-2** (compiled-class-as-dynamic-ctor, needs codegen): step 4
   (`__construct_closure` export). Only if test262 evidence shows a
   compiled-*class* reaching a dynamic construct site uncovered by #1682.
+  Still open — out of scope for the #1694 PR (A.i's `NotPromise` is an
+  ordinary function, not a class).

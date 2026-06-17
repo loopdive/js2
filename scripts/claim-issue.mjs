@@ -146,7 +146,11 @@ function commitAndPush(baseSha, id, content, message) {
     const commitArgs = ["commit-tree", tree, "-m", message];
     if (baseSha) commitArgs.push("-p", baseSha);
     const commit = git(commitArgs);
-    const push = gitTry(["push", REMOTE, `${commit}:refs/heads/${ASSIGN_REF}`]);
+    // --no-verify: the assignment ref only ever carries a single <id>.json (never
+    // labs/ content), and the pre-push integrity gate (pnpm install + typecheck +
+    // lint, ~120s+) makes every claim hang/exit 124. CLAUDE.md sanctions
+    // --no-verify for these non-main, no-CI claim pushes.
+    const push = gitTry(["push", "--no-verify", REMOTE, `${commit}:refs/heads/${ASSIGN_REF}`]);
     return push.ok;
   } finally {
     rmSync(tmp, { recursive: true, force: true });

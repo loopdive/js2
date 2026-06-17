@@ -29,9 +29,21 @@
 //   node scripts/reconcile-tasklist.mjs --quiet    # one line: "N stale: id,id" (for hooks)
 //   node scripts/reconcile-tasklist.mjs --json      # machine-readable
 //   node scripts/reconcile-tasklist.mjs --apply     # best-effort: rewrite stale task JSON status=completed
+//   node scripts/reconcile-tasklist.mjs --no-merged-prs  # skip the merged-PR cross-check (offline)
 //
 // Safe everywhere: if no task store is present (e.g. CI runners), it exits 0
 // with "no task store" and never fails a build.
+//
+// SECOND DRIFT SOURCE (#2147): the task<->frontmatter reconciler above never
+// checks issue frontmatter against MERGED PRs. The sprint-62 triage found 11
+// sprint-61 issues still `ready` whose fixes had already merged — a dev WILL
+// claim already-fixed work. So we additionally fetch merged PR titles
+// (`gh pr list --state merged`), extract their `#NNNN` references, and report
+// every issue still at `ready`/`in-progress` whose number is cited by a merged
+// CODE PR. Plan/docs PRs (`plan:`/`docs:`/`chore(plan)` titles) are excluded so
+// a planning commit that merely *mentions* an issue can't false-flag it.
+// Report-only — the PO owns the actual frontmatter flips. The check is skipped
+// silently when `gh` is unavailable/unauthenticated (CI) or `--no-merged-prs`.
 
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -42,6 +54,7 @@ const args = new Set(process.argv.slice(2));
 const QUIET = args.has("--quiet");
 const JSON_OUT = args.has("--json");
 const APPLY = args.has("--apply");
+const NO_MERGED_PRS = args.has("--no-merged-prs");
 
 const CLAUDE_HOME = process.env.CLAUDE_HOME || join(homedir(), ".claude");
 const TASKS_ROOT = join(CLAUDE_HOME, "tasks");
@@ -140,6 +153,99 @@ function subjectSaysDone(task) {
   return /\b(CLOSED|SUPERSEDED|STALE|\[DONE\])\b/.test(task.subject || "");
 }
 
+// ── #2147: cross-check ready/in-progress issues against merged PR titles ──────
+
+// PR titles that are planning/docs-only — a `#NNNN` in one of these is a
+// mention, not a fix, so it must NOT flag the issue. Matches the repo's
+// conventional-commit prefixes (`plan:`, `docs:`, `chore(plan): …`, etc.).
+const PLAN_DOCS_TITLE_RE = /^\s*(?:plan|docs|chore\(plan\)|chore\(docs\)|plan\([^)]*\)|docs\([^)]*\))\b/i;
+
+// Issues actively claimable by a dev — these are the ones a stale merged-PR
+// reference actually poisons (a dev would pick them up). `done`/`wont-fix`/
+// `in-review`/`blocked`/`backlog` are not at risk of a wrong claim.
+const AT_RISK_ISSUE_STATUSES = new Set(["ready", "in-progress"]);
+
+// List every issue file with its id, status, and title.
+function listIssues() {
+  const issues = [];
+  if (!existsSync(ISSUES_DIR)) return issues;
+  for (const f of readdirSync(ISSUES_DIR)) {
+    const m = f.match(/^(\d+[a-z]?)-.+\.md$/i);
+    if (!m) continue;
+    let text;
+    try {
+      text = readFileSync(join(ISSUES_DIR, f), "utf8");
+    } catch {
+      continue;
+    }
+    const status = (text.match(/^status:\s*(\S+)/m)?.[1] || "").toLowerCase() || null;
+    const title = text.match(/^title:\s*"?(.+?)"?\s*$/m)?.[1] || "";
+    issues.push({ id: m[1].toLowerCase(), file: f, status, title });
+  }
+  return issues;
+}
+
+// Fetch merged PR titles via `gh` and return the set of issue ids cited by a
+// non-plan/docs (i.e. code) PR. Returns null if `gh` is unavailable so the
+// caller can skip the check cleanly (CI, offline). The `#NNNN` reference is
+// taken from the whole title — for code PRs every cited issue is a candidate
+// (a fix PR commonly cites the primary issue plus the ones it also closes).
+function mergedPrIssueRefs() {
+  let raw;
+  try {
+    // -L caps the lookback; merged PRs older than the current sprint window are
+    // irrelevant (their issues were reconciled long ago). JSON keeps parsing robust.
+    raw = execSync("gh pr list --state merged -L 200 --json title", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 20000,
+    });
+  } catch {
+    return null; // gh missing / unauthenticated / network — skip silently
+  }
+  let prs;
+  try {
+    prs = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const refs = new Map(); // issueId -> sample PR title that cited it
+  for (const pr of prs) {
+    const title = pr.title || "";
+    if (PLAN_DOCS_TITLE_RE.test(title)) continue; // mention-only, not a fix
+    const seen = new Set();
+    for (const m of title.matchAll(/#(\d+[a-z]?)/gi)) {
+      const id = m[1].toLowerCase();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (!refs.has(id)) refs.set(id, title);
+    }
+  }
+  return refs;
+}
+
+// Build the list of at-risk issues cited by a merged code PR.
+function mergedPrStaleIssues() {
+  if (NO_MERGED_PRS) return { skipped: true, reason: "--no-merged-prs", flagged: [] };
+  const refs = mergedPrIssueRefs();
+  if (refs === null) return { skipped: true, reason: "gh unavailable", flagged: [] };
+  const flagged = [];
+  for (const issue of listIssues()) {
+    if (!issue.status || !AT_RISK_ISSUE_STATUSES.has(issue.status)) continue;
+    const prTitle = refs.get(issue.id);
+    if (prTitle) {
+      flagged.push({
+        id: issue.id,
+        issueStatus: issue.status,
+        prTitle: prTitle.slice(0, 90),
+        title: issue.title.slice(0, 70),
+      });
+    }
+  }
+  flagged.sort((a, b) => Number(parseInt(a.id, 10)) - Number(parseInt(b.id, 10)));
+  return { skipped: false, flagged };
+}
+
 const tasks = loadTasks();
 if (tasks.length === 0) {
   out("reconcile-tasklist: no task store found (ok on CI) — nothing to do.");
@@ -167,12 +273,34 @@ for (const t of open) {
   }
 }
 
+// #2147: ready/in-progress issues already fixed by a merged PR.
+const mergedPr = mergedPrStaleIssues();
+
 if (JSON_OUT) {
-  console.log(JSON.stringify({ total: tasks.length, open: open.length, stale }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        total: tasks.length,
+        open: open.length,
+        stale,
+        mergedPrFixed: mergedPr.flagged,
+        mergedPrCheckSkipped: mergedPr.skipped ? mergedPr.reason : false,
+      },
+      null,
+      2,
+    ),
+  );
 } else if (QUIET) {
-  console.log(stale.length === 0 ? "0 stale" : `${stale.length} stale: ${stale.map((s) => s.id).join(",")}`);
+  const staleLine = stale.length === 0 ? "0 stale" : `${stale.length} stale: ${stale.map((s) => s.id).join(",")}`;
+  const prLine =
+    mergedPr.flagged.length === 0
+      ? ""
+      : ` | ${mergedPr.flagged.length} merged-but-ready: ${mergedPr.flagged.map((s) => "#" + s.id).join(",")}`;
+  console.log(staleLine + prLine);
 } else {
-  out(`\nreconcile-tasklist: ${tasks.length} tasks, ${open.length} open, ${stale.length} STALE (done-but-not-completed)\n`);
+  out(
+    `\nreconcile-tasklist: ${tasks.length} tasks, ${open.length} open, ${stale.length} STALE (done-but-not-completed)\n`,
+  );
   for (const s of stale) {
     out(`  #${s.id}  [${s.reason}]  ${s.subject}`);
   }
@@ -180,6 +308,22 @@ if (JSON_OUT) {
     out(`\nApply (authoritative — run as the team lead):`);
     for (const s of stale) out(`  TaskUpdate taskId=${s.id} status=completed`);
     out(`\nOr best-effort direct rewrite: node scripts/reconcile-tasklist.mjs --apply`);
+  }
+
+  // #2147 merged-PR cross-check report.
+  if (mergedPr.skipped) {
+    out(`\nmerged-PR cross-check (#2147): skipped (${mergedPr.reason}).`);
+  } else {
+    out(
+      `\nmerged-PR cross-check (#2147): ${mergedPr.flagged.length} ready/in-progress issue(s) cited by a merged code PR:`,
+    );
+    for (const s of mergedPr.flagged) {
+      out(`  #${s.id}  [${s.issueStatus}]  fixed by merged PR "${s.prTitle}"`);
+    }
+    if (mergedPr.flagged.length) {
+      out(`\n  → these fixes have merged but the issue frontmatter still reads ready/in-progress.`);
+      out(`    The PO should flip status: done (report-only — this script does not write frontmatter).`);
+    }
   }
 }
 

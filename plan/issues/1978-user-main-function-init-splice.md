@@ -1,10 +1,11 @@
 ---
 id: 1978
 title: "user function named main gets the module-init body spliced into it: top-level state resets on every call; WASI infinite recursion for main() convention"
-status: ready
+status: done
 sprint: 62
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-16
+completed: 2026-06-16
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -15,6 +16,19 @@ goal: core-semantics
 related: [900, 907, 1122, 1789]
 origin: "2026-06-10 deep-audit sweep (optimizer agent): verified on main"
 ---
+
+## Resolution (2026-06-16)
+
+Fixed by commit `d3fc8a9ea` *fix(#1978): stop splicing module-init into a user
+function named main*. `src/codegen/declarations.ts` no longer prepends the
+module-init body into a user function named `main`; it always emits a
+standalone `__module_init` run once via the Wasm start section (GC) or the
+WASI `_start` export. Re-verified on current upstream/main: repro A
+(`let counter=0; export function main(){counter++;return counter}`) returns
+`1,2,3` across host calls; repro B (WASI `main();` convention) compiles to a
+standalone `__module_init` with no self-recursion. This frontmatter flip
+reconciles the stale `status: ready` (the code fix had already merged); no
+further code change.
 
 # #1978 — `main` name collision with the synthetic init function
 

@@ -26,9 +26,11 @@
 import { ts } from "../ts-api.js";
 import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { allocLocal } from "./context/locals.js";
 import { addFuncType } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
-import { compileExpression, VOID_RESULT } from "./shared.js";
+import { compileArrowAsClosure, compileExpression, VOID_RESULT } from "./shared.js";
+import { coercionInstrs } from "./type-coercion.js";
 
 /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
  *  object keys (only GC eqrefs can be compared by identity). */
@@ -912,6 +914,22 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
  * assume); native strings and other GC refs are already anyref subtypes;
  * externrefs externalize via `any.convert_extern`.
  */
+/**
+ * (#2162) Re-exported for the Set runtime, which reuses the Map backing store
+ * and needs the identical key/value → anyref boxing for its element arg.
+ */
+export function coerceSetArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValType | null): void {
+  coerceArgToAnyref(ctx, fctx, t);
+}
+
+/**
+ * (#2162) Re-exported for the WeakMap/WeakSet runtime, which reuses the Map
+ * backing store and needs the identical key/value → anyref boxing.
+ */
+export function coerceMapKeyToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValType | null): void {
+  coerceArgToAnyref(ctx, fctx, t);
+}
+
 function coerceArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValType | null): void {
   if (t === null) {
     // Absent value (e.g. compileExpression produced nothing) — push a null
@@ -974,6 +992,12 @@ export function tryCompileNativeMapMethodCall(
 ): InnerResult | undefined {
   if (!ctx.nativeStrings) return undefined;
   const methodName = propAccess.name.text;
+
+  // forEach drives a callback over the entries vector (24.1.3.5) — separate path.
+  if (methodName === "forEach") {
+    return tryCompileNativeCollectionForEach(ctx, fctx, propAccess, callExpr, /* isSet */ false);
+  }
+
   const handled =
     methodName === "set" ||
     methodName === "get" ||
@@ -1057,6 +1081,192 @@ export function tryCompileNativeMapSizeGet(
   }
   fctx.body.push({ op: "call", funcIdx: sizeIdx });
   return { kind: "i32" } as ValType;
+}
+
+/**
+ * (#2162) Intercept `Map.prototype.forEach` / `Set.prototype.forEach` in
+ * standalone / `nativeStrings` mode and drive the callback over the native
+ * `$Map` backing store. Spec 24.1.3.5 / 24.2.3.6: invoke
+ * `callbackfn(value, key, collection)` for every live entry in insertion order
+ * (a Set passes the value as both `value` and `key`). The `thisArg` 2nd
+ * argument is accepted but, like the array-method native callbacks, only honored
+ * when the callback closes over `this` itself — out of scope for this slice.
+ *
+ * Reuses the entries-vector walk from `__map_iter_next` (index 0..entryCount,
+ * skipping tombstones via `F_HASH & TOMBSTONE_BIT`) and the closure-call shape
+ * from `array-methods.ts` (push coerced args, `call_ref` the closure funcref).
+ * The callback must be a Wasm closure (arrow / function expr / named fn);
+ * otherwise we bail so the generic path can try.
+ *
+ * `isSet` selects the key passed to the callback: for a Set, value === key.
+ */
+export function tryCompileNativeCollectionForEach(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  isSet: boolean,
+): InnerResult | undefined {
+  if (!ctx.nativeStrings) return undefined;
+  if (propAccess.name.text !== "forEach") return undefined;
+  ensureMapHelpers(ctx);
+  if (ctx.mapTypeIdx < 0) return undefined;
+
+  const cbArg = callExpr.arguments[0];
+  if (cbArg === undefined) return undefined;
+  // Only handle Wasm-closure callbacks (arrow / function expr / named fn ref).
+  const willBeClosure =
+    ts.isArrowFunction(cbArg) ||
+    ts.isFunctionExpression(cbArg) ||
+    (ts.isIdentifier(cbArg) && (ctx.funcMap.has(cbArg.text) || ctx.closureMap.has(cbArg.text)));
+  if (!willBeClosure) return undefined;
+
+  // Map struct field layout (matches ensureMapHelpers' local constants).
+  const M_ENTRIES = 1;
+  const M_ENTRYCOUNT = 2;
+  const F_KEY = 0;
+  const F_VALUE = 1;
+  const F_HASH = 3;
+  const anyref: ValType = { kind: "anyref" };
+
+  // Receiver → ref $Map, stored in a temp.
+  const recvType = compileExpression(ctx, fctx, propAccess.expression);
+  if (recvType === null) return undefined;
+  if (recvType.kind === "externref") {
+    fctx.body.push({ op: "any.convert_extern" } as Instr);
+    fctx.body.push({ op: "ref.cast", typeIdx: ctx.mapTypeIdx } as Instr);
+  } else if (recvType.kind === "anyref" || recvType.kind === "eqref") {
+    fctx.body.push({ op: "ref.cast", typeIdx: ctx.mapTypeIdx } as Instr);
+  } else if ((recvType.kind === "ref" || recvType.kind === "ref_null") && recvType.typeIdx !== ctx.mapTypeIdx) {
+    return undefined;
+  }
+  const mTmp = allocLocal(fctx, `__mfe_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
+  fctx.body.push({ op: "local.set", index: mTmp });
+
+  // Compile the callback to a Wasm closure; resolve its ClosureInfo.
+  const cbResult =
+    ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
+      ? compileArrowAsClosure(ctx, fctx, cbArg)
+      : compileExpression(ctx, fctx, cbArg);
+  if (!cbResult || (cbResult.kind !== "ref" && cbResult.kind !== "ref_null")) return undefined;
+  const closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
+  const closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
+  if (!closureInfo) return undefined;
+  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, cbResult);
+  fctx.body.push({ op: "local.set", index: closureTmp });
+
+  const numParams = closureInfo.paramTypes.length;
+  const iTmp = allocLocal(fctx, `__mfe_i_${fctx.locals.length}`, { kind: "i32" });
+  const entryTmp = allocLocal(fctx, `__mfe_e_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.mapEntryTypeIdx,
+  });
+
+  // local funcref guard (same shape as array-methods guardedFuncRefCastInstrs).
+  const guardFuncTmp = allocLocal(fctx, `__mfe_gfc_${fctx.locals.length}`, { kind: "funcref" } as ValType);
+  const guardedFuncRefCast = (funcTypeIdx: number): Instr[] => [
+    { op: "local.tee", index: guardFuncTmp },
+    { op: "ref.test", typeIdx: funcTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: funcTypeIdx } as ValType },
+      then: [
+        { op: "local.get", index: guardFuncTmp },
+        { op: "ref.cast_null", typeIdx: funcTypeIdx },
+      ],
+      else: [{ op: "ref.null", typeIdx: funcTypeIdx }],
+    } as Instr,
+  ];
+
+  // entry = m.entries[i]  (cast to $MapEntry, stored in entryTmp)
+  const loadEntry: Instr[] = [
+    { op: "local.get", index: mTmp } as Instr,
+    { op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: M_ENTRIES } as unknown as Instr,
+    { op: "local.get", index: iTmp } as Instr,
+    { op: "array.get", typeIdx: ctx.mapEntriesTypeIdx } as unknown as Instr,
+    { op: "ref.cast", typeIdx: ctx.mapEntryTypeIdx } as Instr,
+    { op: "local.set", index: entryTmp } as Instr,
+  ];
+
+  // callback(value, key, collection) — push only as many args as it declares.
+  // The closure funcref's FIRST param is the closure env itself; push it before
+  // the user args (mirrors array-methods.ts callClosure).
+  const callClosure: Instr[] = [
+    { op: "local.get", index: closureTmp } as Instr,
+    // entry.value / entry.key are stored as `anyref` (boxed numbers are
+    // `__box_number` externrefs wrapped via any.convert_extern). Externalize to
+    // externref first, then coerce to the param type — externref→f64 unboxes via
+    // `__unbox_number`, externref→string casts to the native string, etc.
+    ...(numParams >= 1
+      ? [
+          { op: "local.get", index: entryTmp } as Instr,
+          { op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_VALUE } as unknown as Instr,
+          { op: "extern.convert_any" } as Instr,
+          ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[0] ?? anyref, fctx),
+        ]
+      : []),
+    ...(numParams >= 2
+      ? [
+          // Map: key field; Set: value === key.
+          { op: "local.get", index: entryTmp } as Instr,
+          { op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: isSet ? F_VALUE : F_KEY } as unknown as Instr,
+          { op: "extern.convert_any" } as Instr,
+          ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[1] ?? anyref, fctx),
+        ]
+      : []),
+    ...(numParams >= 3
+      ? [
+          { op: "local.get", index: mTmp } as Instr,
+          ...coercionInstrs(ctx, { kind: "ref", typeIdx: ctx.mapTypeIdx }, closureInfo.paramTypes[2] ?? anyref, fctx),
+        ]
+      : []),
+    { op: "local.get", index: closureTmp } as Instr,
+    { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 } as Instr,
+    ...guardedFuncRefCast(closureInfo.funcTypeIdx),
+    { op: "ref.as_non_null" } as Instr,
+    { op: "call_ref", typeIdx: closureInfo.funcTypeIdx } as Instr,
+    // forEach ignores the callback result; drop whatever it returned.
+    ...(closureInfo.returnType === null ? [] : [{ op: "drop" } as Instr]),
+  ];
+
+  // i = 0; loop { if i >= entryCount break; entry = entries[i]; i++;
+  //               if (entry.hash & TOMBSTONE_BIT) continue; callback(...); }
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: iTmp });
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [
+      {
+        op: "loop",
+        blockType: { kind: "empty" },
+        body: [
+          // if i >= entryCount → break
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "local.get", index: mTmp } as Instr,
+          { op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: M_ENTRYCOUNT } as unknown as Instr,
+          { op: "i32.ge_s" } as Instr,
+          { op: "br_if", depth: 1 } as Instr,
+          ...loadEntry,
+          // i++
+          { op: "local.get", index: iTmp } as Instr,
+          { op: "i32.const", value: 1 } as Instr,
+          { op: "i32.add" } as Instr,
+          { op: "local.set", index: iTmp } as Instr,
+          // tombstone? skip (continue the loop)
+          { op: "local.get", index: entryTmp } as Instr,
+          { op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_HASH } as unknown as Instr,
+          { op: "i32.const", value: TOMBSTONE_BIT } as Instr,
+          { op: "i32.and" } as Instr,
+          { op: "br_if", depth: 0 } as Instr,
+          ...callClosure,
+          { op: "br", depth: 0 } as Instr,
+        ],
+      } as Instr,
+    ],
+  } as Instr);
+
+  return VOID_RESULT;
 }
 
 /**

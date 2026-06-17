@@ -1,9 +1,11 @@
 ---
 id: 1694
 title: "Promise.any/all/allSettled/race: non-Promise capability `this` + extends-Promise codegen (~50 fails)"
-status: backlog
+status: done
+assignee: ttraenkler/cs-1694
 created: 2026-05-28
-updated: 2026-06-03
+updated: 2026-06-17
+completed: 2026-06-17
 revalidated: 2026-06-03
 priority: medium
 feasibility: hard
@@ -12,7 +14,7 @@ task_type: bugfix
 area: codegen, runtime
 language_feature: promises, subclassing
 goal: spec-completeness
-sprint: Backlog
+sprint: 63
 needs_architect_spec: true
 related: [1368, 1465, 1528, 1116, 1644, 1682, 1596, 1632b]
 ---
@@ -208,3 +210,64 @@ combinator hook is in `_resolveCtor` (runtime.ts:7822): for the
 `.call(closure, …)` case it must return `_wrapCallableForHost(thisArg,
 exports)` so V8's `NewPromiseCapability(C)` can `Construct(C, [executor])`.
 Sub-task **#1632b-1** (runtime-only, no codegen) closes this A.i family.
+
+## Implemented #1632b-1 (2026-06-17, senior-developer cs-1694) — A.i closed
+
+The sole genuine remaining gap (A.i — a **compiled function** used as the
+capability constructor) is now fixed, runtime-only, in `src/runtime.ts`.
+
+**What shipped:**
+
+1. `_wrapCallableForHost(closure, callbackState)` — a sibling of
+   `_wrapForHost` whose Proxy target is a real `function compiledFnTarget(){}`
+   (so the Proxy may legally carry `apply` + `construct` traps and
+   `typeof proxy === "function"` holds — both required by V8's
+   `IsCallable`/`IsConstructor`). The wrapper is cached per closure
+   (`_hostCallableCache` WeakMap) and mirrored into `_hostProxyReverse` so
+   `_unwrapForHost` round-trips the raw struct back into Wasm.
+   - `apply` / `construct` dispatch through `_wrapWasmClosureUnknownArity`
+     (the existing dynamic-arity `__call_fn_*` bridge) — no new export, no
+     codegen.
+   - `construct` implements **ordinary `[[Construct]]`** (ECMA-262 §10.2.2):
+     run the body with a fresh `{}` as `this`, return the body's value if it
+     is an object else the fresh receiver; a throw from the body propagates so
+     `NewPromiseCapability`'s abrupt-completion ordering is observed.
+   - Every other trap (`get`/`set`/`has`/`ownKeys`/`getOwnPropertyDescriptor`/
+     `defineProperty`/`deleteProperty`) **delegates to the standard
+     `_wrapForHost(closure)` proxy** — its read/has/enumerate machinery is
+     reused verbatim, so NOTHING in `_wrapForHost` had to be extracted or
+     touched (lower regression risk than the spec's step-1 extraction option).
+     `getPrototypeOf` returns `Function.prototype`.
+
+2. **Hook in `_resolveCtor`** (the combinator capability-resolver): for
+   `directCall === 0` (`Promise.METHOD.call(thisArg, …)`), when `thisArg` is a
+   WasmGC struct AND `__is_closure(thisArg) === 1`, return
+   `_wrapCallableForHost(thisArg, callbackState)`. **Why the `__is_closure`
+   gate is load-bearing:** a plain object (`ctx-non-ctor`) or a non-closure
+   named struct must stay non-constructible so V8's NewPromiseCapability still
+   throws the spec §27.2.4.X step-2 TypeError. Only genuine closures get the
+   callable wrap; primitives/null/undefined never reach the struct branch.
+
+**Why ordinary-[[Construct]] only (no `__construct_closure` export):** A.i's
+`NotPromise` is always an *ordinary function*, never a compiled *class*. The
+compiled-class-as-dynamic-constructor case is #1632b-2 (needs codegen) and has
+no test262 coverage reaching this site uncovered by #1682, so it is
+intentionally deferred.
+
+**Verification (two-step `WebAssembly.compile` + `instantiate` + `setExports`,
+matching `tests/promise-combinators.test.ts`):**
+- A.i positive: `Promise.all.call(Cap, [])` with `function Cap(executor){…}`
+  → the compiled body now RUNS (was `[object Object] is not a constructor`).
+- `ctx-non-object` (`Promise.all.call(5, [])`) → still TypeError.
+- `ctx-non-ctor` (`Promise.all.call({}, [])`) → still TypeError.
+- B/A.ii (`class X extends Promise {}; X.all([])`) → still resolves.
+- 4 new tests added to `tests/promise-combinators.test.ts`
+  (`describe("… compiled-fn capability constructor (#1694 A.i)")`).
+- Adjacent suites green: #1632a, #1596, #1732-S1, #1337-bind-call,
+  #1712, #1896-typeof-closure, #2174 (53 tests).
+
+**Harness gotcha (cost ~30 min):** the verification harness MUST call
+`imports.setExports(instance.exports)` after `WebAssembly.instantiate`, or
+`callbackState.getExports()` stays `undefined`, `__is_closure` is unreachable,
+and the wrap silently no-ops. Raw `WebAssembly.instantiate(binary, imports)`
+without `setExports` gives a false "body never ran" reading.

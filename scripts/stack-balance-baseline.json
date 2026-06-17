@@ -1,0 +1,12 @@
+{
+  "generated": "2026-06-16",
+  "fixups": {
+    "drop-excess": 2,
+    "default-value-lossy": 78,
+    "branch-type-coerce": 0,
+    "branch-type-cast": 0,
+    "call-arg-coerce": 6,
+    "struct-field-coerce": 0,
+    "local-set-coerce": 0
+  }
+}

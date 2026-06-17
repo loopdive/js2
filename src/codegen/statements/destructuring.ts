@@ -27,7 +27,8 @@ import {
 } from "../destructuring-params.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
-import { addFuncType, getArrTypeIdxFromVec } from "../registry/types.js";
+import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "../registry/types.js";
+import { getVecInfo } from "../type-coercion.js";
 import {
   coerceType,
   compileExpression,
@@ -41,6 +42,7 @@ import { collectInstrs } from "./shared.js";
 import { emitLocalTdzInit, emitTdzInitForBindingPattern } from "./tdz.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../expressions/proto-override.js";
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
+import { emitDrainCustomIterableToVec, isCustomIterable } from "../custom-iterable.js";
 
 /**
  * (#1719 S1) Gate predicate for the array object-value representation track.
@@ -1033,6 +1035,60 @@ export function compileArrayDestructuring(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   const isVecArray = arrDef && arrDef.kind === "array";
+
+  // (#2033) Array-destructuring a user-defined iterable — an object literal /
+  // class instance whose struct carries `[Symbol.iterator]()`. Without this it
+  // fell through to the vec/tuple field reads below and pulled non-existent
+  // numeric fields → NaN. Spec §8.5.2 IteratorBindingInitialization: array
+  // destructuring is a GetIterator consumer, exactly like for-of and spread.
+  // Coerce to externref and delegate to the externref decl path, whose helper
+  // runs the full GetIterator (@@iterator + .next()) protocol.
+  // (#2033) Array-destructuring a user-defined iterable — an object literal /
+  // class instance whose struct carries `[Symbol.iterator]()`. Without this it
+  // fell through to the vec/tuple field reads below (or the externref
+  // __extern_get fallback) and pulled non-existent numeric fields → NaN. Spec
+  // §8.5.2 IteratorBindingInitialization: array destructuring is a GetIterator
+  // consumer, exactly like for-of and spread (#2033 spread fix). Drain the
+  // iterator protocol into a vec (reusing the spread drain), then destructure
+  // that vec through the proven typed-vec path.
+  if (!isVecArray && isCustomIterable(ctx, resultType)) {
+    const drainVecTypeIdx = getOrRegisterVecType(ctx, "f64");
+    const drainVecInfo = getVecInfo(ctx, drainVecTypeIdx);
+    if (drainVecInfo) {
+      const iterableLocal = allocLocal(fctx, `__destr_citer_src_${fctx.locals.length}`, resultType);
+      fctx.body.push({ op: "local.set", index: iterableLocal });
+      if (emitDrainCustomIterableToVec(ctx, fctx, iterableLocal, resultType, drainVecTypeIdx)) {
+        // `struct.new` yields a non-null ref; type the local `ref` (not
+        // `ref_null`) so the typed-vec destructure's OOB→default logic matches
+        // the literal-array path (a `ref_null` source takes a different branch
+        // that mis-handles the binding default).
+        const vecLocal = allocLocal(fctx, `__destr_citer_vec_${fctx.locals.length}`, {
+          kind: "ref",
+          typeIdx: drainVecTypeIdx,
+        });
+        fctx.body.push({ op: "local.set", index: vecLocal });
+        destructureParamArray(
+          ctx,
+          fctx,
+          vecLocal,
+          pattern,
+          { kind: "ref", typeIdx: drainVecTypeIdx },
+          {
+            mode: "decl",
+            bindingKind: recoverBindingKind(pattern) ?? "var",
+          },
+        );
+        syncDestructuredLocalsToGlobals(ctx, fctx, pattern);
+        return;
+      }
+      // Drain unavailable — value already consumed into iterableLocal; fall
+      // back to the externref path on a fresh extern view is not possible here
+      // (value gone), so emit binding locals + a structured error.
+      ensureBindingLocals(ctx, fctx, pattern);
+      reportError(ctx, decl, "Cannot destructure custom iterable: iterator imports unavailable");
+      return;
+    }
+  }
 
   // Check if this is a tuple struct (fields named _0, _1, etc.)
   // Note: 0-field structs are treated as empty tuples so that defaults apply correctly

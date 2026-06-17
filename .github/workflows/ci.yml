@@ -57,13 +57,50 @@ jobs:
       - name: IR fallback gate (#1376)
         run: pnpm run check:ir-fallbacks
 
+      - name: IR adoption table freshness (#2145)
+        # Fails when plan/log/ir-adoption.md drifts from its generator data or
+        # from the IrFallbackReason union in src/ir/select.ts. Regenerate with
+        # `pnpm run gen:ir-adoption`.
+        run: pnpm run check:ir-adoption
+
+      - name: Stack-balance fixup ratchet (#1918)
+        # Each stack-balance fixup repairs an emitter bug. Fails when any fixup
+        # bucket grows vs. scripts/stack-balance-baseline.json — a new fixup
+        # means new wrong codegen reached the safety net (some arms are lossy:
+        # a missing/wrong-typed branch value patched with a const default ships
+        # a silently-wrong runtime value). Shrink the producing codegen, not
+        # the gate. See plan/issues/1918-stack-balance-strict-mode-fixup-ratchet.md.
+        run: pnpm run check:stack-balance
+
+      - name: Codegen silent-fallback gate (#2089)
+        run: pnpm run check:codegen-fallbacks
+
       - name: AnyValue box-site gate (#2104)
         run: pnpm run check:any-box-sites
+
+      - name: Coercion-site drift gate (#2108)
+        # Fails when the JS-semantic coercion vocabulary (ToString/ToNumber/
+        # ToPrimitive/equality/ToBoolean) is hand-rolled at a NEW site outside
+        # the coercion engine (see plan/log/analysis-2026-06/03-coercion-engine
+        # -spec.md §5). The single-engine migration ratchets the baseline down.
+        run: pnpm run check:coercion-sites
 
       - name: Issue integrity + link gate (#1616)
         # Fails on duplicate IDs, filename/frontmatter ID mismatch, dangling
         # depends_on, or broken plan/issues/<id>-<slug>.md links in tracked *.md.
         run: pnpm run check:issues
+
+      - name: Issue→probe coverage gate (#2093)
+        # A bugfix issue (created on/after the cutoff) cannot flip to
+        # `status: done` without a permanent probe/test reference — either a
+        # tests/issue-<id>.test.ts file or a cited tests/…test… / test262/… path.
+        # WARNING-only at `ready`; HARD FAIL on the done-flip. Diffs the changed
+        # issue files against the PR base so only this PR's flips are gated.
+        # Skips cleanly when no diff base resolves (never blocks a build it can't
+        # reason about). Needs the base ref present for the diff.
+        run: |
+          git fetch --no-tags --depth=1 origin main 2>/dev/null || true
+          ISSUE_COVERAGE_BASE=origin/main pnpm run check:issue-spec-coverage
 
       - name: Host-import allowlist + strict-mode gate (#1524)
         env:
@@ -137,6 +174,37 @@ jobs:
       #         git push
       #       fi
       #     fi
+
+  # #2139 — Execute the linear-backend (linear-memory lowering), C-ABI, and
+  # SIMD test suites in CI. These 20 files (tests/linear-*.test.ts,
+  # tests/c-abi.test.ts, tests/simd*.test.ts) sat at tests/ root with NO CI
+  # job running them: the equivalence shards only run tests/equivalence/ and
+  # the `quality` job only runs lint/typecheck/gates plus a few named files.
+  # That gap is why #1974/#1975/#1976/#1977 (linear-backend bugs) shipped
+  # silently — nothing executed linear output after merge. All 20 files pass
+  # on main, so this runs them directly (no baseline-gate needed); any failure
+  # is a genuine regression and blocks the PR. Single-fork keeps peak RAM low.
+  linear-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 25
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Run linear-backend, C-ABI, and SIMD tests
+        run: |
+          # Invoke vitest directly (not `pnpm test --`) so the trailing file
+          # globs are scoped to vitest and not consumed by pnpm. Single-fork +
+          # no file-parallelism keeps peak RAM ~1 GB (same pattern as the
+          # equivalence shards). See #2139.
+          pnpm exec vitest run \
+            tests/linear-*.test.ts tests/c-abi.test.ts tests/simd.test.ts tests/simd-wat.test.ts \
+            --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 
   # #1659 — Run tests/equivalence/ in CI. Previously skipped because the full
   # suite OOMed under file-parallelism. Each shard runs single-fork (peak

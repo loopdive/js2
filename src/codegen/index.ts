@@ -22,11 +22,14 @@ import { irVal, type IrType } from "../ir/nodes.js";
 import { buildTypeMap, type LatticeType } from "../ir/propagate.js";
 import { planIrCompilation, type IrFallbackReason } from "../ir/select.js";
 import { createCodegenContext } from "./context/create-context.js";
+import type { FallbackCounts } from "./fallback-telemetry.js";
+import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type {
   ClosureInfo,
   CodegenContext,
+  CodegenError,
   CodegenOptions,
   ExternClassInfo,
   FunctionContext,
@@ -35,12 +38,13 @@ import type {
 import type { NodeBuiltinImport } from "../import-resolver.js";
 import { eliminateDeadImports } from "./dead-elimination.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
+import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { ensureNativeIteratorRuntime, fillNativeIteratorUserArms } from "./iterator-native.js";
 import { fillClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { emitUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
-import { fillApplyClosure, fillExternIsArray } from "./object-runtime.js";
+import { fillApplyClosure, fillExternIsArray, fillProxyDispatch } from "./object-runtime.js";
 import {
   fixupExternConvertAny,
   fixupStructNewArgCounts,
@@ -68,7 +72,7 @@ import {
 } from "./registry/types.js";
 import { exportDrainMicrotasksIfRegistered, getDrainFuncIdxForWasiStart } from "./async-scheduler.js";
 import { flushLateImportShifts, registerAddStringImports, registerAddUnionImports } from "./shared.js";
-import { stackBalance } from "./stack-balance.js";
+import { stackBalance, getFixupEvents, summarizeFixups, strictBalanceDiagnostics } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureRegexMatchVecType } from "./native-regex.js";
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
@@ -212,6 +216,31 @@ function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
   function walk(node: ts.Node): void {
     if (found) return;
     if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      found = true;
+      return;
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+  return found;
+}
+
+/**
+ * (#2179) True when the source contains a `delete` operating on a property or
+ * element access (`delete o.a` / `delete o[k]`). `delete x` of a bare
+ * identifier and `delete <other expr>` (no-op deletes) do NOT count — only
+ * member deletes can leave a runtime tombstone that the inline struct.get
+ * read fast-path would bypass. Used to gate the tombstone-aware read routing
+ * so delete-free modules emit byte-identical wasm.
+ */
+function sourceContainsDelete(sourceFile: ts.SourceFile): boolean {
+  let found = false;
+  function walk(node: ts.Node): void {
+    if (found) return;
+    if (
+      ts.isDeleteExpression(node) &&
+      (ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression))
+    ) {
       found = true;
       return;
     }
@@ -954,7 +983,11 @@ export function generateModule(
   options?: CodegenOptions,
 ): {
   module: WasmModule;
-  errors: { message: string; line: number; column: number; severity?: "error" | "warning" }[];
+  errors: CodegenError[];
+  // #2089 — silent-fallback telemetry counters (per class → per site → count).
+  fallbackCounts?: FallbackCounts;
+  // #1923 — IR post-claim demotions (only when trackIrPostClaim is set).
+  irPostClaimErrors?: { kind: string; func: string; message: string }[];
 } {
   const mod = createEmptyModule();
   const ctx = createCodegenContext(mod, ast.checker, options);
@@ -968,6 +1001,11 @@ export function generateModule(
       ctx.topLevelFunctionNames.add(stmt.name.text);
     }
   }
+  // (#2179) Pre-scan for `delete <member>` so `any`-receiver property reads can
+  // be routed through the tombstone-aware `__extern_get` host helper instead of
+  // the inline struct.get fast-path (which reads the live field and ignores the
+  // runtime delete tombstone). Delete-free modules keep byte-identical output.
+  ctx.moduleUsesDelete = sourceContainsDelete(ast.sourceFile);
   try {
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
@@ -1170,6 +1208,11 @@ export function generateModule(
       ctx.arrayIteratorMaybeOverridden = true;
     }
 
+    // (#2023) Detect any `new.target` use up front so class collection assigns
+    // class-ids and `new`/comparison sites emit the threading global. Off by
+    // default — programs without `new.target` are byte-identical.
+    scanForNewTarget(ctx, ast.sourceFile);
+
     collectDeclarations(ctx, ast.sourceFile);
 
     // Shape inference: detect array-like variables and override their types
@@ -1298,10 +1341,27 @@ export function generateModule(
         } catch (e) {
           // Selector claimed a function whose types can't be resolved —
           // skip the IR path for this one. Fall through to legacy.
-          reportErrorNoNode(
-            ctx,
-            `IR path: could not resolve types for ${name}: ${e instanceof Error ? e.message : String(e)}`,
-          );
+          //
+          // #1921 — this is a deliberate IR→legacy fallback, not a compile
+          // error: the legacy path still produces a working body for `name`.
+          // Emit severity "warning" so it stays visible to bridge tests but
+          // does NOT fail the build (consistent with the IR-fallback channel
+          // at `formatIrPathFallbackDiagnostic` below). Defaulting to "error"
+          // would fail every program with a class-typed cross-function return
+          // that the IR lowerer can't yet represent (e.g. a `Builder` chain).
+          //
+          // #2137 — also record this on the structured `irPostClaimErrors`
+          // channel (kind "resolve") so consumers (bridge tests, the
+          // check:ir-fallbacks gate) can query IR-path fallbacks without
+          // string-matching the diagnostics array. The warning line below is
+          // retained one sprint for back-compat.
+          const resolveMsg = e instanceof Error ? e.message : String(e);
+          (ctx.irPostClaimErrors ??= []).push({
+            kind: "resolve",
+            func: name,
+            message: resolveMsg,
+          });
+          reportErrorNoNode(ctx, `IR path: could not resolve types for ${name}: ${resolveMsg}`, "warning");
         }
       }
       // Only request IR compilation for functions we successfully built
@@ -1317,6 +1377,16 @@ export function generateModule(
         funcs: new Set<string>([...selection.funcs].filter((n) => overrideMap.has(n))),
         classMembers: selection.classMembers,
       };
+      // (#2023) The IR `new C(...)` lowering does not thread the new.target
+      // class-id (that machinery lives only on the legacy path). When the
+      // program uses `new.target`, route every function through legacy so the
+      // outermost-`new` global is set/restored at each construction site. This
+      // is a coarse but safe gate — `new.target` is rare, so the perf cost is
+      // negligible and it avoids a parallel IR implementation of the threading.
+      if (ctx.usesNewTarget) {
+        safeSelection.funcs.clear();
+        safeSelection.classMembers = new Set();
+      }
       const report = compileIrPathFunctions(ctx, ast.sourceFile, safeSelection, overrideMap, classShapes);
       // Slice 12 (#1169o) — most IR-path failures are NOT compile errors. The
       // legacy path has already produced a working `body` for every function
@@ -1340,6 +1410,20 @@ export function generateModule(
       // class. This is the per-kind scoping hook the long-term retire
       // plan wires through (see plan/log/ir-adoption.md).
       for (const err of report.errors) {
+        // #1923 — meter post-claim demotions for the ratchet gate. These are
+        // functions the selector CLAIMED that then failed build/verify/lower/
+        // backend-legality and fell back to legacy through this warning channel
+        // — counted by no selector-level metric (`IrFallbackReason`). Always
+        // collected (cheap: the errors are already iterated here) and surfaced
+        // on `CompileResult.irPostClaimErrors`, mirroring `fallbackCounts`,
+        // which is likewise always counted; the gate buckets by kind +
+        // normalized message class. Pure telemetry; the demotion below is
+        // unchanged.
+        (ctx.irPostClaimErrors ??= []).push({
+          kind: err.kind ?? "lower",
+          func: err.func,
+          message: err.message,
+        });
         const diag = formatIrPathFallbackDiagnostic(err);
         // #1858 C4: keep the leading "IR path failed for …" text intact — many
         // bridge tests filter on `e.message.startsWith("IR path failed")` — but
@@ -1569,6 +1653,13 @@ export function generateModule(
     // method-dispatch site reserved the bridge (`ctx.applyClosureReserved`).
     fillApplyClosure(ctx);
 
+    // (#1100) Fill the reserved standalone Proxy trap-invoke drivers
+    // (`__proxy_call_{get,set,has}`) now that `__call_fn_method_2/3/4` are
+    // registered. Each driver wraps the matching closure-method dispatcher so a
+    // user trap closure runs with the handler bound as `this`. No-op when no
+    // standalone `new Proxy` site reserved the runtime (`ctx.proxyDispatchReserved`).
+    fillProxyDispatch(ctx);
+
     // (#2151) Fill the reserved `__call_m_<name>` closed-struct method
     // dispatchers now that every object-literal struct + its `<Struct>_<name>`
     // method funcs are registered. Read-only over funcMap (all deps registered
@@ -1629,8 +1720,18 @@ export function generateModule(
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
     peepholeOptimize(mod);
 
+    // #1984 — freeze the index spaces. Every legitimate late import mutation
+    // (addUnionImports / addStringImports / reconcileNativeStrFinalizeShift,
+    // across gc/wasi/standalone) has run by this point; the remaining passes
+    // (stackBalance, fixupExternConvertAny, emit) do NOT add imports. Any
+    // addImport/ensureLateImport after here is a producer bug and throws at
+    // its own call site (see imports.ts / late-imports.ts).
+    ctx.indexSpaceFrozen = true;
+
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
+    // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
+    drainStackBalanceTelemetry(ctx, ast.sourceFile.fileName);
 
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after all other passes since they can introduce invalid coercions.
@@ -1639,7 +1740,75 @@ export function generateModule(
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  return { module: mod, errors: ctx.errors };
+  // (#2094) Emit-time backstop for the addImport gate: scan the finished
+  // import section for host imports that leaked into a standalone/strict
+  // binary and report each as a structured compile error.
+  assertNoLeakedHostImports(ctx, mod);
+
+  return {
+    module: mod,
+    errors: ctx.errors,
+    fallbackCounts: ctx.fallbackCounts,
+    irPostClaimErrors: ctx.irPostClaimErrors,
+  };
+}
+
+/**
+ * (#2094) Post-link import-section scan — the emit-time backstop for the
+ * `addImport` gate.
+ *
+ * Gated on `ctx.strictNoHostImports` ONLY, deliberately matching the per-call
+ * `addImport` gate's trigger (`src/codegen/registry/imports.ts`). Under strict
+ * mode (auto-on for `--target wasi`, opt-in via `--no-host-imports`) the build
+ * contract is "no JS-host imports", so a host import that survived dead-import
+ * elimination bypassed the gate (stale funcMap index / direct `mod.imports.push`)
+ * and would fail instantiation in a hostless runtime (#2073/#2075). This scan
+ * turns that into a clean `success: false` CE instead.
+ *
+ * It does NOT fire on plain `--target standalone` (which is NOT strict by
+ * default): standalone builds today still tolerate a set of `env` imports that
+ * the test harness satisfies, and rejecting them here would regress thousands
+ * of currently-passing standalone tests. The scan is a backstop for the strict
+ * contract, not a new policy — when standalone is run strictly
+ * (`strictNoHostImports`) it is covered. No-op for host/WasmGC builds.
+ */
+function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
+  if (!ctx.strictNoHostImports) return;
+  const leaks = scanForLeakedHostImports(mod.imports);
+  for (const leak of leaks) {
+    reportErrorNoNode(ctx, buildLeakedHostImportError(leak));
+  }
+}
+
+/**
+ * #1918 — Drain stack-balance fixup telemetry after a `stackBalance(mod)` run.
+ *
+ * Every fixup the pass applied is a masked emitter bug. Previously the count
+ * was returned and discarded. Now we:
+ *   - Under `JS2WASM_LOG_STACK_BALANCE=1`, log a one-line per-kind histogram to
+ *     stderr (per-compile debug visibility — AC #1).
+ *   - Under `JS2WASM_STRICT_BALANCE`, push each fixup as a located
+ *     severity-"warning" (=1) or severity-"error" (=error) onto `ctx.errors`
+ *     (AC #3 — the lossy const-default arm is warning-visible). Strict errors
+ *     fail the WasmGC compile through the existing `severity === "error"` gate.
+ *
+ * MUST be called immediately after `stackBalance(mod)` — the collector is
+ * module-scoped and reset on the next `stackBalance` call.
+ */
+function drainStackBalanceTelemetry(ctx: CodegenContext, fileLabel: string): void {
+  const events = getFixupEvents();
+  if (process.env.JS2WASM_LOG_STACK_BALANCE === "1") {
+    const counts = summarizeFixups(events);
+    const hist = Object.entries(counts)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `${k}=${n}`)
+      .join(",");
+    process.stderr.write(`[stack-balance] file=${fileLabel || "<source>"} fixups=${events.length} ${hist}\n`);
+  }
+  for (const diag of strictBalanceDiagnostics(events)) {
+    ctx.errors.push({ message: diag.message, line: diag.line, column: diag.column, severity: diag.severity });
+  }
 }
 
 /**
@@ -4886,7 +5055,11 @@ export function generateMultiModule(
   options?: CodegenOptions,
 ): {
   module: WasmModule;
-  errors: { message: string; line: number; column: number; severity?: "error" | "warning" }[];
+  errors: CodegenError[];
+  // #2089 — silent-fallback telemetry counters (per class → per site → count).
+  fallbackCounts?: FallbackCounts;
+  // #1923 — IR post-claim demotions (only when trackIrPostClaim is set).
+  irPostClaimErrors?: { kind: string; func: string; message: string }[];
 } {
   const mod = createEmptyModule();
   const ctx = createCodegenContext(mod, multiAst.checker, options);
@@ -4986,6 +5159,11 @@ export function generateMultiModule(
     }
 
     // Phase 2: Collect all declarations — only entry file gets Wasm exports
+    // (#2023) Whole-realm new.target detection — OR across all source files.
+    for (const sf of multiAst.sourceFiles) {
+      scanForNewTarget(ctx, sf);
+    }
+
     for (const sf of multiAst.sourceFiles) {
       const isEntry = sf === multiAst.entryFile;
       collectDeclarations(ctx, sf, isEntry);
@@ -5145,8 +5323,16 @@ export function generateMultiModule(
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
     peepholeOptimize(mod);
 
+    // #1984 — freeze the index spaces (multi-module path). Same boundary as the
+    // single-module generateModule: all legitimate late import mutations have
+    // run; stackBalance / fixupExternConvertAny / emit add no imports. Any
+    // addImport/ensureLateImport after here throws at the producer site.
+    ctx.indexSpaceFrozen = true;
+
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
+    // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
+    drainStackBalanceTelemetry(ctx, multiAst.entryFile.fileName);
 
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after stackBalance since fixCallArgTypesInBody can insert
@@ -5161,7 +5347,15 @@ export function generateMultiModule(
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  return { module: mod, errors: ctx.errors };
+  // (#2094) Emit-time backstop for the addImport gate — see generateModule.
+  assertNoLeakedHostImports(ctx, mod);
+
+  return {
+    module: mod,
+    errors: ctx.errors,
+    fallbackCounts: ctx.fallbackCounts,
+    irPostClaimErrors: ctx.irPostClaimErrors,
+  };
 }
 
 // ── Unified single-pass import collector (#592) ─────────────────────
@@ -9288,6 +9482,22 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 0 }, { op: "return" }],
       },
+      // (#2107) native string ($AnyString) → "string", NOT "object". Under
+      // nativeStrings/standalone a string value is a `$AnyString` GC struct
+      // carried as externref; without this guard `typeof (s: any) === "object"`
+      // wrongly held and `=== "string"` was the only true arm via the separate
+      // __typeof_string helper, so both string-tagged comparisons disagreed.
+      ...(ctx.anyStrTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: 1 },
+            { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+            },
+          ] as Instr[])
+        : []),
       // non-null, not a boxed primitive → object
       { op: "i32.const", value: 1 },
     ],
@@ -9655,6 +9865,119 @@ export function resolveNativeTypeAnnotation(tsType: ts.Type): ValType | null {
 }
 
 /**
+ * (#2176) Resolve the type of an identifier reference, preferring the user's
+ * own declaration over an ambient lib (`.d.ts`) global of the same name.
+ *
+ * Root cause: js2wasm analyzes a top-level program as a **script** (no
+ * import/export ⇒ not a module). In script mode a top-level `const name = …`
+ * does NOT shadow the writable global `var name: string` declared in
+ * `lib.dom.d.ts` (both live in the global scope, and TypeScript resolves a
+ * bare reference to the ambient symbol). So `const y = name` types `y` as
+ * `void` (the ambient `name`) instead of `string`, and the colliding-name
+ * read (`` `${name}` ``, `"x" + name`, `const y = name`) loses its real type —
+ * the codegen then registers `y` as an i32 global and the value reads back as
+ * `0`/`undefined`. Runtime values are stored correctly under `$__mod_name`;
+ * only the *type* is poisoned. Common colliders: `name` (→ undefined),
+ * `length`, `top`, `status`, `origin`, etc. from lib.dom.
+ *
+ * Fix: when `getTypeAtLocation(id)` binds to a symbol whose declarations live
+ * ONLY in lib `.d.ts` files, but a user-level binding of that exact name is in
+ * scope (a non-lib declaration), re-derive the type from the user binding so
+ * the read/declaration sees the real type. Falls back to the original type
+ * when no user binding shadows the ambient — zero behavior change for genuine
+ * host-global reads (`window.name`, bare `length` with no user binding).
+ */
+export function resolveIdentifierType(ctx: CodegenContext, id: ts.Identifier): ts.Type {
+  const sym = ctx.checker.getSymbolAtLocation(id);
+  const decls = sym?.declarations;
+  // Only intervene when the bound symbol is purely ambient (every declaration
+  // lives in a lib/declaration file). A user declaration mixed in means TS
+  // already resolved (at least partly) to the user — leave it alone.
+  const isPurelyAmbient =
+    decls !== undefined && decls.length > 0 && decls.every((d) => d.getSourceFile().isDeclarationFile);
+  if (!isPurelyAmbient) {
+    return ctx.checker.getTypeAtLocation(id);
+  }
+  // A same-name user binding shadows the ambient global, but in script mode the
+  // checker's scope contains ONLY the ambient symbol — `getSymbolsInScope`
+  // never surfaces the user binding. So walk the AST enclosing scopes for a
+  // user-source declaration (var/let/const, function, class, or param) of the
+  // same name and re-derive the type from it.
+  const userDecl = findUserBindingDecl(id);
+  if (userDecl) {
+    return ctx.checker.getTypeAtLocation(userDecl);
+  }
+  return ctx.checker.getTypeAtLocation(id);
+}
+
+/**
+ * (#2176) Walk enclosing scopes from `id` outward to find a user-source
+ * declaration that binds `id.text` (a `var`/`let`/`const` declaration,
+ * function/class declaration, or parameter). Returns the binding node whose
+ * `getTypeAtLocation` gives the real type, or undefined if no user binding
+ * shadows the ambient global.
+ */
+function findUserBindingDecl(id: ts.Identifier): ts.Node | undefined {
+  const name = id.text;
+  const bindsName = (node: ts.Node): ts.Node | undefined => {
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      !node.getSourceFile().isDeclarationFile
+    ) {
+      return node;
+    }
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) &&
+      node.name?.text === name &&
+      !node.getSourceFile().isDeclarationFile
+    ) {
+      return node;
+    }
+    return undefined;
+  };
+  // Search a statement list (block / source file body) for a binding.
+  const searchStatements = (statements: readonly ts.Statement[]): ts.Node | undefined => {
+    for (const stmt of statements) {
+      if (ts.isVariableStatement(stmt)) {
+        for (const d of stmt.declarationList.declarations) {
+          const found = bindsName(d);
+          if (found) return found;
+        }
+      } else {
+        const found = bindsName(stmt);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  let scope: ts.Node | undefined = id.parent;
+  while (scope) {
+    if (ts.isBlock(scope) || ts.isSourceFile(scope) || ts.isModuleBlock(scope)) {
+      const found = searchStatements(scope.statements);
+      if (found) return found;
+    }
+    // Function/arrow/method parameters bind names in their body scope.
+    if (
+      (ts.isFunctionDeclaration(scope) ||
+        ts.isFunctionExpression(scope) ||
+        ts.isArrowFunction(scope) ||
+        ts.isMethodDeclaration(scope) ||
+        ts.isConstructorDeclaration(scope)) &&
+      scope.parameters
+    ) {
+      for (const p of scope.parameters) {
+        const found = bindsName(p);
+        if (found) return found;
+      }
+    }
+    scope = scope.parent;
+  }
+  return undefined;
+}
+
+/**
  * Resolve a ts.Type to a ValType, using the struct registry and anonymous type map.
  * Use this instead of mapTsTypeToWasm in the codegen to get real type indices.
  */
@@ -9764,6 +10087,23 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // dispatch reads a typed receiver (no externref round-trip / illegal cast).
     // JS-host mode keeps Map as an externref-backed externClass (falls through).
     if (sym?.name === "Map" && ctx.nativeStrings) {
+      ensureMapRuntimeTypes(ctx);
+      if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
+    }
+
+    // (#2162) Set → the SAME native `$Map` struct in standalone / nativeStrings
+    // mode (a Set is a Map with key === value). A `Set`-typed binding becomes
+    // `ref $Map` so `new Set()` stores directly and method/.size dispatch reads
+    // a typed receiver. JS-host mode keeps Set as an externref externClass.
+    if (sym?.name === "Set" && ctx.nativeStrings) {
+      ensureMapRuntimeTypes(ctx);
+      if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
+    }
+
+    // (#2162) WeakMap / WeakSet → the SAME native `$Map` struct in standalone /
+    // nativeStrings mode (they reuse the Map backing store with object-identity
+    // keys and no iteration). JS-host mode keeps them as externref externClasses.
+    if ((sym?.name === "WeakMap" || sym?.name === "WeakSet") && ctx.nativeStrings) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }
@@ -10202,8 +10542,14 @@ function externMethod(
  * (e.g., bundled/browser environments where readLibFile returns empty strings).
  */
 export function registerBuiltinExternClasses(ctx: CodegenContext): void {
-  // Set methods — all take (self: externref, ...args: externref) → externref
-  if (!ctx.externClasses.has("Set")) {
+  // Set methods — all take (self: externref, ...args: externref) → externref.
+  // (#2162) In standalone / nativeStrings mode `Set` is served by the
+  // WasmGC-native runtime (src/codegen/set-runtime.ts, reusing the Map backing
+  // store), intercepted at the new-expression / method-call / .size sites.
+  // Registering it as an externClass here would eagerly emit a `Set_new` host
+  // import the standalone module can't satisfy, so skip it in that mode (mirrors
+  // the Map gating below). JS-host mode keeps the externClass path unchanged.
+  if (!ctx.externClasses.has("Set") && !ctx.nativeStrings) {
     const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
     // ES2015 methods
     methods.set("add", externMethod(1)); // add(value) → Set
@@ -10269,8 +10615,11 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
-  // WeakMap methods
-  if (!ctx.externClasses.has("WeakMap")) {
+  // WeakMap methods.
+  // (#2162) Skip under nativeStrings — the native weak-collection runtime
+  // (weak-collections-runtime.ts, reusing the Map backing store) serves it, so
+  // registering the externClass would leak a `WeakMap_new` host import.
+  if (!ctx.externClasses.has("WeakMap") && !ctx.nativeStrings) {
     const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
     methods.set("get", externMethod(1));
     methods.set("set", externMethod(2));
@@ -10291,8 +10640,10 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
-  // WeakSet methods
-  if (!ctx.externClasses.has("WeakSet")) {
+  // WeakSet methods.
+  // (#2162) Skip under nativeStrings — served by the native weak-collection
+  // runtime; registering the externClass would leak a `WeakSet_new` host import.
+  if (!ctx.externClasses.has("WeakSet") && !ctx.nativeStrings) {
     const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
     methods.set("add", externMethod(1));
     methods.set("has", externMethod(1));

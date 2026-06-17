@@ -8,6 +8,7 @@ import { forEachChild, ts } from "../../ts-api.js";
 import { collectReferencedIdentifiers } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError, reportErrorNoNode } from "../context/errors.js";
+import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType, restoreLocals, snapshotLocals } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
@@ -1672,7 +1673,10 @@ function compileForOfAssignDestructuring(
           : propName;
 
       const fieldIdx = fields.findIndex((f) => f.name === propName);
-      if (fieldIdx === -1) continue;
+      if (fieldIdx === -1) {
+        reportSilentFallback(ctx, "lookup-miss-skip", "loops:forof-assign-destructure-field-miss", prop);
+        continue;
+      }
 
       let targetLocal = fctx.localMap.get(targetName);
       let targetSyncGlobalIdx: number | undefined;

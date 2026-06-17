@@ -54,6 +54,12 @@ import {
   RE_FLAG_Y,
 } from "./regex/bytecode.js";
 import { compilePattern, RepeatTooLargeError } from "./regex/compile.js";
+import {
+  emitBrandCheckTypeError,
+  getBuiltinBrand,
+  registerNativeProtoBuiltin,
+  type NativeProtoBuiltinGlue,
+} from "./native-proto.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
@@ -737,6 +743,55 @@ function loadStandaloneRegExpStruct(
   }
   fctx.body.push({ op: "local.set", index: regexpLocal });
   return { regexpLocal, structTypeIdx: storedRegexpType.typeIdx };
+}
+
+/**
+ * (#2175 S1) Brand-recovery prologue for a *dynamic* (externref) RegExp `this`.
+ *
+ * The reflective forms — `RegExp.prototype.test.call(re, s)`,
+ * `re[Symbol.match](s)`, the `flags`-getter via a property descriptor — receive
+ * the receiver as an opaque externref through a closure call, so there is no
+ * receiver *expression* to brand-narrow at a syntactic site. This helper does
+ * the identical externref→`$NativeRegExp` narrowing that the static fast path's
+ * `loadStandaloneRegExpStruct` performs on an expression (the
+ * `any.convert_extern` + `ref.test` + `ref.cast` body), but driven from a local
+ * holding the externref `this`. On a non-RegExp `this` it throws a **catchable
+ * `TypeError`** (§22.2.6.4.1 RegExpHasFlag step 2) via the shared exception-tag
+ * path — never a raw `ref.cast` trap (mirrors #2100 M2).
+ *
+ * Leaves nothing on the stack; returns the local holding the cast struct and the
+ * struct type index for the caller's field reads / engine calls. Returns `null`
+ * only if the standalone RegExp struct can't be registered (defensive — it
+ * always can under standalone).
+ */
+export function recoverRegExpStructFromExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  thisExternLocal: number,
+): { regexpLocal: number; structTypeIdx: number } | null {
+  const structTypeIdx = ensureStandaloneRegExpStruct(ctx);
+  const anyLocal = allocLocal(fctx, `__re_this_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  // any.convert_extern(this) → anyref, kept in a local for the ref.test guard.
+  fctx.body.push({ op: "local.get", index: thisExternLocal });
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "local.set", index: anyLocal });
+
+  // Brand check: ref.test $NativeRegExp. On failure throw a catchable TypeError
+  // (the wrong-`this` brand-check the 31 reflective brand-check tests gate on).
+  fctx.body.push({ op: "local.get", index: anyLocal } as Instr);
+  fctx.body.push({ op: "ref.test", typeIdx: structTypeIdx } as Instr);
+  fctx.body.push({ op: "i32.eqz" } as Instr);
+  const throwBody: Instr[] = [];
+  emitBrandCheckTypeError(ctx, throwBody, "Method called on incompatible receiver (RegExp brand check failed)");
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwBody, else: [] } as Instr);
+
+  // ref.cast to the concrete struct and stash in a typed local.
+  const reStructType: ValType = { kind: "ref", typeIdx: structTypeIdx };
+  const regexpLocal = allocLocal(fctx, `__re_recovered_${fctx.locals.length}`, reStructType);
+  fctx.body.push({ op: "local.get", index: anyLocal } as Instr);
+  fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx } as Instr);
+  fctx.body.push({ op: "local.set", index: regexpLocal });
+  return { regexpLocal, structTypeIdx };
 }
 
 /**
@@ -1533,6 +1588,24 @@ export function tryCompileStandaloneRegExpPropertyRead(
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
+  return emitRegExpReflectionFieldRead(ctx, fctx, propName, regexpLocal, structTypeIdx);
+}
+
+/**
+ * (#2175 S1) Shared RegExp reflection field-read sequence, factored out of
+ * `tryCompileStandaloneRegExpPropertyRead` so the native-method-getter closures
+ * (#2175) emit the *identical* getter body off a recovered struct local. The
+ * caller has already pushed nothing on the stack; this helper pushes the
+ * `local.get regexpLocal` itself and the field read, returning the getter's
+ * result ValType. Static path callers route through here byte-for-byte.
+ */
+export function emitRegExpReflectionFieldRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propName: string,
+  regexpLocal: number,
+  structTypeIdx: number,
+): ValType {
   fctx.body.push({ op: "local.get", index: regexpLocal });
   if (propName === "source") {
     fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_SOURCE });
@@ -1556,6 +1629,231 @@ export function tryCompileStandaloneRegExpPropertyRead(
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "i32.ne" });
   return { kind: "i32" };
+}
+
+/**
+ * (#2175 S1) RegExp `.test` driven by a recovered struct local + a subject
+ * string local, for the native-method-closure body where there is no receiver
+ * *expression* (the reflective `RegExp.prototype.test.call(re, s)` /
+ * `re[Symbol.match]`-adjacent forms). Self-contained — does NOT route through
+ * `emitRegexSearchCall` (which is expression-driven) so the static fast path
+ * stays byte-identical. Returns the i32 match flag (1/0) on the stack.
+ *
+ * `subjStrLocal` holds a flattened native-string struct ref (the closure body
+ * flattens its externref arg before calling). The search starts at index 0 and
+ * honours stickiness like the non-g/y `.test` static path; lastIndex mutation
+ * for g/y reflective receivers is deferred (the dynamic receiver makes the
+ * static flag analysis unavailable — a conservative, spec-observable subset).
+ */
+export function emitRegExpTestFromLocals(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  regexpLocal: number,
+  structTypeIdx: number,
+  subjStrLocal: number,
+): void {
+  const searchIdx = ensureRegexSearch(ctx);
+  const i32Arr = regexI32ArrayType(ctx);
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+
+  // caps = array.new_default(2 * nGroups + nScratch)
+  const capsLocal = allocLocal(fctx, `__re_tcaps_${fctx.locals.length}`, { kind: "ref", typeIdx: i32Arr });
+  pushNSlots(fctx, regexpLocal, structTypeIdx);
+  fctx.body.push({ op: "array.new_default", typeIdx: i32Arr } as Instr);
+  fctx.body.push({ op: "local.set", index: capsLocal });
+
+  // sticky = (flags & RE_FLAG_Y) != 0
+  const stickyLocal = allocLocal(fctx, `__re_tsticky_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS });
+  fctx.body.push({ op: "i32.const", value: RE_FLAG_Y });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.ne" });
+  fctx.body.push({ op: "local.set", index: stickyLocal });
+
+  // __regex_search(prog, classTable, nSlots, inData, inOff, inLen, start=0, sticky, caps)
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_PROG });
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_CLASS_TABLE });
+  pushNSlots(fctx, regexpLocal, structTypeIdx);
+  fctx.body.push({ op: "local.get", index: subjStrLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }); // data
+  fctx.body.push({ op: "local.get", index: subjStrLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }); // off
+  fctx.body.push({ op: "local.get", index: subjStrLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }); // len
+  fctx.body.push({ op: "i32.const", value: 0 }); // startIdx
+  fctx.body.push({ op: "local.get", index: stickyLocal });
+  fctx.body.push({ op: "local.get", index: capsLocal });
+  fctx.body.push({ op: "call", funcIdx: searchIdx });
+}
+
+/** (#2175 S1) The standalone-RegExp struct type index, for the proto populator. */
+export function getStandaloneRegExpStructTypeIdx(ctx: CodegenContext): number {
+  return ensureStandaloneRegExpStruct(ctx);
+}
+
+// ── #2175 S1: RegExp builtin-prototype glue ───────────────────────────────────
+//
+// The contract `native-proto.ts` consumes for RegExp: a brand, a member CSV (the
+// proto's own-key set, with `@@<id>` sentinels for the well-known-symbol
+// members), per-member kinds/arities, and an `emitMemberBody` that runs the
+// brand-recovery prologue and the member body off a recovered struct local.
+
+/** RegExp.prototype string-named member set (the reflection-visible own keys). */
+const REGEXP_PROTO_STRING_MEMBERS: readonly string[] = [
+  "exec",
+  "test",
+  "toString",
+  "compile",
+  "source",
+  "flags",
+  "global",
+  "ignoreCase",
+  "multiline",
+  "dotAll",
+  "unicode",
+  "unicodeSets",
+  "sticky",
+  "hasIndices",
+  "lastIndex",
+];
+
+/** Well-known-symbol members on RegExp.prototype, as `@@<id>` CSV sentinels
+ *  (id from WELL_KNOWN_SYMBOLS: match=7, replace=8, search=9, split=10,
+ *  matchAll wired separately as it has no fixed low id here). */
+const REGEXP_PROTO_SYMBOL_MEMBERS: readonly string[] = ["@@7", "@@8", "@@9", "@@10"];
+
+/** Which RegExp.prototype members are accessor getters (§22.2.6). */
+const REGEXP_GETTER_MEMBERS = new Set<string>([
+  "source",
+  "flags",
+  "global",
+  "ignoreCase",
+  "multiline",
+  "dotAll",
+  "unicode",
+  "unicodeSets",
+  "sticky",
+  "hasIndices",
+]);
+
+/** Static arity (`fn.length`) of RegExp.prototype methods (§22.2.6). */
+const REGEXP_METHOD_LENGTH: Readonly<Record<string, number>> = {
+  exec: 1,
+  test: 1,
+  toString: 0,
+  compile: 2,
+};
+
+/**
+ * (#2175 S1) Register the RegExp builtin-prototype glue with the shared
+ * `native-proto` core. Idempotent — safe to call from every reflective entry.
+ * Returns the RegExp brand, or `undefined` if the brand band isn't available
+ * (defensive — it always is).
+ */
+export function ensureRegExpNativeProtoGlue(ctx: CodegenContext): number | undefined {
+  const brand = getBuiltinBrand(ctx, "RegExp");
+  if (brand === undefined) return undefined;
+
+  const memberCsv = [...REGEXP_PROTO_STRING_MEMBERS, ...REGEXP_PROTO_SYMBOL_MEMBERS].join(",");
+  const glue: NativeProtoBuiltinGlue = {
+    brand,
+    name: "RegExp",
+    memberCsv,
+    memberKind: (member) => (REGEXP_GETTER_MEMBERS.has(member) ? "getter" : "method"),
+    memberLength: (member) => REGEXP_METHOD_LENGTH[member] ?? 1,
+    emitMemberBody: (c, fctx, member, kind) => emitRegExpProtoMemberBody(c, fctx, member, kind),
+  };
+  registerNativeProtoBuiltin(ctx, glue);
+  return brand;
+}
+
+/**
+ * Emit a RegExp.prototype method/getter closure body. The closure params are:
+ *   index 0: the `__fn_wrap` self struct,
+ *   index 1: the externref `this` receiver,
+ *   index 2..: externref args (for methods).
+ * Runs the brand-recovery prologue (externref `this` → `$NativeRegExp`, or a
+ * catchable TypeError on a wrong `this`), then the member body, leaving the
+ * member result on the stack. Returns the result ValType, or `null` on refusal.
+ */
+function emitRegExpProtoMemberBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  member: string,
+  kind: "getter" | "method",
+): ValType | null {
+  // Brand-recovery prologue: `this` is closure param index 1 (externref).
+  const recovered = recoverRegExpStructFromExternref(ctx, fctx, 1);
+  if (recovered === null) return null;
+  const { regexpLocal, structTypeIdx } = recovered;
+
+  if (kind === "getter") {
+    // Reuse the exact static-path field-read sequence. lastIndex is a data
+    // property, not an accessor — but reading it as a getter is harmless and
+    // keeps the closure-table uniform.
+    const fieldType = emitRegExpReflectionFieldRead(ctx, fctx, member, regexpLocal, structTypeIdx);
+    // The closure-call ABI is uniform on externref/i32/f64 results; a native
+    // string ref (`.flags`/`.source`) must be boxed to externref so it survives
+    // the `call_ref` boundary and the receiving `any` comparison. i32 flag
+    // booleans and the f64 lastIndex pass through unchanged.
+    if (fieldType.kind === "ref" || fieldType.kind === "ref_null") {
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+      return { kind: "externref" };
+    }
+    return fieldType;
+  }
+
+  // Method bodies.
+  if (member === "test" || member === "@@9") {
+    // `.test(s)` and `[Symbol.search]`-adjacent forms both run the search and
+    // return an i32-ish result; here we return the i32 match flag for `.test`.
+    // (Full `[Symbol.search]` index semantics are a later refinement; the
+    // dispatch path + brand recovery are what S1 proves.)
+    const subjLocal = flattenExternrefArgToString(ctx, fctx, 2);
+    emitRegExpTestFromLocals(ctx, fctx, regexpLocal, structTypeIdx, subjLocal);
+    return { kind: "i32" };
+  }
+
+  if (member === "source" || member === "flags") {
+    // Defensive: these are getters, but if reached as a "method" form, fall to
+    // the field read.
+    return emitRegExpReflectionFieldRead(ctx, fctx, member, regexpLocal, structTypeIdx);
+  }
+
+  // exec / toString / compile / @@match / @@replace / @@split and remaining
+  // members are dispatch-registered (the closure value materializes and brand
+  // recovery runs) but their full native bodies are staged in as follow-ups —
+  // emit a spec-shaped placeholder result so the closure type is well-formed and
+  // the reflective READ + brand recovery compile cleanly. These return an
+  // externref (null) until their engine body lands.
+  fctx.body.push({ op: "ref.null.extern" } as Instr);
+  return { kind: "externref" };
+}
+
+/**
+ * Narrow an externref closure-arg (a boxed native string) at `paramIdx` to a
+ * flattened native-string struct local. Mirrors how the static RegExp paths
+ * flatten a subject string, but starting from an opaque externref.
+ */
+function flattenExternrefArgToString(ctx: CodegenContext, fctx: FunctionContext, paramIdx: number): number {
+  ensureNativeStringHelpers(ctx);
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const subjLocal = allocLocal(fctx, `__re_arg_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
+  // externref arg → anyref → ref $AnyString → __str_flatten → ref $NativeString.
+  fctx.body.push({ op: "local.get", index: paramIdx } as Instr);
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+  if (flattenIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: flattenIdx } as Instr);
+  }
+  fctx.body.push({ op: "local.set", index: subjLocal });
+  return subjLocal;
 }
 
 /**

@@ -15,6 +15,70 @@
 
 import { createReadStream, readFileSync } from "fs";
 import { createInterface } from "readline";
+import { createHash } from "crypto";
+
+// #1943 — single source of truth for the documented merge thresholds, so the
+// CI regression-gate ENFORCES the same numbers the dev-self-merge skill
+// documents (previously the hard gate was only `net_per_test >= 0`; the 10%
+// ratio and 50-per-bucket limits lived solely in skill text an agent could
+// skip). `.claude/skills/dev-self-merge.md` references these constants.
+//
+// - REGRESSION_RATIO_LIMIT: fail when regressions / improvements >= 10%.
+// - REGRESSION_BUCKET_LIMIT: fail when any single path bucket has > 50
+//   regressions.
+// - REGRESSION_BUCKET_PATH_DEPTH: a "bucket" is the first N path segments of a
+//   test file (e.g. `test/built-ins/Array/prototype/every`), matching the
+//   skill's `'/'.join(f.split('/')[:5])`.
+export const REGRESSION_RATIO_LIMIT = 0.1;
+export const REGRESSION_BUCKET_LIMIT = 50;
+export const REGRESSION_BUCKET_PATH_DEPTH = 5;
+
+/**
+ * Group regressed test files into path buckets (first
+ * `REGRESSION_BUCKET_PATH_DEPTH` segments) and return them sorted by count
+ * descending. Mirrors the dev-self-merge skill's bucket grouping exactly so
+ * the documented and enforced definitions stay byte-identical (#1943).
+ */
+export function bucketRegressions(files: string[]): { bucket: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    const bucket = file.split("/").slice(0, REGRESSION_BUCKET_PATH_DEPTH).join("/");
+    counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([bucket, count]) => ({ bucket, count })).sort((a, b) => b.count - a.count);
+}
+
+/**
+ * Evaluate the documented merge thresholds against the wasm-hash-filtered
+ * counts. Returns the list of human-readable failure reasons (empty ⇒ pass).
+ * Pure (no I/O) so the unit test can drive it directly with fixture data
+ * (#1943 acceptance criteria). The ratio gate only fires when there is at
+ * least one regression — a clean PR (R == 0) always passes regardless of how
+ * few improvements it carries.
+ */
+export function evaluateRegressionThresholds(opts: {
+  improvements: number;
+  regressionsWasmChange: number;
+  regressedFiles: string[];
+}): string[] {
+  const failures: string[] = [];
+  const { improvements, regressionsWasmChange, regressedFiles } = opts;
+  if (regressionsWasmChange > 0) {
+    const ratio = improvements > 0 ? regressionsWasmChange / improvements : Infinity;
+    if (ratio >= REGRESSION_RATIO_LIMIT) {
+      const pct = improvements > 0 ? (ratio * 100).toFixed(1) + "%" : "∞ (0 improvements)";
+      failures.push(
+        `regression ratio ${pct} (${regressionsWasmChange}/${improvements}) meets/exceeds the ${(REGRESSION_RATIO_LIMIT * 100).toFixed(0)}% limit`,
+      );
+    }
+  }
+  for (const { bucket, count } of bucketRegressions(regressedFiles)) {
+    if (count > REGRESSION_BUCKET_LIMIT) {
+      failures.push(`bucket "${bucket}" has ${count} regressions, exceeds the ${REGRESSION_BUCKET_LIMIT}-test limit`);
+    }
+  }
+  return failures;
+}
 
 interface TestResult {
   file: string;
@@ -37,17 +101,42 @@ interface TestResult {
    * per-test `compile_timeout` exclusion otherwise hides.
    */
   compile_ms?: number;
+  /**
+   * #2096: opaque monotonic integer identifying the conformance oracle (the
+   * verdict logic: error classification + negative-expectation matching +
+   * required error precision). Stamped on every row by `recordResult`. Two
+   * runs with the same `oracle_version` apply identical verdict logic, so
+   * their rows are directly comparable; differing versions are not, and the
+   * diff is refused unless `ORACLE_REBASE=1`. Defined in
+   * tests/test262-oracle-version.ts.
+   */
+  oracle_version?: number;
 }
 
 type StatusMap = Map<string, TestResult>;
 
-async function loadJsonl(path: string): Promise<StatusMap> {
+interface LoadedJsonl {
+  map: StatusMap;
+  /**
+   * The oracle_version observed in the file. `undefined` if no row carried
+   * one (a pre-#2096 file). `"mixed"` if rows disagreed — a file assembled
+   * from shards run under different oracles, which must never be compared.
+   */
+  oracleVersion: number | "mixed" | undefined;
+}
+
+async function loadJsonl(path: string): Promise<LoadedJsonl> {
   const map: StatusMap = new Map();
+  let oracleVersion: number | "mixed" | undefined;
   const rl = createInterface({ input: createReadStream(path) });
   for await (const line of rl) {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line) as TestResult;
+      if (typeof entry.oracle_version === "number" && oracleVersion !== "mixed") {
+        if (oracleVersion === undefined) oracleVersion = entry.oracle_version;
+        else if (oracleVersion !== entry.oracle_version) oracleVersion = "mixed";
+      }
       if (entry.file) {
         map.set(entry.file, entry);
       }
@@ -55,7 +144,7 @@ async function loadJsonl(path: string): Promise<StatusMap> {
       // skip malformed lines
     }
   }
-  return map;
+  return { map, oracleVersion };
 }
 
 // Reads baseline metadata (baseline_generated_at, baseline_sha) from a report.json.
@@ -93,6 +182,14 @@ Options:
   --all                         Show all transitions (no limit)
   --quiet, -q                   Only show summary counts
   --baseline-meta <report.json> Read baseline_generated_at + baseline_sha to warn on stale baseline
+
+Environment:
+  ORACLE_REBASE=1               Allow a cross-oracle-version diff (#2096). By default a diff
+                                between two JSONL files whose rows carry different oracle_version
+                                stamps is refused (exit 2), because the verdict logic differed and
+                                the diff would read oracle skew as regressions. Set this only on the
+                                oracle-flip PR (e.g. #1945) to intentionally re-seed the baseline at
+                                the new oracle version.
   --path-filter <patterns>      Restrict the diff to tests whose path contains any of the
                                 pipe-separated substrings (same semantics as TEST262_PATH_FILTER).
                                 Used by #1954 scoped PR-time runs: the candidate JSONL only covers
@@ -144,7 +241,63 @@ async function run(
   baselineMetaPath?: string,
   pathFilter: string[] = [],
 ) {
-  let [baseline, newer] = await Promise.all([loadJsonl(baselinePath), loadJsonl(newPath)]);
+  const [baselineLoaded, newerLoaded] = await Promise.all([loadJsonl(baselinePath), loadJsonl(newPath)]);
+  let baseline = baselineLoaded.map;
+  let newer = newerLoaded.map;
+
+  // #2096: cross-version oracle guard. The oracle (verdict logic) decides
+  // pass/fail/CE; when it tightens (e.g. the #1945 trap-vs-TypeError upgrade)
+  // rows flip for the SAME compiler output. Diffing a baseline against a
+  // candidate produced under a DIFFERENT oracle reads that skew as regressions
+  // and trips the gate on oracle change, not code change. Refuse such a diff
+  // unless ORACLE_REBASE=1 — which is how the oracle-flip PR re-seeds the
+  // baseline at the new version (promote-baseline picks it up on merge).
+  const oracleRebase = process.env.ORACLE_REBASE === "1";
+  const baseOracle = baselineLoaded.oracleVersion;
+  const newOracle = newerLoaded.oracleVersion;
+  const fmtOracle = (v: number | "mixed" | undefined) =>
+    v === undefined ? "unstamped (pre-#2096)" : v === "mixed" ? "mixed (multiple versions)" : `v${v}`;
+
+  // A "mixed" file is never comparable: it was assembled from shards run under
+  // different oracles, so even a same-version peer can't be trusted. This is a
+  // hard error regardless of ORACLE_REBASE.
+  if (baseOracle === "mixed" || newOracle === "mixed") {
+    console.error(
+      `\n✖ Oracle-version guard (#2096): one side carries MIXED oracle versions ` +
+        `(baseline=${fmtOracle(baseOracle)}, new=${fmtOracle(newOracle)}).\n` +
+        `  A result file assembled from shards run under different oracles cannot be diffed.\n` +
+        `  Re-run all shards under a single oracle version, then diff again.\n`,
+    );
+    process.exit(2);
+  }
+
+  // Differing single versions: refuse unless explicitly rebasing. Treat an
+  // unstamped (pre-#2096) file as comparable to anything — there is no
+  // recorded oracle to conflict with, so we fall back to the legacy behaviour
+  // and only emit an informational note.
+  if (baseOracle !== undefined && newOracle !== undefined && baseOracle !== newOracle) {
+    if (!oracleRebase) {
+      console.error(
+        `\n✖ Oracle-version guard (#2096): cross-version diff refused.\n` +
+          `  baseline oracle = ${fmtOracle(baseOracle)}, new oracle = ${fmtOracle(newOracle)}.\n` +
+          `  These rows were produced by different verdict logic, so the diff would read\n` +
+          `  oracle skew as regressions. To intentionally re-seed the baseline at the new\n` +
+          `  oracle version (e.g. the #1945 flip PR), re-run with ORACLE_REBASE=1.\n`,
+      );
+      process.exit(2);
+    }
+    console.log(
+      `ORACLE_REBASE=1 — comparing across oracle versions ` +
+        `(baseline ${fmtOracle(baseOracle)} → new ${fmtOracle(newOracle)}). ` +
+        `Regression numbers below mix oracle skew with code changes; use only to re-seed.`,
+    );
+  } else if (baseOracle === undefined || newOracle === undefined) {
+    console.log(
+      `Oracle-version note (#2096): ${fmtOracle(baseOracle)} (baseline) vs ${fmtOracle(newOracle)} (new) — ` +
+        `at least one side is unstamped, comparing as legacy same-oracle.`,
+    );
+  }
+
   if (pathFilter.length > 0) {
     const before = baseline.size;
     baseline = applyPathFilter(baseline, pathFilter);
@@ -167,6 +320,16 @@ async function run(
      * transition is CI runner noise (#1222).
      */
     wasmUnchanged: boolean;
+    /**
+     * #2098: the baseline-side `compile_ms` for this test, when recorded.
+     * Used to split `pass → compile_timeout` regressions into `ct_flake`
+     * (baseline already compiled near the 30s boundary in well under the
+     * 5s flake threshold → the timeout is runner-load noise) vs `ct_suspect`
+     * (baseline compile already > 5s → the PR may have pushed a genuinely
+     * slow compile over the edge, worth a look). Encodes the tribal rule
+     * "pass→compile_timeout is runner-load flake unless baseline compile >5s".
+     */
+    baselineCompileMs?: number;
   }[] = [];
   const improvements: { file: string; from: string; to: string }[] = [];
   const otherChanges: { file: string; from: string; to: string }[] = [];
@@ -210,6 +373,7 @@ async function run(
         error: cur?.error,
         error_category: cur?.error_category,
         wasmUnchanged,
+        baselineCompileMs: typeof base?.compile_ms === "number" ? base.compile_ms : undefined,
       });
     } else if (baseStatus !== "pass" && curStatus === "pass") {
       improvements.push({ file, from: baseStatus, to: curStatus });
@@ -274,6 +438,42 @@ async function run(
   const regressionsReal = regressions.length - regressionsCT;
   console.log(`=== Compile timeouts (pass → compile_timeout): ${regressionsCT} ===`);
   console.log(`=== Regressions excluding compile_timeout: ${regressionsReal} ===`);
+
+  // #2098: split compile_timeout regressions by baseline compile cost, encoding
+  // the triage rule that lived only in memory files
+  // (feedback_regression_analysis): "pass→compile_timeout is runner-load flake
+  // unless baseline compile >5s". A test whose baseline already compiled in
+  // well under the threshold can only have timed out from CI runner load
+  // (`ct_flake`); one whose baseline was already slow may have been pushed over
+  // the 30s wall by the PR and deserves a look (`ct_suspect`). A timeout with no
+  // recorded baseline compile_ms is conservatively counted as suspect (we can't
+  // prove it was fast). Output-only — no gate behaviour change; the workflow
+  // already excludes ALL compile_timeout from the ratio (#1192/#1942).
+  const CT_FLAKE_THRESHOLD_MS = 5000;
+  const ctRegressions = regressions.filter((r) => r.to === "compile_timeout");
+  let ctFlake = 0;
+  let ctSuspect = 0;
+  for (const r of ctRegressions) {
+    if (typeof r.baselineCompileMs === "number" && r.baselineCompileMs <= CT_FLAKE_THRESHOLD_MS) {
+      ctFlake += 1;
+    } else {
+      ctSuspect += 1;
+    }
+  }
+  console.log(
+    `=== ct_flake (compile_timeout, baseline ≤${CT_FLAKE_THRESHOLD_MS}ms — runner-load noise): ${ctFlake} ===`,
+  );
+  console.log(
+    `=== ct_suspect (compile_timeout, baseline >${CT_FLAKE_THRESHOLD_MS}ms or unknown — investigate): ${ctSuspect} ===`,
+  );
+  if (!quiet && ctSuspect > 0) {
+    for (const r of ctRegressions.filter(
+      (r) => !(typeof r.baselineCompileMs === "number" && r.baselineCompileMs <= CT_FLAKE_THRESHOLD_MS),
+    )) {
+      const ms = typeof r.baselineCompileMs === "number" ? `${Math.round(r.baselineCompileMs)}ms` : "unknown";
+      console.log(`  ct_suspect ${r.file} (baseline compile ${ms})`);
+    }
+  }
 
   // #1942: compile-time regression signals. `pass → compile_timeout` is
   // excluded from every regression gate (it's runner-load flake — see the
@@ -393,6 +593,30 @@ async function run(
     console.log();
   }
 
+  // #2098: stable bucket-signature hash. Encodes the triage rule from
+  // feedback_baseline_drift_cross_check: "identical regression clusters across
+  // unrelated PRs are baseline drift, not real regressions." The signature is
+  // a sha256 over the SORTED set of regressing test paths plus their
+  // destination status — it is independent of the PR, the run order, and the
+  // counts, so two PRs that regress the exact same cluster emit the SAME hash.
+  // An agent (or a future cross-PR drift detector) can compare the hash across
+  // open PRs: a match means the cluster is pre-existing drift to triage once,
+  // not N independent regressions. compile_timeout flake is excluded so a
+  // single flapping test can't perturb the signature. Output-only — no gate
+  // behaviour change.
+  const signatureFiles = regressions
+    .filter((r) => r.to !== "compile_timeout")
+    .map((r) => `${r.file} ${r.to}`)
+    .sort();
+  if (signatureFiles.length > 0) {
+    const bucketSignature = createHash("sha256").update(signatureFiles.join("\n")).digest("hex").slice(0, 16);
+    console.log(`=== Regression bucket signature: ${bucketSignature} (${signatureFiles.length} non-CT files) ===`);
+    console.log(
+      `  (Same signature on another PR ⇒ identical cluster ⇒ likely baseline drift — see feedback_baseline_drift_cross_check.)`,
+    );
+    console.log();
+  }
+
   // Net delta
   const basePass = baselineCounts["pass"] || 0;
   const newPass = newCounts["pass"] || 0;
@@ -427,7 +651,29 @@ async function run(
   // Compile_timeout flaps (timing noise) and wasm-identical flips are excluded via
   // regressionsWasmChange. Gate: improvements.length - regressionsWasmChange < 0.
   const netPerTest = improvements.length - regressionsWasmChange;
+  let gateFailed = false;
   if (netPerTest < 0) {
+    console.log(
+      `=== GATE FAIL: net_per_test ${netPerTest} < 0 (${improvements.length} improvements − ${regressionsWasmChange} regressions) ===`,
+    );
+    gateFailed = true;
+  }
+
+  // #1943 — enforce the documented ratio (10%) and per-bucket (50) thresholds
+  // that previously lived only in the dev-self-merge skill text. Same
+  // wasm-hash-filtered count the net gate uses (`noiseFiltered`), so
+  // compile_timeout flaps and byte-identical flips never trip these either.
+  const thresholdFailures = evaluateRegressionThresholds({
+    improvements: improvements.length,
+    regressionsWasmChange,
+    regressedFiles: noiseFiltered.map((r) => r.file),
+  });
+  for (const reason of thresholdFailures) {
+    console.log(`=== GATE FAIL: ${reason} ===`);
+    gateFailed = true;
+  }
+
+  if (gateFailed) {
     process.exit(1);
   }
 }
@@ -437,4 +683,10 @@ function truncate(s: string, maxLen: number): string {
   return s.slice(0, maxLen - 3) + "...";
 }
 
-main();
+// Only run the CLI when invoked directly (not when imported by the unit test
+// for the exported threshold helpers — #1943). `process.argv[1]` is the
+// executed script path under tsx/node.
+const invokedPath = process.argv[1] ?? "";
+if (invokedPath.endsWith("diff-test262.ts") || invokedPath.endsWith("diff-test262.js")) {
+  main();
+}

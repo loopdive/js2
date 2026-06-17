@@ -1,10 +1,12 @@
 ---
 id: 2130
 title: "delete o.prop is a no-op and `in` answers against the static struct shape — post-delete / dynamic-key / object-rest all wrong"
-status: ready
+status: done
 sprint: 62
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/d1
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -12,12 +14,37 @@ task_type: bugfix
 area: codegen
 language_feature: object-literals
 goal: property-model
-related: [1821, 492, 1112, 1991]
+related: [1821, 492, 1112, 1991, 2179]
 renumbered_from: "residual of #1821 (done) — surfaced by #1971 re-validation"
 origin: "2026-06-12 #1971 PO re-validation vs main c19a2e9c1"
 ---
 
 # #2130 — `delete` / `in` ignore runtime object shape (static-struct resolution)
+
+## Resolution (2026-06-16, Stage A — the titled `in`/hasOwnProperty defect)
+
+**Done:** `in` and `Object.prototype.hasOwnProperty` now consult the runtime
+presence model (delete tombstone + sidecar) via a single shared predicate
+`_wasmStructHasOwn` (`src/runtime.ts`), instead of the static struct shape.
+`__hasOwnProperty` and `__extern_has` (the `in` operator) both route through
+it. The buggy module-global `__sget_<key>` existence probe in `__extern_has`
+(which reported any field-name present in *any* struct type as present on
+*every* receiver, and never consulted the tombstone — architect addendum A1)
+was deleted. `_safeGet` is tombstone-gated and `_safeSet` clears the tombstone
+on re-add (A3/A5). Tests: `tests/issue-2130-delete-in-presence.test.ts` (7
+cases, all green). Verified `delete o.a; "a" in o` → false; object-rest
+`"e" in rest` → false; `o.x = undefined; "x" in o` → true; delete-then-re-add
+restores `in`.
+
+**Deferred to #2179 (architect addenda A6/A7 — never in #2130's deliverable):**
+the post-delete struct **read** path for statically-resolvable receivers
+(`const o:any={a:1,b:2}; delete o.a; o.a === undefined`). The `any` read
+compiles to an inline `ref.test`+`struct.get` fast-path that reads the live
+f64 field (bypassing the runtime tombstone), and `=== undefined` is
+constant-folded on the f64 field type. Fixing it requires routing such reads
+through `__extern_get` for delete-using modules — which breaks standalone/WASI
+(no `__extern_get` host import) and needs representation-steering. Tracked as a
+separate `feasibility: hard` codegen concern in #2179.
 
 ## Problem
 
@@ -365,3 +392,55 @@ In the `__extern_has` rewrite, the plain-JS sidecar check must be key-based
 value-based `_sidecarGet(obj, key) !== undefined` (`runtime.ts:6357`) —
 HasProperty (§7.3.12) is value-independent, so `o.x = undefined; "x" in o`
 must be true.
+
+---
+
+## Implementation status (2026-06-16, d1)
+
+### Landed — Stage A: tombstone-aware presence predicate (the `in` half)
+
+The headline defect — `in` / `hasOwnProperty` answering against the static
+struct shape and ignoring runtime deletes — is fixed. `src/runtime.ts`:
+
+- Extracted **`_wasmStructHasOwn(obj, key, exports)`** — the single own-property
+  predicate (tombstone → sidecar (key-based, A8) → descriptor → class
+  proto/static methods → struct-field shape). `__hasOwnProperty` now delegates
+  to it (pure extraction).
+- Rewrote **`__extern_has`** (the `in` operator): WasmGC-struct receivers route
+  through `_wasmStructHasOwn` + the `_OBJECT_PROTO_KEYS` inherited tier, and the
+  buggy **module-global `__sget_<key>` existence probe is deleted** (addendum
+  A1 — it reported every receiver as having any field name present in any struct
+  type and never consulted the tombstone). Plain-JS receivers use native
+  HasProperty + a key-based sidecar check (A8).
+- **`_safeGet`**: tombstone gate at the top of the WasmGC branch — a deleted key
+  reads `undefined` via the generic (`__extern_get`) read path.
+- **`_safeSet`**: clears the tombstone on (re-)assignment (A3) — single choke
+  point covering the sidecar / `__sset_` / symbol arms.
+
+Acceptance criteria met by Stage A:
+- `delete o.a; "a" in o` → `false` ✓
+- sibling `"b" in o` stays `true` ✓
+- dynamic-key `delete o[k]; "a" in o` → `false` ✓
+- object-rest `"e" in rest` → `false`, `"f" in rest` → `true` ✓
+- `delete o.a; o.a = 5; "a" in o` → `true` ✓
+- value-independent HasProperty: `o.x = undefined; "x" in o` → `true` ✓
+- No regressions across in-operator / hasOwnProperty / delete-operator /
+  #1821 / #1991 / #1364b suites.
+
+Tests: `tests/issue-2130-delete-in-presence.test.ts` (7 cases, all green).
+
+### Deferred — the read half (`delete o.a; o.a === undefined`)
+
+For a **statically-resolvable struct receiver** (e.g. `const o:any={a:1,b:2}`),
+`o.a` after delete still reads the stale field value. Root cause: that read
+compiles to an inline `ref.test`+`struct.get` fast-path
+(`emitExternrefToStructGet`, `src/codegen/property-access.ts`) that reads the
+live f64 field and bypasses the runtime tombstone, and `o.a === undefined` is
+constant-folded because the field's static type is `f64` (never `undefined`).
+
+This is the architect's explicitly-deferred **A6/A7** work: the only sound fix
+is to steer delete-touched object literals away from the inline struct.get
+fast-path (route reads through tombstone-aware `__extern_get` in JS-host mode,
+and use `$Object` representation steering in standalone mode — a wasm-side
+`(obj,key)` tombstone registry is rejected by A7 because WasmGC has no weak
+refs). Tracked as the read-path follow-up to this issue.

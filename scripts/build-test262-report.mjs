@@ -178,6 +178,13 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
     match: (_record, text) => hasAny(text, ["late-import index-shift class"]),
   },
   {
+    id: "leaked-host-import",
+    issues: ["#2094", "#2073", "#2075"],
+    label:
+      "Leaked host import in standalone binary — emit-time scan CE (#2094): a host import bypassed the addImport gate (stale funcMap index / direct push). Was a silent instantiation failure (#2073/#2075); now a structured CE.",
+    match: (_record, text) => hasAny(text, ["leaked host import"]),
+  },
+  {
     id: "numeric-separator-literal-values",
     issues: ["#1782", "#53"],
     label: "Numeric and BigInt separator literals evaluate to wrong values",
@@ -663,6 +670,13 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
       ]),
   },
   {
+    id: "standalone-getter-callback-bridge",
+    issues: ["#929", "#1027", "#1239"],
+    label:
+      "Standalone object-literal / defineProperty accessor needs the `__make_getter_callback` JS-host bridge (this-bound getter/setter); no pure-Wasm path yet, so the strict gate fails the build. Surfaced as a structured CE by #1921 (was a dropped-import / leaked-import failure).",
+    match: (_record, text) => hasAny(text, ["__make_getter_callback", "make_getter_callback import"]),
+  },
+  {
     id: "misc-spec-tail",
     issues: ["#1577", "#779"],
     label: "Miscellaneous low-volume spec-completeness tail",
@@ -753,12 +767,21 @@ async function main() {
   const categories = new Map();
   const errorCategories = new Map();
   const skipReasons = new Map();
+  // #1853 — hard-error stability bucket (malformed_wasm / missing_test_export),
+  // aggregated separately from coverage so it can be gated as a regression.
+  const hardErrors = new Map();
   const scopeCounts = new Map([
     ["standard", createCounts()],
     ["annex_b", createCounts()],
     ["proposal", createCounts()],
   ]);
   const rootCauseRecords = [];
+  // #2096: capture the oracle_version stamped on the result rows so the
+  // merged report carries the same identity. If rows disagree (a merge of
+  // shards produced under different oracles) we keep the LOWEST seen and flag
+  // it as mixed — a mixed report should never be promoted to a baseline.
+  let oracleVersion;
+  let oracleVersionMixed = false;
 
   const rl = createInterface({
     input: createReadStream(args.input),
@@ -768,6 +791,14 @@ async function main() {
   for await (const line of rl) {
     if (!line.trim()) continue;
     const record = JSON.parse(line);
+    if (typeof record.oracle_version === "number") {
+      if (oracleVersion === undefined) {
+        oracleVersion = record.oracle_version;
+      } else if (oracleVersion !== record.oracle_version) {
+        oracleVersionMixed = true;
+        oracleVersion = Math.min(oracleVersion, record.oracle_version);
+      }
+    }
     const status = record.status;
     const scope = record.scope ?? "standard";
     const scopeOfficial = record.scope_official ?? scope !== "proposal";
@@ -799,6 +830,12 @@ async function main() {
     if (record.error_category) {
       errorCategories.set(record.error_category, (errorCategories.get(record.error_category) ?? 0) + 1);
     }
+    // #1853 — count hard errors (malformed Wasm / missing test export) into the
+    // stability bucket. `hard_error_kind` is set by the runner only where the
+    // outcome is unambiguously a compiler bug, never for unsupported-feature.
+    if (record.hard_error_kind) {
+      hardErrors.set(record.hard_error_kind, (hardErrors.get(record.hard_error_kind) ?? 0) + 1);
+    }
     if (status === "skip" && record.error) {
       skipReasons.set(record.error, (skipReasons.get(record.error) ?? 0) + 1);
     }
@@ -824,6 +861,12 @@ async function main() {
     timestamp: new Date().toISOString(),
     baseline_generated_at: args.baselineGeneratedAt || new Date().toISOString(),
     baseline_sha: args.baselineSha || "",
+    // #2096: oracle identity for the merged report. Carried so diff-test262
+    // can refuse cross-version comparisons. `oracle_version_mixed` flags a
+    // report assembled from shards run under different oracles — never promote
+    // such a report to a baseline.
+    oracle_version: oracleVersion ?? null,
+    ...(oracleVersionMixed ? { oracle_version_mixed: true } : {}),
     mode: {
       target,
       include_proposals: args.includeProposals ? 1 : 0,
@@ -858,6 +901,9 @@ async function main() {
         ...counter,
       })),
     error_categories: Object.fromEntries([...errorCategories.entries()].sort(([a], [b]) => a.localeCompare(b))),
+    // #1853 — hard-error stability bucket, surfaced separately from coverage and
+    // gated by scripts/check-test262-hard-errors.mjs against a committed baseline.
+    hard_errors: Object.fromEntries([...hardErrors.entries()].sort(([a], [b]) => a.localeCompare(b))),
     skip_reasons: Object.fromEntries([...skipReasons.entries()].sort(([a], [b]) => a.localeCompare(b))),
   };
 

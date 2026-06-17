@@ -63,6 +63,35 @@ regressions = [(f, new.get(f, 'missing'), new_details.get(f, {}))
 print(f"Total: {len(regressions)}")
 ```
 
+## Step 2b: Read the mechanical triage signals from `diff-test262` (#2098)
+
+`scripts/diff-test262.ts` now encodes two triage rules that used to live only
+in memory files, so you can read them straight off the diff output instead of
+re-deriving them per run:
+
+```bash
+npx tsx scripts/diff-test262.ts .test262-cache/test262-current.jsonl \
+  /tmp/regressions-<TS>/test262-results-merged.jsonl
+```
+
+- **`ct_flake` vs `ct_suspect`** — `pass → compile_timeout` regressions are
+  split by the BASELINE-side `compile_ms`. `ct_flake` (baseline ≤ 5000 ms) is
+  runner-load noise and already excluded from the gate. `ct_suspect` (baseline
+  > 5000 ms, or no recorded baseline compile) is the only timeout bucket worth
+  reading — a PR may have pushed an already-slow compile over the 30s wall. The
+  suspect file list is printed inline (non-`--quiet`).
+- **Regression bucket signature** — a 16-hex sha256 over the sorted set of
+  `{file, destination-status}` for all non-CT regressions. It is independent of
+  the PR, run order, and counts. If **another open PR's diff prints the same
+  signature**, the two PRs regress the identical cluster ⇒ it is almost
+  certainly pre-existing **baseline drift**, not N independent regressions
+  (`feedback_baseline_drift_cross_check`). Triage the cluster once and treat the
+  matching PRs as false-positive-by-drift.
+
+These are output-only signals — they do not change the gate. Use them to skip
+ahead: a run whose only regressions are `ct_flake` + a signature that matches
+another PR needs no per-test sampling.
+
 ## Step 3: Bucket by path + error message pattern
 
 ```python

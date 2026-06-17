@@ -1,8 +1,10 @@
 ---
 id: 2171
 title: "standalone: native generator only supports numeric yields — string/boolean/object yields bail (#680)"
-status: ready
-sprint: 62
+status: done
+completed: 2026-06-17
+assignee: sendev-closures
+sprint: 63
 created: 2026-06-15
 priority: medium
 feasibility: hard
@@ -120,3 +122,35 @@ it mid-flight risks a hard-to-debug interaction with those in-queue PRs (the
 shared `info.resultTypeIdx` they read). The spec is de-risked (the per-generator
 result-type finding is the crux and is confirmed), so the next dev — or me once
 #1492/#1493 land — can implement the string slice in one focused pass.
+
+## Resolution (2026-06-17)
+
+**Implemented and merged** in `c3eb18936` ("feat(#2171): string-yield native
+generators in standalone (SF-4 of #2157)"), exactly per the spec above:
+`generatorElemValType` / `isStringYieldExpression` choose a per-generator
+`elemValType` (f64 for numeric, the native `$AnyString` ref for all-string
+generators); `ensureNativeGeneratorResultType` keys the result struct
+(`__NativeGeneratorResult_<kind>`) and value field on the elem type; the resume
+function, state-struct spills, and the for-of driver
+(`tryCompileNativeGeneratorForOf`) all thread `info.elemValType`. Mixed/object
+yields still `fail()` cleanly (numeric path byte-identical).
+
+The issue file's `status` was left at `ready` (the impl commit didn't flip it).
+Reconciled to `done` here, and the SF-4 acceptance test was promoted from
+`it.todo` to a live test (+ two value-correctness guards: concat length, first
+char code). Verified on `upstream/main`: SF-4 string yields iterate 2× with zero
+host imports, and `s += v` concatenation produces the correct `$AnyString`
+(`"ab"`, length 2, first char `'a'`).
+
+### Known residual → follow-up #2187
+
+A **per-element string method on an `any`-typed loop variable** in standalone
+(e.g. `for (const v of g()) n += v.length` where TS infers `v: any` because no
+lib types resolve the generator's element type) routes through the generic
+externref property path instead of the native `$AnyString` path, yielding `0`.
+The loop var's *local ValType* is the string ref, but `compilePropertyAccess`
+gates the native-string `.length`/method fast-path on the *TS static type*
+(`isStringType(tsObjType)`), which is `any` here. This is the broader value-rep
+concern (#2072 family) — string-method dispatch keyed on local ValType when the
+TS type is `any` — not specific to generators. Tracked as #2187; out of scope
+for SF-4 (whose acceptance is iteration + concat, both correct).

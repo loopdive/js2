@@ -1,10 +1,11 @@
 ---
 id: 2148
 title: "Status-orphan reconciliation: 60 in-review issues with no open PR + reset dead in-progress need re-validation"
-status: ready
+status: done
+completed: 2026-06-16
 sprint: 62
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-16
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -52,6 +53,37 @@ likely fixing PR if findable); repro present ⇒ `ready` with sprint
 - Every pool-2 issue is either `done` or has a re-validated repro.
 - #680's true state recorded; #735/#762 unblocked or re-blocked
   accordingly.
+
+## Resolution (2026-06-16, dv3)
+
+Full re-sweep of `plan/issues/*.md` on `upstream/main`. The 60-issue
+`in-review` pool from the 2026-06-12 review had **already been drained** by
+intervening reconcile work (PRs #1437, #1529 and the per-issue impl PRs that
+carry `status: done` themselves). Only **two** `in-review` orphans with no open
+*and* no merged PR remained; both reconciled:
+
+- **#1326** (async standalone microtask queue) → `in-progress`. It is a **live
+  epic** — `required_by: [1326c, 1766, 1774]` and TaskList "revive #1326" is
+  in_progress — so its true state is `in-progress`, not `in-review` (per the
+  special-case in Approach: coordinate with the live #1326c/#1042 epic).
+- **#1645** (ArrayBuffer resizable + detached-buffer guards) → `ready`,
+  `sprint: Backlog`. No implementation exists (spec-gap, unimplemented), so the
+  repro is present ⇒ `ready` + backlog per the Approach rule.
+
+**Pool 2** (the 17 reset `in-progress` issues) was not re-touched — they were
+already moved to `ready` in the originating 2026-06-12 review; this task only
+needed to drain the `in-review` pool to zero.
+
+**Sprint-62 residual-epic audit (the task-description angle):** cross-referenced
+every non-`done` sprint-62 issue against `gh pr list --state merged`. The
+residual epics with merged slice-PRs (#2009, #2029, #2051, #2106, #2151, #2158,
+#2159, #2160, #2161, #2162, #2163, #2164, #2166, #2169, #1917, #1712) each
+**explicitly document remaining slices** in their files ("issue stays
+open"/"carried forward"/"Keep … in-progress until …") — they are *not* orphaned
+completions and were correctly left non-`done`. No false flips made.
+
+Acceptance criteria met: **zero `in-review` issues without an open PR**
+(`grep -l '^status: in-review' plan/issues/*.md` → none after this PR).
 
 ## Notes
 

@@ -35,6 +35,7 @@ import {
   type IrTerminator,
   type IrUnop,
   type IrValueId,
+  mapNestedBuffers,
 } from "../nodes.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
 import { retireAllocsIn } from "./alloc-discipline.js";
@@ -57,33 +58,67 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
   }
 
   let changed = false;
+
+  // Fold one instr against `scope`, recording any new top-level const it folds
+  // into back into `scope`, and recursively folding inside its nested buffers
+  // (#1925). Buffers get a CHILD scope (a clone of `scope`): a const defined
+  // inside a buffer is visible to later instrs in that buffer and its nested
+  // buffers, but must NOT leak to siblings after the buffer — a `const` inside a
+  // loop/if body does not dominate code following it. Valid structured IR only
+  // references already-defined values, so inheriting the parent scope is sound.
+  const foldInstr = (instr: IrInstr, scope: Map<IrValueId, IrConst>): IrInstr => {
+    // 0. A pre-existing `const` is visible to later ops in this scope. Top-level
+    // consts are already globally pre-seeded; this records buffer-interior ones
+    // (which are NOT pre-seeded) so a `binary(const, const)` later in the same
+    // buffer can fold.
+    if (instr.kind === "const" && instr.result !== null && !scope.has(instr.result)) {
+      scope.set(instr.result, instr.value);
+    }
+    // 1. Fold this instr's own operands (binary/unary → const).
+    let rewritten = tryFoldInstr(instr, scope);
+    if (rewritten !== instr) {
+      changed = true;
+      if (instr.alloc !== undefined && rewritten.alloc === undefined) {
+        retireAllocsIn(instr, registry);
+      }
+      if (rewritten.kind === "const" && rewritten.result !== null) {
+        scope.set(rewritten.result, rewritten.value);
+      }
+    }
+    // 2. Recurse into nested buffers (loop/if/for-of/try) with a child scope.
+    rewritten = mapNestedBuffers(rewritten, (buffer) => foldBuffer(buffer, scope));
+    if (rewritten !== instr) changed = true;
+    return rewritten;
+  };
+
+  // Fold a buffer in order under a child scope cloned from `parent`. Returns the
+  // same array reference when nothing inside changed (so mapNestedBuffers can
+  // preserve instr identity up the chain).
+  const foldBuffer = (buffer: readonly IrInstr[], parent: Map<IrValueId, IrConst>): readonly IrInstr[] => {
+    const child = new Map(parent);
+    let bufChanged = false;
+    const out: IrInstr[] = [];
+    for (const instr of buffer) {
+      const folded = foldInstr(instr, child);
+      if (folded !== instr) bufChanged = true;
+      out.push(folded);
+    }
+    return bufChanged ? out : buffer;
+  };
+
   const newBlocks: IrBlock[] = fn.blocks.map((block) => {
     const newInstrs: IrInstr[] = [];
+    let blockChanged = false;
     for (const instr of block.instrs) {
-      const rewritten = tryFoldInstr(instr, constDefs);
-      if (rewritten !== instr) {
-        changed = true;
-        // Rule 3 (retire): if the fold dropped an allocation the original
-        // carried (e.g. a folded-away string), the value no longer allocates —
-        // retire its id so the replacement `const` (which carries none) is
-        // consistent. Today CF only folds binary/unary (non-alloc), so this is
-        // a no-op guard that future alloc-folding rewrites inherit for free.
-        if (instr.alloc !== undefined && rewritten.alloc === undefined) {
-          retireAllocsIn(instr, registry);
-        }
-        // A fold turned a binary/unary into a const — record the new def
-        // so subsequent ops in the same or later blocks see it folded.
-        if (rewritten.kind === "const" && rewritten.result !== null) {
-          constDefs.set(rewritten.result, rewritten.value);
-        }
-      }
+      const rewritten = foldInstr(instr, constDefs);
+      if (rewritten !== instr) blockChanged = true;
       newInstrs.push(rewritten);
     }
 
     const newTerm = tryFoldTerminator(block.terminator, constDefs);
     if (newTerm !== block.terminator) changed = true;
 
-    if (newInstrs === block.instrs && newTerm === block.terminator) {
+    if (!blockChanged && newTerm === block.terminator) {
       // Nothing changed in this block.
       return block;
     }
@@ -91,7 +126,7 @@ export function constantFold(fn: IrFunction, registry?: AllocSiteRegistry): IrFu
       id: block.id,
       blockArgs: block.blockArgs,
       blockArgTypes: block.blockArgTypes,
-      instrs: newInstrs,
+      instrs: blockChanged ? newInstrs : block.instrs,
       terminator: newTerm,
     };
   });

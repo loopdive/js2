@@ -3,7 +3,7 @@ id: 2173
 title: "standalone: yield* over a general iterable (array / custom {next()}) in native generators (SF-3 slice-2 of #2157)"
 status: blocked
 blocked_by: [2106]
-sprint: 62
+sprint: 63
 created: 2026-06-16
 updated: 2026-06-16
 priority: medium

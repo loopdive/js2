@@ -39,19 +39,23 @@ describe("Promise / async equivalence", () => {
     expect(wasm.main()).toBe(42);
   });
 
-  it("await expression passes through value", async () => {
+  it("await of a suspending call resolves through a real Promise (#1796 CPS)", async () => {
+    // `test` awaits `getVal()` (a non-static async call) so it genuinely
+    // suspends and is CPS-lowered to return a real Promise. `main` awaits it;
+    // the result resolves through a microtask tick. (Was "await expression
+    // passes through value" under the legacy synchronous-async fakery.)
     const src = `
       async function getVal(): Promise<number> { return 100; }
       async function test(): Promise<number> {
         const v = await getVal();
         return v;
       }
-      export function main(): number {
-        return test() as any as number;
+      export async function main(): Promise<number> {
+        return await test();
       }
     `;
     const wasm = await compileToWasm(src);
-    expect(wasm.main()).toBe(100);
+    await expect(wasm.main()).resolves.toBe(100);
   });
 
   it("multiple sequential awaits", async () => {
@@ -101,19 +105,24 @@ describe("Promise / async equivalence", () => {
     expect(wasm.main()).toBe(42);
   });
 
-  it("nested async calls", async () => {
+  it("nested async calls resolve through a real Promise (#1796 CPS)", async () => {
+    // `outer` awaits `inner(x)` (a non-static async call) so it genuinely
+    // suspends, then computes `squared + 1` in its continuation — exercising
+    // a captured prefix local across the suspension. CPS-lowered to a real
+    // Promise; awaited through a microtask tick. (Was "nested async calls"
+    // under the legacy synchronous-async fakery.)
     const src = `
       async function inner(x: number): Promise<number> { return x * x; }
       async function outer(x: number): Promise<number> {
         const squared = await inner(x);
         return squared + 1;
       }
-      export function main(): number {
-        return outer(5) as any as number;
+      export async function main(): Promise<number> {
+        return await outer(5);
       }
     `;
     const wasm = await compileToWasm(src);
-    expect(wasm.main()).toBe(26);
+    await expect(wasm.main()).resolves.toBe(26);
   });
 
   it("async function with loop", async () => {

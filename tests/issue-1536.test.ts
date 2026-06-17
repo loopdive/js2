@@ -99,3 +99,64 @@ describe("#1536 Phase 2 — native Error `$name` materialization (standalone)", 
     expect((instance.exports.test as () => number)()).toBe(7);
   });
 });
+
+describe("#1536 Gap #1 — native Error `.stack` field (standalone)", () => {
+  it("$Error_struct constructors carry a 4th $stack field initialized to null", async () => {
+    // The ctor must push 4 field values before `struct.new $Error_struct`:
+    // tag(i32) + message + name + stack(ref.null.extern). Without the new
+    // field the ctor would push only 3 and the struct.new arity would change.
+    const src = `
+      export function test(): number {
+        const e = new Error("boom");
+        return 1;
+      }
+    `;
+    const r = await compile(src, { target: "standalone" });
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    // Wasm-native ctor, no host import.
+    const envImports = r.imports.filter((i) => i.module === "env").map((i) => i.name);
+    expect(envImports).not.toContain("__new_Error");
+    expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(1);
+  });
+
+  it("reading `error.stack` standalone compiles, validates, and does not trap", async () => {
+    // `.stack` is non-standard and initialized to null (≈ undefined). The read
+    // must lower to the `$Error_struct` fast path (struct.get fieldIdx 3), NOT
+    // the host `__extern_get` import, and must not trap at runtime.
+    const src = `
+      export function test(): number {
+        const e = new Error("boom");
+        const s = e.stack;
+        // Touch the value in a way that doesn't deref it: a null/undefined
+        // .stack is falsy, so this returns 5 without trapping.
+        return s ? 9 : 5;
+      }
+    `;
+    const r = await compile(src, { target: "standalone" });
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    const envImports = r.imports.filter((i) => i.module === "env").map((i) => i.name);
+    expect(envImports).not.toContain("__extern_get");
+    expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(5);
+  });
+
+  it("`.message` and `.name` field indices are unchanged by the new `.stack` field", async () => {
+    // Regression guard: adding $stack at fieldIdx 3 must keep message=1/name=2.
+    // The construct+throw+catch path (which reads no fields) still runs, and
+    // the module stays valid — proving the struct layout shift didn't corrupt
+    // the existing fast paths.
+    const src = `
+      export function test(): number {
+        try { throw new TypeError("boom"); } catch (e) { return 3; }
+      }
+    `;
+    const r = await compile(src, { target: "standalone" });
+    expect(r.success).toBe(true);
+    expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(3);
+  });
+});

@@ -12,6 +12,7 @@ import {
   isGeneratorType,
   isNumberType,
   isNumberWrapperType,
+  isPromiseType,
   isStringType,
   isStringWrapperType,
   isSymbolType,
@@ -56,7 +57,13 @@ import {
   nativeStringType,
   resolveWasmType,
 } from "../index.js";
-import { compileArrayConstructorCall, compileSymbolCall, resolveComputedKeyExpression } from "../literals.js";
+import {
+  compileArrayConstructorCall,
+  compileObjectLiteralAsExternref,
+  compileSymbolCall,
+  resolveComputedKeyExpression,
+  resolvePropertyNameText,
+} from "../literals.js";
 import { tryEmitJsonParseLiteral, tryEmitJsonStringifyStatic } from "../json-standalone.js";
 import { emitJsonParsePrimitive, emitJsonQuoteString } from "../json-runtime.js";
 import {
@@ -122,7 +129,11 @@ import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
-import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
+import {
+  emitNativeGeneratorToVec,
+  nativeGeneratorInfoForForOfSubject,
+  tryCompileNativeGeneratorMethodCall,
+} from "../generators-native.js";
 import {
   ensureNativeStringExternBridge,
   ensureStrToCharVecHelper,
@@ -199,6 +210,46 @@ const BUILTIN_CLASS_NAMES = new Set([
  * literal to `false`. Returns `undefined` when the value isn't statically
  * resolvable (caller should fall back to the runtime path).
  */
+/**
+ * (#2076) Compile an `Object.assign(target, ...sources)` argument, pushing an
+ * externref onto the stack. Under `--target standalone`, the native
+ * `__object_assign` reads each operand by `ref.test $Object` and iterates its
+ * `$PropEntry` table; a *closed-struct* literal fails that test, so its
+ * properties are silently dropped and `Object.keys` on the result sees nothing
+ * (the bug). The struct path is what `compileObjectLiteral` picks for a literal
+ * argument whose TS contextual type — here `Object.assign`'s generic signature
+ * resolves it to a CONCRETE object type, not `any` — so the open-`$Object`
+ * diversion (literals.ts) never fires.
+ *
+ * Fix: when the argument is a *plain data-property / spread* object literal
+ * (no accessors, methods, or computed/symbol keys — the same shapes the
+ * `$Object` builder accepts at literals.ts:870-874), build it directly as a
+ * native `$Object` via `compileObjectLiteralAsExternref` so `__object_assign`
+ * recognises it. Any other argument (identifiers, calls, accessor-bearing
+ * literals) keeps the ordinary `compileExpression` path. Standalone-only — host
+ * / WASI mode owns the `__object_assign` JS import and is untouched.
+ */
+function compileObjectAssignArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
+  if (
+    ctx.standalone &&
+    ts.isObjectLiteralExpression(arg) &&
+    arg.properties.length > 0 &&
+    arg.properties.every(
+      (p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isSpreadAssignment(p),
+    ) &&
+    arg.properties.every((p) => ts.isSpreadAssignment(p) || resolvePropertyNameText(ctx, p) !== undefined)
+  ) {
+    const objResult = compileObjectLiteralAsExternref(ctx, fctx, arg);
+    if (objResult) {
+      if (objResult.kind !== "externref") coerceType(ctx, fctx, objResult, { kind: "externref" });
+      return;
+    }
+    // fall through to the ordinary path if the $Object builder declined.
+  }
+  const t = compileExpression(ctx, fctx, arg, { kind: "externref" });
+  if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+}
+
 function staticToBoolean(expr: ts.Expression): boolean | undefined {
   while (
     ts.isAsExpression(expr) ||
@@ -953,6 +1004,45 @@ function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression): bool
   };
 
   return initMayBeHost(decl.initializer);
+}
+
+/**
+ * (#2028) Is `expr` an identifier resolving to a parameter of a **Promise
+ * executor** — the `(resolve, reject) => {…}` arrow/function-expression passed
+ * directly to `new Promise(...)`?
+ *
+ * Those params are bound by the host (native `new Promise` calls the executor
+ * with real JS `resolve`/`reject` functions), so they arrive as plain externref
+ * JS callables, NOT wasm closure structs. Calling them through the closure-struct
+ * `ref.test`/`ref.cast`/`struct.get`/`call_ref` dispatch path nulls the cast and
+ * traps on the null deref — they must take the `__call_function` arm instead.
+ *
+ * This is intentionally narrow. An ordinary callable parameter (`cb` in
+ * `function apply(cb, v) { return cb(v); }`) is ALSO lowered with an `externref`
+ * wasm type — the closure struct is recovered dynamically at the call site via
+ * `ref.test (ref $closure)`. So "externref-typed callable param" alone is NOT a
+ * safe discriminator: gating on it would re-emit the `__call_function` arm for
+ * pure local-closure programs and regress the #1941 dual-mode guarantee. The
+ * precise signal is that the param's *declaring function is a Promise executor*
+ * (an arrow/function-expression that is the direct argument of `new Promise`),
+ * whose param values are genuinely host-supplied.
+ */
+function calleeIsPromiseExecutorParam(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isIdentifier(expr)) return false;
+  const sym = ctx.checker.getSymbolAtLocation(expr);
+  const decl = sym?.valueDeclaration;
+  if (!decl || !ts.isParameter(decl)) return false;
+  // The parameter's declaring function must be the executor of `new Promise(...)`:
+  // an arrow / function expression that is a direct argument of a `new Promise`.
+  const fn = decl.parent;
+  if (!fn || (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn))) return false;
+  const argParent = fn.parent;
+  if (!argParent || !ts.isNewExpression(argParent)) return false;
+  const ctor = argParent.expression;
+  if (!ts.isIdentifier(ctor) || ctor.text !== "Promise") return false;
+  // Confirm the executor is actually in the argument list (not, e.g., a type arg).
+  const fnNode: ts.Node = fn;
+  return (argParent.arguments ?? []).some((a) => a === fnNode);
 }
 
 /**
@@ -2109,7 +2199,12 @@ function compileCallExpression(
             : (unwrapped as ts.TypeAssertion).expression;
     }
     if (ts.isIdentifier(unwrapped)) {
-      const NAMESPACE_NON_CALLABLE = new Set(["Math", "JSON", "Reflect", "Atomics"]);
+      // #2180 — `Proxy(t,h)` without `new` must throw TypeError: the Proxy
+      // exotic has [[Construct]] but no [[Call]]. The `new Proxy` form is
+      // handled separately in new-super.ts; member calls like
+      // `Proxy.revocable(...)` reach a different branch (this guard only fires
+      // for a bare-identifier callee), so listing it here is safe.
+      const NAMESPACE_NON_CALLABLE = new Set(["Math", "JSON", "Reflect", "Atomics", "Proxy"]);
       if (NAMESPACE_NON_CALLABLE.has(unwrapped.text)) {
         // Evaluate arguments for their side effects (spec: argument list is
         // evaluated before the [[Call]] check would normally run), then throw.
@@ -3972,6 +4067,27 @@ function compileCallExpression(
         // Didn't lower as a native string — roll back and use the paths below.
         fctx.body.length = bodyLenBefore;
       }
+      // (#2169) Array.from(g()) over a Wasm-native generator without a mapFn.
+      // The argument lowers to the generator state struct, NOT a __vec — the
+      // host fallback below would convert it to externref and call __array_from
+      // (an env import that doesn't exist standalone). Drain the generator into
+      // an f64 vec via the native resume loop instead (shares the spread
+      // helper). Tentatively compile + commit only when the arg genuinely
+      // lowers to a native-generator subject (mirrors the #1470 native-string
+      // probe above).
+      if (!hasMapFn) {
+        const bodyLenBefore = fctx.body.length;
+        const t = compileExpression(ctx, fctx, expr.arguments[0]!);
+        const genInfo = t ? nativeGeneratorInfoForForOfSubject(ctx, t) : undefined;
+        if (genInfo) {
+          const genVecTypeIdx = getOrRegisterVecType(ctx, "f64");
+          const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);
+          emitNativeGeneratorToVec(ctx, fctx, genInfo, t!, genVecTypeIdx, genArrTypeIdx);
+          return { kind: "ref", typeIdx: genVecTypeIdx };
+        }
+        // Not a native generator — roll back and use the paths below.
+        fctx.body.length = bodyLenBefore;
+      }
       // Only handle array arguments — create a shallow copy
       if (!hasMapFn && (argWasmType.kind === "ref" || argWasmType.kind === "ref_null")) {
         const arrInfo = resolveArrayInfo(ctx, argTsType);
@@ -5136,8 +5252,9 @@ function compileCallExpression(
       expr.arguments.length >= 1
     ) {
       const targetArg = expr.arguments[0]!;
-      const targetType = compileExpression(ctx, fctx, targetArg, { kind: "externref" });
-      if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, { kind: "externref" });
+      // (#2076) Object-literal operands must build as native $Objects in
+      // standalone so __object_assign's `ref.test $Object` recognises them.
+      compileObjectAssignArg(ctx, fctx, targetArg);
       // Build the variadic `...sources` list. Under --target standalone there is
       // no JS array, so the native __object_assign iterates a $ObjVec built by
       // the native $ObjVec builders (__objvec_new / __objvec_push) instead of the
@@ -5170,8 +5287,7 @@ function compileCallExpression(
         fctx.body.push({ op: "local.set", index: sourcesLocal });
         for (let i = 1; i < expr.arguments.length; i++) {
           fctx.body.push({ op: "local.get", index: sourcesLocal });
-          const srcType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
-          if (srcType && srcType.kind !== "externref") coerceType(ctx, fctx, srcType, { kind: "externref" });
+          compileObjectAssignArg(ctx, fctx, expr.arguments[i]!);
           fctx.body.push({ op: "call", funcIdx: arrPushIdx });
         }
         fctx.body.push({ op: "local.get", index: targetLocal });
@@ -5979,8 +6095,17 @@ function compileCallExpression(
             }
             return primitiveStringType;
           }
-          if ((ctx.standalone || ctx.wasi) && expr.arguments.length === 1) {
-            const staticStringType = tryEmitJsonStringifyStatic(ctx, fctx, expr.arguments[0]!);
+          if ((ctx.standalone || ctx.wasi) && expr.arguments.length >= 1) {
+            // #2166: thread the optional replacer (must be null/undefined) and
+            // space args so `JSON.stringify(value, null, 2)` produces the
+            // indented form statically instead of refusing.
+            const staticStringType = tryEmitJsonStringifyStatic(
+              ctx,
+              fctx,
+              expr.arguments[0]!,
+              expr.arguments[1],
+              expr.arguments[2],
+            );
             if (staticStringType !== undefined) {
               return staticStringType;
             }
@@ -6090,6 +6215,20 @@ function compileCallExpression(
         // env::__date_now host import (which wasmtime does not provide).
         if (ctx.wasi && ctx.funcMap.has("__wasi_date_now")) {
           fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wasi_date_now")! } as Instr);
+          return { kind: "f64" };
+        }
+        // (#2164) Pure standalone (--target standalone, no JS host AND no WASI
+        // clock) has no wall-clock source, so the env::__date_now host import is
+        // unsatisfiable — every module that calls Date.now() (or new Date() with
+        // no args) failed to instantiate standalone, breaking unrelated Date
+        // tests that only touch Date.now() in setup. Emit the Unix epoch (0)
+        // directly: deterministic, no import leak, module instantiates. Tests
+        // that construct explicit timestamps (the bulk of the gap) then work;
+        // only tests asserting a *real* current time (which standalone WasmGC
+        // cannot provide) stay failing — and those need a clock source, not a
+        // host import.
+        if (ctx.standalone === true) {
+          fctx.body.push({ op: "f64.const", value: 0 } as Instr);
           return { kind: "f64" };
         }
         const dateNowIdx = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
@@ -6469,6 +6608,24 @@ function compileCallExpression(
               const onFulfilled = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers);
               const onRejected = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[1], liveBuffers);
               emitStandalonePromiseThen(ctx, fctx, promiseInstrs, onFulfilled, onRejected);
+            } finally {
+              for (const b of liveBuffers) ctx.liveBodies.delete(b);
+            }
+            return { kind: "externref" };
+          }
+
+          // (#2165) Standalone `.catch(onRejected)` ≡ `.then(undefined, onRejected)`
+          // per §27.2.5.1. Reuse the native `$Promise` then-machinery so WASI
+          // mode doesn't leak the `Promise_catch` / `__make_callback` host
+          // imports. The chained promise still propagates a fulfilled receiver
+          // unchanged (onFulfilled = null) and routes a rejection through the
+          // user's onRejected continuation.
+          if (isStandalonePromiseActive(ctx) && method === "catch") {
+            const liveBuffers: Instr[][] = [];
+            try {
+              const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
+              const onRejected = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers);
+              emitStandalonePromiseThen(ctx, fctx, promiseInstrs, null, onRejected);
             } finally {
               for (const b of liveBuffers) ctx.liveBodies.delete(b);
             }
@@ -8935,7 +9092,24 @@ function compileCallExpression(
         if (wrapperTypes) {
           const matchedClosureInfo = wrapperTypes.closureInfo;
           const matchedStructTypeIdx = wrapperTypes.structTypeIdx;
-          const expectedReturn = matchedClosureInfo.returnType; // null for void
+          // (#2174) When the callee's signature returns `Promise<T>`,
+          // `resolveWasmType` strips the Promise wrapper and yields the awaited
+          // value's wasm type (e.g. f64 for `() => Promise<number>`). But an
+          // *internal* call to an async closure leaves the **Promise object**
+          // (externref) on the stack — the async closure's real funcref type
+          // returns externref, which is registered as a separate dispatch
+          // candidate below (`tryAltFuncType([externref])`). If the dispatch
+          // block were typed `(result f64)`, the async candidate's `call_ref`
+          // (externref) would mismatch the block result → invalid Wasm
+          // (`__closure_N fallthru expected f64/i32, got externref`). Worse, a
+          // type-only externref→f64 coercion would unbox the Promise to NaN and
+          // corrupt the value. So when the callee is async, widen the dispatch
+          // result to externref: the Promise flows through intact and the
+          // surrounding `wrapAsyncReturn` (expressions.ts) consumes it as the
+          // call expression's value. Surfaced by the test262 cluster
+          // `async-function/returns-async-function-returns-arguments-*`.
+          const calleeIsAsync = isPromiseType(sigRetType);
+          const expectedReturn: ValType | null = calleeIsAsync ? { kind: "externref" } : matchedClosureInfo.returnType; // null for void
 
           // (#1131) Preemptively create alternative closure wrapper types.
           // TypeScript allows covariant return types in callbacks, e.g.
@@ -9119,7 +9293,13 @@ function compileCallExpression(
             // function params are always wrapped into the closure struct, so the
             // arm would be dead code and only serve to pull host imports
             // (__js_array_new/…) into otherwise self-contained modules.
-            calleeMayBeHostCallable(ctx, expr.expression);
+            // (#2028) ALSO emit it for a Promise-executor `resolve`/`reject`
+            // parameter — those arrive as host JS functions and must dispatch
+            // through __call_function, not the closure-struct call_ref path
+            // (which traps on the null cast). Narrowly gated to Promise-executor
+            // params so the #1941 dual-mode guarantee for ordinary callable
+            // params is preserved.
+            (calleeMayBeHostCallable(ctx, expr.expression) || calleeIsPromiseExecutorParam(ctx, expr.expression));
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;
@@ -9268,35 +9448,59 @@ function compileCallExpression(
               fcCallBody.push({ op: "ref.cast", typeIdx: fc.funcTypeIdx });
               fcCallBody.push({ op: "call_ref", typeIdx: fc.funcTypeIdx });
 
-              // Coerce return to expected type
+              // Coerce return to expected type.
+              //
+              // The `if`-block declares `(result <expectedReturn>)`, so EVERY
+              // arm must leave a value of that exact type. But only the arm
+              // whose `funcTypeIdx` matches `retFn`'s runtime funcref actually
+              // executes — the rest are synthesized type-validity padding that
+              // never runs. So the coercion MUST be side-effect-free for those
+              // dead arms: pulling a late host import (e.g. `__unbox_number`)
+              // from a never-matching candidate shifts function indices mid-body
+              // and desyncs an already-baked `ref.func` operand → the closure
+              // ends up wrapping the wrong function (#2174 regression: a plain
+              // `var fn = makeAdder(10); fn(32)` had its adder `ref.func`
+              // rewritten to a freshly-imported `__typeof_boolean`, throwing at
+              // runtime). The live arm always matches `expectedReturn` exactly
+              // (so `valTypesMatch` is true and this block is skipped for it).
+              const matchedDispatch = expectedReturn !== null && fc.returnType !== null;
+              const numericKind = (t: ValType): boolean => t.kind === "i32" || t.kind === "f64" || t.kind === "i64";
               if (expectedReturn === null && fc.returnType !== null) {
                 fcCallBody.push({ op: "drop" } as Instr);
               } else if (expectedReturn !== null && fc.returnType === null) {
                 fcCallBody.push(...defaultValueInstrs(expectedReturn));
               } else if (
-                expectedReturn !== null &&
-                fc.returnType !== null &&
-                !valTypesMatch(fc.returnType, expectedReturn) &&
-                (expectedReturn.kind === "i32" || expectedReturn.kind === "f64" || expectedReturn.kind === "i64") &&
-                (fc.returnType.kind === "i32" || fc.returnType.kind === "f64" || fc.returnType.kind === "i64")
+                matchedDispatch &&
+                !valTypesMatch(fc.returnType!, expectedReturn!) &&
+                numericKind(expectedReturn!) &&
+                numericKind(fc.returnType!)
               ) {
-                // (#1693) Numeric-primitive return-type mismatch in the multi-
-                // funcref dispatch ladder (e.g. expected i32, candidate returns
-                // f64). The if-block declares `(result <expectedReturn>)`, so we
-                // must coerce the call_ref result inline. Surfaces at full-module
-                // scale in axios/lib/utils.js where ~30 same-arity arrow
-                // predicates with diverging numeric returns populate
-                // ctx.closureInfoByTypeIdx.
-                //
-                // Narrowly gated to numeric-primitive pairs only — externref/
-                // ref/ref_null mismatches stay on the existing lossy-but-valid
-                // drop+default path that already validates and never executes
-                // (those synthesized candidates only catch funcrefs that the
-                // real signature didn't match).
+                // (#1693) Numeric-primitive divergence between a real matching
+                // candidate and the declared block type (e.g. expected i32,
+                // candidate returns f64). `coerceType` between numeric kinds
+                // emits ONLY pure ops (`f64.convert_i32_s` / `i32.trunc_sat_f64_s`
+                // / …) — no late imports, no index shift — so it is safe even on
+                // a dead arm. Surfaces at full-module scale in axios/lib/utils.js
+                // where ~30 same-arity arrow predicates with diverging numeric
+                // returns populate ctx.closureInfoByTypeIdx.
                 const savedBody = fctx.body;
                 fctx.body = fcCallBody;
-                coerceType(ctx, fctx, fc.returnType, expectedReturn);
+                coerceType(ctx, fctx, fc.returnType!, expectedReturn!);
                 fctx.body = savedBody;
+              } else if (matchedDispatch && !valTypesMatch(fc.returnType!, expectedReturn!)) {
+                // (#2174) Any remaining mismatch is externref/ref ↔ primitive on
+                // a candidate that does NOT match the runtime funcref (the live
+                // arm matched `expectedReturn` and skipped this block). Bridging
+                // these via `coerceType` would pull `__box_number`/`__unbox_number`
+                // — a late import that shifts indices and corrupts earlier
+                // `ref.func`s. Since this arm never executes, drop its value and
+                // push a type-valid default for the block result instead — no
+                // import, no shift. (The async case from #2174 is handled by
+                // widening `expectedReturn` to externref above, which makes the
+                // live async/Promise arm `valTypesMatch` and pass through; the
+                // dead f64 candidates land here and get a null-extern default.)
+                fcCallBody.push({ op: "drop" } as Instr);
+                fcCallBody.push(...defaultValueInstrs(expectedReturn!));
               }
 
               funcDispatch = [

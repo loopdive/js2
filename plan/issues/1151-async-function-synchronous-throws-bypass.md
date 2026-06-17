@@ -1,16 +1,18 @@
 ---
 id: 1151
 title: "Async function synchronous throws bypass Promise.reject wrapping"
-status: ready
+status: done
+assignee: ttraenkler/dv1
+completed: 2026-06-16
 created: 2026-04-21
-updated: 2026-04-21
+updated: 2026-06-16
 priority: high
 feasibility: hard
 reasoning_effort: high
 task_type: architectural
 language_feature: async-functions
 goal: async-model
-sprint: Backlog
+sprint: 62
 es_edition: es2017
 note: "Verified 2026-05-21: function-body.ts isAsync/effectiveRetType drifted from L127-130 to L567-569; wrapAsyncReturn from expressions.ts:163 → L184"
 ---
@@ -506,3 +508,36 @@ the `await asyncCall()` fast-path were NOT touched, per the critical rules.
 **Not in scope / deferred:** Gap A2 (body-wrap safety net) — open only if a
 residual sync-throw cluster remains after CI measures A1. Gap C (`src/ir/lower.ts`
 `IrInstrAsyncThrow`) — bundled with the #1373b gate flip (senior-dev).
+
+## Gap B residual closed (dv1, 2026-06-16) — object-pattern param RequireObjectCoercible
+
+Gap B (binding-pattern param coercion) was marked DONE, but a residual remained:
+the coercion forces `wasmType = externref` for binding-pattern params, yet the
+`compileFunctionExpression` arrow/function-expression path
+(`closures.ts` → object-pattern arm) routes an externref object pattern to
+**`destructureParamObjectExternref`**, which — unlike the array param helper
+(`destructureParamArray`, guards at destructuring-params.ts:922) and the
+function-DECLARATION path (`destructureParamObject`, guards at :584) — did **not**
+emit the spec-mandated RequireObjectCoercible null/undefined guard
+(ECMA-262 §8.6.2 step 1).
+
+Symptom (verified on current main, host + standalone):
+- `(({a}) => a)(null)` / `(undefined)` → silently returned `undefined`
+  instead of throwing a synchronous TypeError.
+- `(({}) => 0)(null)` → same (empty pattern must throw too).
+- Array-pattern arrows (`([a]) => a`) and `function f({a}){}` declarations
+  already threw correctly — asymmetric.
+
+**Fix:** emit `emitExternrefDestructureGuard(ctx, fctx, paramIdx)` at the top of
+`destructureParamObjectExternref` (`src/codegen/destructuring-params.ts`). The
+guard only throws on null/undefined; valid objects and the two
+`destructureParamObject` delegation sites (which already guard first) pass
+through unchanged — a second guard on a non-null value is a no-op. +12 LOC.
+
+**Tests:** `tests/issue-1151.test.ts` (8 cases) — arrow object pattern throws on
+null/undefined, empty pattern throws on null, nested array pattern regression
+watch, and four valid-argument cases (field read, nested read-through, default
+key, rest) confirming no false-positive throws. tsc clean; biome clean. The
+pre-existing `tests/basic-destructuring.test.ts` etc. failures are a broken
+`./helpers.js` harness import (missing in tree, fails identically on main), not
+a regression from this change.

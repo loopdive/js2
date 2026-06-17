@@ -1,10 +1,12 @@
 ---
 id: 1976
 title: "linear backend: string relationals compare memory addresses; .length returns UTF-8 byte count; string concat in compound-assign emits invalid module"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-16
+completed: 2026-06-16
+assignee: ttraenkler/tld-1921
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -94,3 +96,50 @@ UTF-8/WTF-16 work.)
 - `src/codegen-linear/runtime.ts` — new `__str_cmp` helper
 - `src/codegen-linear/index.ts` — route string relationals through `__str_cmp`;
   string `+=` via `__str_concat`; `inferExprType` string-concat → i32
+
+## Resolution (2026-06-16) — UTF-16 `.length` (repro row 3) closed
+
+The remaining `.length` divergence is now fixed **without** an invasive storage
+migration. Rather than count code units inside `__str_len` (which slice/indexOf
+rely on as a *byte* offset), a dedicated runtime fn was added and only the
+user-facing `.length` property routed through it:
+
+- **`src/codegen-linear/runtime.ts`** — new `__str_length_utf16(ptr) -> i32`.
+  Walks the stored UTF-8 bytes and counts UTF-16 code units from each leading
+  byte's high bits: `0xxxxxxx`/`110xxxxx`/`1110xxxx` → a BMP code point (1 unit,
+  advance 1/2/3 bytes), `11110xxx` → an astral code point (2 units / surrogate
+  pair, advance 4 bytes). ASCII counts == byte length (unchanged). `__str_len`
+  (byte count) is left untouched as the internal primitive.
+- **`src/codegen-linear/index.ts`** — the `string.length` property lowering now
+  calls `__str_length_utf16` instead of `__str_len`. The `slice(start)`
+  `end = str.length` byte fallback still uses `__str_len` (byte offset) — that
+  is correct, since `__str_slice` indexes by byte.
+
+Repro table now fully matches Node: `"é".length` → 1, `"é世😀".length` → 4,
+`"😀😀".length` → 4 (were 2 / 9 / 8).
+
+**Still residual (genuinely larger, out of scope here):** `slice` / `charCodeAt`
+/ `codePointAt` / indexing operate on **byte** offsets, so for *multi-byte*
+strings they don't yet match UTF-16 code-unit semantics. That is the full
+storage/offset audit the Progress note above describes (WTF-16 storage vs.
+code-unit-offset translation), tied to #1588's GC-side UTF-8/WTF-16 decision.
+This PR closes all three stated acceptance-criteria repros (criterion 3 blesses
+ASCII byte fast paths) and leaves the broader offset unification to that
+follow-up.
+
+### Test Results
+
+- `tests/issue-1976.test.ts` — 23/23 pass (the 15 prior cases + 8 new UTF-16
+  `.length` cases covering ASCII / Latin-1 / BMP / astral / mixed, plus
+  length-after-concat of a multi-byte string).
+- All linear-backend suites green after the change: `linear-string` +
+  `linear-{basic,advanced,array,runtime,integration,classes,collections,
+  controlflow,functions,map,set,bitwise,break-continue,element-assign,u8array,
+  ir}` = 136 tests, no regressions.
+- `npm run typecheck` + `npm run lint` (Biome) clean.
+
+### Files (this PR)
+
+- `src/codegen-linear/runtime.ts` — new `__str_length_utf16` helper
+- `src/codegen-linear/index.ts` — route `string.length` through it
+- `tests/issue-1976.test.ts` — UTF-16 `.length` cases

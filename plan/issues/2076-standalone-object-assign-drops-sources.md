@@ -1,10 +1,12 @@
 ---
 id: 2076
 title: "standalone: Object.assign drops later sources entirely — native __object_assign never iterates the sources vec"
-status: ready
-sprint: 63
+status: done
+assignee: ttraenkler/dv1
+completed: 2026-06-16
+sprint: 62
 created: 2026-06-11
-updated: 2026-06-12
+updated: 2026-06-16
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -72,3 +74,48 @@ touches. **Recommend holding #2076 until #2009 PR-1 lands**, then re-evaluating
 whether `__object_assign`'s writeback works against the new $shape.
 
 (The paired #2077 `.name` half also intersects #2072 boxing per the task note.)
+
+## Resolution (2026-06-16, dv1)
+
+The earlier "writeback never lands" diagnosis was a misread — `__extern_set`
+and `__object_assign` are both correct. The real fault is upstream, at the
+`Object.assign` CALL SITE (`src/codegen/expressions/calls.ts`): the target and
+source object-literal ARGUMENTS were compiled with an `externref` contextual
+type, which routes them through `compileObjectLiteral`'s **closed-struct** path
+(their TS contextual type, inferred from `Object.assign`'s generic lib
+signature, is a concrete object type — not `any` — so the open-`$Object`
+diversion at `literals.ts:864` never fires). `__object_assign` then reads each
+operand via `ref.test $Object` + a `$PropEntry` walk, which a closed struct
+fails — so the sources are skipped entirely AND the target's own keys are
+invisible to `Object.keys` (`__obj_ordered` sizes its output by `$Object.count`,
+which a closed struct doesn't have).
+
+This is why a probe like `Object.assign({a:1}, {a:3}).a` returned 1 (the read
+`.a` hit a struct field) while `Object.keys` returned 0 (no `$Object` to
+enumerate) — two facets of the same closed-struct routing, NOT a writeback bug.
+
+**Fix**: a `compileObjectAssignArg` helper (calls.ts) that, in standalone mode,
+builds a plain data-property / spread object-literal argument directly as a
+native `$Object` via the now-exported `compileObjectLiteralAsExternref`, so
+`__object_assign` recognises both target and sources. Identifiers, calls and
+accessor-bearing literals keep the ordinary `compileExpression` path. Host / gc
+/ wasi modes are untouched (the `__object_assign` JS import owns those).
+
+Independent of #2009 — no struct-shape change was needed.
+
+## Test Results (2026-06-16, standalone, host-import-free)
+
+`tests/issue-2076.test.ts` — 8/8 pass:
+
+| case | before | after |
+|---|---|---|
+| `Object.assign({a:1},{b:2,a:3})` → `a*10+b` | 10 | 32 |
+| `Object.keys(Object.assign({a:1},{b:2})).length` | 0 | 2 |
+| 3 sources, last wins (`{a:1},{a:2},{a:3}`) | 1 | 3 |
+| target mutated in place (`src.b`) | 0 | 2 |
+| non-literal source variable | (skipped) | 32 |
+| spread inside source literal | (skipped) | 32 |
+| empty source `{}` keeps target keys | 0 | 1 |
+| no source returns target | 2 | 2 |
+
+No regressions in `issue-2127.test.ts` / `issue-1901.test.ts` (13/13).

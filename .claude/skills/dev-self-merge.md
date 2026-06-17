@@ -33,13 +33,13 @@ done
 
 After the run exits:
 
-| Outcome | Action |
-|---|---|
-| **All required checks green** | Proceed to Step 0 (or directly to Step 1 if the CI feed JSON is present) |
+| Outcome                                                    | Action                                                                                                                                    |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **All required checks green**                              | Proceed to Step 0 (or directly to Step 1 if the CI feed JSON is present)                                                                  |
 | **Drift** (mergeable_state becomes `BEHIND` while waiting) | `git fetch origin && git merge origin/main` in the worktree, resolve conflicts with full PR context, `git push`, loop back to wait-for-CI |
-| **CI failure** (any required check `FAILURE`) | Diagnose with full PR context — the agent KNOWS what it changed. Fix locally, `git push`, loop back to wait-for-CI |
-| **Long wait** (>10 min) | Emit a `TaskUpdate` noting the unusual wait but keep waiting |
-| **Very long wait** (>20 min) | Escalate to tech lead |
+| **CI failure** (any required check `FAILURE`)              | Diagnose with full PR context — the agent KNOWS what it changed. Fix locally, `git push`, loop back to wait-for-CI                        |
+| **Long wait** (>10 min)                                    | Emit a `TaskUpdate` noting the unusual wait but keep waiting                                                                              |
+| **Very long wait** (>20 min)                               | Escalate to tech lead                                                                                                                     |
 
 The CI feed `pr-<N>.json` still drives the merge gate below — fetch it once
 CI completes:
@@ -86,6 +86,7 @@ git show origin/main:.claude/ci-status/pr-<N>.json
 
 If `test262_skipped: true` in the JSON, this was a test-only / docs-only PR
 (no `src/**` changes). Skip Steps 3–4 entirely:
+
 - `conclusion == "success"` → **MERGE** (go to Step 5)
 - `conclusion != "success"` → **ESCALATE — basic CI failed on a non-src PR.**
 
@@ -180,14 +181,25 @@ If `head_sha` in the JSON ≠ `git rev-parse HEAD` output:
 
 Stop.
 
+> **#1943 — CI now ENFORCES criteria 2 and 3 as a hard gate.** The
+> regression-gate job (`scripts/diff-test262.ts`) fails the required check
+> when the 10% ratio or 50-per-bucket limit is exceeded, not just when
+> `net_per_test < 0`. The thresholds are exported constants
+> (`REGRESSION_RATIO_LIMIT` / `REGRESSION_BUCKET_LIMIT` /
+> `REGRESSION_BUCKET_PATH_DEPTH` in `scripts/diff-test262.ts`) — this table
+> is the documentation twin of those constants; they are byte-identical by
+> construction. So a branch-protected PR can no longer merge on `net ≥ 0`
+> alone; this skill's job below reduces to interpreting/explaining ESCALATE
+> cases the gate surfaces.
+
 ## Step 3 — criteria (in order, stop at first failure)
 
-| # | Criterion | Failure output |
-|---|-----------|----------------|
-| 1 | `net_per_test > 0` | **ESCALATE — net_per_test is not positive (value: N). PR caused more regressions than improvements.** |
-| 2 | `R == 0 OR R / improvements < 0.10`, where `R = regressions_wasm_change ?? regressions_real ?? regressions` | **ESCALATE — regression ratio is N% (R/improvements), exceeds 10% threshold.** |
-| 3 | No bucket > 50 regressions (see Step 4) | **ESCALATE — bucket "\<path\>" has N regressions, exceeds 50-test limit.** |
-| 4 | All above pass | **MERGE** |
+| #   | Criterion                                                                                                   | Failure output                                                                                        |
+| --- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 1   | `net_per_test > 0`                                                                                          | **ESCALATE — net_per_test is not positive (value: N). PR caused more regressions than improvements.** |
+| 2   | `R == 0 OR R / improvements < 0.10`, where `R = regressions_wasm_change ?? regressions_real ?? regressions` | **ESCALATE — regression ratio is N% (R/improvements), exceeds 10% threshold.**                        |
+| 3   | No bucket > 50 regressions (see Step 4)                                                                     | **ESCALATE — bucket "\<path\>" has N regressions, exceeds 50-test limit.**                            |
+| 4   | All above pass                                                                                              | **MERGE**                                                                                             |
 
 `R` (criterion 2) prefers `regressions_wasm_change` if the feed has it
 (post-#1222 CI). This filters out byte-identical-binary pass→fail flips,
@@ -262,7 +274,7 @@ gh api graphql -f query='{ repository(owner:"loopdive",name:"js2"){ mergeQueue(b
 ```
 
 > **Why GraphQL `enqueuePullRequest`, NOT `gh pr merge <N> --auto`.** `--auto` only
-> *arms* auto-merge on a check-state **transition** — it fires when a PENDING
+> _arms_ auto-merge on a check-state **transition** — it fires when a PENDING
 > required check flips green. By the time `/dev-self-merge` runs (Steps 1–4 only
 > proceed on a **complete, green** CI run) the PR is already `CLEAN`, so there is no
 > transition left to fire on and `--auto` **silently no-ops — the PR is never
@@ -273,6 +285,7 @@ gh api graphql -f query='{ repository(owner:"loopdive",name:"js2"){ mergeQueue(b
 > direct bypass is tech-lead-only.)
 
 Once enqueued, GitHub will:
+
 1. Place the PR on a temp branch (`gh-readonly-queue/main/pr-<N>-...`)
 2. Re-run the required checks (`cheap gate`, `merge shard reports`, `quality`) against that merged state via the `merge_group` event
 3. Fast-forward main if checks pass — usually within minutes of CI completing
@@ -288,6 +301,7 @@ open the PR at `in-review` and plan a later flip — that is exactly what orphan
 issues at `in-review` (see #1602/#1603/#1606).
 
 **Once queued, your job is done.** Do not wait for the actual merge. Proceed immediately:
+
 1. (Status already `done` in the merged PR — no separate flip needed.)
 2. `TaskUpdate taskId=<your-task> status=completed`
 3. Remove your worktree: `git worktree remove /workspace/.claude/worktrees/<branch>`
@@ -300,12 +314,13 @@ issues at `in-review` (see #1602/#1603/#1606).
    it here too keeps the checkout fresh between monitor passes.)
 5. `TaskList` → claim next unowned task (or message tech lead if empty)
 
-> If the queue *rejects* the PR (rare — see below), the `status: done` you set
+> If the queue _rejects_ the PR (rare — see below), the `status: done` you set
 > has not yet landed on main, so nothing is orphaned; re-evaluate and re-queue.
 
 ### If the queue rejects your PR
 
 GitHub will comment on the PR if the final queue checks fail (rare — would mean something flipped between your CI run and the queue's re-run, likely main moved). In that case:
+
 - The auto-refresh workflow may have already pushed a merge of main into your branch — fetch and review
 - Re-evaluate /dev-self-merge against the new CI run
 - If still good, re-queue with the GraphQL `enqueuePullRequest` mutation above (NOT `gh pr merge --auto` — see why in Step 5)
@@ -313,6 +328,7 @@ GitHub will comment on the PR if the final queue checks fail (rare — would mea
 ### Admin direct-merge — only when
 
 Use `gh pr merge <N> --merge --admin` (bypassing the queue) only when:
+
 - The change is workflow-only / CI-only and the queue ruleset checks don't apply
 - Tech lead explicitly authorizes a hotfix bypass
 - The queue itself is broken and needs unblocking
@@ -322,6 +338,7 @@ Set `GATE_BYPASS=1` if the local pre-commit hook blocks because `pr-<N>.json` is
 ## What ESCALATE means
 
 Post to tech lead via SendMessage with:
+
 - Which criterion failed
 - The exact values from the CI JSON
 - The PR number

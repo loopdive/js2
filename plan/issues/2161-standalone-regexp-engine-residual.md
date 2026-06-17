@@ -2,7 +2,7 @@
 id: 2161
 title: "Standalone RegExp engine conformance residual (~579 tests)"
 status: ready
-sprint: 62
+sprint: 63
 created: 2026-06-15
 updated: 2026-06-15
 priority: high
@@ -138,3 +138,79 @@ Tracked as a follow-up.
 **#2161 stays open** for the dominant ~425 `(none)` Symbol.match-protocol harness
 bucket (needs the CI standalone-shard compile_error breakdown to scope), which
 is independent of this matchAll wiring.
+
+## Data-backed residual triage (2026-06-16, sdev5)
+
+Pulled the standalone-shard baseline (`loopdive/js2wasm-baselines`
+`test262-standalone-current.jsonl`, 48,117 entries, sha 2026-06-16) and bucketed
+every RegExp-bucket failure. **1,120 RegExp failures: 843 compile_error + 277
+fail.** The 651 RegExp compile_errors by `error_signature`:
+
+| count | bucket | nature |
+|---:|---|---|
+| 126 | `RegExp.prototype.<prop>` built-in value read (#1907/#1888 S6-b) | **reflection** — `RegExp.prototype.test`/`.flags`/getter *descriptor* reads. Verified: **instance** `re.flags`/`re.source`/`re.global`/`re.ignoreCase`/`re.multiline` ALREADY compile + run in standalone — only the `RegExp.prototype`-as-receiver reflection form refuses (`property-access.ts:1975`, `ensureStandaloneBuiltinStaticMethodClosure` has no RegExp.prototype pairs). |
+| ~128 | `@@match`/`@@replace`/`@@split`/`@@matchAll` symbol-protocol calls (literal-substring backend refuses; `string-ops.ts`) | **native built-in prototype-method closures** — `re[Symbol.match](s)` etc. The String.prototype.matchAll *call* form is DONE (#1504); this is the explicit `re[Symbol.X]()` protocol form. |
+| ~64 | dynamic constructor patterns/flags (RegExp Phase 2a) | regex-engine feature work |
+| 33 | `\q{…}` string disjunction (Phase 2a) | unsupported regex feature (v-flag) |
+| 30 | `__get_builtin` dynamic-shape (Phase B) | not RegExp-specific; dynamic-object reflection |
+| 33 | `\\`-class / literal-substring backend gaps | regex-engine feature work |
+| 10 | `Cannot convert object to primitive value` (runtime) | a `_toPrimitiveSync`/key-coercion gap on a RegExp receiver |
+
+**Conclusion (honest scope call):** there is **no clean bounded point-fix** left
+in #2161. The matchAll concrete leak (the one named in the original triage) is
+already shipped via #1504. Each remaining bucket is a sub-project:
+
+1. **RegExp.prototype reflection (126)** — add native built-in *method/getter
+   closures* for the RegExp.prototype pairs to
+   `ensureStandaloneBuiltinStaticMethodClosure`, backed by the native engine's
+   flag fields (`RE_FIELD_*`) + the existing exec/test helpers. ~14 pairs
+   (test/exec/compile/toString + 10 flag getters). Self-contained but meaty
+   (each getter needs a closure fctx + brand check + descriptor reflection for
+   the `Object.getOwnPropertyDescriptor(RegExp.prototype, "flags").get` form).
+2. **Symbol-protocol calls (~128)** — `re[Symbol.match/replace/split/matchAll]`
+   route the global forms to the existing native `tryCompileStandaloneStringMatch*`
+   path (reuse #1504's `__regex_match_all_arrays`); the non-global/symbol form
+   needs RegExpExec-protocol lowering.
+3. **Regex-engine features (~97)**: dynamic ctor patterns/flags, `\q{}`
+   v-flag string disjunction — backend feature work, separate from the object
+   model.
+
+**Recommend:** split #2161 into (a) `fix: standalone RegExp.prototype reflection
+closures` (~126 tests, self-contained, architect-spec'd), (b) `fix: standalone
+RegExp @@symbol protocol calls` (~128, reuses #1504), (c) `feat: standalone
+RegExp engine v-flag / dynamic-ctor features` (~97, regex backend). Each is a
+dispatchable issue with a concrete test gate; none is a tail-end slice. Sub (a)
++ (b) together recover ~250 standalone tests.
+
+### Refinement on sub-bucket (a) — REVISED scope (2026-06-16, sdev5, #2161a)
+
+On implementation entry I pinpointed the exact refusal: it is **reading
+`RegExp.prototype` itself** (the prototype OBJECT), not the individual
+method/getter. `RegExp.prototype.test`, `RegExp.prototype.flags`,
+`RegExp.prototype.flags.length`, `Object.getOwnPropertyDescriptor(RegExp.
+prototype, "flags").get` — ALL fail at the inner `RegExp.prototype` read
+(`property-access.ts:1969-1976`: `RegExp` is a `BUILTIN_CTOR_NAME` identifier,
+`propName === "prototype"` has no native handler → `reportUnsupported…`). There
+is **no isolated slice** (not even `.length`/`.name`) that avoids it: every form
+chains off `RegExp.prototype`.
+
+Sub-categories of the 126 (by test form): 52 legacy `.call` (`RegExp.prototype.
+test.call(re, s)`), 57 Symbol.* protocol members, 31 this-val brand-check, 26
+`.length`/`.name`, 7 prop-desc reflection.
+
+**This means (a) is NOT self-contained** — it requires `RegExp.prototype` to be a
+**standalone-queryable object** whose members resolve to native method/getter
+closures + descriptors. That is the **same architecture as #2158's standalone
+builtin-prototype readers** (representing a builtin's `.prototype` host-free,
+replacing the `__register_prototype` host-Proxy that `nativeStrings` skips). The
+method closures additionally need the native RegExp engine generalized to a
+**runtime (externref) regex receiver** (today `emitRegexExecArrayCall` takes a
+statically-typed `$NativeRegExp` from a known expression).
+
+**Recommendation (revised):** (a) is NOT a bounded point-fix; fold it into
+#2158's standalone-prototype-reader phase (or architect-spec it as "standalone
+builtin-prototype object + native-method-closure dispatch", which #2159
+TypedArray and other builtins will also need). The cleanly-isolated wins inside
+(a) are gated on the same `RegExp.prototype`-object representation, so there is
+no tail-end slice to peel off. sdev5 flagged this at the implementation boundary
+rather than half-building the prototype-object representation at session tail.

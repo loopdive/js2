@@ -23,6 +23,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { irFallbacks } from "./helpers/ir-fallbacks.js";
 import { buildImports } from "../src/runtime.js";
 import { planIrCompilation } from "../src/ir/select.js";
 import ts from "typescript";
@@ -268,13 +269,7 @@ describe("#1183 — IR compile produces no IR-fallback errors", () => {
     it(`compiles "${tc.name}" cleanly under experimentalIR`, async () => {
       const r = await compile(tc.source, { experimentalIR: true, nativeStrings: tc.nativeStrings });
       expect(r.success).toBe(true);
-      const irErrors = r.errors.filter(
-        (e) =>
-          e.message.startsWith("IR path failed") ||
-          e.message.startsWith("ir/from-ast") ||
-          e.message.startsWith("ir/lower"),
-      );
-      expect(irErrors).toEqual([]);
+      expect(irFallbacks(r)).toEqual([]);
     });
   }
 });

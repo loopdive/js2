@@ -42,6 +42,7 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
+import { emitRyuToBuf } from "./number-ryu.js";
 import { addFuncType } from "./registry/types.js";
 
 const BUF_CAP = 256;
@@ -407,365 +408,13 @@ export function emitNativeNumberFormat(ctx: CodegenContext, which: Set<string>):
 }
 
 /**
- * #1836 — emit the §6.1.6.1.20 exponential-notation form `d[.ddd…]e±N` for a
- * positive finite `abs` (the caller has already written any leading '-' decision
- * to L_NEG and guarded `abs > 0`). Pure Wasm, no log10 (Wasm has none): the
- * mantissa is normalised into [1,10) by iterative ×/÷10 while tracking the
- * decimal exponent, then up to `SIG_DIGITS` significant digits are emitted
- * (trailing zeros trimmed, the '.' dropped if none remain), followed by 'e', the
- * exponent sign, and the exponent's decimal digits.
- *
- * The exponent magnitude is at most 3 decimal digits (|exp| <= 308 for a finite
- * f64), so its digits are emitted MSB-first via a hundreds/tens/ones decomposition
- * with leading-zero suppression — no reverse pass, so the buffer write cursor
- * `L_POS` is never used as a shrinking high pointer.
- *
- * This is the bounded slice: it fixes the two concrete failures ((1e21) lacked
- * 'e', (1e-7) collapsed to "0") and the wrong-output class for the exponential
- * regime. Bit-perfect shortest-round-trip (Ryū/Grisu) remains #1335 Phase 2.
- *
- * Locals consumed: L_ABS (f64, in), L_NEG (i32, in), L_BUF (i16[]) / L_POS (i32)
- * the write cursor, L_M (f64) normalised mantissa, L_EXP (i32) decimal exponent,
- * L_SD (i32) significant-digit counter, L_DIGIT (f64) digit scratch, L_TMP (i32)
- * exponent-magnitude scratch.
- */
-function emitExponential(
-  strDataTypeIdx: number,
-  L: {
-    L_ABS: number;
-    L_NEG: number;
-    L_BUF: number;
-    L_POS: number;
-    L_EXP: number;
-    L_M: number;
-    L_SD: number;
-    L_DIGIT: number;
-    L_TMP: number; // exponent-magnitude scratch (i32)
-    finalizeIdx: number;
-  },
-): Instr[] {
-  // 15 significant digits is the safe precision floor for an IEEE-754 double
-  // (~15.95 decimal digits). Emitting more exposes the binary representation's
-  // noise (e.g. 9.5e-8 → 9.500000000000001e-8); 15 + round-half-up keeps the
-  // common exponential-regime values bit-exact with V8. Shortest-round-trip
-  // (Grisu/Ryū, which would also nail 16-17-digit extremes) is #1335 Phase 2.
-  const SIG_DIGITS = 15; // significant digits to emit (incl. the leading one)
-  // Half of the unit in the last emitted place, applied to the normalised
-  // mantissa in [1,10) before truncation so the final digit is rounded, not
-  // floored: 0.5 × 10^-(SIG_DIGITS-1).
-  const ROUND_BIAS = 0.5 * Math.pow(10, -(SIG_DIGITS - 1));
-
-  // Emit one mantissa digit: d = floor(L_M); write '0'+d; L_M = (L_M - d) * 10.
-  const emitMantissaDigit = (): Instr[] => [
-    { op: "local.get", index: L.L_M },
-    { op: "f64.floor" },
-    { op: "local.set", index: L.L_DIGIT },
-    { op: "local.get", index: L.L_BUF },
-    { op: "local.get", index: L.L_POS },
-    { op: "i32.const", value: C_ZERO },
-    { op: "local.get", index: L.L_DIGIT },
-    { op: "i32.trunc_f64_s" },
-    { op: "i32.add" },
-    { op: "array.set", typeIdx: strDataTypeIdx },
-    { op: "local.get", index: L.L_POS },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.set", index: L.L_POS },
-    { op: "local.get", index: L.L_M },
-    { op: "local.get", index: L.L_DIGIT },
-    { op: "f64.sub" },
-    { op: "f64.const", value: 10 },
-    { op: "f64.mul" },
-    { op: "local.set", index: L.L_M },
-  ];
-
-  // The exponent's decimal digits (hundreds/tens/ones) are emitted inline at the
-  // tail of the returned body, with L_SD tracking "has a digit been printed yet"
-  // for leading-zero suppression — see the comment block there.
-
-  return [
-    // m = abs; exp = 0.
-    { op: "local.get", index: L.L_ABS },
-    { op: "local.set", index: L.L_M },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: L.L_EXP },
-
-    // while m >= 10: m /= 10; exp++.
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L.L_M },
-            { op: "f64.const", value: 10 },
-            { op: "f64.lt" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: L.L_M },
-            { op: "f64.const", value: 10 },
-            { op: "f64.div" },
-            { op: "local.set", index: L.L_M },
-            { op: "local.get", index: L.L_EXP },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: L.L_EXP },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-    // while m < 1: m *= 10; exp--.
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L.L_M },
-            { op: "f64.const", value: 1 },
-            { op: "f64.ge" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: L.L_M },
-            { op: "f64.const", value: 10 },
-            { op: "f64.mul" },
-            { op: "local.set", index: L.L_M },
-            { op: "local.get", index: L.L_EXP },
-            { op: "i32.const", value: 1 },
-            { op: "i32.sub" },
-            { op: "local.set", index: L.L_EXP },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-
-    // Round-half-up: bias the normalised mantissa by half a unit in the last
-    // emitted significant place, then re-normalise if the bias carried it to
-    // >= 10 (e.g. 9.999…95 → 10.0 → 1.0, exp++). Subsequent digit extraction is
-    // plain truncation, which now yields the rounded representation.
-    { op: "local.get", index: L.L_M },
-    { op: "f64.const", value: ROUND_BIAS },
-    { op: "f64.add" },
-    { op: "local.set", index: L.L_M },
-    { op: "local.get", index: L.L_M },
-    { op: "f64.const", value: 10 },
-    { op: "f64.ge" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: L.L_M },
-        { op: "f64.const", value: 10 },
-        { op: "f64.div" },
-        { op: "local.set", index: L.L_M },
-        { op: "local.get", index: L.L_EXP },
-        { op: "i32.const", value: 1 },
-        { op: "i32.add" },
-        { op: "local.set", index: L.L_EXP },
-      ],
-    },
-
-    // Leading '-' if negative.
-    { op: "local.get", index: L.L_NEG },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: putConst(strDataTypeIdx, L.L_BUF, L.L_POS, C_MINUS),
-    },
-
-    // Leading significant digit (the one before the '.').
-    ...emitMantissaDigit(),
-
-    // '.' then up to SIG_DIGITS-1 more digits.
-    ...putConst(strDataTypeIdx, L.L_BUF, L.L_POS, C_DOT),
-    { op: "i32.const", value: 1 },
-    { op: "local.set", index: L.L_SD },
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L.L_SD },
-            { op: "i32.const", value: SIG_DIGITS },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            ...emitMantissaDigit(),
-            { op: "local.get", index: L.L_SD },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: L.L_SD },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-    // Trim trailing '0' digits.
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: L.L_POS },
-            { op: "i32.eqz" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: L.L_BUF },
-            { op: "local.get", index: L.L_POS },
-            { op: "i32.const", value: 1 },
-            { op: "i32.sub" },
-            { op: "array.get_u", typeIdx: strDataTypeIdx },
-            { op: "i32.const", value: C_ZERO },
-            { op: "i32.ne" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: L.L_POS },
-            { op: "i32.const", value: 1 },
-            { op: "i32.sub" },
-            { op: "local.set", index: L.L_POS },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-    // Drop a trailing '.' if all fractional digits were trimmed.
-    { op: "local.get", index: L.L_BUF },
-    { op: "local.get", index: L.L_POS },
-    { op: "i32.const", value: 1 },
-    { op: "i32.sub" },
-    { op: "array.get_u", typeIdx: strDataTypeIdx },
-    { op: "i32.const", value: C_DOT },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: L.L_POS },
-        { op: "i32.const", value: 1 },
-        { op: "i32.sub" },
-        { op: "local.set", index: L.L_POS },
-      ],
-    },
-
-    // 'e'.
-    ...putConst(strDataTypeIdx, L.L_BUF, L.L_POS, C_LC_E),
-    // Exponent sign: '+' if exp >= 0 else '-'; then expmag = |exp| in L_TMP.
-    { op: "local.get", index: L.L_EXP },
-    { op: "i32.const", value: 0 },
-    { op: "i32.lt_s" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...putConst(strDataTypeIdx, L.L_BUF, L.L_POS, C_MINUS),
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: L.L_EXP },
-        { op: "i32.sub" },
-        { op: "local.set", index: L.L_TMP },
-      ],
-      else: [
-        ...putConst(strDataTypeIdx, L.L_BUF, L.L_POS, C_PLUS),
-        { op: "local.get", index: L.L_EXP },
-        { op: "local.set", index: L.L_TMP },
-      ],
-    },
-    // Exponent digits, MSB-first. expmag (L_TMP) is 0..~308, i.e. at most three
-    // decimal digits, so render hundreds/tens/ones directly with leading-zero
-    // suppression (L_SD = "have we printed a digit yet"). No reverse pass, so the
-    // write cursor L_POS is never used as a shrinking high pointer.
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: L.L_SD }, // L_SD: 0 until the first non-suppressed digit
-    // hundreds place: d = expmag / 100; if d != 0 print it and mark started.
-    { op: "local.get", index: L.L_TMP },
-    { op: "i32.const", value: 100 },
-    { op: "i32.div_u" },
-    { op: "i32.const", value: 0 },
-    { op: "i32.ne" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: L.L_BUF },
-        { op: "local.get", index: L.L_POS },
-        { op: "i32.const", value: C_ZERO },
-        { op: "local.get", index: L.L_TMP },
-        { op: "i32.const", value: 100 },
-        { op: "i32.div_u" },
-        { op: "i32.add" },
-        { op: "array.set", typeIdx: strDataTypeIdx },
-        { op: "local.get", index: L.L_POS },
-        { op: "i32.const", value: 1 },
-        { op: "i32.add" },
-        { op: "local.set", index: L.L_POS },
-        { op: "i32.const", value: 1 },
-        { op: "local.set", index: L.L_SD },
-      ],
-    },
-    // tens place: print if started OR the tens digit is non-zero.
-    { op: "local.get", index: L.L_SD },
-    { op: "local.get", index: L.L_TMP },
-    { op: "i32.const", value: 10 },
-    { op: "i32.div_u" },
-    { op: "i32.const", value: 10 },
-    { op: "i32.rem_u" },
-    { op: "i32.const", value: 0 },
-    { op: "i32.ne" },
-    { op: "i32.or" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: L.L_BUF },
-        { op: "local.get", index: L.L_POS },
-        { op: "i32.const", value: C_ZERO },
-        { op: "local.get", index: L.L_TMP },
-        { op: "i32.const", value: 10 },
-        { op: "i32.div_u" },
-        { op: "i32.const", value: 10 },
-        { op: "i32.rem_u" },
-        { op: "i32.add" },
-        { op: "array.set", typeIdx: strDataTypeIdx },
-        { op: "local.get", index: L.L_POS },
-        { op: "i32.const", value: 1 },
-        { op: "i32.add" },
-        { op: "local.set", index: L.L_POS },
-      ],
-    },
-    // ones place: always printed (exponent has at least one digit).
-    { op: "local.get", index: L.L_BUF },
-    { op: "local.get", index: L.L_POS },
-    { op: "i32.const", value: C_ZERO },
-    { op: "local.get", index: L.L_TMP },
-    { op: "i32.const", value: 10 },
-    { op: "i32.rem_u" },
-    { op: "i32.add" },
-    { op: "array.set", typeIdx: strDataTypeIdx },
-    { op: "local.get", index: L.L_POS },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.set", index: L.L_POS },
-
-    { op: "local.get", index: L.L_BUF },
-    { op: "local.get", index: L.L_POS },
-    { op: "call", funcIdx: L.finalizeIdx },
-    { op: "return" },
-  ] as Instr[];
-}
-
-/**
  * `number_toString(value: f64) -> externref`
  *
  * Host-compatible default radix-10 Number::toString for standalone/WASI. Safe
- * integers delegate to the existing radix formatter; finite fractional values
- * use a compact fixed-point fallback (six fractional digits, trimmed) so
- * template interpolation can produce a native string without any JS host bridge.
+ * integers delegate to the radix-10 formatter; every other finite value goes
+ * through the shortest-roundtrip Ryū formatter `__num_ryu_to_buf` (#1537),
+ * which produces the exact §6.1.6.1.13 string (fixed or `d.dddde±N`) without any
+ * JS host bridge.
  */
 function emitToString(
   ctx: CodegenContext,
@@ -779,26 +428,18 @@ function emitToString(
   if (radixIdx === undefined) return;
   const finalizeIdx = ctx.funcMap.get("__num_fmt_finalize");
   if (finalizeIdx === undefined) return;
+  // #1537: shortest-roundtrip Ryū formatter for the fractional / unsafe branch.
+  const ryuToBufIdx = emitRyuToBuf(ctx, strDataTypeIdx);
 
-  // params: 0 value:f64
-  // locals: 1 buf 2 pos 3 tmp 4 neg 5 abs 6 scale 7 scaled 8 intpart
-  //         9 fracpart 10 pow 11 digit 12 k
+  // params: 0 value:f64 ; locals: 1 buf 2 pos 3 tmp 4 neg 5 abs.
+  // The Ryū path keeps its own scratch inside __num_ryu_to_buf, so this function
+  // only needs the prologue locals.
   const L_VALUE = 0;
   const L_BUF = 1;
   const L_POS = 2;
   const L_TMP = 3;
   const L_NEG = 4;
   const L_ABS = 5;
-  const L_SCALE = 6;
-  const L_SCALED = 7;
-  const L_INT = 8;
-  const L_FRAC = 9;
-  const L_POW = 10;
-  const L_DIGIT = 11;
-  const L_K = 12;
-  const L_EXP = 13; // decimal exponent for the exponential-notation regime
-  const L_M = 14; // mantissa normalised to [1,10)
-  const L_SD = 15; // significant-digit counter
 
   const finalizeReturn = (): Instr[] => [
     { op: "local.get", index: L_BUF },
@@ -810,39 +451,15 @@ function emitToString(
   const body: Instr[] = [
     ...emitNonFinitePrologue(ctx, finalizeIdx, strDataTypeIdx, L_VALUE, L_BUF, L_POS, L_TMP, L_NEG, L_ABS),
 
-    // §6.1.6.1.20 exponential-notation regime: ToString uses `d.dddde±N` when the
-    // decimal-point position falls outside (-6, 21]. We approximate that by the
-    // magnitude thresholds |x| >= 1e21 or 0 < |x| < 1e-6, which is exactly where
-    // V8 switches to exponential. (abs == 0 is already handled by the prologue's
-    // radix path below.) This eliminates (1e21).toString() rendering a 22-digit
-    // integer and (1e-7).toString() collapsing to "0".
-    { op: "local.get", index: L_ABS },
-    { op: "f64.const", value: 1e21 },
-    { op: "f64.ge" },
-    { op: "local.get", index: L_ABS },
-    { op: "f64.const", value: 0 },
-    { op: "f64.gt" },
-    { op: "local.get", index: L_ABS },
-    { op: "f64.const", value: 1e-6 },
-    { op: "f64.lt" },
-    { op: "i32.and" },
-    { op: "i32.or" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: emitExponential(strDataTypeIdx, {
-        L_ABS,
-        L_NEG,
-        L_BUF,
-        L_POS,
-        L_EXP,
-        L_M,
-        L_SD,
-        L_DIGIT,
-        L_TMP,
-        finalizeIdx,
-      }),
-    },
+    // NOTE (#1537): the §6.1.6.1.20 exponential-notation regime is NOT special-
+    // cased here. The shortest-roundtrip Ryū formatter below (`__num_ryu_to_buf`)
+    // implements the full §6.1.6.1.13 framing and already chooses fixed vs
+    // `d.dddde±N` by the decimal-point position `n` (exponential when n > 21 or
+    // n <= -6), producing V8-exact output for `1e21`→"1e+21", `1e-7`→"1e-7",
+    // `5e-324`, and Number.MAX_VALUE alike. The earlier #1836 magnitude-threshold
+    // gate routed those through a fixed 15-significant-digit `emitExponential`,
+    // which truncated the shortest representation (e.g. MAX_VALUE →
+    // "1.79769313486232e+308"); Ryū supersedes it.
 
     // Safe integers can reuse the radix-10 formatter exactly.
     { op: "local.get", index: L_ABS },
@@ -864,157 +481,17 @@ function emitToString(
       ],
     },
 
-    // Fractional fallback: round to 6 fractional digits and trim trailing zeros.
-    { op: "f64.const", value: 1000000 },
-    { op: "local.set", index: L_SCALE },
+    // Fractional / unsafe-magnitude branch: shortest-roundtrip Ryū (#1537).
+    // `__num_ryu_to_buf(abs, neg, buf, pos)` writes the §6.1.6.1.13-formatted
+    // shortest decimal (including the leading '-' when neg) and returns the new
+    // write position. Passing `abs` keeps the sign bit clear so the Ryū core
+    // sees a positive value; the sign is reapplied by the formatter from `neg`.
     { op: "local.get", index: L_ABS },
-    { op: "local.get", index: L_SCALE },
-    { op: "f64.mul" },
-    { op: "f64.const", value: 0.5 },
-    { op: "f64.add" },
-    { op: "f64.floor" },
-    { op: "local.set", index: L_SCALED },
-    { op: "local.get", index: L_SCALED },
-    { op: "local.get", index: L_SCALE },
-    { op: "f64.div" },
-    { op: "f64.floor" },
-    { op: "local.set", index: L_INT },
-    { op: "local.get", index: L_SCALED },
-    { op: "local.get", index: L_INT },
-    { op: "local.get", index: L_SCALE },
-    { op: "f64.mul" },
-    { op: "f64.sub" },
-    { op: "local.set", index: L_FRAC },
-
     { op: "local.get", index: L_NEG },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: putConst(strDataTypeIdx, L_BUF, L_POS, C_MINUS),
-    },
-    ...emitIntegerDigits(strDataTypeIdx, L_INT, L_BUF, L_POS, L_TMP, L_POW, L_DIGIT),
-
-    { op: "local.get", index: L_FRAC },
-    { op: "f64.const", value: 0 },
-    { op: "f64.ne" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...putConst(strDataTypeIdx, L_BUF, L_POS, C_DOT),
-        { op: "local.get", index: L_SCALE },
-        { op: "f64.const", value: 10 },
-        { op: "f64.div" },
-        { op: "f64.floor" },
-        { op: "local.set", index: L_POW },
-        { op: "i32.const", value: 0 },
-        { op: "local.set", index: L_K },
-        {
-          op: "block",
-          blockType: { kind: "empty" },
-          body: [
-            {
-              op: "loop",
-              blockType: { kind: "empty" },
-              body: [
-                { op: "local.get", index: L_K },
-                { op: "i32.const", value: 6 },
-                { op: "i32.ge_s" },
-                { op: "br_if", depth: 1 },
-                { op: "local.get", index: L_FRAC },
-                { op: "local.get", index: L_POW },
-                { op: "f64.div" },
-                { op: "f64.floor" },
-                { op: "local.set", index: L_DIGIT },
-                { op: "local.get", index: L_BUF },
-                { op: "local.get", index: L_POS },
-                { op: "i32.const", value: C_ZERO },
-                { op: "local.get", index: L_DIGIT },
-                { op: "i32.trunc_f64_s" },
-                { op: "i32.add" },
-                { op: "array.set", typeIdx: strDataTypeIdx },
-                { op: "local.get", index: L_POS },
-                { op: "i32.const", value: 1 },
-                { op: "i32.add" },
-                { op: "local.set", index: L_POS },
-                { op: "local.get", index: L_FRAC },
-                { op: "local.get", index: L_DIGIT },
-                { op: "local.get", index: L_POW },
-                { op: "f64.mul" },
-                { op: "f64.sub" },
-                { op: "local.set", index: L_FRAC },
-                { op: "local.get", index: L_POW },
-                { op: "f64.const", value: 10 },
-                { op: "f64.div" },
-                { op: "f64.floor" },
-                { op: "local.set", index: L_POW },
-                { op: "local.get", index: L_K },
-                { op: "i32.const", value: 1 },
-                { op: "i32.add" },
-                { op: "local.set", index: L_K },
-                { op: "br", depth: 0 },
-              ],
-            },
-          ],
-        },
-        // while pos>0 && buf[pos-1]=='0': pos--
-        {
-          op: "block",
-          blockType: { kind: "empty" },
-          body: [
-            {
-              op: "loop",
-              blockType: { kind: "empty" },
-              body: [
-                { op: "local.get", index: L_POS },
-                { op: "i32.eqz" },
-                { op: "br_if", depth: 1 },
-                { op: "local.get", index: L_BUF },
-                { op: "local.get", index: L_POS },
-                { op: "i32.const", value: 1 },
-                { op: "i32.sub" },
-                { op: "array.get_u", typeIdx: strDataTypeIdx },
-                { op: "i32.const", value: C_ZERO },
-                { op: "i32.ne" },
-                { op: "br_if", depth: 1 },
-                { op: "local.get", index: L_POS },
-                { op: "i32.const", value: 1 },
-                { op: "i32.sub" },
-                { op: "local.set", index: L_POS },
-                { op: "br", depth: 0 },
-              ],
-            },
-          ],
-        },
-        // If trimming removed all fractional digits, remove the decimal point.
-        { op: "local.get", index: L_POS },
-        { op: "i32.const", value: 0 },
-        { op: "i32.gt_s" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: L_BUF },
-            { op: "local.get", index: L_POS },
-            { op: "i32.const", value: 1 },
-            { op: "i32.sub" },
-            { op: "array.get_u", typeIdx: strDataTypeIdx },
-            { op: "i32.const", value: C_DOT },
-            { op: "i32.eq" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: L_POS },
-                { op: "i32.const", value: 1 },
-                { op: "i32.sub" },
-                { op: "local.set", index: L_POS },
-              ],
-            },
-          ],
-        },
-      ],
-    },
+    { op: "local.get", index: L_BUF },
+    { op: "local.get", index: L_POS },
+    { op: "call", funcIdx: ryuToBufIdx },
+    { op: "local.set", index: L_POS },
     ...finalizeReturn(),
   ];
 
@@ -1030,17 +507,6 @@ function emitToString(
       { name: "tmp", type: i32 },
       { name: "neg", type: i32 },
       { name: "abs", type: f64 },
-      { name: "scale", type: f64 },
-      { name: "scaled", type: f64 },
-      { name: "intpart", type: f64 },
-      { name: "fracpart", type: f64 },
-      { name: "pow", type: f64 },
-      { name: "digit", type: f64 },
-      { name: "k", type: i32 },
-      // #1836 exponential-notation regime (emitExponential):
-      { name: "exp", type: i32 }, // 13: decimal exponent
-      { name: "m", type: f64 }, // 14: mantissa normalised to [1,10)
-      { name: "sd", type: i32 }, // 15: significant-digit counter / exp-digit started flag
     ],
     body,
     exported: false,

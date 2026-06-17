@@ -1000,8 +1000,14 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
     case "i64.div_s":
       enc.byte(OP.i64_div_s);
       break;
+    case "i64.div_u":
+      enc.byte(OP.i64_div_u);
+      break;
     case "i64.rem_s":
       enc.byte(OP.i64_rem_s);
+      break;
+    case "i64.rem_u":
+      enc.byte(OP.i64_rem_u);
       break;
     case "i64.eq":
       enc.byte(OP.i64_eq);
@@ -1012,14 +1018,26 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
     case "i64.lt_s":
       enc.byte(OP.i64_lt_s);
       break;
+    case "i64.lt_u":
+      enc.byte(OP.i64_lt_u);
+      break;
     case "i64.le_s":
       enc.byte(OP.i64_le_s);
+      break;
+    case "i64.le_u":
+      enc.byte(OP.i64_le_u);
       break;
     case "i64.gt_s":
       enc.byte(OP.i64_gt_s);
       break;
+    case "i64.gt_u":
+      enc.byte(OP.i64_gt_u);
+      break;
     case "i64.ge_s":
       enc.byte(OP.i64_ge_s);
+      break;
+    case "i64.ge_u":
+      enc.byte(OP.i64_ge_u);
       break;
     case "i64.eqz":
       enc.byte(OP.i64_eqz);
