@@ -35,7 +35,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression, VOID_RESULT } from "./shared.js";
-import { coerceSetArgToAnyref, ensureMapHelpers } from "./map-runtime.js";
+import { coerceSetArgToAnyref, ensureMapHelpers, tryCompileNativeCollectionForEach } from "./map-runtime.js";
 
 /**
  * Emit the `__set_add(m, v) -> ref $Map` helper (idempotent). `Set.add` stores
@@ -100,6 +100,15 @@ export function tryCompileNativeSetMethodCall(
 ): InnerResult | undefined {
   if (!ctx.nativeStrings) return undefined;
   const methodName = propAccess.name.text;
+
+  // (#2162) Set.prototype.forEach drives the shared collection-forEach over the
+  // $Map backing store with isSet=true (value passed as both value AND key per
+  // 24.2.3.6). Delegates to the same machinery as Map.forEach (which compiles
+  // the receiver itself), so intercept BEFORE compiling the receiver below.
+  if (methodName === "forEach") {
+    return tryCompileNativeCollectionForEach(ctx, fctx, propAccess, callExpr, /* isSet */ true);
+  }
+
   const handled = methodName === "add" || methodName === "has" || methodName === "delete" || methodName === "clear";
   if (!handled) return undefined;
 

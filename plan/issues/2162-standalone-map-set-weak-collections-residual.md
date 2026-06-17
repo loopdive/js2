@@ -4,7 +4,7 @@ title: "Standalone Map/Set/WeakMap/WeakSet conformance residual (~532 tests)"
 status: in-progress
 sprint: 63
 created: 2026-06-15
-updated: 2026-06-16
+updated: 2026-06-17
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -85,13 +85,28 @@ FinalizationRegistry liveness, skip-filtered, could tell). Host/gc unchanged.
 zero `WeakMap_*`/`WeakSet_*`/`Map_*` imports): WeakMap set+get / has / distinct
 keys / overwrite / delete; WeakSet add+has / delete / chained add.
 
+## Slice 3 — native Set.forEach (2026-06-17, dev-1)
+
+`Set.prototype.forEach(cb)` was the one remaining broken collection method:
+the #1510 Set runtime served add/has/delete/clear/size but not iteration, so
+`s.forEach(...)` fell through to the generic path and produced **invalid Wasm**
+in standalone. The shared collection-forEach machinery
+(`tryCompileNativeCollectionForEach`, added for Map.forEach #1527) already
+supports a Set via its `isSet` flag (passes the element as BOTH value and key
+per §24.2.3.6); this slice just wires Set's method dispatch
+(`tryCompileNativeSetMethodCall`, set-runtime.ts) to call it, intercepting
+`forEach` before the add/has/delete/clear gate (and before the receiver is
+compiled, since the shared helper compiles the receiver itself). One import line
++ one dispatch branch; no new runtime helper. Host/gc unchanged (nativeStrings-
+gated). **Verified** `tests/issue-2162-set-foreach.test.ts` (7/7, `--target wasi`,
+zero `Set_*`/`Map_*` imports): value sum, value===key, insertion order,
+tombstone skip, SameValueZero dedupe, empty, string elements.
+
 ### Remaining slices (issue stays in-progress)
 
-- **Map.forEach** (PR #1527) and **Set.forEach** (follow-up) — entries-vector
-  drive over the callback closure.
 - `keys()`/`values()`/`entries()` + `for-of` over Map/Set — needs a JS-iterable
   iterator object; `new Map(iterable)` / `new Set(iterable)` — needs
-  `__map_new_from_arr`.
+  `__map_new_from_arr`. (Next slice.)
 - ES2025 set-algebra: `union`/`intersection`/`difference`/
   `symmetricDifference`/`isSubsetOf`/`isSupersetOf`/`isDisjointFrom`.
 - The `Set === literal` / collection-of-`any` comparison confounds depend on the
