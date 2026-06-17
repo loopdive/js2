@@ -1,8 +1,9 @@
 {
   "id": "2158",
   "assignee": "ttraenkler/dev-3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2158-slice1-array-native-proto",
   "claimed_at": "2026-06-17T04:33:34Z",
-  "updated_at": "2026-06-17T04:33:34Z"
+  "updated_at": "2026-06-17T04:34:00Z",
+  "released_at": "2026-06-17T04:34:00Z"
 }
