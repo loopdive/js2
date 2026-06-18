@@ -1,8 +1,9 @@
 {
   "id": "2358",
   "assignee": "ttraenkler/cs-2164",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2358-finish",
   "claimed_at": "2026-06-18T10:16:25Z",
-  "updated_at": "2026-06-18T10:16:25Z"
+  "updated_at": "2026-06-18T10:27:19Z",
+  "released_at": "2026-06-18T10:27:19Z"
 }
