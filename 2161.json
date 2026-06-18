@@ -1,9 +1,8 @@
 {
   "id": "2161",
-  "assignee": "ttraenkler/d2",
-  "status": "released",
-  "branch": "issue-2161-matchall",
-  "claimed_at": "2026-06-16T01:54:31Z",
-  "updated_at": "2026-06-18T09:34:02Z",
-  "released_at": "2026-06-18T09:34:02Z"
+  "assignee": "ttraenkler/cs-2164",
+  "status": "in-progress",
+  "branch": "issue-2161-regexp-finish",
+  "claimed_at": "2026-06-18T09:35:22Z",
+  "updated_at": "2026-06-18T09:35:22Z"
 }
