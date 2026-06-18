@@ -1,8 +1,9 @@
 {
   "id": "2045",
   "assignee": "ttraenkler/cs-2164",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2045-linear-uint8",
   "claimed_at": "2026-06-18T10:00:01Z",
-  "updated_at": "2026-06-18T10:00:01Z"
+  "updated_at": "2026-06-18T10:15:00Z",
+  "released_at": "2026-06-18T10:15:00Z"
 }
