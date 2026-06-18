@@ -1,8 +1,9 @@
 {
   "id": "2162",
   "assignee": "ttraenkler/dev-1",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2162-set-iteration-foreach",
   "claimed_at": "2026-06-17T04:17:31Z",
-  "updated_at": "2026-06-17T04:17:31Z"
+  "updated_at": "2026-06-18T09:34:13Z",
+  "released_at": "2026-06-18T09:34:13Z"
 }
