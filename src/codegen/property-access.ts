@@ -49,7 +49,13 @@ import {
   getBuiltinBrand,
   getNativeProtoBuiltinGlue,
 } from "./native-proto.js";
-import { ensureArrayNativeProtoGlue, ensureObjectNativeProtoGlue } from "./array-object-proto.js";
+import {
+  ensureArrayNativeProtoGlue,
+  ensureObjectNativeProtoGlue,
+  ensureStringNativeProtoGlue,
+  ensureNumberNativeProtoGlue,
+  ensureBooleanNativeProtoGlue,
+} from "./array-object-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
@@ -468,6 +474,20 @@ function tryEnsureNativeProtoBrand(ctx: CodegenContext, builtinName: string): nu
   }
   if (builtinName === "Object") {
     return ensureObjectNativeProtoGlue(ctx);
+  }
+  // (#1907 / #1888 S6-b — S4) String / Number / Boolean wrapper protos: register
+  // the native-proto glue on demand so `String.prototype.<method>` (and Number/
+  // Boolean) value reads resolve to a `$NativeProto` host-free instead of
+  // refusing. Reflective member closures degrade to a catchable TypeError until
+  // their native bodies land — the value-read object needs only the member set.
+  if (builtinName === "String") {
+    return ensureStringNativeProtoGlue(ctx);
+  }
+  if (builtinName === "Number") {
+    return ensureNumberNativeProtoGlue(ctx);
+  }
+  if (builtinName === "Boolean") {
+    return ensureBooleanNativeProtoGlue(ctx);
   }
   // Other builtins: only resolve if some path already registered glue for them.
   const brand = getBuiltinBrand(ctx, builtinName);

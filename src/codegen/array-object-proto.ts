@@ -88,6 +88,64 @@ const OBJECT_PROTO_METHODS = [
   "valueOf",
 ] as const;
 
+/**
+ * `String.prototype`'s own method names (ES2024 §22.1.3). `@@iterator` is a
+ * well-known-symbol member resolved via the computed-access path, so only the
+ * string members go in the CSV (same convention as `ARRAY_PROTO_METHODS`).
+ * Annex-B (`substr`, `anchor`, `big`, …) is included so a bare
+ * `String.prototype.substr` value read resolves host-free.
+ */
+const STRING_PROTO_METHODS = [
+  "at",
+  "charAt",
+  "charCodeAt",
+  "codePointAt",
+  "concat",
+  "endsWith",
+  "includes",
+  "indexOf",
+  "isWellFormed",
+  "lastIndexOf",
+  "localeCompare",
+  "match",
+  "matchAll",
+  "normalize",
+  "padEnd",
+  "padStart",
+  "repeat",
+  "replace",
+  "replaceAll",
+  "search",
+  "slice",
+  "split",
+  "startsWith",
+  "substr",
+  "substring",
+  "toLocaleLowerCase",
+  "toLocaleUpperCase",
+  "toLowerCase",
+  "toString",
+  "toUpperCase",
+  "toWellFormed",
+  "trim",
+  "trimEnd",
+  "trimStart",
+  "valueOf",
+] as const;
+
+/** `Number.prototype`'s own method names (ES2024 §21.1.3). */
+const NUMBER_PROTO_METHODS = [
+  "toExponential",
+  "toFixed",
+  "toLocaleString",
+  "toPrecision",
+  "toString",
+  "valueOf",
+] as const;
+
+/** `Boolean.prototype`'s own method names (ES2024 §20.3.3). */
+const BOOLEAN_PROTO_METHODS = ["toString", "valueOf"] as const;
+
 /** Spec arity (`fn.length`) of the proto methods that differ from the default 1. */
 const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = {
   concat: 1,
@@ -103,8 +161,49 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = {
   hasOwnProperty: 1,
   isPrototypeOf: 1,
   propertyIsEnumerable: 1,
+  // String.prototype arities that differ from the default 1 (ES2024 §22.1.3).
+  at: 1,
+  charAt: 1,
+  charCodeAt: 1,
+  codePointAt: 1,
+  endsWith: 1,
+  includes: 1,
+  indexOf: 1,
+  lastIndexOf: 1,
+  localeCompare: 1,
+  match: 1,
+  matchAll: 1,
+  normalize: 0,
+  padEnd: 1,
+  padStart: 1,
+  repeat: 1,
+  replace: 2,
+  replaceAll: 2,
+  search: 1,
+  slice: 2,
+  split: 2,
+  startsWith: 1,
+  substr: 2,
+  substring: 2,
+  // Number.prototype (ES2024 §21.1.3).
+  toExponential: 1,
+  toFixed: 1,
+  toPrecision: 1,
+  // Zero-arity String/Number/Boolean/Object proto methods (ES2024) — fold
+  // `<method>.length` to 0 so the meta-read path (`tryCompileStandalone-
+  // BuiltinProtoMemberMeta`) reports the spec arity.
+  charAt: 1,
+  toLowerCase: 0,
+  toUpperCase: 0,
+  toLocaleLowerCase: 0,
+  toLocaleUpperCase: 0,
+  trim: 0,
+  trimEnd: 0,
+  trimStart: 0,
+  isWellFormed: 0,
+  toWellFormed: 0,
   // entries/keys/values/reverse/pop/shift/toString/valueOf/… default to 0 or 1;
-  // the value-read object does not depend on exact arities, only the member set.
+  // the value-read OBJECT does not depend on exact arities, only the member set.
 };
 
 /**
@@ -162,6 +261,44 @@ export function ensureObjectNativeProtoGlue(ctx: CodegenContext): number | undef
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
     registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Object", OBJECT_PROTO_METHODS));
+  }
+  return brand;
+}
+
+/**
+ * Register `String.prototype` glue (idempotent) and return its brand. (#1907 /
+ * #1888 S6-b — S4 wrapper protos.) The String brand is pre-reserved in
+ * `BUILTIN_BRAND_TABLE`; this only fills in the member CSV so a bare
+ * `String.prototype` / `String.prototype.<method>` value read resolves host-free
+ * instead of refusing. Reflective member-CLOSURE bodies still degrade to a
+ * catchable TypeError (`emitProtoMemberBodyRefusal`) until per-member native
+ * bodies land — the value-read object itself needs only the member set.
+ */
+export function ensureStringNativeProtoGlue(ctx: CodegenContext): number | undefined {
+  const brand = getBuiltinBrand(ctx, "String");
+  if (brand === undefined) return undefined;
+  if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "String", STRING_PROTO_METHODS));
+  }
+  return brand;
+}
+
+/** Register `Number.prototype` glue (idempotent) and return its brand. */
+export function ensureNumberNativeProtoGlue(ctx: CodegenContext): number | undefined {
+  const brand = getBuiltinBrand(ctx, "Number");
+  if (brand === undefined) return undefined;
+  if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Number", NUMBER_PROTO_METHODS));
+  }
+  return brand;
+}
+
+/** Register `Boolean.prototype` glue (idempotent) and return its brand. */
+export function ensureBooleanNativeProtoGlue(ctx: CodegenContext): number | undefined {
+  const brand = getBuiltinBrand(ctx, "Boolean");
+  if (brand === undefined) return undefined;
+  if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Boolean", BOOLEAN_PROTO_METHODS));
   }
   return brand;
 }
