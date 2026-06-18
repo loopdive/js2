@@ -1,8 +1,9 @@
 {
   "id": "2106",
   "assignee": "ttraenkler/cs-2158",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2106-value-rep-undefined-observability",
   "claimed_at": "2026-06-18T09:49:57Z",
-  "updated_at": "2026-06-18T09:49:57Z"
+  "updated_at": "2026-06-18T09:59:49Z",
+  "released_at": "2026-06-18T09:59:49Z"
 }
