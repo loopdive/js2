@@ -1,8 +1,9 @@
 {
   "id": "2051",
   "assignee": "ttraenkler/cs-2163",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2051-optional-chain-undefined",
   "claimed_at": "2026-06-18T09:56:49Z",
-  "updated_at": "2026-06-18T09:56:49Z"
+  "updated_at": "2026-06-18T10:06:14Z",
+  "released_at": "2026-06-18T10:06:14Z"
 }
