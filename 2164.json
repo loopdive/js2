@@ -1,8 +1,9 @@
 {
   "id": "2164",
   "assignee": "ttraenkler/dev-4",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2164-standalone-date-residual",
   "claimed_at": "2026-06-17T03:47:23Z",
-  "updated_at": "2026-06-17T03:47:23Z"
+  "updated_at": "2026-06-18T09:13:29Z",
+  "released_at": "2026-06-18T09:13:29Z"
 }
