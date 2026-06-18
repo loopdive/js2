@@ -2,7 +2,7 @@
 id: 2026
 title: "classes are not first-class values: new K() on a parameter throws 'No dependency provided for extern class', .constructor identity broken"
 status: in-progress
-assignee: ttraenkler/sdev-async2
+assignee: ttraenkler/sdev-ctor
 sprint: 63
 created: 2026-06-10
 updated: 2026-06-18
@@ -386,3 +386,54 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
   pure-Wasm (no host import) so both modes must pass.
 - Confirm no test262 `built-ins/`/`language/` regressions in the
   classes/new buckets (CI).
+
+### Implementation log (sdev-ctor, 2026-06-18) — PR-3a/PR-3b: arg & meta edges
+
+Re-validated on upstream/main @ 955552ecc (after PR-1/PR-1b landed via #1647/
+#1656/#1672). Measured the dynamic-new edges with an 8-case probe. Three genuine
+breakages remained on the `emitDynamicNewFallback` path:
+
+1. **Spread → INVALID Wasm (worst).** `new K(...[a,b])` AND `new K(...x)` both
+   failed module instantiation: `extern.convert_any[0] expected anyref, found
+   call of type i32`. Root cause: the per-arg eval loop compiled a
+   `SpreadElement` verbatim — the spread expression yields an i32 (array length)
+   / ref, not a boxed externref, so the downstream box hit a broken
+   `extern.convert_any`. `new K(4, ...[5])` silently returned `null`.
+2. **new.target read 0** inside a dynamically-constructed ctor (`new.target ===
+   K` → false). The dynamic path never set the new-target global.
+
+**PR-3a (spread).** In `emitDynamicNewFallback`, BEFORE emitting any code, detect
+spread args. Flatten an array-LITERAL spread via the existing shared
+`flattenCallArgs` (the same compile-time flatten the static class-`new` path
+uses); a non-flattenable (variable) spread returns `false` so the caller falls
+through to the legacy path — a runtime miss, NOT a broken module. The
+return-false-before-emit ordering is load-bearing: nothing is pushed to
+`fctx.body` for the fallback until after the spread check, so the bail is safe.
+Result: `new K(...[4,5])` → 9, `new K(4,...[5])` → 9, `new K(...someVar)` now
+instantiates cleanly (runtime miss; runtime variable-spread drive is a noted
+follow-up, mirroring how even the static path defers non-literal spread to
+`compileSpreadCallArgs`).
+
+**PR-3b (new.target).** In `buildCtorArm`, call the shared
+`emitSetNewTargetBeforeCall(ctx, fctx.body, className)` right before the
+`call <Class>_new`, mirroring the static path. The id-based comparison
+(`compileBinaryExpression`'s new.target arm vs `getOrAssignClassNewTargetId`)
+then matches. No-op unless `ctx.usesNewTarget`, so zero cost otherwise. Result:
+`new.target === K` → true inside a dynamically-constructed ctor; discriminates
+correctly between two classes.
+
+Files: `src/codegen/expressions/new-super.ts` only (additive; no struct-shape
+change; helpers by name). Tests: `tests/issue-2026-dynamic-new-edges.test.ts`
+(6 cases: array-lit spread, mixed spread, non-flattenable-spread no-crash,
+new.target true, new.target discrimination, plain-arg PR-1 regression guard).
+tsc + prettier + biome-lint clean. All 13 existing #2026 tests still green;
+`issue-2023` (new.target) + `class-expressions` regression-clean.
+(`classes.test.ts` `string_constants`-import failures are a pre-existing harness
+artifact, identical with this change stashed out — not a regression.)
+
+**Still open under this issue — PR-2:** `.constructor === A` for an
+externref/`any`-typed receiver (`make(A).constructor === A` still reads 0; the
+STATIC receiver `new A().constructor === A` already works). Needs a runtime
+`__tag`→`__class_<Name>`-singleton dispatch in `property-access.ts` when the
+receiver is externref — structurally the same tag-dispatch as PR-1 but mapping
+to the class-object getter. Separate slice; does not block the PR-3 edges.

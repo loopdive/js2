@@ -1693,7 +1693,26 @@ function emitDynamicNewFallback(
   }
   if (candidates.length === 0) return false;
 
-  const args = expr.arguments ?? [];
+  const rawArgs = expr.arguments ?? [];
+
+  // (#2026 PR-3a) Spread arguments. `new K(...x)` must NOT reach the per-arg
+  // eval loop verbatim: a `SpreadElement` compiles to the array/iterator value
+  // (an i32 length / ref), not a boxed externref, so the downstream
+  // `extern.convert_any` produced INVALID Wasm (whole-module instantiate
+  // failure). Flatten an array-LITERAL spread (`new K(...[a, b])`) into its
+  // element expressions via the shared `flattenCallArgs` helper — the same
+  // compile-time flatten the static class-`new` path uses. A non-flattenable
+  // spread (`new K(...someVar)`) needs a runtime drive we don't yet have here;
+  // bail BEFORE emitting any code (no descriptor/args pushed yet) so the caller
+  // falls through to its legacy path instead of us emitting a broken module.
+  // Returning `false` is only safe here because nothing has been pushed to
+  // `fctx.body` for this fallback yet.
+  let args: readonly ts.Expression[] = rawArgs;
+  if (rawArgs.some((a) => ts.isSpreadElement(a))) {
+    const flat = flattenCallArgs(rawArgs);
+    if (flat === null) return false; // non-literal spread — leave to legacy path
+    args = flat;
+  }
 
   // Evaluate the callee descriptor once into an anyref local (the value to
   // type-test). null/undefined descriptors leave a null anyref → every
@@ -1788,6 +1807,14 @@ function emitDynamicNewFallback(
         pushDefaultValue(fctx, pType, ctx);
       }
     }
+    // (#2026 PR-3b) Set new.target to the DISPATCHED class id before the ctor
+    // call, mirroring the static `new C()` path (`emitSetNewTargetBeforeCall`).
+    // Without this the new-target global keeps whatever the enclosing frame
+    // left, so `new.target === K` inside a dynamically-constructed ctor read 0.
+    // The id-based comparison (`compileBinaryExpression`'s new.target arm) then
+    // matches `getOrAssignClassNewTargetId(className)`. No-op unless the module
+    // uses new.target (`ctx.usesNewTarget`), so zero cost otherwise.
+    emitSetNewTargetBeforeCall(ctx, fctx.body, className);
     fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
     // Box the instance to externref to match the dispatch `if` block type. Most
     // `<Class>_new` return `(ref $structIdx)` (an anyref subtype) → wrap with
