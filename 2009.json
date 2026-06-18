@@ -1,8 +1,9 @@
 {
   "id": "2009",
   "assignee": "ttraenkler/cs-2158",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2009-same-shape-struct-collision",
   "claimed_at": "2026-06-18T10:11:27Z",
-  "updated_at": "2026-06-18T10:11:27Z"
+  "updated_at": "2026-06-18T10:16:40Z",
+  "released_at": "2026-06-18T10:16:40Z"
 }
