@@ -1,8 +1,9 @@
 {
   "id": "2151",
   "assignee": "ttraenkler/cs-2160",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2151-any-receiver-dispatch",
   "claimed_at": "2026-06-18T10:01:56Z",
-  "updated_at": "2026-06-18T10:01:56Z"
+  "updated_at": "2026-06-18T10:03:24Z",
+  "released_at": "2026-06-18T10:03:24Z"
 }
