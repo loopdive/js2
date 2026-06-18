@@ -1,8 +1,9 @@
 {
   "id": "2163",
   "assignee": "ttraenkler/dev-3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2163-standalone-symbol-residual",
   "claimed_at": "2026-06-17T03:41:43Z",
-  "updated_at": "2026-06-17T03:41:43Z"
+  "updated_at": "2026-06-18T09:13:19Z",
+  "released_at": "2026-06-18T09:13:19Z"
 }
