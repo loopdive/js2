@@ -1,9 +1,9 @@
 {
   "id": "2160",
   "assignee": "ttraenkler/d1",
-  "status": "done",
+  "status": "released",
   "branch": "issue-2160-number-parse-namespace",
   "claimed_at": "2026-06-16T01:39:12Z",
-  "updated_at": "2026-06-16T11:55:09Z",
-  "released_at": "2026-06-16T11:55:09Z"
+  "updated_at": "2026-06-18T09:14:17Z",
+  "released_at": "2026-06-18T09:14:17Z"
 }
