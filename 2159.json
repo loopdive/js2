@@ -1,8 +1,9 @@
 {
   "id": "2159",
   "assignee": "ttraenkler/cs-2164",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2159-typedarray-finish",
   "claimed_at": "2026-06-18T09:48:59Z",
-  "updated_at": "2026-06-18T09:48:59Z"
+  "updated_at": "2026-06-18T09:57:58Z",
+  "released_at": "2026-06-18T09:57:58Z"
 }
