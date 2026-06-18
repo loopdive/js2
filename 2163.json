@@ -1,8 +1,9 @@
 {
   "id": "2163",
   "assignee": "ttraenkler/cs-2163",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2163-symbol-residual-finish",
   "claimed_at": "2026-06-18T09:14:52Z",
-  "updated_at": "2026-06-18T09:14:52Z"
+  "updated_at": "2026-06-18T09:48:26Z",
+  "released_at": "2026-06-18T09:48:26Z"
 }
