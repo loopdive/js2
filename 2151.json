@@ -1,9 +1,9 @@
 {
   "id": "2151",
   "assignee": "ttraenkler/dev-3",
-  "status": "done",
+  "status": "released",
   "branch": "issue-2151-standalone-any-receiver",
   "claimed_at": "2026-06-17T03:56:52Z",
-  "updated_at": "2026-06-17T04:16:57Z",
-  "released_at": "2026-06-17T04:16:57Z"
+  "updated_at": "2026-06-18T09:34:34Z",
+  "released_at": "2026-06-18T09:34:34Z"
 }
