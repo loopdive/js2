@@ -1,8 +1,9 @@
 {
   "id": "2378",
   "assignee": "ttraenkler/sd5",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2378-uri-percent-encoding",
   "claimed_at": "2026-06-19T02:19:39Z",
-  "updated_at": "2026-06-19T02:19:39Z"
+  "updated_at": "2026-06-19T02:42:17Z",
+  "released_at": "2026-06-19T02:42:17Z"
 }
