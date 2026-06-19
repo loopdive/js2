@@ -1,8 +1,9 @@
 {
   "id": "2373",
   "assignee": "ttraenkler/sd4",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2400-object-rest-destructuring",
   "claimed_at": "2026-06-19T01:11:59Z",
-  "updated_at": "2026-06-19T01:11:59Z"
+  "updated_at": "2026-06-19T01:17:01Z",
+  "released_at": "2026-06-19T01:17:01Z"
 }
