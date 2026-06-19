@@ -1,8 +1,9 @@
 {
   "id": "1322",
   "assignee": "ttraenkler/sd1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1322-mark-done",
   "claimed_at": "2026-06-19T00:34:56Z",
-  "updated_at": "2026-06-19T00:34:56Z"
+  "updated_at": "2026-06-19T00:36:03Z",
+  "released_at": "2026-06-19T00:36:03Z"
 }
