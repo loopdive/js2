@@ -1,8 +1,9 @@
 {
   "id": "2400",
   "assignee": "ttraenkler/sd3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2378-native-uri-encoding",
   "claimed_at": "2026-06-19T02:19:50Z",
-  "updated_at": "2026-06-19T02:19:50Z"
+  "updated_at": "2026-06-19T02:25:47Z",
+  "released_at": "2026-06-19T02:25:47Z"
 }
