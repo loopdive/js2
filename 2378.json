@@ -1,8 +1,8 @@
 {
   "id": "2378",
-  "assignee": "ttraenkler/sd3",
+  "assignee": "ttraenkler/sd5",
   "status": "in-progress",
-  "branch": "issue-2378-native-uri-encoding",
-  "claimed_at": "2026-06-19T02:09:35Z",
-  "updated_at": "2026-06-19T02:09:35Z"
+  "branch": "issue-2378-uri-percent-encoding",
+  "claimed_at": "2026-06-19T02:19:39Z",
+  "updated_at": "2026-06-19T02:19:39Z"
 }
