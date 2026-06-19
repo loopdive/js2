@@ -1,9 +1,10 @@
 ---
 id: 1344
 title: "spec gap: Generator/AsyncIterator prototype receiver TypeErrors + return/throw (52 + 12 test262 fails)"
-status: ready
+status: suspended
+assignee: ttraenkler/sen-1
 created: 2026-05-08
-updated: 2026-06-12
+updated: 2026-06-19
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -142,3 +143,105 @@ even though tests check just for its existence).
 ## Unblocked (2026-06-12)
 
 Blocker #1665 is done — flipped to `ready`, queued sprint 63. Re-validate the repro first (#2148).
+
+---
+
+## Slice 1 (2026-06-19, sd3) — `next`/`return` borrowed-receiver TypeError — LANDED
+
+Landed the dominant `this-val-not-generator` bucket: calling a borrowed
+generator method with a `this` that lacks `[[GeneratorState]]`
+(`GeneratorPrototype.next.call({})`) now throws a **catchable TypeError**
+(§27.5.3.2 GeneratorValidate step 2), instead of the prior **silent
+`{value: 0, done: true}` sentinel**.
+
+**Root cause / fix** (`src/codegen/generators-native.ts`
+`buildNativeGeneratorDispatch`): the dispatch tests the receiver against each
+known native-generator state type (`ref.test $stateType`) and, on no match, fell
+through to a hard-coded `{value:0, done:1}` result. That terminal `fallback`
+is exactly the "not a generator" case, so it now emits a real catchable
+TypeError via the shared `emitBrandCheckTypeError(ctx, body, msg)` helper (a
+`__new_TypeError` instance + `throw $exc`, never a `ref.cast` trap). `throw` is
+stack-polymorphic so it satisfies the enclosing block's result type without
+leaving a value. One disjoint change; the per-generator `next`/`return` branches
+are untouched.
+
+**Verified** (`tests/issue-1344.test.ts`, 5 cases): borrowed `.next.call({})`
+and `.return.call({}, v)` throw a `TypeError` *instance* (catchable in-module,
+not a host RuntimeError); real generator `.next()` sequence + `.return(v)`
+unchanged. `tsc --noEmit` clean; loadable generator suites
+(`generators`/`generator-methods*`-loadable/`gen-call-579`) green. (Several
+`generator-*.test.ts` files fail to even *load* on `origin/main` because they
+import a never-committed `tests/helpers.js` — pre-existing infra gap, not a
+regression from this change.)
+
+**Still open for #1344 (issue stays `in-progress`):**
+- **`.throw()`** is not routed through the native dispatch at all
+  (`tryCompileNativeGeneratorMethodCall` early-returns for `throw`, and
+  `compileDirectNativeGeneratorMethod` returns `undefined` for it) — the
+  `throw/from-state-completed` bucket is untouched.
+- **AsyncGenerator / AsyncIterator prototype** receiver checks + the
+  prototype-of-prototypes existence (the 12-fail async bucket).
+- **Reifying `GeneratorPrototype` as a first-class object** so the test262
+  `Object.getPrototypeOf(g).prototype.next` access path is exercised directly
+  (the current slice triggers via a borrowed method reference, which covers the
+  semantic but the test262 harness uses the prototype-object access).
+
+These remaining parts are the genuinely architectural half the 2026-05-28
+triage flagged ("NOT a localized fix") — route to senior-dev/architect.
+
+## Suspended Work (sd3 → sen-1, 2026-06-19)
+
+**Branch:** `issue-1344-generator-receiver-checks` (PR #1732, BLOCKED — net-53)
+**Worktree:** `/workspace/.claude/worktrees/issue-1344-generator-receiver-checks`
+**PR #1732:** parked — fails the standalone regression gate; NOT in the merge
+queue; do NOT enqueue.
+
+### What the branch does (and why it regressed)
+Slice 1 makes `buildNativeGeneratorDispatch`'s terminal `fallback`
+(`src/codegen/generators-native.ts`) throw a catchable TypeError via
+`emitBrandCheckTypeError` (native-proto.ts) instead of the silent
+`{value:0,done:true}` sentinel. **Semantically correct** — borrowed
+`Generator.prototype.{next,return}.call({})` now throws TypeError per §27.5.3.2;
+5 unit tests pass (`tests/issue-1344.test.ts`); tsc clean.
+
+**But CI standalone regression gate = net -53** (single bucket
+`37cbcb78aea838e8`, all "wasm-hash change"). Confirmed root cause:
+`emitBrandCheckTypeError` runs error-machinery side effects
+(`emitWasiErrorConstructor` pushes `__new_TypeError`, `addStringConstantGlobal`,
+`ensureExnTag`) **per generator dispatch site, inline in the fallback build**,
+which happens MID generator-body compilation. This perturbs **every** generator
+binary (+346 bytes for a one-generator program, verified) even when the throw is
+never reached, and for 53 standalone tests that perturbation flips pass→fail.
+Basic generator runtime behaviour (next/for-of/return/done/yield*) is
+byte-stable and value-identical to baseline; the 53 are a subtler
+harness/index-timing interaction.
+
+### Approved fix direction (tech-lead option A) — needs senior-dev
+Pre-register the TypeError-throw machinery **once** as a shared helper (mirror
+#2025's proven `ensureNullThisTypeError` + `buildNullThisTypeErrorThrow`):
+- a `ctx.generatorBrandTypeErrorReady` flag + idempotent
+  `ensureGeneratorBrandTypeError(ctx, fctx)` that registers
+  `__new_TypeError` / the message string / exn-tag ONCE with a correct
+  late-import flush (`ensureLateImport` + `flushLateImportShifts`);
+- a pure-lookup `buildGeneratorBrandTypeErrorThrow(ctx)` for the fallback arm;
+- a single SHARED message (not the per-`methodName` string the WIP uses).
+Then re-validate the standalone gate — **net ≥ 0 required before enqueue.**
+
+**Why senior-dev / the tripwire:** getting `ensure`'s late-import flush to land
+on the in-progress generator `fctx` at the right moment during the mid-body
+`buildNativeGeneratorDispatch` build is exactly the error-machinery **timing**
+protocol that #1726 / #2079 own. Done wrong it re-introduces the same index
+desync → another net-53 class. This is NOT just hoisting a throw to a stub.
+
+### Resume steps for sen-1
+1. `cd /workspace/.claude/worktrees/issue-1344-generator-receiver-checks`
+   (re-claim with `--force` if needed). PR #1732 is the existing impl PR.
+2. Replace the inline `emitBrandCheckTypeError(ctx, fallback, …)` call in
+   `buildNativeGeneratorDispatch` with `ensure…` (once, up front, before the
+   `branch(0)` build) + `build…` (pure) for the fallback instrs.
+3. Verify a single-generator program is byte-identical to baseline when the
+   throw is unreachable (the WIP is +346 b; the fix should be ~0).
+4. Re-run the standalone regression gate; only enqueue at net ≥ 0.
+5. Then (separate follow-on slices, still #1344): `.throw()` routing,
+   AsyncGenerator/AsyncIterator prototype checks, GeneratorPrototype-as-object
+   reification — see the remaining-parts list above.

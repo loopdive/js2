@@ -33,6 +33,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { nativeStringType } from "./native-strings.js";
+import { emitBrandCheckTypeError } from "./native-proto.js";
 import { addFuncType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "./shared.js";
 
@@ -1691,11 +1692,14 @@ function buildNativeGeneratorDispatch(
 ): Instr[] {
   const infos = Array.from(ctx.nativeGenerators.values());
   const resultType: ValType = { kind: "ref", typeIdx: ensureNativeGeneratorResultType(ctx) };
-  const fallback: Instr[] = [
-    { op: "f64.const", value: 0 },
-    { op: "i32.const", value: 1 },
-    { op: "struct.new", typeIdx: ctx.nativeGeneratorResultTypeIdx },
-  ];
+  // #1344 — the receiver matched NONE of the native generator state types, i.e.
+  // `[[GeneratorState]]` is absent (e.g. `GeneratorPrototype.next.call({})`).
+  // Per §27.5.3.2 GeneratorValidate step 2 / §27.5.1.2-4, throw a *catchable*
+  // TypeError (a real `__new_TypeError` instance + `throw $exc`), never the old
+  // silent `{value: 0, done: true}` sentinel. `throw` is stack-polymorphic, so
+  // it satisfies the enclosing block's `resultType` without leaving a value.
+  const fallback: Instr[] = [];
+  emitBrandCheckTypeError(ctx, fallback, `Generator.prototype.${methodName} requires that 'this' be a Generator`);
 
   function branch(index: number): Instr[] {
     if (index >= infos.length) return fallback;
