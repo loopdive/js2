@@ -20,6 +20,7 @@ import {
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
+import { emitCollectionIteratorVec } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#2169c) native Array.from drain
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
@@ -4015,8 +4016,44 @@ function compileCallExpression(
         // Not a native generator — roll back and use the paths below.
         fctx.body.length = bodyLenBefore;
       }
-      // Only handle array arguments — create a shallow copy
-      if (!hasMapFn && (argWasmType.kind === "ref" || argWasmType.kind === "ref_null")) {
+      // (#42 follow-up) Array.from(Set) — standalone native. A Set lowers to a
+      // `ref $Map` whose field layout is NOT a `__vec` (field 0 is not a length,
+      // field 1 is the entries bucket array), yet the purely-STRUCTURAL
+      // `resolveArrayInfo` matches any struct with a `ref array` field[1] — so
+      // the array-copy fast path below FALSELY treats the Set struct as a `__vec`,
+      // does `struct.get 0/1` on it, then `struct.new <vecTypeIdx>` with a
+      // mismatched field arity → "not enough arguments on the stack for
+      // struct.new" (invalid Wasm). And the generic `__iterator` native drain
+      // (#2169c) hard-casts the subject to a `__vec` → `illegal cast` trap at
+      // runtime for a non-vec Set.
+      //
+      // Route through the SAME `emitCollectionIteratorVec` driver the `[...set]`
+      // spread (#42) and `.values()` paths use: a Set yields its values
+      // (§23.1.4.1 / §24.2.3). It produces a canonical externref `$Vec` — exactly
+      // Array.from's result. (Array.from(Map) → `[k, v]` entry pairs needs the
+      // `$ObjVec` pair-indexing path, which is not yet sound here, so Map keeps
+      // the existing routing — see the WeakSet/WeakMap/Map reject below.)
+      const argSymName = (argTsType.symbol ?? argTsType.aliasSymbol)?.name;
+      if (!hasMapFn && ctx.nativeStrings && argSymName === "Set") {
+        const matType = emitCollectionIteratorVec(ctx, fctx, expr.arguments[0]!, "values", /* isSet */ true);
+        if (matType != null && matType !== VOID_RESULT && (matType.kind === "ref" || matType.kind === "ref_null")) {
+          return matType;
+        }
+        // Driver declined (e.g. a real JS Set arriving as externref) — fall
+        // through to the paths below.
+      }
+      // Reject the known non-array builtin collections from the structural
+      // array-copy fast path so a Set the driver above declined, or a
+      // Map/WeakSet/WeakMap, cannot be mis-read as a `__vec` (the struct.new
+      // arity crash above). They fall through to the native iterator drain
+      // (#2169c) / host fallback instead.
+      const isNonArrayBuiltinCollection =
+        argSymName === "Set" || argSymName === "Map" || argSymName === "WeakSet" || argSymName === "WeakMap";
+      if (
+        !hasMapFn &&
+        !isNonArrayBuiltinCollection &&
+        (argWasmType.kind === "ref" || argWasmType.kind === "ref_null")
+      ) {
         const arrInfo = resolveArrayInfo(ctx, argTsType);
         if (arrInfo) {
           const { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;
