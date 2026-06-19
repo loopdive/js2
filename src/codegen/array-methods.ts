@@ -6654,11 +6654,25 @@ function compileArrayFind(
     "truthy",
   );
 
-  // Result local -- NaN (not found) or element value
-  const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
+  // Result local -- the not-found sentinel (`undefined`) or the element value.
+  // #2506 — a boxed-any element (`any[]`) is an externref/anyref/ref, NOT a
+  // numeric f64. The standalone (`!ctx.fast`) lane defaulted the result slot to
+  // f64 and `local.set` an externref element into it → invalid Wasm
+  // (`local.set[0] expected type f64, found ... externref`). For a ref-typed
+  // element keep the result slot as the element type and use `ref.null.extern`
+  // (the `undefined` sentinel) for not-found; numeric elements keep the f64/NaN
+  // path. number[]/string[]/boolean[] are unaffected.
+  const elemIsRef =
+    elemType.kind === "externref" ||
+    elemType.kind === "anyref" ||
+    elemType.kind === "ref" ||
+    elemType.kind === "ref_null";
+  const findResType: ValType = ctx.fast ? elemType : elemIsRef ? { kind: "externref" } : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_find_res_${fctx.locals.length}`, findResType);
   if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
+  } else if (elemIsRef) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr); // not found → `undefined`
   } else {
     fctx.body.push({ op: "f64.const", value: 0 });
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -6680,7 +6694,8 @@ function compileArrayFind(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: elemTmpLocal } as Instr,
-        ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        ...(!ctx.fast && !elemIsRef && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        ...(!ctx.fast && elemIsRef && elemType.kind !== "externref" ? [{ op: "extern.convert_any" } as Instr] : []),
         { op: "local.set", index: findResTmp } as Instr,
         { op: "br", depth: 2 } as Instr,
       ],
@@ -6692,7 +6707,7 @@ function compileArrayFind(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: findResTmp });
-  return ctx.fast ? elemType : { kind: "f64" };
+  return ctx.fast ? elemType : elemIsRef ? { kind: "externref" } : { kind: "f64" };
 }
 
 /**
@@ -6845,10 +6860,20 @@ function compileArrayFindLast(
     "truthy",
   );
 
-  const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
+  // #2506 — see compileArrayFind: a boxed-any (`any[]`) element is a ref, not a
+  // numeric f64; keep the result slot as an externref with a `ref.null.extern`
+  // not-found sentinel rather than mis-typing it f64 (invalid Wasm).
+  const elemIsRef =
+    elemType.kind === "externref" ||
+    elemType.kind === "anyref" ||
+    elemType.kind === "ref" ||
+    elemType.kind === "ref_null";
+  const findResType: ValType = ctx.fast ? elemType : elemIsRef ? { kind: "externref" } : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_findLast_res_${fctx.locals.length}`, findResType);
   if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
+  } else if (elemIsRef) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr); // not found → `undefined`
   } else {
     fctx.body.push({ op: "f64.const", value: 0 });
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -6870,7 +6895,8 @@ function compileArrayFindLast(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: elemTmpLocal } as Instr,
-        ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        ...(!ctx.fast && !elemIsRef && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+        ...(!ctx.fast && elemIsRef && elemType.kind !== "externref" ? [{ op: "extern.convert_any" } as Instr] : []),
         { op: "local.set", index: findResTmp } as Instr,
         { op: "br", depth: 2 } as Instr,
       ],
@@ -6882,7 +6908,7 @@ function compileArrayFindLast(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: findResTmp });
-  return ctx.fast ? elemType : { kind: "f64" };
+  return ctx.fast ? elemType : elemIsRef ? { kind: "externref" } : { kind: "f64" };
 }
 
 /**
