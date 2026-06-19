@@ -1,8 +1,9 @@
 {
   "id": "2375",
   "assignee": "ttraenkler/sd1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2375-object-is-native",
   "claimed_at": "2026-06-19T01:22:32Z",
-  "updated_at": "2026-06-19T01:22:32Z"
+  "updated_at": "2026-06-19T08:23:47Z",
+  "released_at": "2026-06-19T08:23:47Z"
 }
