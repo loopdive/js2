@@ -1,8 +1,9 @@
 {
   "id": "2402",
   "assignee": "ttraenkler/sd3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2402-object-prototype-tostring-tag",
   "claimed_at": "2026-06-19T02:26:01Z",
-  "updated_at": "2026-06-19T02:26:01Z"
+  "updated_at": "2026-06-19T02:28:47Z",
+  "released_at": "2026-06-19T02:28:47Z"
 }
