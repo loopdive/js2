@@ -634,7 +634,7 @@ function compileObjectLiteralWithAccessors(
         fctx.body.push({ op: "local.get", index: objLocal });
         fctx.body.push({ op: "i32.const", value: wellKnownSymId });
         fctx.body.push({ op: "call", funcIdx: boxSymIdx });
-        const ok = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+        const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
         if (!ok) {
           fctx.body.push({ op: "ref.null.extern" });
         }
@@ -651,7 +651,7 @@ function compileObjectLiteralWithAccessors(
         } else if (keyType.kind !== "externref") {
           coerceType(ctx, fctx, keyType, { kind: "externref" });
         }
-        const okRt = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+        const okRt = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
         if (okRt) {
           fctx.body.push({ op: "call", funcIdx: setIdx });
         } else {
@@ -673,7 +673,7 @@ function compileObjectLiteralWithAccessors(
       for (const instr of stringConstantExternrefInstrs(ctx, methodName)) {
         fctx.body.push(instr);
       }
-      const ok = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+      const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
       if (!ok) {
         fctx.body.push({ op: "ref.null.extern" });
       }
@@ -772,6 +772,36 @@ function emitObjectLiteralAccessorFn(
     return true;
   }
   return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true, ...captureOptions });
+}
+
+/**
+ * (#6408 follow-up) Compile an object-literal METHOD body and leave a callable
+ * externref on the stack for `__extern_set`. Mirrors the getter/setter routing
+ * in `emitObjectLiteralAccessorFn`: standalone → host-free closure
+ * (`compileArrowAsClosure`, converted to externref) so the method does NOT leak
+ * the `__make_getter_callback` JS bridge; JS-host / GC → `compileArrowAsCallback`
+ * with `needsThis: true` (unchanged host bridge). Returns `false` when the caller
+ * should push `ref.null.extern`.
+ *
+ * Why: the three MethodDeclaration arms below previously called
+ * `compileArrowAsCallback(... { needsThis: true })` unconditionally, which routes
+ * through `__make_getter_callback` (an `env::` host import, closures.ts) even in
+ * `--target standalone`. The sibling get/set arm was already standalone-aware
+ * (#1888 S5b); a literal mixing a regular method with a getter therefore left the
+ * getter host-free but leaked the bridge for the method. The standalone method
+ * closure is invoked through the same `__current_this`-bound closure-call path the
+ * getter closures use, so `this` is bound correctly.
+ */
+function emitObjectLiteralMethodFn(ctx: CodegenContext, fctx: FunctionContext, fn: ts.FunctionExpression): boolean {
+  if (ctx.standalone) {
+    const closureType = compileArrowAsClosure(ctx, fctx, fn);
+    if (!closureType) return false;
+    if (closureType.kind !== "externref") {
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+    }
+    return true;
+  }
+  return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true });
 }
 
 /**
