@@ -1,8 +1,9 @@
 {
   "id": "1344",
   "assignee": "ttraenkler/sd3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1344-generator-receiver-checks",
   "claimed_at": "2026-06-19T00:38:46Z",
-  "updated_at": "2026-06-19T00:38:46Z"
+  "updated_at": "2026-06-19T00:50:31Z",
+  "released_at": "2026-06-19T00:50:31Z"
 }
