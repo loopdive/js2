@@ -1,9 +1,8 @@
 {
   "id": "2009",
-  "assignee": "ttraenkler/sd5",
-  "status": "released",
+  "assignee": "ttraenkler/sen-1",
+  "status": "in-progress",
   "branch": "issue-2009-r3b-insertion-order",
-  "claimed_at": "2026-06-19T03:09:02Z",
-  "updated_at": "2026-06-19T03:12:15Z",
-  "released_at": "2026-06-19T03:12:15Z"
+  "claimed_at": "2026-06-19T03:13:39Z",
+  "updated_at": "2026-06-19T03:13:39Z"
 }
