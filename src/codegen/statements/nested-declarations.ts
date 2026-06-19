@@ -1266,6 +1266,16 @@ export function emitSetExtrasArgv(
   args: ts.Expression[],
   startIdx: number,
 ): void {
+  // (#2202) When the overflow args contain a spread, the static per-AST-node
+  // build below counts `...arr` as ONE element, so a callee reading `arguments`
+  // sees the wrong length. Delegate to the runtime spread-aware builder, which
+  // expands each spread to its array length. It only fires for the all-overflow
+  // (startIdx === 0) shape — the test262 `*method()` / `method()` arguments
+  // spread cluster — and returns false otherwise, falling through to the static
+  // path unchanged. argc for that shape is already 0 (min(N, paramCount=0)).
+  if (startIdx === 0 && args.some((a) => ts.isSpreadElement(a))) {
+    if (emitSetExtrasArgvWithSpread(ctx, fctx, args, 0)) return;
+  }
   const { globalIdx, vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const ati = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const extrasCount = args.length - startIdx;
@@ -1305,6 +1315,245 @@ export function emitSetExtrasArgv(
   fctx.body.push({ op: "local.get", index: arrTmp });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
   fctx.body.push({ op: "global.set", index: globalIdx } as Instr);
+}
+
+/**
+ * (#2202) Spread-aware `arguments` population. The static `emitSetExtrasArgv`
+ * counts a spread call argument (`...arr`) as a SINGLE element, so a callee
+ * that reads `arguments` sees `arguments.length` == the number of AST argument
+ * nodes, not the runtime-expanded count: `obj.m(...[1,2,3])` reported length 1.
+ *
+ * This helper builds the extras vec at RUNTIME by concatenating, per argument:
+ *   - a fixed (non-spread) arg  → one boxed externref element;
+ *   - a spread `...e`           → all elements of `e`'s vec (array.copy).
+ *
+ * It is **additive**: it only fires when the call has at least one spread AND
+ * the callee reads `arguments`. The non-spread path is unchanged.
+ *
+ * **Scope (#2202 slice 1):** supports `paramCount === 0` — every argument flows
+ * into `__extras_argv` and `__argc` is set to 0, which is the entire test262
+ * `*method()` / `method()` arguments-object spread cluster (the methods declare
+ * no formal params). For `paramCount > 0` with a spread the formal/extra split
+ * needs a runtime sub-slice; this helper returns `false` so the caller keeps the
+ * existing (static) behaviour and the >0-param spread case is left to a
+ * follow-up / architect spec. Returns `true` iff it emitted the runtime extras.
+ */
+export function emitSetExtrasArgvWithSpread(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: ts.Expression[],
+  paramCount: number,
+): boolean {
+  const hasSpread = args.some((a) => ts.isSpreadElement(a));
+  if (!hasSpread) return false;
+  // Slice 1 scope: only the all-args-to-extras (paramCount 0) shape. A method
+  // with formal params + a spread needs a runtime formal/extra split — deferred.
+  if (paramCount !== 0) return false;
+
+  // Register __box_number up front and flush any late-import index shift BEFORE
+  // emitting any `call` in this helper. Lazily adding the import mid-emission
+  // shifts every function index and desyncs already-emitted `call funcIdx`s
+  // (the late-import-shift hazard, cf. emitArgumentsObject).
+  ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+
+  const { globalIdx, vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+  const ati = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  const boxIdx = ctx.funcMap.get("__box_number");
+
+  // Per-arg, save either a single boxed externref (fixed) or the spread's data
+  // array + length (spread), and accumulate the total element count in a local.
+  const totalLenLocal = allocLocal(fctx, `__sa_total_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+  fctx.body.push({ op: "local.set", index: totalLenLocal });
+
+  type Part =
+    | { kind: "fixed"; valLocal: number }
+    | { kind: "spread"; dataLocal: number; lenLocal: number; spreadArrTypeIdx: number; elemType: ValType };
+  const parts: Part[] = [];
+
+  for (const arg of args) {
+    if (ts.isSpreadElement(arg)) {
+      const vecType = compileExpression(ctx, fctx, arg.expression);
+      if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
+        // Spread source isn't a vec we can iterate — bail to static behaviour.
+        return false;
+      }
+      const spreadArrTypeIdx = getArrTypeIdxFromVec(ctx, vecType.typeIdx);
+      if (spreadArrTypeIdx < 0) return false;
+      const spreadArrDef = ctx.mod.types[spreadArrTypeIdx];
+      if (!spreadArrDef || spreadArrDef.kind !== "array") return false;
+      const elemType = spreadArrDef.element;
+      const vecLocal = allocLocal(fctx, `__sa_vec_${fctx.locals.length}`, vecType);
+      fctx.body.push({ op: "local.set", index: vecLocal });
+      // len = vec.length (field 0)
+      const lenLocal = allocLocal(fctx, `__sa_len_${fctx.locals.length}`, { kind: "i32" });
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      fctx.body.push({ op: "struct.get", typeIdx: vecType.typeIdx, fieldIdx: 0 } as Instr);
+      fctx.body.push({ op: "local.set", index: lenLocal });
+      // data = vec.data (field 1)
+      const dataLocal = allocLocal(fctx, `__sa_data_${fctx.locals.length}`, {
+        kind: "ref_null",
+        typeIdx: spreadArrTypeIdx,
+      });
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      fctx.body.push({ op: "struct.get", typeIdx: vecType.typeIdx, fieldIdx: 1 } as Instr);
+      fctx.body.push({ op: "local.set", index: dataLocal });
+      // total += len
+      fctx.body.push({ op: "local.get", index: totalLenLocal });
+      fctx.body.push({ op: "local.get", index: lenLocal });
+      fctx.body.push({ op: "i32.add" } as Instr);
+      fctx.body.push({ op: "local.set", index: totalLenLocal });
+      parts.push({ kind: "spread", dataLocal, lenLocal, spreadArrTypeIdx, elemType });
+    } else {
+      // Fixed arg → box to externref, save in a local.
+      const valLocal = allocLocal(fctx, `__sa_val_${fctx.locals.length}`, { kind: "externref" });
+      const t = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (t === null) {
+        fctx.body.push({ op: "ref.null.extern" } as Instr);
+      } else if (t.kind === "f64") {
+        if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx } as Instr);
+        else {
+          fctx.body.push({ op: "drop" } as Instr);
+          fctx.body.push({ op: "ref.null.extern" } as Instr);
+        }
+      } else if (t.kind === "i32") {
+        fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+        if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx } as Instr);
+        else {
+          fctx.body.push({ op: "drop" } as Instr);
+          fctx.body.push({ op: "ref.null.extern" } as Instr);
+        }
+      } else if (t.kind === "ref" || t.kind === "ref_null") {
+        fctx.body.push({ op: "extern.convert_any" } as Instr);
+      }
+      fctx.body.push({ op: "local.set", index: valLocal });
+      // total += 1
+      fctx.body.push({ op: "local.get", index: totalLenLocal });
+      fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+      fctx.body.push({ op: "i32.add" } as Instr);
+      fctx.body.push({ op: "local.set", index: totalLenLocal });
+      parts.push({ kind: "fixed", valLocal });
+    }
+  }
+
+  // Allocate the result data array (default-null) sized to the runtime total.
+  const dstArrLocal = allocLocal(fctx, `__sa_dst_${fctx.locals.length}`, { kind: "ref", typeIdx: ati });
+  fctx.body.push({ op: "local.get", index: totalLenLocal });
+  fctx.body.push({ op: "array.new_default", typeIdx: ati } as Instr);
+  fctx.body.push({ op: "local.set", index: dstArrLocal });
+
+  // Fill the result array left-to-right with a running cursor.
+  const cursorLocal = allocLocal(fctx, `__sa_cur_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+  fctx.body.push({ op: "local.set", index: cursorLocal });
+
+  for (const part of parts) {
+    if (part.kind === "fixed") {
+      // dst[cursor] = val; cursor += 1
+      fctx.body.push({ op: "local.get", index: dstArrLocal });
+      fctx.body.push({ op: "local.get", index: cursorLocal });
+      fctx.body.push({ op: "local.get", index: part.valLocal });
+      fctx.body.push({ op: "array.set", typeIdx: ati } as Instr);
+      fctx.body.push({ op: "local.get", index: cursorLocal });
+      fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+      fctx.body.push({ op: "i32.add" } as Instr);
+      fctx.body.push({ op: "local.set", index: cursorLocal });
+    } else {
+      // Element-by-element copy with per-element boxing — the spread's element
+      // array may be f64 (number[]), i32 (bool/handle), or externref (any[]/
+      // object[]); each must be boxed to externref before landing in the
+      // externref-typed `arguments` data array (array.copy can't bridge the
+      // element-type mismatch). Loop: for (j=0; j<len; j++) dst[cursor+j] =
+      // box(spreadData[j]); cursor += len.  Guarded against a null/empty spread.
+      const jLocal = allocLocal(fctx, `__sa_j_${fctx.locals.length}`, { kind: "i32" });
+      const copyBody: Instr[] = [];
+      // dst[cursor + j] = box(spreadData[j])
+      copyBody.push({ op: "local.get", index: dstArrLocal } as Instr);
+      copyBody.push({ op: "local.get", index: cursorLocal } as Instr);
+      copyBody.push({ op: "local.get", index: jLocal } as Instr);
+      copyBody.push({ op: "i32.add" } as Instr);
+      // value = box(spreadData[j])
+      copyBody.push({ op: "local.get", index: part.dataLocal } as Instr);
+      copyBody.push({ op: "ref.as_non_null" } as Instr);
+      copyBody.push({ op: "local.get", index: jLocal } as Instr);
+      copyBody.push({ op: "array.get", typeIdx: part.spreadArrTypeIdx } as Instr);
+      const et = part.elemType;
+      if (et.kind === "f64") {
+        if (boxIdx !== undefined) copyBody.push({ op: "call", funcIdx: boxIdx } as Instr);
+        else {
+          copyBody.push({ op: "drop" } as Instr);
+          copyBody.push({ op: "ref.null.extern" } as Instr);
+        }
+      } else if (et.kind === "i32") {
+        copyBody.push({ op: "f64.convert_i32_s" } as Instr);
+        if (boxIdx !== undefined) copyBody.push({ op: "call", funcIdx: boxIdx } as Instr);
+        else {
+          copyBody.push({ op: "drop" } as Instr);
+          copyBody.push({ op: "ref.null.extern" } as Instr);
+        }
+      } else if (et.kind === "ref" || et.kind === "ref_null") {
+        copyBody.push({ op: "extern.convert_any" } as Instr);
+      }
+      // (externref element already has the right ABI — no conversion)
+      copyBody.push({ op: "array.set", typeIdx: ati } as Instr);
+      // j++
+      copyBody.push({ op: "local.get", index: jLocal } as Instr);
+      copyBody.push({ op: "i32.const", value: 1 } as Instr);
+      copyBody.push({ op: "i32.add" } as Instr);
+      copyBody.push({ op: "local.set", index: jLocal } as Instr);
+      copyBody.push({ op: "br", depth: 0 } as Instr);
+
+      // if (data != null) { j = 0; loop { if (j >= len) break; <copyBody> } }
+      fctx.body.push({ op: "local.get", index: part.dataLocal });
+      fctx.body.push({ op: "ref.is_null" } as Instr);
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [],
+        else: [
+          { op: "i32.const", value: 0 } as Instr,
+          { op: "local.set", index: jLocal } as Instr,
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: jLocal } as Instr,
+                  { op: "local.get", index: part.lenLocal } as Instr,
+                  { op: "i32.ge_s" } as Instr,
+                  { op: "br_if", depth: 1 } as Instr,
+                  ...copyBody,
+                ],
+              } as Instr,
+            ],
+          } as Instr,
+        ],
+      } as Instr);
+      // cursor += len
+      fctx.body.push({ op: "local.get", index: cursorLocal });
+      fctx.body.push({ op: "local.get", index: part.lenLocal });
+      fctx.body.push({ op: "i32.add" } as Instr);
+      fctx.body.push({ op: "local.set", index: cursorLocal });
+    }
+  }
+
+  // __extras_argv = { length: total, data: dstArr }
+  fctx.body.push({ op: "local.get", index: totalLenLocal });
+  fctx.body.push({ op: "local.get", index: dstArrLocal });
+  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+  fctx.body.push({ op: "global.set", index: globalIdx } as Instr);
+
+  // __argc = 0 (paramCount): no formal slots are filled from params; every
+  // runtime arg lives in extras, copied at offset numArgs(=0) by
+  // emitArgumentsVecBody. arguments.length == 0 + total.
+  const argcGlobalIdx = ensureArgcGlobal(ctx);
+  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+  fctx.body.push({ op: "global.set", index: argcGlobalIdx } as Instr);
+  return true;
 }
 
 /**
