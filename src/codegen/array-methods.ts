@@ -24,7 +24,7 @@ import {
 } from "./registry/types.js";
 import { noJsHost } from "./expressions/helpers.js";
 import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterator-native.js";
-import { ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import {
   compileArrowAsClosure,
@@ -4960,6 +4960,33 @@ function compileArrayJoinNative(
     if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" } as Instr);
     elemToStr.push({ op: "call", funcIdx: numToStrIdx } as Instr);
     // number_toString returns the native string boxed as externref.
+    elemToStr.push({ op: "any.convert_extern" } as Instr);
+    elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+  } else if (elemType.kind === "externref") {
+    // #2074 residual — an externref-element vec (untyped `[]`, `any[]`,
+    // `(string|number)[]`, object arrays) is NOT a native string. The old
+    // `ref.as_non_null` produced a `(ref extern)` where the fold's accumulator
+    // wants `(ref null $AnyString)`, emitting an invalid module ("local.set
+    // expected (ref null 6), found ref.as_non_null of (ref extern)") — even for
+    // an *empty* such array (the loop never runs, but `elemToStr`'s static type
+    // must still match `resultTmp`).
+    //
+    // Stringify each externref element through `__extern_toString` (§7.1.17,
+    // registered by `ensureObjectRuntime`) — the SAME native ToString the
+    // `String(x)` / `x + ""` paths use, so a boxed-number element from the
+    // #2379 `new Array(N)`/any-element representation (`$__box_number_struct`
+    // externref) recovers to its numeric text rather than "[object Object]".
+    // (The `$__any_to_string` tag-dispatcher does NOT recover that boxed-number
+    // shape on the join-fed value, so `__extern_toString` is the correct
+    // helper.) `__extern_toString` is `(externref) -> externref` returning a
+    // native string boxed as externref; convert it back to `(ref $AnyString)`.
+    ensureObjectRuntime(ctx);
+    const externToStrIdx = ctx.funcMap.get("__extern_toString");
+    if (externToStrIdx === undefined) {
+      reportError(ctx, callExpr, "join of an any[]/object[] array requires __extern_toString (object runtime)");
+      return null;
+    }
+    elemToStr.push({ op: "call", funcIdx: externToStrIdx } as Instr);
     elemToStr.push({ op: "any.convert_extern" } as Instr);
     elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
   } else {

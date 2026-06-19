@@ -89,3 +89,38 @@ describe("#2075 — vec-shaped receivers join with zero imports (collateral prob
     });
   }
 });
+
+describe("#2074 residual — externref-element (any[] / empty / boxed-any) join is valid + correct", () => {
+  // Pre-#2074-residual these emitted an INVALID module:
+  //   "local.set[0] expected (ref null 6), found ref.as_non_null of (ref extern)".
+  // The else-branch assumed a `(ref null $NativeString)` element and `ref.as_non_null`'d
+  // it — but an externref-element vec (untyped `[]`, `any[]`, boxed-any) is not a
+  // native string. Now each element is stringified via the native `__extern_toString`
+  // (§7.1.17), the SAME ToString `String(x)` uses, so boxed-NUMBER elements recover to
+  // their numeric text rather than "[object Object]". These assert validity + correctness.
+  const cases: Array<[string, string, number]> = [
+    // Empty untyped array → "" (length 0). Was the headline invalid-Wasm case
+    // (`new Array()` / `[]` + join, test262 join/S15.4.4.5_A1.1_T1).
+    ["empty any[]", `const a: any[] = []; return a.join(",").length;`, 0],
+    // any[] numeric elements stringify per ToString — "1,2,3" length 5 (NOT
+    // "[object Object]…" which the $AnyValue tag-dispatcher produced for the
+    // join-fed boxed-number element).
+    ["any[] numeric", `const a: any[] = [1,2,3]; return a.join(",").length;`, 5],
+    ["any[] numeric first char", `const a: any[] = [1,2,3]; return a.join(",").charCodeAt(0);`, 49], // '1'
+    // any[] string elements still correct.
+    ["any[] string", `const a: any[] = ["x","y"]; return a.join(",").length;`, 3], // "x,y"
+    ["any[] string first char", `const a: any[] = ["x","y"]; return a.join(",").charCodeAt(0);`, 120], // 'x'
+    // Empty-array join with explicit separator is still "".
+    ["empty + sep", `const a: any[] = []; return a.join("-").length;`, 0],
+    // Array.prototype.toString delegates to join (§23.1.3.36) through the same
+    // native fold, so it gets the externref-element fix for free.
+    ["any[] numeric toString", `const a: any[] = [1,2,3]; return a.toString().length;`, 5], // "1,2,3"
+    ["any[] numeric toString first char", `const a: any[] = [1,2,3]; return a.toString().charCodeAt(0);`, 49], // '1'
+    ["empty any[] toString", `const a: any[] = []; return a.toString().length;`, 0],
+  ];
+  for (const [name, body, expected] of cases) {
+    it(`${name}`, async () => {
+      expect(await runStandalone(`export function run(): number { ${body} }`)).toBe(expected);
+    });
+  }
+});
