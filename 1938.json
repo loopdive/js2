@@ -1,8 +1,9 @@
 {
   "id": "1938",
   "assignee": "ttraenkler/sd3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1938-linear-number-array-f64",
   "claimed_at": "2026-06-19T00:12:00Z",
-  "updated_at": "2026-06-19T00:12:00Z"
+  "updated_at": "2026-06-19T00:37:13Z",
+  "released_at": "2026-06-19T00:37:13Z"
 }
