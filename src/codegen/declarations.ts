@@ -1387,7 +1387,13 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectForInStringLiterals finalize ──
-  if (state.forInFound) {
+  // (#2371) Only register the JS-host for-in enumeration imports in host mode.
+  // In standalone / WASI there is no JS host, so registering them leaks four
+  // unsatisfiable `env::__for_in_*` imports and makes the module fail to
+  // instantiate. The standalone path in `compileForInStatement` enumerates keys
+  // natively (static own-key unroll for objects/classes; a runtime index loop
+  // for arrays). Mirrors the iterator-import finalizers above.
+  if (state.forInFound && !ctx.standalone && !ctx.wasi) {
     addForInImports(ctx);
   }
   if (state.forInLiterals.size > 0) {

@@ -4710,21 +4710,34 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   const hasIdx = ctx.funcMap.get("__for_in_has");
 
   if (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) {
-    // Fallback: static unrolling when host imports are not available (standalone mode)
-    const exprType = ctx.checker.getTypeAtLocation(stmt.expression);
-    const props = exprType.getProperties();
-    if (props.length === 0) return;
-    for (const prop of props) {
-      // (#51) Materialize each enumerated key via the dual-mode helper. Under
-      // nativeStrings `stringGlobalMap` holds a `-1` sentinel global, so the old
-      // `global.get <sentinel>` reached binary emit as "global index out of
-      // range — -1". `stringConstantExternrefInstrs` emits the NativeString
-      // inline (externref) standalone and a host `global.get` only under GC.
-      addStringConstantGlobal(ctx, prop.name);
-      for (const instr of stringConstantExternrefInstrs(ctx, prop.name)) fctx.body.push(instr);
-      fctx.body.push({ op: "local.set", index: keyLocal });
-      compileStatement(ctx, fctx, stmt.statement);
-    }
+    // Standalone / WASI fallback (#2371): there is no JS host `__for_in_*`, so
+    // for-in must enumerate keys without one. A naive static unroll of the TS
+    // type's own properties is NOT sufficient to be correct:
+    //
+    //  - Array receivers enumerate the integer indices "0".."length-1", which
+    //    are NOT the static array type's `.getProperties()` (those are the
+    //    Array.prototype methods + `length`).
+    //  - A `for (k in o) … o[k] …` body reads the value by the RUNTIME key — and
+    //    standalone dynamic property read by a runtime string key (`o[k]` with
+    //    `k` a string variable) has no native path yet; it returns 0/default.
+    //    So even an object-literal unroll, while it materialises the correct
+    //    KEY string each iteration, would let a value-read body silently
+    //    miscompute.
+    //  - A dynamically-typed (`any`) receiver has no static key set at all.
+    //
+    // A correct standalone for-in therefore needs (a) native object/array key
+    // enumeration over the runtime struct/vec and (b) native dynamic property
+    // read by a runtime string key. Both are broad capabilities tracked as the
+    // #2371 follow-up. Until they land, refuse with a clear compile-time
+    // diagnostic rather than emit a silently-wrong loop. This is strictly better
+    // than the pre-#2371 behaviour, where the host imports were registered and
+    // the module failed to *instantiate* at runtime against an empty host.
+    reportError(
+      ctx,
+      stmt,
+      "for-in is not yet supported in standalone mode (#2371) — there is no JS host to enumerate keys. " +
+        "Use a numeric `for` loop over array indices, `for-of` for values, or `Object.keys(o)` when keys are needed.",
+    );
     return;
   }
 
