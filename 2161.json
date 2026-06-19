@@ -1,8 +1,9 @@
 {
   "id": "2161",
   "assignee": "ttraenkler/sd1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2161-regex-string-coercion",
   "claimed_at": "2026-06-19T00:11:39Z",
-  "updated_at": "2026-06-19T00:11:39Z"
+  "updated_at": "2026-06-19T00:25:23Z",
+  "released_at": "2026-06-19T00:25:23Z"
 }
