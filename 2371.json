@@ -1,9 +1,9 @@
 {
   "id": "2371",
   "assignee": "ttraenkler/sd1",
-  "status": "done",
+  "status": "released",
   "branch": "issue-2371-standalone-forin-leak",
   "claimed_at": "2026-06-19T00:47:59Z",
-  "updated_at": "2026-06-19T00:57:54Z",
-  "released_at": "2026-06-19T00:57:54Z"
+  "updated_at": "2026-06-19T01:10:57Z",
+  "released_at": "2026-06-19T01:10:57Z"
 }
