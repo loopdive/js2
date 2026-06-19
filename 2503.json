@@ -1,8 +1,9 @@
 {
   "id": "2503",
   "assignee": "ttraenkler/sen-1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2503-dstr-param-shape-arity",
   "claimed_at": "2026-06-19T09:03:46Z",
-  "updated_at": "2026-06-19T09:03:46Z"
+  "updated_at": "2026-06-19T09:19:48Z",
+  "released_at": "2026-06-19T09:19:48Z"
 }
