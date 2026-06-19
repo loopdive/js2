@@ -413,7 +413,8 @@ export function addUint8ArrayRuntime(mod: WasmModule): void {
 
   // __u8arr_from_arr(arrPtr: i32) → i32
   // Creates a Uint8Array from a number[] array.
-  // Array layout: [header 8B][len:u32 +8][cap:u32 +12][elements: i32×cap +16...]
+  // Array layout: [header 8B][len:u32 +8][cap:u32 +12][elements: 8B(f64)×cap +16...]
+  // Each source element is an f64 slot (#1938); truncate to a byte on copy.
   // Extra locals: local1 = len, local2 = newPtr, local3 = i
   addRuntimeFunc(
     mod,
@@ -455,18 +456,19 @@ export function addUint8ArrayRuntime(mod: WasmModule): void {
                 { op: "local.get", index: lenLocal },
                 { op: "i32.ge_u" },
                 { op: "br_if", depth: 1 },
-                // newPtr[12+i] = (u8) arrPtr[16 + i*4]
+                // newPtr[12+i] = (u8) arrPtr[16 + i*8]  (f64 slot → byte)
                 { op: "local.get", index: newPtrLocal },
                 { op: "local.get", index: iLocal },
                 { op: "i32.add" },
-                // Load element from array: arrPtr + 16 + i*4
+                // Load f64 element from array: arrPtr + 16 + i*8
                 { op: "local.get", index: 0 }, // arrPtr
                 { op: "local.get", index: iLocal },
-                { op: "i32.const", value: 4 },
+                { op: "i32.const", value: 8 },
                 { op: "i32.mul" },
                 { op: "i32.add" },
-                { op: "i32.load", align: 2, offset: 16 },
-                // Store as byte
+                { op: "f64.load", align: 3, offset: 16 },
+                // Truncate f64 → i32, store low byte
+                { op: "i32.trunc_f64_s" },
                 { op: "i32.store8", align: 0, offset: 12 },
                 // i++
                 { op: "local.get", index: iLocal },
@@ -531,14 +533,21 @@ function ensureArrayResolveRuntime(mod: WasmModule): void {
 
 /**
  * Add Array runtime functions to the module.
- * Layout: [header 8B][len:u32 at +8][cap:u32 at +12][elements: i32×cap at +16...]
+ * Layout: [header 8B][len:u32 at +8][cap:u32 at +12][elements: 8B×cap at +16...]
+ *
+ * #1938: element slots are 8 bytes (stride 8), holding a raw bit pattern the
+ * runtime never interprets. The runtime element boundary is typed **f64**:
+ * a numeric element flows in/out as its IEEE-754 f64 value (zero conversions),
+ * while a reference/boolean i32 is shuffled into the low 4 bytes of the slot by
+ * codegen (`i64.extend_i32_u` → `f64.reinterpret_i64` on store, inverse on
+ * load). Storing f64 slots fixes `[1.5][0]` → 1.5 (was truncated to i32).
  *
  * Functions added:
  * - __arr_new(cap: i32) → i32 (pointer)
  * - __arr_grow(ptr: i32, minCap: i32) → i32 (relocated pointer; forwards old header)
- * - __arr_push(ptr: i32, val: i32) → void
- * - __arr_get(ptr: i32, idx: i32) → i32
- * - __arr_set(ptr: i32, idx: i32, val: i32) → void
+ * - __arr_push(ptr: i32, val: f64) → void
+ * - __arr_get(ptr: i32, idx: i32) → f64
+ * - __arr_set(ptr: i32, idx: i32, val: f64) → void
  * - __arr_len(ptr: i32) → i32
  * - __arr_from_data(dataPtr: i32, len: i32) → i32 (header ptr)
  */
@@ -546,7 +555,7 @@ export function addArrayRuntime(mod: WasmModule): void {
   ensureArrayResolveRuntime(mod); // accessors below resolve forwarded arrays (#1977)
   const mallocIdx = findFuncIndex(mod, "__malloc");
 
-  // __arr_new: allocate header(8) + len(4) + cap(4) + elements(cap*4)
+  // __arr_new: allocate header(8) + len(4) + cap(4) + elements(cap*8)
   // Tag byte at offset 0: 0x01 = Array
   // extra locals: local 1 = ptr
   addRuntimeFunc(
@@ -556,10 +565,10 @@ export function addArrayRuntime(mod: WasmModule): void {
     [{ kind: "i32" }],
     [],
     (local1Idx) => [
-      // Allocate: 16 + cap*4
+      // Allocate: 16 + cap*8
       { op: "i32.const", value: 16 },
       { op: "local.get", index: 0 }, // cap
-      { op: "i32.const", value: 4 },
+      { op: "i32.const", value: 8 },
       { op: "i32.mul" },
       { op: "i32.add" },
       { op: "call", funcIdx: mallocIdx },
@@ -637,10 +646,10 @@ export function addArrayRuntime(mod: WasmModule): void {
           ],
           else: [],
         },
-        // newPtr = __malloc(16 + newCap*4)
+        // newPtr = __malloc(16 + newCap*8)
         { op: "i32.const", value: 16 },
         { op: "local.get", index: newCapLocal },
-        { op: "i32.const", value: 4 },
+        { op: "i32.const", value: 8 },
         { op: "i32.mul" },
         { op: "i32.add" },
         { op: "call", funcIdx: mallocIdx },
@@ -670,18 +679,19 @@ export function addArrayRuntime(mod: WasmModule): void {
                 { op: "local.get", index: lenLocal },
                 { op: "i32.ge_u" },
                 { op: "br_if", depth: 1 },
+                // newPtr[i] = ptr[i] (raw 8-byte slot copy; bits opaque)
                 { op: "local.get", index: newPtrLocal },
                 { op: "local.get", index: iLocal },
-                { op: "i32.const", value: 4 },
+                { op: "i32.const", value: 8 },
                 { op: "i32.mul" },
                 { op: "i32.add" },
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: iLocal },
-                { op: "i32.const", value: 4 },
+                { op: "i32.const", value: 8 },
                 { op: "i32.mul" },
                 { op: "i32.add" },
-                { op: "i32.load", align: 2, offset: 16 },
-                { op: "i32.store", align: 2, offset: 16 },
+                { op: "f64.load", align: 3, offset: 16 },
+                { op: "f64.store", align: 3, offset: 16 },
                 { op: "local.get", index: iLocal },
                 { op: "i32.const", value: 1 },
                 { op: "i32.add" },
@@ -707,13 +717,13 @@ export function addArrayRuntime(mod: WasmModule): void {
 
   const arrGrowIdx = findFuncIndex(mod, "__arr_grow");
 
-  // __arr_push: store val at ptr+16+len*4, increment len.
+  // __arr_push: store val (f64 slot) at ptr+16+len*8, increment len.
   // Resolves forwarding and grows when len == cap (#1977 — was an unbounded
   // write into the bump arena that corrupted adjacent allocations).
   addRuntimeFunc(
     mod,
     "__arr_push",
-    [{ kind: "i32" }, { kind: "i32" }],
+    [{ kind: "i32" }, { kind: "f64" }],
     [],
     [],
     (local2Idx) => [
@@ -743,14 +753,14 @@ export function addArrayRuntime(mod: WasmModule): void {
         ],
         else: [],
       },
-      // Store val at ptr + 16 + len*4
+      // Store val at ptr + 16 + len*8 (f64 slot)
       { op: "local.get", index: 0 }, // ptr
       { op: "local.get", index: local2Idx }, // len
-      { op: "i32.const", value: 4 },
+      { op: "i32.const", value: 8 },
       { op: "i32.mul" },
       { op: "i32.add" },
-      { op: "local.get", index: 1 }, // val
-      { op: "i32.store", align: 2, offset: 16 },
+      { op: "local.get", index: 1 }, // val (f64)
+      { op: "f64.store", align: 3, offset: 16 },
       // Increment len: store len+1 at ptr+8
       { op: "local.get", index: 0 }, // ptr
       { op: "local.get", index: local2Idx }, // len
@@ -761,16 +771,16 @@ export function addArrayRuntime(mod: WasmModule): void {
     1,
   );
 
-  // __arr_get: load i32 at ptr + 16 + idx*4.
+  // __arr_get: load f64 slot at ptr + 16 + idx*8.
   // Resolves forwarding; OOB (idx >= len, unsigned — covers negative idx)
-  // returns 0, the backend's undefined representation (#1977 — was a raw
-  // load of neighbouring memory).
-  addRuntimeFunc(mod, "__arr_get", [{ kind: "i32" }, { kind: "i32" }], [{ kind: "i32" }], [], () => [
+  // returns 0.0, the backend's undefined representation (#1977 — was a raw
+  // load of neighbouring memory). Slot bits are opaque to the runtime (#1938).
+  addRuntimeFunc(mod, "__arr_get", [{ kind: "i32" }, { kind: "i32" }], [{ kind: "f64" }], [], () => [
     // ptr = __arr_resolve(ptr)
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: arrResolveIdx },
     { op: "local.set", index: 0 },
-    // if idx >= len (unsigned): return 0 (undefined)
+    // if idx >= len (unsigned): return 0.0 (undefined)
     { op: "local.get", index: 1 },
     { op: "local.get", index: 0 },
     { op: "i32.load", align: 2, offset: 8 },
@@ -778,26 +788,26 @@ export function addArrayRuntime(mod: WasmModule): void {
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      then: [{ op: "f64.const", value: 0 }, { op: "return" }],
       else: [],
     },
     { op: "local.get", index: 0 }, // ptr
     { op: "local.get", index: 1 }, // idx
-    { op: "i32.const", value: 4 },
+    { op: "i32.const", value: 8 },
     { op: "i32.mul" },
     { op: "i32.add" },
-    { op: "i32.load", align: 2, offset: 16 },
+    { op: "f64.load", align: 3, offset: 16 },
   ]);
 
-  // __arr_set: store i32 at ptr + 16 + idx*4.
+  // __arr_set: store f64 slot at ptr + 16 + idx*8.
   // Resolves forwarding; grows when idx >= cap; extends len (zero-filling
   // the gap) when idx >= len, per JS store-beyond-length semantics (#1977).
   // A negative idx is a JS non-index property write — dropped (no-op) rather
-  // than corrupting header/neighbour memory.
+  // than corrupting header/neighbour memory. Slot bits are opaque (#1938).
   addRuntimeFunc(
     mod,
     "__arr_set",
-    [{ kind: "i32" }, { kind: "i32" }, { kind: "i32" }],
+    [{ kind: "i32" }, { kind: "i32" }, { kind: "f64" }],
     [],
     [],
     (firstLocalIdx) => {
@@ -853,11 +863,11 @@ export function addArrayRuntime(mod: WasmModule): void {
                 { op: "br_if", depth: 1 },
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: fillLocal },
-                { op: "i32.const", value: 4 },
+                { op: "i32.const", value: 8 },
                 { op: "i32.mul" },
                 { op: "i32.add" },
-                { op: "i32.const", value: 0 },
-                { op: "i32.store", align: 2, offset: 16 },
+                { op: "f64.const", value: 0 },
+                { op: "f64.store", align: 3, offset: 16 },
                 { op: "local.get", index: fillLocal },
                 { op: "i32.const", value: 1 },
                 { op: "i32.add" },
@@ -884,14 +894,14 @@ export function addArrayRuntime(mod: WasmModule): void {
           ],
           else: [],
         },
-        // Store val
+        // Store val (f64 slot)
         { op: "local.get", index: 0 }, // ptr
         { op: "local.get", index: 1 }, // idx
-        { op: "i32.const", value: 4 },
+        { op: "i32.const", value: 8 },
         { op: "i32.mul" },
         { op: "i32.add" },
-        { op: "local.get", index: 2 }, // val
-        { op: "i32.store", align: 2, offset: 16 },
+        { op: "local.get", index: 2 }, // val (f64)
+        { op: "f64.store", align: 3, offset: 16 },
       ];
     },
     1,
@@ -908,7 +918,12 @@ export function addArrayRuntime(mod: WasmModule): void {
   // Build an internal array object from a raw, contiguous block of `len`
   // i32 elements at `dataPtr`. Used by the C ABI wrapper to rehydrate an
   // array parameter passed as a (ptr, len) pair (#1835).
-  // Layout written: [header 8B][len:u32 @ +8][cap:u32 @ +12][elems @ +16...]
+  // Layout written: [header 8B][len:u32 @ +8][cap:u32 @ +12][elems 8B @ +16...]
+  // Each incoming i32 is widened into the low 4 bytes of an 8-byte slot
+  // (i64.extend_i32_u → f64.reinterpret_i64), matching the codegen ref/bool
+  // slot encoding (#1938). Reference/string/handle array params round-trip;
+  // number[] params through the C ABI are a separate slice (the host passes
+  // raw doubles, not i32 handles).
   // extra locals: local 2 = ptr (result), local 3 = i (loop counter)
   addRuntimeFunc(
     mod,
@@ -920,10 +935,10 @@ export function addArrayRuntime(mod: WasmModule): void {
       const ptrLocal = firstLocalIdx;
       const iLocal = firstLocalIdx + 1;
       return [
-        // Allocate: 16 + len*4
+        // Allocate: 16 + len*8
         { op: "i32.const", value: 16 },
         { op: "local.get", index: 1 }, // len
-        { op: "i32.const", value: 4 },
+        { op: "i32.const", value: 8 },
         { op: "i32.mul" },
         { op: "i32.add" },
         { op: "call", funcIdx: mallocIdx },
@@ -940,7 +955,9 @@ export function addArrayRuntime(mod: WasmModule): void {
         { op: "local.get", index: ptrLocal },
         { op: "local.get", index: 1 },
         { op: "i32.store", align: 2, offset: 12 },
-        // Copy elements: for i=0; i<len; i++ { mem[ptr+16+i*4] = mem[dataPtr+i*4] }
+        // Copy elements: for i=0; i<len; i++ { slot[i] = widen(mem[dataPtr+i*4]) }
+        // The incoming block is packed i32 (4-byte stride); each i32 is widened
+        // into the low 4 bytes of the destination's 8-byte slot (#1938).
         { op: "i32.const", value: 0 },
         { op: "local.set", index: iLocal },
         {
@@ -956,21 +973,23 @@ export function addArrayRuntime(mod: WasmModule): void {
                 { op: "local.get", index: 1 }, // len
                 { op: "i32.ge_u" },
                 { op: "br_if", depth: 1 },
-                // dest addr = ptr + i*4 (offset 16 applied at store)
+                // dest addr = ptr + i*8 (offset 16 applied at store)
                 { op: "local.get", index: ptrLocal },
                 { op: "local.get", index: iLocal },
-                { op: "i32.const", value: 4 },
+                { op: "i32.const", value: 8 },
                 { op: "i32.mul" },
                 { op: "i32.add" },
-                // value = mem[dataPtr + i*4]
+                // value = widen(mem[dataPtr + i*4]) : i32 → f64 slot
                 { op: "local.get", index: 0 }, // dataPtr
                 { op: "local.get", index: iLocal },
                 { op: "i32.const", value: 4 },
                 { op: "i32.mul" },
                 { op: "i32.add" },
                 { op: "i32.load", align: 2, offset: 0 },
-                // store at dest+16
-                { op: "i32.store", align: 2, offset: 16 },
+                { op: "i64.extend_i32_u" },
+                { op: "f64.reinterpret_i64" },
+                // store at dest+16 (f64 slot)
+                { op: "f64.store", align: 3, offset: 16 },
                 // i++
                 { op: "local.get", index: iLocal },
                 { op: "i32.const", value: 1 },
@@ -2027,12 +2046,15 @@ export function addStringRuntime(mod: WasmModule): void {
                 { op: "i32.const", value: -1 },
                 { op: "i32.eq" },
                 { op: "br_if", depth: 1 },
-                // push substring [start, pos)
+                // push substring [start, pos) — encode the string i32 pointer
+                // into the low 4 bytes of the f64 element slot (#1938).
                 { op: "local.get", index: resultLocal },
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: startLocal },
                 { op: "local.get", index: posLocal },
                 { op: "call", funcIdx: strSliceIdx },
+                { op: "i64.extend_i32_u" },
+                { op: "f64.reinterpret_i64" },
                 { op: "call", funcIdx: arrPushIdx },
                 // start = pos + sepLen
                 { op: "local.get", index: posLocal },
@@ -2044,12 +2066,15 @@ export function addStringRuntime(mod: WasmModule): void {
             },
           ],
         },
-        // push final substring [start, strLen)
+        // push final substring [start, strLen) — encode the string i32 pointer
+        // into the f64 element slot (#1938).
         { op: "local.get", index: resultLocal },
         { op: "local.get", index: 0 },
         { op: "local.get", index: startLocal },
         { op: "local.get", index: strLenLocal2 },
         { op: "call", funcIdx: strSliceIdx },
+        { op: "i64.extend_i32_u" },
+        { op: "f64.reinterpret_i64" },
         { op: "call", funcIdx: arrPushIdx },
         // return result
         { op: "local.get", index: resultLocal },

@@ -2,6 +2,20 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-06-19 — Sprint-64 conformance-pool refill (PO standalone failure mining)
+
+Mined current standalone test262 failures (`.test262-cache/test262-standalone-current.jsonl`)
+for fresh dev-claimable conformance slices that are **independent of the
+in-progress standalone epics** (#2175 builtin-prototype readers, #2158/#2159/#2101
+class/TA descriptors, #2036 array generics, #2042 defineProperty, #2039 invalid-Wasm,
+ToPrimitive value-rep, BigInt #2044) and not deferred (async-gen/Proxy/eval/Temporal).
+All four also fail in JS-host, so devs can validate without standalone-only setup.
+Filed `sprint: 64`, `status: ready`:
+- [#2200](../2200-annexb-block-level-function-hoisting.md) — Annex B B.3.3 block-level function hoisting (~186) — medium, **highest impact**
+- [#2203](../2203-array-destructuring-elision-default-miscount.md) — array destructuring elision + default miscount (~54 standalone CE) — medium
+- [#2202](../2202-arguments-trailing-comma-spread-generator-method.md) — `arguments.length` for trailing-comma+spread in generator methods (~30) — medium
+- [#2201](../2201-logical-assignment-named-evaluation.md) — logical-assignment NamedEvaluation `fn.name` (~9) — easy/XS
+
 ## Sprint-61 merged-PR code review (2026-06-10)
 
 Static review of all 24 sprint-61 merged PRs (9 issues). #1909/#1910/#1902/#6407
