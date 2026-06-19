@@ -266,6 +266,124 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext): number | undefin
   return funcIdx;
 }
 
+/**
+ * (#1461/#54) Native standalone `(externref, externref) -> i32` strict-equality
+ * (`===`, StrictEqualityComparison) over two boxed externref values. The pure-Wasm
+ * replacement for the `__host_eq` host import in the array-like search arm
+ * (`indexOf`/`lastIndexOf`). Composes the two existing engine-owned helpers:
+ * `__any_from_extern` (recovers a boxed externref primitive — number/boolean/
+ * string/null/object — into a uniform `(ref $AnyValue)`) then `__any_strict_eq`
+ * (===-compares two `$AnyValue`, numeric class unified via `f64.eq` ⇒ NaN≠NaN,
+ * strings by content, objects by identity). Standalone-only; returns undefined
+ * otherwise (caller keeps the host import).
+ */
+export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefined {
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  const existing = ctx.funcMap.get("__extern_strict_eq");
+  if (existing !== undefined) return existing;
+  const fromExternIdx = ensureAnyFromExternHelper(ctx);
+  ensureAnyHelpers(ctx);
+  const strictEqIdx = ctx.funcMap.get("__any_strict_eq");
+  if (fromExternIdx === undefined || strictEqIdx === undefined) return undefined;
+
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    "__extern_strict_eq",
+  );
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: fromExternIdx },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: fromExternIdx },
+    { op: "call", funcIdx: strictEqIdx },
+  ];
+  ctx.mod.functions.push({ name: "__extern_strict_eq", typeIdx, locals: [], body, exported: false });
+  ctx.funcMap.set("__extern_strict_eq", funcIdx);
+  return funcIdx;
+}
+
+/**
+ * (#1461/#54) Native standalone `(externref, externref) -> i32` SameValueZero
+ * (§7.2.11) over two boxed externref values — the pure-Wasm replacement for the
+ * `__same_value_zero` host import in the array-like `includes` search arm.
+ * SameValueZero differs from `===` ONLY in `NaN`: SameValueZero(NaN, NaN) is
+ * true (and +0/−0 are equal under both, which `f64.eq` already gives). So:
+ * `__extern_strict_eq(a, b) || (a and b are both NaN numbers)`. The NaN test
+ * recovers both via `__any_from_extern`, checks tag ∈ {2,3} (number) and the
+ * f64 self-inequality (`x !== x`).
+ */
+export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | undefined {
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  const existing = ctx.funcMap.get("__extern_same_value_zero");
+  if (existing !== undefined) return existing;
+  const strictEqExternIdx = ensureExternStrictEqHelper(ctx);
+  const fromExternIdx = ensureAnyFromExternHelper(ctx);
+  ensureAnyValueType(ctx);
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  if (strictEqExternIdx === undefined || fromExternIdx === undefined || anyTypeIdx < 0) return undefined;
+
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    "__extern_same_value_zero",
+  );
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  // locals: 2,3 = the two recovered $AnyValue refs.
+  const anyRef: ValType = { kind: "ref", typeIdx: anyTypeIdx };
+  // Returns 1 if `local.get idx`'s $AnyValue is a NaN number (tag 2/3 + f64 self-ne).
+  const isNanNumber = (idx: number): Instr[] => [
+    { op: "local.get", index: idx } as Instr,
+    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 } as Instr, // tag
+    { op: "i32.const", value: 3 } as Instr,
+    { op: "i32.eq" } as Instr, // f64-number tag (NaN only lives in the f64 field)
+    { op: "local.get", index: idx } as Instr,
+    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 } as Instr, // f64 val
+    { op: "local.get", index: idx } as Instr,
+    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 } as Instr,
+    { op: "f64.ne" } as Instr, // x !== x  ⇒ NaN
+    { op: "i32.and" } as Instr,
+  ];
+  const body: Instr[] = [
+    // if (strict_eq) return 1
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: strictEqExternIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 1 }],
+      else: [
+        // both-NaN: recover both, test each is a NaN number.
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: fromExternIdx },
+        { op: "local.set", index: 2 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: fromExternIdx },
+        { op: "local.set", index: 3 },
+        ...isNanNumber(2),
+        ...isNanNumber(3),
+        { op: "i32.and" },
+      ],
+    },
+  ];
+  ctx.mod.functions.push({
+    name: "__extern_same_value_zero",
+    typeIdx,
+    locals: [
+      { name: "a_any", type: anyRef },
+      { name: "b_any", type: anyRef },
+    ],
+    body,
+    exported: false,
+  });
+  ctx.funcMap.set("__extern_same_value_zero", funcIdx);
+  return funcIdx;
+}
+
 export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined {
   if (!(ctx.standalone || ctx.wasi)) return undefined;
   if (ctx.anyValueTypeIdx < 0) return undefined;

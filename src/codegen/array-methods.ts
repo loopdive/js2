@@ -35,7 +35,12 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
-import { ensureAnyHelpers, isAnyValue } from "./any-helpers.js";
+import {
+  ensureAnyHelpers,
+  ensureExternSameValueZeroHelper,
+  ensureExternStrictEqHelper,
+  isAnyValue,
+} from "./any-helpers.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
@@ -501,16 +506,19 @@ const ARRAY_LIKE_SEARCH_METHODS = new Set(["indexOf", "lastIndexOf", "includes"]
  * senior/infra; this set is removed entry-by-entry as those native paths land.
  */
 const STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS = new Set([
-  "indexOf",
-  "lastIndexOf",
-  "includes",
   // (#2036 S6 step 2) `filter` now has a native standalone arm — it builds its
   // result via the native `$ObjVec` builder (`__objvec_new`/`__objvec_push`)
   // instead of the host `__js_array_*`, so it no longer leaks a host import.
   // Removed from the refusal set.
   //
-  // (#1461/#54) `map` stays until its native indexed (sparse-hole) result arm
-  // lands. `reduce`/`reduceRight` are special-cased in the dispatch
+  // (#1461/#54) `indexOf`/`lastIndexOf`/`includes` now have a native search arm:
+  // `compileArrayLikePrototypeSearch` routes element comparison through the
+  // pure-Wasm `__extern_strict_eq` / `__extern_same_value_zero` helpers
+  // (composed from `__any_from_extern` + `__any_strict_eq`) under standalone, so
+  // they no longer leak `__host_eq` / `__same_value_zero`. Removed from the set.
+  //
+  // `map` stays until its native indexed (sparse-hole) result arm lands.
+  // `reduce`/`reduceRight` are special-cased in the dispatch
   // (`standaloneArrayLikeMethodRefused`): the **with-initial-value** form is
   // host-import-free (accumulator boxed through native `__box_number`) and
   // ALLOWED; the **no-initial-value** form's §23.1.3.21 forward hole-scan still
@@ -1556,9 +1564,19 @@ function compileArrayLikePrototypeSearch(
     [{ kind: "externref" }, { kind: "f64" }],
     [{ kind: "i32" }],
   );
-  const cmpFn = isIncludes
-    ? ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }])
-    : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+  // (#1461/#54) Element comparison. Standalone/WASI route through the native
+  // pure-Wasm `__extern_strict_eq` (===, indexOf/lastIndexOf) /
+  // `__extern_same_value_zero` (includes) helpers — composed from
+  // `__any_from_extern` + `__any_strict_eq` — so the search arm leaks no host
+  // import. Host/gc mode keeps the `__host_eq` / `__same_value_zero` host imports.
+  const nativeCmp = ctx.standalone || ctx.wasi;
+  const cmpFn = nativeCmp
+    ? isIncludes
+      ? ensureExternSameValueZeroHelper(ctx)
+      : ensureExternStrictEqHelper(ctx)
+    : isIncludes
+      ? ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }])
+      : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
   if (lenFn === undefined || getIdxFn === undefined || hasIdxFn === undefined || cmpFn === undefined) return undefined;
   flushLateImportShifts(ctx, fctx);
 
@@ -1758,7 +1776,14 @@ function compileArrayLikePrototypeSearch(
   // late-shift hazard.)
   const getIdxFnNow = ctx.funcMap.get("__extern_get_idx") ?? getIdxFn;
   const hasIdxFnNow = ctx.funcMap.get("__extern_has_idx") ?? hasIdxFn;
-  const cmpFnNow = ctx.funcMap.get(isIncludes ? "__same_value_zero" : "__host_eq") ?? cmpFn;
+  const cmpFnName = nativeCmp
+    ? isIncludes
+      ? "__extern_same_value_zero"
+      : "__extern_strict_eq"
+    : isIncludes
+      ? "__same_value_zero"
+      : "__host_eq";
+  const cmpFnNow = ctx.funcMap.get(cmpFnName) ?? cmpFn;
 
   // ── Loop body ────────────────────────────────────────────────────
   // Outer block: "exit on found".
