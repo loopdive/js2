@@ -15,6 +15,16 @@ name: Unstick merge queue
 # group and reliably re-fires the webhooks.
 
 on:
+  # Event-driven trigger (#2517): fire on every CI / Test262 completion, not only
+  # the throttled */15 cron. GitHub deprioritizes scheduled workflows under load —
+  # on 2026-06-19 the cron skipped for ~80 min and the queue sat wedged the whole
+  # time. workflow_run mirrors auto-enqueue.yml's reliable trigger so the unstick
+  # fires whenever a relevant workflow completes. The script self-gates (acts only
+  # on a genuine head-AWAITING_CHECKS >=12 min with zero merge_group runs), so
+  # firing it frequently is safe — it no-ops on a healthy queue.
+  workflow_run:
+    workflows: ["Test262 Sharded", "CI"]
+    types: [completed]
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
