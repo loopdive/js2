@@ -4903,6 +4903,33 @@ function compileArrayJoinNative(
     }
   }
 
+  // #2505 — boxed-any element (`any[]`): each element is a generic boxed value
+  // (externref/anyref), stringified through `__extern_toString` (the same path
+  // `String(any)` uses) in the per-element fold below. Resolve the import index
+  // here, BEFORE the fold body is built, so the `call` baked into the repeated
+  // `elemToStr` sequence has a stable funcIdx (a late `ensureLateImport` mid-fold
+  // would shift indices under the already-emitted prelude). The shift is flushed
+  // against `fctx.body` before the fold runs.
+  const elemIsBoxedAny = elemType.kind === "externref" || elemType.kind === "anyref";
+  let externToStrIdx: number | undefined;
+  let externIsUndefIdx: number | undefined;
+  let boxedAnyElemTmp: number | undefined;
+  if (elemIsBoxedAny) {
+    externToStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+    // §23.1.3.18 step 7d: a `null`/`undefined` array element joins as the empty
+    // string (NOT "null"/"undefined" the way String(null) would). `null` is the
+    // structural `ref.null.extern`; `undefined` is a boxed sentinel externref —
+    // detect it with the runtime predicate. Resolve both imports up-front for
+    // funcIdx stability before the fold body is built.
+    externIsUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+    if (externToStrIdx === undefined || externIsUndefIdx === undefined) {
+      reportError(ctx, callExpr, "join of an any[] requires __extern_toString / __extern_is_undefined");
+      return null;
+    }
+    flushLateImportShifts(ctx, fctx);
+    boxedAnyElemTmp = allocLocal(fctx, `__njoin_elem_${fctx.locals.length}`, { kind: "externref" });
+  }
+
   const vecTmp = allocLocal(fctx, `__njoin_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__njoin_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const foldLocals = allocJoinFoldLocals(fctx, repr, "njoin");
@@ -4962,6 +4989,46 @@ function compileArrayJoinNative(
     // number_toString returns the native string boxed as externref.
     elemToStr.push({ op: "any.convert_extern" } as Instr);
     elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+  } else if (
+    elemIsBoxedAny &&
+    externToStrIdx !== undefined &&
+    externIsUndefIdx !== undefined &&
+    boxedAnyElemTmp !== undefined
+  ) {
+    // #2505 — boxed-any element (`any[]`): the element is a generic boxed value
+    // (externref/anyref), NOT a `(ref null $NativeString)`. `ref.as_non_null`
+    // would leave it typed externref/anyref, which can't `local.set` into the
+    // `(ref $AnyString)` fold result local — the invalid-Wasm `local.set[0]
+    // expected (ref null $AnyString)` defect.
+    //
+    // Spec §23.1.3.18 step 7d: a `null`/`undefined` element joins as the empty
+    // string. Otherwise route the element through `__extern_toString` (externref
+    // → externref), the SAME path `String(any)` uses — in standalone it is the
+    // native object-runtime ToString that correctly recovers a boxed number/
+    // boolean/string element (a bare `__any_to_string` over `any.convert_extern`
+    // misses the host-boxed-number externref shape and mis-renders `1` as
+    // "[object Object]"). Then bring the native-string externref back to
+    // `(ref $AnyString)` for the concat fold — mirroring the separator coercion.
+    if (elemType.kind === "anyref") {
+      elemToStr.push({ op: "extern.convert_any" } as Instr);
+    }
+    // tee element → temp; nullish? (ref.is_null OR __extern_is_undefined) → ""
+    elemToStr.push({ op: "local.tee", index: boxedAnyElemTmp } as Instr);
+    elemToStr.push({ op: "ref.is_null" } as Instr);
+    elemToStr.push({ op: "local.get", index: boxedAnyElemTmp } as Instr);
+    elemToStr.push({ op: "call", funcIdx: externIsUndefIdx } as Instr);
+    elemToStr.push({ op: "i32.or" } as Instr);
+    elemToStr.push({
+      op: "if",
+      blockType: { kind: "val", type: nativeStringType(ctx) },
+      then: nativeStringLiteralInstrs(ctx, ""),
+      else: [
+        { op: "local.get", index: boxedAnyElemTmp } as Instr,
+        { op: "call", funcIdx: externToStrIdx } as Instr,
+        { op: "any.convert_extern" } as Instr,
+        { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr,
+      ],
+    } as Instr);
   } else {
     // String element: a (ref null $NativeString) — non-null cast up to $AnyString.
     elemToStr.push({ op: "ref.as_non_null" } as Instr);
