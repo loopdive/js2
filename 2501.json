@@ -1,8 +1,8 @@
 {
   "id": "2501",
-  "assignee": "ttraenkler/sd3",
+  "assignee": "ttraenkler/sd5",
   "status": "in-progress",
   "branch": "issue-2402-object-prototype-tostring-tag",
-  "claimed_at": "2026-06-19T02:30:00Z",
-  "updated_at": "2026-06-19T02:30:00Z"
+  "claimed_at": "2026-06-19T05:28:57Z",
+  "updated_at": "2026-06-19T05:28:57Z"
 }
