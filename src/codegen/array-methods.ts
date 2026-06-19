@@ -4579,28 +4579,15 @@ function compileArraySlice(
   _elemType: ValType,
 ): ValType {
   const vecTmp = allocLocal(fctx, `__arr_slc_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
-  const dataTmp = allocLocal(fctx, `__arr_slc_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
-  const newData = allocLocal(fctx, `__arr_slc_ndata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
-  const startTmp = allocLocal(fctx, `__arr_slc_s_${fctx.locals.length}`, { kind: "i32" });
-  const endTmp = allocLocal(fctx, `__arr_slc_e_${fctx.locals.length}`, { kind: "i32" });
-  const lenTmp = allocLocal(fctx, `__arr_slc_len_${fctx.locals.length}`, { kind: "i32" });
-  const sliceLenTmp = allocLocal(fctx, `__arr_slc_sl_${fctx.locals.length}`, { kind: "i32" });
 
-  // Compile receiver -> vec ref
+  // Compile receiver -> vec ref, stash in vecTmp, null-guard, drop the tee leftover.
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp);
+  fctx.body.push({ op: "drop" });
 
-  // Get length from vec
-  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "local.set", index: lenTmp });
-
-  // Get data array from vec
-  fctx.body.push({ op: "local.get", index: vecTmp });
-  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "local.set", index: dataTmp });
-
-  // start arg -- clamp negative: if start < 0, start = max(0, len + start)
+  // start arg (f64→i32) into a local; default 0.
+  const startTmp = allocLocal(fctx, `__arr_slc_s_${fctx.locals.length}`, { kind: "i32" });
   if (callExpr.arguments.length >= 1) {
     compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
@@ -4608,21 +4595,69 @@ function compileArraySlice(
     fctx.body.push({ op: "i32.const", value: 0 });
   }
   fctx.body.push({ op: "local.set", index: startTmp });
-  emitClampIndex(fctx, startTmp, lenTmp);
 
-  // end arg -- clamp negative: if end < 0, end = max(0, len + end); clamp to len
-  if (callExpr.arguments.length >= 2) {
+  // end arg into a local (only when explicit); null = "use length".
+  const hasEnd = callExpr.arguments.length >= 2;
+  const endTmp = allocLocal(fctx, `__arr_slc_e_${fctx.locals.length}`, { kind: "i32" });
+  if (hasEnd) {
     compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: endTmp });
+  }
+  return compileArraySliceFromVecLocal(ctx, fctx, vecTmp, vecTypeIdx, arrTypeIdx, startTmp, hasEnd ? endTmp : null);
+}
+
+/**
+ * (#2193 PR-B) Local-driven core of `Array.prototype.slice`: given the receiver
+ * vec already in `vecLocal` and the (already-truncated-to-i32) start in
+ * `startLocal`, produce a new sliced vec. `endLocal === null` means "no explicit
+ * end" (use the receiver length). This is the AST-free entry the proto-member
+ * closure body (`emitArrayProtoMemberBody`) calls after recovering the array
+ * instance from the closure `this` externref. `compileArraySlice` is now a thin
+ * wrapper that compiles the receiver/args into locals then delegates here — so the
+ * direct `a.slice(...)` lowering is behaviour-preserving (pure extraction).
+ */
+export function compileArraySliceFromVecLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  vecLocal: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  startLocal: number,
+  endLocal: number | null,
+): ValType {
+  const dataTmp = allocLocal(fctx, `__arr_slc_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const newData = allocLocal(fctx, `__arr_slc_ndata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__arr_slc_len_${fctx.locals.length}`, { kind: "i32" });
+  const sliceLenTmp = allocLocal(fctx, `__arr_slc_sl_${fctx.locals.length}`, { kind: "i32" });
+
+  // len = vec.length (field 0)
+  fctx.body.push({ op: "local.get", index: vecLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+
+  // data = vec.data (field 1)
+  fctx.body.push({ op: "local.get", index: vecLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // start clamp (negative → max(0, len+start); positive → min(start, len))
+  emitClampIndex(fctx, startLocal, lenTmp);
+
+  // end: explicit (clamp) or default = len.
+  const endFin = allocLocal(fctx, `__arr_slc_efin_${fctx.locals.length}`, { kind: "i32" });
+  if (endLocal !== null) {
+    fctx.body.push({ op: "local.get", index: endLocal });
+    fctx.body.push({ op: "local.set", index: endFin });
+    emitClampIndex(fctx, endFin, lenTmp);
   } else {
     fctx.body.push({ op: "local.get", index: lenTmp });
+    fctx.body.push({ op: "local.set", index: endFin });
   }
-  fctx.body.push({ op: "local.set", index: endTmp });
-  emitClampIndex(fctx, endTmp, lenTmp);
 
   // sliceLen = max(0, end - start)
-  fctx.body.push({ op: "local.get", index: endTmp });
-  fctx.body.push({ op: "local.get", index: startTmp });
+  fctx.body.push({ op: "local.get", index: endFin });
+  fctx.body.push({ op: "local.get", index: startLocal });
   fctx.body.push({ op: "i32.sub" });
   fctx.body.push({ op: "local.set", index: sliceLenTmp });
   emitClampNonNeg(fctx, sliceLenTmp);
@@ -4633,9 +4668,9 @@ function compileArraySlice(
   fctx.body.push({ op: "local.set", index: newData });
 
   // array.copy newData[0..sliceLen] = data[start..start+sliceLen]
-  emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, startTmp, sliceLenTmp);
+  emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, startLocal, sliceLenTmp);
 
-  // Create new vec struct: { sliceLen, newData }
+  // struct.new vec { sliceLen, newData }
   fctx.body.push({ op: "local.get", index: sliceLenTmp });
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });

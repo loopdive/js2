@@ -1,5 +1,6 @@
 {
   "codegen/array-methods.ts": 20,
+  "codegen/array-object-proto.ts": 1,
   "codegen/async-scheduler.ts": 3,
   "codegen/binary-ops.ts": 38,
   "codegen/closed-method-dispatch.ts": 1,

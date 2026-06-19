@@ -21,7 +21,7 @@
  */
 
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import type { ValType } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import {
   getBuiltinBrand,
   getNativeProtoBuiltinGlue,
@@ -29,6 +29,11 @@ import {
   type NativeProtoBuiltinGlue,
 } from "./native-proto.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
+import { allocLocal } from "./context/locals.js";
+import { emitThisReceiverGuardConvert } from "./property-access.js";
+import { compileArraySliceFromVecLocal } from "./array-methods.js";
+import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -255,6 +260,7 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = {
   forEach: 1,
   push: 1,
   reduce: 1,
+  slice: 2,
   splice: 2,
   unshift: 1,
   with: 2,
@@ -286,7 +292,6 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = {
   replace: 2,
   replaceAll: 2,
   search: 1,
-  slice: 2,
   split: 2,
   startsWith: 1,
   substr: 2,
@@ -367,6 +372,75 @@ function emitProtoMemberBodyRefusal(
   return null;
 }
 
+/**
+ * (#2193 PR-B) Unbox an externref closure-arg (a boxed JS number) at `paramIdx`
+ * into an i32, leaving it on the stack. `default0` is used when the arg is
+ * absent/non-number (the closure ABI over-pads with externref args).
+ */
+function unboxArgToI32(ctx: CodegenContext, fctx: FunctionContext, paramIdx: number): number {
+  const local = allocLocal(fctx, `__pm_arg_${fctx.locals.length}`, { kind: "i32" });
+  const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+  flushLateImportShifts(ctx, fctx);
+  fctx.body.push({ op: "local.get", index: paramIdx } as Instr);
+  if (unboxIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: unboxIdx } as Instr);
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
+  } else {
+    fctx.body.push({ op: "drop" } as Instr);
+    fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+  }
+  fctx.body.push({ op: "local.set", index: local } as Instr);
+  return local;
+}
+
+/**
+ * (#2193 PR-B) Emit the native body for an `Array.prototype.<member>` closure
+ * value. `this` is closure-param 1 (externref boxed array), args at 2.. . Recovers
+ * the array instance via the registered-vec `ref.test`/`ref.cast` guard, then
+ * delegates to the AST-free `compileArray<member>FromVecLocal` core. Members
+ * without a native local-driven core yet degrade to a catchable TypeError (not a
+ * compile refusal). Returns externref (the uniform closure-call result type).
+ */
+function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  if (member !== "slice") {
+    // Other Array.prototype members: their *FromVecLocal cores land in PR-C; until
+    // then, a reflective call degrades to a catchable TypeError, not a compile error.
+    emitThrowTypeError(ctx, fctx, `Array.prototype.${member} is not yet callable as a value in --target standalone`);
+    return { kind: "externref" };
+  }
+
+  // slice: args begin@2, end@3 (closure ABI pads with externref). Unbox to i32.
+  const startLocal = unboxArgToI32(ctx, fctx, 2);
+  const endLocal = unboxArgToI32(ctx, fctx, 3);
+  const resultType: ValType = { kind: "externref" };
+
+  // Recover the array instance from the externref `this` (param 1) over the
+  // registered vec types; run the slice core in each compiled-array arm, box the
+  // result vec to externref. Non-array `this` → host path → TypeError-ish null.
+  const targets = [...ctx.vecTypeMap.values()];
+  fctx.body.push({ op: "local.get", index: 1 } as Instr); // this
+  emitThisReceiverGuardConvert(
+    ctx,
+    fctx,
+    targets,
+    resultType,
+    (concreteType) => {
+      // `concreteType` = (ref vecTypeIdx); stash into a vec local.
+      const vecTypeIdx = (concreteType as { typeIdx: number }).typeIdx;
+      const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+      const vecLocal = allocLocal(fctx, `__pm_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+      fctx.body.push({ op: "local.set", index: vecLocal } as Instr);
+      compileArraySliceFromVecLocal(ctx, fctx, vecLocal, vecTypeIdx, arrTypeIdx, startLocal, endLocal);
+      fctx.body.push({ op: "extern.convert_any" } as Instr); // vec → externref
+    },
+    () => {
+      // Non-array (genuine host) `this`: no compiled backing → return undefined.
+      fctx.body.push({ op: "ref.null.extern" } as Instr);
+    },
+  );
+  return resultType;
+}
+
 function makeGlue(
   ctx: CodegenContext,
   brand: number,
@@ -382,7 +456,10 @@ function makeGlue(
     // not the proto).
     memberKind: () => "method",
     memberLength: (member) => PROTO_METHOD_LENGTH[member] ?? 1,
-    emitMemberBody: (c, fctx, member) => emitProtoMemberBodyRefusal(c, fctx, name, member),
+    // (#2193 PR-B) Array.prototype.slice is now a real native closure body; other
+    // Array members + all Object members still degrade to a catchable TypeError.
+    emitMemberBody: (c, fctx, member) =>
+      name === "Array" ? emitArrayProtoMemberBody(c, fctx, member) : emitProtoMemberBodyRefusal(c, fctx, name, member),
   };
 }
 

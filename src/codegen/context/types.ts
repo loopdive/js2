@@ -1415,6 +1415,14 @@ export interface CodegenContext {
    *  member name (e.g. `RegExp.prototype.test.length === 1`,
    *  `.name === "test"`). Populated by `ensureStandaloneNativeMethodClosure`. */
   nativeClosureMeta?: Map<number, { name: string; length: number }>;
+  /** (#2193 PR-B) Struct-type indices of `$NativeProto` member closures whose
+   *  FIRST user param is the receiver (`this`) — e.g. `Array.prototype.slice`'s
+   *  `(self, this, start, end)` closure. Unlike a plain user function (which
+   *  ignores `this`), a reflective `m.call(thisArg, …args)` on one of these MUST
+   *  thread `thisArg` into param 1 instead of dropping it. The generic `.call`
+   *  dispatch in expressions/calls.ts consults this set to decide. Populated by
+   *  `ensureStandaloneNativeMethodClosure`. */
+  nativeProtoReceiverClosureStructTypes?: Set<number>;
   /** (#682) Native standalone RegExp engine hook. Standalone mode currently
    *  enables the reduced literal-substring backend; null means RegExp lowering
    *  must stay on the explicit #1474 refusal path. */

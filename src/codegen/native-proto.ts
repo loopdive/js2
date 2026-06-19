@@ -436,6 +436,15 @@ export function ensureStandaloneNativeMethodClosure(
     ctx.nativeClosureMeta.set(funcIdx, { name: member, length: arity });
   }
 
+  // (#2193 PR-B) A `"method"` closure's first user param is the receiver
+  // (`this`); record its struct type so a reflective `m.call(thisArg, …args)`
+  // threads `thisArg` into param 1 instead of dropping it (the plain-function
+  // `.call` default). Getters carry no user-visible receiver-arg semantics here.
+  if (kind === "method") {
+    if (!ctx.nativeProtoReceiverClosureStructTypes) ctx.nativeProtoReceiverClosureStructTypes = new Set();
+    ctx.nativeProtoReceiverClosureStructTypes.add(wrapperTypes.structTypeIdx);
+  }
+
   return { type: { kind: "ref", typeIdx: wrapperTypes.structTypeIdx }, funcIdx };
 }
 
