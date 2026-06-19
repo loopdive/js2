@@ -1148,6 +1148,18 @@ export interface CodegenContext {
   /** Widened empty-object fields introduced by Object.defineProperty rather than assignment. */
   widenedDefinePropertyKeys: Set<string>;
   /**
+   * (#2372) Standalone-only: receiver var names that are the target of at least
+   * one `Object.defineProperty(var, key, desc)` where `desc` is a *dynamic*
+   * (non-inline-literal) descriptor. Such defines are applied via the native
+   * `__obj_define_from_desc` `$Object` runtime, which the struct-widening read
+   * path (`struct.get`) cannot observe. Membership here suppresses
+   * struct-widening for the receiver so it stays on the `$Object` representation
+   * and both the dynamic write and the read-back route through the native
+   * runtime consistently. Empty in host/gc/wasi mode (only populated under
+   * `ctx.standalone`).
+   */
+  dynamicDescriptorWidenVars: Set<string>;
+  /**
    * (#1239) Variable names whose initializer is an object literal carrying
    * `get`/`set` accessors. Such variables are stored as plain JS host
    * objects (via `__new_plain_object` + `__defineProperty_accessor`) and

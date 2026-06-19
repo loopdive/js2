@@ -1,9 +1,10 @@
 ---
 id: 1322
 title: "Math.random() has no standalone fallback — requires JS host import in WASI/standalone mode"
-status: ready
+status: done
+completed: 2026-06-19
 created: 2026-05-07
-updated: 2026-06-12
+updated: 2026-06-19
 priority: low
 feasibility: easy
 reasoning_effort: low
@@ -92,3 +93,16 @@ slot can be filled with the xorshift64 body.
 ## Frontmatter reconcile (2026-06-12)
 
 Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).
+
+## Closed — already implemented & merged (2026-06-19, sd1)
+
+Smoke-tested during the sprint-64 backlog-candidate sweep: **does NOT reproduce —
+the feature is fully landed.** The implementation was merged via PR #262
+(`feat(#1322): wire Math.random() to WASI random_get in standalone mode`):
+`src/codegen/math-helpers.ts:131+` emits `Math_random` as a defined function
+calling `wasi_snapshot_preview1.random_get` (no `env.Math_random` host import in
+WASI), and `tests/issue-1322.test.ts` (6 cases) passes on current main
+(`[0,1)` range, distinct repeated values, dice-face coverage, the WASI-import
+guard, the JS-host regression guard, and the shared-registry guard). The frontmatter
+was simply never flipped from `ready` to `done` when the original session died
+(sprints 42-52). Flipping it now; no code change. **Status → done.**

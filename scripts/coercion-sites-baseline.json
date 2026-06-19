@@ -22,7 +22,7 @@
   "codegen/map-runtime.ts": 2,
   "codegen/number-format-native.ts": 8,
   "codegen/object-ops.ts": 4,
-  "codegen/object-runtime.ts": 22,
+  "codegen/object-runtime.ts": 23,
   "codegen/parse-number-native.ts": 4,
   "codegen/property-access.ts": 11,
   "codegen/stack-balance.ts": 1,

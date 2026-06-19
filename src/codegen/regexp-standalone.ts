@@ -1804,44 +1804,45 @@ export function tryCompileStandaloneRegExpPropertyRead(
 }
 
 /**
- * `RegExp.prototype.toString()` in standalone mode (#2161, §22.2.6.14).
+ * Shared core for §22.2.6.14 `RegExp.prototype.toString()` rendering of a
+ * static / backend-created RegExp *receiver expression* — `"/" + source + "/" +
+ * flags` — emitting a native string with ZERO host imports.
  *
- * The spec result is `"/" + R.[[OriginalSource]] + "/" + R.[[OriginalFlags]]` —
- * i.e. `"/" + re.source + "/" + re.flags`, both of which the native backend
- * already produces (the struct's `source` field is stored in the spec-escaped
- * §22.2.6.13.1 form, and `__regex_flags_str` builds the d-g-i-m-s-u-v-y flag
- * string). In standalone / nativeStrings mode there is no JS host, so a
- * `re.toString()` / `String(re)` / `` `${re}` `` previously leaked the generic
- * `env::Object_toString` import (and `String(re)` null-deref'd). This composes
- * the two native field reads with `__str_concat`, returning a native string —
- * zero host imports.
+ * The spec result is `"/" + R.[[OriginalSource]] + "/" + R.[[OriginalFlags]]`,
+ * both of which the native backend already produces (the struct's `source`
+ * field is stored in the spec-escaped §22.2.6.13.1 form, and `__regex_flags_str`
+ * builds the d-g-i-m-s-u-v-y flag string). In standalone / nativeStrings mode
+ * there is no JS host, so the generic ref→string coercion path leaked
+ * `env::Object_toString` (or null-deref'd). This composes the two native field
+ * reads with `__str_concat`.
  *
- * Returns `undefined` when the call is not a static-RegExp `.toString()`
- * (caller falls through), `null` after a narrowed refusal, or the result type.
+ * Used by the `re.toString()` method dispatch (`tryCompileStandaloneRegExpToString`)
+ * AND by the value→string coercion paths (`String(re)`, `` `${re}` ``) which
+ * would otherwise null-deref or yield `"[object Object]"` (#2161).
+ *
+ * Returns the emitted native-string `ValType`, `null` after a reported refusal
+ * (e.g. a non-backend RegExp), or `undefined` when the expression is not a
+ * static / backend-created RegExp the caller should keep falling through for.
  */
-export function tryCompileStandaloneRegExpToString(
+export function emitStandaloneRegExpToStringFromExpr(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  expr: ts.CallExpression,
-  propAccess: ts.PropertyAccessExpression,
+  regexpExpr: ts.Expression,
 ): ValType | null | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "toString" || expr.arguments.length !== 0) return undefined;
-  const objType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  if (!ctx.standalone) return undefined;
+  const objType = ctx.checker.getTypeAtLocation(regexpExpr);
   const nonNull = objType.getNonNullableType?.() ?? objType;
   if (!isGlobalRegExpType(nonNull)) return undefined;
   // Only static / backend-created receivers route to the native struct; a
   // dynamic externref RegExp falls through to the host/refusal path.
-  if (
-    !isStaticStandaloneRegExpCreation(ctx, propAccess.expression) &&
-    !isKnownBackendCreatedRegExpReceiver(ctx, propAccess.expression)
-  ) {
+  if (!isStaticStandaloneRegExpCreation(ctx, regexpExpr) && !isKnownBackendCreatedRegExpReceiver(ctx, regexpExpr)) {
     return undefined;
   }
 
   const repr = nativeStringRepr(ctx);
   if (repr === undefined) return undefined;
 
-  const loaded = loadStandaloneRegExpStruct(ctx, fctx, propAccess.expression);
+  const loaded = loadStandaloneRegExpStruct(ctx, fctx, regexpExpr);
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
@@ -1864,6 +1865,16 @@ export function tryCompileStandaloneRegExpToString(
   acc = repr.concat(acc, flagsInstrs);
   for (const instr of acc) fctx.body.push(instr);
   return repr.resultType;
+}
+
+export function tryCompileStandaloneRegExpToString(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): ValType | null | undefined {
+  if (!ctx.standalone || propAccess.name.text !== "toString" || expr.arguments.length !== 0) return undefined;
+  return emitStandaloneRegExpToStringFromExpr(ctx, fctx, propAccess.expression);
 }
 
 /**

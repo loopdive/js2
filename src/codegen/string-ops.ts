@@ -23,6 +23,7 @@ import {
   tryCompileNativeVecConcatOperand,
 } from "./native-strings.js";
 import {
+  emitStandaloneRegExpToStringFromExpr,
   tryCompileStandaloneStringMatch,
   tryCompileStandaloneStringMatchAll,
   tryCompileStandaloneStringReplace,
@@ -457,6 +458,28 @@ export function compileNativeTemplateExpression(
     // stringification rather than "0" (parallels the JS-host path).
     const spanNativeIsUndef = (spanNativeTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
     const spanNativeIsNull = (spanNativeTsType.flags & ts.TypeFlags.Null) !== 0;
+
+    // #2161 — a static / backend-created RegExp substitution stringifies via its
+    // native RegExp.prototype.toString (§22.2.6.14 → "/" + source + "/" + flags),
+    // not the `$__any_to_string` "[object Object]" fallthrough below. The core
+    // compiles the receiver itself and leaves a native string ref on the stack,
+    // so route through it BEFORE compileExpression and skip the type cascade.
+    if (standaloneNativeStrings) {
+      const reStr = emitStandaloneRegExpToStringFromExpr(ctx, fctx, span.expression);
+      if (reStr !== undefined && reStr !== null) {
+        if (i === 0 && !expr.head.text) {
+          // no head — first span result is the running accumulator
+        } else {
+          fctx.body.push({ op: "call", funcIdx: concatIdx } as Instr);
+        }
+        if (span.literal.text) {
+          compileStringLiteral(ctx, fctx, span.literal.text, span.literal);
+          fctx.body.push({ op: "call", funcIdx: concatIdx } as Instr);
+        }
+        continue;
+      }
+    }
+
     const spanType = compileExpression(ctx, fctx, span.expression);
     const spanIsScalarNullish = (spanNativeIsUndef || spanNativeIsNull) && spanType && spanType.kind !== "externref";
     const spanIsBool = spanType && spanType.kind === "i32" && isBooleanType(spanNativeTsType);

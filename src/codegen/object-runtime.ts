@@ -4410,6 +4410,241 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     void L_KEY;
   }
 
+  // ── __obj_define_from_desc (#1629b — native single dynamic-descriptor apply) ─
+  //
+  // `Object.defineProperty(obj, key, descVar)` where `descVar` is a runtime
+  // value (not an inline `{...}` literal the compiler can statically expand).
+  // The JS-host path routes to the `env::__defineProperty_desc` import; under
+  // `--target standalone` there is no host, so this is the Wasm-native analogue
+  // of host `_toPropertyDescriptorValidate` + apply (runtime.ts) over a
+  // descriptor `$Object`. It mirrors EXACTLY the per-descriptor block in
+  // `__defineProperties` above (same field reads, same conflict/callable
+  // checks, same dispatch to `__defineProperty_value` / `__defineProperty_accessor`),
+  // but for ONE (obj, key, desc) triple instead of a key-map.
+  //
+  // Spec: ES §6.2.5.6 ToPropertyDescriptor + §10.1.6.3 OrdinaryDefineOwnProperty.
+  //   - non-object desc (here: not a standalone `$Object`) → TypeError §10.1.6.
+  //     null/undefined desc → lenient empty-descriptor no-op (matches host
+  //     leniency for absent struct reads; the call site already throws for a
+  //     statically-non-object literal).
+  //   - data (value|writable) + accessor (get|set) both present → TypeError.
+  //   - get/set present and non-callable → TypeError.
+  //
+  // params: 0=obj(externref) 1=key(externref) 2=desc(externref)
+  {
+    addUnionImportsViaRegistry(ctx);
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
+    const exnTagIdx = ensureExnTag(ctx);
+    const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty")!;
+    const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
+    const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
+    const defineValueIdx = ctx.funcMap.get("__defineProperty_value")!;
+    const defineAccessorIdx = ctx.funcMap.get("__defineProperty_accessor")!;
+    const externGetIdx = ctx.funcMap.get("__extern_get")!;
+
+    // Host value-bit flag layout decoded by __defineProperty_value / _accessor.
+    const HOST_FLAG_WRITABLE = FLAG_WRITABLE; // bit 0
+    const HOST_FLAG_ENUMERABLE = FLAG_ENUMERABLE; // bit 1
+    const HOST_FLAG_CONFIGURABLE = FLAG_CONFIGURABLE; // bit 2
+
+    const L_DESC = 3; // desc as externref (after $Object validation)
+    const L_DESC_ANY = 4;
+    const L_FLAGS = 5;
+    const L_HAS_DATA = 6;
+    const L_HAS_ACCESSOR = 7;
+    const L_VALUE = 8;
+    const L_GETTER = 9;
+    const L_SETTER = 10;
+
+    const keyRef = (key: string): Instr[] => [
+      ...nativeStringLiteralInstrs(ctx, key),
+      { op: "extern.convert_any" } as Instr,
+    ];
+    const hasField = (key: string): Instr[] => [
+      { op: "local.get", index: L_DESC },
+      ...keyRef(key),
+      { op: "call", funcIdx: hasOwnIdx },
+    ];
+    const getField = (key: string): Instr[] => [
+      { op: "local.get", index: L_DESC },
+      ...keyRef(key),
+      { op: "call", funcIdx: externGetIdx },
+    ];
+    const setFlag = (bit: number): Instr[] => [
+      { op: "local.get", index: L_FLAGS },
+      { op: "i32.const", value: bit },
+      { op: "i32.or" },
+      { op: "local.set", index: L_FLAGS },
+    ];
+    const throwTypeError = (message: string): Instr[] => {
+      addStringConstantGlobal(ctx, message);
+      return [
+        ...stringConstantExternrefInstrs(ctx, message),
+        { op: "call", funcIdx: typeErrorCtorIdx },
+        { op: "throw", tagIdx: exnTagIdx } as Instr,
+      ];
+    };
+    // ToBoolean(getField(key)) → set valueBit; always set hasData when marksData.
+    const readBooleanFlag = (key: string, valueBit: number, marksData: boolean): Instr[] => [
+      ...hasField(key),
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...(marksData
+            ? ([
+                { op: "i32.const", value: 1 },
+                { op: "local.set", index: L_HAS_DATA },
+              ] as Instr[])
+            : []),
+          ...getField(key),
+          { op: "call", funcIdx: isTruthyIdx },
+          { op: "if", blockType: { kind: "empty" }, then: setFlag(valueBit) } as Instr,
+        ],
+      } as Instr,
+    ];
+    // get/set: mark hasAccessor, capture the closure, and if non-null require callable.
+    const readAccessor = (key: "get" | "set", localIdx: number): Instr[] => [
+      ...hasField(key),
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: L_HAS_ACCESSOR },
+          ...getField(key),
+          { op: "local.tee", index: localIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: localIdx },
+              { op: "call", funcIdx: typeofFunctionIdx },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: throwTypeError("TypeError: Getter/setter must be a function"),
+              } as Instr,
+            ],
+          } as Instr,
+        ],
+      } as Instr,
+    ];
+
+    const body: Instr[] = [
+      // desc null → empty-descriptor no-op, return obj.
+      { op: "local.get", index: 2 },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: 0 }, { op: "return" }] },
+      // desc must be a standalone $Object; otherwise TypeError (ToPropertyDescriptor §10.1.6).
+      { op: "local.get", index: 2 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: L_DESC_ANY },
+      { op: "ref.test", typeIdx: objectTypeIdx },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: throwTypeError("TypeError: Property description must be an object"),
+      },
+      { op: "local.get", index: 2 },
+      { op: "local.set", index: L_DESC },
+
+      // Reset accumulators.
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: L_FLAGS },
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: L_HAS_DATA },
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: L_HAS_ACCESSOR },
+      { op: "ref.null.extern" },
+      { op: "local.set", index: L_VALUE },
+      { op: "ref.null.extern" },
+      { op: "local.set", index: L_GETTER },
+      { op: "ref.null.extern" },
+      { op: "local.set", index: L_SETTER },
+
+      // value present → hasData, capture value.
+      ...hasField("value"),
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: L_HAS_DATA },
+          ...getField("value"),
+          { op: "local.set", index: L_VALUE },
+        ],
+      },
+      ...readBooleanFlag("writable", HOST_FLAG_WRITABLE, true),
+      ...readBooleanFlag("enumerable", HOST_FLAG_ENUMERABLE, false),
+      ...readBooleanFlag("configurable", HOST_FLAG_CONFIGURABLE, false),
+      ...readAccessor("get", L_GETTER),
+      ...readAccessor("set", L_SETTER),
+
+      // data + accessor conflict → TypeError (§6.2.5.6 step 4).
+      { op: "local.get", index: L_HAS_DATA },
+      { op: "local.get", index: L_HAS_ACCESSOR },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: throwTypeError(
+          "TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        ),
+      },
+
+      // Apply: accessor → __defineProperty_accessor(obj, key, get, set, flags);
+      //        data     → __defineProperty_value(obj, key, value, flags).
+      { op: "local.get", index: L_HAS_ACCESSOR },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: L_GETTER },
+          { op: "local.get", index: L_SETTER },
+          { op: "local.get", index: L_FLAGS },
+          { op: "f64.convert_i32_s" },
+          { op: "call", funcIdx: defineAccessorIdx },
+          { op: "drop" },
+        ],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: L_VALUE },
+          { op: "local.get", index: L_FLAGS },
+          { op: "f64.convert_i32_s" },
+          { op: "call", funcIdx: defineValueIdx },
+          { op: "drop" },
+        ],
+      },
+      { op: "local.get", index: 0 },
+    ];
+
+    registerNative(
+      "__obj_define_from_desc",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+      [
+        { name: "desc", type: { kind: "externref" } },
+        { name: "descAny", type: { kind: "anyref" } },
+        { name: "flags", type: { kind: "i32" } },
+        { name: "hasData", type: { kind: "i32" } },
+        { name: "hasAccessor", type: { kind: "i32" } },
+        { name: "value", type: { kind: "externref" } },
+        { name: "getter", type: { kind: "externref" } },
+        { name: "setter", type: { kind: "externref" } },
+      ],
+      body,
+    );
+  }
+
   // ── __getOwnPropertyDescriptor (#1888 Slice 5 — native descriptor read-back) ─
   //
   // `Object.getOwnPropertyDescriptor(obj, key)` / `Reflect.getOwnPropertyDescriptor`

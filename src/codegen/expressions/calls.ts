@@ -126,6 +126,7 @@ import { tryStaticEvalInline } from "./eval-inline.js";
 import { compileExternMethodCall, compileSpreadCallArgs, emitLazyProtoGet } from "./extern.js";
 import {
   compileStandaloneRegExpConstructor,
+  emitStandaloneRegExpToStringFromExpr,
   isGlobalRegExpIdentifier,
   tryCompileStandaloneRegExpExec,
   tryCompileStandaloneRegExpSymbolCall,
@@ -9159,6 +9160,19 @@ function compileCallExpression(
         const strArg0TsType = ctx.checker.getTypeAtLocation(strArg0);
         const arrToStr = tryEmitArrayToStringNative(ctx, fctx, strArg0, strArg0TsType);
         if (arrToStr !== undefined) return arrToStr;
+      }
+
+      // #2161 — String(re) in standalone: a static / backend-created RegExp
+      // argument routes through its native RegExp.prototype.toString
+      // (§22.2.6.14 → "/" + source + "/" + flags) instead of the generic
+      // ref→string coercion, which null-derefs on the $NativeRegExp struct in
+      // native-strings mode (re.toString() already works; the String() builtin
+      // lowering did not detect it). Must run BEFORE compileExpression so the
+      // RegExp receiver is compiled by the toString core. Additive: returns
+      // undefined (falls through) for any non-static / dynamic RegExp.
+      {
+        const reToStr = emitStandaloneRegExpToStringFromExpr(ctx, fctx, strArg0);
+        if (reToStr !== undefined && reToStr !== null) return reToStr;
       }
 
       const argType = compileExpression(ctx, fctx, strArg0);
