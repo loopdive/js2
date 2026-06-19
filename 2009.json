@@ -1,9 +1,8 @@
 {
   "id": "2009",
-  "assignee": "ttraenkler/cs-2158",
-  "status": "released",
-  "branch": "issue-2009-same-shape-struct-collision",
-  "claimed_at": "2026-06-18T10:11:27Z",
-  "updated_at": "2026-06-18T10:16:40Z",
-  "released_at": "2026-06-18T10:16:40Z"
+  "assignee": "ttraenkler/sd5",
+  "status": "in-progress",
+  "branch": "issue-2009-r3b-insertion-order",
+  "claimed_at": "2026-06-19T03:09:02Z",
+  "updated_at": "2026-06-19T03:09:02Z"
 }
