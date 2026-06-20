@@ -1,8 +1,9 @@
 {
   "id": "2550",
   "assignee": "ttraenkler/dev-gate",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2550-trust-gate-fork-allowlist",
   "claimed_at": "2026-06-20T15:14:26Z",
-  "updated_at": "2026-06-20T15:14:26Z"
+  "updated_at": "2026-06-20T15:28:39Z",
+  "released_at": "2026-06-20T15:28:39Z"
 }
