@@ -1,8 +1,8 @@
 {
   "id": "2563",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-20T20:51:55Z",
-  "updated_at": "2026-06-20T20:51:55Z"
+  "assignee": "ttraenkler/sd-privatefield",
+  "status": "in-progress",
+  "branch": "issue-2563-privatefield-typeerror",
+  "claimed_at": "2026-06-20T20:52:25Z",
+  "updated_at": "2026-06-20T20:52:25Z"
 }
