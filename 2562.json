@@ -1,8 +1,9 @@
 {
   "id": "2562",
   "assignee": "ttraenkler/sd-baseline",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2562-baseline-staleness-srcaware",
   "claimed_at": "2026-06-20T19:31:44Z",
-  "updated_at": "2026-06-20T19:31:44Z"
+  "updated_at": "2026-06-20T20:03:54Z",
+  "released_at": "2026-06-20T20:03:54Z"
 }
