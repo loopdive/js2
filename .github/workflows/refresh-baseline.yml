@@ -1,27 +1,48 @@
-name: Emergency Baseline Refresh
+name: Baseline Refresh (scheduled + emergency)
 
-# Dedicated one-click emergency baseline refresh (#1078).
-# Runs test262 on current main unconditionally and promotes the result
-# to the committed baseline — no regression gate, no conditions.
+# Two modes (#1078 emergency; #2562 scheduled anti-staleness):
 #
-# Usage: Actions → Emergency Baseline Refresh → Run workflow
+#   1. SCHEDULED (cron) — a NORMAL baseline promote of current main's ACTUAL
+#      test262 state, run on a timer so the baseline never goes content-stale
+#      during a stretch of docs/CI-only merges (which advance main but never
+#      re-promote, because the test262-sharded.yml promote-baseline job only
+#      fires on test262-relevant pushes). This is NOT a force/emergency refresh:
+#      it records main's true current conformance (main is already-merged code,
+#      so recording its state never "bakes in" a regression past a PR gate). It
+#      requires no confirmation. Cadence: every 8h, offset from the top-of-hour
+#      Actions rush.
+#
+#   2. EMERGENCY (workflow_dispatch with force_baseline_refresh=true + confirm
+#      _force="YES") — disaster-recovery UNCONDITIONAL promote that ignores the
+#      regression gate. Both inputs are required; the confirmation prevents
+#      accidental forced overwrites.
+#
+# Both modes run test262 on current `main` and promote the result to the
+# committed baseline + the loopdive/js2wasm-baselines repo. An audit commit
+# records who/what triggered the refresh and the pass/total numbers; the commit
+# subject distinguishes a scheduled-normal refresh from a forced one.
+#
+# Usage (emergency): Actions → Baseline Refresh → Run workflow
 #   force_baseline_refresh: true
 #   confirm_force: "YES"
-#
-# Both inputs are required. The confirmation prevents accidental runs.
-# An audit commit records who triggered the refresh and pass/total numbers.
+# Usage (scheduled): automatic; or Run workflow with force_baseline_refresh:false
+#   for a manual NORMAL refresh of current main (no confirmation needed).
 
 on:
+  schedule:
+    # Every 8 hours, offset to :17 to avoid the top-of-hour Actions rush and to
+    # not collide with baseline-summary-sync (:37) / floor-staleness (:23).
+    - cron: "17 */8 * * *"
   workflow_dispatch:
     inputs:
       force_baseline_refresh:
-        description: "Force unconditional baseline promotion (ignores regressions)"
-        required: true
+        description: "EMERGENCY: force unconditional baseline promotion (ignores regressions). Leave false for a normal refresh of current main."
+        required: false
         default: false
         type: boolean
       confirm_force:
-        description: 'Type "YES" to confirm emergency baseline refresh'
-        required: true
+        description: 'Type "YES" to confirm an EMERGENCY (forced) refresh. Not needed for a normal refresh.'
+        required: false
         default: ""
         type: string
       compiler_pool_size:
@@ -35,30 +56,51 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # #2562 — a run is FORCED (emergency) only on a confirmed workflow_dispatch.
+  # schedule (and a non-forced dispatch) are NORMAL refreshes. Computed once
+  # here so every job/step can branch on the SAME definition.
+  IS_FORCED: ${{ github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES' }}
 
 concurrency:
-  group: emergency-baseline-refresh
+  # Both modes promote main's baseline — a scheduled run and an emergency run
+  # must never race each other, so they share one group. cancel-in-progress is
+  # false so a refresh always runs to completion (latest-wins is handled by the
+  # promote step's fetch+re-anchor retry loops, mirrored from promote-baseline).
+  group: baseline-refresh
   cancel-in-progress: false
 
 jobs:
   validate-inputs:
-    name: validate emergency inputs
+    name: validate refresh inputs
     runs-on: ubuntu-latest
     steps:
-      - name: Check force_baseline_refresh is true
-        if: ${{ !inputs.force_baseline_refresh }}
+      # #2562 — confirmation is required ONLY for an emergency (forced) dispatch.
+      # A scheduled run, or a non-forced manual dispatch, is a NORMAL refresh and
+      # needs no confirmation. Reject the dangerous half-states: force requested
+      # without "YES", or "YES" given without force.
+      - name: Validate emergency confirmation (forced dispatch only)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE: ${{ inputs.force_baseline_refresh }}
+          CONFIRM: ${{ inputs.confirm_force }}
         run: |
-          echo "ERROR: force_baseline_refresh must be true for emergency baseline refresh."
-          echo "This workflow is only for disaster recovery — use the regular test262-sharded workflow for normal runs."
-          exit 1
-
-      - name: Check confirmation
-        if: inputs.confirm_force != 'YES'
-        run: |
-          echo "ERROR: You must type exactly 'YES' in the confirm_force field."
-          echo "This prevents accidental emergency baseline overwrites."
-          echo "Got: '${{ inputs.confirm_force }}'"
-          exit 1
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            echo "✓ Scheduled NORMAL baseline refresh — records main's current test262 state (no force, no confirmation needed)."
+            exit 0
+          fi
+          if [ "$FORCE" = "true" ]; then
+            if [ "$CONFIRM" != "YES" ]; then
+              echo "ERROR: an EMERGENCY (forced) refresh requires confirm_force=\"YES\" (got: '$CONFIRM')."
+              echo "This prevents accidental forced baseline overwrites that ignore the regression gate."
+              exit 1
+            fi
+            echo "✓ EMERGENCY (forced) baseline refresh confirmed — promotes unconditionally."
+          else
+            if [ -n "$CONFIRM" ] && [ "$CONFIRM" != "" ]; then
+              echo "::warning::confirm_force=\"$CONFIRM\" was supplied but force_baseline_refresh is false — running a NORMAL refresh (the confirmation is ignored)."
+            fi
+            echo "✓ Manual NORMAL baseline refresh — records main's current test262 state (no force)."
+          fi
 
   test262-shard:
     name: test262 shard ${{ matrix.chunk }}
@@ -245,9 +287,16 @@ jobs:
 
       - name: Build merged test262 report
         run: |
+          # --baseline-sha records the main commit this baseline was generated
+          # from into the report's `baseline_sha` field, matching the
+          # test262-sharded.yml promote-baseline path. The #1668 stale-baseline
+          # guard and the #2562 src-aware drift gate both parse this main-sha
+          # (from the baselines-repo commit subject below) — without it, a
+          # refreshed baseline can't be proven content-current.
           node scripts/build-test262-report.mjs \
             --input merged-reports/test262-results-merged.jsonl \
             --output merged-reports/test262-report-merged.json \
+            --baseline-sha "${{ github.sha }}" \
             --include-proposals
 
       - name: Sanity check report
@@ -264,7 +313,11 @@ jobs:
           echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
         id: sanity
 
-      - name: Promote to baseline (unconditional)
+      # Records main's current test262 state. On a scheduled/normal refresh this
+      # is just the true conformance of already-merged main (no PR gate to
+      # bypass); on a forced/emergency refresh it is the disaster-recovery
+      # unconditional promote. Either way it never compares against a baseline.
+      - name: Promote merged report to baseline
         run: |
           mkdir -p benchmarks/results website/public/benchmarks/results
           rm -f benchmarks/results/test262-current.jsonl \
@@ -339,7 +392,17 @@ jobs:
             echo "No baseline changes to push."
           else
             ACTOR="${{ github.actor }}"
-            git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass"
+            # #2562 — record the main-sha in the commit subject (matching the
+            # promote-baseline format "... (<sha>)") so the #1668 stale-baseline
+            # guard and the #2562 src-aware drift gate can parse the main commit
+            # this baseline was generated from. NORMAL (scheduled / non-forced)
+            # vs FORCED (emergency) is reflected in the wording so the audit log
+            # is unambiguous.
+            if [ "${IS_FORCED}" = "true" ]; then
+              git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass (${{ github.sha }})"
+            else
+              git commit -m "chore(test262): scheduled baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass (${{ github.sha }})"
+            fi
             git push
           fi
 
@@ -354,7 +417,7 @@ jobs:
       # and baseline-summary-sync.yml: snapshot the small promote JSON files,
       # hard-checkout a CLEAN tip of main on each attempt, re-apply, commit
       # [skip ci], push via the deploy key, retry on the merge-queue race.
-      - name: Commit FORCED baseline refresh (audit trail)
+      - name: Commit baseline refresh to main (audit trail)
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
         run: |
@@ -363,6 +426,9 @@ jobs:
             echo "::error::MAIN_DEPLOY_KEY secret is empty/unset (environment baseline-promote). The main-repo baseline push needs the private half of the loopdive/js2 'MAIN_DEPLOY_KEY' deploy key — GITHUB_TOKEN is blocked by ruleset GH013."
             exit 1
           fi
+          # #2562 — NORMAL (scheduled / non-forced) vs FORCED (emergency) label
+          # for the audit commit subject.
+          if [ "${IS_FORCED}" = "true" ]; then REFRESH_KIND="FORCED"; else REFRESH_KIND="scheduled"; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Stage only the small JSON files and generated edition buckets (JSONL lives in baselines repo, not main).
@@ -440,9 +506,9 @@ jobs:
               PUSHED=1
               break
             fi
-            git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass [skip ci]"
+            git commit -m "chore(test262): ${REFRESH_KIND} baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass [skip ci]"
             if git push deploykey HEAD:main; then
-              echo "Pushed FORCED baseline refresh to main via deploy key (${PASS}/${TOTAL} pass, attempt ${attempt})."
+              echo "Pushed ${REFRESH_KIND} baseline refresh to main via deploy key (${PASS}/${TOTAL} pass, attempt ${attempt})."
               PUSHED=1
               break
             fi

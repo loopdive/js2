@@ -158,11 +158,13 @@ function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
   let numImportGlobals = 0;
   let numImportTags = 0;
   let numImportTables = 0;
+  let numImportMemories = 0;
   for (const imp of mod.imports) {
     if (imp.desc.kind === "func") numImportFuncs++;
     else if (imp.desc.kind === "global") numImportGlobals++;
     else if (imp.desc.kind === "tag") numImportTags++;
     else if (imp.desc.kind === "table") numImportTables++;
+    else if (imp.desc.kind === "memory") numImportMemories++;
   }
   let typesAreFlat = true;
   let numTypes = 0;
@@ -180,7 +182,7 @@ function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
     numGlobals: numImportGlobals + mod.globals.length,
     numTags: numImportTags + mod.tags.length,
     numTables: numImportTables + mod.tables.length,
-    numMemories: mod.memories ? mod.memories.length : 0,
+    numMemories: numImportMemories + (mod.memories ? mod.memories.length : 0),
     flatTypes: typesAreFlat ? mod.types : null,
     where: "module",
     maxLocals: -1,
@@ -765,6 +767,18 @@ export function encodeImport(imp: Import, enc: WasmEncoder): void {
     case "table":
       enc.byte(0x01);
       enc.byte(imp.desc.elementType === "funcref" ? TYPE.funcref : TYPE.externref);
+      if (imp.desc.max !== undefined) {
+        enc.byte(0x01);
+        enc.u32(imp.desc.min);
+        enc.u32(imp.desc.max);
+      } else {
+        enc.byte(0x00);
+        enc.u32(imp.desc.min);
+      }
+      break;
+    case "memory":
+      enc.byte(0x02); // import kind: memory
+      // limits: flags byte (0x01 = has max) then min[, max]
       if (imp.desc.max !== undefined) {
         enc.byte(0x01);
         enc.u32(imp.desc.min);

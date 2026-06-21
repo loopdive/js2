@@ -15,6 +15,16 @@ name: Unstick merge queue
 # group and reliably re-fires the webhooks.
 
 on:
+  # Event-driven trigger (#2517): fire on every CI / Test262 completion, not only
+  # the throttled */15 cron. GitHub deprioritizes scheduled workflows under load —
+  # on 2026-06-19 the cron skipped for ~80 min and the queue sat wedged the whole
+  # time. workflow_run mirrors auto-enqueue.yml's reliable trigger so the unstick
+  # fires whenever a relevant workflow completes. The script self-gates (acts only
+  # on a genuine head-AWAITING_CHECKS >=12 min with zero merge_group runs), so
+  # firing it frequently is safe — it no-ops on a healthy queue.
+  workflow_run:
+    workflows: ["Test262 Sharded", "CI"]
+    types: [completed]
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
@@ -41,8 +51,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
+      # Mint a GitHub App token (#2523). The dequeue+re-enqueue this workflow
+      # performs MUST use an App token, not GITHUB_TOKEN — a bot-token re-enqueue
+      # does not fire merge_group runs and would re-wedge the very head this
+      # workflow exists to unstick. No GITHUB_TOKEN fallback on purpose.
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ENQUEUE_APP_ID }}
+          private-key: ${{ secrets.ENQUEUE_APP_PRIVATE_KEY }}
       - name: Detect and nudge a wedged queue head
         env:
-          GH_TOKEN: ${{ secrets.AUTO_ENQUEUE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
         run: node scripts/unstick-merge-queue.mjs

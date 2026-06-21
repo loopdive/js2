@@ -62,18 +62,17 @@ export function test(): number { const p = make(P); return p.x; }
     expect(await runTest(src)).toBe(7);
   });
 
-  it("refuses a non-array-literal (variable) spread with a clear diagnostic, not a crash", async () => {
-    // The compile must FAIL with an attributable #2026 error — not silently emit
-    // a wrong value, and not crash with the unrelated `global index out of range`
-    // binary-emit error the legacy fallthrough would produce in standalone.
+  it("variable (non-array-literal) spread now constructs via the runtime argv path (#2026 #53)", async () => {
+    // PR-3a refused a non-array-literal spread loudly; #2026/#53 (this PR)
+    // supersedes that with a runtime `$ObjVecArr` argv so `new K(...args)`
+    // actually constructs rather than refusing — producing the correct value,
+    // not crashing and not silently emitting a wrong result.
     const src = `
 class P { x: number; constructor(a: number) { this.x = a; } }
 function make(K: any, args: number[]): any { return new K(...args); }
-export function test(): number { make(P, [3]); return 1; }
+export function test(): number { const p = make(P, [3]); return p.x; }
 `;
-    const r = await compile(src, { fileName: "test.ts" });
-    expect(r.success).toBe(false);
-    expect(r.errors.some((e) => /non-array-literal spread is not yet supported/.test(e.message))).toBe(true);
+    expect(await runTest(src)).toBe(3);
   });
 
   it("regression guard: plain-arg dynamic new still works (PR-1, unchanged)", async () => {

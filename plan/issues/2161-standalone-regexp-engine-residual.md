@@ -2,10 +2,10 @@
 id: 2161
 title: "Standalone RegExp engine conformance residual (~579 tests)"
 status: in-progress
-assignee: ttraenkler/cs-2164
+assignee: ttraenkler/sd1
 sprint: 64
 created: 2026-06-15
-updated: 2026-06-18
+updated: 2026-06-19
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -341,3 +341,52 @@ coercion returns a wrong-length string) both route through value→string
 coercion, not `re.toString()`, and need RegExp-aware coercion in those lowerings
 — a distinct slice. The (a) reflection and (c) dynamic-receiver buckets remain
 as noted above. **#2161 stays open.**
+
+## Slice 8 (2026-06-19, sd1) — standalone `String(re)` + template `` `${re}` `` coercion
+
+**Landed.** Closes the slice-7 deferral: the value→string COERCION paths now
+route through the native RegExp.prototype.toString rendering, matching the
+already-working `re.toString()` method form. Confirmed against `2af57ffc0`:
+
+| form | before | after |
+|---|---|---|
+| `String(/abc/gi)` | runtime null-deref (null string) | `/abc/gi` |
+| `` `x${/abc/gi}y` `` | `x[object Object]y` | `x/abc/giy` |
+| `re.toString()` | `/abc/gi` (slice 7) | unchanged |
+
+**Fix** — extracted a shared operand-explicit core from the slice-7 method
+helper, then wired it into the two coercion sites:
+
+- `src/codegen/regexp-standalone.ts`: factored
+  `emitStandaloneRegExpToStringFromExpr(ctx, fctx, regexpExpr)` out of
+  `tryCompileStandaloneRegExpToString` (§22.2.6.14 → `"/" + source + "/" +
+  flags` via `__regex_flags_str` + `__str_concat`). The method helper now
+  delegates to it; behaviour byte-identical for the `re.toString()` path. Gated
+  on `ctx.standalone` + a static / backend-created RegExp receiver (dynamic
+  externref receivers fall through unchanged).
+- `src/codegen/expressions/calls.ts`: in the `String(...)` builtin lowering,
+  try the core BEFORE `compileExpression` (so the RegExp receiver is compiled
+  by the core, not the generic ref→string `coerceType` that null-deref'd the
+  `$NativeRegExp` struct). Additive — falls through for non-RegExp args, mirrors
+  the adjacent `tryEmitArrayToStringNative` (#2160) String(arr) hook.
+- `src/codegen/string-ops.ts`: in `compileNativeTemplateExpression`, a static /
+  backend-created RegExp span routes through the core (BEFORE `compileExpression`)
+  instead of falling to the `$__any_to_string` `"[object Object]"` path, then
+  applies the shared concat-tail (head/literal). Guarded on
+  `standaloneNativeStrings` (= `noJsHost`), so host + fast-mode-with-host are
+  untouched.
+
+**Validation.** New `tests/issue-2161-regex-string-coercion.test.ts` (13):
+`String(re)` flagged/flagless/empty-pattern/escaped-slash/const-bound/canonical
+dgimsy + 4-pair host-JS parity; `` `${re}` `` head/flagless/leading-no-head/
+two-spans/const-bound + 3-pair host-JS parity — all standalone with an empty
+importObject asserting no `Object_toString` / `__extern_*` / `js-string` leak.
+The 28 #2161 (tostring/symbol-protocol/matchall) + 700 regex regression cases
+(#1539/#1913/#1914/#1911/#1912/#1474/#2175/#1328/#1329/#1330/#1830/regexp/
+regex-bytecode/#682) stay green (refactor is behaviour-preserving). tsc +
+prettier + biome(lint) + stack-balance + coercion-sites + any-box gates clean.
+
+**Still open under #2161:** (a) `RegExp.prototype` reflection — gated on #2158's
+standalone prototype-object representation; (c) dynamic / `any`-typed receivers
+(both coercion forms fall through to host for those); and the regex-engine
+feature tail (v-flag `\q{}`, dynamic ctor patterns). **#2161 stays open.**

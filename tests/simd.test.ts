@@ -567,7 +567,9 @@ describe("SIMD string indexOf (__str_indexOf_simd)", () => {
 });
 
 describe("SIMD array indexOf (__arr_indexOf_simd)", () => {
-  it("finds element in first 4 (SIMD path)", async () => {
+  // #1938: number[] elements are f64 slots; the SIMD helper now takes an f64
+  // search value and compares 2 elements per f64x2 chunk.
+  it("finds element in first SIMD chunk", async () => {
     const e = await buildWithSimd((mod, fi) => {
       const typeIdx = mod.types.length;
       mod.types.push({
@@ -588,12 +590,12 @@ describe("SIMD array indexOf (__arr_indexOf_simd)", () => {
           { op: "local.set", index: 0 },
           ...[10, 20, 30, 40, 50, 60, 70, 80].flatMap((v) => [
             { op: "local.get" as const, index: 0 },
-            { op: "i32.const" as const, value: v },
+            { op: "f64.const" as const, value: v },
             { op: "call" as const, funcIdx: fi["__arr_push"] },
           ]),
           // Search for 30 (should be index 2)
           { op: "local.get", index: 0 },
-          { op: "i32.const", value: 30 },
+          { op: "f64.const", value: 30 },
           { op: "call", funcIdx: fi["__arr_indexOf_simd"] },
         ],
         exported: true,
@@ -603,7 +605,7 @@ describe("SIMD array indexOf (__arr_indexOf_simd)", () => {
     expect(e.test_arr_indexOf()).toBe(2);
   });
 
-  it("finds element in second SIMD chunk", async () => {
+  it("finds element in a later SIMD chunk", async () => {
     const e = await buildWithSimd((mod, fi) => {
       const typeIdx = mod.types.length;
       mod.types.push({
@@ -623,12 +625,12 @@ describe("SIMD array indexOf (__arr_indexOf_simd)", () => {
           { op: "local.set", index: 0 },
           ...[10, 20, 30, 40, 50, 60, 70, 80].flatMap((v) => [
             { op: "local.get" as const, index: 0 },
-            { op: "i32.const" as const, value: v },
+            { op: "f64.const" as const, value: v },
             { op: "call" as const, funcIdx: fi["__arr_push"] },
           ]),
-          // Search for 70 (should be index 6, in second SIMD chunk)
+          // Search for 70 (should be index 6)
           { op: "local.get", index: 0 },
-          { op: "i32.const", value: 70 },
+          { op: "f64.const", value: 70 },
           { op: "call", funcIdx: fi["__arr_indexOf_simd"] },
         ],
         exported: true,
@@ -636,6 +638,37 @@ describe("SIMD array indexOf (__arr_indexOf_simd)", () => {
       mod.exports.push({ name: "test_arr_indexOf2", desc: { kind: "func", index: funcIdx } });
     });
     expect(e.test_arr_indexOf2()).toBe(6);
+  });
+
+  it("finds a fractional element (f64 fidelity, not possible under i32)", async () => {
+    const e = await buildWithSimd((mod, fi) => {
+      const typeIdx = mod.types.length;
+      mod.types.push({ kind: "func", name: "$test_type", params: [], results: [{ kind: "i32" }] });
+      const funcIdx = mod.functions.length;
+      mod.functions.push({
+        name: "test_arr_indexOf_frac",
+        typeIdx,
+        locals: [{ name: "arr", type: { kind: "i32" } }],
+        body: [
+          { op: "i32.const", value: 16 },
+          { op: "call", funcIdx: fi["__arr_new"] },
+          { op: "local.set", index: 0 },
+          ...[1.5, 2.5, 3.5, 4.5, 5.5].flatMap((v) => [
+            { op: "local.get" as const, index: 0 },
+            { op: "f64.const" as const, value: v },
+            { op: "call" as const, funcIdx: fi["__arr_push"] },
+          ]),
+          // Search for 3.5 (should be index 2) — would be impossible if elements
+          // were i32-truncated to 3.
+          { op: "local.get", index: 0 },
+          { op: "f64.const", value: 3.5 },
+          { op: "call", funcIdx: fi["__arr_indexOf_simd"] },
+        ],
+        exported: true,
+      });
+      mod.exports.push({ name: "test_arr_indexOf_frac", desc: { kind: "func", index: funcIdx } });
+    });
+    expect(e.test_arr_indexOf_frac()).toBe(2);
   });
 
   it("returns -1 when element not found", async () => {
@@ -658,11 +691,11 @@ describe("SIMD array indexOf (__arr_indexOf_simd)", () => {
           { op: "local.set", index: 0 },
           ...[10, 20, 30].flatMap((v) => [
             { op: "local.get" as const, index: 0 },
-            { op: "i32.const" as const, value: v },
+            { op: "f64.const" as const, value: v },
             { op: "call" as const, funcIdx: fi["__arr_push"] },
           ]),
           { op: "local.get", index: 0 },
-          { op: "i32.const", value: 99 },
+          { op: "f64.const", value: 99 },
           { op: "call", funcIdx: fi["__arr_indexOf_simd"] },
         ],
         exported: true,
@@ -681,7 +714,7 @@ describe("SIMD array fill (__arr_fill_simd)", () => {
         kind: "func",
         name: "$test_type",
         params: [],
-        results: [{ kind: "i32" }],
+        results: [{ kind: "f64" }],
       });
       const funcIdx = mod.functions.length;
       mod.functions.push({
@@ -695,16 +728,16 @@ describe("SIMD array fill (__arr_fill_simd)", () => {
           { op: "local.set", index: 0 },
           ...[0, 0, 0, 0, 0, 0, 0, 0].flatMap((_) => [
             { op: "local.get" as const, index: 0 },
-            { op: "i32.const" as const, value: 0 },
+            { op: "f64.const" as const, value: 0 },
             { op: "call" as const, funcIdx: fi["__arr_push"] },
           ]),
-          // Fill with value 42 from index 0 to 8
+          // Fill with value 42.5 from index 0 to 8
           { op: "local.get", index: 0 },
-          { op: "i32.const", value: 42 },
+          { op: "f64.const", value: 42.5 },
           { op: "i32.const", value: 0 },
           { op: "i32.const", value: 8 },
           { op: "call", funcIdx: fi["__arr_fill_simd"] },
-          // Read element at index 5 (should be 42)
+          // Read element at index 5 (should be 42.5 — f64 fidelity)
           { op: "local.get", index: 0 },
           { op: "i32.const", value: 5 },
           { op: "call", funcIdx: fi["__arr_get"] },
@@ -713,7 +746,7 @@ describe("SIMD array fill (__arr_fill_simd)", () => {
       });
       mod.exports.push({ name: "test_arr_fill", desc: { kind: "func", index: funcIdx } });
     });
-    expect(e.test_arr_fill()).toBe(42);
+    expect(e.test_arr_fill()).toBe(42.5);
   });
 
   it("fills partial range", async () => {
@@ -725,7 +758,6 @@ describe("SIMD array fill (__arr_fill_simd)", () => {
         params: [],
         results: [{ kind: "i32" }],
       });
-      // Returns two values packed: arr[1] * 1000 + arr[3]
       const funcIdx = mod.functions.length;
       mod.functions.push({
         name: "test_arr_fill_partial",
@@ -737,30 +769,33 @@ describe("SIMD array fill (__arr_fill_simd)", () => {
           { op: "local.set", index: 0 },
           ...[1, 2, 3, 4, 5].flatMap((v) => [
             { op: "local.get" as const, index: 0 },
-            { op: "i32.const" as const, value: v },
+            { op: "f64.const" as const, value: v },
             { op: "call" as const, funcIdx: fi["__arr_push"] },
           ]),
           // Fill from index 1 to 3 with value 99
           { op: "local.get", index: 0 },
-          { op: "i32.const", value: 99 },
+          { op: "f64.const", value: 99 },
           { op: "i32.const", value: 1 },
           { op: "i32.const", value: 3 },
           { op: "call", funcIdx: fi["__arr_fill_simd"] },
-          // Return arr[0] * 10000 + arr[1] * 100 + arr[2]
+          // Return arr[0] * 10000 + arr[1] * 100 + arr[2] (truncate f64 → i32)
           { op: "local.get", index: 0 },
           { op: "i32.const", value: 0 },
           { op: "call", funcIdx: fi["__arr_get"] },
+          { op: "i32.trunc_f64_s" },
           { op: "i32.const", value: 10000 },
           { op: "i32.mul" },
           { op: "local.get", index: 0 },
           { op: "i32.const", value: 1 },
           { op: "call", funcIdx: fi["__arr_get"] },
+          { op: "i32.trunc_f64_s" },
           { op: "i32.const", value: 100 },
           { op: "i32.mul" },
           { op: "i32.add" },
           { op: "local.get", index: 0 },
           { op: "i32.const", value: 2 },
           { op: "call", funcIdx: fi["__arr_get"] },
+          { op: "i32.trunc_f64_s" },
           { op: "i32.add" },
           // Expected: 1 * 10000 + 99 * 100 + 99 = 19999
         ],

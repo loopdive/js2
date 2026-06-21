@@ -140,7 +140,9 @@
     "dispatch:inbox": "node scripts/dispatch-channel.mjs inbox",
     "claude:symphony-channel": "node scripts/claude-symphony-channel.mjs",
     "check:issue-ids": "node scripts/check-issue-ids.mjs",
-    "check:issue-ids:staged": "node scripts/check-issue-ids.mjs --staged"
+    "check:issue-ids:staged": "node scripts/check-issue-ids.mjs --staged",
+    "check:issue-ids:against-main": "node scripts/check-issue-ids.mjs --against-main",
+    "new:issue-id:allocate": "node scripts/claim-issue.mjs --allocate"
   },
   "dependencies": {
     "typescript": "^5.7"

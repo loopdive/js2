@@ -3,7 +3,7 @@ id: 1169
 title: "IR Phase 4 — migrate full compiler to IR path, retire legacy AST→Wasm codegen"
 status: ready
 created: 2026-04-22
-updated: 2026-05-01
+updated: 2026-06-19
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -11,7 +11,7 @@ task_type: feature
 area: codegen
 language_feature: compiler-internals
 goal: async-model
-sprint: 46
+sprint: Backlog
 depends_on: [1167c, 1168]
 required_by: [1169a]
 ---

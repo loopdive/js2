@@ -23,6 +23,7 @@ import {
   tryCompileNativeVecConcatOperand,
 } from "./native-strings.js";
 import {
+  emitStandaloneRegExpToStringFromExpr,
   tryCompileStandaloneStringMatch,
   tryCompileStandaloneStringMatchAll,
   tryCompileStandaloneStringReplace,
@@ -457,6 +458,28 @@ export function compileNativeTemplateExpression(
     // stringification rather than "0" (parallels the JS-host path).
     const spanNativeIsUndef = (spanNativeTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
     const spanNativeIsNull = (spanNativeTsType.flags & ts.TypeFlags.Null) !== 0;
+
+    // #2161 — a static / backend-created RegExp substitution stringifies via its
+    // native RegExp.prototype.toString (§22.2.6.14 → "/" + source + "/" + flags),
+    // not the `$__any_to_string` "[object Object]" fallthrough below. The core
+    // compiles the receiver itself and leaves a native string ref on the stack,
+    // so route through it BEFORE compileExpression and skip the type cascade.
+    if (standaloneNativeStrings) {
+      const reStr = emitStandaloneRegExpToStringFromExpr(ctx, fctx, span.expression);
+      if (reStr !== undefined && reStr !== null) {
+        if (i === 0 && !expr.head.text) {
+          // no head — first span result is the running accumulator
+        } else {
+          fctx.body.push({ op: "call", funcIdx: concatIdx } as Instr);
+        }
+        if (span.literal.text) {
+          compileStringLiteral(ctx, fctx, span.literal.text, span.literal);
+          fctx.body.push({ op: "call", funcIdx: concatIdx } as Instr);
+        }
+        continue;
+      }
+    }
+
     const spanType = compileExpression(ctx, fctx, span.expression);
     const spanIsScalarNullish = (spanNativeIsUndef || spanNativeIsNull) && spanType && spanType.kind !== "externref";
     const spanIsBool = spanType && spanType.kind === "i32" && isBooleanType(spanNativeTsType);
@@ -753,9 +776,24 @@ export function compileTaggedTemplateExpression(
   // Use savedBody pattern so compileStringLiteral pushes into a separate array
   const savedBody = pushBody(fctx);
 
+  // The strings array element type is `externref` (line above). In nativeStrings
+  // mode `compileStringLiteral` materializes a `(ref $NativeString)` struct, NOT
+  // an externref — pushing that struct straight into the externref-typed
+  // `array.new_fixed` emits an invalid module ("array.new_fixed[0] expected
+  // externref, found struct.new of (ref $NativeString)"). Bridge each native
+  // string element to externref with `extern.convert_any` so the element type
+  // matches. (Host-string mode already returns externref, so this is a no-op
+  // there.) Surfaced by `const r = tag\`a${1}b\`;` under --target standalone.
+  const pushStringElem = (text: string): void => {
+    compileStringLiteral(ctx, fctx, text, expr);
+    if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+    }
+  };
+
   // First: build the raw strings array as a regular vec
   for (const raw of rawParts) {
-    compileStringLiteral(ctx, fctx, raw, expr);
+    pushStringElem(raw);
   }
   fctx.body.push({
     op: "array.new_fixed",
@@ -778,7 +816,7 @@ export function compileTaggedTemplateExpression(
 
   // Second: build the cooked strings array
   for (const str of stringParts) {
-    compileStringLiteral(ctx, fctx, str, expr);
+    pushStringElem(str);
   }
   fctx.body.push({
     op: "array.new_fixed",

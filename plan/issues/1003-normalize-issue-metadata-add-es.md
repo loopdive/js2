@@ -3,14 +3,14 @@ id: 1003
 title: "Normalize issue metadata: add ES edition, language feature, and task type to all issue frontmatter"
 status: ready
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-06-19
 priority: high
 feasibility: medium
 reasoning_effort: high
 task_type: planning
 language_feature: planning-metadata
 goal: contributor-readiness
-sprint: 45
+sprint: Backlog
 depends_on: [1000]
 es_edition: multi
 ---

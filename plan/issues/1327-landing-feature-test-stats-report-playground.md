@@ -3,7 +3,7 @@ id: 1327
 title: "Landing page: per-feature test pass counts + feature report page + playground deep-link"
 status: ready
 created: 2026-05-07
-updated: 2026-05-07
+updated: 2026-06-19
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: feature
 area: site, dashboard
 language_feature: site
 goal: npm-library-support
-sprint: 50
+sprint: Backlog
 ---
 # #1327 — Feature support section: live test counts, report page, playground deep-links
 

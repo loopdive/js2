@@ -443,6 +443,21 @@ export function tryEmitLinearU8StdinRead(
   }
   fctx.body.push({ op: "local.set", index: offLocal } as Instr);
 
+  // #2524 Phase 1 — under the node-io shim, hand `(ptr+off, len-off)` to the
+  // imported `stdin_read`; the shim builds the iovec + calls fd_read into the
+  // shared memory and returns the byte count.
+  if (ctx.nodeIoShim) {
+    fctx.body.push({ op: "local.get", index: buf.ptrLocalIdx } as Instr);
+    fctx.body.push({ op: "local.get", index: offLocal } as Instr);
+    fctx.body.push({ op: "i32.add" } as Instr);
+    fctx.body.push({ op: "local.get", index: buf.lenLocalIdx } as Instr);
+    fctx.body.push({ op: "local.get", index: offLocal } as Instr);
+    fctx.body.push({ op: "i32.sub" } as Instr);
+    fctx.body.push({ op: "call", funcIdx: ctx.nodeIoStdinReadIdx } as Instr);
+    fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+    return { kind: "f64" };
+  }
+
   // iovec.buf = ptr + off   (memory[0])
   fctx.body.push({ op: "i32.const", value: 0 } as Instr);
   fctx.body.push({ op: "local.get", index: buf.ptrLocalIdx } as Instr);
@@ -485,6 +500,21 @@ export function tryEmitLinearU8StdWrite(
 ): boolean {
   const buf = getLinearU8Buffer(ctx, fctx, bufArg);
   if (!buf) return false;
+
+  // #2524 Phase 1 — under the node-io shim, the syscall + iovec live in the
+  // shim. The user module just hands `(ptr, len)` to the imported write fn over
+  // the shared memory: zero staging copy, no iovec, no nwritten cell.
+  if (ctx.nodeIoShim) {
+    const ioIdx = useStderr ? ctx.nodeIoStderrWriteIdx : ctx.nodeIoStdoutWriteIdx;
+    fctx.body.push({ op: "local.get", index: buf.ptrLocalIdx } as Instr);
+    fctx.body.push({ op: "local.get", index: buf.lenLocalIdx } as Instr);
+    fctx.body.push({ op: "call", funcIdx: ioIdx } as Instr);
+    // stdout_write returns bytes-written (i32) → drop to match the fd_write
+    // path's stack contract; stderr_write returns void → nothing to drop.
+    if (!useStderr) fctx.body.push({ op: "drop" } as Instr);
+    return true;
+  }
+
   const fd = useStderr ? 2 : 1;
   // iovec.buf = ptr (memory[0])
   fctx.body.push({ op: "i32.const", value: 0 } as Instr);

@@ -14,10 +14,14 @@ name: Auto-enqueue green PRs
 # GitHub's `merge_group` formation — poking the serial head WHILE a merge group
 # is mid-formation wedged the queue twice on 2026-05-30/31 (stuck
 # AWAITING_CHECKS, no merge_group dispatched; only a ~10-min ruleset
-# disable/re-enable reset cleared it). So the sweep is now SURGICAL. The script
-# (scripts/enqueue-green-prs.mjs) applies three guards:
-#   1. BACK-OFF — if ANY queue entry is AWAITING_CHECKS (a head is forming), it
-#      skips the entire sweep and lets GitHub finish.
+# disable/re-enable reset cleared it). So the sweep is SURGICAL. The script
+# (scripts/enqueue-green-prs.mjs) applies these guards:
+#   1. TRAILING-ADD ONLY (#2560) — it only enqueues PRs NOT already in the queue,
+#      so every add is a trailing append to the queue tail and the forming head's
+#      merge group is never touched (only dequeuing/re-adding the HEAD cancels its
+#      run). It does NOT skip the whole sweep when a head is forming — that old
+#      over-broad back-off meant the serial queue (almost always has a forming
+#      head) was rarely fed and green PRs stranded until a human enqueued them.
 #   2. ALL-CHECKS GREEN — it rejects UNSTABLE PRs and any PR whose `gh pr
 #      checks` table contains a non-pass/non-skipping row.
 #   3. GRACE WINDOW — it only enqueues a PR whose checks have been green for
@@ -49,7 +53,10 @@ permissions:
 
 concurrency:
   group: auto-enqueue
-  cancel-in-progress: false
+  # Idempotent sweep: the latest run enqueues every mergeable PR, so a burst of
+  # triggers should collapse to the most-recent run rather than serial-running
+  # each one (#2519 — cut redundant workflow runs). Safe to cancel in-flight.
+  cancel-in-progress: true
 
 jobs:
   enqueue:
@@ -63,8 +70,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
+      # Mint a GitHub App installation token (#2523). Enqueuing via GITHUB_TOKEN
+      # does NOT trigger merge_group workflows ("a workflow run cannot trigger
+      # another workflow run"), so the queue head wedges (AWAITING_CHECKS, zero
+      # merge_group runs) — this cost a full night on 2026-06-19/20. A GitHub
+      # App is a distinct actor, so its enqueues DO fire merge_group runs.
+      # No `|| secrets.GITHUB_TOKEN` fallback ON PURPOSE: a missing/invalid app
+      # secret must fail this job LOUDLY, never silently re-introduce the wedge.
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ENQUEUE_APP_ID }}
+          private-key: ${{ secrets.ENQUEUE_APP_PRIVATE_KEY }}
       - name: Enqueue green PRs
         env:
-          GH_TOKEN: ${{ secrets.AUTO_ENQUEUE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
         run: node scripts/enqueue-green-prs.mjs

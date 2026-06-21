@@ -35,7 +35,12 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
-import { ensureAnyHelpers, isAnyValue } from "./any-helpers.js";
+import {
+  ensureAnyHelpers,
+  ensureExternSameValueZeroHelper,
+  ensureExternStrictEqHelper,
+  isAnyValue,
+} from "./any-helpers.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
@@ -501,18 +506,44 @@ const ARRAY_LIKE_SEARCH_METHODS = new Set(["indexOf", "lastIndexOf", "includes"]
  * senior/infra; this set is removed entry-by-entry as those native paths land.
  */
 const STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS = new Set([
-  "indexOf",
-  "lastIndexOf",
-  "includes",
   // (#2036 S6 step 2) `filter` now has a native standalone arm — it builds its
   // result via the native `$ObjVec` builder (`__objvec_new`/`__objvec_push`)
   // instead of the host `__js_array_*`, so it no longer leaks a host import.
-  // Removed from the refusal set. map/reduce/reduceRight stay until their
-  // native result/accumulator arms land (map needs sparse-hole handling).
+  // Removed from the refusal set.
+  //
+  // (#1461/#54) `indexOf`/`lastIndexOf`/`includes` now have a native search arm:
+  // `compileArrayLikePrototypeSearch` routes element comparison through the
+  // pure-Wasm `__extern_strict_eq` / `__extern_same_value_zero` helpers
+  // (composed from `__any_from_extern` + `__any_strict_eq`) under standalone, so
+  // they no longer leak `__host_eq` / `__same_value_zero`. Removed from the set.
+  //
+  // `map` stays until its native indexed (sparse-hole) result arm lands.
+  // `reduce`/`reduceRight` are special-cased in the dispatch
+  // (`standaloneArrayLikeMethodRefused`): the **with-initial-value** form is
+  // host-import-free (accumulator boxed through native `__box_number`) and
+  // ALLOWED; the **no-initial-value** form's §23.1.3.21 forward hole-scan still
+  // hits a module-finalization func-index shift (`__extern_has_idx` baked call
+  // mis-resolves to `number_toString` → `if` over an externref → invalid Wasm),
+  // so it stays refused until that finalization-shift bug is fixed.
   "map",
-  "reduce",
-  "reduceRight",
 ]);
+
+/**
+ * (#1461/#54) Whether an array-like `.call(...)` over a non-array receiver is
+ * refused under `--target standalone`/`wasi`. Beyond the static
+ * `STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS` set, `reduce`/`reduceRight` are
+ * refused ONLY in their no-initial-value form (the forward hole-scan trips a
+ * module-finalization func-index shift → invalid Wasm). The with-initial-value
+ * form compiles to valid, host-free Wasm and is allowed through.
+ */
+function standaloneArrayLikeMethodRefused(methodName: string, callExpr: ts.CallExpression): boolean {
+  if (STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS.has(methodName)) return true;
+  if (methodName === "reduce" || methodName === "reduceRight") {
+    // args: [receiver, callback, initialValue?]. No initial value ⇒ refuse.
+    return callExpr.arguments.length < 3;
+  }
+  return false;
+}
 
 /**
  * Compile Array.prototype.METHOD.call(anyReceiver, callback, ...args) for any-typed receivers.
@@ -591,7 +622,7 @@ export function compileArrayLikePrototypeCall(
   // arm (#2036 PR-1) and fall through unaffected. Host/gc mode is untouched
   // (gated on standalone||wasi). Step 2 (real generic arm + emitter fix) removes
   // entries from this set as native paths land.
-  if ((ctx.standalone || ctx.wasi) && STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS.has(methodName)) {
+  if ((ctx.standalone || ctx.wasi) && standaloneArrayLikeMethodRefused(methodName, callExpr)) {
     reportError(
       ctx,
       callExpr,
@@ -1533,9 +1564,19 @@ function compileArrayLikePrototypeSearch(
     [{ kind: "externref" }, { kind: "f64" }],
     [{ kind: "i32" }],
   );
-  const cmpFn = isIncludes
-    ? ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }])
-    : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+  // (#1461/#54) Element comparison. Standalone/WASI route through the native
+  // pure-Wasm `__extern_strict_eq` (===, indexOf/lastIndexOf) /
+  // `__extern_same_value_zero` (includes) helpers — composed from
+  // `__any_from_extern` + `__any_strict_eq` — so the search arm leaks no host
+  // import. Host/gc mode keeps the `__host_eq` / `__same_value_zero` host imports.
+  const nativeCmp = ctx.standalone || ctx.wasi;
+  const cmpFn = nativeCmp
+    ? isIncludes
+      ? ensureExternSameValueZeroHelper(ctx)
+      : ensureExternStrictEqHelper(ctx)
+    : isIncludes
+      ? ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }])
+      : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
   if (lenFn === undefined || getIdxFn === undefined || hasIdxFn === undefined || cmpFn === undefined) return undefined;
   flushLateImportShifts(ctx, fctx);
 
@@ -1735,7 +1776,14 @@ function compileArrayLikePrototypeSearch(
   // late-shift hazard.)
   const getIdxFnNow = ctx.funcMap.get("__extern_get_idx") ?? getIdxFn;
   const hasIdxFnNow = ctx.funcMap.get("__extern_has_idx") ?? hasIdxFn;
-  const cmpFnNow = ctx.funcMap.get(isIncludes ? "__same_value_zero" : "__host_eq") ?? cmpFn;
+  const cmpFnName = nativeCmp
+    ? isIncludes
+      ? "__extern_same_value_zero"
+      : "__extern_strict_eq"
+    : isIncludes
+      ? "__same_value_zero"
+      : "__host_eq";
+  const cmpFnNow = ctx.funcMap.get(cmpFnName) ?? cmpFn;
 
   // ── Loop body ────────────────────────────────────────────────────
   // Outer block: "exit on found".
@@ -4531,28 +4579,15 @@ function compileArraySlice(
   _elemType: ValType,
 ): ValType {
   const vecTmp = allocLocal(fctx, `__arr_slc_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
-  const dataTmp = allocLocal(fctx, `__arr_slc_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
-  const newData = allocLocal(fctx, `__arr_slc_ndata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
-  const startTmp = allocLocal(fctx, `__arr_slc_s_${fctx.locals.length}`, { kind: "i32" });
-  const endTmp = allocLocal(fctx, `__arr_slc_e_${fctx.locals.length}`, { kind: "i32" });
-  const lenTmp = allocLocal(fctx, `__arr_slc_len_${fctx.locals.length}`, { kind: "i32" });
-  const sliceLenTmp = allocLocal(fctx, `__arr_slc_sl_${fctx.locals.length}`, { kind: "i32" });
 
-  // Compile receiver -> vec ref
+  // Compile receiver -> vec ref, stash in vecTmp, null-guard, drop the tee leftover.
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp);
+  fctx.body.push({ op: "drop" });
 
-  // Get length from vec
-  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "local.set", index: lenTmp });
-
-  // Get data array from vec
-  fctx.body.push({ op: "local.get", index: vecTmp });
-  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "local.set", index: dataTmp });
-
-  // start arg -- clamp negative: if start < 0, start = max(0, len + start)
+  // start arg (f64→i32) into a local; default 0.
+  const startTmp = allocLocal(fctx, `__arr_slc_s_${fctx.locals.length}`, { kind: "i32" });
   if (callExpr.arguments.length >= 1) {
     compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
@@ -4560,21 +4595,69 @@ function compileArraySlice(
     fctx.body.push({ op: "i32.const", value: 0 });
   }
   fctx.body.push({ op: "local.set", index: startTmp });
-  emitClampIndex(fctx, startTmp, lenTmp);
 
-  // end arg -- clamp negative: if end < 0, end = max(0, len + end); clamp to len
-  if (callExpr.arguments.length >= 2) {
+  // end arg into a local (only when explicit); null = "use length".
+  const hasEnd = callExpr.arguments.length >= 2;
+  const endTmp = allocLocal(fctx, `__arr_slc_e_${fctx.locals.length}`, { kind: "i32" });
+  if (hasEnd) {
     compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: endTmp });
+  }
+  return compileArraySliceFromVecLocal(ctx, fctx, vecTmp, vecTypeIdx, arrTypeIdx, startTmp, hasEnd ? endTmp : null);
+}
+
+/**
+ * (#2193 PR-B) Local-driven core of `Array.prototype.slice`: given the receiver
+ * vec already in `vecLocal` and the (already-truncated-to-i32) start in
+ * `startLocal`, produce a new sliced vec. `endLocal === null` means "no explicit
+ * end" (use the receiver length). This is the AST-free entry the proto-member
+ * closure body (`emitArrayProtoMemberBody`) calls after recovering the array
+ * instance from the closure `this` externref. `compileArraySlice` is now a thin
+ * wrapper that compiles the receiver/args into locals then delegates here — so the
+ * direct `a.slice(...)` lowering is behaviour-preserving (pure extraction).
+ */
+export function compileArraySliceFromVecLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  vecLocal: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  startLocal: number,
+  endLocal: number | null,
+): ValType {
+  const dataTmp = allocLocal(fctx, `__arr_slc_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const newData = allocLocal(fctx, `__arr_slc_ndata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const lenTmp = allocLocal(fctx, `__arr_slc_len_${fctx.locals.length}`, { kind: "i32" });
+  const sliceLenTmp = allocLocal(fctx, `__arr_slc_sl_${fctx.locals.length}`, { kind: "i32" });
+
+  // len = vec.length (field 0)
+  fctx.body.push({ op: "local.get", index: vecLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenTmp });
+
+  // data = vec.data (field 1)
+  fctx.body.push({ op: "local.get", index: vecLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: dataTmp });
+
+  // start clamp (negative → max(0, len+start); positive → min(start, len))
+  emitClampIndex(fctx, startLocal, lenTmp);
+
+  // end: explicit (clamp) or default = len.
+  const endFin = allocLocal(fctx, `__arr_slc_efin_${fctx.locals.length}`, { kind: "i32" });
+  if (endLocal !== null) {
+    fctx.body.push({ op: "local.get", index: endLocal });
+    fctx.body.push({ op: "local.set", index: endFin });
+    emitClampIndex(fctx, endFin, lenTmp);
   } else {
     fctx.body.push({ op: "local.get", index: lenTmp });
+    fctx.body.push({ op: "local.set", index: endFin });
   }
-  fctx.body.push({ op: "local.set", index: endTmp });
-  emitClampIndex(fctx, endTmp, lenTmp);
 
   // sliceLen = max(0, end - start)
-  fctx.body.push({ op: "local.get", index: endTmp });
-  fctx.body.push({ op: "local.get", index: startTmp });
+  fctx.body.push({ op: "local.get", index: endFin });
+  fctx.body.push({ op: "local.get", index: startLocal });
   fctx.body.push({ op: "i32.sub" });
   fctx.body.push({ op: "local.set", index: sliceLenTmp });
   emitClampNonNeg(fctx, sliceLenTmp);
@@ -4585,9 +4668,9 @@ function compileArraySlice(
   fctx.body.push({ op: "local.set", index: newData });
 
   // array.copy newData[0..sliceLen] = data[start..start+sliceLen]
-  emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, startTmp, sliceLenTmp);
+  emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, startLocal, sliceLenTmp);
 
-  // Create new vec struct: { sliceLen, newData }
+  // struct.new vec { sliceLen, newData }
   fctx.body.push({ op: "local.get", index: sliceLenTmp });
   fctx.body.push({ op: "local.get", index: newData });
   fctx.body.push({ op: "ref.as_non_null" });
@@ -4903,6 +4986,21 @@ function compileArrayJoinNative(
     }
   }
 
+  // #2505-family — a boxed-any (`externref`) element array stringifies each
+  // element through the runtime `__extern_toString` (the same ToString
+  // `String(x)`/template-literals use for an `any` value). Resolve its funcIdx
+  // up front and flush the late-import shift BEFORE the fold bakes the call, so
+  // the index is stable. Bail to the string-element path only if unavailable.
+  let externToStrIdx: number | undefined;
+  if (elemType.kind === "externref") {
+    externToStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (externToStrIdx === undefined) {
+      reportError(ctx, callExpr, "join of a boxed-any array requires __extern_toString");
+      return null;
+    }
+  }
+
   const vecTmp = allocLocal(fctx, `__njoin_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__njoin_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const foldLocals = allocJoinFoldLocals(fctx, repr, "njoin");
@@ -4960,6 +5058,23 @@ function compileArrayJoinNative(
     if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" } as Instr);
     elemToStr.push({ op: "call", funcIdx: numToStrIdx } as Instr);
     // number_toString returns the native string boxed as externref.
+    elemToStr.push({ op: "any.convert_extern" } as Instr);
+    elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
+  } else if (elemType.kind === "externref") {
+    // #2505-family — a boxed-any element array (`any[]`, `new Array(N)` holes)
+    // stores its elements as raw `externref`, NOT as a `$NativeString` ref. The
+    // string-element branch below (`ref.as_non_null`) would non-null the externref
+    // and `local.set` it into the `(ref $AnyString)` result local → a validator
+    // type mismatch ("local.set expected (ref null N), found ref.as_non_null of
+    // (ref extern)"). Route each boxed-any element through `__extern_toString`
+    // (externref → externref native string) — the SAME runtime ToString that
+    // `String(a[i])` / `` `${a[i]}` `` use for an `any`-typed value. (NOT
+    // `__any_to_string`, the $AnyValue-tag dispatcher: an `any[]` element is a
+    // `__box_number`/`__box_boolean`-boxed externref, not a $AnyValue, so the tag
+    // dispatch mis-stringifies it to "[object Object]".) Convert the externref
+    // result up to `ref $AnyString` for the concat fold. `__extern_toString` is
+    // provided by ensureObjectRuntime; reuse the funcIdx captured before the loop.
+    elemToStr.push({ op: "call", funcIdx: externToStrIdx! } as Instr);
     elemToStr.push({ op: "any.convert_extern" } as Instr);
     elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr);
   } else {
@@ -6587,10 +6702,20 @@ function compileArrayFind(
     "truthy",
   );
 
-  // Result local -- NaN (not found) or element value
-  const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
+  // #2507 — a boxed-any (`externref`) element array (`any[]`, `new Array(N)`)
+  // returns the matched ELEMENT, which is an `externref`, not an f64. The
+  // non-fast default below assumes a numeric element and types the result local
+  // f64 with a NaN "not found" sentinel — which then `local.set`s the externref
+  // element into an f64 local ("expected f64, found externref"). Keep the result
+  // as `externref` for an externref element (and use `ref.null.extern` — the
+  // `undefined` sentinel — for "not found", which is the spec result anyway).
+  const elemIsExternref = elemType.kind === "externref";
+  // Result local -- NaN/undefined (not found) or element value
+  const findResType: ValType = ctx.fast || elemIsExternref ? elemType : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_find_res_${fctx.locals.length}`, findResType);
-  if (ctx.fast) {
+  if (elemIsExternref) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -6625,7 +6750,7 @@ function compileArrayFind(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: findResTmp });
-  return ctx.fast ? elemType : { kind: "f64" };
+  return ctx.fast || elemIsExternref ? elemType : { kind: "f64" };
 }
 
 /**
@@ -6778,9 +6903,15 @@ function compileArrayFindLast(
     "truthy",
   );
 
-  const findResType: ValType = ctx.fast ? elemType : { kind: "f64" };
+  // #2507 — boxed-any (`externref`) element array returns the externref element,
+  // not an f64; keep the result type externref with a `ref.null.extern`
+  // (undefined) "not found" sentinel. See compileArrayFind.
+  const elemIsExternref = elemType.kind === "externref";
+  const findResType: ValType = ctx.fast || elemIsExternref ? elemType : { kind: "f64" };
   const findResTmp = allocLocal(fctx, `__arr_findLast_res_${fctx.locals.length}`, findResType);
-  if (ctx.fast) {
+  if (elemIsExternref) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -6815,7 +6946,7 @@ function compileArrayFindLast(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: findResTmp });
-  return ctx.fast ? elemType : { kind: "f64" };
+  return ctx.fast || elemIsExternref ? elemType : { kind: "f64" };
 }
 
 /**
@@ -7074,7 +7205,31 @@ function compileArraySort(
   if (elemType.kind === "f64" || elemType.kind === "i32" || isStringElem) {
     const defaultResult = compileArrayDefaultToStringSort(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType);
     if (defaultResult) return defaultResult;
-    // Fell through (e.g. helpers unavailable) — fall back to numeric Timsort.
+    // Fell through (e.g. helpers unavailable) — fall back to numeric Timsort,
+    // but ONLY for numeric element kinds (below): the numeric Timsort hard-codes
+    // `f64.gt`/`i32.gt_s`, so routing a ref/externref element array here mints
+    // `__isort_<kind>` with a comparator that does `f64.gt` on a non-numeric
+    // `array.get` → invalid Wasm (#2502). For non-numeric kinds, leave the array
+    // as-is (a no-op sort) rather than emit a poisoned binary.
+  }
+
+  // #2502 — the numeric Timsort is valid only for i32/f64 element arrays. A
+  // ref/externref-element array whose default ToString sort fell through above
+  // must NOT reach `ensureTimsortHelper` (the `elemType.kind as "i32"|"f64"`
+  // cast is a lie for externref and produces `f64.gt` on an externref element).
+  // Emit a no-op (return the receiver unchanged) — correct for the common holes
+  // case (`new Array(2)` is all `undefined`, already sorted) and never invalid.
+  if (elemType.kind !== "i32" && elemType.kind !== "f64") {
+    const vecTmp0 = allocLocal(fctx, `__arr_sort_noop_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: vecTypeIdx,
+    });
+    compileExpression(ctx, fctx, propAccess.expression);
+    fctx.body.push({ op: "local.tee", index: vecTmp0 });
+    emitReceiverNullGuard(ctx, fctx, vecTmp0);
+    fctx.body.push({ op: "local.get", index: vecTmp0 });
+    fctx.body.push({ op: "ref.as_non_null" });
+    return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
   const elemKind = elemType.kind as "i32" | "f64";
@@ -7119,6 +7274,23 @@ function compileArrayDefaultToStringSort(
   const isNumeric = elemType.kind === "f64" || elemType.kind === "i32";
   const native = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0;
 
+  // #2379 — in NATIVE-string mode this ToString sort's non-numeric branch
+  // `ref.cast`s each `array.get` element to `$AnyString` (see `stringifyTail`),
+  // which is sound only for a NativeString-typed element ref. A raw `externref`
+  // element is a *boxed-any* value (e.g. `new Array(N)` holes, an `any[]`), NOT a
+  // NativeString — `ref.cast` of an `(ref extern)` against `(ref $AnyString)` is
+  // invalid Wasm (different reference-type hierarchies → "ref.as_non_null of
+  // (ref extern) has to be in the same reference type hierarchy as (ref N)" in
+  // `__module_init`). Bail so the caller no-ops the sort (#2502) instead of
+  // emitting a poisoned binary. Boxed-any ToString-order sorting is a separate
+  // follow-up needing a runtime any→string step, not this static cast.
+  // HOST mode is unaffected: there `cmpStrType` is `externref` and the string
+  // branch emits only `ref.as_non_null` (no cast), so a host externref element
+  // sorts correctly — do NOT bail there or valid host string sorts break.
+  if (!isNumeric && native && elemType.kind === "externref") {
+    return null;
+  }
+
   // Comparison-string type + the compare/stringify helpers per backend.
   let cmpStrType: ValType;
   let compareIdx: number | undefined;
@@ -7139,7 +7311,7 @@ function compileArrayDefaultToStringSort(
     if (isNumeric) numToStrIdx = ctx.funcMap.get("number_toString");
   }
   if (compareIdx === undefined || (isNumeric && numToStrIdx === undefined)) {
-    return null; // helpers not registered — fall back to numeric Timsort
+    return null; // helpers not registered — caller no-ops (#2502) or numeric Timsort
   }
 
   const vecTmp = allocLocal(fctx, `__dsort_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });

@@ -3,7 +3,7 @@ id: 1641
 title: "spec gap: yield in nested try/finally + yield expression evaluation order (46 test262 fails)"
 status: ready
 created: 2026-05-08
-updated: 2026-05-24
+updated: 2026-06-19
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen
 language_feature: generators
 goal: spec-completeness
-sprint: 50
+sprint: Backlog
 renumbered_from: 1347
 parent: 1328
 ---

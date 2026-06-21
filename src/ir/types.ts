@@ -424,6 +424,7 @@ export type ImportDesc =
   | { kind: "func"; typeIdx: number }
   | { kind: "table"; elementType: string; min: number; max?: number }
   | { kind: "global"; type: ValType; mutable: boolean }
+  | { kind: "memory"; min: number; max?: number }
   | { kind: "tag"; typeIdx: number };
 
 export interface WasmExport {

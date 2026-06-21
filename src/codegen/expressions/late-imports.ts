@@ -34,6 +34,11 @@ const UNION_NATIVE_HELPER_NAMES = new Set([
   "__typeof_object",
   "__typeof_function",
   "__typeof",
+  // #2508 — native Strict Equality / SameValueZero over boxed externrefs, so
+  // standalone `any[].indexOf/lastIndexOf/includes` need no JS host import.
+  // Synthesised by addUnionImportsAsNativeFuncs alongside the typeof/unbox set.
+  "__host_eq",
+  "__same_value_zero",
 ]);
 
 /**
@@ -691,6 +696,23 @@ export function patchStructNewForAddedField(
     if (!patched.has(sb)) {
       patchInstrs(sb);
       patched.add(sb);
+    }
+  }
+  // (#2503) Patch DETACHED live bodies — buffers temporarily swapped onto
+  // `fctx.body` via a plain JS-local swap (not `pushBody`, so absent from
+  // `fctx.savedBodies`) and registered in `ctx.liveBodies` for exactly this
+  // coverage window (mirrors the late-import-shift walk at line ~212). The
+  // destructuring-param nested-pattern default path (destructuring-params.ts)
+  // builds a default object literal into such a detached `if.then` buffer; when
+  // a LATER same-shape object grows that struct's field set, the field-pad
+  // `patchStructNewForAddedField` previously could not reach the earlier
+  // struct.new sitting in the orphaned buffer, leaving it one operand short of
+  // the grown 3-field type → invalid Wasm ("struct.new need 3, got 2"). Same bug
+  // class as #2158 (late-import shift) but for the field-pad patch.
+  for (const lb of ctx.liveBodies) {
+    if (!patched.has(lb)) {
+      patchInstrs(lb);
+      patched.add(lb);
     }
   }
 }

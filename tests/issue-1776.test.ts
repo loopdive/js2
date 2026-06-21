@@ -52,8 +52,12 @@ describe("#1776 standalone isSameValue externref equality", () => {
     // No `env::*` host import may leak in standalone mode (acceptance #1776).
     const hostImports = [...r.wat.matchAll(/\(import "env" "([^"]+)"/g)].map((m) => m[1]);
     expect(hostImports, `leaked host imports: ${hostImports.join(", ")}`).toEqual([]);
-    expect(r.wat.includes("__host_eq")).toBe(false);
-    expect(r.wat.includes("__host_loose_eq")).toBe(false);
+    // `__host_eq` / `__host_loose_eq` must not appear as a leaked env IMPORT.
+    // (#2508 added a legitimate native `(func $__host_eq …)` for array search,
+    // so a bare substring check no longer distinguishes the leak — gate on the
+    // import form specifically.)
+    expect(hostImports.includes("__host_eq")).toBe(false);
+    expect(hostImports.includes("__host_loose_eq")).toBe(false);
 
     // Must compile (validate) AND instantiate with an EMPTY import object — a
     // true standalone module. Wrap with the function WAT on failure for triage.
@@ -146,8 +150,10 @@ describe("#1776 standalone isSameValue externref equality", () => {
       { fileName: "issue-1776-wasi.ts", target: "wasi" },
     );
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
-    expect(r.wat.includes("__host_eq")).toBe(false);
-    // wasi modules import wasi_snapshot_preview1 funcs; just confirm no env host-eq leak.
+    // No `env::__host_eq` host IMPORT may leak (a native `(func $__host_eq …)`
+    // from #2508 is fine). wasi modules import wasi_snapshot_preview1 funcs only.
+    const wasiHostImports = [...r.wat.matchAll(/\(import "env" "([^"]+)"/g)].map((m) => m[1]);
+    expect(wasiHostImports.includes("__host_eq")).toBe(false);
     await WebAssembly.compile(r.binary);
   });
 

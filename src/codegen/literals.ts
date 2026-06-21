@@ -634,7 +634,7 @@ function compileObjectLiteralWithAccessors(
         fctx.body.push({ op: "local.get", index: objLocal });
         fctx.body.push({ op: "i32.const", value: wellKnownSymId });
         fctx.body.push({ op: "call", funcIdx: boxSymIdx });
-        const ok = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+        const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
         if (!ok) {
           fctx.body.push({ op: "ref.null.extern" });
         }
@@ -651,7 +651,7 @@ function compileObjectLiteralWithAccessors(
         } else if (keyType.kind !== "externref") {
           coerceType(ctx, fctx, keyType, { kind: "externref" });
         }
-        const okRt = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+        const okRt = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
         if (okRt) {
           fctx.body.push({ op: "call", funcIdx: setIdx });
         } else {
@@ -673,7 +673,7 @@ function compileObjectLiteralWithAccessors(
       for (const instr of stringConstantExternrefInstrs(ctx, methodName)) {
         fctx.body.push(instr);
       }
-      const ok = compileArrowAsCallback(ctx, fctx, prop as unknown as ts.FunctionExpression, { needsThis: true });
+      const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
       if (!ok) {
         fctx.body.push({ op: "ref.null.extern" });
       }
@@ -772,6 +772,36 @@ function emitObjectLiteralAccessorFn(
     return true;
   }
   return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true, ...captureOptions });
+}
+
+/**
+ * (#6408 follow-up) Compile an object-literal METHOD body and leave a callable
+ * externref on the stack for `__extern_set`. Mirrors the getter/setter routing
+ * in `emitObjectLiteralAccessorFn`: standalone → host-free closure
+ * (`compileArrowAsClosure`, converted to externref) so the method does NOT leak
+ * the `__make_getter_callback` JS bridge; JS-host / GC → `compileArrowAsCallback`
+ * with `needsThis: true` (unchanged host bridge). Returns `false` when the caller
+ * should push `ref.null.extern`.
+ *
+ * Why: the three MethodDeclaration arms below previously called
+ * `compileArrowAsCallback(... { needsThis: true })` unconditionally, which routes
+ * through `__make_getter_callback` (an `env::` host import, closures.ts) even in
+ * `--target standalone`. The sibling get/set arm was already standalone-aware
+ * (#1888 S5b); a literal mixing a regular method with a getter therefore left the
+ * getter host-free but leaked the bridge for the method. The standalone method
+ * closure is invoked through the same `__current_this`-bound closure-call path the
+ * getter closures use, so `this` is bound correctly.
+ */
+function emitObjectLiteralMethodFn(ctx: CodegenContext, fctx: FunctionContext, fn: ts.FunctionExpression): boolean {
+  if (ctx.standalone) {
+    const closureType = compileArrowAsClosure(ctx, fctx, fn);
+    if (!closureType) return false;
+    if (closureType.kind !== "externref") {
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+    }
+    return true;
+  }
+  return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true });
 }
 
 /**
@@ -1580,6 +1610,44 @@ export function compileObjectLiteralForStruct(
         }
       }
     }
+  }
+
+  // (#2009 R3b) Record this literal's field names in JS INSERTION order so the
+  // host name export (`__struct_field_names`) can enumerate keys in spec order.
+  // The struct's slot order comes from `ts.Type.getProperties()`, which is
+  // last-spread-first for spread-result types and therefore does NOT match the
+  // §13.2.5 PropertyDefinitionEvaluation order. Walk `expr.properties` in source
+  // order: a named/shorthand/method/accessor prop contributes its key; a spread
+  // contributes its source's own field names in order. First occurrence fixes a
+  // key's position (a later duplicate or override keeps the earlier slot, e.g.
+  // `{...{a:1},...{b:2},...{a:3}}` → `a,b`). The first literal of a deduped
+  // canonical type wins, so the result is deterministic by compile order and a
+  // no-op for plain literals whose checker order already matches insertion order.
+  if (!ctx.structInsertionOrder.has(typeName)) {
+    const spreadByPropIndex = new Map<number, { name: string }[]>();
+    for (const src of spreadSources) spreadByPropIndex.set(src.propIndex, src.srcFields);
+    const insertionOrder: string[] = [];
+    const seen = new Set<string>();
+    const pushName = (n: string | undefined): void => {
+      if (n === undefined || n.startsWith("$") || n.startsWith("__")) return;
+      if (seen.has(n)) return;
+      seen.add(n);
+      insertionOrder.push(n);
+    };
+    for (let pi = 0; pi < expr.properties.length; pi++) {
+      const prop = expr.properties[pi]!;
+      if (ts.isSpreadAssignment(prop)) {
+        const srcFields = spreadByPropIndex.get(pi);
+        if (srcFields) for (const f of srcFields) pushName(f.name);
+        continue;
+      }
+      if (ts.isMethodDeclaration(prop) || ts.isGetAccessorDeclaration(prop) || ts.isSetAccessorDeclaration(prop)) {
+        if (prop.name) pushName(resolveAccessorPropName(ctx, prop.name));
+        continue;
+      }
+      pushName(resolvePropertyNameText(ctx, prop));
+    }
+    if (insertionOrder.length > 0) ctx.structInsertionOrder.set(typeName, insertionOrder);
   }
 
   // (#1557) Per-literal method funcIdx overrides. When struct dedup collapses
@@ -3075,7 +3143,110 @@ export function compileArrayLiteral(
           const t = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(el));
           return t.kind === "ref" || t.kind === "ref_null" || t.kind === "externref";
         });
-        if (hasObjectElem) {
+        // (#2190b) Mirror of the string-first widening below for the NUMERIC-FIRST
+        // ordering: `[7, "ab"]` (a `[number, string]` tuple) picks an f64/i32 vec
+        // from element 0, then DROPS the native-string element (it is
+        // `extern.convert_any`'d + `__unbox_number`'d to NaN) — so `e[0][1]` reads
+        // back NaN and `(… as string)` traps. The `hasObjectElem` scan above
+        // deliberately EXCLUDES strings (a genuine numeric literal keeps its fast
+        // path), so detect a native-string element separately and only under an
+        // `any` contextual element type — the heterogeneous-tuple-in-`any[]` case.
+        // A real `(number|string)[]` / `number[]` literal is untouched (its
+        // contextual element type is not `any`), preserving the #1021/#786
+        // first-element fast path and the historical `[0, "last"]` behaviour.
+        let hasNativeStringElem = false;
+        if (!hasObjectElem && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+          // An inner tuple `[7, "ab"]` of an `any[]` is contextually typed `any`
+          // DIRECTLY (not `Array<any>`); a top-level `const a: any[] = [7, "ab"]`
+          // is contextually `Array<any>` (element type `any`). Accept either — both
+          // mean "no declared element constraint", which is the only case where a
+          // numeric-first literal may legitimately also hold a string element.
+          const ctxArrTypeNum = ctx.checker.getContextualType(expr);
+          const ctxElemNum =
+            ctxArrTypeNum && (ctxArrTypeNum.flags & ts.TypeFlags.Any) !== 0
+              ? ctxArrTypeNum
+              : ctxArrTypeNum
+                ? ctx.checker.getTypeArguments(ctxArrTypeNum as ts.TypeReference)[0]
+                : undefined;
+          if (ctxElemNum && (ctxElemNum.flags & ts.TypeFlags.Any) !== 0) {
+            hasNativeStringElem = expr.elements.some((el) => {
+              if (ts.isOmittedExpression(el) || _isUndefinedLike(el) || ts.isSpreadElement(el)) return false;
+              if (el.kind === ts.SyntaxKind.StringLiteral) return true;
+              const t = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(el));
+              if (t.kind === "ref" || t.kind === "ref_null") {
+                const ti = (t as { typeIdx: number }).typeIdx;
+                return ti === ctx.anyStrTypeIdx || ti === ctx.nativeStrTypeIdx;
+              }
+              return false;
+            });
+          }
+        }
+        if (hasObjectElem || hasNativeStringElem) {
+          elemWasm = { kind: "externref" };
+        }
+      } else if (
+        ctx.nativeStrings &&
+        ctx.anyStrTypeIdx >= 0 &&
+        (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+        ((elemWasm as { typeIdx: number }).typeIdx === ctx.anyStrTypeIdx ||
+          (elemWasm as { typeIdx: number }).typeIdx === ctx.nativeStrTypeIdx)
+      ) {
+        // (#2190 residual / #2190b) The first element is a native string, so the
+        // first-element heuristic picked `$AnyString` for the whole vec — but a
+        // heterogeneous literal like `["a", 1]` (a `[string, number]` tuple,
+        // common as an `Object.fromEntries` entry) then DROPS the non-string
+        // element (`f64.const 1; drop`) and substitutes `ref.null $AnyString;
+        // ref.as_non_null` → a guaranteed null-deref trap on a later read. Mirror
+        // the numeric-first `hasObjectElem` widening: if any element is NOT a
+        // native string, widen the vec to `externref` so each element is boxed by
+        // its own static type (`__box_number`/`__box_boolean`/native-string) at
+        // construction. Scoped to native-strings mode (true under standalone and
+        // WASI); number[]/struct[] etc. are untouched (their first element isn't a
+        // native string).
+        const hasNonStringElem = expr.elements.some((el) => {
+          if (ts.isOmittedExpression(el) || ts.isSpreadElement(el)) return false;
+          if (el.kind === ts.SyntaxKind.StringLiteral) return false;
+          const t = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(el));
+          if (t.kind === "ref" || t.kind === "ref_null") {
+            const ti = (t as { typeIdx: number }).typeIdx;
+            return ti !== ctx.anyStrTypeIdx && ti !== ctx.nativeStrTypeIdx;
+          }
+          // f64 / i32 / externref / etc. — a non-string element.
+          return true;
+        });
+        if (hasNonStringElem) {
+          elemWasm = { kind: "externref" };
+        }
+      } else if (
+        ctx.nativeStrings &&
+        ctx.anyStrTypeIdx >= 0 &&
+        (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+        ((elemWasm as { typeIdx: number }).typeIdx === ctx.anyStrTypeIdx ||
+          (elemWasm as { typeIdx: number }).typeIdx === ctx.nativeStrTypeIdx)
+      ) {
+        // (#2190 residual) The first element is a native string, so the
+        // first-element heuristic picked `$AnyString` for the whole vec — but a
+        // heterogeneous literal like `["a", 1]` (a `[string, number]` tuple,
+        // common as an `Object.fromEntries` entry) then DROPS the non-string
+        // element (`f64.const 1; drop`) and substitutes `ref.null $AnyString;
+        // ref.as_non_null` → a guaranteed null-deref trap on a later read. Mirror
+        // the numeric-first `hasObjectElem` widening: if any element is NOT a
+        // native string, widen the vec to `externref` so each element is boxed by
+        // its own static type (`__box_number`/`__box_boolean`/native-string) at
+        // construction. Scoped to native-strings mode; number[]/struct[] etc. are
+        // untouched (their first element isn't a string).
+        const hasNonStringElem = expr.elements.some((el) => {
+          if (ts.isOmittedExpression(el) || ts.isSpreadElement(el)) return false;
+          if (el.kind === ts.SyntaxKind.StringLiteral) return false;
+          const t = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(el));
+          if (t.kind === "ref" || t.kind === "ref_null") {
+            const ti = (t as { typeIdx: number }).typeIdx;
+            return ti !== ctx.anyStrTypeIdx && ti !== ctx.nativeStrTypeIdx;
+          }
+          // f64 / i32 / externref / etc. — a non-string element.
+          return true;
+        });
+        if (hasNonStringElem) {
           elemWasm = { kind: "externref" };
         }
       }

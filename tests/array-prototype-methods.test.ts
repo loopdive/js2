@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { assertEquivalent } from "./helpers.js";
+import { assertEquivalent } from "./equivalence/helpers.js";
 
 describe("array prototype methods", () => {
   it("indexOf returns correct index", async () => {

@@ -7,7 +7,7 @@
  */
 import { ts } from "../ts-api.js";
 import { isVoidType } from "../checker/type-mapper.js";
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import {
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
@@ -20,6 +20,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
+import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
@@ -224,6 +225,85 @@ function emitDescriptorUndefinedSidecars(
   }
 }
 
+/**
+ * (#2372) Reify a typed WasmGC descriptor struct (already on the stack) into a
+ * fresh open-hash `$Object`, so the native `__obj_define_from_desc` applier —
+ * which runs ToPropertyDescriptor via `__hasOwnProperty`/`__extern_get` over a
+ * `$Object` — can read it. A dynamic descriptor (`var d = { value: 1 }`) is
+ * typed by the checker as a closed struct; without reification the applier sees
+ * a non-`$Object` and throws a spurious TypeError §10.1.6.
+ *
+ * Stack contract: consumes the `(ref|ref null structTypeIdx)` on top, leaves a
+ * `$Object` externref in its place.
+ *
+ * Emitted INLINE referencing `__new_plain_object` / `__extern_set` via
+ * `ensureLateImport` (shift-safe by-name late imports) — NOT a finalize-built
+ * helper body that bakes funcIdxs, so the #2190 late-import-shift hazard does
+ * not apply. Per-field boxing is delegated to `coerceType(... externref)`
+ * (f64 → `__box_number`, i32/bool → box, ref/externref → `extern.convert_any`/
+ * identity). Accessor `get`/`set` fields are already `externref` (boxed
+ * closures) and pass through unchanged.
+ */
+function emitDescriptorStructReify(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  structTypeIdx: number,
+  fields: readonly FieldDef[],
+): void {
+  const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+
+  // Stow the source struct ref (currently on the stack) in a temp.
+  const srcLocal = allocLocal(fctx, `__desc_src_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: structTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: srcLocal });
+
+  if (newObjIdx === undefined || setIdx === undefined) {
+    // Object runtime unavailable (should not happen under ctx.standalone, but be
+    // safe): degrade to the prior behavior — push the struct as externref.
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+    return;
+  }
+
+  // newObj = __new_plain_object()
+  const objLocal = allocLocal(fctx, `__desc_obj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: newObjIdx });
+  fctx.body.push({ op: "local.set", index: objLocal });
+
+  // For each static struct field: __extern_set(newObj, "<name>", box(field)).
+  // The source struct may be null (ref_null) — guard each read with a non-null
+  // check so a null descriptor reifies to an empty object (the applier then
+  // throws §10.1.6 for the empty/non-descriptor case, preserving ordering).
+  for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
+    const field = fields[fieldIdx]!;
+    // skip internal/synthetic fields that aren't real descriptor keys
+    if (field.name.startsWith("$") || field.name.startsWith("__")) continue;
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, field.name);
+    for (const instr of stringConstantExternrefInstrs(ctx, field.name)) fctx.body.push(instr);
+    // value: src.<field>, boxed to externref
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "ref.as_non_null" } as Instr);
+    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+    if (field.type.kind !== "externref") {
+      coerceType(ctx, fctx, field.type, { kind: "externref" });
+    }
+    fctx.body.push({ op: "call", funcIdx: setIdx });
+  }
+
+  // Leave the reified $Object on the stack.
+  fctx.body.push({ op: "local.get", index: objLocal });
+}
+
 function emitDefinePropertyDescRuntime(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -250,7 +330,29 @@ function emitDefinePropertyDescRuntime(
   }
 
   const descType = compileExpression(ctx, fctx, descArg);
-  if (descType) {
+  // (#2372) Standalone descriptor reification. The native
+  // `__obj_define_from_desc` applier runs ToPropertyDescriptor over the
+  // descriptor as a `$Object` (via `__hasOwnProperty`/`__extern_get`, which
+  // `ref.test $Object`); a *dynamic* descriptor (`var d = {...}`) that the TS
+  // checker typed as a closed WasmGC struct is "not an object" to that helper
+  // and triggers a spurious TypeError §10.1.6. When the descriptor compiled to
+  // a typed struct, reify it into a fresh `$Object` here (read each static
+  // struct field via `struct.get`, box to externref, `__extern_set` onto a new
+  // open-hash object) so the applier can read it. A descriptor that is already
+  // a `$Object` (externref — e.g. `as any`, or a `$Object`-built literal) is
+  // passed through unchanged: no double-wrap. Gated `ctx.standalone`; host/gc/
+  // wasi keep their existing `__defineProperty_desc` host-import path.
+  const descStructTypeIdx =
+    ctx.standalone && descType && (descType.kind === "ref" || descType.kind === "ref_null")
+      ? descType.typeIdx
+      : undefined;
+  const reifyStructName = descStructTypeIdx !== undefined ? ctx.typeIdxToStructName.get(descStructTypeIdx) : undefined;
+  const reifyFields = reifyStructName ? ctx.structFields.get(reifyStructName) : undefined;
+  if (descType && descStructTypeIdx !== undefined && reifyFields && reifyFields.length > 0) {
+    emitDescriptorStructReify(ctx, fctx, descStructTypeIdx, reifyFields);
+    // emitDescriptorStructReify consumes the struct ref on the stack and leaves
+    // a `$Object` externref in its place.
+  } else if (descType) {
     if (descType.kind === "ref" || descType.kind === "ref_null") {
       fctx.body.push({ op: "extern.convert_any" } as Instr);
     } else if (descType.kind !== "externref") {
@@ -261,6 +363,27 @@ function emitDefinePropertyDescRuntime(
   }
   const descLocal = allocLocal(fctx, `__defprop_desc_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: descLocal });
+
+  // (#1629b) Standalone: there is no JS host, so the `__defineProperty_desc`
+  // import is refused (#1472 Phase B). Route to the Wasm-native
+  // `__obj_define_from_desc(obj, key, desc)` helper, which performs
+  // ToPropertyDescriptor over the descriptor `$Object` and dispatches to the
+  // native `__defineProperty_value` / `__defineProperty_accessor` store. The
+  // host-side `__descriptor_undefined` presence sidecar is not used standalone
+  // (the native helper reads presence directly via `__hasOwnProperty`), so the
+  // undefined-fields sidecar emission is host-only.
+  if (ctx.standalone) {
+    ensureObjectRuntime(ctx);
+    fctx.body.push({ op: "local.get", index: descLocal });
+    const nativeIdx = ctx.funcMap.get("__obj_define_from_desc");
+    if (nativeIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: nativeIdx });
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    return { kind: "externref" };
+  }
+
   emitDescriptorUndefinedSidecars(ctx, fctx, descLocal, undefinedFields);
   fctx.body.push({ op: "local.get", index: descLocal });
 

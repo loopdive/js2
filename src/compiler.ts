@@ -777,6 +777,7 @@ export function compileSourceSync(
         utf8Storage: options.utf8Storage,
         testRuntime: options.testRuntime,
         wasi: options.target === "wasi",
+        nodeIoShim: options.nodeIoShim,
         standalone: options.target === "standalone",
         // (#2119) thread module-strictness inference for the single-source
         // path (test262 + the playground both compile via `compile()` here).
@@ -1130,6 +1131,7 @@ export async function compileMultiSource(
         utf8Storage: options.utf8Storage,
         testRuntime: options.testRuntime,
         wasi: options.target === "wasi",
+        nodeIoShim: options.nodeIoShim,
         strictNoHostImports: options.strictNoHostImports,
         standalone: options.target === "standalone",
         // (#2119) default true (module input is strict → unmapped arguments);
@@ -1443,6 +1445,7 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
         utf8Storage: options.utf8Storage,
         testRuntime: options.testRuntime,
         wasi: options.target === "wasi",
+        nodeIoShim: options.nodeIoShim,
         strictNoHostImports: options.strictNoHostImports,
         standalone: options.target === "standalone",
         // (#2119) default true (module input is strict → unmapped arguments);

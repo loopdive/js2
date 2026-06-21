@@ -127,7 +127,9 @@ export function emitWat(mod: WasmModule): string {
           ? `(global $${imp.name} ${imp.desc.mutable ? `(mut ${formatValType(imp.desc.type)})` : formatValType(imp.desc.type)})`
           : imp.desc.kind === "table"
             ? `(table ${imp.desc.min} ${imp.desc.max ?? ""} ${imp.desc.elementType})`
-            : `(tag (type ${imp.desc.typeIdx}))`;
+            : imp.desc.kind === "memory"
+              ? `(memory ${imp.desc.min}${imp.desc.max !== undefined ? ` ${imp.desc.max}` : ""})`
+              : `(tag (type ${imp.desc.typeIdx}))`;
     lines.push(`${indent(1)}(import "${escapeWatString(imp.module)}" "${escapeWatString(imp.name)}" ${desc})`);
   }
 

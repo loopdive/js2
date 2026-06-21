@@ -59,15 +59,15 @@ WASI HTTP enables serverless edge functions.
 | **940** | Add String.fromCodePoint to WASI/standalone string helpers | 37 | done | low |
 | **949** | Research: Integrate Chris Fallin's JS-to-Wasm Blog Series into Documentation | 37 | done | medium |
 | **1029** | Migrate to TypeScript 7.x (Go rewrite / typescript-go) when compiler API stabilizes | Backlog | backlog | low |
-| **1045** | DOM globals as extern classes (DOM_HOST_GLOBALS, queueMicrotask, requestAnimationFrame) | 45 | ready | high |
+| **1045** | DOM globals as extern classes (DOM_HOST_GLOBALS, queueMicrotask, requestAnimationFrame) | Backlog | ready | high |
 | **1066** | Support eval in standalone mode via host-compiled Wasm child module | Backlog | ready | medium |
 | **1096** | Isolate environment adapters — remove top-level await and browser/Node probing from core modules | 45 | done | medium |
-| **1099** | Standalone execution demo — compile and run a program on Wasmtime with zero JS host | 45 | ready | high |
-| **1132** | Publish compiler as @loopdive/js2 on npm + JSR | 42 | in-progress | high |
+| **1099** | Standalone execution demo — compile and run a program on Wasmtime with zero JS host | Backlog | ready | high |
+| **1132** | Publish compiler as @loopdive/js2 on npm + JSR | Backlog | ready | high |
 | **1134** | __any_eq loose equality missing cross-tag coercion — null==undefined, bool==number all return false | Backlog | done | medium |
 | **1136** | Array.prototype.flat() and flatMap() not implemented | 42 | done | medium |
 | **1137** | ES2023 array methods: toReversed, toSorted, toSpliced, with — not implemented | 42 | done | medium |
-| **1147** | Add a public Docs page to the site | 45 | ready | medium |
+| **1147** | Add a public Docs page to the site | Backlog | ready | medium |
 | **1152** | Array.prototype higher-order methods fail with 'object is not a function' after PR #195 __get_builtin change (~217 test262 regressions) | 44 | done | high |
 | **1167c** | IR Phase 3c — monomorphize + tagged-unions (blocked on frontend widening) | 44 | done | high |
 | **1169e** | IR Phase 4 Slice 6 — iterators and for-of through the IR path | 45 | done | high |
@@ -84,7 +84,7 @@ WASI HTTP enables serverless edge functions.
 | **1587** | Static analysis pass: ownership and access semantics on IR values | 55 | done | medium |
 | **1588** | String encoding tracking: prove UTF-8 guarantees for zero-copy Component Model interop | 55 | done | medium |
 | **1650** | Component Model string boundary: encode-import selection (Edge B) on the encoding annotation | Backlog | backlog | medium |
-| **1751** | WIT generator emits an incomplete world: hardcoded package name + no WASI imports | 58 | in-review | medium |
+| **1751** | WIT generator emits an incomplete world: hardcoded package name + no WASI imports | 58 | done | medium |
 | **1752** | TextEncoder / TextDecoder runtime API (standalone + WASI) | 58 | done | medium |
 | **1753** | Native-messaging host: 64 MiB read/write via ≤1 MiB chunked streaming | 58 | done | medium |
 | **1754** | Build-from-repo: packages/index re-exports unresolved @loopdive/js2 | Backlog | ready | medium |
@@ -96,19 +96,19 @@ WASI HTTP enables serverless edge functions.
 | **1763** | Remove dead sync binaryen createRequire path + bare require(node:fs) residual in optimize.ts | Backlog | done | medium |
 | **1764** | wasmtime bench: model production edge-serverless per-request instantiation (warm engine), not full process spawns | 58 | done | medium |
 | **1765** | nullable number alias guard not narrowed for typed-array byte assignment | 58 | done | medium |
-| **1766** | process.stdout.write backpressure / once('drain') pattern not supported | 58 | blocked | medium |
+| **1766** | process.stdout.write backpressure / once('drain') pattern not supported | Backlog | blocked | medium |
 | **1767** | native-messaging 64 MiB run grows wasmtime memory toward OOM | 58 | done | high |
 | **1768** | allowJs native-messaging sendMessage emits invalid WASI wasm | 58 | done | high |
 | **1769** | generalize nullable primitive union lowering and narrowing | 58 | done | medium |
 | **1771** | pre-push issue integrity can miss committed dangling dependencies | 58 | done | medium |
 | **1772** | Spike edge.js as a Node API module / WASI shim layer | Backlog | backlog | medium |
 | **1773** | generate dependency graph data in CI and publish to labs | 58 | done | medium |
-| **1774** | wasi preview3 async stream semantics for Node stdout/stderr | 58 | ready | medium |
+| **1774** | wasi preview3 async stream semantics for Node stdout/stderr | Backlog | ready | medium |
 | **1775** | standalone CLI bundle embeds TypeScript lib declarations | 58 | done | high |
 | **1779** | WIT generator wasm-tools round-trip parity check | Backlog | ready | medium |
 | **1780** | TextEncoder.encodeInto support for standalone and WASI | Backlog | done | medium |
 | **1786** | wrapExports ABI support for packed TypedArray vectors | Backlog | ready | medium |
-| **1973** | optimize:true via binaryen npm module re-introduces exact heap types — optimized binaries rejected by stock V8 and JSC (#1580 masking silently no-ops) | 61 | ready | high |
+| **1973** | optimize:true via binaryen npm module re-introduces exact heap types — optimized binaries rejected by stock V8 and JSC (#1580 masking silently no-ops) | 61 | done | high |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

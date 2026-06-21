@@ -276,6 +276,17 @@ export interface CompileOptions {
    *  Default: false (calls to fs.readFileSync / fs.writeFileSync raise a compile error). */
   allowFs?: boolean;
   /**
+   * #2524 Phase 1 — route `process.std{in,out,err}` IO through a separately
+   * compiled, linkable `js2wasm:node-io` shim instead of inlining the
+   * `wasi_snapshot_preview1.fd_read`/`fd_write` glue. WASI-only (ignored for
+   * other targets). When set, the user module imports `stdin_read`/
+   * `stdout_write`/`stderr_write` plus its linear memory from `js2wasm:node-io`
+   * and carries no `wasi_snapshot_preview1` import for stream IO; link against
+   * `node-shim.wasm` (or `--preload js2wasm:node-io=node-shim.wasm` under
+   * wasmtime). Default off — the inline path stays as fallback.
+   */
+  nodeIoShim?: boolean;
+  /**
    * Enforce dual-mode discipline (#1524): when true, codegen rejects any
    * JS-host `env` import that is not on
    * `src/codegen/host-import-allowlist.ts`. Auto-enabled under

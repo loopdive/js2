@@ -67,7 +67,7 @@ promise infrastructure.
 | **854** | Iterator protocol: null next/return/throw methods (126 tests) | 44 | done | high |
 | **855** | Promise resolution and async error handling (210 tests) | 35 | done | high |
 | **859** | Map.forEach callback captures are immutable snapshots -- causes infinite loop on mutation during iteration | 50 | done | high |
-| **860** | Promise executor and property-assigned functions not compiled as host callbacks | Backlog | in-review | medium |
+| **860** | Promise executor and property-assigned functions not compiled as host callbacks | Backlog | done | medium |
 | **875** | Research: ES standard support matrix for all JS-to-Wasm engines | 0 | done | medium |
 | **919** | Fix direct-eval arguments regressions introduced since the April 1 test262 baseline | 37 | done | high |
 | **930** | Not-a-constructor detection: built-in methods callable with new (68 FAIL) | 37 | done | medium |
@@ -94,16 +94,16 @@ promise infrastructure.
 | **1027** | Missing __make_getter_callback late-import in PR #43 accessor paths | 40 | done | high |
 | **1034** | Compile prettier to Wasm — parser + AST + printer stress test; self-format smoke test | 41 | done | high |
 | **1035** | WASI hello-world: compile console.log + node:fs write to a standalone native executable | 45 | done | high |
-| **1042** | async/await state-machine lowering (AwaitExpression is currently a no-op) | 58 | in-progress | high |
-| **1044** | Node builtin modules as host imports (NODE_HOST_IMPORT_MODULES, node: prefix normalization) | 45 | ready | high |
+| **1042** | async/await state-machine lowering (AwaitExpression is currently a no-op) | 64 | in-progress | high |
+| **1044** | Node builtin modules as host imports (NODE_HOST_IMPORT_MODULES, node: prefix normalization) | Backlog | ready | high |
 | **1089** | codegen: support dynamic import() expressions — 429 test262 tests skipped | Backlog | ready | medium |
-| **1093** | Systematic ECMAScript spec conformance audit — review compiled semantics against tc39.es/ecma262 | 45 | ready | high |
+| **1093** | Systematic ECMAScript spec conformance audit — review compiled semantics against tc39.es/ecma262 | Backlog | ready | high |
 | **1116** | Promise resolution and async error handling (210 tests) | 55 | done | critical |
 | **1150** | Fix runtime_error:26 + type_error:7 + oob:5 — async destructuring regressions | 44 | done | high |
-| **1151** | Async function synchronous throws bypass Promise.reject wrapping | Backlog | ready | high |
+| **1151** | Async function synchronous throws bypass Promise.reject wrapping | 62 | done | high |
 | **1153** | Compiler-internal crashes block ~3,585 test262 tests: commentDirectiveRegEx.exec, constructSigs.reduce, cache.set | 44 | done | critical |
 | **1154** | test262 worker: Array.prototype poisoning leaks into TypeScript compiler — Array.from fails at compile time (~378 test262 regressions) | 50 | done | high |
-| **1169** | IR Phase 4 — migrate full compiler to IR path, retire legacy AST→Wasm codegen | 46 | ready | high |
+| **1169** | IR Phase 4 — migrate full compiler to IR path, retire legacy AST→Wasm codegen | Backlog | ready | high |
 | **1169f** | IR Phase 4 Slice 7 — generators and async/await through the IR path | 45 | done | high |
 | **1169h** | IR Phase 4 Slice 9 — try/catch/finally and throw through the IR path | 45 | done | high |
 | **1169i** | IR Phase 4 Slice 10 — remaining builtins (RegExp, TypedArray, DataView) through the IR path | 45 | done | high |

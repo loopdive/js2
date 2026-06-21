@@ -3,8 +3,8 @@ id: 1625
 title: "#779 and #820 cluster decomposition — sprint 54 dispatch plan"
 status: ready
 created: 2026-05-21
-updated: 2026-05-24
-sprint: 53
+updated: 2026-06-19
+sprint: Backlog
 renumbered_from: 779
 parents: [779, 820]
 baseline: "benchmarks/results/test262-current.jsonl (21.5.2026 00:24)"

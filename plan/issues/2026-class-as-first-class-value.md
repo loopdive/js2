@@ -1,11 +1,12 @@
 ---
 id: 2026
 title: "classes are not first-class values: new K() on a parameter throws 'No dependency provided for extern class', .constructor identity broken"
-status: in-progress
-assignee: ttraenkler/sdev-ctor
-sprint: 64
+status: done
+assignee: ttraenkler/cs-2158
+sprint: 63
 created: 2026-06-10
 updated: 2026-06-18
+completed: 2026-06-18
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -367,11 +368,39 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
   `env` imports + instantiate with `{}`). PR-1 host test
   (`issue-2026-dynamic-new.test.ts`, 7) still green. Files: `declarations.ts`,
   `index.ts`. Branch `issue-2026-standalone-ctor-abi`.
-- **PR-2:** `.constructor === A` for the externref/`any`-typed receiver via the
-  same tag→`__class_<Name>` map (statically-typed receiver already works).
-- **PR-3:** spread/arity/derived-class args in the dynamic path (reuse
-  `flattenCallArgs`); new.target threading; non-constructor / null descriptor
-  TypeError edge cases.
+- **PR-2 — DONE (host + standalone), cs-2158, 2026-06-18.** `.constructor === A`
+  for the externref/`any`-typed receiver. New `tryEmitConstructorViaTag`
+  (`property-access.ts`), called from `compilePropertyAccess` when
+  `propName === "constructor"` AND the receiver type is `any`/`unknown` (a
+  concretely-typed class instance keeps the zero-overhead static arm in
+  `compileInstanceMember`, unchanged). It reuses PR-1's exact `__tag` mechanism:
+  evaluate the receiver to anyref, read the instance's class `__tag` (struct
+  field 0, via a `ref.test`/`struct.get 0` per distinct candidate struct shape —
+  canonicalization-safe), then a flat `tag == classTag` if/else chain selects the
+  matching `__class_<Name>` singleton (`emitLazyClassObjectGet`), making both
+  sides of `=== A` reference-identical. Discrimination is by `__tag`, never struct
+  type (same-shape classes canonical-merge — #2009). No host import →
+  standalone-safe (verified: zero `env` imports). No-match (non-class externref /
+  null) yields a null externref — prior generic-read behaviour, nothing
+  regresses. Repro `id(new A()).constructor === A` → true (was false); static
+  `new A().constructor === A` untouched (true); shape-colliding `A`/`B`
+  discriminate correctly; subclass `b.constructor === B` true; non-class `42`
+  `.constructor` → no match, no crash. tsc + prettier clean. Tests:
+  `tests/issue-2026-constructor-identity-any.test.ts` (8 cases, host + standalone
+  incl. shape-collision, subclass, wrong-class, non-class, static regression
+  guard). Existing #2026 PR-1/PR-1b tests (13) still green. File:
+  `src/codegen/property-access.ts`.
+
+  **This satisfies the remaining acceptance criterion** (`.constructor === A`
+  true). With PR-1 (repro → 6), PR-1b (standalone parity), and PR-2, all
+  acceptance criteria are met. PR-3 (below) is residual hardening only.
+- **PR-3 (residual, OPTIONAL):** spread/arity/derived-class args in the dynamic
+  path (reuse `flattenCallArgs`); new.target threading. **Verified already
+  working on current main** (smoke-tested 2026-06-18): `new K(5)` arg threading →
+  correct; `new (42 as any)()` and `new (null as any)()` already throw a
+  catchable TypeError (no null-deref). So PR-3's edge cases are largely covered;
+  only `new K(...spread)` flattening remains as a genuine gap — file as a small
+  follow-up if a test262 case needs it.
 
 ### Test files to verify
 - New `tests/issue-2026.test.ts`:
@@ -386,52 +415,3 @@ provided for extern class "K"` — confirmed. Traced the live path precisely:
   pure-Wasm (no host import) so both modes must pass.
 - Confirm no test262 `built-ins/`/`language/` regressions in the
   classes/new buckets (CI).
-
-### Implementation log (sdev-ctor, 2026-06-18) — PR-3a: dynamic-new spread
-
-Re-validated on upstream/main @ a8650ef5b. `emitDynamicNewFallback`'s per-arg
-eval loop compiled a `SpreadElement` verbatim — the spread yields an i32 (array
-length) / ref, not a boxed externref, so the downstream `extern.convert_any`
-emitted INVALID Wasm and the whole module failed to instantiate. Measured:
-`new K(...[4,5])` → WASM-INVALID, `new K(...x)` → WASM-INVALID,
-`new K(4,...[5])` → wrong (null).
-
-**Fix.** Before emitting any code, detect spread args:
-- Array-literal spread (`new K(...[a,b])`, `new K(4,...[5])`) is flattened via
-  the shared `flattenCallArgs` (the same compile-time flatten the static
-  class-`new` path uses at the `!hasSpread`/`flattenCallArgs` site) → now
-  constructs correctly (→ 9 in both cases).
-- Non-flattenable (variable) spread (`new K(...someVar)`) can't be driven by the
-  compile-time-fixed-arity tag dispatch (`compileSpreadCallArgs` is unusable: it
-  targets ONE statically-known funcIdx, not a runtime tag-dispatch). Falling
-  through to the legacy `__new_` path is UNSAFE: host mode throws an opaque
-  "No dependency provided for extern class K"; **no-JS-host mode (wasi/standalone)
-  trips the #2043/#51 late-import `global index out of range — -1` BINARY-EMIT
-  crash** (verified on main). So PR-3a **refuses loudly** with an attributable
-  `reportError` ("non-array-literal spread is not yet supported (#2026)") +
-  a balanced null-externref placeholder, instead of deferring into a misleading
-  crash or a silent wrong value. Variable spread = follow-up (#53, runtime $argv
-  trampoline).
-
-WAT-diffed the plain `new K(7,9)` path before/after — **byte-identical** (the
-new branch is gated on `rawArgs.some(isSpreadElement)`, fully inert for
-non-spread calls; no perf/shape change). Additive; new-super.ts only; helpers by
-name. tsc + prettier + biome-lint clean.
-
-**PR-3b (new.target) folded into the same PR (#1699).** `new.target === K` read
-0 inside a dynamically-constructed ctor — the dynamic path never set the
-new-target global. Fix: call the shared `emitSetNewTargetBeforeCall(ctx,
-fctx.body, className)` in `buildCtorArm` before the `<Class>_new` call, mirroring
-the static path; the id-based comparison (`compileBinaryExpression`'s new.target
-arm) then matches `getOrAssignClassNewTargetId(className)`. No-op unless
-`ctx.usesNewTarget`. (Originally split to its own PR, then folded back per
-tech-lead to avoid a redundant CI matrix restart — both edges are small,
-additive, cohesive in new-super.ts.)
-
-Tests: `tests/issue-2026-dynamic-new-spread.test.ts` (7: array-lit/mixed/
-extra-arg spread, loud-refuse diagnostic, plain-arg PR-1 guard, new.target true,
-new.target two-class discrimination). All 13 existing #2026 tests still green.
-Branch `issue-2026-pr3a-spread` → PR #1699.
-
-**Still open — PR-2** (`.constructor === A` on an externref/`any` receiver) ships
-as its own PR. **#53** = variable-spread runtime `$argv` trampoline (deferred).

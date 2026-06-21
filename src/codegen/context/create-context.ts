@@ -170,6 +170,7 @@ export function createCodegenContext(
     widenedTypeProperties: new Map(),
     widenedVarStructMap: new Map(),
     widenedDefinePropertyKeys: new Set(),
+    dynamicDescriptorWidenVars: new Set(),
     externrefAccessorVars: new Set(),
     pendingMathMethods: new Set(),
     pendingMethodTrampolines: [],
@@ -196,6 +197,7 @@ export function createCodegenContext(
     anonStructHash: new Map(),
     shapeIdByStructName: new Map(),
     shapeNameCsvById: [],
+    structInsertionOrder: new Map(),
     funcTypeCache: new Map(),
     pendingLateImportShift: null,
     protoGlobals: new Map(),
@@ -209,6 +211,11 @@ export function createCodegenContext(
     nullThisTypeErrorReady: false, // (#2025)
     funcClosureGlobals: new Map(),
     wasi: options?.wasi ?? false,
+    // #2524 Phase 1 — node-io shim only applies under WASI; ignored otherwise.
+    nodeIoShim: !!(options?.wasi && options?.nodeIoShim),
+    nodeIoStdoutWriteIdx: -1,
+    nodeIoStderrWriteIdx: -1,
+    nodeIoStdinReadIdx: -1,
     standalone: options?.standalone ?? false,
     // #682 — native standalone RegExp engine hook. Standalone mode enables the
     // reduced literal-substring backend; broader QuickJS libregexp ABI linking

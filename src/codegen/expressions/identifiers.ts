@@ -496,6 +496,45 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
     return emitStringBuilderRead(ctx, fctx, sb);
   }
 
+  // (#2200 Phase 1, Annex B B.3.3) If `name` is a block-nested function whose
+  // web-compat outer var-binding was cancelled (intervening lexical shadow /
+  // same-named param — recorded in `fctx.annexBCancelled` during hoisting), a
+  // read OUTSIDE the declaring block has no binding and must throw
+  // ReferenceError — even though the funcMap (and the TS checker's Annex-B-hoisted
+  // symbol) still resolve the name, and even though the compiler's flat
+  // `localMap` may carry a shared slot for the like-named lexical. A read INSIDE
+  // the declaring block falls through to normal resolution (the block-local
+  // function / lexical). Checked BEFORE localMap so the cancellation wins; gated
+  // on the normally-empty `annexBCancelled` set, so non-Annex-B modules are
+  // byte-identical.
+  const cancelRanges = fctx.annexBCancelled?.get(name);
+  if (cancelRanges && cancelRanges.length > 0) {
+    const pos = id.getStart();
+    const insideDeclaringBlock = cancelRanges.some((r) => pos >= r.start && pos < r.end);
+    if (!insideDeclaringBlock) {
+      const msg = `${name} is not defined`;
+      if (noJsHost(ctx)) {
+        emitThrowReferenceError(ctx, fctx, msg);
+        fctx.body.push({ op: "unreachable" });
+        return { kind: "externref" };
+      }
+      const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+      flushLateImportShifts(ctx, fctx);
+      if (throwRefErrIdx !== undefined) {
+        addStringConstantGlobal(ctx, msg);
+        const strIdx = ctx.stringGlobalMap.get(msg)!;
+        fctx.body.push({ op: "global.get", index: strIdx } as Instr);
+        fctx.body.push({ op: "call", funcIdx: throwRefErrIdx } as Instr);
+        fctx.body.push({ op: "unreachable" });
+      } else {
+        const tagIdx = ensureExnTag(ctx);
+        fctx.body.push({ op: "ref.null.extern" } as Instr);
+        fctx.body.push({ op: "throw", tagIdx });
+      }
+      return { kind: "externref" };
+    }
+  }
+
   const localIdx = fctx.localMap.get(name);
   if (localIdx !== undefined) {
     // TDZ check for function-local let/const variables

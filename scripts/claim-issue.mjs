@@ -17,10 +17,26 @@
 //
 // Usage:
 //   node scripts/claim-issue.mjs <id> <assignee> [--branch <b>] [--force]
+//   node scripts/claim-issue.mjs --allocate [<assignee>] [--branch <b>] [--json]
 //   node scripts/claim-issue.mjs --check <id>
 //   node scripts/claim-issue.mjs --release <id> [<assignee>]
 //   node scripts/claim-issue.mjs --complete <id>
 //   node scripts/claim-issue.mjs --list
+//
+// ATOMIC ID ALLOCATION (#2531): `--allocate` is the canonical, collision-proof
+// way to reserve a FRESH issue id. Picking an id by hand ("next free off main")
+// races: two devs on separate branches each pick the same number because none
+// of their new `plan/issues/<id>-*.md` files are on `main` yet, the duplicate
+// is green at PR-time, and it only fails in the `merge_group` — wedging the
+// queue. `--allocate` closes that window by treating the orphan
+// `issue-assignments` ref as a RESERVATION REGISTRY: the next id is
+// max(ids on origin/main ∪ ids added by every currently-open PR ∪ ids already
+// reserved on the ref) + 1, and the reservation is written with the same
+// first-push-wins atomicity as a claim. Two concurrent allocators cannot both
+// win the same id — the loser's push is rejected non-fast-forward, it re-fetches
+// (now seeing the winner's reservation) and recomputes a fresh id. With an
+// `<assignee>` the reservation doubles as the claim lock; without one it writes
+// a bare `reserved` placeholder the eventual claim transitions in place.
 //
 // SLICE-LEVEL LOCKING (#41): for an issue the architect decomposed into
 // FILE-DISJOINT parallel slices, pass a slice-qualified id `<issue>:<slice>`
@@ -39,6 +55,7 @@
 //
 // Exit codes: 0 ok / free · 2 usage error · 3 already claimed by someone else
 //             4 issue already done/wont-fix on main · 5 push gave up after retries
+// (--allocate prints the reserved id to stdout on success and exits 0.)
 
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
@@ -80,13 +97,15 @@ const positional = argv.filter((a, i) => !a.startsWith("--") && argv[i - 1] !== 
 
 const mode = flags.has("--list")
   ? "list"
-  : flags.has("--check")
-    ? "check"
-    : flags.has("--release")
-      ? "release"
-      : flags.has("--complete")
-        ? "complete"
-        : "claim";
+  : flags.has("--allocate")
+    ? "allocate"
+    : flags.has("--check")
+      ? "check"
+      : flags.has("--release")
+        ? "release"
+        : flags.has("--complete")
+          ? "complete"
+          : "claim";
 
 function normalizeAssignee(raw) {
   if (!raw) return "";
@@ -155,6 +174,110 @@ function mainIssueStatus(id) {
   if (!cat.ok) return null;
   const m = cat.out.match(/^status:\s*([\w-]+)\s*$/m);
   return { file, status: m ? m[1] : null };
+}
+
+// --- id-universe scanning (for --allocate) ----------------------------------
+//
+// A fresh issue id must be unique against THREE populations, because none of
+// them alone closes the collision window:
+//   (1) ids already on origin/main          — the committed record;
+//   (2) ids added by every currently-open PR — in-flight files not yet merged
+//       (THE race the merge-queue wedge came from);
+//   (3) ids already reserved on this ref     — concurrent allocators that won
+//       a push microseconds ago.
+// `allUsedIds()` unions all three; the next id is max(union)+1 (monotonic — we
+// never reuse a gap that might be reserved on a branch this scan can't see).
+
+const ISSUE_ID_RE = /(?:^|\/)plan\/issues\/(\d+)[a-z]?-[^/]*\.md$/;
+
+// Stray ids separated from the contiguous body by a large gap (a mis-typed
+// 6406 when the real range is ~2500) must not poison max+1 and hand out a 6408
+// — the #1858 mis-allocation. Drop anything > GAP above the running max.
+const STRAY_GAP = 1000;
+
+function contiguousMax(idSet) {
+  const sorted = [...idSet].sort((a, b) => a - b);
+  let max = 0;
+  for (const id of sorted) {
+    if (max > 0 && id - max > STRAY_GAP) break;
+    max = id;
+  }
+  return max;
+}
+
+function idsFromMain() {
+  const out = new Set();
+  const ls = gitTry(["ls-tree", "-r", "--name-only", MAIN_REF, "plan/issues/"]);
+  if (!ls.ok) return out;
+  for (const f of ls.out.split("\n")) {
+    const m = f.match(ISSUE_ID_RE);
+    if (m) out.add(Number(m[1]));
+  }
+  return out;
+}
+
+// Ids reserved/claimed on the orphan ref. Every `<key>.json` entry's `id`
+// field counts — a `reserved` placeholder reserves the number just as firmly
+// as an in-progress claim, otherwise two allocators racing the same second
+// would both compute the same max+1.
+function idsFromAssignRef(sha) {
+  const out = new Set();
+  if (!sha) return out;
+  const ls = gitTry(["ls-tree", "--name-only", sha]);
+  if (!ls.ok) return out;
+  for (const f of ls.out.split("\n")) {
+    if (!f.endsWith(".json")) continue;
+    const e = readEntry(sha, f.replace(/\.json$/, ""));
+    if (e && e.id != null && /^\d+$/.test(String(e.id))) out.add(Number(e.id));
+  }
+  return out;
+}
+
+// Ids added by currently-open PRs. Uses `gh` when available (the only way to
+// see a fork-headed PR whose branch is NOT a refs/remotes/origin/* ref here).
+// Best-effort: on any gh failure (offline, unauthenticated, old gh) we return
+// an empty set and fall back to main ∪ ref — the PR-time CI gate
+// (check-issue-ids --against-main) is the hard backstop, this scan only shrinks
+// the race window at allocation time.
+function idsFromOpenPRs() {
+  const out = new Set();
+  const repo = process.env.CLAIM_PR_REPO || "loopdive/js2";
+  // List open PR numbers (cap to keep the per-PR file query bounded).
+  let prNumbers = [];
+  try {
+    const raw = execFileSync(
+      "gh",
+      ["pr", "list", "-R", repo, "--state", "open", "--limit", "200", "--json", "number"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    prNumbers = JSON.parse(raw).map((p) => p.number);
+  } catch {
+    return out; // gh unavailable / unauthenticated — fall back to main ∪ ref
+  }
+  for (const n of prNumbers) {
+    try {
+      const raw = execFileSync("gh", ["pr", "view", String(n), "-R", repo, "--json", "files"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      for (const f of JSON.parse(raw).files || []) {
+        const m = (f.path || "").match(ISSUE_ID_RE);
+        if (m) out.add(Number(m[1]));
+      }
+    } catch {
+      /* skip this PR */
+    }
+  }
+  return out;
+}
+
+function allUsedIds(sha, { scanPRs }) {
+  const all = new Set([...idsFromMain(), ...idsFromAssignRef(sha)]);
+  if (scanPRs) for (const id of idsFromOpenPRs()) all.add(id);
+  return all;
 }
 
 // Build a new tree = base tree with `<id>.json` set to `content`, then
@@ -234,6 +357,75 @@ function nowIso() {
   return new Date().toISOString().replace(/\.\d+Z$/, "Z");
 }
 
+// Atomically reserve the next free issue id (#2531). Computes max(used)+1 over
+// origin/main ∪ open-PR-added ids ∪ ref-reserved ids, writes a reservation
+// entry, and pushes first-wins. On a non-ff rejection (another allocator landed
+// a reservation since we read), re-fetch and recompute a fresh id — so two
+// concurrent allocators can NEVER hand out the same number. Prints the reserved
+// id to stdout (machine-readable; the human/JSON detail goes to stderr or with
+// --json). `assignee` is optional: with one the reservation doubles as the claim
+// lock (status in-progress); without one it's a bare `reserved` placeholder the
+// real claim transitions in place.
+function doAllocate(assignee) {
+  const wantJson = flags.has("--json");
+  const scanPRs = !flags.has("--no-pr-scan");
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const sha = remoteAssignSha();
+    fetchAssign(sha);
+
+    const used = allUsedIds(sha, { scanPRs });
+    // contiguousMax+1 is always strictly above the contiguous body, so it can
+    // never alias an in-use id (strays sit > STRAY_GAP above max, never at +1).
+    const id = String(contiguousMax(used) + 1);
+
+    // --dry-run: preview the candidate without reserving (no push). Useful to
+    // see "what id would I get" without burning a reservation. NOT collision-
+    // safe on its own — only the real reserve+push is atomic.
+    if (flags.has("--dry-run")) {
+      if (wantJson) process.stdout.write(JSON.stringify({ id: Number(id), dryRun: true }) + "\n");
+      else {
+        console.error(
+          `(dry-run) next free id would be #${id} (scanned ${used.size} used ids; PR-scan ${scanPRs ? "on" : "off"})`,
+        );
+        process.stdout.write(`${id}\n`);
+      }
+      return;
+    }
+
+    const entry = {
+      id,
+      assignee: assignee || "",
+      status: assignee ? "in-progress" : "reserved",
+      branch: assignee ? branch || "" : "",
+      reserved_at: nowIso(),
+      ...(assignee ? { claimed_at: nowIso() } : {}),
+      updated_at: nowIso(),
+    };
+    const verb = assignee ? `reserve+claim #${id} -> ${assignee}` : `reserve #${id}`;
+    const msg = `chore(assign): ${verb} [skip ci]`;
+    const content = JSON.stringify(entry, null, 2) + "\n";
+
+    if (commitAndPush(sha, id, content, msg)) {
+      // stdout = just the id (scriptable); details to stderr unless --json.
+      if (wantJson) {
+        process.stdout.write(
+          JSON.stringify({ id: Number(id), assignee: assignee || null, branch: entry.branch || null }) + "\n",
+        );
+      } else {
+        console.error(
+          `Reserved issue #${id}${assignee ? ` for ${assignee}${entry.branch ? ` (branch ${entry.branch})` : ""}` : ""}.`,
+        );
+        console.error(`(pushed to ${REMOTE}/${ASSIGN_REF}; main untouched, no CI triggered)`);
+        process.stdout.write(`${id}\n`);
+      }
+      return;
+    }
+    console.error(`allocate: ref moved (attempt ${attempt}/${MAX_RETRIES}) — re-scanning for a fresh id…`);
+  }
+  die(5, `Could not reserve a fresh id after ${MAX_RETRIES} attempts (heavy contention). Re-run.`);
+}
+
 function writeMode(target, assignee, kind) {
   const { base, slice, key, label } = target;
   // Pre-flight: refuse claiming an issue already closed on main. Resolve the
@@ -305,6 +497,9 @@ function writeMode(target, assignee, kind) {
 // --- dispatch ---------------------------------------------------------------
 if (mode === "list") {
   doList();
+} else if (mode === "allocate") {
+  // --allocate [<assignee>] — reserve the next fresh id. Assignee optional.
+  doAllocate(normalizeAssignee(positional[0] || process.env.CLAIM_ASSIGNEE || ""));
 } else if (mode === "check") {
   const id = positional[0];
   if (!id) die(2, "usage: claim-issue.mjs --check <id[:slice]>");

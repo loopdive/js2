@@ -151,3 +151,28 @@ which leaks `env.__get_undefined` in standalone until #1702's `nativeStrings`
 guard lands (a PRE-EXISTING 1-level leak too, not introduced here). The 4
 no-arg-construction tests' `imports === []` assertion passes once #1702 merges;
 this PR is rebased on #1702.
+
+## Re-validation of the #48 follow-up (2026-06-19, sdev-protoglue)
+
+Re-measured the task #48 scope against current upstream/main (`129df118f`).
+**The scoped acceptance is already satisfied** — the construction-routing fix
+(PR #1713) is in place. Verified standalone, all green:
+
+- 3-level `D extends A extends Error`: `instanceof Error` / `instanceof A` /
+  `instanceof D` all `true`; `.message` carries the constructor arg (real
+  `$Error_struct`); a thrown `D` is catchable as `Error`.
+- 4-level `D extends B extends A extends Error`: `instanceof Error` and
+  `instanceof B` both `true`.
+- Explicit-`super(msg)` chains at every level: `.message` correct.
+- `tests/issue-2188-multilevel-error-chain.test.ts` (+ `issue-2188.test.ts`):
+  **17 tests pass.**
+
+**No code change needed.** The sole remaining gap is a *user-field* set in an
+intermediate ctor (`class A extends Error { code:number; constructor(m){
+super(m); this.code=42; } }; class D extends A {}` → `new D().code` is `0`).
+That is the **documented out-of-scope externref-backed own-field limitation**
+(`class-bodies.ts` ~1674: "user `prop = ...` declarations inside `class Sub
+extends Error` would need to be installed via host setters, which is out of
+scope") — the instance IS a `$Error_struct`, which has no slot for arbitrary
+user fields. This is the #2101 brand/representation lane, NOT the #48 scoped
+instanceof+message bug. Flagged, not fixed here.

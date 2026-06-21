@@ -920,7 +920,9 @@ function compileForOfStatement(ctx: LinearContext, fctx: LinearFuncContext, stmt
   // Load element: x = getter(arr, idx)
   if (loopVarIdx !== undefined) {
     if (iterKind === "ArrayOrUint8Array") {
-      // Runtime dispatch: check tag byte at offset 0
+      // Runtime dispatch: check tag byte at offset 0. Both arms must yield the
+      // same type; __u8arr_get returns i32 (byte), __arr_get returns an f64 slot
+      // (#1938). Reconcile to f64 (u8 side: f64.convert_i32_u inside `then`).
       const arrGetIdx = ctx.funcMap.get("__arr_get")!;
       const u8GetIdx = ctx.funcMap.get("__u8arr_get")!;
       fctx.body.push({ op: "local.get", index: arrLocal });
@@ -929,11 +931,12 @@ function compileForOfStatement(ctx: LinearContext, fctx: LinearFuncContext, stmt
       fctx.body.push({ op: "i32.eq" });
       fctx.body.push({
         op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
+        blockType: { kind: "val", type: { kind: "f64" } },
         then: [
           { op: "local.get", index: arrLocal },
           { op: "local.get", index: idxLocal },
           { op: "call", funcIdx: u8GetIdx },
+          { op: "f64.convert_i32_u" },
         ],
         else: [
           { op: "local.get", index: arrLocal },
@@ -941,15 +944,29 @@ function compileForOfStatement(ctx: LinearContext, fctx: LinearFuncContext, stmt
           { op: "call", funcIdx: arrGetIdx },
         ],
       });
+      // Slot is now f64. A ref/string element needs decoding to its i32 handle.
+      if (elementIsI32) {
+        pushSlotToI32(fctx);
+      }
+    } else if (iterKind === "Uint8Array") {
+      // u8 element is an i32 byte; convert to f64 unless the binding is i32.
+      const u8GetIdx = ctx.funcMap.get("__u8arr_get")!;
+      fctx.body.push({ op: "local.get", index: arrLocal });
+      fctx.body.push({ op: "local.get", index: idxLocal });
+      fctx.body.push({ op: "call", funcIdx: u8GetIdx });
+      if (!elementIsI32) {
+        fctx.body.push({ op: "f64.convert_i32_s" });
+      }
     } else {
-      const getFuncName = iterKind === "Uint8Array" ? "__u8arr_get" : "__arr_get";
-      const arrGetIdx = ctx.funcMap.get(getFuncName)!;
+      // Array element is an f64 slot (#1938). For a number/boolean binding the
+      // slot IS the value; for a ref/string binding decode to its i32 handle.
+      const arrGetIdx = ctx.funcMap.get("__arr_get")!;
       fctx.body.push({ op: "local.get", index: arrLocal });
       fctx.body.push({ op: "local.get", index: idxLocal });
       fctx.body.push({ op: "call", funcIdx: arrGetIdx });
-    }
-    if (!elementIsI32) {
-      fctx.body.push({ op: "f64.convert_i32_s" });
+      if (elementIsI32) {
+        pushSlotToI32(fctx);
+      }
     }
     fctx.body.push({ op: "local.set", index: loopVarIdx });
   }
@@ -2608,7 +2625,15 @@ function compileArrayLiteral(ctx: LinearContext, fctx: LinearFuncContext, expr: 
 
     for (const elem of elements) {
       fctx.body.push({ op: "local.get", index: tmpLocal });
-      compileExprToI32(ctx, fctx, elem); // value → i32 for storage
+      // #1938: __arr_push takes an f64 slot. A numeric element flows straight
+      // in as its f64 value (no truncation); a ref/bool element is compiled to
+      // i32 and encoded into the low 4 bytes of the slot.
+      if (inferExprType(ctx, fctx, elem).kind === "f64") {
+        compileExprToF64(ctx, fctx, elem);
+      } else {
+        compileExprToI32(ctx, fctx, elem);
+        pushI32ToSlot(fctx);
+      }
       fctx.body.push({ op: "call", funcIdx: arrPushIdx });
     }
 
@@ -2763,12 +2788,12 @@ function compileArrayDestructuring(
       const varName = element.name.text;
       const localIdx = addLocal(fctx, varName, elemIsI32 ? { kind: "i32" } : { kind: "f64" });
 
-      // x = __arr_get(arr, i)
+      // x = __arr_get(arr, i) → f64 slot (#1938)
       fctx.body.push({ op: "local.get", index: arrLocal });
       fctx.body.push({ op: "i32.const", value: i });
       fctx.body.push({ op: "call", funcIdx: arrGetIdx });
-      if (!elemIsI32) {
-        fctx.body.push({ op: "f64.convert_i32_s" });
+      if (elemIsI32) {
+        pushSlotToI32(fctx); // ref/string slot → i32 handle
       }
       fctx.body.push({ op: "local.set", index: localIdx });
     }
@@ -3050,12 +3075,14 @@ function compileElementAccess(ctx: LinearContext, fctx: LinearFuncContext, expr:
   const objKind = getExprCollectionKind(ctx, fctx, expr.expression);
 
   if (objKind === "Array") {
-    // arr[i] → __arr_get(arr, i) → i32
+    // arr[i] → __arr_get(arr, i) → f64 slot (#1938)
     const getIdx = ctx.funcMap.get("__arr_get")!;
     compileExpression(ctx, fctx, expr.expression); // arr ptr (i32)
     compileExprToI32(ctx, fctx, expr.argumentExpression); // index → i32
     fctx.body.push({ op: "call", funcIdx: getIdx });
-    // Only convert to f64 for number/boolean arrays; object/string arrays stay i32
+    // The slot is an f64 bit pattern. For a number/boolean element the slot IS
+    // the f64 value (no conversion). For an object/string element the i32
+    // handle lives in the low 4 bytes — decode it back to i32.
     let elemIsNum = true;
     try {
       const elemType = ctx.checker.getTypeAtLocation(expr);
@@ -3064,8 +3091,8 @@ function compileElementAccess(ctx: LinearContext, fctx: LinearFuncContext, expr:
     } catch {
       /* default: assume number */
     }
-    if (elemIsNum) {
-      fctx.body.push({ op: "f64.convert_i32_s" });
+    if (!elemIsNum) {
+      pushSlotToI32(fctx);
     }
   } else if (objKind === "Uint8Array") {
     // u8[i] → __u8arr_get(u8, i) → i32, convert to f64 (always numeric)
@@ -3140,17 +3167,16 @@ function compileElementAccessAssignment(
   const objKind = getExprCollectionKind(ctx, fctx, left.expression);
 
   if (objKind === "Array") {
-    // arr[i] = v → __arr_set(arr, i, v); leave v as the expression result.
+    // arr[i] = v → __arr_set(arr, i, slot(v)); leave v as the expression result.
     //
-    // For a numeric element the value is an f64; element storage is currently
-    // i32 (the truncation half of #1938 is a separate change), so we keep the
-    // f64 in a scratch local as the expression result (an assignment used as a
-    // value must yield the assigned value, not the i32-truncated form — and a
-    // numeric `arr[i] = v` flows into an f64 context) and truncate only for the
-    // store. Non-numeric (string/object) element arrays already produce an i32
-    // value; for those `compileExprToI32` is the identity and the scratch is i32.
+    // #1938: element storage is now an 8-byte f64 slot. A numeric (or boolean)
+    // RHS is an f64 and is stored verbatim — `[1.5][0]` no longer truncates. A
+    // reference (string/object) RHS is an i32 handle encoded into the low 4
+    // bytes of the slot. The scratch local holds the un-encoded value so the
+    // assignment-as-expression yields the assigned value (f64 for numeric,
+    // i32 for reference), matching the surrounding context.
     const setIdx = ctx.funcMap.get("__arr_set")!;
-    // A numeric RHS compiles to f64; a reference (string/object) RHS to i32.
+    // A numeric/boolean RHS compiles to f64; a reference (string/object) RHS to i32.
     const rightIsNumeric = inferExprType(ctx, fctx, right).kind === "f64";
     const valLocal = addScratch({ kind: rightIsNumeric ? "f64" : "i32" });
     compileExpression(ctx, fctx, right); // value — evaluated once
@@ -3158,8 +3184,8 @@ function compileElementAccessAssignment(
     compileExpression(ctx, fctx, left.expression); // arr ptr (i32)
     compileExprToI32(ctx, fctx, left.argumentExpression); // index → i32
     fctx.body.push({ op: "local.get", index: valLocal });
-    if (rightIsNumeric) {
-      fctx.body.push({ op: "i32.trunc_f64_s" }); // store i32 element (#1938 part 2 will store f64)
+    if (!rightIsNumeric) {
+      pushI32ToSlot(fctx); // encode i32 handle into the f64 slot
     }
     fctx.body.push({ op: "call", funcIdx: setIdx });
     fctx.body.push({ op: "local.get", index: valLocal }); // assigned value (f64 for numeric)
@@ -3332,10 +3358,15 @@ function compileArrayMethodCall(
   methodName: string,
 ): void {
   if (methodName === "push") {
-    // arr.push(val) → __arr_push(arr, i32(val))
+    // arr.push(val) → __arr_push(arr, slot(val)) (#1938: f64 slot)
     const pushIdx = ctx.funcMap.get("__arr_push")!;
     compileExpression(ctx, fctx, propAccess.expression); // arr ptr (i32)
-    compileExprToI32(ctx, fctx, expr.arguments[0]); // value → i32
+    if (inferExprType(ctx, fctx, expr.arguments[0]).kind === "f64") {
+      compileExprToF64(ctx, fctx, expr.arguments[0]); // numeric/boolean → f64 slot
+    } else {
+      compileExprToI32(ctx, fctx, expr.arguments[0]); // ref → i32
+      pushI32ToSlot(fctx); // → f64 slot
+    }
     fctx.body.push({ op: "call", funcIdx: pushIdx });
     // push returns void in runtime, but expression needs a value for drop
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -3460,12 +3491,12 @@ function compileArrayHOF(
   fctx.body.push({ op: "i32.ge_s" });
   fctx.body.push({ op: "br_if", depth: 1 });
 
-  // elem = __arr_get(arr, i)
+  // elem = __arr_get(arr, i) → f64 slot (#1938)
   fctx.body.push({ op: "local.get", index: arrLocal });
   fctx.body.push({ op: "local.get", index: iLocal });
   fctx.body.push({ op: "call", funcIdx: arrGetIdx });
-  if (!elemIsI32) {
-    fctx.body.push({ op: "f64.convert_i32_s" });
+  if (elemIsI32) {
+    pushSlotToI32(fctx); // ref/string slot → i32 handle
   }
   fctx.body.push({ op: "local.set", index: elemLocal });
 
@@ -3498,20 +3529,24 @@ function compileArrayHOF(
     fctx.body = pushBody;
     fctx.body.push({ op: "local.get", index: resultLocal! });
     fctx.body.push({ op: "local.get", index: elemLocal });
-    if (!elemIsI32) {
-      fctx.body.push({ op: "i32.trunc_f64_s" });
+    // #1938: __arr_push takes an f64 slot. elemLocal is f64 for number/boolean
+    // (push verbatim) and i32 for ref/string (encode into the slot).
+    if (elemIsI32) {
+      pushI32ToSlot(fctx);
     }
     fctx.body.push({ op: "call", funcIdx: arrPushIdx });
     fctx.body = savedBody2;
     fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: pushBody });
   } else if (method === "map") {
-    // __arr_push(result, callback(elem))
+    // __arr_push(result, slot(callback(elem)))  (#1938: f64 slot — no truncation)
     fctx.body.push({ op: "local.get", index: resultLocal! });
     compileExpression(ctx, fctx, bodyExpr);
-    // Convert mapped value to i32 for storage
+    // A numeric/boolean mapped value is an f64 → store verbatim (the truncation
+    // that broke `[1.5,2.5].map(x=>x*2)` is gone). A ref mapped value is an i32
+    // → encode into the slot.
     const mappedType = inferExprType(ctx, fctx, bodyExpr);
-    if (mappedType.kind === "f64") {
-      fctx.body.push({ op: "i32.trunc_f64_s" });
+    if (mappedType.kind !== "f64") {
+      pushI32ToSlot(fctx);
     }
     fctx.body.push({ op: "call", funcIdx: arrPushIdx });
   } else if (method === "some") {
@@ -3703,7 +3738,11 @@ function compileArrayJoin(
   fctx.body.push({ op: "local.get", index: arrLocal });
   fctx.body.push({ op: "local.get", index: iLocal });
   fctx.body.push({ op: "call", funcIdx: arrGetIdx });
-  // arr[i] returns i32 (string pointer for string arrays)
+  // __arr_get returns an f64 slot (#1938); join concatenates string pointers,
+  // so decode the slot back to the i32 string handle. (Joining a number[] was
+  // already unsupported — it stringifies the raw handle — so this only changes
+  // the slot decode, not that pre-existing limitation.)
+  pushSlotToI32(fctx);
   fctx.body.push({ op: "call", funcIdx: strConcatIdx });
   fctx.body.push({ op: "local.set", index: resultLocal });
 
@@ -3930,6 +3969,29 @@ function compileExprToF64(ctx: LinearContext, fctx: LinearFuncContext, expr: ts.
   if (exprType.kind === "i32") {
     fctx.body.push({ op: "f64.convert_i32_s" });
   }
+}
+
+// ── Array element slot encode/decode (#1938) ─────────────────────────
+//
+// Linear array element slots are 8-byte raw bit patterns the runtime never
+// interprets (__arr_get/_set/_push take/return f64). The codegen owns the
+// interpretation per element kind:
+//   - number (f64): the slot IS the IEEE-754 value — no conversion.
+//   - reference/boolean (i32 handle / 0|1): the i32 lives in the low 4 bytes,
+//     shuffled in via i64.extend_i32_u → f64.reinterpret_i64 and out via the
+//     inverse. This keeps the hot numeric path conversion-free and confines the
+//     bit-cast to the rarer ref/bool sites.
+
+/** Encode an i32 (ref/bool handle) already on the stack into an f64 array slot. */
+function pushI32ToSlot(fctx: LinearFuncContext): void {
+  fctx.body.push({ op: "i64.extend_i32_u" });
+  fctx.body.push({ op: "f64.reinterpret_i64" });
+}
+
+/** Decode an f64 array slot already on the stack back into its i32 (ref/bool) handle. */
+function pushSlotToI32(fctx: LinearFuncContext): void {
+  fctx.body.push({ op: "i64.reinterpret_f64" });
+  fctx.body.push({ op: "i32.wrap_i64" });
 }
 
 // ── Type inference and resolution ────────────────────────────────────

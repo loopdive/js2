@@ -3,14 +3,14 @@ id: 1099
 title: "Standalone execution demo — compile and run a program on Wasmtime with zero JS host"
 status: ready
 created: 2026-04-12
-updated: 2026-04-12
+updated: 2026-06-19
 priority: high
 feasibility: hard
 reasoning_effort: max
 task_type: feature
 language_feature: standalone-target
 goal: platform
-sprint: 45
+sprint: Backlog
 depends_on: [1094]
 es_edition: n/a
 ---

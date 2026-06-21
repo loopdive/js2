@@ -355,3 +355,21 @@ PR #1295 is the active review PR for this re-dispatch metadata refresh.
     pass.
   - The issue remains `in-review` with `pr: 1295`; the PR-status poller owns
     the eventual transition to `done` after merge.
+
+## Harvest update — 2026-06-19 (run `e9579720`, dated 2026-06-18) — ⚠ count regressed
+
+The standalone `Cannot convert object to primitive value` runtime bucket is now
+**2,835** records (1,612 unqualified + 1,223 line-prefixed) — the **single
+largest standalone runtime-failure bucket**, up from this issue's recorded
+`784`. Every historical owner is `done` (#1090, #1253, #1319, #1525, #1525b,
+#1716, #1806, #1910), so the residual is currently **untracked by any open
+issue**. Sample files are core operator/destructuring paths, not edge cases:
+`language/expressions/equals/S11.9.1_A7.7.js`,
+`language/expressions/addition/order-of-evaluation.js`,
+`language/expressions/array/S11.1.4_A1.4.js`,
+`…/arrow-function/dstr/ary-ptrn-elem-ary-empty-init.js`. This is a genuine
+standalone ToPrimitive coverage gap on `==` / `+` / array-literal /
+destructuring receivers (a runtime throw the wasm produced — not classifier
+over-match). Successor child **#2503** filed (goal `standalone-mode`, parent
+#1781) to own the 2,835-record residual; this issue stays `done`. Default lane
+is healthy here (only 48 records).

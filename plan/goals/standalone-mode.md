@@ -46,7 +46,7 @@ and any environment without a JS runtime. This follows the pattern of
 | **594** | Mark WasmGC struct types as final for V8 devirtualization | 0 | done | medium |
 | **644** | Integrate conformance report as playground panel | Backlog | ready | critical |
 | **652** | Compile-time ARC: static lifetime analysis for linear memory mode | Backlog | ready | low |
-| **680** | Wasm-native generators (state machines) with optional JS host fallback | Backlog | in-review | high |
+| **680** | Wasm-native generators (state machines) with optional JS host fallback | Backlog | done | high |
 | **682** | RegExp standalone mode: native engine or embedded library for non-JS targets | 58 | done | high |
 | **788** | Architecture: modularize src/ into focused subfolder structure | 39 | done | medium |
 | **809** | Extract native string helpers from index.ts → native-strings.ts | 59 | done | medium |
@@ -65,14 +65,14 @@ and any environment without a JS runtime. This follows the pattern of
 | **1169p** | IR Phase 4 Slice 13 — String + Array prototype methods through IR | 47 | done | medium |
 | **1232** | IR Phase 4 Slice 13c — String fixed-signature methods through IR | 47 | done | high |
 | **1321** | Number.prototype formatting methods (toString/toFixed/toPrecision/toExponential) rely on JS host unnecessarily | 50 | done | medium |
-| **1322** | Math.random() has no standalone fallback — requires JS host import in WASI/standalone mode | 50 | in-progress | low |
-| **1323** | Iterator protocol bridging: implement $IteratorResult struct in pure Wasm, eliminate host bridge | 50 | in-review | medium |
+| **1322** | Math.random() has no standalone fallback — requires JS host import in WASI/standalone mode | 50 | done | low |
+| **1323** | Iterator protocol bridging: implement $IteratorResult struct in pure Wasm, eliminate host bridge | 50 | done | medium |
 | **1324** | JSON.stringify and JSON.parse: implement in pure Wasm, eliminate JS host dependency | 50 | done | medium |
-| **1325** | instanceof against built-in types: compile-time type-tag registry eliminates JS host for common cases | 50 | in-progress | medium |
-| **1326** | Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host | 58 | in-review | low |
-| **1326c** | Async standalone Phase 1C: microtask queue + Promise.then chained-resolution (follow-up to #1326 Phase 1B) | 52 | in-progress | medium |
+| **1325** | instanceof against built-in types: compile-time type-tag registry eliminates JS host for common cases | Backlog | ready | medium |
+| **1326** | Async standalone: implement microtask queue + CPS scheduler in Wasm for Promise/async without JS host | 62 | done | low |
+| **1326c** | Async standalone Phase 1C: microtask queue + Promise.then chained-resolution (follow-up to #1326 Phase 1B) | 62 | done | medium |
 | **1335** | Number.prototype formatting in pure Wasm: integer toString(radix), then Ryu for floats (standalone) | 58 | done | medium |
-| **1353** | JSON.stringify (objects/arrays) + JSON.parse: architect spec for Wasm shape-walking and recursive-descent parser | 50 | ready | medium |
+| **1353** | JSON.stringify (objects/arrays) + JSON.parse: architect spec for Wasm shape-walking and recursive-descent parser | Backlog | ready | medium |
 | **1662** | audit: standalone (--target wasi) host-import leaks per construct + remaining-gap map | Backlog | done | high |
 | **1663** | host-indep: pure-Wasm parseInt / parseFloat / Number(string) in standalone mode | Backlog | done | medium |
 | **1664** | host-indep: residual __extern_* / __register_* / __iterator* / __array_* leaks after #1472 | Backlog | done | medium |
@@ -81,7 +81,7 @@ and any environment without a JS runtime. This follows the pattern of
 | **1677** | Signature A: native string helper func-index shift unification (__str_flatten/__str_to_extern call[k] type mismatch under --target wasi) | Backlog | done | high |
 | **1689** | Number(string) returns 0 under --target wasi — missing native StringToNumber | Backlog | done | medium |
 | **1776** | standalone test262 isSameValue emits invalid Wasm for externref operands | 58 | done | high |
-| **1781** | standalone test262 run must publish full JSONL and root-cause issue map | 58 | in-review | high |
+| **1781** | standalone test262 run must publish full JSONL and root-cause issue map | 58 | done | high |
 | **1789** | standalone/WASI module-level const/let initializers never run before exported functions → TDZ trap on any module-const object access | 58 | done | high |
 | **1806** | standalone: 2,136 tests fail with 'Cannot convert object to primitive value' | 60 | done | high |
 | **1807** | standalone: 277 async-generator tests emit invalid Wasm in isSameValue (#1776 residual) | 59 | done | medium |
@@ -89,7 +89,7 @@ and any environment without a JS runtime. This follows the pattern of
 | **1891** | standalone: generator-method destructuring param emits invalid Wasm (array.set externref vs (ref null N)) — over-shifted funcIdx after generator-body late imports | 61 | done | high |
 | **1896** | Standalone closure callable round-trip through open-$Object (#1888 S2 prerequisite) | Backlog | ready |  |
 | **1897** | Gate merges on standalone test262 regression | 61 | done | high |
-| **1899** | finalize funcIdx-authority contract: reconcile↔dead-elim native-string helper sibling-call mismatch (late-shift class recurrence-proofing) |  | ready | medium |
+| **1899** | finalize funcIdx-authority contract: reconcile↔dead-elim native-string helper sibling-call mismatch (late-shift class recurrence-proofing) | 64 | ready | medium |
 | **1900** | standalone native ToPrimitive (Phase 1): Wasm-native OrdinaryToPrimitive over $Object (~2,136 ceiling) | 61 | done | high |
 | **1901** | Standalone __extern_get string-key read on a closed-struct/$Vec-backed externref returns 0 (untyped-param object reads) | 61 | done | high |
 | **1902** | Math/Number constant reads refuse under --target standalone (__get_builtin pre-empts native f64.const) [#1888 S6-c] | 61 | done | high |
@@ -101,30 +101,87 @@ and any environment without a JS runtime. This follows the pattern of
 | **1908** | standalone: re-split and fix residual isSameValue bucket after #1776/#1807 | 61 | done | critical |
 | **1909** | standalone RegExp residual bucket after #1474/#682: split Phase 2d and native-engine gaps | 61 | done | critical |
 | **1910** | standalone ToPrimitive residual bucket after #1900/#1525b | 61 | done | critical |
+| **1910a** | standalone boxed primitive-wrapper ToPrimitive (new Number/String/Boolean) | 63 | done | critical |
+| **1910d** | standalone loose-eq (==/!=) Object↔primitive ToPrimitive arm (§7.2.13 steps 11-12) | 61 | done | high |
 | **1911** | standalone RegExp Phase 2d: u/v/d flags, Unicode escapes, lookaround, modifiers | 61 | done | critical |
 | **1912** | standalone RegExp Phase 2b: word boundaries, backrefs, and character-class compatibility | 61 | done | critical |
-| **1913** | standalone RegExp string protocol, matchAll, split/replace, and lastIndex residuals | 61 | ready | critical |
+| **1913** | standalone RegExp string protocol, matchAll, split/replace, and lastIndex residuals | 61 | done | critical |
 | **1914** | standalone RegExp native-engine reflection, constructor, prototype, and result-shape gaps | 61 | done | critical |
-| **1959** | native RegExp VM: empty-body quantifier loops burn the 1M-step cap and silently report no-match (/(?:a?)*/ fails) | 61 | ready | high |
-| **1960** | native RegExp VM: capture groups not reset between quantifier iterations | 61 | ready | medium |
-| **1961** | nativeStrings: === on a string\|undefined value compares by reference, not content (\"hello\".at(1) === \"e\" → false) | 61 | ready | high |
-| **1962** | nativeStrings: spreading a string ([...\"ab\"]) silently produces an empty array | 61 | ready | high |
-| **1963** | nativeStrings trim/trimStart/trimEnd whitespace set incomplete (U+1680, U+2000-200A, U+2028/29, U+202F, U+205F, U+3000 not trimmed) | 61 | ready | medium |
-| **1964** | nativeStrings: for-of over a string iterates code units, not code points (4 iterations for \"a😀b\") | 61 | ready | medium |
-| **2029** | standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests) | Backlog | ready | critical |
-| **2036** | standalone: Array.prototype generics over array-like receivers emit invalid Wasm / null-deref / wrong results instead of refusing loud (~500+ tests) | Backlog | ready | high |
-| **2037** | standalone: NamedEvaluation `.name` wrong for functions/classes bound via destructuring defaults (683 tests) | Backlog | ready | high |
-| **2038** | standalone: `illegal cast` in __iterator_next / async destructuring & yield* paths (~470 tests) | Backlog | ready | high |
-| **2039** | standalone invalid-Wasm residual bucket after #1623/#1666/#1677: async-gen i64 ABI, __obj_find externref key, __str_flatten, arguments arity (~1,135 tests) | Backlog | in-progress | critical |
+| **1959** | native RegExp VM: empty-body quantifier loops burn the 1M-step cap and silently report no-match (/(?:a?)*/ fails) | 61 | done | high |
+| **1960** | native RegExp VM: capture groups not reset between quantifier iterations | 61 | done | medium |
+| **1961** | nativeStrings: === on a string\|undefined value compares by reference, not content (\"hello\".at(1) === \"e\" → false) | 61 | done | high |
+| **1962** | nativeStrings: spreading a string ([...\"ab\"]) silently produces an empty array | 61 | done | high |
+| **1963** | nativeStrings trim/trimStart/trimEnd whitespace set incomplete (U+1680, U+2000-200A, U+2028/29, U+202F, U+205F, U+3000 not trimmed) | 61 | done | medium |
+| **1964** | nativeStrings: for-of over a string iterates code units, not code points (4 iterations for \"a😀b\") | 61 | done | medium |
+| **2029** | standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests) | 64 | in-progress | critical |
+| **2036** | standalone: Array.prototype generics over array-like receivers emit invalid Wasm / null-deref / wrong results instead of refusing loud (~500+ tests) | Backlog | in-progress | high |
+| **2037** | standalone: NamedEvaluation `.name` wrong for functions/classes bound via destructuring defaults (683 tests) | 61 | done | high |
+| **2038** | standalone: `illegal cast` in __iterator_next / async destructuring & yield* paths (~470 tests) | 62 | done | high |
+| **2039** | standalone invalid-Wasm residual bucket after #1623/#1666/#1677: async-gen i64 ABI, __obj_find externref key, __str_flatten, arguments arity (~1,135 tests) | Backlog | blocked | critical |
 | **2040** | standalone: generator/destructuring runtime-semantics residual — rest-pattern iterator consumption, lazy defaults, private elements (~1,750 tests) | Backlog | ready | critical |
 | **2041** | standalone: built-ins/Temporal — 544 host-pass tests die with opaque runtime null-deref instead of loud refusal | Backlog | ready | medium |
-| **2042** | standalone: Object.defineProperty/defineProperties residual — __obj_insert illegal cast + descriptor semantics over $Object (~340 tests) | Backlog | ready | high |
+| **2042** | standalone: Object.defineProperty/defineProperties residual — __obj_insert illegal cast + descriptor semantics over $Object (~340 tests) | Backlog | in-progress | high |
 | **2043** | architecture: retire the late-import function-index-shift bug class (always-on emit-time index validation + stale-proof func references) | Backlog | done | high |
-| **2045** | linear Uint8Array (WASI): silent-corruption holes — name-keyed buffer registry, no bounds checks — plus escape-analysis demotion gaps (#1886 follow-up) | Backlog | ready | critical |
-| **2046** | standalone Reflect: receiver arg silently dropped, deleteProperty ignores freeze/configurable, no ToPropertyKey (#1905 follow-up) | Backlog | ready | high |
-| **2047** | unify standalone Array.isArray: inline snapshot predicate diverges from direct calls; #1904's native __extern_is_array is dead code; both over-claim non-array carriers | Backlog | ready | high |
-| **2123** | nativeStrings slice() swaps start/end like substring — \"hello\".slice(3,1) returns \"el\" instead of \"\" | 61 | ready | high |
-| **2125** | nativeStrings split() ignores the limit argument; split(undefined) emits an invalid Wasm module | 61 | ready | high |
+| **2045** | linear Uint8Array (WASI): silent-corruption holes — name-keyed buffer registry, no bounds checks — plus escape-analysis demotion gaps (#1886 follow-up) | 64 | in-progress | critical |
+| **2046** | standalone Reflect: receiver arg silently dropped, deleteProperty ignores freeze/configurable, no ToPropertyKey (#1905 follow-up) | Backlog | in-progress | high |
+| **2047** | unify standalone Array.isArray: inline snapshot predicate diverges from direct calls; #1904's native __extern_is_array is dead code; both over-claim non-array carriers | Backlog | done | high |
+| **2101a** | standalone: own fields on externref-backed Error subclass TRAP construction (this.code=42 casts $Error to $A) | Backlog | done | low |
+| **2101b** | standalone: implicit derived ctor on externref-backed subclass skips ancestor field-init (new D().code=0 where A declares the field) | Backlog | ready | low |
+| **2115** | nativeStrings slice() swaps start/end like substring — \"hello\".slice(3,1) returns \"el\" instead of \"\" | 61 | wont-fix | high |
+| **2117** | nativeStrings split() ignores the limit argument; split(undefined) emits an invalid Wasm module | 61 | wont-fix | high |
+| **2123** | nativeStrings slice() swaps start/end like substring — \"hello\".slice(3,1) returns \"el\" instead of \"\" | 61 | done | high |
+| **2125** | nativeStrings split() ignores the limit argument; split(undefined) emits an invalid Wasm module | 61 | done | high |
+| **2150** | standalone: Array.prototype generics over array-like receivers emit invalid Wasm — stale funcIdx baked before a late-import shift (emitWat/emitBinary divergence) | Backlog | done | high |
+| **2151** | standalone: any-receiver method dispatch — o.method() on a closed object-literal struct doesn't invoke | 64 | in-progress | high |
+| **2153** | standalone object emit: `Object emit error: u32 out of range: -19` — abstract heap-type typeIdx emitted as a relocation symbolIndex | Backlog | done | high |
+| **2157** | Standalone iterator/generator conformance residual (~1,200 tests beyond #2079) | 62 | done | critical |
+| **2158** | Standalone class/prototype/private-name/descriptor conformance residual (~1,388 tests) | 64 | in-progress | high |
+| **2159** | Standalone TypedArray/DataView/ArrayBuffer conformance residual (~1,308 tests) | 64 | in-progress | high |
+| **2160** | Standalone String/Number method & coercion conformance residual (~635 tests) | 64 | ready | high |
+| **2161** | Standalone RegExp engine conformance residual (~579 tests) | 64 | in-progress | high |
+| **2162** | Standalone Map/Set/WeakMap/WeakSet conformance residual (~532 tests) | 64 | in-progress | high |
+| **2162a** | Standalone array-spread consumer of a native Set ([...set] / Set.values()/keys()) | 64 | done | medium |
+| **2162b** | Standalone array-spread of a pair-producing array iterator ([...arr.entries()]) | 64 | done | medium |
+| **2163** | Standalone Symbol conformance residual (~240 tests) | 63 | done | medium |
+| **2164** | Standalone Date conformance residual (~234 tests) | 63 | done | medium |
+| **2165** | Standalone Promise/async conformance residual (~223 tests) | 62 | done | medium |
+| **2166** | Standalone JSON conformance residual (~76 tests) | 63 | done | low |
+| **2169** | standalone: spread / Array.from / array-destructure don't drive a native generator (treat the state struct as a __vec) | 63 | done | high |
+| **2169b** | Standalone Array.from(<native array iterator>) — __iterator driver struct.new index desync (invalid struct index) | 64 | done | medium |
+| **2169c** | Standalone host-free Array.from(iterable) — drain via native __iterator instead of __array_from host import | 64 | done | medium |
+| **2170** | standalone: `yield*` delegation unsupported in native generator lowering (clean #680 bail) | 62 | done | medium |
+| **2171** | standalone: native generator only supports numeric yields — string/boolean/object yields bail (#680) | 63 | done | medium |
+| **2172** | standalone: nested `function*` declarations take the JS-host path (funcindex CE) — native lowering only wired for top-level generators | 62 | done | high |
+| **2173** | standalone: yield* over a general iterable (array / custom {next()}) in native generators (SF-3 slice-2 of #2157) | 64 | blocked | medium |
+| **2175** | architect spec: standalone builtin-prototype object representation + native-method-closure dispatch | Backlog | in-progress | high |
+| **2187** | standalone: string methods on an any-typed local with a native-string ValType take the generic externref path (v.length → 0) | Backlog | ready | low |
+| **2188** | standalone: sibling Error subclasses share the parent $tag — instanceof can't distinguish them (per-user-class brand) | Backlog | in-progress | low |
+| **2191** | Standalone case-conversion === literal: #40 ascii→uni toUpperCase repoint missed the called fn (funcIdx shift) |  | done | high |
+| **2193** | standalone: builtin .prototype / static-property value reads refuse (~83 tests) — register $NativeProto glue for Array/Object/Promise | Backlog | in-progress | high |
+| **2199** | Standalone DataView accessor bounds validation — get/set must throw RangeError, not trap OOB | 64 | done | medium |
+| **2199b** | Standalone DataView setter operation order — ToNumber(value) before the bounds RangeError | 64 | done | medium |
+| **2357** | Standalone TypedArray subarray-aliasing — offset-windowing view representation | Backlog | done | medium |
+| **2358** | Standalone native __to_primitive can't reduce typed (nominal) object structs through the externref boundary | Backlog | ready | high |
+| **2370** | [ARCH] DCE remapTypeIdxInBody is non-idempotent — any aliased helper body double-remaps (latent miscompile) | Backlog | ready | medium |
+| **2371** | standalone-native single dynamic-descriptor Object.defineProperty (__obj_define_from_desc) | 64 | done | medium |
+| **2372** | standalone: force dynamic-object-receiver vars onto $Object representation (the dynamic-object family unblock) | Backlog | done | high |
+| **2374** | standalone: String/Number/Boolean.prototype.<method> built-in static-property value reads refuse (~67 tests) — register $NativeProto glue (S4 wrapper protos) | Backlog | done | high |
+| **2375** | standalone: TypedArray/ArrayBuffer/DataView.prototype value-read cluster is gated on builtin-ctor reflection in the test262 harness, not the $NativeProto glue | Backlog | blocked | medium |
+| **2376** | standalone: Date.prototype.<method> built-in static-property value reads refuse (~82 tests) — register $NativeProto glue (S5) | Backlog | done | high |
+| **2377** | standalone: Error/Map/Set.prototype.<method> built-in static-property value reads refuse (~47 tests) — register $NativeProto glue (S6) | Backlog | done | high |
+| **2378** | standalone: Function/Symbol/BigInt/WeakMap/WeakSet.prototype value reads refuse (~33 tests) — register $NativeProto glue (S7) | Backlog | done | high |
+| **2401** | Wasm-native BigInt64Array / BigUint64Array — i64/BigInt element representation | Backlog | ready | low |
+| **2500** | Wasm-native decodeURI / encodeURI / decodeURIComponent / encodeURIComponent (percent-encoding, ~133 test262) | 64 | done | medium |
+| **2503** | standalone ToPrimitive residual (successor to #1910): 2,835 `Cannot convert object to primitive value` on ==/+/array-literal/destructuring receivers | Backlog | ready | critical |
+| **2504** | standalone: console.log(string) emits invalid Wasm — __str_to_extern body calls a stale (shifted) funcIdx (need-3-got-2) |  | ready | low |
+| **2505** | standalone: typed-vec array method on an externref receiver (top-level new Array(N)) emits invalid ref.cast |  | done | medium |
+| **2506** | standalone: any[]/boxed-any element join() & toString() emit invalid Wasm (local.set $AnyString type mismatch) |  | done | medium |
+| **2507** | standalone: any[].find()/findLast() emit invalid Wasm (externref element stored into f64 result slot) |  | done | medium |
+| **2508** | standalone: any[].indexOf/includes/lastIndexOf leak env.__host_eq/__same_value_zero (no native impl) |  | in-progress | medium |
+| **2510** | standalone: tagged template with a bound result emits invalid Wasm (array.new_fixed externref vs struct.new $NativeString) | Backlog | done | medium |
+| **2511** | standalone: any[] of heterogeneous tuples — nested access e[0][1] traps null-deref (#2190 residual) |  | done | medium |
+| **2513** | standalone: Object.fromEntries([[\"k\",\"v\"],…]) over a string-key array literal (#2042 S3 residual) |  | done | medium |
+| **6408** | standalone object-literal data/method property keys emit `global.get -1` sentinel → binary emit error (~17 tests; subcluster of a 155-test #51-family residual) | 64 | done | high |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

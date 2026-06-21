@@ -3,14 +3,14 @@ id: 1528
 title: "spec gap: non-constructor TypeError — Promise.all / allSettled species and executor paths"
 status: ready
 created: 2026-05-20
-updated: 2026-06-12
+updated: 2026-06-19
 priority: medium
 feasibility: medium
 reasoning_effort: medium
 task_type: bugfix
 area: codegen
 language_feature: promise, species, constructor-invariants
-sprint: 52
+sprint: Backlog
 es_edition: ES2015+
 test262_category: built-ins/Promise, language/function-code
 test262_count: 79

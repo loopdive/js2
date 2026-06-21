@@ -25,6 +25,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { getOrRegisterDvWindowType } from "../dataview-native.js"; // (#2159/#38) DataView windowing wrapper
+import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
 import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
 import { ensureObjectRuntime } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime
@@ -1695,45 +1696,48 @@ function emitDynamicNewFallback(
 
   const rawArgs = expr.arguments ?? [];
 
-  // (#2026 PR-3a) Spread arguments. `new K(...x)` must NOT reach the per-arg
-  // eval loop verbatim: a `SpreadElement` compiles to the array/iterator value
-  // (an i32 length / ref), not a boxed externref, so the downstream
-  // `extern.convert_any` produced INVALID Wasm (whole-module instantiate
-  // failure). Flatten an array-LITERAL spread (`new K(...[a, b])`) into its
-  // element expressions via the shared `flattenCallArgs` helper — the same
-  // compile-time flatten the static class-`new` path uses.
+  // (#2026 PR-3a) Spread arguments. A `SpreadElement` compiles to the array/
+  // iterator value (an i32 length / ref), not a boxed externref, so reaching the
+  // per-arg eval loop verbatim makes the downstream `extern.convert_any` emit
+  // INVALID Wasm (whole-module instantiate failure). Flatten an array-LITERAL
+  // spread (`new K(...[a, b])`) into its element expressions via the shared
+  // `flattenCallArgs` helper — the same compile-time flatten the static
+  // class-`new` path uses.
   //
-  // A non-flattenable spread (`new K(...someVar)`) needs a runtime arity drive
-  // the tag-dispatch path does not yet have (it pre-evaluates a COMPILE-TIME-
-  // fixed set of arg locals; `compileSpreadCallArgs` is unusable here because it
-  // targets ONE statically-known ctor, not a runtime tag-dispatch). We do NOT
-  // fall through to the legacy `__new_` path for it: that path is the
-  // unknown-ctor host import, which (a) in host mode throws an opaque
-  // "No dependency provided for extern class K" at runtime, and (b) in no-JS-
-  // host mode (`--target wasi`/standalone) trips the #2043/#51 late-import
-  // `global index out of range — -1` BINARY-EMIT crash — a whole-module
-  // failure that masquerades as an unrelated bug. So we **refuse loudly** with
-  // a clear, attributable compile error (the #2043 guidance: "make the producer
-  // refuse loudly") instead of deferring into a misleading crash. A runtime-
-  // length argv trampoline is the follow-up that makes this case actually work.
+  // (#2026 #53) A non-flattenable spread (`new K(...someVar)`) has a RUNTIME
+  // length, so there is no compile-time-fixed arg count. We can't use fixed
+  // `argLocals`; instead we build a runtime `$ObjVecArr` argv (+ `argc`) below
+  // and each tag-arm reads `argv[i]` with a runtime bounds check. This supersedes
+  // the earlier loud-refuse (PR-3a, #1699): variable spread now WORKS rather than
+  // failing to compile.
   let args: readonly ts.Expression[] = rawArgs;
-  if (rawArgs.some((a) => ts.isSpreadElement(a))) {
+  const hasSpread = rawArgs.some((a) => ts.isSpreadElement(a));
+  let useRuntimeArgv = false;
+  if (hasSpread) {
     const flat = flattenCallArgs(rawArgs);
-    if (flat === null) {
-      reportError(
-        ctx,
-        expr,
-        "Dynamic `new K(...args)` with a non-array-literal spread is not yet supported (#2026): " +
-          "the value-bound (any-typed) constructor dispatch needs a runtime-length argument vector. " +
-          "Use an array-literal spread (`new K(...[a, b])`) or a statically-typed class.",
-      );
-      // Keep the value stack balanced: the caller returns `{ kind: "externref" }`
-      // on `true`, so leave a null externref placeholder (the diagnostic above
-      // already fails the compile). Do NOT fall through to the broken legacy path.
-      fctx.body.push({ op: "ref.null.extern" });
-      return true;
+    if (flat !== null) {
+      args = flat; // all spreads were array literals — flatten at compile time
+    } else {
+      useRuntimeArgv = true; // a non-literal spread is present — runtime argv
     }
-    args = flat;
+  }
+
+  // (#53) The runtime-argv path needs the `$ObjVecArr` `(array (mut externref))`
+  // type. It is RESERVED up-front for class-bearing sources (`reserveObjVecArrType`
+  // in the type-init phase) precisely so a body can reference a STABLE index —
+  // minting it lazily here baked an unresolved `-1` heap-type ref at binary-emit
+  // (#2043 / reference_subview_type_idx_stability). If the reservation is somehow
+  // absent (defensive — every class-bearing source reserves it), bail loudly
+  // rather than emit a broken module.
+  if (useRuntimeArgv && ctx.reservedObjVecArrTypeIdx === undefined) {
+    reportError(
+      ctx,
+      expr,
+      "Dynamic `new K(...x)` runtime-argv needs the up-front-reserved $ObjVecArr type (#2026 #53), " +
+        "which was not reserved for this module.",
+    );
+    fctx.body.push({ op: "ref.null.extern" });
+    return true;
   }
 
   // Evaluate the callee descriptor once into an anyref local (the value to
@@ -1749,20 +1753,156 @@ function emitDynamicNewFallback(
   const descLocal = allocLocal(fctx, `__dynnew_desc_${fctx.locals.length}`, { kind: "anyref" } as ValType);
   fctx.body.push({ op: "local.set", index: descLocal });
 
-  // Pre-evaluate each argument once into an externref temp (boxed). Each
-  // dispatch arm reads these and coerces to the matched ctor's param ValType,
-  // so argument expressions run exactly once regardless of which class matches.
+  // ── Argument materialization ───────────────────────────────────────────────
+  // Two shapes feed the per-class tag-arms:
+  //  - `argLocals` (fixed-arity, the common case): one boxed externref temp per
+  //    positional arg; arm `i` reads `argLocals[i]` (compile-time bounds).
+  //  - runtime argv (`useRuntimeArgv`, a non-literal spread present): a single
+  //    `$ObjVecArr` (`(array (mut externref))`) holding ALL args in source order
+  //    plus an `argc` i32; arm `i` reads `argv[i]` with a runtime bounds check.
   const argLocals: number[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const aTy = compileExpression(ctx, fctx, args[i]!, { kind: "externref" });
-    if (aTy && aTy.kind !== "externref") {
-      coerceType(ctx, fctx, aTy, { kind: "externref" });
-    } else if (aTy === null) {
-      fctx.body.push({ op: "ref.null.extern" });
+  let argvLocal = -1;
+  let argcLocal = -1;
+  let objVecArrTypeIdx = -1;
+  // Emit `local <idx> = local <idx> + 1` (i32 cursor bump).
+  const bumpI32Local = (f: FunctionContext, idx: number): void => {
+    f.body.push({ op: "local.get", index: idx });
+    f.body.push({ op: "i32.const", value: 1 });
+    f.body.push({ op: "i32.add" });
+    f.body.push({ op: "local.set", index: idx });
+  };
+  if (!useRuntimeArgv) {
+    // Pre-evaluate each argument once into an externref temp (boxed). Each
+    // dispatch arm reads these and coerces to the matched ctor's param ValType,
+    // so argument expressions run exactly once regardless of which class matches.
+    for (let i = 0; i < args.length; i++) {
+      const aTy = compileExpression(ctx, fctx, args[i]!, { kind: "externref" });
+      if (aTy && aTy.kind !== "externref") {
+        coerceType(ctx, fctx, aTy, { kind: "externref" });
+      } else if (aTy === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      const aLocal = allocLocal(fctx, `__dynnew_arg${i}_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: aLocal });
+      argLocals.push(aLocal);
     }
-    const aLocal = allocLocal(fctx, `__dynnew_arg${i}_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push({ op: "local.set", index: aLocal });
-    argLocals.push(aLocal);
+  } else {
+    // (#53) Build a runtime argv. Reserve a generously-sized `$ObjVecArr` and an
+    // `argc` cursor, then append each arg in source order: a plain positional
+    // arg is boxed and written at argv[argc++]; a spread's source is compiled to
+    // its vec struct {len, data} and each element copied (boxed) into argv.
+    objVecArrTypeIdx = ctx.reservedObjVecArrTypeIdx!;
+    argvLocal = allocLocal(fctx, `__dynnew_argv_${fctx.locals.length}`, { kind: "ref", typeIdx: objVecArrTypeIdx });
+    argcLocal = allocLocal(fctx, `__dynnew_argc_${fctx.locals.length}`, { kind: "i32" });
+
+    // Pass 1 — evaluate every spread source ONCE into a vec local (so arg
+    // expressions run exactly once) and compute the argv capacity = (#non-spread
+    // args) + Σ(spread source len). `vecTypeIdx` is captured per spread so we can
+    // re-read its {len,data} fields without re-deriving the type.
+    const spreadVecs: { local: number; vecTypeIdx: number; arrTypeIdx: number; elemType: ValType }[] = [];
+    let staticCount = 0;
+    fctx.body.push({ op: "i32.const", value: 0 }); // capacity accumulator on stack
+    for (const arg of rawArgs) {
+      if (!ts.isSpreadElement(arg)) {
+        staticCount++;
+        continue;
+      }
+      const vecTy = compileExpression(ctx, fctx, arg.expression);
+      if (!vecTy || (vecTy.kind !== "ref" && vecTy.kind !== "ref_null")) {
+        // Spread source is not an array-like vec (e.g. a non-iterable). Bail
+        // loudly rather than emit a wrong value. (Full iterator-protocol drive
+        // over arbitrary iterables is #42.) Keep the stack balanced: the caller
+        // returns externref on `true`.
+        if (vecTy) fctx.body.push({ op: "drop" });
+        reportError(
+          ctx,
+          expr,
+          "Dynamic `new K(...x)` spread source is not an array-like value (#2026 #53): " +
+            "only array spreads are supported in the value-bound constructor path.",
+        );
+        fctx.body.push({ op: "drop" }); // drop the capacity accumulator
+        fctx.body.push({ op: "ref.null.extern" });
+        return true;
+      }
+      const vecLocal = allocLocal(fctx, `__dynnew_svec_${fctx.locals.length}`, vecTy);
+      fctx.body.push({ op: "local.tee", index: vecLocal } as Instr);
+      // capacity += vec.len (vec struct field 0)
+      fctx.body.push({ op: "struct.get", typeIdx: vecTy.typeIdx, fieldIdx: 0 } as Instr);
+      fctx.body.push({ op: "i32.add" });
+      const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTy.typeIdx);
+      const arrDef = arrTypeIdx >= 0 ? ctx.mod.types[arrTypeIdx] : undefined;
+      const elemType: ValType = arrDef && arrDef.kind === "array" ? arrDef.element : { kind: "f64" };
+      spreadVecs.push({ local: vecLocal, vecTypeIdx: vecTy.typeIdx, arrTypeIdx, elemType });
+    }
+    fctx.body.push({ op: "i32.const", value: staticCount });
+    fctx.body.push({ op: "i32.add" }); // total capacity
+    fctx.body.push({ op: "array.new_default", typeIdx: objVecArrTypeIdx } as Instr);
+    fctx.body.push({ op: "local.set", index: argvLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: argcLocal });
+
+    // Pass 2 — append every arg into argv in source order.
+    let spreadIdx = 0;
+    for (const arg of rawArgs) {
+      if (!ts.isSpreadElement(arg)) {
+        // argv[argc++] = box(arg)
+        fctx.body.push({ op: "local.get", index: argvLocal });
+        fctx.body.push({ op: "local.get", index: argcLocal });
+        const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+        if (aTy && aTy.kind !== "externref") coerceType(ctx, fctx, aTy, { kind: "externref" });
+        else if (aTy === null) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "array.set", typeIdx: objVecArrTypeIdx } as Instr);
+        bumpI32Local(fctx, argcLocal);
+        continue;
+      }
+      const sv = spreadVecs[spreadIdx++]!;
+      if (sv.arrTypeIdx < 0) continue;
+      // len = svec.len ; data = svec.data ; j = 0
+      const jLocal = allocLocal(fctx, `__dynnew_j_${fctx.locals.length}`, { kind: "i32" });
+      const lenLocal = allocLocal(fctx, `__dynnew_slen_${fctx.locals.length}`, { kind: "i32" });
+      const dataLocal = allocLocal(fctx, `__dynnew_sdata_${fctx.locals.length}`, {
+        kind: "ref_null",
+        typeIdx: sv.arrTypeIdx,
+      });
+      fctx.body.push({ op: "local.get", index: sv.local });
+      fctx.body.push({ op: "struct.get", typeIdx: sv.vecTypeIdx, fieldIdx: 0 } as Instr);
+      fctx.body.push({ op: "local.set", index: lenLocal });
+      fctx.body.push({ op: "local.get", index: sv.local });
+      fctx.body.push({ op: "struct.get", typeIdx: sv.vecTypeIdx, fieldIdx: 1 } as Instr);
+      fctx.body.push({ op: "local.set", index: dataLocal });
+      fctx.body.push({ op: "i32.const", value: 0 });
+      fctx.body.push({ op: "local.set", index: jLocal });
+
+      // Build the loop body: argv[argc] = box(data[j]); argc++; j++.
+      const loopBody: Instr[] = [];
+      const savedBody = fctx.body;
+      fctx.body = loopBody;
+      // j >= len ? break (br_if depth 1 → out of the enclosing block).
+      fctx.body.push({ op: "local.get", index: jLocal });
+      fctx.body.push({ op: "local.get", index: lenLocal });
+      fctx.body.push({ op: "i32.ge_s" });
+      fctx.body.push({ op: "br_if", depth: 1 } as Instr); // break outer block
+      // argv[argc] = box(data[j])
+      fctx.body.push({ op: "local.get", index: argvLocal });
+      fctx.body.push({ op: "local.get", index: argcLocal });
+      fctx.body.push({ op: "local.get", index: dataLocal });
+      fctx.body.push({ op: "local.get", index: jLocal });
+      emitBoundsCheckedArrayGet(fctx, sv.arrTypeIdx, sv.elemType);
+      if (sv.elemType.kind !== "externref") coerceType(ctx, fctx, sv.elemType, { kind: "externref" });
+      fctx.body.push({ op: "array.set", typeIdx: objVecArrTypeIdx } as Instr);
+      // argc++ ; j++
+      bumpI32Local(fctx, argcLocal);
+      bumpI32Local(fctx, jLocal);
+      fctx.body.push({ op: "br", depth: 0 } as Instr); // loop back
+      fctx.body = savedBody;
+
+      // (block (loop <loopBody>)) — loopBody breaks via `br_if 1`, repeats via `br 0`.
+      fctx.body.push({
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody } as Instr],
+      } as Instr);
+    }
   }
 
   // Discriminate by the class TAG, never by struct type alone. WasmGC
@@ -1820,7 +1960,42 @@ function emitDynamicNewFallback(
     fctx.body = arm;
     for (let i = 0; i < paramTypes.length; i++) {
       const pType = paramTypes[i]!;
-      if (i < argLocals.length) {
+      if (useRuntimeArgv) {
+        // Runtime argv: param i = (i < argc) ? box-coerce(argv[i]) : default.
+        // The bounds check is RUNTIME because argc is only known at runtime.
+        // Build the externref value first (argv[i] or null), then coerce to the
+        // param ValType (or default-pad via pushDefaultValue when out of range).
+        const elemExtern: Instr[] = [
+          { op: "local.get", index: argvLocal },
+          { op: "i32.const", value: i },
+          { op: "array.get", typeIdx: objVecArrTypeIdx } as Instr,
+        ];
+        const padArm: Instr[] = [];
+        {
+          const sb = fctx.body;
+          fctx.body = padArm;
+          pushDefaultValue(fctx, pType, ctx);
+          fctx.body = sb;
+        }
+        const inRangeArm: Instr[] = [];
+        {
+          const sb = fctx.body;
+          fctx.body = inRangeArm;
+          for (const ins of elemExtern) fctx.body.push(ins);
+          if (pType.kind !== "externref") coerceType(ctx, fctx, { kind: "externref" }, pType);
+          fctx.body = sb;
+        }
+        // i < argc ? inRangeArm : padArm  (both yield a `pType` value)
+        fctx.body.push({ op: "i32.const", value: i });
+        fctx.body.push({ op: "local.get", index: argcLocal });
+        fctx.body.push({ op: "i32.lt_s" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: pType },
+          then: inRangeArm,
+          else: padArm,
+        } as Instr);
+      } else if (i < argLocals.length) {
         fctx.body.push({ op: "local.get", index: argLocals[i]! });
         if (pType.kind !== "externref") {
           coerceType(ctx, fctx, { kind: "externref" }, pType);

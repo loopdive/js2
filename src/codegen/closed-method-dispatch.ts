@@ -53,6 +53,16 @@ function dispatcherName(methodName: string, arity: number): string {
 }
 
 /**
+ * (#2151 Slice 4) Mangle a method name into the VARARG dispatcher name. The
+ * vararg dispatcher takes the receiver plus a single `args` externref (a runtime
+ * `$ObjVec` or wasm vec) and reads each declared param from it by index — for a
+ * DYNAMIC spread `o.m(...xs)` whose arity is unknown at compile time.
+ */
+function varargDispatcherName(methodName: string): string {
+  return `__call_m_${methodName}_vararg`;
+}
+
+/**
  * Reserve (or fetch) the closed-struct dispatcher `__call_m_<name>_<arity>`
  * funcIdx with a placeholder body. The real body is built by
  * {@link fillClosedMethodDispatch} at finalize. Idempotent; records the
@@ -100,27 +110,172 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
 }
 
 /**
- * Fill every reserved `__call_m_<name>` dispatcher body at FINALIZE. Mirrors
- * `fillApplyClosure` (object-runtime.ts). Must run AFTER all object-literal
- * struct types and their `<Struct>_<name>` method funcs are registered, and
- * after `addUnionImports` (so `__box_number`/`__box_boolean` exist) — i.e. in
- * the same finalize phase as `emitStructFieldGetters`/`emitIteratorMethodExport`.
- * No-op when no dispatcher was reserved.
+ * (#2151 Slice 4) Reserve (or fetch) the VARARG closed-struct dispatcher
+ * `__call_m_<name>_vararg(recv: externref, args: externref) -> externref` for a
+ * DYNAMIC-spread method call `o.m(...xs)` whose arity is unknown at compile time.
+ *
+ * The fill (in {@link fillClosedMethodDispatch}) type-switches over every closed
+ * struct having `<Struct>_<name>` exactly like the fixed-arity dispatcher, but
+ * sources each declared param from `__extern_get_idx(args, i)` (0..K-1, K = that
+ * method's declared param count) instead of from a fixed dispatcher param. The
+ * bottom arm forwards the SAME `args` externref to
+ * `__extern_method_call(recv, "<name>", args)` for the open-`$Object` case.
+ *
+ * Like the fixed-arity reserve, all fallback-arm dependencies are registered NOW
+ * (during compilation) so the fill only READS funcMap — `ensureObjVecBuilders`
+ * pulls in the object runtime including `__extern_get_idx` / `__extern_length`,
+ * which the per-struct arms read args through. Idempotent. Only meaningful under
+ * `ctx.standalone || ctx.wasi`.
+ */
+export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodName: string): number {
+  const name = varargDispatcherName(methodName);
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+
+  // Pulls in the object runtime (`__objvec_new`/`__objvec_push`/
+  // `__extern_method_call` AND `__extern_get_idx`/`__extern_length`) so the fill
+  // is read-only. The method-name string constant backs the fallback call.
+  ensureObjVecBuilders(ctx);
+  addStringConstantGlobal(ctx, methodName);
+
+  // Signature: (recv: externref, args: externref) -> externref.
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    "$closed_method_dispatch_vararg_type",
+  );
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.mod.functions.push({
+    name,
+    typeIdx,
+    locals: [],
+    body: [{ op: "unreachable" } as Instr],
+    exported: false,
+  });
+  ctx.funcMap.set(name, funcIdx);
+  (ctx.closedMethodDispatchVarargNames ??= new Set<string>()).add(methodName);
+  return funcIdx;
+}
+
+/** One candidate closed struct that carries `<Struct>_<methodName>`. */
+type MethodEntry = { typeIdx: number; funcIdx: number; paramTypes: ValType[]; resultType: ValType };
+
+/**
+ * Collect every closed object-literal struct with a `<Struct>_<methodName>`
+ * method of the requested arity (`exactArity`), or — for the vararg dispatcher —
+ * EVERY arity (`exactArity === null`). Param 0 is always the receiver struct
+ * (`this`); `paramTypes` excludes it. Skips wrapper/internal carriers.
+ */
+function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArity: number | null): MethodEntry[] {
+  const mod = ctx.mod;
+  const entries: MethodEntry[] = [];
+  for (const [structName] of ctx.structFields) {
+    const typeIdx = ctx.structMap.get(structName);
+    if (typeIdx === undefined) continue;
+    if (
+      structName.startsWith("Wrapper") ||
+      structName === "$AnyValue" ||
+      structName.startsWith("__vec_") ||
+      structName.startsWith("__arr_") ||
+      structName.startsWith("$")
+    )
+      continue;
+
+    const funcIdx = ctx.funcMap.get(`${structName}_${methodName}`);
+    if (funcIdx === undefined) continue;
+    const funcDef = mod.functions[funcIdx - ctx.numImportFuncs];
+    const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
+    if (!funcType || funcType.kind !== "func") continue;
+    // Must be `this` + (exactArity) declared params, unless vararg (any arity).
+    if (exactArity !== null && funcType.params.length !== 1 + exactArity) continue;
+    if (funcType.params.length < 1) continue;
+    const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
+    entries.push({ typeIdx, funcIdx, paramTypes: funcType.params.slice(1), resultType });
+  }
+  return entries;
+}
+
+/** Coerce helper funcIdxs, read once per fill pass (registered at reserve). */
+type CoerceIdxs = { boxNumIdx?: number; unboxNumIdx?: number; unboxBoolIdx?: number };
+
+/**
+ * Build one closed-struct call arm: cast recv→`this`, push each declared arg
+ * (sourced via `pushArg(a)` — fixed dispatcher params OR `__extern_get_idx`),
+ * coerce each externref arg to the method's declared param type, call, and
+ * box-coerce the result back to externref. Shared by the fixed-arity and vararg
+ * fills so the coercion logic stays single-sourced.
+ */
+function buildEntryArm(
+  ci: CoerceIdxs,
+  anyLocalIdx: number,
+  entry: MethodEntry,
+  pushArg: (a: number) => Instr[],
+): Instr[] {
+  const { boxNumIdx, unboxNumIdx, unboxBoolIdx } = ci;
+  const arm: Instr[] = [
+    { op: "local.get", index: anyLocalIdx } as Instr,
+    { op: "ref.cast", typeIdx: entry.typeIdx } as Instr, // `this`
+  ];
+  for (let a = 0; a < entry.paramTypes.length; a++) {
+    const want = entry.paramTypes[a] ?? { kind: "externref" };
+    arm.push(...pushArg(a)); // the arg, as externref, onto the stack
+    if (want.kind === "f64") {
+      if (unboxNumIdx !== undefined) arm.push({ op: "call", funcIdx: unboxNumIdx } as Instr);
+      else arm.push({ op: "drop" } as Instr, { op: "f64.const", value: 0 } as Instr);
+    } else if (want.kind === "i32") {
+      if ((want as { boolean?: true }).boolean && unboxBoolIdx !== undefined) {
+        arm.push({ op: "call", funcIdx: unboxBoolIdx } as Instr);
+      } else if (unboxNumIdx !== undefined) {
+        arm.push({ op: "call", funcIdx: unboxNumIdx } as Instr);
+        arm.push({ op: "i32.trunc_sat_f64_s" } as Instr);
+      } else {
+        arm.push({ op: "drop" } as Instr, { op: "i32.const", value: 0 } as Instr);
+      }
+    } else if (want.kind === "ref" || want.kind === "ref_null") {
+      arm.push({ op: "any.convert_extern" } as Instr);
+      arm.push({ op: "ref.cast", typeIdx: (want as { typeIdx: number }).typeIdx } as Instr);
+    }
+    // externref param: already externref — no coercion.
+  }
+  arm.push({ op: "call", funcIdx: entry.funcIdx } as Instr);
+  // Box-coerce the result back to externref.
+  if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
+    arm.push({ op: "extern.convert_any" } as Instr);
+  } else if (entry.resultType.kind === "f64") {
+    if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx } as Instr);
+    else arm.push({ op: "drop" } as Instr, { op: "ref.null.extern" } as Instr);
+  } else if (entry.resultType.kind === "i32") {
+    arm.push({ op: "f64.convert_i32_s" } as Instr);
+    if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx } as Instr);
+    else arm.push({ op: "drop" } as Instr, { op: "ref.null.extern" } as Instr);
+  }
+  // externref result: no coercion.
+  return arm;
+}
+
+/**
+ * Fill every reserved `__call_m_<name>_<arity>` AND `__call_m_<name>_vararg`
+ * dispatcher body at FINALIZE. Mirrors `fillApplyClosure` (object-runtime.ts).
+ * Must run AFTER all object-literal struct types and their `<Struct>_<name>`
+ * method funcs are registered, and after `addUnionImports` (so
+ * `__box_number`/`__box_boolean` exist). No-op when nothing was reserved.
  */
 export function fillClosedMethodDispatch(ctx: CodegenContext): void {
-  const names = ctx.closedMethodDispatchNames;
-  if (!names || names.size === 0) return;
-
   const mod = ctx.mod;
-  const boxNumIdx = ctx.funcMap.get("__box_number");
-  // (#2151 Slice 2) externref→primitive unbox helpers for arg coercion (read
-  // only; registered at reserve time via addUnionImports).
-  const unboxNumIdx = ctx.funcMap.get("__unbox_number");
-  const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean");
+  const ci: CoerceIdxs = {
+    boxNumIdx: ctx.funcMap.get("__box_number"),
+    unboxNumIdx: ctx.funcMap.get("__unbox_number"),
+    unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
+  };
+  const methodCallIdx = ctx.funcMap.get("__extern_method_call");
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
 
-  for (const key of names) {
-    // key is `<methodName>/<arity>` (#2151 Slice 2). Split from the LAST `/` so
-    // method names containing `/` (none in practice) wouldn't corrupt the arity.
+  // ── Fixed-arity dispatchers (#2151 Slices 1–3) ──────────────────────────
+  for (const key of ctx.closedMethodDispatchNames ?? []) {
+    // key is `<methodName>/<arity>`. Split from the LAST `/` (method names never
+    // contain `/`) so the arity parses cleanly.
     const slash = key.lastIndexOf("/");
     const methodName = slash >= 0 ? key.slice(0, slash) : key;
     const arity = slash >= 0 ? Number.parseInt(key.slice(slash + 1), 10) || 0 : 0;
@@ -129,53 +284,17 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     const dispFn = mod.functions[dispIdx - ctx.numImportFuncs];
     if (!dispFn) continue;
 
-    // Param layout of the dispatcher: local 0 = recv (externref), locals
-    // 1..arity = the externref args, local (arity+1) = the `any` temp (anyref).
+    // Param layout: local 0 = recv, locals 1..arity = externref args,
+    // local (arity+1) = the `any` temp.
     const anyLocalIdx = arity + 1;
+    const entries = collectMethodEntries(ctx, methodName, arity);
 
-    // Collect every closed struct with a `<Struct>_<methodName>` method whose
-    // signature is `(this, arg0..arg{arity-1})` — i.e. `1 + arity` params (param
-    // 0 = the receiver struct). Skip wrapper/internal carriers.
-    const entries: { typeIdx: number; funcIdx: number; paramTypes: ValType[]; resultType: ValType }[] = [];
-    for (const [structName] of ctx.structFields) {
-      const typeIdx = ctx.structMap.get(structName);
-      if (typeIdx === undefined) continue;
-      if (
-        structName.startsWith("Wrapper") ||
-        structName === "$AnyValue" ||
-        structName.startsWith("__vec_") ||
-        structName.startsWith("__arr_") ||
-        structName.startsWith("$")
-      )
-        continue;
-
-      const methodFullName = `${structName}_${methodName}`;
-      const funcIdx = ctx.funcMap.get(methodFullName);
-      if (funcIdx === undefined) continue;
-
-      const funcDef = mod.functions[funcIdx - ctx.numImportFuncs];
-      const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
-      if (!funcType || funcType.kind !== "func") continue;
-      // Must be `this` + exactly `arity` declared params.
-      if (funcType.params.length !== 1 + arity) continue;
-      const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
-      // Declared param types of the args (skip param 0 = `this`).
-      const paramTypes = funcType.params.slice(1);
-      entries.push({ typeIdx, funcIdx, paramTypes, resultType });
-    }
-
-    // Bottom arm: open-$Object fallback via
-    // __extern_method_call(recv, name, [arg0..arg{arity-1}]). The args are pushed
-    // onto a fresh $ObjVec so the open-object runtime reads them by index.
-    const methodCallIdx = ctx.funcMap.get("__extern_method_call");
-    const objVecNewIdx = ctx.funcMap.get("__objvec_new");
-    const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+    // Bottom arm: open-$Object fallback — build a $ObjVec of the fixed args.
     let current: Instr[];
     if (methodCallIdx !== undefined && objVecNewIdx !== undefined && (arity === 0 || objVecPushIdx !== undefined)) {
       const argVec: Instr[] = [];
       if (arity > 0 && objVecPushIdx !== undefined) {
-        // vec = __objvec_new(); for each arg: __objvec_push(vec, argi); then vec.
-        const vecTmp = anyLocalIdx + 1; // an extra local for the arg vec
+        const vecTmp = anyLocalIdx + 1;
         argVec.push({ op: "call", funcIdx: objVecNewIdx } as Instr);
         argVec.push({ op: "local.set", index: vecTmp } as Instr);
         for (let a = 0; a < arity; a++) {
@@ -197,80 +316,83 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       current = [{ op: "ref.null.extern" } as Instr];
     }
 
-    // Build the type-switch from the bottom up: nest each struct arm.
     for (const entry of entries) {
-      const callAndCoerce: Instr[] = [
-        { op: "local.get", index: anyLocalIdx } as Instr,
-        { op: "ref.cast", typeIdx: entry.typeIdx } as Instr, // `this`
-      ];
-      // Push each arg coerced from externref to the method's declared param type.
-      // Args arrive as externref (the call site boxes them); the method wants
-      // its declared types. Inline the unbox (we're building a raw Instr[], not
-      // via fctx, so we can't call coerceType): f64 ← __unbox_number, i32-boolean
-      // ← __unbox_boolean, i32 ← __unbox_number + trunc, ref ← any.convert_extern
-      // + guarded cast. The unbox helpers are registered at reserve time.
-      for (let a = 0; a < arity; a++) {
-        const want = entry.paramTypes[a] ?? { kind: "externref" };
-        callAndCoerce.push({ op: "local.get", index: 1 + a } as Instr);
-        if (want.kind === "f64") {
-          if (unboxNumIdx !== undefined) callAndCoerce.push({ op: "call", funcIdx: unboxNumIdx } as Instr);
-          else callAndCoerce.push({ op: "drop" } as Instr, { op: "f64.const", value: 0 } as Instr);
-        } else if (want.kind === "i32") {
-          if ((want as { boolean?: true }).boolean && unboxBoolIdx !== undefined) {
-            callAndCoerce.push({ op: "call", funcIdx: unboxBoolIdx } as Instr);
-          } else if (unboxNumIdx !== undefined) {
-            callAndCoerce.push({ op: "call", funcIdx: unboxNumIdx } as Instr);
-            callAndCoerce.push({ op: "i32.trunc_sat_f64_s" } as Instr);
-          } else {
-            callAndCoerce.push({ op: "drop" } as Instr, { op: "i32.const", value: 0 } as Instr);
-          }
-        } else if (want.kind === "ref" || want.kind === "ref_null") {
-          // externref → GC ref: any.convert_extern then guarded ref.cast.
-          callAndCoerce.push({ op: "any.convert_extern" } as Instr);
-          callAndCoerce.push({ op: "ref.cast", typeIdx: (want as { typeIdx: number }).typeIdx } as Instr);
-        }
-        // externref param: arg is already externref — no coercion.
-      }
-      callAndCoerce.push({ op: "call", funcIdx: entry.funcIdx } as Instr);
-      // Box-coerce the result back to externref.
-      if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
-        callAndCoerce.push({ op: "extern.convert_any" } as Instr);
-      } else if (entry.resultType.kind === "f64") {
-        if (boxNumIdx !== undefined) callAndCoerce.push({ op: "call", funcIdx: boxNumIdx } as Instr);
-        else callAndCoerce.push({ op: "drop" } as Instr, { op: "ref.null.extern" } as Instr);
-      } else if (entry.resultType.kind === "i32") {
-        callAndCoerce.push({ op: "f64.convert_i32_s" } as Instr);
-        if (boxNumIdx !== undefined) callAndCoerce.push({ op: "call", funcIdx: boxNumIdx } as Instr);
-        else callAndCoerce.push({ op: "drop" } as Instr, { op: "ref.null.extern" } as Instr);
-      }
-      // externref result: no coercion.
-
+      const callAndCoerce = buildEntryArm(ci, anyLocalIdx, entry, (a) => [{ op: "local.get", index: 1 + a } as Instr]);
       current = [
         { op: "local.get", index: anyLocalIdx } as Instr,
         { op: "ref.test", typeIdx: entry.typeIdx } as Instr,
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "externref" } },
-          then: callAndCoerce,
-          else: current,
-        },
+        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
       ];
     }
 
-    const body: Instr[] = [
+    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
+    if (arity > 0 && objVecNewIdx !== undefined && objVecPushIdx !== undefined) {
+      locals.push({ name: "__argvec", type: { kind: "externref" } });
+    }
+    dispFn.locals = locals;
+    dispFn.body = [
       { op: "local.get", index: 0 } as Instr,
       { op: "any.convert_extern" } as Instr,
       { op: "local.set", index: anyLocalIdx } as Instr,
       ...current,
     ];
+    void (dispFn as WasmFunction);
+  }
 
-    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
-    // The open-$Object fallback for arity>0 needs an extra arg-vec local.
-    if (arity > 0 && objVecNewIdx !== undefined && objVecPushIdx !== undefined) {
-      locals.push({ name: "__argvec", type: { kind: "externref" } });
+  // ── Vararg dispatchers (#2151 Slice 4 — dynamic spread `o.m(...xs)`) ─────
+  // Signature `(recv: externref, args: externref) -> externref`. Each candidate
+  // struct's declared param i is sourced from `__extern_get_idx(args, i)` (a
+  // native index read over the runtime $ObjVec / wasm vec; out-of-range → null,
+  // matching `undefined`). The bottom arm forwards the SAME `args` externref to
+  // `__extern_method_call(recv, name, args)` for the open-$Object case.
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  for (const methodName of ctx.closedMethodDispatchVarargNames ?? []) {
+    const dispIdx = ctx.funcMap.get(varargDispatcherName(methodName));
+    if (dispIdx === undefined) continue;
+    const dispFn = mod.functions[dispIdx - ctx.numImportFuncs];
+    if (!dispFn) continue;
+
+    // Param layout: local 0 = recv, local 1 = args (externref), local 2 = `any`.
+    const argsLocalIdx = 1;
+    const anyLocalIdx = 2;
+    const entries = collectMethodEntries(ctx, methodName, null);
+
+    // Bottom arm: open-$Object fallback forwards `args` directly.
+    let current: Instr[] =
+      methodCallIdx !== undefined
+        ? [
+            { op: "local.get", index: 0 } as Instr,
+            ...stringConstantExternrefInstrs(ctx, methodName),
+            { op: "local.get", index: argsLocalIdx } as Instr,
+            { op: "call", funcIdx: methodCallIdx } as Instr,
+          ]
+        : [{ op: "ref.null.extern" } as Instr];
+
+    for (const entry of entries) {
+      // arg a ← __extern_get_idx(args, a). If the helper is absent, the arm can't
+      // source args → skip (defensive; it is always present via reserve).
+      const callAndCoerce =
+        externGetIdxIdx !== undefined
+          ? buildEntryArm(ci, anyLocalIdx, entry, (a) => [
+              { op: "local.get", index: argsLocalIdx } as Instr,
+              { op: "f64.const", value: a } as Instr,
+              { op: "call", funcIdx: externGetIdxIdx } as Instr,
+            ])
+          : current;
+      current = [
+        { op: "local.get", index: anyLocalIdx } as Instr,
+        { op: "ref.test", typeIdx: entry.typeIdx } as Instr,
+        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
+      ];
     }
-    dispFn.locals = locals;
-    dispFn.body = body;
+
+    dispFn.locals = [{ name: "__any", type: { kind: "anyref" } }];
+    dispFn.body = [
+      { op: "local.get", index: 0 } as Instr,
+      { op: "any.convert_extern" } as Instr,
+      { op: "local.set", index: anyLocalIdx } as Instr,
+      ...current,
+    ];
     void (dispFn as WasmFunction);
   }
 }

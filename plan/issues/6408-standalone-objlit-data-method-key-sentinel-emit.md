@@ -1,11 +1,12 @@
 ---
 id: 6408
 title: "standalone object-literal data/method property keys emit `global.get -1` sentinel → binary emit error (~17 tests; subcluster of a 155-test #51-family residual)"
-status: in-progress
-assignee: ttraenkler/sdev-harvest
+status: done
+assignee: ttraenkler/sd2
 sprint: 64
 created: 2026-06-18
-updated: 2026-06-18
+updated: 2026-06-19
+completed: 2026-06-19
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -140,3 +141,61 @@ Recommend a dedicated follow-up issue (a systematic `global.get`-of-string-globa
 audit across `src/codegen/*.ts` under `ctx.standalone`) rather than folding it
 into this focused PR — each site is mechanically identical but the stack-type and
 GC-mode verification per site is what makes it broad-blast-radius.
+
+## Follow-up landed (2026-06-19, sd2) — object-literal METHOD body leaked `__make_getter_callback` standalone
+
+The key-sentinel PR #1710 (merged) fixed the **key** emit for the
+PropertyAssignment + MethodDeclaration arms. While re-probing the same
+accessor-path object-literal codegen on current main, found a **second,
+distinct** standalone defect in the *method-body* compilation (orthogonal to the
+key sentinel — the key was already host-free):
+
+**An object literal mixing a regular method with a getter/setter leaked the
+`env::__make_getter_callback` host import in `--target standalone`.** Probe on
+main:
+
+| literal shape | env import (standalone) |
+|---|---|
+| `{ get id() {…} }` | (none) ✓ |
+| `{ tag: 7, get id() {…} }` (data + getter, #6408 key fix) | (none) ✓ |
+| `{ describe() {…}, get id() {…} }` (method + getter) | **`__make_getter_callback`** ✗ |
+
+**Root cause** (`src/codegen/literals.ts`, `compileObjectLiteralWithAccessors`):
+the getter/setter arm routes through `emitObjectLiteralAccessorFn`, which is
+standalone-aware (#1888 S5b) — host-free `compileArrowAsClosure` under
+`ctx.standalone`. But the **three sibling MethodDeclaration arms** (well-known
+Symbol-key, runtime-computed-key, string/identifier-key) called
+`compileArrowAsCallback(prop, { needsThis: true })` **unconditionally**.
+`needsThis: true` selects the `__make_getter_callback` JS bridge
+(`closures.ts:2961` `makeCallbackName = needsThis ? "__make_getter_callback" :
+"__make_callback"`), an `env::` host import — so a method on an accessor-path
+literal imported the bridge even in pure-Wasm mode.
+
+**Fix:** new `emitObjectLiteralMethodFn` mirroring `emitObjectLiteralAccessorFn`
+— standalone → host-free `compileArrowAsClosure` (→ externref); GC / JS-host →
+the unchanged `compileArrowAsCallback(... needsThis)` bridge. The three method
+arms now route through it. The standalone method closure is dispatched via the
+same `__current_this`-bound closure-call path the getter closures already use,
+so `this` binds correctly. GC mode is unchanged (same `compileArrowAsCallback`).
+
+**Verified** (`tests/issue-6408-objlit-method-host-leak.test.ts`, 6 cases, all
+standalone, asserting BOTH zero `env` imports AND correct `this`-bound runtime
+values): getter-sibling still works; method reads `this` data (7); `this`-mutating
+method sees mutation (2); computed-key method (9); iterator-shaped `next()` method
++ getter (0); method-only-no-getter regression guard (4). The 4 existing
+`issue-6408-objlit-key-sentinel` cases stay green; `accessor-side-effects` +
+`object-literals` suites green (37). `tsc --noEmit` clean; prettier + biome clean.
+The two pre-existing failures (`issue-1888` 2-4-arg dispatch; the
+`object-*-getters-setters` / `object-define-property-accessors` `./helpers.js`
+harness-load errors) fail **identically** on `origin/main` with and without this
+change — not regressions.
+
+**Out of this slice (separate orthogonal standalone leaks, noted not fixed):**
+- A `[Symbol.iterator]()`/well-known-Symbol **computed method key** still pulls in
+  `env::__box_symbol` (the well-known-symbol key-boxing path, `literals.ts:548`) —
+  independent of the method-body bridge fixed here.
+- The broader 137-test `-1` string-global sentinel sweep across other emit sites
+  (above) remains; many of those sites are already `< 0`-guarded on current main
+  (`class-bodies.ts`, the `defineProperty` value path probed clean), so the live
+  residual is smaller than the original 155 tally and needs a fresh
+  baseline-diff bucket count before a dedicated sweep issue.

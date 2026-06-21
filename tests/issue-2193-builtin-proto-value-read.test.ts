@@ -72,3 +72,64 @@ describe("#2193 (PR-A) — standalone builtin .prototype value reads", () => {
     ).toBe(1);
   });
 });
+
+// PR-B — a value-materialized Array.prototype member method is CALLABLE via
+// `.call` / `.apply`. The blocker was the reflective `call_ref`'s trailing
+// operand: it pushed the wrapper struct instead of the funcref from the
+// wrapper's field 0, so validation reported the classic `expected (ref
+// $funcType) found (ref $wrapStruct)` off-by-one. Extracting the funcref (the
+// canonical closure-call tail) before call_ref fixes it.
+describe("#2193 (PR-B) — value-materialized proto method called via .call/.apply", () => {
+  it("Array.prototype.slice.call(a, 1, 3) === a.slice(1, 3)", async () => {
+    expect(
+      await runStandalone(`
+        export function test(): number {
+          const a = [10, 20, 30, 40, 50];
+          const m = Array.prototype.slice;
+          const r = m.call(a, 1, 3);
+          const s = a.slice(1, 3);
+          return r[0] === s[0] && r[1] === s[1] && r.length === s.length ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it(".call threads thisArg → receiver: slice values are correct", async () => {
+    expect(
+      await runStandalone(`
+        export function test(): number {
+          const a = [10, 20, 30, 40, 50];
+          const m = Array.prototype.slice;
+          const r = m.call(a, 1, 3);
+          // r === [20, 30]
+          return r.length === 2 && r[0] === 20 && r[1] === 30 ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it(".apply with a static array arg list reshapes [thisArg, ...args]", async () => {
+    expect(
+      await runStandalone(`
+        export function test(): number {
+          const a = [10, 20, 30, 40, 50];
+          const m = Array.prototype.slice;
+          const r = m.apply(a, [1, 3]);
+          return r.length === 2 && r[0] === 20 && r[1] === 30 ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("no regression: the plain instance a.slice(1, 3) path still works", async () => {
+    expect(
+      await runStandalone(`
+        export function test(): number {
+          const a = [10, 20, 30, 40, 50];
+          const s = a.slice(1, 3);
+          return s[0] + s[1];
+        }
+      `),
+    ).toBe(50);
+  });
+});

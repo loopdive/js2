@@ -27,6 +27,7 @@
 - [project_next_session.md](project_next_session.md) — Session state: 16,013 pass, honest baseline after exception tag fix
 - [project_bigint_i64_brand_gate.md](project_bigint_i64_brand_gate.md) — #1349/#1644 BigInt fixes gated on architect i64-bigint-brand ValType decision; not a dev codegen guard
 - [project_linear_backend_no_console_log.md](project_linear_backend_no_console_log.md) — Linear backend (target:"linear", non-WASI) drops console.log; it's return-value-oriented — cross-backend/diff tests must assert return values, not stdout (#1854)
+- [project_proxy_no_ts_type_brand.md](project_proxy_no_ts_type_brand.md) — A JS Proxy carries no TS-type brand (types as its target); never static-classify a possibly-proxy receiver — detect syntactically + defer to host (#2501 proxy-revoked regression)
 
 ### Team & agents (rules not in plan/method/team-setup.md)
 - [feedback_architect_worktree_isolation.md](feedback_architect_worktree_isolation.md) — Always spawn architects with isolation:worktree — they stall and request respawn without it
@@ -82,12 +83,15 @@
 - [feedback_never_delete_test_data.md](feedback_never_delete_test_data.md) — Never delete test data/cache/runs without asking
 - [feedback_ask_before_killing_tests.md](feedback_ask_before_killing_tests.md) — Never kill running tests without asking
 - [feedback_baseline_drift_cross_check.md](feedback_baseline_drift_cross_check.md) — Cross-check CI regressions against other open PRs; sample locally — identical clusters across unrelated PRs are drift
+- [project_standalone_floor_only_on_merge_group.md](project_standalone_floor_only_on_merge_group.md) — Standalone floor gate (#2097) runs only on merge_group, not PR; standalone regressions pass all PR checks then fail in the queue. Bisect via merged-report jsonl diff or local WebAssembly.validate
+- [project_standalone_hostimport_gate_index_shift.md](project_standalone_hostimport_gate_index_shift.md) — Gating lib-global host-import registration under standalone (collectReferencedGlobalNames, #2520/PR#1787) reorders import/type table → wrong type idx → "throw expected externref, found call of type i64"
 - [feedback_cla_check_rerun_after_merge_commit.md](feedback_cla_check_rerun_after_merge_commit.md) — Fork PR enqueue fails "cla-check expected" after a merge-main commit; gh run rerun the cla-check workflow to repost on the new head
 - [reference_error_analysis.md](reference_error_analysis.md) — Test262 error analysis procedure
 
 ### Development methodology
 - [feedback_spec_first_fixes.md](feedback_spec_first_fixes.md) — Always fetch the ECMAScript spec (tc39.es/ecma262) before fixing test failures; implement from fetched spec text, never from memory; cite spec section in commits
 - [project_type_index_shift_and_deadelim.md](project_type_index_shift_and_deadelim.md) — Type-index hazards: dead-elimination prunes+remaps unreferenced WasmGC types; never push a struct type mid-class-collection (desyncs class struct typeidx); register shared types late+once
+- [project_brand_check_swap_savedbodies.md](project_brand_check_swap_savedbodies.md) — fctx.body swaps that capture a throw/else branch must use pushBody/popBody (register savedBodies) or a late string-constant import shift skips the already-emitted receiver global.get → invalid wasm (#2563)
 
 ### Model usage
 - [feedback_sonnet_for_sprint_loop.md](feedback_sonnet_for_sprint_loop.md) — Use Sonnet for routine tech-lead loop; Opus only for crisis/architecture

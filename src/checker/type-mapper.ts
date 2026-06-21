@@ -14,6 +14,7 @@ const BUILTIN_TYPES = new Set([
   "BigInt",
   "Int8Array",
   "Uint8Array",
+  "Uint8ClampedArray",
   "Int16Array",
   "Uint16Array",
   "Int32Array",

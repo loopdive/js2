@@ -559,33 +559,33 @@ function addSimdStringIndexOf(mod: WasmModule): void {
 }
 
 /**
- * __arr_indexOf_simd(arr: i32, val: i32) → i32
+ * __arr_indexOf_simd(arr: i32, val: f64) → i32
  *
- * SIMD-accelerated i32 array indexOf.
- * Splats the search value across i32x4 and compares 4 elements at a time.
+ * SIMD-accelerated number[] array indexOf.
+ * #1938: elements are 8-byte f64 slots, so the search value is splatted across
+ * an f64x2 and 2 elements are compared per 128-bit chunk (stride 16 bytes).
  * Returns the index of the first match, or -1 if not found.
- * Array layout: ptr+8 = length, ptr+16 = element data (i32[])
+ * Array layout: ptr+8 = length, ptr+16 = element data (f64[])
  */
 function addSimdArrayIndexOfI32(mod: WasmModule): void {
-  const params: ValType[] = [{ kind: "i32" }, { kind: "i32" }];
+  const params: ValType[] = [{ kind: "i32" }, { kind: "f64" }];
   const results: ValType[] = [{ kind: "i32" }];
 
   const typeIdx = mod.types.length;
   mod.types.push({ kind: "func", name: "$type___arr_indexOf_simd", params, results });
 
-  // params: arr(0), val(1)
-  // locals: len(2), i(3), valVec(4:v128), cmpVec(5:v128), mask(6)
+  // params: arr(0), val(1:f64)
+  // locals: len(2), i(3), valVec(4:v128), cmpVec(5:v128)
   const locals: LocalDef[] = [
     { name: "len", type: { kind: "i32" } },
     { name: "i", type: { kind: "i32" } },
     { name: "valVec", type: { kind: "v128" } },
     { name: "cmpVec", type: { kind: "v128" } },
-    { name: "mask", type: { kind: "i32" } },
   ];
 
   const len = 2,
     i = 3,
-    mask = 6;
+    cmpVec = 5;
 
   const body: Instr[] = [
     // len = arr.len
@@ -593,16 +593,16 @@ function addSimdArrayIndexOfI32(mod: WasmModule): void {
     { op: "i32.load", align: 2, offset: 8 },
     { op: "local.set", index: len },
 
-    // valVec = i32x4.splat(val)
+    // valVec = f64x2.splat(val)
     { op: "local.get", index: 1 },
-    { op: "i32x4.splat" },
+    { op: "f64x2.splat" },
     { op: "local.set", index: 4 }, // valVec
 
     // i = 0
     { op: "i32.const", value: 0 },
     { op: "local.set", index: i },
 
-    // SIMD loop: compare 4 elements at a time
+    // SIMD loop: compare 2 elements at a time (f64x2)
     {
       op: "block",
       blockType: { kind: "empty" },
@@ -611,82 +611,48 @@ function addSimdArrayIndexOfI32(mod: WasmModule): void {
           op: "loop",
           blockType: { kind: "empty" },
           body: [
-            // if i + 4 > len, break to scalar
+            // if i + 2 > len, break to scalar
             { op: "local.get", index: i },
-            { op: "i32.const", value: 4 },
+            { op: "i32.const", value: 2 },
             { op: "i32.add" },
             { op: "local.get", index: len },
             { op: "i32.gt_u" },
             { op: "br_if", depth: 1 },
 
-            // Load 4 elements: v128.load(arr + 16 + i*4)
+            // Load 2 elements: v128.load(arr + 16 + i*8)
             { op: "local.get", index: 0 },
             { op: "local.get", index: i },
-            { op: "i32.const", value: 4 },
+            { op: "i32.const", value: 8 },
             { op: "i32.mul" },
             { op: "i32.add" },
-            { op: "v128.load", align: 2, offset: 16 },
+            { op: "v128.load", align: 3, offset: 16 },
 
-            // Compare with valVec
+            // cmpVec = f64x2.eq(loaded, valVec) — matching lanes become all-1s
             { op: "local.get", index: 4 }, // valVec
-            { op: "i32x4.eq" },
+            { op: "f64x2.eq" },
+            { op: "local.set", index: cmpVec },
 
-            // Get bitmask
-            { op: "i32x4.bitmask" },
-            { op: "local.set", index: mask },
+            // lane 0 match? (i64x2.extract_lane 0 != 0)
+            { op: "local.get", index: cmpVec },
+            { op: "i64x2.extract_lane", lane: 0 },
+            { op: "i64.const", value: 0n },
+            { op: "i64.ne" },
+            { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: i }, { op: "return" }] },
 
-            // If any match, find which lane
-            { op: "local.get", index: mask },
-            { op: "i32.const", value: 0 },
-            { op: "i32.ne" },
+            // lane 1 match? (i64x2.extract_lane 1 != 0)
+            { op: "local.get", index: cmpVec },
+            { op: "i64x2.extract_lane", lane: 1 },
+            { op: "i64.const", value: 0n },
+            { op: "i64.ne" },
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: [
-                // Check lane 0
-                { op: "local.get", index: mask },
-                { op: "i32.const", value: 1 },
-                { op: "i32.and" },
-                { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: i }, { op: "return" }] },
-                // Check lane 1
-                { op: "local.get", index: mask },
-                { op: "i32.const", value: 2 },
-                { op: "i32.and" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: i },
-                    { op: "i32.const", value: 1 },
-                    { op: "i32.add" },
-                    { op: "return" },
-                  ],
-                },
-                // Check lane 2
-                { op: "local.get", index: mask },
-                { op: "i32.const", value: 4 },
-                { op: "i32.and" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: i },
-                    { op: "i32.const", value: 2 },
-                    { op: "i32.add" },
-                    { op: "return" },
-                  ],
-                },
-                // Must be lane 3
-                { op: "local.get", index: i },
-                { op: "i32.const", value: 3 },
-                { op: "i32.add" },
-                { op: "return" },
-              ],
+              then: [{ op: "local.get", index: i }, { op: "i32.const", value: 1 }, { op: "i32.add" }, { op: "return" }],
             },
 
-            // i += 4
+            // i += 2
             { op: "local.get", index: i },
-            { op: "i32.const", value: 4 },
+            { op: "i32.const", value: 2 },
             { op: "i32.add" },
             { op: "local.set", index: i },
             { op: "br", depth: 0 },
@@ -710,15 +676,15 @@ function addSimdArrayIndexOfI32(mod: WasmModule): void {
             { op: "i32.ge_u" },
             { op: "br_if", depth: 1 },
 
-            // if arr[16 + i*4] == val, return i
+            // if arr[16 + i*8] == val, return i
             { op: "local.get", index: 0 },
             { op: "local.get", index: i },
-            { op: "i32.const", value: 4 },
+            { op: "i32.const", value: 8 },
             { op: "i32.mul" },
             { op: "i32.add" },
-            { op: "i32.load", align: 2, offset: 16 },
+            { op: "f64.load", align: 3, offset: 16 },
             { op: "local.get", index: 1 },
-            { op: "i32.eq" },
+            { op: "f64.eq" },
             { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: i }, { op: "return" }] },
 
             // i++
@@ -746,17 +712,18 @@ function addSimdArrayIndexOfI32(mod: WasmModule): void {
 }
 
 /**
- * __arr_fill_simd(arr: i32, val: i32, start: i32, end: i32) → void
+ * __arr_fill_simd(arr: i32, val: f64, start: i32, end: i32) → void
  *
- * SIMD-accelerated i32 array fill.
- * Splats the fill value across i32x4 and stores 4 elements at a time.
- * Falls back to scalar for the tail.
- * Array layout: ptr+16 = element data (i32[])
+ * SIMD-accelerated number[] array fill.
+ * #1938: elements are 8-byte f64 slots, so the fill value is splatted across an
+ * f64x2 and 2 elements are stored per 128-bit chunk (stride 16 bytes). Falls
+ * back to scalar for the tail.
+ * Array layout: ptr+16 = element data (f64[])
  */
 function addSimdArrayFillI32(mod: WasmModule): void {
   const params: ValType[] = [
     { kind: "i32" }, // arr
-    { kind: "i32" }, // val
+    { kind: "f64" }, // val
     { kind: "i32" }, // start
     { kind: "i32" }, // end
   ];
@@ -775,16 +742,16 @@ function addSimdArrayFillI32(mod: WasmModule): void {
   const i = 4;
 
   const body: Instr[] = [
-    // fillVec = i32x4.splat(val)
+    // fillVec = f64x2.splat(val)
     { op: "local.get", index: 1 },
-    { op: "i32x4.splat" },
+    { op: "f64x2.splat" },
     { op: "local.set", index: 5 }, // fillVec
 
     // i = start
     { op: "local.get", index: 2 },
     { op: "local.set", index: i },
 
-    // SIMD loop: store 4 elements at a time
+    // SIMD loop: store 2 elements at a time (f64x2)
     {
       op: "block",
       blockType: { kind: "empty" },
@@ -793,26 +760,26 @@ function addSimdArrayFillI32(mod: WasmModule): void {
           op: "loop",
           blockType: { kind: "empty" },
           body: [
-            // if i + 4 > end, break to scalar
+            // if i + 2 > end, break to scalar
             { op: "local.get", index: i },
-            { op: "i32.const", value: 4 },
+            { op: "i32.const", value: 2 },
             { op: "i32.add" },
             { op: "local.get", index: 3 }, // end
             { op: "i32.gt_u" },
             { op: "br_if", depth: 1 },
 
-            // v128.store(arr + 16 + i*4, fillVec)
+            // v128.store(arr + 16 + i*8, fillVec)
             { op: "local.get", index: 0 },
             { op: "local.get", index: i },
-            { op: "i32.const", value: 4 },
+            { op: "i32.const", value: 8 },
             { op: "i32.mul" },
             { op: "i32.add" },
             { op: "local.get", index: 5 }, // fillVec
-            { op: "v128.store", align: 2, offset: 16 },
+            { op: "v128.store", align: 3, offset: 16 },
 
-            // i += 4
+            // i += 2
             { op: "local.get", index: i },
-            { op: "i32.const", value: 4 },
+            { op: "i32.const", value: 2 },
             { op: "i32.add" },
             { op: "local.set", index: i },
             { op: "br", depth: 0 },
@@ -836,14 +803,14 @@ function addSimdArrayFillI32(mod: WasmModule): void {
             { op: "i32.ge_u" },
             { op: "br_if", depth: 1 },
 
-            // arr[16 + i*4] = val
+            // arr[16 + i*8] = val (f64 slot)
             { op: "local.get", index: 0 },
             { op: "local.get", index: i },
-            { op: "i32.const", value: 4 },
+            { op: "i32.const", value: 8 },
             { op: "i32.mul" },
             { op: "i32.add" },
-            { op: "local.get", index: 1 }, // val
-            { op: "i32.store", align: 2, offset: 16 },
+            { op: "local.get", index: 1 }, // val (f64)
+            { op: "f64.store", align: 3, offset: 16 },
 
             // i++
             { op: "local.get", index: i },

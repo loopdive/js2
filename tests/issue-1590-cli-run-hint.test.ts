@@ -21,13 +21,18 @@ function compileAndCapture(extraArgs: string): string {
 describe("issue #1590 — CLI post-compile run hint", () => {
   it("standalone target hints the wasmtime command", () => {
     const out = compileAndCapture("--standalone");
-    expect(out).toMatch(/To run: wasmtime -W all-proposals=y/);
+    expect(out).toMatch(/To run: wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y/);
     expect(out).toMatch(/input\.wasm/);
   });
 
   it("wasi target hints the wasmtime command", () => {
     const out = compileAndCapture("--target wasi");
-    expect(out).toMatch(/To run: wasmtime -W all-proposals=y/);
+    expect(out).toMatch(/To run: wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y/);
+  });
+
+  it("does not recommend all-proposals=y (stack-switching exits at load, #2511)", () => {
+    const out = compileAndCapture("--standalone");
+    expect(out).not.toMatch(/all-proposals=y/);
   });
 
   it("default (gc) target hints the JS-host run path", () => {

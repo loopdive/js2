@@ -54,6 +54,7 @@ import {
 } from "./index.js";
 import { ensureNativeStringExternBridge, ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
+import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import {
   isNativeGeneratorCandidate,
@@ -1205,10 +1206,39 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectURIImports finalize ──
-  for (const name of state.uriNeeded) {
-    if (ctx.funcMap.has(name)) continue;
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", name, { kind: "func", typeIdx });
+  // #2500 — the four URI globals are JS-host `env.*` imports in host mode. Under
+  // `--target wasi`/`--target standalone` there is no host, so the call site
+  // previously fell through to a `ref.test`/`ref.cast` of the argument and
+  // returned `null`. Emit the pure-Wasm `__uri_encode` / `__uri_decode` helpers
+  // instead (registered as DEFINED funcs; the batched late-import shift keeps
+  // their funcMap index + sibling-call targets correct as later imports
+  // register). The four NAMES remain mapped to the host import in host mode; in
+  // standalone mode the call site (calls.ts) routes each name through the native
+  // helper with its per-function preserved/reserved mask.
+  {
+    let needsNativeEncode = false;
+    let needsNativeDecode = false;
+    for (const name of state.uriNeeded) {
+      if (ctx.funcMap.has(name)) continue;
+      if (ctx.wasi || ctx.standalone) {
+        if (name === "encodeURI" || name === "encodeURIComponent") {
+          needsNativeEncode = true;
+          continue;
+        }
+        if (name === "decodeURI" || name === "decodeURIComponent") {
+          needsNativeDecode = true;
+          continue;
+        }
+      }
+      const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+      addImport(ctx, "env", name, { kind: "func", typeIdx });
+    }
+    if (needsNativeEncode) {
+      emitNativeUriEncode(ctx);
+    }
+    if (needsNativeDecode) {
+      emitNativeUriDecode(ctx);
+    }
   }
 
   // ── collectStringStaticImports finalize ──
@@ -1974,6 +2004,21 @@ export function collectEmptyObjectWidening(
           // Scan all following statements in the same block for property assignments
           collectPropsFromStatements(checker, ctx, stmts, varName, extraProps, seenProps);
 
+          // (#2372) Standalone: if any `Object.defineProperty(varName, …)` on
+          // this receiver used a *dynamic* (non-inline-literal) descriptor, the
+          // struct-widening fast path is unsound — the dynamic define is applied
+          // through the native `__obj_define_from_desc` `$Object` runtime, but a
+          // widened struct would make the read-back `varName.key` lower to
+          // `struct.get` against a different object (returns 0). Suppress
+          // widening entirely for such receivers so they stay on the `$Object`
+          // representation and writes + reads route through the native runtime
+          // consistently. (`collectPropsFromStatements` sets the poison flag
+          // above, before this decision point.) Host mode is unaffected — it
+          // keeps the struct fast path via the live-mirror Proxy writeback.
+          if (ctx.dynamicDescriptorWidenVars.has(varName)) {
+            continue;
+          }
+
           if (extraProps.length > 0) {
             ctx.widenedTypeProperties.set(varName, extraProps);
 
@@ -2100,6 +2145,24 @@ export function collectPropsFromStatements(
         const descArg = call.arguments[2]!;
         if (ts.isIdentifier(objArg) && objArg.text === varName && ts.isStringLiteral(propArg)) {
           const propName = propArg.text;
+          // (#2372) The struct-widening fast path only works when the
+          // descriptor is a statically-resolvable inline object literal: the
+          // define lowers to `struct.set` and the read-back to `struct.get` on
+          // the SAME widened struct field. A *dynamic* descriptor (a variable /
+          // call result) cannot be applied via `struct.set` — standalone routes
+          // it to the native `__obj_define_from_desc` helper, which writes the
+          // `$Object` open-hash runtime. If we widen the receiver to a struct
+          // anyway, the read-back `o.x` lowers to `struct.get` against the
+          // struct while the write landed in the `$Object` — different objects,
+          // so the read returns 0. Mark this var as define-poisoned so the
+          // widening is suppressed for it (below): the receiver then stays on
+          // the `$Object` representation and BOTH the dynamic write and the
+          // read route through the native runtime consistently. Host mode keeps
+          // the struct fast path (the host `__defineProperty_desc` import
+          // reflects back through the live-mirror Proxy onto the struct sidecar).
+          if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
+            ctx.dynamicDescriptorWidenVars.add(varName);
+          }
           if (!seenProps.has(propName)) {
             seenProps.add(propName);
             // Try to get value type from descriptor.value

@@ -224,3 +224,55 @@ Re-validation on main also confirmed Slices 1–2 are landed and the previously
 
 - Dynamic-spread method calls `o.m(...xs)` (runtime variable-arity dispatch).
 - Host-mode any-method on a closed object literal (pre-existing host limitation).
+
+## Slice 4 RESULT (2026-06-19, sen-1) — DYNAMIC-spread `o.m(...xs)` — IMPLEMENTED & GREEN
+
+Dynamic-spread `o.m(...xs)` (arity unknown at compile time) returned 0 standalone
+because `flattenCallArgs` returns null for a dynamic source → the fixed-arity
+`__call_m_<name>_<arity>` dispatcher (Slices 1–3) cannot apply, and the generic
+`__extern_method_call` fallback only handles the OPEN `$Object` receiver.
+
+**Mechanism — a VARARG dispatcher, reusing the existing fill machinery.** New
+`reserveClosedMethodDispatchVararg` + a vararg pass in `fillClosedMethodDispatch`
+(`src/codegen/closed-method-dispatch.ts`) emit
+`__call_m_<name>_vararg(recv: externref, args: externref) -> externref`. It
+type-switches over the SAME closed structs as the fixed-arity dispatcher, but
+sources each declared param from `__extern_get_idx(args, i)` (0..K-1, K = that
+method's declared param count) instead of fixed dispatcher params — out-of-range
+reads yield `undefined`. The per-struct arg-coerce + `this`-thread + result-box
+logic is now factored into a shared `buildEntryArm(ci, anyLocal, entry, pushArg)`
+helper (and struct collection into `collectMethodEntries`), so fixed-arity and
+vararg are single-sourced. Bottom arm forwards the SAME `args` externref to
+`__extern_method_call(recv, name, args)` for the open-`$Object` case. The call
+site (`calls.ts`) routes a SINGLE pure dynamic spread `o.m(...xs)` to it,
+compiling the spread source array directly as the `args` externref (the native
+`__extern_get_idx` indexes both wasm vecs and `$ObjVec`).
+
+**Verified standalone, ZERO host imports** (`tests/issue-2151-dynamic-spread.test.ts`,
+6 cases): `o.m(...xs)`=5, `this`-thread `o.plus(...xs)`=13, 3-elem=321, 0-len
+`o.n(...[])`=42, function-returned-array spread `o.g(...mk())`=20, plus the
+Slice 1–3 regression guards (`next()`=7, static `o.m(...[2,3])`=5). No regression:
+`issue-2151{,-nary,-spread-literal}` + `issue-2025` + `issue-2009` + generator
+(expressions/methods/nested/return-method/yield-delegation) + for-of-generator
+suites all pass. `tsc --noEmit` clean. (The one `object-literal-getters-setters >
+setter stores value` FAIL is PRE-EXISTING on base — verified by stashing the src
+change and re-running.)
+
+**Scoped OUT (kept on the existing fall-through — same value as before, NO
+regression):**
+- **Mixed `o.m(a, ...xs)`** (fixed leading args + dynamic spread): needs a
+  runtime arg-vec append-loop (push fixed args, then loop-append the spread
+  source). Returns 0 today as before; carve as a follow-up slice.
+- **`--target wasi`**: the `__extern_get_idx` array-like / wasm-vec indexing arms
+  are emitted only under `ctx.standalone` (`objArrayLikeArms = ctx.standalone`,
+  object-runtime.ts). So the vararg dispatcher is gated to `ctx.standalone` ONLY;
+  wasi keeps the existing fall-through (the same pre-existing wasi arg-vec gap the
+  issue's Root-cause section already notes). Widening the array-like arms to wasi
+  is a separate, broader change.
+- **ref/string-typed params** (`o.g("hi")`, `o.g(...["hi"])`): VERIFIED
+  pre-existing across ALL slices — the fixed-arity `o.g("hi")` and static-spread
+  `o.g(...["hi"])` both already fail on main (`Cannot convert object to primitive
+  value`). A separate any-receiver ref-arg-coercion gap, not introduced or in
+  scope here; the vararg path inherits it identically.
+
+#2151 stays in-progress for the mixed-spread + wasi + ref-arg residuals above.

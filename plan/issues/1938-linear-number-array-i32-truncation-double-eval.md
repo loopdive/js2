@@ -1,10 +1,12 @@
 ---
 id: 1938
 title: "Linear backend: number[] stores i32 elements ([1.5] → [1]) and element-assignment evaluates RHS twice"
-status: in-progress
+status: done
+completed: 2026-06-19
+assignee: ttraenkler/sd3
 sprint: 64
 created: 2026-06-10
-updated: 2026-06-11
+updated: 2026-06-19
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -413,3 +415,75 @@ Existing suites that must stay green: `tests/linear-element-assign.test.ts`
 
 Compiler quality review 2026-06. Related: #1937 (fail-loud companion),
 #1854 (cross-backend differential harness would have caught both).
+
+---
+
+## Part 2 — LANDED (2026-06-19, sd3)
+
+Implemented the architect's stride-8 uniform-f64-slot design in one atomic PR.
+`[1.5][0]` now returns `1.5`; `[0.1,0.2,0.3]` sums to `0.6`; `map(x=>x*2)` no
+longer truncates the intermediate. **`done`.**
+
+### What changed (representation: i32×4 → f64×8 slots)
+
+**`src/codegen-linear/runtime.ts`** — the array runtime element boundary is now
+typed **f64**, stride 8, slot bits opaque to the runtime:
+- `__arr_new`/`__arr_grow` allocate `16 + cap*8`; grow copies slots verbatim with
+  `f64.load`/`f64.store`.
+- `__arr_push(i32,f64)`, `__arr_get(i32,i32)→f64`, `__arr_set(i32,i32,f64)` — all
+  `f64.load`/`f64.store` at `idx*8`; OOB `__arr_get` returns `f64.const 0`;
+  `__arr_set` zero-fills the gap with `f64.const 0`. `__arr_len`/`__arr_slice`
+  unchanged in shape (slice is f64-clean for free via get→push).
+- `__arr_from_data` (C-ABI param input) widens each incoming packed i32 into the
+  low 4 bytes of an 8-byte slot (`i64.extend_i32_u`→`f64.reinterpret_i64`).
+- `__u8arr_from_arr` reads the source `number[]` element as an f64 slot and
+  truncates to a byte.
+- `__str_split` encodes each substring i32 pointer into the f64 slot before push.
+
+**`src/codegen-linear/index.ts`** — two helpers, `pushI32ToSlot` /
+`pushSlotToI32` (the i64-shuffle), thread the **existing per-site
+`elemIsI32`/`inferExprType` decision** (no new global routing). Sites updated:
+array literal, element read, element assign, for-of (incl. the
+`ArrayOrUint8Array` runtime-dispatch `if` reconciled to f64), array
+destructuring, `.push`, HOF (`map`/`filter`/`flatMap` load + push-back —
+**deleted the `i32.trunc_f64_s` truncation bugs**), and `join` (decode slot →
+string handle). **Booleans ride the f64 path** (they compile to `f64.const 0/1`
+in this backend), so only true reference (string/object) slots take the
+encode/decode path.
+
+**`src/codegen-linear/c-abi.ts`** — layout comment updated; number[] return
+payload is now 8-byte-strided (host reads it as `double*` / `Float64Array`).
+
+**`src/codegen-linear/simd.ts`** — `__arr_indexOf_simd` / `__arr_fill_simd`
+(dead helpers, no emit site, but kept internally consistent) rewritten from
+`i32x4` (4-lane, stride 4) to `f64x2` (2-lane, stride 16) over the new layout.
+
+### Verification (scoped, all green)
+
+- `tests/issue-1938-number-array-f64.test.ts` (17 cases): the `[1.5][0]`
+  headline, fractional sum/push/set/map/filter, for-of read, NaN, `-0`
+  (`1/-0 === -Infinity`), >2^31 integer, nested `number[][]`, `string[]` read +
+  join, `boolean[]`, store-beyond-length zero-fill, destructuring-rest slice.
+- `tests/issue-1835.test.ts` — C-ABI array return updated to read `Float64Array`
+  (8-byte stride) + a new fractional-element round-trip case.
+- `tests/linear-array.test.ts` + `tests/simd.test.ts` — updated to the f64
+  boundary (push/set/search/fill values become `f64.const`; gets return f64).
+- Full linear suite (126 tests across 15 files) + wasi/simd/c-abi all green.
+- `tsc --noEmit` clean.
+- The 2 pre-existing failures in this area (`issue-1655` `Uint8Array.subarray`
+  "illegal cast"; `real-world-wasi` `it.fails` process.argv) fail **identically
+  on clean `origin/main`** — not regressions from this change.
+
+### Out of scope (unchanged, documented limitations)
+
+- **Map/Set keys/values** still use i32 storage (`index.ts:1021-1033`,
+  `runtime.ts __map_*`/`__set_*`). A fractional Map key still truncates — a
+  distinct, larger surface (hash-bucket layout, `__nmap`/`__nset` variants). No
+  fail-loud diagnostic was added (the existing Map behaviour is unchanged, so no
+  regression); the representation fix belongs in a follow-up issue.
+- **`Array.prototype.slice`/`indexOf`/`fill` as method calls** are still not
+  wired into `compileArrayMethodCall` (a pre-existing gap, orthogonal to the
+  representation). The SIMD helpers exist but have no emit site.
+- **number[] C-ABI *param* input** still rehydrates from packed i32 (the host
+  would pass doubles for a real number array) — only reference/string array
+  params round-trip via `__arr_from_data`. Documented in the runtime comment.

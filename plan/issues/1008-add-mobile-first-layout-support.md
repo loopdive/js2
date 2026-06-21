@@ -3,13 +3,13 @@ id: 1008
 title: "Add mobile-first layout support to the playground"
 status: ready
 created: 2026-04-09
-updated: 2026-04-16
+updated: 2026-06-19
 priority: medium
 feasibility: medium
 task_type: feature
 language_feature: playground-mobile-layout
 goal: developer-experience
-sprint: 45
+sprint: Backlog
 es_edition: n/a
 ---
 # #1008 -- Add mobile-first layout support to the playground
