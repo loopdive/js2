@@ -1937,6 +1937,35 @@ function emitGuardedNativeStringLength(
 }
 
 /**
+ * (#2573) Is `tsType` a genuine PLAIN object whose `.length` is an absent
+ * property (→ `undefined` per §10.1.8 OrdinaryGet), as opposed to an array /
+ * string / arguments / function / typed-array whose `.length` is a real numeric
+ * member?
+ *
+ * Deliberately CONSERVATIVE so it never reclassifies an array-like (whose
+ * `.length` must stay the numeric vec-field-0 / `__extern_length` lowering):
+ *   - `any` / `unknown` are EXCLUDED — at that static type we cannot tell a
+ *     plain object from an array, and arrays dominate; keep the numeric path.
+ *   - must be an Object type (TypeFlags.Object) — primitives/unions/`any` out.
+ *   - must have NO own/inherited `length` member (a real Array/String/arguments
+ *     /TypedArray/bound-fn type declares one),
+ *   - NO numeric index signature (array-likes / tuples carry one),
+ *   - NO call or construct signature (a function's `.length` is its arity).
+ *
+ * `var obj = {}` widens to an object-literal type (symbol `__object`) that
+ * satisfies all four → its `.length` is `undefined`.
+ */
+function isPlainObjectWithoutLength(ctx: CodegenContext, tsType: ts.Type): boolean {
+  if ((tsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return false;
+  if ((tsType.flags & ts.TypeFlags.Object) === 0) return false;
+  if (tsType.getProperty?.("length") !== undefined) return false;
+  if (ctx.checker.getIndexInfoOfType?.(tsType, ts.IndexKind.Number) !== undefined) return false;
+  if ((tsType.getCallSignatures?.().length ?? 0) > 0) return false;
+  if ((tsType.getConstructSignatures?.().length ?? 0) > 0) return false;
+  return true;
+}
+
+/**
  * (#2179) When the module uses `delete <member>` (JS-host mode only), route an
  * `any`/`unknown`-typed property READ through the tombstone-aware `__extern_get`
  * host helper instead of the inline `ref.test`+`struct.get` fast-path. Returns
@@ -3253,6 +3282,32 @@ export function compilePropertyAccess(
     }
     fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
     return { kind: "i32" };
+  }
+
+  // (#2573) `.length` on a PLAIN object → `undefined`, not numeric 0.
+  // §10.1.8 OrdinaryGet: a missing own property reads `undefined`. `length` is
+  // a "reserved accessor" handed to the array-length lowering below, which
+  // returns numeric 0 (vec field 0 / `__extern_length`) — correct for a real
+  // array/string/arguments, but WRONG for a plain `{}` object where `length` is
+  // just an absent property (`({}).length === undefined`). This broke the
+  // generic-Array-method-on-plain-object cluster (test262 S15.4.4.* —
+  // `var obj = {}; obj.length === undefined`), the #983d residual.
+  //
+  // NARROW, static gate so the common (and arithmetic-sensitive) array path is
+  // untouched: only fires when the receiver's TS type is a concrete OBJECT type
+  // (NOT `any`/`unknown` — those keep the runtime `__extern_length` path, where
+  // arrays dominate) that has NO own/inherited `length` member, NO numeric index
+  // signature, and NO call/construct signature — i.e. a genuine plain object
+  // (`var obj = {}` widens to symbol `__object`). A real array/string/function
+  // type carries a `length` member (or a call sig) and is excluded.
+  if (propName === "length" && isPlainObjectWithoutLength(ctx, objType)) {
+    // Evaluate the receiver for its side effects, drop it, push `undefined`.
+    const recv = compileExpression(ctx, fctx, expr.expression);
+    if (recv !== null && recv !== undefined) {
+      fctx.body.push({ op: "drop" } as Instr);
+    }
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
   }
 
   // Handle Function.length — return the number of formal parameters
