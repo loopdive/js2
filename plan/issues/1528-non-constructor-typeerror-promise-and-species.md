@@ -10,7 +10,7 @@ reasoning_effort: medium
 task_type: bugfix
 area: codegen
 language_feature: promise, species, constructor-invariants
-sprint: 64
+sprint: 65
 es_edition: ES2015+
 test262_category: built-ins/Promise, language/function-code
 test262_count: 79

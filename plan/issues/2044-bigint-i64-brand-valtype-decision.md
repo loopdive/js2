@@ -3,7 +3,7 @@ id: 2044
 title: "architect decision: BigInt value representation — i64-bigint-brand ValType vs TS-type-driven boxing (gates #1644 slices, implicated in #2039 i64 ABI bucket)"
 status: blocked
 blocked_by: [2167]
-sprint: 64
+sprint: 65
 created: 2026-06-10
 updated: 2026-06-12
 priority: high

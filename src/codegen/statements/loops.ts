@@ -32,7 +32,9 @@ import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, linearU8ArenaResetInstrs } from "../linear-uint8-arena.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { emitCollectionIteratorVec, ensureMapHelpers, MAP_LAYOUT } from "../map-runtime.js";
+import { resolveArrayInfo } from "../array-methods.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { coercionInstrs } from "../type-coercion.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
@@ -4644,6 +4646,152 @@ function emitForInMemberTargetWrite(
   fctx.body.push({ op: "call", funcIdx: setIdx });
 }
 
+/**
+ * (#2575) Emit `for (k in arr)` over a WasmGC array/vec receiver: enumerate the
+ * live integer-index keys `"0".."length-1"` (as strings) in ascending order,
+ * per §13.7.5 / OrdinaryOwnPropertyKeys. Self-contained — no `__for_in_*` host
+ * import and no `$ObjVec` walk; length is read from the vec struct (field 0) and
+ * each index is ToString'd via the sealed decimal-key formatter (the same helper
+ * the object runtime uses for integer keys). Works identically in host and
+ * standalone mode. Shares the `block $break { loop { cond; block $continue {
+ * body } incr; br } }` scaffolding with the dynamic-object path so `break` /
+ * `continue` / nested-loop depth handling is consistent.
+ */
+function emitArrayForIn(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForInStatement,
+  arrayInfo: { vecTypeIdx: number; arrTypeIdx: number; elemType: ValType },
+  keyLocal: number,
+  memberTarget: ts.PropertyAccessExpression | ts.ElementAccessExpression | null,
+  bindingPattern: ts.ObjectBindingPattern | ts.ArrayBindingPattern | null,
+): void {
+  const { vecTypeIdx } = arrayInfo;
+
+  // Decimal-key formatter (f64 -> externref) for the integer index. Reuses the
+  // sealed engine helper — NOT a hand-rolled ToString — via the SAME registration
+  // array `.join`/`.toString` use. Dual-mode: no-JS-host (standalone / wasi /
+  // nativeStrings) registers the DEFINED native (the helper is not in
+  // UNION_NATIVE_HELPER_NAMES, so a late host import would leak `env::*` there);
+  // JS-host uses the host import (the native formatter needs NativeString GC
+  // types host mode doesn't register — registering them there bakes a `-1`
+  // heap-type ref, the #2043 class). Register before the funcIdx capture so the
+  // late-import index shift settles first.
+  const NUM_FMT = "number_toString";
+  if (ctx.standalone || ctx.wasi || ctx.nativeStrings) {
+    emitNativeNumberFormat(ctx, new Set([NUM_FMT]));
+  } else if (ctx.funcMap.get(NUM_FMT) === undefined) {
+    ensureLateImport(ctx, NUM_FMT, [{ kind: "f64" }], [{ kind: "externref" }]);
+  }
+  flushLateImportShifts(ctx, fctx);
+  const numToStrIdx = ctx.funcMap.get(NUM_FMT);
+
+  // Compile the array expression into a vec ref local. A null/undefined receiver
+  // would throw in JS; for-in over null/undefined is spec'd as a no-op (§13.7.5.1
+  // step 2 returns when the value is undefined/null), so guard with ref.is_null.
+  const vecLocal = allocLocal(fctx, `__forin_arr_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const exprType = compileExpression(ctx, fctx, stmt.expression);
+  if (exprType && (exprType.kind === "ref" || exprType.kind === "ref_null")) {
+    // already a vec ref
+  } else if (exprType && exprType.kind === "externref") {
+    fctx.body.push({ op: "any.convert_extern" } as Instr);
+    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx } as Instr);
+  }
+  fctx.body.push({ op: "local.set", index: vecLocal });
+
+  // length = vec.field0  (0 when the ref is null → loop body never runs)
+  const lenLocal = allocLocal(fctx, `__forin_len_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: vecLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [{ op: "i32.const", value: 0 } as Instr],
+    else: [
+      { op: "local.get", index: vecLocal } as Instr,
+      { op: "ref.as_non_null" } as Instr,
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr,
+    ],
+  } as Instr);
+  fctx.body.push({ op: "local.set", index: lenLocal });
+
+  // Counter i = 0
+  const iLocal = allocLocal(fctx, `__forin_i_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: iLocal });
+
+  // Build the user body (block+loop+block adds 3 nesting levels — same as the
+  // dynamic-object path), with the per-iteration head write for non-identifier
+  // heads (#1613).
+  const savedBody = pushBody(fctx);
+  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! += 3;
+  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! += 3;
+  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth += 3;
+  adjustRethrowDepth(fctx, 3);
+  fctx.breakStack.push(2);
+  fctx.continueStack.push(0);
+
+  if (memberTarget) {
+    emitForInMemberTargetWrite(ctx, fctx, memberTarget, keyLocal);
+  } else if (bindingPattern) {
+    if (ts.isArrayBindingPattern(bindingPattern)) {
+      fctx.body.push({ op: "local.get", index: keyLocal });
+      compileExternrefArrayDestructuringDecl(ctx, fctx, bindingPattern, { kind: "externref" });
+    } else {
+      fctx.body.push({ op: "local.get", index: keyLocal });
+      compileExternrefObjectDestructuringDecl(ctx, fctx, bindingPattern, { kind: "externref" });
+    }
+  }
+
+  if (ts.isBlock(stmt.statement)) {
+    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    for (const s of stmt.statement.statements) compileStatement(ctx, fctx, s);
+    restoreBlockScopedShadows(fctx, savedScope);
+  } else {
+    compileStatement(ctx, fctx, stmt.statement);
+  }
+
+  const userBody = fctx.body;
+  fctx.breakStack.pop();
+  fctx.continueStack.pop();
+  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! -= 3;
+  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! -= 3;
+  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth -= 3;
+  adjustRethrowDepth(fctx, -3);
+  popBody(fctx, savedBody);
+
+  const loopBody: Instr[] = [];
+  // Condition: i >= length → break ($break is depth 1 from inside $loop)
+  loopBody.push({ op: "local.get", index: iLocal });
+  loopBody.push({ op: "local.get", index: lenLocal });
+  loopBody.push({ op: "i32.ge_s" });
+  loopBody.push({ op: "br_if", depth: 1 });
+
+  // key = <decimal formatter>(f64(i))  → keyLocal (externref string)
+  loopBody.push({ op: "local.get", index: iLocal });
+  loopBody.push({ op: "f64.convert_i32_s" });
+  if (numToStrIdx !== undefined) {
+    loopBody.push({ op: "call", funcIdx: numToStrIdx });
+  }
+  loopBody.push({ op: "local.set", index: keyLocal });
+
+  // block $continue { userBody }
+  loopBody.push({ op: "block", blockType: { kind: "empty" }, body: userBody });
+
+  // increment + restart
+  loopBody.push({ op: "local.get", index: iLocal });
+  loopBody.push({ op: "i32.const", value: 1 });
+  loopBody.push({ op: "i32.add" });
+  loopBody.push({ op: "local.set", index: iLocal });
+  loopBody.push({ op: "br", depth: 0 });
+
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  });
+}
+
 export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForInStatement): void {
   // Get the loop variable name
   const init = stmt.initializer;
@@ -4701,6 +4849,21 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     fctx.body.push({ op: "local.set", index: keyLocal });
   } else {
     reportError(ctx, stmt, "for-in requires a variable declaration or identifier");
+    return;
+  }
+
+  // (#2575) Array receiver: enumerate the live numeric indices, not the static
+  // array TYPE members. `for (k in arr)` must yield the own enumerable keys —
+  // the integer-index keys "0".."length-1" as strings, ascending
+  // (§13.7.5 / OrdinaryOwnPropertyKeys). The receiver lowers to a WasmGC vec
+  // struct (not `$Object`, so `__object_keys` returns empty; not a closed
+  // struct, so the static-unroll path enumerated `length`+prototype members =
+  // wrong, and host mode enumerated nothing). Emit a self-contained native
+  // index loop here for BOTH host and standalone — length from vec field 0,
+  // each index ToString'd via the sealed decimal-key formatter, no host import.
+  const recvArrayInfo = resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
+  if (recvArrayInfo) {
+    emitArrayForIn(ctx, fctx, stmt, recvArrayInfo, keyLocal, memberTarget, bindingPattern);
     return;
   }
 

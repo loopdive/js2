@@ -3,7 +3,7 @@ id: 2106
 title: "value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton"
 status: in-progress
 assignee: ttraenkler/sdev7
-sprint: 64
+sprint: 65
 created: 2026-06-11
 updated: 2026-06-18
 priority: high

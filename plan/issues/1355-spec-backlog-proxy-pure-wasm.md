@@ -12,7 +12,7 @@ task_type: feature
 area: runtime, codegen
 language_feature: proxy
 goal: spec-completeness
-sprint: 64
+sprint: 65
 parent: 1334
 depends_on: [1100]
 note: "2026-06-15: elevated to TOP priority by stakeholder (Proxy/Promise/async-to-100% epic). Remaining 10 traps + invariant checks to drive Proxy past host-fallback toward 100% (standalone). Follows #1100 Phase 1. Needs architect spec."

@@ -29,6 +29,7 @@
   "codegen/property-access.ts": 16,
   "codegen/stack-balance.ts": 1,
   "codegen/statements/control-flow.ts": 4,
+  "codegen/statements/loops.ts": 1,
   "codegen/statements/nested-declarations.ts": 2,
   "codegen/string-ops.ts": 22,
   "codegen/type-coercion.ts": 28

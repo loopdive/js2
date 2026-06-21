@@ -3,7 +3,7 @@ id: 2158
 title: "Standalone class/prototype/private-name/descriptor conformance residual (~1,388 tests)"
 status: in-progress
 assignee: ttraenkler/cs-2158
-sprint: 64
+sprint: 65
 created: 2026-06-15
 updated: 2026-06-18
 priority: high

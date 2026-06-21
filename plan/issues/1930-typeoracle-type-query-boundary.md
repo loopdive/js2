@@ -3,7 +3,7 @@ id: 1930
 title: "TypeOracle — one type-query boundary between the TS checker and codegen (unblocks TS7, kills suppression heuristics)"
 status: blocked
 blocked_by: [2167]
-sprint: 64
+sprint: 65
 model: fable
 created: 2026-06-10
 updated: 2026-06-12

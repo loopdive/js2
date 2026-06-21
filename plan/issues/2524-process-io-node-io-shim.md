@@ -8,7 +8,7 @@ priority: high
 feasibility: hard
 reasoning_effort: max
 goal: modularization
-sprint: 64
+sprint: 65
 assignee: senior-developer
 ---
 # #2524 -- Phase 1: process IO via linkable `js2wasm:node-io` shim

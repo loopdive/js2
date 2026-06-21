@@ -1,7 +1,9 @@
 ---
 id: 2575
 title: "standalone: for-in over an array static-unrolls members, not numeric indices (no $ObjVec / index walk)"
-status: ready
+status: done
+completed: 2026-06-21
+assignee: ttraenkler/sd-6
 sprint: Backlog
 created: 2026-06-21
 updated: 2026-06-21

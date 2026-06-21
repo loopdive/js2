@@ -2,7 +2,7 @@
 id: 2151
 title: "standalone: any-receiver method dispatch — o.method() on a closed object-literal struct doesn't invoke"
 status: in-progress
-sprint: 64
+sprint: 65
 created: 2026-06-14
 updated: 2026-06-17
 priority: high

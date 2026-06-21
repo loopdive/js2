@@ -2,7 +2,7 @@
 id: 2029
 title: "standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests)"
 status: in-progress
-sprint: 64
+sprint: 65
 created: 2026-06-10
 updated: 2026-06-17
 priority: critical

@@ -8,7 +8,7 @@ reasoning_effort: medium
 task_type: ci
 area: ci
 goal: dev-velocity
-sprint: 64
+sprint: 65
 related: [2519, 2517]
 ---
 
