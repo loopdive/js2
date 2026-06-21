@@ -1,9 +1,8 @@
 {
   "id": "983d",
-  "assignee": "ttraenkler/sd-4",
-  "status": "released",
-  "branch": "issue-983d-live-mirror-writeback",
-  "claimed_at": "2026-06-21T11:41:50Z",
-  "updated_at": "2026-06-21T12:34:27Z",
-  "released_at": "2026-06-21T12:34:27Z"
+  "assignee": "ttraenkler/sd-3",
+  "status": "in-progress",
+  "branch": "issue-983d-host-method-gate",
+  "claimed_at": "2026-06-21T18:11:30Z",
+  "updated_at": "2026-06-21T18:11:30Z"
 }
