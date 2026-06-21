@@ -171,6 +171,50 @@ Also breaks with `String(a)` / `a*2` / `a-1` in place of `1/a` — i.e. **ANY
 landing. The `directCastInstrs` rest-copy theory was ruled out (the rest IS fresh;
 the failure is purely the equality helper).
 
+## PINPOINTED + fix attempt (sd-3, 2026-06-21 round 2) — needs architect spec for the representation matrix
+
+**The exact dead line:** in `__any_strict_eq` / `__any_eq` (`any-helpers.ts`), the
+tag-5 (string) arm is `strEqualsIdx >= 0 ? [__str_equals] : [i32.const 0]`.
+`strEqualsIdx = ctx.jsStringImports.get("equals")` is **-1 in standalone** (no
+JS-string imports), so the arm is the hardcoded **`i32.const 0`** → EVERY tag-5
+`===`/`==` returns false. A NUMBER `any` is boxed as tag-5 by `boxToAny`
+(`value-tags.ts:178`, the #1888 policy), so `5 === 5` → tag-5 → `i32.const 0` →
+false. Confirmed minimal: `function f(a:any){const m=a*2; const x:any=5; const
+y:any=5; return x===y;}` → false standalone.
+
+**Fix attempt (REVERTED):** replace the standalone `i32.const 0` with a runtime
+disambiguation — recover numbers via `__any_to_f64`+`f64.eq`, real strings via
+native `__str_flatten`+`__str_equals`. The numeric half WORKS (`5===5` true,
+`isSame(1,2)` false, all the `_isSameValue` repros pass) and a scoped broad sweep
+was **net +3** (equals +2, strict-equals +2) — BUT it **regressed array-string
+`indexOf`/`includes` by −1** (`["abc"].indexOf("abc")` → -1).
+
+**Why the regression — the representation matrix is the blocker:** the tag-5 box's
+field-4 is NOT one uniform type. `__any_box_string` (the `any`-literal / dispatch
+path) and `__any_from_extern` (the array-search path, `any-helpers.ts:194` —
+`fallbackStringAny`, field-4 = the raw externref) tag BOTH numbers AND strings as
+tag-5, and the field-4 externref of an array-element string does NOT pass
+`ref.test ctx.anyStrTypeIdx` (it is some other string rep — `$NativeString` /
+`wasm:js-string` / cons), so the string-vs-number discriminator mis-routes it to
+the numeric arm → NaN → no match. An inverted discriminator (`ref.test
+nativeBoxNumberTypeIdx`) then mis-caught arrays. **Every local discriminator hits
+a different field-4 representation gap** — exactly the #1888 hazard.
+
+**What an architect spec must settle (the real work):** a single, correct
+field-4 type discriminator (or a normalized box) covering ALL tag-5 producers
+(`__any_box_string`, `__any_from_extern`) × ALL inhabitants (number / native
+string `$AnyString` vs `$NativeString` vs cons / host-string externref / object).
+The cleanest landing is probably to make `boxToAny`/`__any_from_extern` carry a
+SUB-TAG (or store a `$BoxedNumber` vs string discriminant in a reserved field) so
+`__any_strict_eq` can branch deterministically — but that touches the #1888
+representation and MUST be gated by the full standalone baseline (merge_group),
+not a scoped sweep (the scoped sweep showed +3 but hid the indexOf −1; the real
+delta is large because `_isSameValue` gates a huge fraction of asserts).
+
+**Recommend `/architect-spec` on this** (AnyValue tag-5 field-4 representation +
+equality). The numeric `_isSameValue` fix is proven; only the string/array
+co-existence needs the representation design.
+
 ## Acceptance criteria
 
 - `assert.notSameValue(x, values)` family passes: rest pattern yields a fresh
