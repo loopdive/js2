@@ -56,3 +56,20 @@ Before any gate/refusal change, VALIDATE against the real test262 standalone
 harness — a host-import "leak" or refusal seen against an empty importObject may
 be benign because the harness provides the import. A native lowering (additive)
 is always safe; demoting a working path is not.
+
+## Re-validation (sd-1, 2026-06-21, sprint-64 ready-list sweep @ origin/main d0bf058bc)
+
+**PARTIAL — 2 of the 3 listed forms now work standalone; only
+`propertyIsEnumerable` still refuses.** Probed `--target standalone
+--nativeStrings`:
+
+| form | status now |
+|---|---|
+| `Object.is(NaN,NaN)` → true / `Object.is(0,-0)` → false | **WORKS** (the bounded sub-slice acceptance is met, host + standalone) |
+| `Object.fromEntries([["a",5]]).a` → 5 | **WORKS** (was a dynamic-shape CE; now lowers — likely landed with the #2374/#2542 dynamic-property work) |
+| `o.propertyIsEnumerable("x")` | **still CE**: `Codegen error: '__propertyIsEnumerable' (dynamic-shape object/property operation) is not yet…` |
+
+Recommendation: **re-scope #2541 down to `propertyIsEnumerable` only** (the
+other two acceptance bullets are satisfied), or fold the remaining
+`propertyIsEnumerable` refusal into the #2542 dynamic-property machinery it
+shares (sd-2 is actively on #2542). Not a fresh full-issue's worth of work.

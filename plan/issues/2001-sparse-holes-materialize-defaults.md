@@ -88,3 +88,14 @@ feasibility is `hard` / reasoning_effort `high`. Routing back to
 architect for the representation ratification (as #2001/#1852/#1931) before
 any dev implementation — dev-1 is moving to standalone-priority work per
 tech-lead direction.
+
+## Re-validation (sd-1, 2026-06-21, sprint-64 ready-list sweep @ origin/main d0bf058bc)
+
+**STILL OPEN, still ARCH-BLOCKED.** Re-confirmed the repros are live:
+`[1,,3].forEach(()=>c++)` count = **3** (expect 2); `b=[1]; b[5]=9;
+b.join(",")` = **"1,0,0,0,0,9"** (expect "1,,,,,9"). Disposition unchanged —
+gated on the unmet representation decision (hole sentinel vs side bitmap vs
+accept-divergence). Should NOT be claimed for implementation in the dev/
+senior-dev lane until an architect ratifies the representation. Recommend
+moving the sprint-64 task off the implementable queue (tag `[PARKED — needs
+arch representation decision]`).
