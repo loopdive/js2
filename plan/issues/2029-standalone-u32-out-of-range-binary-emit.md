@@ -170,3 +170,41 @@ standalone still leaks the `__new_<Builtin>` HOST import (`class-bodies.ts:1423/
 — a host-import-retirement concern, not the emit crash. Kept #2029 `in-progress`:
 the emit-crash cluster (the headline) is fixed; the `__new_<Builtin>` standalone
 runtime path is the residual. Reassess closing once that lands.
+
+## Slice (2026-06-21, dev-agent) — object-literal data-key + accessor emit crash
+
+**Status stays `in-progress`** — another emit-crash slice (the `Iterator/prototype`
+cluster, ~49 standalone CE).
+
+The `built-ins/Iterator/prototype` failures are NOT about `extends Iterator` —
+they're driven by the throwing-iterator fixtures returning
+`{ done: true, get value() { … } }`: an object literal mixing a **data property**
+with an **accessor**. Such a literal is routed through the host-object (externref)
+path, and the DATA-property key was materialized with a raw
+`global.get <stringGlobalMap.get(key)>`, guarding only `=== undefined`. Under
+standalone/nativeStrings the key string is the `-1` sentinel (#1174), so
+`global.get -1` crashed the encoder (`global index out of range — -1` at function
+`<f>` / `<Class>_next`).
+
+Minimal trigger (no Iterator, no throw needed): `{ a: 1, get v() { return 5; } }`.
+Getter-only or data-only literals already worked — only the **mix** crashed.
+
+**Fix:** in `compileObjectLiteral`'s host-object path (`src/codegen/literals.ts`),
+materialize the data-property key via the dual-mode `stringConstantExternrefInstrs`
+helper — exactly mirroring the accessor-key path right below it (which already had
+this fix). gc/host mode unchanged.
+
+**Measured (60-file `built-ins/Iterator/prototype` standalone sample):** main
+`pass 4 / CE 28 (6 emit-CE)` → fix `pass 6 / CE 23 (1 emit-CE)`. The full-cluster
+scan had ~49 emit-CEs of this shape; this clears the bulk. Zero host regressions
+(emit fix is `-1`-sentinel-gated, never reached in gc mode).
+
+**Validation.** `tests/issue-2029-objlit-data-accessor-standalone-emit.test.ts`
+(7/7): data-before/after-getter, data+setter, multi-data+accessor, the Iterator
+throwing-iterator next() shape, no-`-1`-global assertion, host no-regression.
+tsc + prettier + coercion-sites clean.
+
+**Still open (separate):** the `o.a + o.v` arithmetic read-back over two `any`
+props of an accessor-routed object traps standalone (`illegal cast`) — the same
+native dynamic-read/unbox gap noted for the Object.create slice, not the emit
+crash. The 1 residual emit-CE in the sample is a different producer.

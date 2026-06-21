@@ -485,11 +485,21 @@ function compileObjectLiteralWithAccessors(
         }
       } else {
         if (propName === undefined) continue;
+        // (#2029) Materialize the data-property key via the dual-mode helper.
+        // Under standalone/nativeStrings, `addStringConstantGlobal` records the
+        // `-1` sentinel (no host string-constant global), so the old
+        // `global.get <stringGlobalMap.get(propName)>` emitted `global.get -1`
+        // → "global index out of range — -1" at serialize time. This fired
+        // whenever a host-object-routed literal (one that ALSO carries an
+        // accessor — `{ a: 1, get v() {} }`) emitted a plain data key, e.g. the
+        // `Iterator.prototype` throwing-iterator fixtures. Mirror the accessor
+        // key path above: `stringConstantExternrefInstrs` emits the native
+        // string inline standalone and the host `global.get` under GC.
         addStringConstantGlobal(ctx, propName);
-        const keyGlobal = ctx.stringGlobalMap.get(propName);
-        if (keyGlobal === undefined) continue;
         fctx.body.push({ op: "local.get", index: objLocal });
-        fctx.body.push({ op: "global.get", index: keyGlobal });
+        for (const instr of stringConstantExternrefInstrs(ctx, propName)) {
+          fctx.body.push(instr);
+        }
       }
       // Compile value and coerce to externref.
       let valType: ValType | null;
