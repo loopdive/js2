@@ -1,10 +1,11 @@
 ---
 id: 1920
 title: "One instruction walker — peephole misses catchAll bodies; ≥4 divergent recursive walkers"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-17
+completed: 2026-06-17
 priority: medium
 feasibility: easy
 reasoning_effort: medium
@@ -78,3 +79,36 @@ no-pattern cases. All pass. (The pre-existing `ref-cast-peephole.test.ts`
 closure failures are an unrelated test-harness import-shape issue —
 `string_constants` import missing from the test's `{ env: {} }` — present on
 main before this change.)
+
+## Resolution (2026-06-17, dev-mech1) — items 1/2 (peephole) + item 4, DONE
+
+Closing the remaining open items. Re-validated on upstream/main @ 79e16bb37
+(item 3 catchAll fix already merged via #91a736164).
+
+**Items 1 + 2 — peephole recursion now drives the shared enumerator.**
+`peephole.ts` `optimizeBody` no longer hand-rolls a per-op switch to descend
+into child bodies; it calls `walkChildren` from `walk-instructions.ts`. That is
+the single child-buffer enumerator (`then`/`else`/`body`/`catches[].body`/
+`catchAll`), so peephole now covers every nested buffer — and any future
+`Instr` child field — with zero chance of re-diverging (the exact failure mode
+that produced the item-3 bug). The other three walkers (stack-balance DCE,
+late-imports, locals scanning) were left as a deliberately separate follow-up
+to keep this PR's blast radius small; peephole — the one that carried the
+defect — is now converged.
+
+**Item 4 — two new peephole patterns:**
+- Pattern 7: `f64.const 0; f64.const 0; f64.div` → `f64.const NaN` (3→1).
+  Normalizes the 0/0-division NaN materialization generically, so it banks the
+  win at every emit site (present + future) instead of hand-editing each
+  emitter. `f64.const NaN` encodes losslessly via the raw 8-byte float.
+- Pattern 8: `local.set N; local.get N` → `local.tee N` (2→1), and the new
+  `local.tee` then folds with a trailing `drop` (pattern 3) for a further save.
+  Stack-effect-preserving; peephole runs before stack-balance.
+
+Tests: extended `tests/issue-1920.test.ts` — block/loop/if-then/if-else
+recursion through `walkChildren`, pattern-7 collapse + genuine-division
+no-touch, pattern-8 fusion + differing-index no-fusion. 9/9 pass. `tsc --noEmit`
+clean. The pre-existing `ref-cast-peephole.test.ts` (6) and
+`optional-direct-closure-call.test.ts` (2) closure failures are the same
+unrelated `string_constants` harness import-shape issue — verified identical
+with this change stashed.

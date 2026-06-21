@@ -35,7 +35,15 @@
  */
 
 /** Modules other than `env` whose imports are not JS-host bindings and are always allowed. */
-export const ALWAYS_ALLOWED_IMPORT_MODULES: ReadonlySet<string> = new Set(["wasi_snapshot_preview1"]);
+export const ALWAYS_ALLOWED_IMPORT_MODULES: ReadonlySet<string> = new Set([
+  "wasi_snapshot_preview1",
+  // #2524 Phase 1 — `js2wasm:node-io` is a canonical linkable Wasm interface
+  // (a separately-compiled shim implements it over WASI), NOT a JS-host
+  // binding. Like `wasi_snapshot_preview1`, it is always allowed under strict
+  // dual-mode: the module that imports it links against `node-shim.wasm` (or
+  // any conforming deno/browser shim), no JS runtime required.
+  "js2wasm:node-io",
+]);
 
 export interface HostImportAllowlistEntry {
   /** Match kind. `exact` matches the import name literally; `prefix` matches a name beginning with the pattern. */

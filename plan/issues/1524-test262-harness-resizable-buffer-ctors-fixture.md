@@ -13,7 +13,7 @@ language_feature: test262-harness, typed-array
 sprint: Backlog
 es_edition: n/a
 test262_category: built-ins/Array/prototype, built-ins/TypedArray
-test262_count: 202
+test262_count: 227
 related: []
 ---
 # #1524 — `ctors` fixture not exposed in resizable-buffer test262 tests
@@ -68,3 +68,14 @@ L49:3 ctors is not defined
 **202 test262 fails** unblocked — many will still fail downstream on
 resizable-buffer semantics, but converting CE → assertion fail makes
 the underlying gaps visible for follow-up.
+
+## Harvest update — 2026-06-19 (run `e9579720`, dated 2026-06-18)
+
+Default-lane cascade grew **202 → 227**. The `resizableArrayBufferUtils.js`
+include (`defines: [floatCtors, ctors, MyBigInt64Array,
+CreateResizableArrayBuffer, …]`) still never binds its fixtures, so downstream
+references throw `ReferenceError`: `ctors is not defined` ×175,
+`floatArrayConstructors` ×21, `nonClampedIntArrayConstructors` ×18,
+`floatCtors` ×5, `typedArrayConstructors` ×8 (plus `byteConversionValues` ×17
+from `byteConversion.js`). Root cause unchanged. Still `backlog`; recorded
+count bumped to 227.

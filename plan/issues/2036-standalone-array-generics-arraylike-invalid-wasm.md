@@ -139,3 +139,42 @@ indices visited); holes are skipped.
   a follow-up (escalated to tech lead 2026-06-14).
 - The broader generic-arm work (#1888 Slice 4) and the ~308 residual
   callback-evaluation assertion rows — re-measure after PR-1.
+
+## S6 Step 1 — LANDED (2026-06-17, dev-2)
+
+Implemented the loud-refusal step per the architect spec. In
+`compileArrayLikePrototypeCall` (`src/codegen/array-methods.ts`), when the
+receiver is a **borrowed array-like `$Object`** (real `__vec_`/`__arr_` arrays
+already take the dedicated native path and return earlier) and the target is a
+not-yet-native method, standalone/WASI now emits a `Codegen error:` naming the
+method + `#2036 S6` instead of leaking a host import or emitting invalid Wasm:
+
+- `STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS = {indexOf, lastIndexOf, includes,
+  filter, map, reduce, reduceRight}` — search methods leaked
+  `__host_eq`/`__same_value_zero` + tripped the `local.set expected f64, found
+  call externref` binary-emitter bug; result-builders leaked
+  `__js_array_new`/`__js_array_push`.
+- Callback-iteration methods (`forEach`/`some`/`every`/`find`/`findIndex`) got a
+  native `$Object` arm in PR-1 and are intentionally NOT in the set (control test
+  asserts they keep compiling + running).
+- Gated on `ctx.standalone || ctx.wasi`; host/gc output byte-identical.
+
+Tests: `tests/issue-2036.test.ts` (+9 cases — each of the 7 methods refuses
+loudly over an array-like `$Object`; controls: `forEach` still works, real native
+array still works, host mode still compiles the borrowed call). All 16 in the
+file pass; prettier/biome/tsc clean. Re-validated through the real
+`runTest262File` standalone harness: `15.4.4.20-9-c-iii-3.js` now refuses cleanly
+(was invalid Wasm).
+
+### Remaining true-invalid-Wasm (NOT this slice — separate follow-up)
+
+Three `built-ins/Array/prototype/filter` rows still emit genuine invalid Wasm but
+are NOT borrowed-receiver array-likes (out of S6 scope): `15.4.4.20-4-7.js`
+(`arr.filter(new Object())` — non-callable callback on a real array),
+`create-ctor-non-object.js`, `create-ctor-poisoned.js` (`Symbol.species`
+constructor reflection). All fail in a `__closure_N` with `call[1] expected type
+f64, found local.get` — a distinct native-`filter`-closure / species bug, not the
+generic-receiver root. Fold into Step 2 (senior/infra) or file separately.
+
+Issue stays `in-progress` — Step 2 (the real generic `$Object` arm +
+binary-emitter local-type fix) is senior/infra and unshipped.

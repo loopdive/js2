@@ -20,6 +20,7 @@ import { availableParallelism } from "os";
 import { CompilerPool, type PoolResult } from "./compiler-pool.js";
 import {
   findTestFiles,
+  isModuleGoal,
   matchesPathFilter,
   parseMeta,
   shouldSkip,
@@ -198,7 +199,16 @@ async function processBatch(tests: typeof allTests, pool: CompilerPool) {
           return;
         }
 
-        const hash = createHash("md5").update(wrapped).update(compilerHash).digest("hex");
+        // (#2119) script tests keep mapped `arguments`; genuine module-goal
+        // tests infer module-strictness. Must be part of the cache key since it
+        // changes the emitted wasm independently of the wrapped source text.
+        const inferModuleStrictArguments = isModuleGoal(category, meta, source);
+
+        const hash = createHash("md5")
+          .update(wrapped)
+          .update(compilerHash)
+          .update(inferModuleStrictArguments ? "msa1" : "msa0")
+          .digest("hex");
         const cachePath = join(CACHE_DIR, `${hash}.wasm`);
         const metaPath = join(CACHE_DIR, `${hash}.json`);
 
@@ -232,11 +242,31 @@ async function processBatch(tests: typeof allTests, pool: CompilerPool) {
           (meta.negative.phase === "parse" || meta.negative.phase === "early" || meta.negative.phase === "resolution");
 
         // Worker writes .wasm + .json directly to disk (no binary over IPC)
-        const result = await pool.compile(wrapped, 20_000, false, undefined, relPath, cachePath, metaPath);
+        const result = await pool.compile(
+          wrapped,
+          20_000,
+          false,
+          undefined,
+          relPath,
+          cachePath,
+          metaPath,
+          undefined,
+          inferModuleStrictArguments,
+        );
         if (result.ok) {
           let earlyErrorCodes: number[] | undefined;
           if (isNegative) {
-            const diagResult = await pool.compile(wrapped, 20_000, true, undefined, relPath);
+            const diagResult = await pool.compile(
+              wrapped,
+              20_000,
+              true,
+              undefined,
+              relPath,
+              undefined,
+              undefined,
+              undefined,
+              inferModuleStrictArguments,
+            );
             if (!diagResult.ok) {
               const ES_EARLY_ERRORS = new Set([1102, 1103, 1210, 1213, 1214, 1359, 1360, 2300, 18050]);
               earlyErrorCodes = ((diagResult as any).errorCodes || []).filter((c: number) => ES_EARLY_ERRORS.has(c));

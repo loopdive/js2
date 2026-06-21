@@ -3,14 +3,14 @@ id: 1098
 title: "Audit and reduce patch-layer accumulation in codegen (155 workarounds, special cases, fallbacks)"
 status: ready
 created: 2026-04-12
-updated: 2026-04-12
+updated: 2026-06-19
 priority: medium
 feasibility: medium
 reasoning_effort: high
 task_type: refactor
 language_feature: compiler-internals
 goal: core-semantics
-sprint: 45
+sprint: Backlog
 es_edition: n/a
 ---
 # #1098 — Audit and reduce patch-layer accumulation in codegen

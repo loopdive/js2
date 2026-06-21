@@ -63,6 +63,7 @@ import {
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
+import { nativeStringRepr } from "./builtin-scaffold.js";
 
 export const STANDALONE_REGEXP_ABI_VERSION = 1;
 
@@ -1087,6 +1088,23 @@ export function tryCompileStandaloneStringSearch(
     return undefined;
   }
 
+  // String-method operand order: subject = receiver, regex = arg.
+  return emitStandaloneRegExpSearchCore(ctx, fctx, expr, propAccess.expression, argExpr);
+}
+
+/**
+ * Operand-explicit core for `@@search` semantics (§22.2.6.13): returns the
+ * match index (f64) or -1. Shared by `String.prototype.search` (subject is the
+ * receiver) and the `re[Symbol.search](str)` protocol form (subject is the
+ * argument) — only the operand wiring differs.
+ */
+function emitStandaloneRegExpSearchCore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  subjExpr: ts.Expression,
+  regexExpr: ts.Expression,
+): ValType | null {
   if (!hasStandaloneRegExpEngine(ctx)) {
     reportStandaloneRegExpUnsupported(ctx, expr, "String.prototype.search without an enabled standalone engine");
     return null;
@@ -1095,7 +1113,7 @@ export function tryCompileStandaloneStringSearch(
   const i32Arr = regexI32ArrayType(ctx);
 
   // emit __regex_search(...) — leaves the i32 match flag on the stack.
-  const emitted = emitRegexSearchCall(ctx, fctx, argExpr, propAccess.expression);
+  const emitted = emitRegexSearchCall(ctx, fctx, regexExpr, subjExpr);
   if (emitted === null) return null;
 
   // matched ? f64(caps[0]) : -1
@@ -1145,9 +1163,27 @@ export function tryCompileStandaloneStringMatch(
     return undefined;
   }
 
-  const flags = staticRegExpFlags(ctx, argExpr);
+  // String-method operand order: subject = receiver, regex = arg.
+  return emitStandaloneRegExpMatchCore(ctx, fctx, expr, propAccess.expression, argExpr);
+}
+
+/**
+ * Operand-explicit core for `@@match` semantics (§22.2.6.8). Shared by
+ * `String.prototype.match` (subject is the receiver, regex is the argument) and
+ * the `re[Symbol.match](str)` protocol form (regex is the receiver, subject is
+ * the argument). Global match collects every [0] substring into a match-vec;
+ * non-global returns the single capture array (`.exec`-shaped).
+ */
+function emitStandaloneRegExpMatchCore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  subjExpr: ts.Expression,
+  regexExpr: ts.Expression,
+): ValType | null {
+  const flags = staticRegExpFlags(ctx, regexExpr);
   if (flags === null) {
-    reportStandaloneRegExpUnsupported(ctx, argExpr, "String.prototype.match with dynamic RegExp flags");
+    reportStandaloneRegExpUnsupported(ctx, regexExpr, "String.prototype.match with dynamic RegExp flags");
     return null;
   }
 
@@ -1171,11 +1207,11 @@ export function tryCompileStandaloneStringMatch(
     const matchVecTypeIdx = ensureRegexMatchVecType(ctx);
     const strTypeIdx = ctx.nativeStrTypeIdx;
 
-    const loaded = loadStandaloneRegExpStruct(ctx, fctx, argExpr);
+    const loaded = loadStandaloneRegExpStruct(ctx, fctx, regexExpr);
     if (loaded === null) return null;
     const { regexpLocal, structTypeIdx } = loaded;
 
-    const subjType = compileExpression(ctx, fctx, propAccess.expression, nativeStringType(ctx));
+    const subjType = compileExpression(ctx, fctx, subjExpr, nativeStringType(ctx));
     if (subjType?.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" } as Instr);
     fctx.body.push({ op: "call", funcIdx: flattenIdx });
     const subjLocal = allocLocal(fctx, `__re_gm_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
@@ -1208,7 +1244,7 @@ export function tryCompileStandaloneStringMatch(
 
   // Non-global match = RegExpExec (§22.2.6.8 step 5) — sticky regexps read
   // and advance lastIndex through the shared exec path.
-  return emitRegexExecArrayCall(ctx, fctx, argExpr, propAccess.expression, {
+  return emitRegexExecArrayCall(ctx, fctx, regexExpr, subjExpr, {
     gyLastIndex: flagsHaveGlobalOrSticky(flags),
   });
 }
@@ -1246,9 +1282,27 @@ export function tryCompileStandaloneStringMatchAll(
     return undefined; // string-arg / non-RegExp form → generic / refusal path
   }
 
-  const flags = staticRegExpFlags(ctx, argExpr);
+  // String-method operand order: subject = receiver, regex = arg.
+  return emitStandaloneRegExpMatchAllCore(ctx, fctx, expr, propAccess.expression, argExpr);
+}
+
+/**
+ * Operand-explicit core for `@@matchAll` semantics (§22.2.6.9). Shared by
+ * `String.prototype.matchAll` and the `re[Symbol.matchAll](str)` protocol form.
+ * Requires a static global (`g`) RegExp — non-global matchAll is a runtime
+ * TypeError, left to the refusal path. Returns an iterable vec-of-capture-arrays
+ * (`undefined` when the form falls through, e.g. non-global, dynamic flags).
+ */
+function emitStandaloneRegExpMatchAllCore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  subjExpr: ts.Expression,
+  regexExpr: ts.Expression,
+): ValType | null | undefined {
+  const flags = staticRegExpFlags(ctx, regexExpr);
   if (flags === null) {
-    reportStandaloneRegExpUnsupported(ctx, argExpr, "String.prototype.matchAll with dynamic RegExp flags");
+    reportStandaloneRegExpUnsupported(ctx, regexExpr, "String.prototype.matchAll with dynamic RegExp flags");
     return null;
   }
   // matchAll REQUIRES a global regex (non-global throws TypeError); only the
@@ -1270,11 +1324,11 @@ export function tryCompileStandaloneStringMatchAll(
   const outerVecTypeIdx = ensureRegexMatchAllVecType(ctx);
   const strTypeIdx = ctx.nativeStrTypeIdx;
 
-  const loaded = loadStandaloneRegExpStruct(ctx, fctx, argExpr);
+  const loaded = loadStandaloneRegExpStruct(ctx, fctx, regexExpr);
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
-  const subjType = compileExpression(ctx, fctx, propAccess.expression, nativeStringType(ctx));
+  const subjType = compileExpression(ctx, fctx, subjExpr, nativeStringType(ctx));
   if (subjType?.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" } as Instr);
   fctx.body.push({ op: "call", funcIdx: flattenIdx });
   const subjLocal = allocLocal(fctx, `__re_gma_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
@@ -1344,19 +1398,6 @@ export function tryCompileStandaloneStringReplace(
     return undefined; // not a RegExp arg → generic string path
   }
 
-  // Replacement must be a STRING (any string expression — `$`-substitution
-  // patterns are expanded at runtime by __regex_get_substitution per
-  // §22.2.6.11, #1913). Function replacers need closure dispatch with
-  // capture-arg marshalling and stay a narrowed refusal.
-  if (!isStringLikeArg(ctx, replExpr)) {
-    reportStandaloneRegExpUnsupported(
-      ctx,
-      replExpr,
-      `String.prototype.${method} with a function (or non-string) replacer (#1913 follow-up)`,
-    );
-    return null;
-  }
-
   const flags = staticRegExpFlags(ctx, reExpr);
   if (flags === null) return undefined;
   const reHasGlobal = flags.includes("g");
@@ -1367,8 +1408,55 @@ export function tryCompileStandaloneStringReplace(
   // For `replace`, global is honored (replace-all when `g`, first-only else).
   const globalReplace = method === "replaceAll" || reHasGlobal;
 
+  // String-method operand order: subject = receiver, regex = arg[0].
+  return emitStandaloneRegExpReplaceCore(
+    ctx,
+    fctx,
+    expr,
+    propAccess.expression,
+    reExpr,
+    replExpr,
+    globalReplace,
+    method,
+  );
+}
+
+/**
+ * Operand-explicit core for `@@replace` semantics (§22.2.6.11). Shared by
+ * `String.prototype.replace`/`replaceAll` (subject is the receiver, regex is
+ * arg[0]) and the `re[Symbol.replace](str, replacement)` protocol form (regex is
+ * the receiver, subject is arg[0]). `globalReplace` is resolved by the caller
+ * from the method (`replaceAll`) and/or the regex `g` flag. `diag` names the
+ * surface (`replace`/`replaceAll`/`@@replace`) for refusal messages.
+ *
+ * Returns a `$NativeString` (no array boundary, no host import). A non-string
+ * replacement (function replacer) stays a narrowed refusal.
+ */
+function emitStandaloneRegExpReplaceCore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  subjExpr: ts.Expression,
+  reExpr: ts.Expression,
+  replExpr: ts.Expression,
+  globalReplace: boolean,
+  diag: string,
+): ValType | null {
+  // Replacement must be a STRING (any string expression — `$`-substitution
+  // patterns are expanded at runtime by __regex_get_substitution per
+  // §22.2.6.11, #1913). Function replacers need closure dispatch with
+  // capture-arg marshalling and stay a narrowed refusal.
+  if (!isStringLikeArg(ctx, replExpr)) {
+    reportStandaloneRegExpUnsupported(
+      ctx,
+      replExpr,
+      `${diag} with a function (or non-string) replacer (#1913 follow-up)`,
+    );
+    return null;
+  }
+
   if (!hasStandaloneRegExpEngine(ctx)) {
-    reportStandaloneRegExpUnsupported(ctx, expr, `String.prototype.${method} without an enabled standalone engine`);
+    reportStandaloneRegExpUnsupported(ctx, expr, `${diag} without an enabled standalone engine`);
     return null;
   }
 
@@ -1386,8 +1474,8 @@ export function tryCompileStandaloneStringReplace(
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
-  // --- subject: flatten the receiver string ---
-  const subjType = compileExpression(ctx, fctx, propAccess.expression, nativeStringType(ctx));
+  // --- subject: flatten the subject string ---
+  const subjType = compileExpression(ctx, fctx, subjExpr, nativeStringType(ctx));
   if (subjType?.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" } as Instr);
   fctx.body.push({ op: "call", funcIdx: flattenIdx });
   const subjLocal = allocLocal(fctx, `__re_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
@@ -1453,9 +1541,37 @@ export function tryCompileStandaloneStringSplit(
   }
   const limitExpr = expr.arguments[1];
 
+  // String-method operand order: subject = receiver, regex = arg[0].
+  return emitStandaloneRegExpSplitCore(
+    ctx,
+    fctx,
+    expr,
+    propAccess.expression,
+    reExpr,
+    limitExpr,
+    "String.prototype.split",
+  );
+}
+
+/**
+ * Operand-explicit core for `@@split` semantics (§22.2.6.14). Shared by
+ * `String.prototype.split` (subject is the receiver, separator regex is arg[0],
+ * limit is arg[1]) and the `re[Symbol.split](str, limit)` protocol form (regex
+ * is the receiver, subject is arg[0], limit is arg[1]). `diag` names the surface
+ * for refusal messages. Returns a native-string vec.
+ */
+function emitStandaloneRegExpSplitCore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  subjExpr: ts.Expression,
+  reExpr: ts.Expression,
+  limitExpr: ts.Expression | undefined,
+  diag: string,
+): ValType | null {
   const meta = staticRegExpPatternFlags(ctx, reExpr);
   if (meta === null) {
-    reportStandaloneRegExpUnsupported(ctx, reExpr, "String.prototype.split with dynamic RegExp separators");
+    reportStandaloneRegExpUnsupported(ctx, reExpr, `${diag} with dynamic RegExp separators`);
     return null;
   }
 
@@ -1464,7 +1580,7 @@ export function tryCompileStandaloneStringSplit(
   if (compileStaticStandaloneRegExp(ctx, meta.pattern, meta.flags, reExpr) === null) return null;
 
   if (!hasStandaloneRegExpEngine(ctx)) {
-    reportStandaloneRegExpUnsupported(ctx, expr, "String.prototype.split without an enabled standalone engine");
+    reportStandaloneRegExpUnsupported(ctx, expr, `${diag} without an enabled standalone engine`);
     return null;
   }
 
@@ -1481,7 +1597,7 @@ export function tryCompileStandaloneStringSplit(
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
-  const subjType = compileExpression(ctx, fctx, propAccess.expression, nativeStringType(ctx));
+  const subjType = compileExpression(ctx, fctx, subjExpr, nativeStringType(ctx));
   if (subjType?.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" } as Instr);
   fctx.body.push({ op: "call", funcIdx: flattenIdx });
   const subjLocal = allocLocal(fctx, `__re_split_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
@@ -1513,7 +1629,7 @@ export function tryCompileStandaloneStringSplit(
       // matches ToUint32 for the integer limits tests exercise.
       fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
     } else if (limType.kind !== "i32") {
-      reportStandaloneRegExpUnsupported(ctx, limitExpr, "String.prototype.split with non-numeric limits");
+      reportStandaloneRegExpUnsupported(ctx, limitExpr, `${diag} with non-numeric limits`);
       return null;
     }
   }
@@ -1528,6 +1644,102 @@ export function tryCompileStandaloneStringSplit(
     return null;
   }
   return { kind: "ref", typeIdx: nstrVecTypeIdx };
+}
+
+/**
+ * `re[Symbol.match](str)` / `re[Symbol.matchAll](str)` / `re[Symbol.search](str)`
+ * — the explicit well-known-symbol protocol forms (§22.2.6) — in standalone
+ * mode (#2161).
+ *
+ * These are the operand-swapped duals of `String.prototype.match/matchAll/
+ * search`: the RegExp is the **receiver** and the string is the **argument**.
+ * The native engine is operand-order agnostic (the lower-level emitters take an
+ * explicit regex expression + subject expression), so each method reuses the
+ * exact same core that backs the corresponding String.prototype method — there
+ * is no separate engine path and no host import.
+ *
+ * Gating mirrors the String.prototype path: the receiver must be a static /
+ * backend-created RegExp value (so the pattern + flags are known at compile
+ * time) and the (first) argument must be string-like. Dynamic-flag receivers
+ * and string-coercion arguments return `undefined`, so the caller falls through
+ * to the existing `__regex_symbol_call` host import (JS-host mode) or the
+ * standalone refusal.
+ *
+ * `@@replace` / `@@split` carry a second operand (replacement / limit). They
+ * reuse the same operand-explicit cores as `String.prototype.replace`/`split`
+ * with the operands swapped (regex = receiver, subject = arg[0]).
+ *
+ * `methodName` is the `@@<id>` sentinel the element-access dispatcher resolved
+ * for the computed Symbol key (e.g. `"@@match"`).
+ */
+export function tryCompileStandaloneRegExpSymbolCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  regexExpr: ts.Expression,
+  methodName: string,
+): ValType | null | undefined {
+  if (!ctx.standalone) return undefined;
+
+  const symbolMethod =
+    methodName === "@@match"
+      ? "match"
+      : methodName === "@@matchAll"
+        ? "matchAll"
+        : methodName === "@@search"
+          ? "search"
+          : methodName === "@@replace"
+            ? "replace"
+            : methodName === "@@split"
+              ? "split"
+              : undefined;
+  if (symbolMethod === undefined) return undefined;
+
+  // Receiver must be a static / backend-created RegExp (pattern + flags known
+  // at compile time); a dynamic / `any`-typed receiver falls through so the
+  // host import can do the fully-dynamic dispatch.
+  const recvType = ctx.checker.getTypeAtLocation(regexExpr);
+  if (!isGlobalRegExpType(recvType) && !isKnownBackendCreatedRegExpReceiver(ctx, regexExpr)) {
+    return undefined;
+  }
+
+  // arg[0] is the subject string in every form; string-coercion
+  // (`re[Symbol.match](42)`) falls through to the host path which does ToString.
+  if (expr.arguments.length < 1) return undefined;
+  const strExpr = expr.arguments[0]!;
+  if (!isStringLikeArg(ctx, strExpr)) return undefined;
+
+  // Operand order: subject = the string ARGUMENT (arg[0]), regex = the RECEIVER.
+  switch (symbolMethod) {
+    case "search":
+      if (expr.arguments.length !== 1) return undefined;
+      return emitStandaloneRegExpSearchCore(ctx, fctx, expr, strExpr, regexExpr);
+    case "match":
+      if (expr.arguments.length !== 1) return undefined;
+      return emitStandaloneRegExpMatchCore(ctx, fctx, expr, strExpr, regexExpr);
+    case "matchAll":
+      if (expr.arguments.length !== 1) return undefined;
+      return emitStandaloneRegExpMatchAllCore(ctx, fctx, expr, strExpr, regexExpr);
+    case "replace": {
+      // `re[Symbol.replace](str, replacement)` — §22.2.6.11. Requires exactly
+      // the (subject, replacement) pair; the replacement string-likeness is
+      // checked inside the core (function replacers stay a narrowed refusal).
+      if (expr.arguments.length !== 2) return undefined;
+      const replExpr = expr.arguments[1]!;
+      // @@replace honors the regex's own `g` flag (replace-all when global,
+      // first-only otherwise); there is no replaceAll distinction here.
+      const flags = staticRegExpFlags(ctx, regexExpr);
+      if (flags === null) return undefined;
+      const globalReplace = flags.includes("g");
+      return emitStandaloneRegExpReplaceCore(ctx, fctx, expr, strExpr, regexExpr, replExpr, globalReplace, "@@replace");
+    }
+    case "split": {
+      // `re[Symbol.split](str[, limit])` — §22.2.6.14. limit is optional.
+      if (expr.arguments.length > 2) return undefined;
+      const limitExpr = expr.arguments[1];
+      return emitStandaloneRegExpSplitCore(ctx, fctx, expr, strExpr, regexExpr, limitExpr, "@@split");
+    }
+  }
 }
 
 // ── #1914: RegExp reflection + match-result shape ─────────────────────
@@ -1589,6 +1801,80 @@ export function tryCompileStandaloneRegExpPropertyRead(
   const { regexpLocal, structTypeIdx } = loaded;
 
   return emitRegExpReflectionFieldRead(ctx, fctx, propName, regexpLocal, structTypeIdx);
+}
+
+/**
+ * Shared core for §22.2.6.14 `RegExp.prototype.toString()` rendering of a
+ * static / backend-created RegExp *receiver expression* — `"/" + source + "/" +
+ * flags` — emitting a native string with ZERO host imports.
+ *
+ * The spec result is `"/" + R.[[OriginalSource]] + "/" + R.[[OriginalFlags]]`,
+ * both of which the native backend already produces (the struct's `source`
+ * field is stored in the spec-escaped §22.2.6.13.1 form, and `__regex_flags_str`
+ * builds the d-g-i-m-s-u-v-y flag string). In standalone / nativeStrings mode
+ * there is no JS host, so the generic ref→string coercion path leaked
+ * `env::Object_toString` (or null-deref'd). This composes the two native field
+ * reads with `__str_concat`.
+ *
+ * Used by the `re.toString()` method dispatch (`tryCompileStandaloneRegExpToString`)
+ * AND by the value→string coercion paths (`String(re)`, `` `${re}` ``) which
+ * would otherwise null-deref or yield `"[object Object]"` (#2161).
+ *
+ * Returns the emitted native-string `ValType`, `null` after a reported refusal
+ * (e.g. a non-backend RegExp), or `undefined` when the expression is not a
+ * static / backend-created RegExp the caller should keep falling through for.
+ */
+export function emitStandaloneRegExpToStringFromExpr(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  regexpExpr: ts.Expression,
+): ValType | null | undefined {
+  if (!ctx.standalone) return undefined;
+  const objType = ctx.checker.getTypeAtLocation(regexpExpr);
+  const nonNull = objType.getNonNullableType?.() ?? objType;
+  if (!isGlobalRegExpType(nonNull)) return undefined;
+  // Only static / backend-created receivers route to the native struct; a
+  // dynamic externref RegExp falls through to the host/refusal path.
+  if (!isStaticStandaloneRegExpCreation(ctx, regexpExpr) && !isKnownBackendCreatedRegExpReceiver(ctx, regexpExpr)) {
+    return undefined;
+  }
+
+  const repr = nativeStringRepr(ctx);
+  if (repr === undefined) return undefined;
+
+  const loaded = loadStandaloneRegExpStruct(ctx, fctx, regexpExpr);
+  if (loaded === null) return null;
+  const { regexpLocal, structTypeIdx } = loaded;
+
+  // result = "/" ++ source ++ "/" ++ flags  (left-folded via __str_concat).
+  // source: struct field read ($AnyString). flags: __regex_flags_str(flags).
+  ensureNativeStringHelpers(ctx);
+  const flagsStrIdx = ensureRegexFlagsStr(ctx);
+  const srcInstrs: Instr[] = [
+    { op: "local.get", index: regexpLocal } as Instr,
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_SOURCE } as Instr,
+  ];
+  const flagsInstrs: Instr[] = [
+    { op: "local.get", index: regexpLocal } as Instr,
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS } as Instr,
+    { op: "call", funcIdx: flagsStrIdx } as Instr,
+  ];
+  // (("/" ++ source) ++ "/") ++ flags
+  let acc = repr.concat(repr.literal("/"), srcInstrs);
+  acc = repr.concat(acc, repr.literal("/"));
+  acc = repr.concat(acc, flagsInstrs);
+  for (const instr of acc) fctx.body.push(instr);
+  return repr.resultType;
+}
+
+export function tryCompileStandaloneRegExpToString(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): ValType | null | undefined {
+  if (!ctx.standalone || propAccess.name.text !== "toString" || expr.arguments.length !== 0) return undefined;
+  return emitStandaloneRegExpToStringFromExpr(ctx, fctx, propAccess.expression);
 }
 
 /**
@@ -1969,15 +2255,38 @@ export function tryCompileStandaloneRegExpMatchResultRead(
  */
 function isStandaloneMatchResultCall(ctx: CodegenContext, expr: ts.Expression): boolean {
   const unwrapped = stripStaticWrapper(expr);
-  if (!ts.isCallExpression(unwrapped) || !ts.isPropertyAccessExpression(unwrapped.expression)) return false;
-  const method = unwrapped.expression.name.text;
-  if (method === "exec") {
-    return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.expression.expression);
+  if (!ts.isCallExpression(unwrapped)) return false;
+  if (ts.isPropertyAccessExpression(unwrapped.expression)) {
+    const method = unwrapped.expression.name.text;
+    if (method === "exec") {
+      return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.expression.expression);
+    }
+    if (method === "match" && unwrapped.arguments.length === 1) {
+      return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.arguments[0]!);
+    }
+    return false;
   }
-  if (method === "match" && unwrapped.arguments.length === 1) {
-    return isKnownBackendCreatedRegExpReceiver(ctx, unwrapped.arguments[0]!);
+  // `re[Symbol.match](s)` (#2161) — the symbol-protocol dual of `s.match(re)`:
+  // a non-global match yields the same `$__regexp_match_vec` ref result, so the
+  // declared local must carry that type too (else indexed reads route through
+  // __extern_get_idx and trap). Receiver is the static/backend RegExp.
+  if (ts.isElementAccessExpression(unwrapped.expression)) {
+    const elem = unwrapped.expression;
+    if (isSymbolMatchKey(elem.argumentExpression) && unwrapped.arguments.length === 1) {
+      return isKnownBackendCreatedRegExpReceiver(ctx, elem.expression);
+    }
   }
   return false;
+}
+
+/** True for the computed key `Symbol.match` (the @@match well-known symbol). */
+function isSymbolMatchKey(arg: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(arg) &&
+    ts.isIdentifier(arg.expression) &&
+    arg.expression.text === "Symbol" &&
+    arg.name.text === "match"
+  );
 }
 
 /** Is `expr` the `null` / `undefined` literal (fine for a ref_null global)? */

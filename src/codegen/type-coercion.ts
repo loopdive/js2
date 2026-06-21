@@ -15,7 +15,7 @@ import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue 
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
-import { ensureLateImport, flushLateImportShifts, registerCoerceType } from "./shared.js";
+import { ensureLateImport, flushLateImportShifts, materializeStructAsObject, registerCoerceType } from "./shared.js";
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -74,6 +74,32 @@ export function emitGuardedFuncRefCast(fctx: FunctionContext, funcTypeIdx: numbe
  * @deprecated No longer needed — coerceType now emits hint strings directly via global.get.
  */
 export type CompileStringLiteralFn = (ctx: CodegenContext, fctx: FunctionContext, value: string) => void;
+
+/**
+ * (#2358) Does a nominal OBJECT-LITERAL struct carry a USER ToPrimitive method —
+ * `valueOf` / `@@toPrimitive` / `toString` — as a struct FIELD (stored as an
+ * eqref/ref closure)? Used to gate the ref-struct→externref materialization:
+ * such objects must cross the boundary as a `$Object` so `__to_primitive` can
+ * dispatch the method once the typeIdx is erased (e.g. inside an `any` param);
+ * plain data structs keep the byte-identical `extern.convert_any`.
+ *
+ * SCOPE: object literals only. A CLASS instance stores its methods as separate
+ * `ClassName_<m>(self)` functions (NOT struct fields), so the field-copy
+ * materializer cannot carry them onto the `$Object`; the class any-param case is
+ * deferred to a follow-up (it has a partial `__call_<m>` / `$__shape_brand`
+ * mechanism that wants its own slice). So this predicate matches FIELDS only.
+ */
+function structHasUserToPrimitive(ctx: CodegenContext, name: string): boolean {
+  const fields = ctx.structFields.get(name);
+  if (fields) {
+    for (const f of fields) {
+      if (f.name === "valueOf" || f.name === "toString" || f.name === "@@toPrimitive") {
+        if (f.type.kind === "ref" || f.type.kind === "ref_null" || f.type.kind === "eqref") return true;
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * Push a string constant onto the Wasm stack using the string_constants global import.
@@ -258,18 +284,28 @@ export function buildVecFromExternref(
         // Save it to a temp local so we can extract each field
         const tmpElem = allocLocal(fctx, `__tuple_src_${fctx.locals.length}`, { kind: "externref" });
         const instrs: Instr[] = [{ op: "local.set", index: tmpElem } as Instr];
-        // For each tuple field, extract from the JS array by index
+        // For each tuple field, extract from the source by index.
         for (let fi = 0; fi < tupleFields.length; fi++) {
           const fieldType = tupleFields[fi]!;
-          // Push the JS array and the index
           instrs.push({ op: "local.get", index: tmpElem } as Instr);
-          if (boxIdx !== undefined) {
+          // Standalone: the pair element is a native `$ObjVec` (e.g. the
+          // `[k, v]` entry built by `__objvec_new`/`__objvec_push`), so its
+          // fields are read positionally with `__extern_get_idx(obj, f64(fi))`.
+          // The string-keyed `__extern_get` casts its key to `$AnyString` and
+          // returns undefined → every pair field read as 0 (the spread-of-
+          // entries bug). Mirror the outer-loop reader choice above. (#2162b)
+          if (useNativeObjVec && getIdxIdx !== undefined) {
             instrs.push({ op: "f64.const", value: fi } as Instr);
-            instrs.push({ op: "call", funcIdx: boxIdx } as Instr);
+            instrs.push({ op: "call", funcIdx: getIdxIdx } as Instr);
           } else {
-            instrs.push({ op: "ref.null.extern" } as Instr);
+            if (boxIdx !== undefined) {
+              instrs.push({ op: "f64.const", value: fi } as Instr);
+              instrs.push({ op: "call", funcIdx: boxIdx } as Instr);
+            } else {
+              instrs.push({ op: "ref.null.extern" } as Instr);
+            }
+            instrs.push({ op: "call", funcIdx: getIdx } as Instr);
           }
-          instrs.push({ op: "call", funcIdx: getIdx } as Instr);
           // Coerce the externref element to the tuple field type
           if (fieldType.kind === "f64" && unboxIdx !== undefined) {
             instrs.push({ op: "call", funcIdx: unboxIdx } as Instr);
@@ -1570,6 +1606,22 @@ export function coerceType(
         return;
       }
     }
+    // (#2358) No explicit hint (plain `any`/externref typing): a nominal object
+    // struct that carries a user ToPrimitive method (`valueOf`/`@@toPrimitive`/
+    // `toString`) must reach the dynamic boundary as a `$Object` so the native
+    // `__to_primitive` helper (which only recognises `$Object`) can reduce it
+    // when the typeIdx is later erased (e.g. inside an `any`-typed parameter).
+    // Materialize it here, where the concrete typeIdx is still known. Plain data
+    // structs (no ToPrimitive method) keep the byte-identical `extern.convert_any`
+    // below — preserving `typeof`/field-read/identity for the common case.
+    if (
+      (ctx.standalone === true || ctx.wasi === true) &&
+      name !== undefined &&
+      structHasUserToPrimitive(ctx, name) &&
+      materializeStructAsObject(ctx, fctx, typeIdx)
+    ) {
+      return;
+    }
     fctx.body.push({ op: "extern.convert_any" });
     // Vec structs (arrays) need Symbol.iterator to be iterable by JS APIs (#854).
     // After extern.convert_any, call __make_iterable to attach Symbol.iterator via sidecar.
@@ -2579,7 +2631,13 @@ export function emitSafeExternrefToF64(ctx: CodegenContext, fctx: FunctionContex
  * This is a local version to avoid circular deps with expressions.ts.
  */
 function emitUndefinedValue(ctx: CodegenContext, fctx: FunctionContext): void {
-  const funcIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+  // (#2029) Standalone / native-strings mode has no JS host to satisfy a
+  // `__get_undefined` import, and `ensureLateImport` does NOT refuse this name —
+  // so without this guard the import LEAKS and the module fails to instantiate
+  // with an empty import object (the `env: module is not an object` linker
+  // error). Mirror the canonical `ensureGetUndefined` guard: undefined collapses
+  // to `ref.null.extern` standalone (indistinguishable from null, by design).
+  const funcIdx = ctx.nativeStrings ? undefined : ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
   if (funcIdx !== undefined) {
     flushLateImportShifts(ctx, fctx);
     fctx.body.push({ op: "call", funcIdx });

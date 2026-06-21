@@ -1,10 +1,11 @@
 ---
 id: 2161
 title: "Standalone RegExp engine conformance residual (~579 tests)"
-status: ready
-sprint: 63
+status: in-progress
+assignee: ttraenkler/sd1
+sprint: 64
 created: 2026-06-15
-updated: 2026-06-15
+updated: 2026-06-19
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -214,3 +215,188 @@ TypedArray and other builtins will also need). The cleanly-isolated wins inside
 (a) are gated on the same `RegExp.prototype`-object representation, so there is
 no tail-end slice to peel off. sdev5 flagged this at the implementation boundary
 rather than half-building the prototype-object representation at session tail.
+
+## Sub-bucket (b), first slice — LANDED (2026-06-17, sdev-regex3)
+
+Re-validated against upstream/main (`fe0e21ba1`). Probed every RegExp form in
+standalone: only the explicit well-known-symbol protocol forms still refused
+(`re[Symbol.match/matchAll/search/replace/split](str)` at
+`calls.ts:~10414`). `RegExp.prototype.test.call(...)` and `String.prototype.*`
+native paths already work, so the prior (a)/(b) split holds: this PR is the
+first slice of (b).
+
+**Shipped — the READ protocol forms** `re[Symbol.match](s)`,
+`re[Symbol.matchAll](s)`, `re[Symbol.search](s)` for static / backend-created
+RegExp receivers route to the native engine, **zero host imports**:
+
+- `src/codegen/regexp-standalone.ts`: extracted operand-explicit cores
+  `emitStandaloneRegExpSearchCore` / `…MatchCore` / `…MatchAllCore` out of the
+  `tryCompileStandaloneStringSearch/Match/MatchAll` functions (which now
+  delegate), then added `tryCompileStandaloneRegExpSymbolCall` that calls those
+  same cores with **swapped operands** (regex = receiver, subject = argument).
+  The native lower-level emitters were already operand-order agnostic, so there
+  is no second engine path. Also taught `isStandaloneMatchResultCall` to
+  recognise the `re[Symbol.match](s)` shape so a `let m = …` local gets the
+  precise `$__regexp_match_vec` ref type (else `m[1]` routes through
+  `__extern_get_idx` and leaks `env::__extern_get` — the bug the runtime probe
+  caught).
+- `src/codegen/index.ts`: mirrored that recognition in
+  `inferStandaloneRegExpMatchArrayType` + `isStaticRegExpMatchArrayCallForImportScan`
+  (the let/const local-type + import-scan inferers).
+- `src/codegen/expressions/calls.ts`: at the standalone `@@`-refusal site, try
+  `tryCompileStandaloneRegExpSymbolCall` first; fall through to the existing
+  refusal (and JS-host `__regex_symbol_call` in host mode) when it returns
+  `undefined`.
+- Tests: `tests/issue-2161-regex-symbol-protocol.test.ts` (8 cases, all
+  standalone + empty importObject). 257 existing regex tests still green
+  (refactor is behaviour-preserving).
+
+**Deferred (still narrowed-refuse, NOT silently wrong):** `@@replace` / `@@split`
+(carry extra replacement / limit operands — their cores still need the
+operand-explicit extraction; next slice), dynamic-flag / `any`-typed receivers
+(fall through to host `__regex_symbol_call`), string-coercion arguments. The
+`RegExp.prototype` reflection bucket (a) remains gated on #2158's prototype-object
+representation. #2161 stays open for those.
+
+## Sub-bucket (b), second slice — LANDED (2026-06-18, sdev-regex3)
+
+Re-validated against upstream/main (`4b0072923`). The prior slice wired the
+READ protocol forms (`@@match`/`@@matchAll`/`@@search`). This slice closes the
+deferred `@@replace`/`@@split` half of bucket (b).
+
+**Shipped — the WRITE/SPLIT protocol forms** `re[Symbol.replace](str, repl)`
+and `re[Symbol.split](str[, limit])` for static / backend-created RegExp
+receivers route to the native engine, **zero host imports**:
+
+- `src/codegen/regexp-standalone.ts`: extracted operand-explicit cores
+  `emitStandaloneRegExpReplaceCore` / `emitStandaloneRegExpSplitCore` out of
+  `tryCompileStandaloneStringReplace` / `tryCompileStandaloneStringSplit` (which
+  now delegate, unchanged behaviour). The cores take explicit `subjExpr` /
+  `reExpr` / (`replExpr` | `limitExpr`) plus a `diag` label for refusal
+  messages — mirroring how match/matchAll/search were factored last slice.
+  Then `tryCompileStandaloneRegExpSymbolCall` adds `@@replace`/`@@split` cases
+  that call those same cores with **swapped operands** (regex = receiver,
+  subject = arg[0], replacement/limit = arg[1]). No second engine path.
+  - `@@replace` honors the receiver's own `g` flag for global-vs-first-only
+    (there is no `replaceAll` distinction in the @@ form); `$n`/`$&`/`$'`
+    substitution patterns expand at runtime via the existing
+    `__regex_get_substitution` path (#1913). A function replacer stays a
+    narrowed refusal (needs closure dispatch with capture marshalling).
+  - `@@split` honors an optional numeric `limit` (arg[1]); the existing
+    `__regex_split` ToUint32 lowering is reused unchanged.
+- `src/codegen/expressions/calls.ts`: unchanged — the standalone `@@`-refusal
+  site already tries `tryCompileStandaloneRegExpSymbolCall` first (added last
+  slice) and falls through to the refusal for forms it returns `undefined` for.
+- No `index.ts` change: `@@replace` returns a `$NativeString` and `@@split`
+  returns the same native-string vec as `String.prototype.split` — neither
+  produces a match-array result that needs the let/const local-type inference
+  the `@@match` form required.
+- Tests: 6 new cases in `tests/issue-2161-regex-symbol-protocol.test.ts`
+  (replace first/global/`$&`-substitution; split count/content/limit), all
+  standalone with an empty importObject asserting no `__regex_symbol_call` /
+  `__extern_get` leak. 14 file cases green; #1539 replace/split + #1913
+  substitution regression suites (43 cases) still green (refactor is
+  behaviour-preserving); host-mode #1328/#1329/#1330/#1830 symbol-protocol
+  (15 cases) unaffected.
+
+**Bucket (b) is now fully landed** for static / backend-created receivers
+(all five @@ forms: match/matchAll/search/replace/split). **Remaining #2161
+work:** (a) `RegExp.prototype` reflection — still gated on #2158's standalone
+prototype-object representation; (c) dynamic / `any`-typed receivers — need the
+runtime-externref regex receiver generalisation (every @@ form falls through to
+host `__regex_symbol_call` today); and the regex-engine feature tail (v-flag
+`\q{}`, dynamic ctor patterns). #2161 stays open for those.
+
+## Slice 7 (2026-06-18, cs-2164) — standalone `RegExp.prototype.toString()`
+
+**Landed.** A standalone-shard re-probe (against `955552ecc`) found `re.toString()`
+leaked `env::Object_toString` — an unsatisfiable host import in `--target
+standalone` — even though both `re.source` and `re.flags` already resolve
+natively (#1914). It fell through the RegExp method dispatch to the generic
+object `toString` path.
+
+**Fix** (`regexp-standalone.ts` + `expressions/calls.ts`): new
+`tryCompileStandaloneRegExpToString` lowers `re.toString()` (§22.2.6.14) to
+`"/" ++ re.source ++ "/" ++ re.flags` — the struct's spec-escaped `source` field
+read (§22.2.6.13.1, already stored escaped) and the `__regex_flags_str(flags)`
+flag-string, composed with `__str_concat` via the shared `nativeStringRepr`
+concat primitive. Returns a native string, **zero host imports**. Gated on
+`ctx.standalone` + a static / backend-created RegExp receiver (a dynamic
+externref receiver falls through to the host/refusal path unchanged); host mode
+is untouched (`re.toString()` still run=6 there). Wired at the RegExp method
+dispatch in `calls.ts`, right after `tryCompileStandaloneRegExpTest`.
+
+**Validation.** New `tests/issue-2161-regex-tostring.test.ts` (7): `/source/flags`
+for flagged + flagless literals, the empty-pattern `/(?:)/` form, escaped-slash
+source, a const-bound receiver, the canonical `dgimsy` flag order, and exact
+host-JS parity across four pattern/flag pairs — all standalone with an empty
+importObject asserting no `Object_toString` / `__extern_*` leak. The 35
+#2161/#2161-matchall/#1474 + 201 #2175/#1914/#1539 regex cases stay green
+(behaviour-preserving). tsc + prettier + biome(error) + stack-balance +
+coercion-sites + any-box gates clean.
+
+**Deferred (separate code paths, NOT this method dispatch):** `String(re)` (still
+null-derefs — the `String()` builtin lowering) and `` `${re}` `` (template-literal
+coercion returns a wrong-length string) both route through value→string
+coercion, not `re.toString()`, and need RegExp-aware coercion in those lowerings
+— a distinct slice. The (a) reflection and (c) dynamic-receiver buckets remain
+as noted above. **#2161 stays open.**
+
+## Slice 8 (2026-06-19, sd1) — standalone `String(re)` + template `` `${re}` `` coercion
+
+**Landed.** Closes the slice-7 deferral: the value→string COERCION paths now
+route through the native RegExp.prototype.toString rendering, matching the
+already-working `re.toString()` method form. Confirmed against `2af57ffc0`:
+
+| form | before | after |
+|---|---|---|
+| `String(/abc/gi)` | runtime null-deref (null string) | `/abc/gi` |
+| `` `x${/abc/gi}y` `` | `x[object Object]y` | `x/abc/giy` |
+| `re.toString()` | `/abc/gi` (slice 7) | unchanged |
+
+**Fix** — extracted a shared operand-explicit core from the slice-7 method
+helper, then wired it into the two coercion sites:
+
+- `src/codegen/regexp-standalone.ts`: factored
+  `emitStandaloneRegExpToStringFromExpr(ctx, fctx, regexpExpr)` out of
+  `tryCompileStandaloneRegExpToString` (§22.2.6.14 → `"/" + source + "/" +
+  flags` via `__regex_flags_str` + `__str_concat`). The method helper now
+  delegates to it; behaviour byte-identical for the `re.toString()` path. Gated
+  on `ctx.standalone` + a static / backend-created RegExp receiver (dynamic
+  externref receivers fall through unchanged).
+- `src/codegen/expressions/calls.ts`: in the `String(...)` builtin lowering,
+  try the core BEFORE `compileExpression` (so the RegExp receiver is compiled
+  by the core, not the generic ref→string `coerceType` that null-deref'd the
+  `$NativeRegExp` struct). Additive — falls through for non-RegExp args, mirrors
+  the adjacent `tryEmitArrayToStringNative` (#2160) String(arr) hook.
+- `src/codegen/string-ops.ts`: in `compileNativeTemplateExpression`, a static /
+  backend-created RegExp span routes through the core (BEFORE `compileExpression`)
+  instead of falling to the `$__any_to_string` `"[object Object]"` path, then
+  applies the shared concat-tail (head/literal). Guarded on
+  `standaloneNativeStrings` (= `noJsHost`), so host + fast-mode-with-host are
+  untouched.
+
+**Validation.** New `tests/issue-2161-regex-string-coercion.test.ts` (13):
+`String(re)` flagged/flagless/empty-pattern/escaped-slash/const-bound/canonical
+dgimsy + 4-pair host-JS parity; `` `${re}` `` head/flagless/leading-no-head/
+two-spans/const-bound + 3-pair host-JS parity — all standalone with an empty
+importObject asserting no `Object_toString` / `__extern_*` / `js-string` leak.
+The 28 #2161 (tostring/symbol-protocol/matchall) + 700 regex regression cases
+(#1539/#1913/#1914/#1911/#1912/#1474/#2175/#1328/#1329/#1330/#1830/regexp/
+regex-bytecode/#682) stay green (refactor is behaviour-preserving). tsc +
+prettier + biome(lint) + stack-balance + coercion-sites + any-box gates clean.
+
+**Still open under #2161:** (a) `RegExp.prototype` reflection — gated on #2158's
+standalone prototype-object representation; (c) dynamic / `any`-typed receivers
+(both coercion forms fall through to host for those); and the regex-engine
+feature tail (v-flag `\q{}`, dynamic ctor patterns). **#2161 stays open.**
+
+## Triage re-probe (2026-06-21, dev-carla) — common patterns verified on upstream/main
+
+Probed against current upstream/main (`--target standalone`, empty/`wasm:js-string`
+imports, no env leak): `re.test`, `re.exec` with capture groups, `String.replace`
+global, `String.match` global, `String.split` with a regex, `re.flags`, and
+sticky (`/y/` + `lastIndex`) **all PASS host-import-free**. So the high-frequency
+RegExp surface is already correct standalone — **no quick dev win remains here**;
+the open residual is the documented feature/representation tail above (v-flag
+`\q{}`, dynamic ctor patterns, `any`-typed receivers). Not claimed.

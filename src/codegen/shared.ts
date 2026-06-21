@@ -224,6 +224,29 @@ export function coerceType(
   _coerceType(ctx, fctx, from, to, toPrimitiveHint);
 }
 
+// ── materializeStructAsObject (#2358) ─────────────────────────────────
+//
+// Reify a nominal object struct (whose ref is on the Wasm stack) into a
+// dynamic `$Object` externref, copying each field as an own-property — so the
+// native `__to_primitive` helper (which only recognises `$Object`) can reduce
+// it across the externref boundary. Implemented in `literals.ts` (needs the
+// per-function emission helpers); registered here to break the
+// type-coercion → literals import cycle. Returns true if it emitted the
+// materialization (struct consumed, `$Object` externref left on the stack),
+// false if it declined (caller falls back to `extern.convert_any`).
+
+type MaterializeStructAsObjectFn = (ctx: CodegenContext, fctx: FunctionContext, structTypeIdx: number) => boolean;
+
+let _materializeStructAsObject: MaterializeStructAsObjectFn = () => false;
+
+export function registerMaterializeStructAsObject(fn: MaterializeStructAsObjectFn): void {
+  _materializeStructAsObject = fn;
+}
+
+export function materializeStructAsObject(ctx: CodegenContext, fctx: FunctionContext, structTypeIdx: number): boolean {
+  return _materializeStructAsObject(ctx, fctx, structTypeIdx);
+}
+
 // ── ensureLateImport / flushLateImportShifts delegates ───────────────
 
 type EnsureLateImportFn = (

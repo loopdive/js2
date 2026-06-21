@@ -23,6 +23,7 @@ import {
   classifyError,
   classifyTestScope,
   findTestFiles,
+  isModuleGoal,
   matchesPathFilter,
   parseMeta,
   shouldSkip,
@@ -575,6 +576,15 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             }
 
             const { source: wrapped, bodyLineOffset: wrapOffset } = wrapTest(source, meta);
+            // (#2119) `wrapTest` injects a synthetic top-level `export function
+            // test()` entry point, which makes TypeScript flag EVERY wrapped
+            // source as a module (`externalModuleIndicator`). The compiler would
+            // then infer module-strictness and unmap `arguments` even for sloppy
+            // `noStrict` script tests, breaking the `arguments-object/mapped/*`
+            // suite. Only genuine module-goal tests should infer module
+            // strictness; pass the script-test signal so the compiler honours
+            // the source's true (sloppy) strictness for non-module tests.
+            const inferModuleStrictArguments = isModuleGoal(category, meta, source);
             const isNegative =
               meta.negative &&
               (meta.negative.phase === "parse" ||
@@ -597,6 +607,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 const result = await multiCompile(vfiles, "./test.ts", {
                   skipSemanticDiagnostics: true,
                   target: TEST262_TARGET,
+                  inferModuleStrictArguments,
                 });
                 const compileRecordMetadata = metadataFromImports(result.imports, false);
                 const reachedRecordMetadata = metadataFromImports(result.imports, true);
@@ -790,6 +801,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 metaPath,
                 label: relPath,
                 target: TEST262_TARGET,
+                inferModuleStrictArguments,
               },
               30_000,
             );
@@ -838,6 +850,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       metaPath,
                       label: relPath + " [poison retry]",
                       target: TEST262_TARGET,
+                      inferModuleStrictArguments,
                     },
                     RETRY_TIMEOUT_MS,
                   ),
@@ -906,6 +919,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       metaPath,
                       label: relPath + " [retry]",
                       target: TEST262_TARGET,
+                      inferModuleStrictArguments,
                     },
                     RETRY_TIMEOUT_MS,
                   ),

@@ -6,7 +6,7 @@ import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
-import { tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
+import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32 } from "../binary-ops.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
@@ -26,6 +26,7 @@ import {
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
+import { getSubviewArrTypeIdx, isSubviewTypeIdx } from "../registry/types.js"; // (#2357/#47) subview write
 import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import {
@@ -64,6 +65,9 @@ import {
 import { emitMappedArgParamSync, emitMappedArgReverseSync } from "./logical-ops.js";
 import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
 import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.js";
+import { getOrRegisterErrorStructType } from "../registry/error-types.js";
+import { ensureObjectRuntime } from "../object-runtime.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { resolveEffectiveStructName } from "../property-access.js";
 import {
   compileStringBuilderAppend,
@@ -2147,6 +2151,98 @@ function emitArrayDestructureFromLocal(
   }
 }
 
+/**
+ * (#2101a R5) Emit an own-field WRITE (`this.code = v` / `inst.code = v`) on an
+ * externref-backed Error subclass, routing through the `$Error_struct.$props`
+ * (fieldIdx 5) open-`$Object` backing instead of the vestigial `$A` struct
+ * (which the receiver is NOT — casting to it traps).
+ *
+ * Lowers to: `props = self.$props; if (props == null) { props =
+ * __new_plain_object(); self.$props = props } __extern_set(props, "code",
+ * box(value))`, returning the RHS as the assignment-expression result.
+ *
+ * Returns the value's ValType on success, or `undefined` when the required
+ * helpers are unavailable (caller falls through to the legacy struct path).
+ */
+function emitExternrefBackedOwnFieldWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  value: ts.Expression,
+  fieldName: string,
+): ValType | null | undefined {
+  ensureObjectRuntime(ctx);
+  const newObjIdx = ctx.funcMap.get("__new_plain_object");
+  const externSetIdx = ensureLateImport(
+    ctx,
+    "__extern_set",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (newObjIdx === undefined || externSetIdx === undefined) return undefined;
+  const errStructIdx = getOrRegisterErrorStructType(ctx);
+
+  // self → a TYPED `(ref $Error_struct)` local, cast ONCE. Reused for both the
+  // `$props` read and the lazy-alloc write-back, avoiding repeated
+  // any.convert_extern/ref.cast round-trips (and their stack-typing pitfalls).
+  const selfResult = compileExpression(ctx, fctx, target.expression, { kind: "externref" });
+  if (!selfResult) {
+    reportError(ctx, target, "Failed to compile externref-backed own-field receiver");
+    return null;
+  }
+  if (selfResult.kind !== "externref") fctx.body.push({ op: "extern.convert_any" } as Instr);
+  const selfStructLocal = allocLocal(fctx, `__ownf_self_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: errStructIdx,
+  });
+  const propsLocal = allocLocal(fctx, `__ownf_props_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "ref.cast", typeIdx: errStructIdx } as Instr);
+  fctx.body.push({ op: "local.set", index: selfStructLocal });
+
+  // props = self.$props (fieldIdx 5)
+  fctx.body.push({ op: "local.get", index: selfStructLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: errStructIdx, fieldIdx: 5 } as Instr);
+  fctx.body.push({ op: "local.tee", index: propsLocal });
+  // if (props == null) { props = __new_plain_object(); self.$props = props }
+  fctx.body.push({ op: "ref.is_null" } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "call", funcIdx: newObjIdx } as Instr,
+      { op: "local.set", index: propsLocal } as Instr,
+      // self.$props = props
+      { op: "local.get", index: selfStructLocal } as Instr,
+      { op: "local.get", index: propsLocal } as Instr,
+      { op: "struct.set", typeIdx: errStructIdx, fieldIdx: 5 } as Instr,
+    ],
+    else: [],
+  } as Instr);
+
+  // __extern_set(props, key, box(value))
+  fctx.body.push({ op: "local.get", index: propsLocal });
+  addStringConstantGlobal(ctx, fieldName);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, fieldName));
+  const valType = compileExpression(ctx, fctx, value);
+  if (!valType) return null;
+  // Box the value to externref for the open-`$Object` store.
+  if (valType.kind !== "externref") {
+    coerceType(ctx, fctx, valType, { kind: "externref" });
+  }
+  // stack: [props, key, value(externref)] — stash the boxed value as the
+  // assignment-expression result before consuming it in the call.
+  const tmpBoxed = allocLocal(fctx, `__ownf_boxed_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: tmpBoxed });
+  fctx.body.push({ op: "call", funcIdx: externSetIdx });
+  // The result is the boxed externref. The common `this.code = 42;` statement
+  // drops it; an `x = (this.code = v)` consumer sees the boxed value (externref
+  // is the uniform own-field representation through this backing).
+  fctx.body.push({ op: "local.get", index: tmpBoxed });
+  return { kind: "externref" };
+}
+
 function compilePropertyAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2474,6 +2570,19 @@ function compilePropertyAssignment(
     }
   }
 
+  // (#2101a R5) Own-field write on an externref-backed Error subclass
+  // (`class A extends Error { code = 0 }`). The instance is the parent's
+  // `$Error_struct` externref, NOT a `$A` WasmGC struct, so the struct.set path
+  // below casts `this` to `$A` and TRAPS at construction. Route the write
+  // through the `$props` backing field (fieldIdx 5) instead: lazily allocate an
+  // open `$Object` on first write, then `__extern_set(props, key, box(value))`.
+  // Standalone only — host mode keeps the host-object machinery.
+  if (ctx.standalone && ctx.classExternrefBackedSet.has(typeName)) {
+    const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName);
+    if (ownWrite !== undefined) return ownWrite;
+    // undefined → not applicable (e.g. helper unavailable); fall through.
+  }
+
   const structTypeIdx = ctx.structMap.get(typeName);
   const fields = ctx.structFields.get(typeName);
   if (structTypeIdx === undefined || !fields) return null;
@@ -2573,9 +2682,15 @@ function compilePropertyAssignmentExternSet(
   }
   fctx.body.push({ op: "local.get", index: valLocal });
 
+  // (#2017) This path is reached only when an accessor descriptor (get/set)
+  // was detected for the property at compile time, so the write is a spec
+  // [[Set]] against an accessor. ESM module code is strict, so a write to a
+  // getter-only accessor must throw a catchable TypeError (§10.1.9) rather than
+  // silently no-op. Route through the strict host setter; getter+setter pairs
+  // and writable data props behave exactly as before.
   const setIdx = ensureLateImport(
     ctx,
-    "__extern_set",
+    "__extern_set_strict",
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [],
   );
@@ -2774,6 +2889,47 @@ function compileElementAssignment(
   }
   const typeIdx = (arrType as { typeIdx: number }).typeIdx;
   const typeDef = ctx.mod.types[typeIdx];
+
+  // (#2357/#47) `$__subview` target (TypedArray subarray): write through to the
+  // SHARED parent buffer at `data[byteOffset + i] = v` (true aliasing). Must run
+  // BEFORE the struct-field check below — a `$__subview` is a 3-field struct so the
+  // 2-field `isVecStructAssign` test is false and the field path would mis-handle
+  // it. Compile-time discriminated by the receiver typeIdx; plain vec arrays never
+  // reach this arm. The receiver ref is already on the stack (from line ~2765).
+  if (typeDef?.kind === "struct" && isSubviewTypeIdx(ctx, typeIdx)) {
+    const subArrTypeIdx = getSubviewArrTypeIdx(ctx, typeIdx);
+    const subArrDef = ctx.mod.types[subArrTypeIdx];
+    if (!subArrDef || subArrDef.kind !== "array") {
+      reportError(ctx, target, "Subview assignment: data is not an array");
+      return null;
+    }
+    const svLocal = allocLocal(fctx, `__sv_set_${fctx.locals.length}`, { kind: "ref_null", typeIdx });
+    fctx.body.push({ op: "local.set", index: svLocal } as Instr);
+    // absolute index = sv.byteOffset + i
+    fctx.body.push({ op: "local.get", index: svLocal } as Instr);
+    fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 2 } as Instr); // byteOffset
+    compileExpression(ctx, fctx, target.argumentExpression, { kind: "i32" });
+    fctx.body.push({ op: "i32.add" } as Instr);
+    const svIdxLocal = allocLocal(fctx, `__sv_idx_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.set", index: svIdxLocal } as Instr);
+    // value: unpack i8/i16 element kind into i32 for the value position (#2159
+    // Slice 1) — `array.set` re-packs into the packed element.
+    const valHint: ValType =
+      subArrDef.element.kind === "i8" || subArrDef.element.kind === "i16" ? { kind: "i32" } : subArrDef.element;
+    const valResult = compileExpression(ctx, fctx, value, valHint);
+    if (valResult && !valTypesMatch(valResult, valHint)) coerceType(ctx, fctx, valResult, valHint);
+    const svValLocal = allocLocal(fctx, `__sv_val_${fctx.locals.length}`, valHint);
+    fctx.body.push({ op: "local.set", index: svValLocal } as Instr);
+    // data[absIdx] = val  (shared backing array → aliases the parent)
+    fctx.body.push({ op: "local.get", index: svLocal } as Instr);
+    fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 } as Instr); // data array
+    fctx.body.push({ op: "local.get", index: svIdxLocal } as Instr);
+    fctx.body.push({ op: "local.get", index: svValLocal } as Instr);
+    fctx.body.push({ op: "array.set", typeIdx: subArrTypeIdx } as Instr);
+    // Assignment is an expression — re-push the value as its result.
+    fctx.body.push({ op: "local.get", index: svValLocal } as Instr);
+    return valHint;
+  }
 
   // Bracket assignment on struct: obj["prop"] = value → struct.set
   // Resolve field name from string/numeric literal, const variable, or constant expression
@@ -5514,6 +5670,18 @@ function compileElementCompoundAssignment(
   rhs: ts.Expression,
   op: ts.SyntaxKind,
 ): ValType | null {
+  // #2045 C.8: compound write `b[i] op= rhs` on a linear-backed Uint8Array must
+  // read-modify-write the linear memory. Without this it fell through to the
+  // GC/externref path below (which materialises the buffer as a value and never
+  // touches linear memory), so `b[0] += 1` silently kept the old byte. Try the
+  // linear read-modify-write first; falls through to GC for any other target.
+  const linU8Compound = tryEmitLinearU8ElementCompound(ctx, fctx, target, () => {
+    // current element value is already on the stack as f64; push rhs, apply op.
+    compileExpression(ctx, fctx, rhs, { kind: "f64" });
+    emitCompoundOp(ctx, fctx, op);
+  });
+  if (linU8Compound !== null) return linU8Compound;
+
   // Compile the object expression
   const objResult = compileExpression(ctx, fctx, target.expression);
   if (!objResult) return null;

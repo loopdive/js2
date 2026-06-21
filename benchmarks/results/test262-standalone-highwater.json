@@ -1,6 +1,8 @@
 {
-  "pass": 21223,
-  "sha": "4c06321eb3960dae3be678b9613f74822a896664",
-  "generated_at": "2026-06-16T07:48:48Z",
+  "pass": 23425,
+  "official_pass": 22290,
+  "official_total": 43135,
+  "sha": "ba0138412cb5b0636e981e808fd5c404f47f2a23",
+  "generated_at": "2026-06-21T02:37:43Z",
   "tolerance": 50
 }

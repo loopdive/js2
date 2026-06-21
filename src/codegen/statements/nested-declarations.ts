@@ -11,11 +11,11 @@ import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 import { isStrictFunction } from "../helpers/is-strict-function.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import {
-  collectFunctionOwnLocals,
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
   promoteAccessorCapturesToGlobals,
 } from "../closures.js";
+import { addFunctionOwnLocals } from "../binding-info.js"; // (#2103) memoized own-locals oracle
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
@@ -228,7 +228,7 @@ export function compileNestedFunctionDeclaration(
   // function body shadow outer references — otherwise a function with its own
   // `var i;` would be treated as capturing the outer `i` (#995).
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(stmt, ownLocals);
+  addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
 
   const referencedNames = new Set<string>();
   for (const s of stmt.body.statements) {
@@ -485,7 +485,7 @@ export function compileNestedFunctionDeclaration(
 
     // Set up `arguments` object if the function body references it
     if (stmt.body && bodyUsesArguments(stmt.body)) {
-      emitArgumentsObject(ctx, liftedFctx, paramTypes, 0, isStrictFunction(stmt));
+      emitArgumentsObject(ctx, liftedFctx, paramTypes, 0, isStrictFunction(stmt, ctx.inferModuleStrictArguments));
     }
 
     if (nativeGenInfo) {
@@ -735,7 +735,13 @@ export function compileNestedFunctionDeclaration(
 
     // Set up `arguments` object if the function body references it
     if (stmt.body && bodyUsesArguments(stmt.body)) {
-      emitArgumentsObject(ctx, liftedFctx, paramTypes, captures.length, isStrictFunction(stmt));
+      emitArgumentsObject(
+        ctx,
+        liftedFctx,
+        paramTypes,
+        captures.length,
+        isStrictFunction(stmt, ctx.inferModuleStrictArguments),
+      );
     }
 
     if (isGenerator) {
@@ -823,6 +829,85 @@ export function compileNestedFunctionDeclaration(
  * If a function fails to compile during hoisting (e.g., uses unsupported features),
  * it is rolled back and will be re-attempted during normal statement compilation.
  */
+/** (#2200) Is `node` a scope boundary for var/function hoisting (a function-like
+ * or the source file)? Annex B B.3.3 only applies to a `function` nested in a
+ * *block* up to the enclosing function/global scope. */
+function isAnnexBScopeBoundary(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isSourceFile(node) ||
+    ts.isModuleBlock(node)
+  );
+}
+
+/** (#2200) Does a Block (or case clause / module body) lexically bind `name` via
+ * a top-level `let`/`const`/class declaration? */
+function blockBindsLexically(stmts: ts.NodeArray<ts.Statement> | ts.Statement[], name: string): boolean {
+  for (const s of stmts) {
+    if (ts.isVariableStatement(s) && (s.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) {
+      for (const d of s.declarationList.declarations) {
+        if (ts.isIdentifier(d.name) && d.name.text === name) return true;
+      }
+    }
+    if (ts.isClassDeclaration(s) && s.name?.text === name) return true;
+  }
+  return false;
+}
+
+/**
+ * (#2200, Annex B B.3.3) Decide whether a block-nested `function` declaration's
+ * web-compat outer var-binding is *cancelled*. Returns the declaring `Block`
+ * (so the caller can record its position range) when the function is block-nested
+ * AND an intervening lexical (`let`/`const`/class) binding for the same name
+ * exists between the block and the enclosing function/global scope, OR a
+ * same-named parameter exists; otherwise `null` (not block-nested, or eligible
+ * for the outer binding — left to the existing unconditional hoist).
+ *
+ * Per §B.3.3.1: the outer binding is created only when replacing the function
+ * with `var F` would not produce an early error — i.e. no intervening lexical
+ * `F` and `F` is not a parameter. Strict-mode functions get no Annex B outer
+ * binding at all, but a *cancelled* binding behaves the same observable way for
+ * case A (reading `F` outside the block throws), so strict mode is not gated
+ * here.
+ */
+function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | null {
+  const name = fnDecl.name?.text;
+  if (!name || !fnDecl.body) return null;
+  const block = fnDecl.parent;
+  // Must be directly inside a Block (not the function body itself, not a case
+  // clause statement list, etc.). A direct function-body decl keeps its hoist.
+  if (!ts.isBlock(block)) return null;
+  if (isAnnexBScopeBoundary(block.parent)) return null; // block IS the fn body → direct decl
+
+  // The block that holds the function may itself carry a sibling lexical shadow.
+  if (blockBindsLexically(block.statements, name)) return block;
+
+  // Walk up from the holding block to the enclosing fn/global, checking each
+  // intervening Block for a lexical binding, and the enclosing function's params.
+  let node: ts.Node = block.parent;
+  while (node && !isAnnexBScopeBoundary(node)) {
+    if (ts.isBlock(node) && blockBindsLexically(node.statements, name)) return block;
+    if (ts.isCaseClause(node) || ts.isDefaultClause(node)) {
+      if (blockBindsLexically(node.statements, name)) return block;
+    }
+    node = node.parent;
+  }
+  // node is now the enclosing function/global boundary. If it is a function with
+  // a parameter named `name`, the Annex B hoist is also cancelled (§B.3.3 param
+  // exclusion).
+  if (node && !ts.isSourceFile(node) && !ts.isModuleBlock(node) && "parameters" in node) {
+    const params = (node as ts.FunctionLikeDeclarationBase).parameters;
+    if (params?.some((p) => ts.isIdentifier(p.name) && p.name.text === name)) return block;
+  }
+  return null;
+}
+
 export function hoistFunctionDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -855,7 +940,7 @@ export function hoistFunctionDeclarations(
       // Capture check: a referenced name that is an outer local (and not an
       // own-local, this/super, or a sibling function) makes this capturing.
       const ownLocals = new Set<string>();
-      collectFunctionOwnLocals(stmt, ownLocals);
+      addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
       const referenced = new Set<string>();
       for (const s of stmt.body.statements) collectReferencedIdentifiers(s, referenced, ownLocals);
       let capturesOuter = false;
@@ -911,6 +996,18 @@ export function hoistFunctionDeclarations(
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
       const funcName = stmt.name.text;
+      // (#2200 Phase 1) Annex B B.3.3 cancellation: if this block-nested function
+      // is ineligible for a web-compat outer var-binding (intervening lexical
+      // shadow or same-named param), record the declaring block's range so a read
+      // of the name OUTSIDE the block throws ReferenceError. The body still
+      // compiles below (the block-local binding must work for in-block calls).
+      const cancelBlock = annexBHoistCancels(stmt);
+      if (cancelBlock) {
+        if (!fctx.annexBCancelled) fctx.annexBCancelled = new Map();
+        const ranges = fctx.annexBCancelled.get(funcName) ?? [];
+        ranges.push({ start: cancelBlock.getStart(), end: cancelBlock.getEnd() });
+        fctx.annexBCancelled.set(funcName, ranges);
+      }
       const hasReservedBodylessEntry = ctx.preRegisteredBodyless?.has(funcName) ?? false;
       const reservedFuncIdx = hasReservedBodylessEntry ? ctx.funcMap.get(funcName) : undefined;
       const reservedEntry =

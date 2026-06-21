@@ -9,12 +9,19 @@
 // max(all ids)+1 (monotonic — never reuses a gap that might be reserved on a
 // branch this scan can't see, e.g. an un-pushed worktree).
 //
-// Usage:  node scripts/next-issue-id.mjs        -> prints e.g. 1745
-//         pnpm run new:issue-id
+// DEPRECATED for allocation (#2531): this script only PREDICTS the next id, it
+// does NOT reserve it — so two callers racing still pick the same number, and
+// the dup only fails in the merge_group (wedging the queue). To allocate, use
+// the ATOMIC reserver instead, which writes a first-push-wins reservation on
+// the orphan ref and re-scans on contention:
 //
-// NOTE: there is still a small window between "pick id" and "push". Pair this
-// with the pre-push #1616 integrity check, which hard-blocks a dup/mismatch
-// before it can reach CI.
+//     node scripts/claim-issue.mjs --allocate     # reserves + prints the id
+//
+// This script remains only as a fast, no-push PREVIEW (≈ `claim-issue.mjs
+// --allocate --dry-run --no-pr-scan`); it does not consult open PRs.
+//
+// Usage:  node scripts/next-issue-id.mjs        -> prints e.g. 1745 (preview only)
+//         pnpm run new:issue-id
 
 import { execSync } from "node:child_process";
 import { readdirSync } from "node:fs";

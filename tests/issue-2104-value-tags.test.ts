@@ -110,3 +110,61 @@ describe("#2104 boxToAny — behaviour preserved end-to-end", () => {
     expect(await run('export function test(): string { const v: any = "hi"; return String(v); }')).toBe("hi");
   });
 });
+
+describe("#42 boxToAny — native-string ref boxes as tag-5 STRING, not tag-6 object", () => {
+  // In standalone/nativeStrings mode a native string is a `ref $AnyString`
+  // (kind "ref"), so boxToAny used to fall through to the generic `ref →
+  // __any_box_ref` arm and box it as a tag-6 OBJECT. That mis-dispatched
+  // `__any_add` (any+any with a string operand took the object-ToString /
+  // numeric arm instead of string concat). The fix routes a native-string ref
+  // to the tag-5 `__any_box_string` path.
+  async function runStandalone(src: string): Promise<number> {
+    const r = await compile(src, { target: "standalone" });
+    expect(r.success, r.success ? "" : `CE: ${JSON.stringify(r.errors)}`).toBe(true);
+    expect(WebAssembly.validate(r.binary), "valid Wasm").toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    return (instance.exports as Record<string, () => number>).run();
+  }
+
+  it("genuine-any string operands concatenate (inline `as any`)", async () => {
+    expect(
+      await runStandalone(
+        'export function run(): number { const c: any = ("foo" as any) + ("bar" as any); return `${c}`.length; }',
+      ),
+    ).toBe(6);
+  });
+
+  it("genuine-any string operands compare equal to the concatenation", async () => {
+    expect(
+      await runStandalone(
+        'export function run(): number { const c: any = ("foo" as any) + ("bar" as any); return c === "foobar" ? 1 : 0; }',
+      ),
+    ).toBe(1);
+  });
+
+  it("typeof of the concatenation is string (tag-5, not tag-6 object)", async () => {
+    expect(
+      await runStandalone(
+        'export function run(): number { const c: any = ("x" as any) + ("y" as any); return typeof c === "string" ? 1 : 0; }',
+      ),
+    ).toBe(1);
+  });
+
+  it("any-typed (non-narrowed) locals concatenate", async () => {
+    // `let`/genuine-any locals are stored as $AnyValue; this also exercises the
+    // operand-coercion path through boxToAny when an operand isn't already boxed.
+    expect(
+      await runStandalone(
+        "function id(x: any): any { return x; } export function run(): number { const a: any = id('foo'); const b: any = id('bar'); const c: any = a + b; return `${c}`.length; }",
+      ),
+    ).toBe(6);
+  });
+
+  it("numeric any+any addition is unaffected (control)", async () => {
+    expect(
+      await runStandalone(
+        "function id(x: any): any { return x; } export function run(): number { const a: any = id(2); const b: any = id(3); const c: any = a + b; return c as number; }",
+      ),
+    ).toBe(5);
+  });
+});

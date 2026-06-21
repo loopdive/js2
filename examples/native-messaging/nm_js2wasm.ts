@@ -84,12 +84,6 @@ function decodeLength(header: Uint8Array): number {
   return header[0] + header[1] * 256 + header[2] * 65536 + header[3] * 16777216;
 }
 
-// Write a 4-byte little-endian frame length prefix to stdout (#1651).
-/** @param {number} len */
-function writeLength(len: number): void {
-  process.stdout.write(new Uint8Array([len & 0xff, (len >> 8) & 0xff, (len >> 16) & 0xff, (len >> 24) & 0xff]));
-}
-
 // Debug telemetry to stderr (fd=2) so it never pollutes the stdout protocol
 // stream. The frame is the 4-byte prefix plus the declared body.
 /** @param {number} declaredLen */
@@ -101,16 +95,25 @@ function logFrameBodyRead(declaredLen: number): void {
 // element loop and written in one go (no subarray / no array.copy).
 /** @param {Uint8Array} src @param {number} start @param {number} runLen */
 function emitRun(src: Uint8Array, start: number, runLen: number): void {
-  const frame = new Uint8Array(runLen + 2);
-  frame[0] = OPEN_BRACKET;
+  // #2526: build the 4-byte LE length prefix + `[run]` body in ONE buffer and
+  // write it with a SINGLE process.stdout.write (one fd_write). Writing the
+  // prefix and body as separate writes lets a streaming receiver misalign on
+  // pipe-chunk boundaries — loopdive/js2#389 (ComponentizeJS works because it
+  // frames atomically; we did not).
+  const bodyLen = runLen + 2; // `[` + run + `]`
+  const out = new Uint8Array(4 + bodyLen);
+  out[0] = bodyLen & 0xff;
+  out[1] = (bodyLen >> 8) & 0xff;
+  out[2] = (bodyLen >> 16) & 0xff;
+  out[3] = (bodyLen >> 24) & 0xff;
+  out[4] = OPEN_BRACKET;
   let k = 0;
   while (k < runLen) {
-    frame[k + 1] = src[start + k];
+    out[5 + k] = src[start + k];
     k = k + 1;
   }
-  frame[runLen + 1] = CLOSE_BRACKET;
-  writeLength(runLen + 2);
-  process.stdout.write(frame);
+  out[4 + runLen + 1] = CLOSE_BRACKET;
+  process.stdout.write(out);
 }
 
 export function main(): void {
@@ -129,10 +132,15 @@ export function main(): void {
 
     if (declaredLen <= FRAME_CHUNK) {
       // Already a single valid JSON message within the cap — echo verbatim.
-      const small = new Uint8Array(declaredLen);
-      if (!readExact(small, declaredLen)) break;
-      writeLength(declaredLen);
-      process.stdout.write(small);
+      // #2526: prefix + body in ONE buffer, ONE process.stdout.write (one
+      // fd_write). Read the body straight into the buffer at offset 4.
+      const out = new Uint8Array(4 + declaredLen);
+      out[0] = declaredLen & 0xff;
+      out[1] = (declaredLen >> 8) & 0xff;
+      out[2] = (declaredLen >> 16) & 0xff;
+      out[3] = (declaredLen >> 24) & 0xff;
+      if (!readAt(out, 4, declaredLen)) break;
+      process.stdout.write(out);
       continue;
     }
 

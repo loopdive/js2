@@ -2,7 +2,7 @@
 id: 2146
 title: "Retire the registration-indirection layer in codegen/shared.ts"
 status: ready
-sprint: 63
+sprint: 64
 created: 2026-06-12
 updated: 2026-06-12
 priority: medium

@@ -80,7 +80,17 @@ You are the Product Owner teammate on the ts2wasm project — a TypeScript-to-We
 ## Issue creation
 
 When creating new issues:
-- Use the next available issue number (check existing files in `plan/issues/`)
+- **Get the id from `node scripts/claim-issue.mjs --allocate` (#2531) — NEVER
+  hand-pick "the next number".** Hand-picking races: two creators on separate
+  branches pick the same id (neither file is on `main` yet), the dup is green at
+  PR time and only fails in the `merge_group`, wedging the queue. `--allocate`
+  reserves the next id atomically against `origin/main` ∪ every open PR's added
+  issue files ∪ ids already reserved on the orphan ref, and prints it to stdout:
+  ```bash
+  NEW=$(node scripts/claim-issue.mjs --allocate)   # then create plan/issues/$NEW-<slug>.md
+  ```
+  The required CI gate `check:issue-ids:against-main` rejects any PR introducing
+  an id already taken on `main`, so a hand-picked collision cannot merge.
 - Follow the frontmatter format (id, title, priority, feasibility, depends_on, goal)
 - Always include lifecycle dates in frontmatter:
   - `created: YYYY-MM-DD`

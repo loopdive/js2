@@ -119,6 +119,7 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // Extern get/set
   if (name === "__extern_get") return { type: "extern_get" };
   if (name === "__extern_set") return { type: "extern_set" };
+  if (name === "__extern_set_strict") return { type: "extern_set_strict" }; // (#2017) strict [[Set]]
 
   // Host strict-equality for two externref operands that are not WasmGC eqrefs
   // (e.g. host functions like `Array === Array`). (#1065)
@@ -311,6 +312,8 @@ function checkJsTypeCoverage(ast: TypedAST): CompileError[] {
 // downgrade from error to warning so they don't block compilation.
 const DOWNGRADE_DIAG_CODES = new Set([
   2304, // "Cannot find name 'X'" — unknown identifiers compiled as externref/unreachable
+  2580, // "Cannot find name 'X'. Do you need to install type definitions for node?" — e.g. `process` under --target wasi, supported natively (node-process-api.ts)
+  2591, // "Cannot find name 'X'. Do you need to install type definitions for a web worker?" — DOM/worker globals codegen handles or stubs
   2339, // "Property 'X' does not exist on type 'Y'" — dynamic property access
   2551, // "Property 'X' does not exist on type 'Y'. Did you mean 'Z'?" — variant of 2339 with suggestion (#613)
   2454, // "Variable 'X' is used before being assigned"

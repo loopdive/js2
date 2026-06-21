@@ -67,6 +67,24 @@ export function passFromReport(reportPath) {
   return pass;
 }
 
+/**
+ * Read the OFFICIAL-scope (no-proposals) pass/total from a merged report —
+ * standard + annex_b only, i.e. the comparable "without proposals" number.
+ * Returns null if the report has no official_summary.
+ */
+export function officialFromReport(reportPath) {
+  try {
+    const report = JSON.parse(readFileSync(reportPath, "utf-8"));
+    const o = report?.official_summary;
+    if (o && typeof o.pass === "number" && typeof o.total === "number") {
+      return { pass: o.pass, total: o.total };
+    }
+  } catch {
+    /* no official_summary — older report shape */
+  }
+  return null;
+}
+
 /** Load the committed high-water mark, or null if it does not exist yet. */
 export function loadHighwater() {
   if (!existsSync(HIGHWATER_PATH)) return null;
@@ -160,8 +178,12 @@ function main() {
     // an explicit re-seed). A net improvement raises the floor so future
     // slides are caught against the new, higher reference.
     if (!mark || pass > mark.pass) {
+      const official = args.report ? officialFromReport(resolve(args.report)) : null;
       const next = {
         pass,
+        // official-scope (no-proposals) count for the statusline / "without
+        // proposals" rate — falls back to absent on older report shapes.
+        ...(official ? { official_pass: official.pass, official_total: official.total } : {}),
         sha: args.sha ?? mark?.sha ?? "unknown",
         generated_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
         tolerance: mark?.tolerance ?? args.tolerance,

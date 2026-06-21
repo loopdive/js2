@@ -242,6 +242,17 @@ the compiled module's linear memory below a 512 MiB cap.
    raw bytes on stdin and produces correctly framed bytes on stdout via
    `process.stdout.write` (a `Uint8Array` prefix + the JSON body).
 
+## Linkable `js2wasm:node-io` shim (`--node-io-shim`, #2524)
+
+By default the stdin/stdout glue is inlined as `wasi_snapshot_preview1.fd_read`
+/ `fd_write` in every module. With `--target wasi --node-io-shim`, the module
+instead imports a stable `js2wasm:node-io` interface (plus its linear memory)
+and links against a small, separately-compiled `node-shim.wasm` that implements
+that interface over WASI — proving the modular linking pattern that generalizes
+to fs/path and to deno/browser shims. See
+[NODE-IO-SHIM.md](./NODE-IO-SHIM.md) for the interface, the memory-ownership
+model, and the Node + wasmtime link steps.
+
 ## Reference hosts in other runtimes
 
 The protocol shape here mirrors the runtime-comparison examples collected at

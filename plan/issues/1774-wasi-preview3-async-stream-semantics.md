@@ -3,7 +3,7 @@ id: 1774
 title: "wasi preview3 async stream semantics for Node stdout/stderr"
 status: ready
 created: 2026-06-01
-updated: 2026-06-02
+updated: 2026-06-19
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: architecture
 area: wasi
 language_feature: wasi
 goal: platform
-sprint: 58
+sprint: Backlog
 depends_on: [1042, 1326, 1575]
 es_edition: n/a
 related: [389, 1651, 1484]

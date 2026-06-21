@@ -53,10 +53,12 @@ permissions:
   actions: write # gh workflow run refresh-baseline.yml (auto-heal)
 
 concurrency:
-  # Serialize the check; never cancel an in-flight one. Cheap job, so a queued
-  # backlog collapses to the latest (which is what we want — latest-wins).
+  # Latest-wins: an alert sweep is idempotent, so collapse a burst of triggers
+  # to the most-recent run. The prior comment said "collapses to the latest"
+  # but the setting was cancel-in-progress:false (which serial-runs each) — this
+  # aligns the setting with the documented intent and cuts redundant runs (#2519).
   group: baseline-floor-staleness-alert
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   check-floor:

@@ -8,7 +8,6 @@ import { forEachChild, ts } from "../../ts-api.js";
 import { collectReferencedIdentifiers } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError, reportErrorNoNode } from "../context/errors.js";
-import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType, restoreLocals, snapshotLocals } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
@@ -19,6 +18,9 @@ import {
 } from "../expressions/assignment.js";
 import { emitCoercedLocalSet, emitThrowTypeError } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
+import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";
+import { reportSilentFallback } from "../fallback-telemetry.js";
+import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
   addIteratorImports,
   ensureI32Condition,
@@ -26,7 +28,12 @@ import {
   nativeStringType,
   resolveWasmType,
 } from "../index.js";
+import { ensureNativeIteratorRuntime } from "../iterator-native.js";
+import { containsLinearU8Allocation, emitLinearU8ArenaMark, linearU8ArenaResetInstrs } from "../linear-uint8-arena.js";
 import { resolveComputedKeyExpression } from "../literals.js";
+import { emitCollectionIteratorVec, ensureMapHelpers, MAP_LAYOUT } from "../map-runtime.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { coercionInstrs } from "../type-coercion.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType } from "../registry/types.js";
 import {
@@ -36,12 +43,9 @@ import {
   emitBoundsCheckedArrayGet,
   valTypesMatch,
 } from "../shared.js";
-import { containsLinearU8Allocation, emitLinearU8ArenaMark, linearU8ArenaResetInstrs } from "../linear-uint8-arena.js";
-import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
-import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import {
-  compileArrayDestructuring,
   arrayDstrNeedsIdentity,
+  compileArrayDestructuring,
   compileExternrefArrayDestructuringDecl,
   compileExternrefObjectDestructuringDecl,
   compileObjectDestructuring,
@@ -52,7 +56,6 @@ import {
   syncDestructuredLocalsToGlobals,
   tryEmitArrayProtoIteratorReadDrive,
 } from "./destructuring.js";
-import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";
 import { adjustRethrowDepth, collectInstrs, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
 import { collectPatternBindingNames } from "./tdz.js";
 
@@ -1212,7 +1215,13 @@ function compileForOfDestructuring(
               if (excludedStrIdx !== undefined) {
                 fctx.body.push({ op: "local.get", index: elemLocal });
                 fctx.body.push({ op: "extern.convert_any" } as Instr);
-                fctx.body.push({ op: "global.get", index: excludedStrIdx });
+                // (#51) `addStringConstantGlobal` stores a `-1` sentinel under
+                // nativeStrings (no host string-constant global); a bare
+                // `global.get -1` crashes binary emit ("global index out of
+                // range — -1"). Materialize the excluded-keys string inline via
+                // the dual-mode helper (inline NativeString externref standalone,
+                // host `global.get` under GC).
+                for (const instr of stringConstantExternrefInstrs(ctx, excludedStr)) fctx.body.push(instr);
                 fctx.body.push({ op: "call", funcIdx: restObjIdx });
                 fctx.body.push({ op: "local.set", index: restIdx });
               }
@@ -2158,14 +2167,10 @@ function compileForOfAssignDestructuringExternref(
       // Push key — string literal for `.prop`, computed value for `[expr]`
       if (ts.isPropertyAccessExpression(targetEl)) {
         const propName = targetEl.name.text;
+        // (#51) Materialize via the dual-mode helper — nativeStrings stores a
+        // `-1` sentinel global so a bare `global.get` crashes binary emit.
         addStringConstantGlobal(ctx, propName);
-        const keyGlobalIdx = ctx.stringGlobalMap.get(propName);
-        if (keyGlobalIdx !== undefined) {
-          fctx.body.push({ op: "global.get", index: keyGlobalIdx } as Instr);
-        } else {
-          // Fallback: skip — string-pool registration should cover all literal names
-          continue;
-        }
+        for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
       } else {
         // ElementAccessExpression
         const keyType = compileExpression(ctx, fctx, targetEl.argumentExpression, { kind: "externref" });
@@ -2379,6 +2384,17 @@ export function compileForOfStatement(ctx: CodegenContext, fctx: FunctionContext
   // index drive but project a different per-iteration value, so they go through
   // compileForOfArrayKeys / compileForOfArrayEntries. All three eliminate the
   // __array_values/__array_keys/__array_entries host imports in standalone/WASI.
+  // (#2162) Native Map/Set for-of in standalone / nativeStrings mode — MUST run
+  // before the array-iterator-receiver detection below. A native collection
+  // (bare `for (x of map)` or `for (x of map.values())` etc.) lowers to the
+  // `$Map` struct, whose `entries` field (a ref to an array) makes
+  // `getArrTypeIdxFromVec` misidentify `$Map` as a vec — so `arrayIteratorReceiver
+  // ForForOf` would wrongly treat the map as an array and iterate garbage. Handle
+  // the collection natively first: materialize the projection (Map default →
+  // `[k, v]` entries, Set default → values; explicit `.keys()/.values()/.entries()`
+  // honoured) into a canonical externref $Vec and drive the array loop over it.
+  if (ctx.nativeStrings && compileForOfNativeCollection(ctx, fctx, stmt, exprTsType)) return;
+
   const arrayIterRecv = arrayIteratorReceiverForForOf(ctx, fctx, stmt);
   if (arrayIterRecv) {
     if (arrayIterRecv.method === "values") {
@@ -2402,6 +2418,270 @@ export function compileForOfStatement(ctx: CodegenContext, fctx: FunctionContext
   if (!compileForOfArrayTentative(ctx, fctx, stmt)) {
     compileForOfIterator(ctx, fctx, stmt);
   }
+}
+
+/**
+ * (#2162) Drive `for (… of <map|set>)` natively in standalone / nativeStrings
+ * mode by materializing the default iterator projection into a canonical
+ * externref `$Vec` and reusing the array for-of loop. Map → `[key, value]`
+ * pairs (`entries`), Set → element list (`values`). Returns `true` when the
+ * subject is a native Map/Set and iteration was emitted, else `false` (caller
+ * continues with the array/iterator paths). A bare `.keys()/.values()/.entries()`
+ * call subject is already handled upstream by `compileNativeCollectionIterator`
+ * via the tentative-array vec path, so this only covers the bare collection.
+ */
+function compileForOfNativeCollection(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForOfStatement,
+  exprTsType: ts.Type,
+): boolean {
+  // Resolve the *receiver* expression and the projection kind. Two subject shapes:
+  //   - bare collection:        `for (x of map)`  → receiver = map, default kind
+  //   - explicit iterator call: `for (x of map.keys())` → receiver = map, kind = keys
+  let receiver: ts.Expression = stmt.expression;
+  let explicitKind: "keys" | "values" | "entries" | undefined;
+  if (ts.isCallExpression(stmt.expression)) {
+    if (stmt.expression.arguments.length !== 0) return false;
+    const callee = stmt.expression.expression;
+    if (!ts.isPropertyAccessExpression(callee)) return false;
+    const m = callee.name.text;
+    if (m !== "keys" && m !== "values" && m !== "entries") return false;
+    receiver = callee.expression;
+    explicitKind = m;
+  }
+
+  // The receiver must be a native Map/Set (its TS type symbol is Map/Set).
+  const recvTsType = ctx.checker.getTypeAtLocation(receiver);
+  const symName = recvTsType.getSymbol()?.getName() ?? recvTsType.aliasSymbol?.name;
+  const isMap = symName === "Map";
+  const isSet = symName === "Set";
+  if (!isMap && !isSet) return false;
+
+  // Default projection: Set → values; Map → `entries` ([k, v] pairs). An explicit
+  // `.keys()/.values()/.entries()` call overrides.
+  const kind: "keys" | "values" | "entries" = explicitKind ?? (isMap ? "entries" : "values");
+
+  // `entries` with a `[k, v]` destructuring binding is driven by a dedicated
+  // native walk that binds the stored key/value directly per live entry — no
+  // intermediate `$ObjVec` pair (whose generic destructuring would route through
+  // the host `__extern_get` and leak imports). Falls back below for non-`[k,v]`
+  // shapes (a single-identifier binding over entries, holes, rest).
+  if (kind === "entries") {
+    if (compileForOfNativeMapEntries(ctx, fctx, stmt, receiver, isSet)) return true;
+    return false;
+  }
+
+  // Confirm the receiver genuinely lowers to the native `$Map` struct (a Map/Set
+  // typed value can still be a host externref in JS-host mode) without leaving
+  // code behind.
+  const bodyLenBefore = fctx.body.length;
+  const localsSnap = snapshotLocals(fctx);
+  const recvType = compileExpression(ctx, fctx, receiver);
+  fctx.body.length = bodyLenBefore;
+  restoreLocals(fctx, localsSnap);
+  if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) return false;
+  if (recvType.typeIdx !== ctx.mapTypeIdx) return false;
+
+  // Build the projection vec, store it in a temp, and iterate it as an array.
+  const vecResult = emitCollectionIteratorVec(ctx, fctx, receiver, kind, /* isSet */ isSet);
+  if (
+    vecResult === undefined ||
+    vecResult === null ||
+    typeof vecResult !== "object" ||
+    (vecResult.kind !== "ref" && vecResult.kind !== "ref_null")
+  ) {
+    // Could not lower (shouldn't happen after the recvType check) — undo and bail.
+    return false;
+  }
+  const vecType: ValType = vecResult;
+  const vecLocal = allocLocal(fctx, `__cof_vec_${fctx.locals.length}`, vecType);
+  fctx.body.push({ op: "local.set", index: vecLocal });
+  compileForOfArrayFromLocal(ctx, fctx, stmt, vecLocal, vecType);
+  return true;
+}
+
+/**
+ * (#2162) Drive `for (const [k, v] of map.entries())` / `for (const [k, v] of map)`
+ * (and the Set `[v, v]` form) natively in standalone / `nativeStrings` mode by
+ * walking the `$Map` entries vector and binding the stored key/value DIRECTLY
+ * into the destructuring targets per live entry — no intermediate `$ObjVec` pair
+ * (whose generic `[k, v]` destructuring would route through the host
+ * `__extern_get` and leak imports). Mirrors `tryCompileNativeCollectionForEach`'s
+ * tombstone-skipping walk and `compileForOfArray`'s block/loop/body-block
+ * break/continue bookkeeping.
+ *
+ * Returns `true` when it emitted the loop; `false` (leaving no code behind) when
+ * the binding is not a 2-element `[k, v]` identifier pattern (holes, rest, a
+ * single-identifier binding over entries, or an assignment target), so the
+ * caller can fall back to the generic path.
+ */
+function compileForOfNativeMapEntries(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForOfStatement,
+  receiver: ts.Expression,
+  isSet: boolean,
+): boolean {
+  if (!ctx.nativeStrings) return false;
+  // Only the `const/let [k, v]` binding form (the dominant Map-entries shape).
+  if (!ts.isVariableDeclarationList(stmt.initializer)) return false;
+  const decl = stmt.initializer.declarations[0]!;
+  if (!ts.isArrayBindingPattern(decl.name)) return false;
+  const elements = decl.name.elements;
+  if (elements.length !== 2) return false;
+  const keyEl = elements[0]!;
+  const valEl = elements[1]!;
+  if (
+    !ts.isBindingElement(keyEl) ||
+    keyEl.dotDotDotToken ||
+    keyEl.initializer ||
+    !ts.isIdentifier(keyEl.name) ||
+    !ts.isBindingElement(valEl) ||
+    valEl.dotDotDotToken ||
+    valEl.initializer ||
+    !ts.isIdentifier(valEl.name)
+  ) {
+    return false;
+  }
+
+  ensureMapHelpers(ctx);
+  if (ctx.mapTypeIdx < 0) return false;
+
+  // Confirm the receiver genuinely lowers to the native `$Map` struct without
+  // leaving code behind (same probe as compileForOfNativeCollection).
+  const probeBody = fctx.body.length;
+  const probeLocals = snapshotLocals(fctx);
+  const recvProbe = compileExpression(ctx, fctx, receiver);
+  fctx.body.length = probeBody;
+  restoreLocals(fctx, probeLocals);
+  if (!recvProbe || (recvProbe.kind !== "ref" && recvProbe.kind !== "ref_null")) return false;
+  if (recvProbe.typeIdx !== ctx.mapTypeIdx) return false;
+
+  const { M_ENTRIES, M_ENTRYCOUNT, F_KEY, F_VALUE, F_HASH, TOMBSTONE_BIT } = MAP_LAYOUT;
+  const isConst = !!(stmt.initializer.flags & ts.NodeFlags.Const);
+  if (isConst) {
+    collectBindingNames(decl.name).forEach((n) => {
+      if (!fctx.constBindings) fctx.constBindings = new Set();
+      fctx.constBindings.add(n);
+    });
+  }
+
+  // Receiver → ref $Map in a temp.
+  const recvType = compileExpression(ctx, fctx, receiver);
+  if (!recvType) return false;
+  const mTmp = allocLocal(fctx, `__mef_m_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.mapTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: mTmp });
+
+  // Bound key/value locals, typed from the binding-element TS types (a numeric
+  // Map key → f64, string → native string ref, etc.).
+  const keyType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(keyEl));
+  const valType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(valEl));
+  const keyLocal = allocLocal(fctx, keyEl.name.text, keyType);
+  const valLocal = allocLocal(fctx, valEl.name.text, valType);
+
+  const iTmp = allocLocal(fctx, `__mef_i_${fctx.locals.length}`, { kind: "i32" });
+  const entryTmp = allocLocal(fctx, `__mef_e_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.mapEntryTypeIdx,
+  });
+
+  // entry = (cast $MapEntry) m.entries[i]
+  const loadEntry: Instr[] = [
+    { op: "local.get", index: mTmp } as Instr,
+    { op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: M_ENTRIES } as unknown as Instr,
+    { op: "local.get", index: iTmp } as Instr,
+    { op: "array.get", typeIdx: ctx.mapEntriesTypeIdx } as unknown as Instr,
+    { op: "ref.cast", typeIdx: ctx.mapEntryTypeIdx } as Instr,
+    { op: "local.set", index: entryTmp } as Instr,
+  ];
+
+  // Externalize a $MapEntry field then coerce to the bound local's type, mirroring
+  // the forEach driver (entry fields are stored anyref / boxed externref).
+  const bindFromEntry = (field: number, targetType: ValType, targetLocal: number): Instr[] => [
+    { op: "local.get", index: entryTmp } as Instr,
+    { op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: field } as unknown as Instr,
+    { op: "extern.convert_any" } as Instr,
+    ...coercionInstrs(ctx, { kind: "externref" }, targetType, fctx),
+    { op: "local.set", index: targetLocal } as Instr,
+  ];
+
+  // i = 0
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: iTmp });
+
+  // Build the loop body (block { loop { body-block } }) — 3 nesting levels, so
+  // adjust break/continue/return depths like compileForOfArray.
+  const savedBody = pushBody(fctx);
+  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! += 3;
+  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! += 3;
+  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth += 3;
+  adjustRethrowDepth(fctx, 3);
+  fctx.breakStack.push(2); // break = exit outer block
+  fctx.continueStack.push(0); // continue = exit body block, then increment
+
+  // if i >= entryCount → break
+  fctx.body.push({ op: "local.get", index: iTmp });
+  fctx.body.push({ op: "local.get", index: mTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: M_ENTRYCOUNT } as unknown as Instr);
+  fctx.body.push({ op: "i32.ge_s" });
+  fctx.body.push({ op: "br_if", depth: 1 });
+
+  // entry = entries[i]; then i++ BEFORE the tombstone/body so a `continue`
+  // (br depth 0 → loop start) and a tombstone-skip both advance the cursor
+  // (mirrors the forEach driver — never re-reads the same slot).
+  fctx.body.push(...loadEntry);
+  fctx.body.push({ op: "local.get", index: iTmp });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: iTmp });
+
+  // tombstone → skip this slot (continue the loop; cursor already advanced).
+  fctx.body.push({ op: "local.get", index: entryTmp });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_HASH } as unknown as Instr);
+  fctx.body.push({ op: "i32.const", value: TOMBSTONE_BIT });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "br_if", depth: 0 });
+
+  // Bind k ← entry.key (Set: value === key), v ← entry.value.
+  fctx.body.push(...bindFromEntry(isSet ? F_VALUE : F_KEY, keyType, keyLocal));
+  fctx.body.push(...bindFromEntry(F_VALUE, valType, valLocal));
+
+  // Compile the user body inside its own block so `continue` (br depth 0 from
+  // inside the body) exits the body block and falls through to the loop's `br`.
+  const savedLoopBody = pushBody(fctx);
+  if (ts.isBlock(stmt.statement)) {
+    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    for (const s of stmt.statement.statements) compileStatement(ctx, fctx, s);
+    restoreBlockScopedShadows(fctx, savedScope);
+  } else {
+    compileStatement(ctx, fctx, stmt.statement);
+  }
+  const bodyInstrs = fctx.body;
+  popBody(fctx, savedLoopBody);
+  fctx.body.push({ op: "block", blockType: { kind: "empty" }, body: bodyInstrs });
+
+  // continue loop (cursor was already advanced above).
+  fctx.body.push({ op: "br", depth: 0 });
+
+  const loopBody = fctx.body;
+  fctx.breakStack.pop();
+  fctx.continueStack.pop();
+  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! -= 3;
+  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! -= 3;
+  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth -= 3;
+  adjustRethrowDepth(fctx, -3);
+  popBody(fctx, savedBody);
+
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+  });
+  return true;
 }
 
 /** #681: an `arr.values()/keys()/entries()` for-of subject resolved to a vec. */
@@ -2511,14 +2791,22 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
     kind: "i32",
   });
   fctx.body.push({ op: "local.get", index: flatLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 });
+  fctx.body.push({
+    op: "struct.get",
+    typeIdx: ctx.nativeStrTypeIdx,
+    fieldIdx: 0,
+  });
   fctx.body.push({ op: "local.set", index: lenLocal });
 
   const offLocal = allocLocal(fctx, `__forof_off_${fctx.locals.length}`, {
     kind: "i32",
   });
   fctx.body.push({ op: "local.get", index: flatLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 });
+  fctx.body.push({
+    op: "struct.get",
+    typeIdx: ctx.nativeStrTypeIdx,
+    fieldIdx: 1,
+  });
   fctx.body.push({ op: "local.set", index: offLocal });
 
   const dataLocal = allocLocal(fctx, `__forof_data_${fctx.locals.length}`, {
@@ -2526,7 +2814,11 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
     typeIdx: ctx.nativeStrDataTypeIdx,
   });
   fctx.body.push({ op: "local.get", index: flatLocal });
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 });
+  fctx.body.push({
+    op: "struct.get",
+    typeIdx: ctx.nativeStrTypeIdx,
+    fieldIdx: 2,
+  });
   fctx.body.push({ op: "local.set", index: dataLocal });
 
   const takeLocal = allocLocal(fctx, `__forof_take_${fctx.locals.length}`, {
@@ -2735,17 +3027,36 @@ function compileForOfArrayTentative(
   return false;
 }
 
+/**
+ * (#2162) Drive the array for-of loop over an already-materialized vec held in a
+ * local (used by the native Map/Set for-of path, which builds the projection vec
+ * itself). Mirrors `compileForOfArray` but skips the expression-compile +
+ * vecLocal store.
+ */
+function compileForOfArrayFromLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForOfStatement,
+  vecLocal: number,
+  vecType: ValType,
+): void {
+  compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
+}
+
 /** Compile for...of over an array using index-based loop (existing behavior) */
 function compileForOfArray(
   ctx: CodegenContext,
   fctx: FunctionContext,
   stmt: ts.ForOfStatement,
   iterableOverride?: ts.Expression,
+  preVec?: { vecLocal: number; vecType: ValType },
 ): void {
   // Compile the iterable expression (vec struct ref). `iterableOverride` is the
-  // inner receiver of a `.values()` call (#681) when present.
+  // inner receiver of a `.values()` call (#681) when present. When `preVec` is
+  // supplied the caller already materialized the vec into a local (#2162 native
+  // Map/Set for-of), so skip the expression compile.
   const bodyLenBefore = fctx.body.length;
-  const vecType = compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
+  const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
     fctx.body.length = bodyLenBefore;
     reportError(ctx, stmt, "for-of requires an array expression");
@@ -2770,9 +3081,11 @@ function compileForOfArray(
   }
   const elemType = arrDef.element;
 
-  // Save vec ref to temp local
-  const vecLocal = allocLocal(fctx, `__forof_vec_${fctx.locals.length}`, vecType);
-  fctx.body.push({ op: "local.set", index: vecLocal });
+  // Save vec ref to temp local. With `preVec` the vec is already in `vecLocal`.
+  const vecLocal = preVec ? preVec.vecLocal : allocLocal(fctx, `__forof_vec_${fctx.locals.length}`, vecType);
+  if (!preVec) {
+    fctx.body.push({ op: "local.set", index: vecLocal });
+  }
 
   // #2065: Array iterators re-read the live length each step (§23.1.5.1), so a
   // body that mutates the array (push/pop/splice/length=…/reassignment, or a
@@ -3201,13 +3514,17 @@ function emitArrayKeysEntriesLoop(
   fctx.body.push({ op: "local.set", index: dataLocal });
 
   // len = vec.length
-  const lenLocal = allocLocal(fctx, `__forof_len_${fctx.locals.length}`, { kind: "i32" });
+  const lenLocal = allocLocal(fctx, `__forof_len_${fctx.locals.length}`, {
+    kind: "i32",
+  });
   fctx.body.push({ op: "local.get", index: vecLocal });
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenLocal });
 
   // i = 0
-  const iLocal = allocLocal(fctx, `__forof_i_${fctx.locals.length}`, { kind: "i32" });
+  const iLocal = allocLocal(fctx, `__forof_i_${fctx.locals.length}`, {
+    kind: "i32",
+  });
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: iLocal });
 
@@ -3348,16 +3665,16 @@ function compileForOfIteratorAssignDestructuring(
 
       // Register string constant for property name
       addStringConstantGlobal(ctx, propName);
-      const strGlobalIdx = ctx.stringGlobalMap.get(propName);
-      if (strGlobalIdx === undefined) continue;
 
       // Refresh getIdx in case addStringConstantGlobal shifted indices
       getIdx = ctx.funcMap.get("__extern_get");
       if (getIdx === undefined) continue;
 
-      // Emit: __extern_get(elem, "propName") -> externref
+      // Emit: __extern_get(elem, "propName") -> externref. (#51) Materialize the
+      // key via the dual-mode helper — nativeStrings stores a `-1` sentinel global
+      // so a bare `global.get` would crash binary emit.
       fctx.body.push({ op: "local.get", index: elemLocal });
-      fctx.body.push({ op: "global.get", index: strGlobalIdx });
+      for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
       fctx.body.push({ op: "call", funcIdx: getIdx });
 
       // Coerce externref to target local's type and set
@@ -3436,10 +3753,9 @@ function compileForOfIteratorAssignDestructuring(
         }
         if (ts.isPropertyAccessExpression(targetElIter)) {
           const propName = targetElIter.name.text;
+          // (#51) Dual-mode key materialization (nativeStrings `-1` sentinel).
           addStringConstantGlobal(ctx, propName);
-          const keyGlobalIdx = ctx.stringGlobalMap.get(propName);
-          if (keyGlobalIdx === undefined) continue;
-          fctx.body.push({ op: "global.get", index: keyGlobalIdx } as Instr);
+          for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
         } else {
           const keyType = compileExpression(ctx, fctx, targetElIter.argumentExpression, { kind: "externref" });
           if (keyType && keyType.kind !== "externref") {
@@ -4031,7 +4347,9 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // Allocate locals for the iterator-step result. __iterator_next now returns a
   // multi-value (i32 done, externref value); resultLocal holds the value, and
   // nextDoneLocal the done flag (#1620 v2 — no $IteratorResult struct).
-  const resultLocal = allocLocal(fctx, `__forof_result_${fctx.locals.length}`, { kind: "externref" });
+  const resultLocal = allocLocal(fctx, `__forof_result_${fctx.locals.length}`, {
+    kind: "externref",
+  });
   const nextDoneLocal = allocLocal(fctx, `__forof_done_raw_${fctx.locals.length}`, { kind: "i32" });
 
   // Declare the loop variable (element type is externref for iterator protocol)
@@ -4306,10 +4624,9 @@ function emitForInMemberTargetWrite(
   // Key
   if (ts.isPropertyAccessExpression(target)) {
     const propName = target.name.text;
+    // (#51) Dual-mode key materialization (nativeStrings `-1` sentinel global).
     addStringConstantGlobal(ctx, propName);
-    const keyGlobalIdx = ctx.stringGlobalMap.get(propName);
-    if (keyGlobalIdx === undefined) return;
-    fctx.body.push({ op: "global.get", index: keyGlobalIdx } as Instr);
+    for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
   } else {
     const keyType = compileExpression(ctx, fctx, target.argumentExpression, {
       kind: "externref",
@@ -4398,9 +4715,13 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     const props = exprType.getProperties();
     if (props.length === 0) return;
     for (const prop of props) {
-      const globalIdx = ctx.stringGlobalMap.get(prop.name);
-      if (globalIdx === undefined) continue;
-      fctx.body.push({ op: "global.get", index: globalIdx });
+      // (#51) Materialize each enumerated key via the dual-mode helper. Under
+      // nativeStrings `stringGlobalMap` holds a `-1` sentinel global, so the old
+      // `global.get <sentinel>` reached binary emit as "global index out of
+      // range — -1". `stringConstantExternrefInstrs` emits the NativeString
+      // inline (externref) standalone and a host `global.get` only under GC.
+      addStringConstantGlobal(ctx, prop.name);
+      for (const instr of stringConstantExternrefInstrs(ctx, prop.name)) fctx.body.push(instr);
       fctx.body.push({ op: "local.set", index: keyLocal });
       compileStatement(ctx, fctx, stmt.statement);
     }

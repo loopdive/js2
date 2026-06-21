@@ -1,10 +1,12 @@
 ---
 id: 2009
 title: "structurally identical struct types share field names at the host boundary — Object.assign/spread/JSON.stringify mislabel keys, spread override order broken"
-status: in-progress
-sprint: 63
+status: done
+assignee: ttraenkler/sen-1
+completed: 2026-06-19
+sprint: 64
 created: 2026-06-10
-updated: 2026-06-15
+updated: 2026-06-19
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -406,6 +408,45 @@ equiv suites identical to main (their incidental FAILs — `spread-rest`,
 `basic-destructuring` "no tests", a couple json cases — are all PRE-EXISTING on
 main, bisected). `tsc --noEmit` clean.
 
+### R3b investigation (cs-2158, 2026-06-18) — acceptance MET; insertion-order is the high-blast remainder
+
+Re-verified on current main: **all three stated acceptance-criteria repros now
+MATCH Node exactly** (`{aa}|{bb}` names, `Object.assign({a:1},{b:2})` →
+`{"a":1,"b":2}`, `{...{x:1,y:2},...{y:3,z:4},x:9}` → `{"x":9,"y":3,"z":4}`). The
+acceptance criteria ("All three repros match Node" + source-order override + no
+perf regression) are satisfied by PR-1/PR-1b/PR-2.
+
+R3b (`{...{x:1,y:2},...{y:3,z:4}}` → `{"y":3,"z":4,"x":1}`, want `{"x":1,"y":3,"z":4}`)
+remains. **Key new finding — a LOWER-blast-radius angle exists but the ordering
+source does not:** the host enumeration order is the **field-name CSV** order,
+NOT the struct slot order — `_structToPlainObject` (runtime.ts:2898) iterates the
+CSV and reads each value via `__sget_<name>` **by name** (slot-independent). So
+reordering only the CSV (leaving slots/getters/dedup/`$shape` untouched) would
+fix R3b with near-zero blast radius — IF a correct insertion-order name list were
+available.
+
+**But the insertion order is NOT recoverable from the `ts.Type` or from symbol
+declaration positions** (both proven wrong here):
+- `tsType.getProperties()` returns last-spread-first (`y,z,x`).
+- Sorting properties by `prop.declarations[0].pos` is ALSO incorrect: it fails
+  when a key re-occurs in a later spread (the winning declaration moves later,
+  but JS insertion order keeps the key at its FIRST occurrence). Verified
+  counterexample: `{...{a:1}, ...{b:2}, ...{a:3}}` → decl-pos sort gives `b,a`,
+  Node gives `a,b`. (`{...{a:1,b:2},...{b:3}}` and `{b:1,...{a:2}}` happen to
+  match by pos, masking the bug — do NOT trust the pos heuristic.)
+
+**Correct fix (the genuine remainder, high blast radius):** JS insertion order is
+a property of the **literal expression**, not the type — it must be computed by
+walking `expr.properties` in source order and, for spreads, each source's own
+keys in order, taking FIRST occurrence. That ordered name list must then drive
+the CSV (cheapest: a per-struct insertion-order name list recorded at
+`compileObjectLiteralForStruct` and consulted by `emitStructFieldNamesExport`
+instead of the slot order). Threading literal-derived order into the shared
+canonical struct's CSV is the scoped-out high-blast-radius change; it also has to
+pick a deterministic order when two literals of the same name-set but different
+insertion order share one canonical type (dedup) — a genuine design decision, not
+a mechanical patch. Left as `it.todo`; #2009 stays in-progress for R3b only.
+
 ### R3b STILL OPEN — spread-result key INSERTION ORDER (issue stays in-progress)
 `{ ...{x:1,y:2}, ...{y:3,z:4} }` now has correct VALUES but stringifies as
 `{"y":3,"z":4,"x":1}` instead of Node's `{"x":1,"y":3,"z":4}`. Root cause: the
@@ -421,3 +462,60 @@ pass) to order an anon object-literal type's fields by JS insertion order
 higher blast radius (shared/canonical struct types, $shape, getters, dedup), so
 scoped OUT of PR-2. Tracked as `it.todo` in `tests/issue-2009.test.ts`. Keep
 #2009 in-progress until R3b lands.
+
+## R3b LANDED (2026-06-19, sen-1) — CSV-reorder, not struct-field reorder
+
+The prior R3b notes assumed the fix had to reorder the spread-result struct's
+**fields** (high blast radius: shared canonical types, `$shape`, getters, dedup).
+It does **not**. The host enumeration order is the **field-name CSV** in
+`__struct_field_names`, which `_structToPlainObject` (runtime.ts) reads BY NAME
+(`__sget_<name>` — slot-independent). So reordering only the CSV restores spec
+enumeration order while leaving slots/getters/dedup/`$shape` byte-identical. The
+struct field SLOT order stays last-spread-first; only the host's *view* of the
+key order changes. This is the lowest-blast-radius angle sd5 (cs-2158) identified.
+
+**Mechanism (4 files, +100/-2):**
+- `CodegenContext.structInsertionOrder: Map<structName, string[]>`
+  (`context/types.ts` + `create-context.ts`) — per anon-literal struct, the
+  field names in JS INSERTION order.
+- `compileObjectLiteralForStruct` (`literals.ts`): after `spreadSources` is
+  built, walk `expr.properties` in source order — named/shorthand/method/accessor
+  props contribute their key; a spread contributes its (already-resolved) source
+  struct's own field names in order. FIRST occurrence fixes a key's position
+  (`{...{a:1},...{b:2},...{a:3}}` → `a,b`). Recorded once per `typeName` (first
+  literal of a deduped canonical type wins → deterministic by compile order).
+- `orderNamesByInsertion(ctx, structName, slotNames)` (`index.ts`): pure permute
+  of `slotNames` into the recorded insertion order; **membership preserved
+  exactly** (never adds/drops a name, so every name still resolves to its
+  getter). No recorded order ⇒ unchanged.
+- Applied at the two CSV-build sites in `index.ts`: the legacy
+  `emitStructFieldNamesExport` arm AND the colliding-`$shape`
+  `resolveSameShapeFieldNameCollisions` arm (the structural-shape grouping key is
+  still slot-order `typeParts`, so same-shape grouping is unaffected; only the
+  enumerated `names`/shape-id CSV is reordered — two colliding structs with the
+  same insertion order now share a shape-id).
+
+**Fixed (asserted in `tests/issue-2009.test.ts`, R3b describe block):** inline +
+named-source two-spread (`{"x":1,"y":3,"z":4}`), leading/trailing named props
+interleaved with spreads, re-occurring-key first-position, Object.keys + for-in
+order via a binding. Plain-literal control unchanged. `tsc --noEmit` clean. The
+object/spread/json/destructuring equiv suites are unchanged vs main (the 4
+`object-mutability`/`object-literal-getters-setters` "setter stores value" /
+"is{Frozen,Sealed,Extensible} stub" FAILs are PRE-EXISTING on base, bisected by
+stashing the src change and re-running — identical 4 fail).
+
+**Known residual (acceptable, deterministic):** when two literals with the same
+field-name SET but DIFFERENT insertion order DEDUP to one canonical struct type
+(e.g. `{x:1,y:2}` and `{...{y:3},...{x:4}}` if the checker normalizes both to
+slot order `x,y`), the FIRST-recorded literal's order wins for both — so the
+second enumerates in the first's order (VALUES always correct, only key order
+differs). A per-instance fix would need `$shape`-style per-instance ordering =
+exactly the high blast radius this approach avoids; rare in practice, so left as
+the documented deterministic choice. The inline `Object.keys({...spread...})`
+direct-argument form still traps ("illegal cast") — a SEPARATE pre-existing
+`Object.keys` inline-spread-argument lowering bug (reproduced on main with the
+src change stashed), NOT an ordering issue; bind to a variable first. Carve
+separately if needed.
+
+All three original acceptance-criteria repros continue to match Node; R3b
+enumeration order now matches too. #2009 closed.

@@ -71,6 +71,7 @@ import {
   paramDefaultNeedsArgc,
 } from "./statements/nested-declarations.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
+import { addFunctionOwnLocals, registerOwnLocalsCollector } from "./binding-info.js"; // (#2103) shared, memoized per-function binding-info oracle
 
 // ── Arrow function callbacks ──────────────────────────────────────────
 
@@ -171,6 +172,12 @@ export function collectFunctionOwnLocals(funcLike: ts.Node, out: Set<string>): v
   }
 }
 
+// (#2103) Back the shared binding-info oracle with the own-locals collector
+// above. Registered once at module load; the oracle memoizes per function node
+// so the repeated per-scope-boundary calls inside the identifier walks below
+// (and across all other lowerings) reuse a single computed set.
+registerOwnLocalsCollector(collectFunctionOwnLocals);
+
 /**
  * Recursively collect `var` declarations (function-scoped) and top-level
  * `function`/`class` declarations from a node tree, without crossing nested
@@ -261,7 +268,7 @@ export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, 
     // expr's own name) to the inner shadow so self-references aren't treated
     // as outer captures.
     const merged = new Set<string>(shadowed ?? []);
-    collectFunctionOwnLocals(node, merged);
+    addFunctionOwnLocals(node, merged); // (#2103) memoized own-locals
     if (ts.isFunctionExpression(node) && node.name) merged.add(node.name.text);
     forEachChild(node, (child) => collectReferencedIdentifiers(child, names, merged));
     return;
@@ -312,7 +319,7 @@ export function collectWrittenIdentifiers(node: ts.Node, names: Set<string>, sha
   }
   if (isFunctionScopeBoundary(node)) {
     const merged = new Set<string>(shadowed ?? []);
-    collectFunctionOwnLocals(node, merged);
+    addFunctionOwnLocals(node, merged); // (#2103) memoized own-locals
     if (ts.isFunctionExpression(node) && node.name) merged.add(node.name.text);
     forEachChild(node, (child) => collectWrittenIdentifiers(child, names, merged));
     return;
@@ -1220,6 +1227,19 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
       if (newFuncIdx !== undefined && newFuncIdx >= ctx.numImportFuncs) {
         return false;
       }
+      // (#28) `new Promise(executor)` — the executor must be invoked by the host
+      // `Promise_new` import (which does `new Promise(_maybeWrapCallable(executor,
+      // 2, …))`). The `__make_callback` host-callback path does NOT round-trip
+      // here: an INLINE executor (`new Promise((res, rej) => …)`) routed through
+      // it produced no callable wrapper, so the executor was silently never
+      // invoked (resolve/reject `undefined`). Compiling the executor as a
+      // first-class CLOSURE instead emits the `__call_fn_2` dispatcher that
+      // `_maybeWrapCallable` uses to make the wasm closure JS-callable — the same
+      // path the working `const exec = …; new Promise(exec)` form already takes.
+      // So treat the Promise executor as a closure value, not a host callback.
+      if (ctorName === "Promise") {
+        return false;
+      }
     }
     return true;
   }
@@ -1454,7 +1474,7 @@ export function compileArrowAsClosure(
   //    outer references — otherwise a closure with its own `var i;` would be
   //    treated as capturing the outer `i` (#995/#996).
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(arrow, ownLocals);
+  addFunctionOwnLocals(arrow, ownLocals); // (#2103) memoized own-locals
   if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
 
   // (#2118) Self-recursive const/let arrow: `const f = (n) => ... f(n-1)`.
@@ -2550,7 +2570,7 @@ export function collectMutatedCaptureNames(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
 ): Set<string> {
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(arrow, ownLocals);
+  addFunctionOwnLocals(arrow, ownLocals); // (#2103) memoized own-locals
   if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
   const written = new Set<string>();
   const body = arrow.body;
@@ -2598,7 +2618,7 @@ export function compileArrowAsCallback(
 
   // 1. Analyze captured variables (scope-aware so own params/var-decls shadow)
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(arrow, ownLocals);
+  addFunctionOwnLocals(arrow, ownLocals); // (#2103) memoized own-locals
   if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
 
   const referencedNames = new Set<string>();
@@ -3641,7 +3661,7 @@ function buildTrampolineThisSlot(
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: objStructTypeIdx } },
           then: throwInstrs, // genuinely no receiver → catchable TypeError
           else: nullThis, // different struct → unchanged passthrough
-        } as unknown as Instr,
+        },
       ]
     : nullThis;
   return [
@@ -3657,7 +3677,7 @@ function buildTrampolineThisSlot(
         { op: "ref.cast", typeIdx: objStructTypeIdx } as Instr,
       ],
       else: elseArm,
-    } as unknown as Instr,
+    },
   ];
 }
 

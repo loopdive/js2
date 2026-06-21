@@ -42,11 +42,15 @@ async function expectAccepted(src: string, target: "standalone" | "wasi" = "stan
 }
 
 describe("#1599 --target standalone refuses dynamic unsupported JSON shapes", () => {
-  it("rejects JSON.stringify of a dynamic object", async () => {
-    await expectRefused(`export function f(o: { a: number }): string { return JSON.stringify(o); }`);
+  it("compiles JSON.stringify of a dynamic object (#2166 PR-A — pure-Wasm __json_stringify_value)", async () => {
+    // PR-A serialises a runtime `$Object` graph with the recursive native
+    // codec instead of refusing (or silently folding the declaration literal).
+    await expectAccepted(`export function f(o: { a: number }): string { return JSON.stringify(o); }`);
   });
 
-  it("rejects JSON.stringify of a dynamic array", async () => {
+  it("still rejects JSON.stringify of a dynamic array (closed typed-vec — PR-A2 sub-slice)", async () => {
+    // Arrays use the closed `__vec_*` structs, not `$ObjVec`, so they stay on
+    // the refusal path until the array sub-slice (PR-A2) lands.
     await expectRefused(`export function f(a: number[]): string { return JSON.stringify(a); }`);
   });
 
@@ -58,21 +62,27 @@ describe("#1599 --target standalone refuses dynamic unsupported JSON shapes", ()
     await expectAccepted(`export function f(n: number): string { return JSON.stringify(n); }`);
   });
 
-  it("rejects dynamic JSON.parse text", async () => {
-    await expectRefused(`export function f(s: string): number { return JSON.parse(s).x; }`);
+  it("compiles dynamic JSON.parse text (PR-C codec, no longer refused)", async () => {
+    // #2166 PR-C: a runtime-string `JSON.parse` now routes to the pure-Wasm
+    // recursive-descent `__json_parse_text` codec (host-import-free), so a
+    // dynamic-text parse + property read compiles instead of refusing.
+    await expectAccepted(`export function f(s: string): number { return JSON.parse(s).x; }`);
   });
 
   it("compiles JSON.parse of a static string literal property read", async () => {
     await expectAccepted(`export function f(): number { return JSON.parse('{"x":42}').x; }`);
   });
 
-  it("also refuses under --target wasi", async () => {
-    await expectRefused(`export function f(o: { a: number }): string { return JSON.stringify(o); }`, "wasi");
-    await expectRefused(`export function f(s: string): number { return JSON.parse(s).x; }`, "wasi");
+  it("still refuses a dynamic array (closed typed-vec) stringify under --target wasi", async () => {
+    // A dynamic array (closed typed-vec) still refuses (PR-A2 follow-up). A
+    // dynamic JSON.parse text now compiles under wasi too (PR-C, host-import-
+    // free — covered by the #2166 PR-C wasi test).
+    await expectRefused(`export function f(a: number[]): string { return JSON.stringify(a); }`, "wasi");
+    await expectAccepted(`export function f(s: string): number { return JSON.parse(s).x; }`, "wasi");
   });
 
   it("emits no env::JSON_* import when refused", async () => {
-    const r = await compile(`export function f(o: { a: number }): string { return JSON.stringify(o); }`, {
+    const r = await compile(`export function f(a: number[]): string { return JSON.stringify(a); }`, {
       target: "standalone",
     });
     expect(r.success).toBe(false);

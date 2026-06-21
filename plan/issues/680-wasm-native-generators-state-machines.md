@@ -262,3 +262,29 @@ Validation:
   the state struct causes silent data corruption on resume. Add an
   assertion: every local read in segment N must come from either
   (a) a wasm local set in the same segment or (b) a struct field.
+
+### Measurement note (2026-06-19, sdev-ctorval re-ground of task #69)
+
+The `function-body.ts:1009` diagnostic ("native generator lowering currently
+supports only sequential numeric yields") is now **largely vestigial** and is a
+**0-flip** target on real test262:
+
+- Native generators now lower yields inside `while`/`for`/`if`/`try-catch`/
+  `switch`, `yield*` delegation (#2170), string yields (#2171 — done), and
+  numeric/boolean/undefined yields (booleans/undefined coerce to f64).
+- The only remaining plan-bail is **non-numeric / non-string / mixed-type
+  yields** (`yield {obj}`, `yield [arr]`, `yield 1; yield "a"`) — these need the
+  generator state-machine's yield ValType widened to a boxed `externref`/`anyref`
+  element rep (state-struct field types + result struct + resume fn + spill
+  machinery). Architect-scale.
+- **Measured impact: 0 / 350** sampled generator/iterator test262 files (under
+  `--target standalone`) hit the seq-numeric-yield CE. The real generator
+  residual is an ~88-file long tail of **distinct per-test `result.value`/
+  `result.done` runtime-semantics mismatches**, NOT the codegen bail — each a
+  separate small bug, not one clusterable slice.
+
+Conclusion: do NOT invest in widening the yield element rep for conformance —
+it flips ~0. The "sequential numeric yields" harvest label was misleading (it
+appeared in a sampled error string but is not a meaningfully-occurring gate, same
+class as the #68 BigInt64Array_new mislabel). If non-numeric yields are wanted
+for completeness, treat as a low-priority #680 follow-up, not a conformance slice.

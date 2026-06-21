@@ -1,0 +1,72 @@
+name: Auto-park merge_group CI failures
+
+# WHY (#2547): test262 now runs only in the merge_group (the #2519 slim-down),
+# so a PR can be fully green at PR-time yet carry a REAL test262/quality
+# regression that only surfaces when the merge queue validates it on the merged
+# state. GitHub ejects the PR, but `auto-enqueue` sees it is still PR-green and
+# re-adds it — it cycles forever, burning a ~15-minute merge_group CI run every
+# lap. This workflow breaks the loop: when a required workflow concludes
+# `failure` for a `merge_group` run, it parks the offending PR with the `hold`
+# label (which enqueue-green-prs.mjs skips via HOLD_LABELS) and posts one
+# idempotent comment.
+#
+# CRITICAL — REAL FAILURE vs CANCELLATION (the #1 footgun; see memory
+# project_merge_queue_requeue_cancels_run). When the queue rebuilds a group
+# (membership change) it CANCELS the in-flight runs, which GitHub ALSO surfaces
+# as a run-level `failure` conclusion but with ZERO failed JOBS. Parking on
+# those would wrongly hold healthy, merely-re-grouped PRs. So the script does
+# NOT trust the run-level conclusion: it fetches the run's jobs and parks ONLY
+# when >= 1 job has conclusion == "failure". 0 failed jobs => cancellation =>
+# do nothing. The job-level guard is the entire point of routing through the
+# helper script rather than reacting to `conclusion` inline.
+#
+# This is ADDITIVE — it does not modify auto-enqueue / queue-unstick /
+# merge-group-sweeper. Labelling + commenting do not need to trigger a
+# downstream workflow, so the default GITHUB_TOKEN is sufficient (no App token).
+
+on:
+  workflow_run:
+    # The workflows that produce the required merge_group checks: Test262
+    # Sharded (cheap gate, merge shard reports, check for test262 regressions)
+    # and CI (quality, equivalence-gate, linear-tests). Both run in the
+    # merge_group; a failure in either is a genuine merged-state regression.
+    workflows: ["Test262 Sharded", "CI"]
+    types: [completed]
+
+permissions:
+  pull-requests: write # add label + comment
+  issues: write # labels live on the issues API
+  actions: read # read the run's jobs to distinguish failure vs cancellation
+
+concurrency:
+  # Serialise per offending run so two completion events for the same run never
+  # double-act; the script is idempotent regardless (hold-label guard).
+  group: auto-park-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  park:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Gate at the workflow level FIRST: only merge_group runs that concluded
+    # failure are candidates. The script then does the real-vs-cancellation
+    # job-level check (a run-level failure can still be a cancellation).
+    if: >-
+      github.event.workflow_run.event == 'merge_group' &&
+      github.event.workflow_run.conclusion == 'failure'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/auto-park-merge-group-failure.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Self-check the parking logic
+        run: node scripts/auto-park-merge-group-failure.mjs --self-check
+      - name: Park the offending PR (only on a genuine job failure)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/auto-park-merge-group-failure.mjs "${{ github.event.workflow_run.id }}"

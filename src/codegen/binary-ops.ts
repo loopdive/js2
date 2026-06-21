@@ -41,6 +41,7 @@ import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringImports, addUnionImports, resolveNativeTypeAnnotation, resolveWasmType } from "./index.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts } from "./shared.js";
+import { isLogicalAssignNamedEvalNameRead, resolveStructNameForExpr } from "./property-access.js";
 import { compileStringBinaryOp } from "./string-ops.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 
@@ -1010,14 +1011,51 @@ export function compileBinaryExpression(
   // keep their existing handling.
   const isStringOrNullableString = (t: ts.Type): boolean =>
     isStringType(t) || getNullablePrimitiveInfo(t)?.primitiveKind === "string";
+
+  // (#2192) A caught Error's `.message`/`.name`/`.stack` read in standalone/WASI
+  // lowers (via the property-access `$Error`-struct guard) to a native-string
+  // ref — but the receiver `e` is typed `any` (the `catch (e)` binding), so the
+  // operand's *TS* type is `any` and the string-equality dispatch below misses
+  // it, falling through to `ref.eq` (struct identity → always false for equal
+  // content). So `e.message === "hi"` was false even though the string is right
+  // (`const m = e.message; m === "hi"` worked because the typed local re-typed
+  // it to `string`). Recognise the property-read shape at the AST level and
+  // treat it as a string operand so the comparison routes to `__str_equals`.
+  const isStandaloneErrorStringPropRead = (node: ts.Expression): boolean => {
+    if (!(ctx.standalone || ctx.wasi)) return false;
+    if (!ts.isPropertyAccessExpression(node)) return false;
+    const p = node.name.text;
+    if (p !== "message" && p !== "name" && p !== "stack") return false;
+    const recv = node.expression;
+    if (!ts.isIdentifier(recv)) return false;
+    const sym = ctx.checker.getSymbolAtLocation(recv);
+    const decl = sym?.valueDeclaration ?? sym?.declarations?.[0];
+    return decl !== undefined && ts.isVariableDeclaration(decl) && ts.isCatchClause(decl.parent);
+  };
+  // (#2201) ES §13.15.2 NamedEvaluation: `id.name` where `id` is the target of a
+  // logical-assignment with an anonymous fn/arrow/class RHS (`id &&=/||=/??= fn`)
+  // lowers (via the property-access `.name` static resolver) to a native-string
+  // ref, but the receiver `id` is typed `number`/`any`, so the operand's *TS*
+  // type isn't `string` and the string-equality dispatch below misses it,
+  // falling through to `ref.eq` (struct identity → always false for equal
+  // content). Recognise the read shape at the AST level so `id.name === "x"`
+  // routes to content-based string equality.
+  const leftIsStrLike =
+    isStringOrNullableString(leftTsType) ||
+    isStandaloneErrorStringPropRead(expr.left) ||
+    isLogicalAssignNamedEvalNameRead(ctx, expr.left);
+  const rightIsStrLike =
+    isStringOrNullableString(rightTsType) ||
+    isStandaloneErrorStringPropRead(expr.right) ||
+    isLogicalAssignNamedEvalNameRead(ctx, expr.right);
   if (
     ctx.nativeStrings &&
     ctx.nativeStrTypeIdx >= 0 &&
     isEqualityOp &&
     !wrapperEquality &&
-    isStringOrNullableString(leftTsType) &&
-    isStringOrNullableString(rightTsType) &&
-    // At least one side is the union form (else the plain-string path below handles it)
+    leftIsStrLike &&
+    rightIsStrLike &&
+    // At least one side is the union/error-read/named-eval form (else the plain-string path below handles it)
     (!isStringType(leftTsType) || !isStringType(rightTsType))
   ) {
     return compileStringBinaryOp(ctx, fctx, expr, op);
@@ -1035,6 +1073,22 @@ export function compileBinaryExpression(
   if (!wrapperEquality && op === ts.SyntaxKind.PlusToken && isStringType(rightTsType) && !isBigIntType(leftTsType)) {
     return compileStringBinaryOp(ctx, fctx, expr, op);
   }
+  // (#2503b) The reversed shape `any == "lit"` (a non-numeric/`any` LEFT against
+  // a statically string-typed RIGHT) is deliberately NOT routed to
+  // `compileStringBinaryOp` here. A pure string-content compare would break
+  // §7.2.15 whenever the `any` actually holds a non-string at runtime:
+  //   - a number: `5 == "5.0"` must be `true` via ToNumber, not `false` via
+  //     `String(5) === "5.0"`;
+  //   - null / undefined: `null == "ab"` is always `false` (never coerces);
+  //   - an object: ToPrimitive then recurse.
+  // Routing on the *static* type alone (as a mirror of the left-string arm)
+  // mis-coerced all three, which is the −3 test262 regression of the first
+  // attempt. Instead the native-string ref operand is boxed to externref by the
+  // loose-equality guard in the struct-ref block below, and the standalone
+  // abstract-equality cascade (~line 1990) dispatches on the *runtime* tag
+  // (string⇄string content compare, string⇄number ToNumber, nullish guard,
+  // Object→ToPrimitive). The left-string arm above already handles a statically
+  // string-typed LEFT (where a content/§7.2.15-aware compare IS correct).
 
   // BigInt operations — handle both pure bigint and mixed bigint/number cases
   if (isBigIntType(leftTsType) || isBigIntType(rightTsType)) {
@@ -1111,7 +1165,7 @@ export function compileBinaryExpression(
         //      (trunc_sat_f64_s(nf) == bi)
         // integral & finite check (NaN/±Inf fail nearest==self or the range test)
         fctx.body.push({ op: "local.get", index: nf });
-        fctx.body.push({ op: "f64.nearest" } as unknown as Instr);
+        fctx.body.push({ op: "f64.nearest" });
         fctx.body.push({ op: "local.get", index: nf });
         fctx.body.push({ op: "f64.eq" }); // integral?
         // range low: nf >= -2^63 (= -9223372036854775808). Written as
@@ -1762,8 +1816,53 @@ export function compileBinaryExpression(
         return { kind: "i32" };
       }
 
-      // For numeric, comparison, and loose equality ops: coerce struct refs → f64 via valueOf
-      if (isNumericOp || isEqOp || isNeqOp) {
+      // (#2503b) Loose equality `==`/`!=` between a native-string ref and an
+      // externref (`any`/object) operand: do NOT ToNumber-coerce the string (the
+      // `isNumericOp || isEqOp || isNeqOp` block below would, turning a
+      // non-numeric string into NaN → `any == "ab"` wrongly false). The strict
+      // `===`/`!==` counterpart is already handled above by the #1914 mixed
+      // externref+native-string arm; loose equality has no such arm and fell
+      // straight into the numeric coercion. Box the string ref to externref so
+      // BOTH operands are externref, then fall through to the standalone
+      // abstract-equality cascade (~line 1990), which dispatches on the runtime
+      // tag: string⇄string content compare, string⇄number ToNumber (§7.2.15
+      // steps 4-7), nullish guard (`null == "ab"` → false), Object→ToPrimitive.
+      // This is what makes `any == "lit"` order-independent with the working
+      // `"lit" == any` (left-string arm) WITHOUT the over-broad static routing
+      // that regressed number-holding `any` (the −3, #2503b first attempt).
+      const isLooseEqNeq = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
+      const otherEqType = leftIsRef ? rightType : leftType;
+      if (
+        isLooseEqNeq &&
+        // A wrapper object (`new Boolean(true)`, `new Number(n)`, `new String(s)`)
+        // is NOT a plain primitive — its loose equality has dedicated
+        // ToPrimitive/identity handling in the wrapper arm further down (~line
+        // 2371). Excluding it here keeps `"1" == new Boolean(true)` on that path
+        // (#1910d); the primitive-tag cascade does not reduce a wrapper struct.
+        !wrapperEquality &&
+        ctx.nativeStrings &&
+        ctx.anyStrTypeIdx >= 0 &&
+        otherEqType.kind === "externref" &&
+        ((leftIsRef && isStringType(leftTsType)) || (rightIsRef && isStringType(rightTsType)))
+      ) {
+        // Box the native-string ref operand → externref (extern.convert_any).
+        // Stack is [left, right]; right is on top.
+        if (rightIsRef) {
+          coerceType(ctx, fctx, rightType, { kind: "externref" });
+          rightType = { kind: "externref" };
+        }
+        if (leftIsRef) {
+          const tmpR = allocTempLocal(fctx, rightType);
+          fctx.body.push({ op: "local.set", index: tmpR });
+          coerceType(ctx, fctx, leftType, { kind: "externref" });
+          fctx.body.push({ op: "local.get", index: tmpR });
+          releaseTempLocal(fctx, tmpR);
+          leftType = { kind: "externref" };
+        }
+        // Both operands are now externref — fall through to the externref
+        // equality cascade below (does NOT re-enter this struct-ref block).
+      } else if (isNumericOp || isEqOp || isNeqOp) {
+        // For numeric, comparison, and loose equality ops: coerce struct refs → f64 via valueOf
         // Per JS spec, binary + uses ToPrimitive with hint "default",
         // while other numeric/comparison ops use hint "number".
         const hint: "number" | "default" = op === ts.SyntaxKind.PlusToken ? "default" : "number";
@@ -1977,6 +2076,16 @@ export function compileBinaryExpression(
     const noJsHost = ctx.standalone === true || ctx.wasi === true;
     if (noJsHost && (leftType.kind === "externref" || rightType.kind === "externref")) {
       const EQ_HEAP = -19; // WasmGC `eq` abstract heap type (signed LEB 0x6d)
+      // (#1910 R1) §7.2.13 IsLooselyEqual steps 11-12 — the Object↔primitive arm
+      // is LOOSE-only (strict `===` never coerces, §7.2.16). Register the native
+      // ToPrimitive engine BEFORE `addUnionImports` / the typeof funcIdx reads so
+      // any late imports it adds can't desync the in-progress body — this is the
+      // #1890 finalization-shift class, and doing it after the funcIdx reads
+      // corrupted the strict `===` path (#1776 isSameValue regressed). Gated on
+      // `isLoose` so the strict path is byte-identical to before.
+      const isLoose =
+        !isStrict && (op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken);
+      if (isLoose) ensureObjectRuntime(ctx);
       addUnionImports(ctx);
       const typeofNum = ctx.funcMap.get("__typeof_number")!;
       const typeofBool = ctx.funcMap.get("__typeof_boolean")!;
@@ -1996,6 +2105,43 @@ export function compileBinaryExpression(
         coerceType(ctx, fctx, leftType, { kind: "externref" });
       }
       fctx.body.push({ op: "local.set", index: lTmp });
+
+      // (#1910 R1) §7.2.13 steps 11-12 — reduce an Object operand to a primitive
+      // for LOOSE equality. We overwrite lTmp/rTmp in place with
+      // ToPrimitive(operand, default) when EXACTLY ONE side is an Object:
+      //   - both Objects → SameType(x,y) (step 1) → IsStrictlyEqual = reference
+      //     identity, NEVER ToPrimitive (so we must NOT reduce — the eqref arm at
+      //     the bottom of the cascade handles it). The XOR gate preserves this.
+      //   - neither Object → no reduction (the `if` is false), primitives flow on.
+      // `__to_primitive` is the identity on a primitive (its leading
+      // returnIfPrimitive guard returns null/number/boolean/string unchanged), so
+      // reducing BOTH operands inside the one-object branch only transforms the
+      // object side; the primitive side is untouched. The single ToPrimitive call
+      // matches the spec's single recursion: after it both operands are primitive
+      // and the recursion bottoms out in the number/string/bigint/boolean arms.
+      const toPrimIdx = ctx.funcMap.get("__to_primitive");
+      const typeofObject = ctx.funcMap.get("__typeof_object");
+      if (isLoose && toPrimIdx !== undefined && typeofObject !== undefined) {
+        const reduceOperand = (externLocal: number): Instr[] => [
+          { op: "local.get", index: externLocal },
+          { op: "ref.null.extern" } as Instr, // default hint
+          { op: "call", funcIdx: toPrimIdx } as Instr,
+          { op: "local.set", index: externLocal },
+        ];
+        fctx.body.push(
+          // lIsObj XOR rIsObj  ≡  lIsObj !== rIsObj
+          { op: "local.get", index: lTmp },
+          { op: "call", funcIdx: typeofObject } as Instr,
+          { op: "local.get", index: rTmp },
+          { op: "call", funcIdx: typeofObject } as Instr,
+          { op: "i32.ne" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...reduceOperand(lTmp), ...reduceOperand(rTmp)],
+          } as Instr,
+        );
+      }
 
       // (#2081) LOOSE null/undefined arm (§7.2.15 steps 2-3): `null == undefined`
       // (and null==null / undefined==undefined) ⇒ true; a nullish vs a
@@ -2802,6 +2948,116 @@ function compileAnyBinaryDispatch(
 }
 
 /**
+ * (#2358) A typed object literal / class instance compiles to a NOMINAL WasmGC
+ * struct (`__anon_N` / `ClassName`), whose concrete `typeIdx` carries the static
+ * `valueOf` / `@@toPrimitive` the `coerceType(ref-struct → f64)` engine
+ * (`type-coercion.ts:1723`) can dispatch at compile time. The moment that struct
+ * is coerced to externref (`extern.convert_any`), the typeIdx is erased and the
+ * standalone native `__to_primitive` helper — which only recognises the dynamic
+ * `$Object` runtime struct via `ref.test objectTypeIdx` — can no longer reduce
+ * it (it returns the object unchanged → caller `__unbox_number` → NaN/null).
+ *
+ * So when an `emitAnyAdd` operand is a nominal struct with a *static*
+ * number-producing ToPrimitive (a `valueOf` or `@@toPrimitive`), reduce it to a
+ * primitive HERE, while the typeIdx is still known, reusing the single #1917
+ * coercion engine — then box. The result is an already-primitive externref, so
+ * the later `__to_primitive` call in the §13.15.3 dispatch is a no-op on it.
+ *
+ * Scoped to valueOf/@@toPrimitive (number-producing) only: a `toString`-only
+ * struct stays on the existing `extern.convert_any` path (no behaviour change),
+ * because the f64 reduction would lossily NaN a string-returning `toString`.
+ */
+function structHasStaticNumericToPrimitive(ctx: CodegenContext, name: string | undefined): boolean {
+  if (name === undefined || !ctx.structMap.has(name)) return false;
+  // Class / standalone-function form: ClassName_@@toPrimitive / ClassName_valueOf.
+  if (ctx.funcMap.get(`${name}_@@toPrimitive`) !== undefined) return true;
+  if (ctx.funcMap.get(`${name}_valueOf`) !== undefined) return true;
+  // Object-literal form: a `valueOf` field holding a callable zero-arg closure
+  // tracked for this struct (the eqref/ref closure path coerceType dispatches).
+  const fields = ctx.structFields.get(name);
+  if (fields) {
+    const vof = fields.find((f) => f.name === "valueOf");
+    if (vof) {
+      const tracked = ctx.valueOfClosureTypes.get(name);
+      if (tracked && tracked.length > 0) return true;
+      // A `valueOf` field holding a closure ref is still reduced by the static
+      // engine's closure-ref subpath even without separately-tracked types.
+      if (vof.type.kind === "ref" || vof.type.kind === "ref_null" || vof.type.kind === "eqref") return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * (#2358) Compile one `+` operand into a fresh externref temp and return its
+ * index (or null if the operand failed to compile).
+ *
+ * The common case keeps the status-quo `{externref}` expectedType, which keeps a
+ * runtime string boxed (no ToNumber coercion) so §13.15.3 can concatenate —
+ * byte-identical to before. The ONLY divergence is when the operand statically
+ * resolves (through `as`/parenthesized/non-null wrappers) to a NOMINAL object
+ * struct with a number-producing ToPrimitive (`valueOf`/`@@toPrimitive`): then it
+ * is compiled WITHOUT the hint (so the concrete `typeIdx` survives) and reduced
+ * to a boxed primitive via the shared #1917 coercion engine, while the typeIdx is
+ * still known. Crossing the externref boundary unreduced would strand the struct
+ * — the native `__to_primitive` helper only recognises the dynamic `$Object`, so
+ * it passes a nominal struct through → `__unbox_number` → NaN/null.
+ *
+ * Scoped to valueOf/@@toPrimitive (number-producing) so the §13.15.3 string-vs-
+ * numeric decision still sees the right primitive; a `toString`-only struct stays
+ * on the existing boxed-externref path (string concat unaffected).
+ */
+function emitAddOperand(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): number | null {
+  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+  // Unwrap `as`/parenthesized/non-null/satisfies wrappers (e.g. `(o as any)`):
+  // the wrappers are type-only / identity, but they make TS report the operand
+  // type as `any` (so the struct name can't be resolved) and make
+  // `compileExpression` coerce the struct to externref internally (erasing the
+  // typeIdx). Resolving + compiling the UNWRAPPED inner expression recovers both.
+  let inner: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(inner) ||
+    ts.isAsExpression(inner) ||
+    ts.isNonNullExpression(inner) ||
+    ts.isSatisfiesExpression(inner) ||
+    ts.isTypeAssertionExpression(inner)
+  ) {
+    inner = (inner as ts.ParenthesizedExpression | ts.AsExpression | ts.NonNullExpression).expression;
+  }
+  const structName = noJsHost ? resolveStructNameForExpr(ctx, fctx, inner) : undefined;
+  if (noJsHost && structHasStaticNumericToPrimitive(ctx, structName)) {
+    const opType = compileExpression(ctx, fctx, inner);
+    if (!opType) return null;
+    if (opType.kind === "ref" || opType.kind === "ref_null") {
+      // Static ToPrimitive(default) → f64 (valueOf/@@toPrimitive ordering), box.
+      coerceType(ctx, fctx, opType, { kind: "f64" }, "default");
+      addUnionImports(ctx);
+      const boxIdx = ctx.funcMap.get("__box_number");
+      if (boxIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: boxIdx });
+      } else {
+        coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+      }
+    } else if (opType.kind !== "externref") {
+      // The struct collapsed to a non-ref scalar (e.g. inlined) — coerce normally.
+      coerceType(ctx, fctx, opType, { kind: "externref" });
+    }
+    const tmp = allocTempLocal(fctx, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: tmp });
+    return tmp;
+  }
+  // Status-quo path: externref hint keeps runtime strings boxed for §13.15.3.
+  const opType = compileExpression(ctx, fctx, expr, { kind: "externref" });
+  if (!opType) return null;
+  if (opType.kind !== "externref") {
+    coerceType(ctx, fctx, opType, { kind: "externref" });
+  }
+  const tmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: tmp });
+  return tmp;
+}
+
+/**
  * (#2058) Emit `+` for two operands where at least one is a dynamic externref
  * (an `any`/`unknown`/boxed value). The operands are already on the Wasm stack
  * (left below right). Per §13.15.3 ApplyStringOrNumericBinaryOperator a runtime
@@ -2837,23 +3093,22 @@ export function emitAnyAdd(ctx: CodegenContext, fctx: FunctionContext, expr: ts.
 
   // Compile both operands to externref temps. Passing the externref hint keeps a
   // runtime string boxed (no ToNumber coercion) so §13.15.3 can concatenate.
-  const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
-  if (!lType) return { kind: "externref" };
-  if (lType.kind !== "externref") {
-    coerceType(ctx, fctx, lType, { kind: "externref" });
-  }
-  const lTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
-  if (!rType) {
+  // (#2358) EXCEPT when the operand statically resolves to a nominal object
+  // struct with a number-producing ToPrimitive (`valueOf`/`@@toPrimitive`): then
+  // compile it WITHOUT the externref hint (so its concrete typeIdx survives) and
+  // reduce it to a boxed primitive via the shared coercion engine, while the
+  // typeIdx is still known. Crossing the externref boundary unreduced strands the
+  // struct — the native `__to_primitive` helper only recognises the dynamic
+  // `$Object`, so it would pass the nominal struct through → `__unbox_number` →
+  // NaN/null. Every other operand keeps the exact status-quo `{externref}`-hint
+  // path (byte-identical), so string concat is unaffected.
+  const lTmp = emitAddOperand(ctx, fctx, expr.left);
+  if (lTmp === null) return { kind: "externref" };
+  const rTmp = emitAddOperand(ctx, fctx, expr.right);
+  if (rTmp === null) {
     releaseTempLocal(fctx, lTmp);
     return { kind: "externref" };
   }
-  if (rType.kind !== "externref") {
-    coerceType(ctx, fctx, rType, { kind: "externref" });
-  }
-  const rTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: rTmp });
 
   // ── JS-host: JS `+` via __host_add ──
   if (!noJsHost) {

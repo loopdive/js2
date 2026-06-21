@@ -3,9 +3,9 @@ id: 2106
 title: "value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton"
 status: in-progress
 assignee: ttraenkler/sdev7
-sprint: 63
+sprint: 64
 created: 2026-06-11
-updated: 2026-06-16
+updated: 2026-06-18
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -304,3 +304,31 @@ result type f64→externref means any **arithmetic** on the result needs an unbo
 default-on; gate carefully and check the arithmetic-on-result paths. Standalone
 correctness depends on S1 (`$undefined` ≠ `null`). Recommend: land S1 first (or
 concurrently), then S3 with a CI-measured blast radius.
+
+### S3 Producer-1 attempt + box-protocol blocker (cs-2158, 2026-06-18)
+
+Attempted S3 Producer-1 (find/findLast numeric miss → externref) in isolation:
+widened the **non-`ctx.fast`** branch of `compileArrayFind`/`compileArrayFindLast`
+(`array-methods.ts`) so the result carrier is externref — found element boxed via
+`coerceType(elemType→externref)`, miss = `emitUndefined`, return type externref.
+**Partial success:** `typeof [1].find(x=>x>5)` correctly became `"undefined"`.
+**But a runtime regression blocks it:** even a plain HIT (`[1,2,3].find(x=>x>1)!`
+→ expect 2) and `findLast` HIT throw `RuntimeError: dereferencing a null
+pointer` at runtime, through the real equivalence harness (not a probe-env
+artifact). The emitted WAT looked correct in isolation (`local.set $res
+(call $__box_number $elem)` on hit, `call $__unbox_number $res` on return), so
+the null-deref is a **box/unbox-protocol mismatch** between the find-result
+externref and how the consuming numeric/`!`-assertion context unwraps it (the
+`__box_number`↔`__unbox_number` round-trip derefs null in this configuration —
+likely a `$AnyValue`-struct vs host-box shape mismatch, or a double-unbox via the
+`!` + numeric coercion path). `Map.get` miss `=== undefined` works (externref
+baseline), so externref *results* are consumable — the break is specific to the
+find-result→numeric-consumer coercion.
+
+**Conclusion:** S3 is NOT a tractable single slice — it needs dedicated
+max-reasoning work to align the find-result box protocol with the numeric
+consumer/`!`-assertion unwrap (and likely should land **after/with S1** and a
+measured test262 run, as the plan already says). Reverted the attempt cleanly
+(no code landed). Next agent: investigate why `__unbox_number(__box_number(x))`
+null-derefs in the find-HIT consuming context before re-widening — that
+box-protocol fix is the real prerequisite, not the find emit site itself.

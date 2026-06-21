@@ -3,7 +3,7 @@ id: 1350
 title: "spec gap: ArrayBuffer resizable + TypedArray detached-buffer guards (100 + 39 test262 fails) — DUPLICATE of #1645"
 status: blocked
 created: 2026-05-08
-updated: 2026-05-28
+updated: 2026-06-19
 priority: medium
 feasibility: hard
 reasoning_effort: medium
@@ -11,7 +11,7 @@ task_type: bugfix
 area: runtime
 language_feature: typedarray
 goal: spec-completeness
-sprint: 50
+sprint: Backlog
 parent: 1328
 duplicate_of: 1645
 ---

@@ -973,7 +973,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     // mappedArgsInfo entirely and leave the built vec as an independent copy
     // (#779e).
     const allSimpleParams = decl.parameters.every((p) => ts.isIdentifier(p.name) && !p.dotDotDotToken);
-    const mappedAllowed = allSimpleParams && !isStrictFunction(decl);
+    const mappedAllowed = allSimpleParams && !isStrictFunction(decl, ctx.inferModuleStrictArguments);
 
     // Set up mapped arguments info for param ↔ arguments sync (#849)
     if (mappedAllowed && params.length > 0) {

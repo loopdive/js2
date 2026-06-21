@@ -155,38 +155,58 @@ export function emitPrivateBrandPredicate(
 }
 
 /**
- * #1365 — Emit a Wasm throw of a real TypeError INSTANCE (not a bare string).
- *
- * Required for spec-compliant `assert.throws(TypeError, fn)` test262 cases —
- * those check `e instanceof TypeError` on the caught value, which requires
- * the thrown ref to be a real TypeError-tagged externref produced by the
- * `__new_TypeError(message)` host import (registered via the same path
- * `new TypeError(msg)` uses, see `expressions/new-super.ts:1411-1453`).
- *
- * Standalone fallback: if `__new_TypeError` import isn't available, throw
- * the message string instead. The instanceof check won't pass in that
- * mode, but the throw is observable and the caller still aborts.
+ * (#2102) Error constructors {@link emitThrowJsError} can build. Each maps to a
+ * `__new_<Kind>(message)` host import in JS-host mode and to the in-module WASI
+ * Error constructor under `--target standalone`/`wasi`. The set is the spec's
+ * runtime-check error family (the §10/§22/§23 bounds/integrity/callable checks).
  */
-export function emitThrowTypeError(ctx: CodegenContext, fctx: FunctionContext, message: string): void {
-  // #1473 — in no-JS-host mode, register the in-module `__new_TypeError`
-  // constructor (emitWasiErrorConstructor) BEFORE resolving the funcIdx, so
-  // `ensureLateImport` finds the in-module function in funcMap and does NOT
-  // add an unsatisfiable `env::__new_TypeError` host import.
+export type JsErrorKind = "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "Error";
+
+/**
+ * (#2102) THE shared "throw a real JS Error instance" lowering. Runtime checks
+ * (bounds / integrity / callable / [[Set]] failures) that the spec requires to
+ * raise a catchable `TypeError`/`RangeError`/… must route through here instead
+ * of emitting an uncatchable Wasm `unreachable`/`ref.cast` trap or a bare string
+ * throw. The thrown ref is a real `<Kind>`-tagged externref (`e instanceof
+ * <Kind>` holds), produced by the same `__new_<Kind>(message)` path `new
+ * <Kind>(msg)` uses, and dispatched through the shared `$exc` tag so the user's
+ * try/catch (and test262 `assert.throws`) catches it.
+ *
+ * Dual-mode: in no-JS-host mode (`--target standalone`/`wasi`) the constructor
+ * is the in-module `emitWasiErrorConstructor` function, so no unsatisfiable
+ * `env::__new_<Kind>` host import is requested. The constructor is registered
+ * BEFORE the funcIdx is resolved so `ensureLateImport` finds the in-module
+ * function in funcMap and does NOT add an `env::__new_<Kind>` host import.
+ * (Consolidates the previously-duplicated #1365 TypeError / #1473
+ * ReferenceError / #2164 RangeError lowerings.)
+ *
+ * Leaves nothing on the value stack (the `throw` is terminal / stack-polymorphic).
+ */
+export function emitThrowJsError(ctx: CodegenContext, fctx: FunctionContext, kind: JsErrorKind, message: string): void {
   if (noJsHost(ctx)) {
-    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    emitWasiErrorConstructor(ctx, kind, 1);
   }
   addStringConstantGlobal(ctx, message);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, message));
-  const newTypeErrorIdx = ensureLateImport(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
+  const ctorIdx = ensureLateImport(ctx, `__new_${kind}`, [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
-  if (newTypeErrorIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: newTypeErrorIdx });
+  if (ctorIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: ctorIdx });
   }
-  // If the import isn't available, the message externref is still on the
-  // stack — degrade to throwing a string. Both paths produce the same
-  // exception tag.
+  // If the constructor isn't available, the message externref is still on the
+  // stack — degrade to throwing a string. Both paths produce the same tag.
   const tagIdx = ensureExnTag(ctx);
   fctx.body.push({ op: "throw", tagIdx });
+}
+
+/**
+ * #1365 — Emit a Wasm throw of a real TypeError INSTANCE (not a bare string).
+ * Thin wrapper over {@link emitThrowJsError}; retained as the canonical call
+ * site name (many uses). Required for spec-compliant `assert.throws(TypeError,
+ * fn)` test262 cases — those check `e instanceof TypeError` on the caught value.
+ */
+export function emitThrowTypeError(ctx: CodegenContext, fctx: FunctionContext, message: string): void {
+  emitThrowJsError(ctx, fctx, "TypeError", message);
 }
 
 /**
@@ -204,25 +224,20 @@ export function emitThrowTypeError(ctx: CodegenContext, fctx: FunctionContext, m
  * `$Error_struct` `$tag` field discrimination.
  */
 export function emitThrowReferenceError(ctx: CodegenContext, fctx: FunctionContext, message: string): void {
-  if (noJsHost(ctx)) {
-    emitWasiErrorConstructor(ctx, "ReferenceError", 1);
-  }
-  addStringConstantGlobal(ctx, message);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, message));
-  const newRefErrorIdx = ensureLateImport(
-    ctx,
-    "__new_ReferenceError",
-    [{ kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (newRefErrorIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: newRefErrorIdx });
-  }
-  // If the constructor isn't available, the message externref is still on the
-  // stack — degrade to throwing a string. Both paths produce the same tag.
-  const tagIdx = ensureExnTag(ctx);
-  fctx.body.push({ op: "throw", tagIdx });
+  // (#2102) Delegates to the shared lowering — see emitThrowJsError.
+  emitThrowJsError(ctx, fctx, "ReferenceError", message);
+}
+
+/**
+ * #2164 — Emit a throw of a RangeError INSTANCE. Mirrors `emitThrowTypeError`.
+ * Used by `Date.prototype.toISOString` on an Invalid Date receiver
+ * (ECMA-262 §21.4.4.36 — RangeError "Invalid time value"). In no-JS-host mode
+ * the RangeError is built via the in-module `__new_RangeError` constructor; in
+ * JS-host mode the import resolves to the JS `RangeError`.
+ */
+export function emitThrowRangeError(ctx: CodegenContext, fctx: FunctionContext, message: string): void {
+  // (#2102) Delegates to the shared lowering — see emitThrowJsError.
+  emitThrowJsError(ctx, fctx, "RangeError", message);
 }
 
 /**

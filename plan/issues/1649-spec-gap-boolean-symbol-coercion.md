@@ -3,7 +3,7 @@ id: 1649
 title: "spec gap: Boolean wrapper + Symbol coercion TypeErrors (24 + 45 test262 fails)"
 status: blocked
 created: 2026-05-08
-updated: 2026-05-28
+updated: 2026-06-19
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen, runtime
 language_feature: types
 goal: spec-completeness
-sprint: 50
+sprint: Backlog
 renumbered_from: 1342
 parent: 1328
 escalation: needs-architect-spec-OR-carve

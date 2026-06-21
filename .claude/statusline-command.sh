@@ -170,6 +170,11 @@ if [ -n "$used" ] || [ -n "$weekly" ] || [ -n "$five_hour" ]; then
 fi
 # Test262 progress
 report="/workspace/benchmarks/results/test262-report.json"
+standalone_report="/workspace/benchmarks/results/test262-standalone-report.json"
+# Fallback source for the "% sa" bar: the committed high-water mark carries
+# official_pass/official_total (no-proposals) and IS refreshed on every push
+# to main, whereas the full standalone report is not committed.
+standalone_highwater="/workspace/benchmarks/results/test262-standalone-highwater.json"
 compile_jsonl="/workspace/benchmarks/results/test262-compile.jsonl"
 precompiling=$(ps aux 2>/dev/null | grep '[p]recompile-tests' | head -1)
 vitesting=$(ps aux 2>/dev/null | grep -E '[v]itest.*test262|[r]un-test262-vitest' | head -1)
@@ -398,7 +403,28 @@ elif [ -f "$report" ]; then
   if [ -z "$in_worktree" ]; then
     p_bar=$(pass_bar "$pass_pct" "${pass_pct}% t262")
     f_bar=$(free_bar "$free_g")
-    printf ' %s %s' "$p_bar" "$f_bar"
+    # Standalone (pure-Wasm, no JS host) test262 pass rate, shown right after
+    # the JS-host bar. `.summary` is standard+annexB (43,135) — TC39 proposals
+    # excluded, matching the host bar's denominator.
+    sa_bar=""
+    sa_pass=""; sa_total=""
+    if [ -f "$standalone_report" ]; then
+      sa_pass=$(jq -r '.summary.pass // 0' "$standalone_report" 2>/dev/null)
+      sa_total=$(jq -r '.summary.total // 1' "$standalone_report" 2>/dev/null)
+    elif [ -f "$standalone_highwater" ]; then
+      # high-water official_* fields = standalone pass/total WITHOUT proposals
+      sa_pass=$(jq -r '.official_pass // empty' "$standalone_highwater" 2>/dev/null)
+      sa_total=$(jq -r '.official_total // empty' "$standalone_highwater" 2>/dev/null)
+    fi
+    if [ -n "$sa_total" ] && [ "$sa_total" -gt 0 ] 2>/dev/null; then
+      sa_pct=$(awk "BEGIN {printf \"%.1f\", $sa_pass * 100 / $sa_total}")
+      sa_bar=$(pass_bar "$sa_pct" "${sa_pct}% sa")
+    fi
+    if [ -n "$sa_bar" ]; then
+      printf ' %s %s %s' "$p_bar" "$sa_bar" "$f_bar"
+    else
+      printf ' %s %s' "$p_bar" "$f_bar"
+    fi
   fi
 fi
 # Branch display:

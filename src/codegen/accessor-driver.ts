@@ -42,6 +42,21 @@ import { addFuncType } from "./registry/types.js";
 export const CALL_ACCESSOR_GET = "__call_accessor_get";
 /** Reserved name for the accessor-set driver (arity-1 setter wrapper). */
 export const CALL_ACCESSOR_SET = "__call_accessor_set";
+/**
+ * (#2166 PR-D1) Reserved name for the JSON reviver driver (arity-2 method
+ * wrapper: `reviver.call(holder, key, value)`).
+ */
+export const CALL_REVIVER = "__call_reviver";
+/**
+ * (#2166 PR-D2) Reserved name for the JSON `toJSON` driver (arity-1 method
+ * wrapper: `value.toJSON(key)`).
+ */
+export const CALL_TO_JSON = "__call_to_json";
+/**
+ * (#2166 PR-D3) Reserved name for the JSON `stringify` replacer driver (arity-2
+ * method wrapper: `replacer.call(holder, key, value)`).
+ */
+export const CALL_REPLACER = "__call_replacer";
 
 /**
  * Reserve the `__call_accessor_get` driver placeholder and return its funcIdx.
@@ -114,6 +129,112 @@ export function reserveAccessorSetDriver(ctx: CodegenContext): number {
 }
 
 /**
+ * (#2166 PR-D1) Reserve the `__call_reviver` driver placeholder and return its
+ * funcIdx.
+ *
+ * Signature: `(externref holder, externref key, externref value) -> externref`.
+ * Filled by `fillAccessorDrivers` to wrap `__call_fn_method_2(holder, reviver,
+ * key, value)` — but note the reviver closure itself is NOT a driver param: the
+ * §25.5.1 walk threads it separately and the driver receives `holder` as the
+ * `this` and `key`/`value` as the two reviver args, with the reviver closure
+ * passed as the dispatcher's 2nd operand by the codec via a 4th hidden param.
+ * To keep the driver arity fixed we instead make the reviver the FIRST arg and
+ * holder the receiver: see `fillAccessorDrivers`. Idempotent.
+ */
+export function reserveReviverDriver(ctx: CodegenContext): number {
+  const existing = ctx.funcMap.get(CALL_REVIVER);
+  if (existing !== undefined) return existing;
+  // (holder, reviver, key, value) -> externref. holder is bound as `this`.
+  const sigIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    "$call_reviver_type",
+  );
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const placeholder: WasmFunction = {
+    name: CALL_REVIVER,
+    typeIdx: sigIdx,
+    // Placeholder; filled by fillAccessorDrivers once __call_fn_method_2 exists.
+    // A bare `unreachable` keeps the stub valid (externref result) if the fill
+    // is skipped (no arity-2 closure ⇒ no reviver could have been passed).
+    locals: [],
+    body: [{ op: "unreachable" } as Instr],
+    exported: false,
+  };
+  ctx.mod.functions.push(placeholder);
+  ctx.funcMap.set(CALL_REVIVER, funcIdx);
+  ctx.reviverDriverReserved = true;
+  return funcIdx;
+}
+
+/**
+ * (#2166 PR-D2) Reserve the `__call_to_json` driver placeholder and return its
+ * funcIdx.
+ *
+ * Signature: `(externref value, externref method, externref key) -> externref`.
+ * Filled by `fillAccessorDrivers` to wrap `__call_fn_method_1(value, method,
+ * key)` — `value` bound as the `toJSON` receiver (`this`), `key` the §25.5.2
+ * SerializeJSONProperty step-2.b argument. Idempotent.
+ */
+export function reserveToJsonDriver(ctx: CodegenContext): number {
+  const existing = ctx.funcMap.get(CALL_TO_JSON);
+  if (existing !== undefined) return existing;
+  const sigIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    "$call_to_json_type",
+  );
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const placeholder: WasmFunction = {
+    name: CALL_TO_JSON,
+    typeIdx: sigIdx,
+    locals: [],
+    body: [{ op: "unreachable" } as Instr],
+    exported: false,
+  };
+  ctx.mod.functions.push(placeholder);
+  ctx.funcMap.set(CALL_TO_JSON, funcIdx);
+  ctx.toJsonDriverReserved = true;
+  return funcIdx;
+}
+
+/**
+ * (#2166 PR-D3) Reserve the `__call_replacer` driver placeholder and return its
+ * funcIdx.
+ *
+ * Signature: `(externref holder, externref replacer, externref key,
+ * externref value) -> externref`. The replacer function is invoked as
+ * `replacer.call(holder, key, value)` (§25.5.2 SerializeJSONProperty step 3),
+ * so `holder` binds as `this` and `key`/`value` are the two arguments — exactly
+ * the reviver driver's shape. Filled by `fillAccessorDrivers` wrapping
+ * `__call_fn_method_2`. Idempotent.
+ */
+export function reserveReplacerDriver(ctx: CodegenContext): number {
+  const existing = ctx.funcMap.get(CALL_REPLACER);
+  if (existing !== undefined) return existing;
+  const sigIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    "$call_replacer_type",
+  );
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const placeholder: WasmFunction = {
+    name: CALL_REPLACER,
+    typeIdx: sigIdx,
+    locals: [],
+    body: [{ op: "unreachable" } as Instr],
+    exported: false,
+  };
+  ctx.mod.functions.push(placeholder);
+  ctx.funcMap.set(CALL_REPLACER, funcIdx);
+  ctx.replacerDriverReserved = true;
+  return funcIdx;
+}
+
+/**
  * Fill the reserved accessor driver bodies in post-processing, AFTER
  * `emitClosureMethodCallExportN(0)` / `(1)` have registered
  * `__call_fn_method_0` / `__call_fn_method_1` in `funcMap`. Each driver is a
@@ -176,6 +297,87 @@ export function fillAccessorDrivers(ctx: CodegenContext): void {
             // __call_fn_method_1 returns an externref result; the setter's
             // return value is discarded per §10.1.5.3 (Set ignores it).
             { op: "drop" } as Instr,
+          ];
+        }
+      }
+    }
+  }
+
+  // (#2166 PR-D1) JSON reviver driver: holder bound as `this`, key+value the two
+  // reviver args. Wraps __call_fn_method_2(holder, reviver, key, value).
+  if (ctx.reviverDriverReserved) {
+    const driverIdx = ctx.funcMap.get(CALL_REVIVER);
+    if (driverIdx !== undefined) {
+      const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+      if (driverFn) {
+        const callMethod2 = ctx.funcMap.get("__call_fn_method_2");
+        if (callMethod2 === undefined) {
+          // No arity-2 closure dispatcher ⇒ no reviver closure could have been
+          // passed; the driver is unreachable from any live walk. Keep a valid
+          // identity body: return the value arg unchanged (externref result).
+          driverFn.body = [{ op: "local.get", index: 3 } as Instr];
+        } else {
+          driverFn.body = [
+            { op: "local.get", index: 0 } as Instr, // holder (bound as `this`)
+            { op: "local.get", index: 1 } as Instr, // reviver closure
+            { op: "local.get", index: 2 } as Instr, // key (arg0)
+            { op: "local.get", index: 3 } as Instr, // value (arg1)
+            { op: "call", funcIdx: callMethod2 } as Instr,
+            // result (reviver's return, externref) is this driver's result
+          ];
+        }
+      }
+    }
+  }
+
+  // (#2166 PR-D2) JSON toJSON driver: value bound as `this`, key the lone arg.
+  // Wraps __call_fn_method_1(value, method, key).
+  if (ctx.toJsonDriverReserved) {
+    const driverIdx = ctx.funcMap.get(CALL_TO_JSON);
+    if (driverIdx !== undefined) {
+      const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+      if (driverFn) {
+        const callMethod1 = ctx.funcMap.get("__call_fn_method_1");
+        if (callMethod1 === undefined) {
+          // No arity-1 closure dispatcher ⇒ no toJSON method closure exists in
+          // the module ⇒ the driver is unreachable (the codec's HasProperty
+          // ref-test never finds a closure). Keep a valid identity body:
+          // return the value arg unchanged (externref result).
+          driverFn.body = [{ op: "local.get", index: 0 } as Instr];
+        } else {
+          driverFn.body = [
+            { op: "local.get", index: 0 } as Instr, // value (bound as `this`)
+            { op: "local.get", index: 1 } as Instr, // toJSON method closure
+            { op: "local.get", index: 2 } as Instr, // key (arg0)
+            { op: "call", funcIdx: callMethod1 } as Instr,
+            // result (toJSON's return, externref) is this driver's result
+          ];
+        }
+      }
+    }
+  }
+
+  // (#2166 PR-D3) JSON replacer driver: holder bound as `this`, key+value the two
+  // replacer args. Wraps __call_fn_method_2(holder, replacer, key, value).
+  if (ctx.replacerDriverReserved) {
+    const driverIdx = ctx.funcMap.get(CALL_REPLACER);
+    if (driverIdx !== undefined) {
+      const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+      if (driverFn) {
+        const callMethod2 = ctx.funcMap.get("__call_fn_method_2");
+        if (callMethod2 === undefined) {
+          // No arity-2 closure dispatcher ⇒ no function replacer could have been
+          // passed; the driver is unreachable from any live walk. Keep a valid
+          // identity body: return the value arg unchanged (externref result).
+          driverFn.body = [{ op: "local.get", index: 3 } as Instr];
+        } else {
+          driverFn.body = [
+            { op: "local.get", index: 0 } as Instr, // holder (bound as `this`)
+            { op: "local.get", index: 1 } as Instr, // replacer closure
+            { op: "local.get", index: 2 } as Instr, // key (arg0)
+            { op: "local.get", index: 3 } as Instr, // value (arg1)
+            { op: "call", funcIdx: callMethod2 } as Instr,
+            // result (replacer's return, externref) is this driver's result
           ];
         }
       }

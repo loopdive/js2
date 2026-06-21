@@ -416,7 +416,7 @@ function buildGrowBody(state: AsyncSchedulerState, funcArrIdx: number, argsArrId
         { op: "global.set", index: state.microtaskCapGlobalIdx } as Instr,
         { op: "return" } as Instr,
       ],
-    } as unknown as Instr,
+    },
 
     // Copy live slice [oldHead, oldTail) into the new arrays starting at 0.
     { op: "local.get", index: oldHead },
@@ -506,7 +506,7 @@ function buildEnqueueBody(state: AsyncSchedulerState, funcArrIdx: number, argsAr
         { op: "i32.const", value: MICROTASK_QUEUE_INITIAL_SLOTS },
         { op: "call", funcIdx: state.growFuncIdx },
       ],
-    } as unknown as Instr,
+    },
 
     // If tail == cap, double the queue.
     { op: "global.get", index: state.microtaskTailGlobalIdx } as Instr,
@@ -521,7 +521,7 @@ function buildEnqueueBody(state: AsyncSchedulerState, funcArrIdx: number, argsAr
         { op: "i32.shl" } as Instr,
         { op: "call", funcIdx: state.growFuncIdx },
       ],
-    } as unknown as Instr,
+    },
 
     // Store fn, caps, arg at index `tail`.
     { op: "global.get", index: state.microtaskFuncsGlobalIdx } as Instr,
@@ -572,7 +572,7 @@ function buildDrainBody(state: AsyncSchedulerState, funcArrIdx: number, argsArrI
       op: "if",
       blockType: { kind: "empty" } as any,
       then: [{ op: "return" } as Instr],
-    } as unknown as Instr,
+    },
 
     {
       op: "block",

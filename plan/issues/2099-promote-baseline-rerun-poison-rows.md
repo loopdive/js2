@@ -85,3 +85,34 @@ error not treated as poison). All pass.
 - [x] A synthetic poisoned row is healed by the next promotion
 - [x] Promotion wall-clock increase bounded — re-run is serial over the small
   poison set only; single-row heal measured at ~0.7s locally.
+
+## Follow-up (2026-06-17, dev-2) — heal step crashed the promote-baseline job
+
+The heal feature itself froze the baseline (~16h stale; every PR's
+`check for test262 regressions` gate blinded). Root cause: a poison row for a
+`dynamic-import` test
+(`test/language/expressions/dynamic-import/import-attributes/2nd-param-with-non-object.js`,
+classified poison by the `Maximum call stack size exceeded` signature) was
+selected for healing. Its clean-process re-run drives Node's
+`importModuleDynamicallyCallback` into a runaway "Maximum call stack size
+exceeded" and emits the rejection as a **deferred** microtask — AFTER the
+per-test `await` settled and after `main()` had finished writing the healed
+JSONL. That deferred error landed OUTSIDE the per-test try/catch as an
+uncaught exception, flipping the process exit code to 1 and failing the
+`promote merged report to main baseline` job (so the js2wasm-baselines JSONL
+was never updated).
+
+Fix (`scripts/heal-poison-rows.ts`):
+- `installDeferredErrorGuards()` — `process.on("uncaughtException"/
+  "unhandledRejection")` log-and-swallow handlers, honouring the script's
+  documented "exit 0 unless args malformed / input unreadable" contract. A
+  contaminating re-run must never block promotion; the affected row is already
+  left as-is (still-poison) by the loop before the deferred error fires.
+- `main().then(() => process.exit(0))` behind an `INVOKED_AS_SCRIPT` entry
+  guard — forces a clean exit after the durable write so a lingering
+  microtask/timer can neither keep the loop alive nor flip the exit code. The
+  entry guard also makes the module importable for the regression test.
+
+Regression test: `tests/issue-2099.test.ts` 5th case — runs the real
+`installDeferredErrorGuards` in a child process, fires both deferred-error
+shapes, and asserts exit 0 (a no-guard child exits 1, confirmed).

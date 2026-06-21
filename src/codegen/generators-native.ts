@@ -33,6 +33,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { nativeStringType } from "./native-strings.js";
+import { emitBrandCheckTypeError } from "./native-proto.js";
 import { addFuncType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "./shared.js";
 
@@ -805,6 +806,87 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: ts.Functio
   return plan !== null && plan.states.some((s) => s.terminator.kind === "yield" || s.terminator.kind === "yield-star");
 }
 
+/**
+ * (#2203) True when `decl` is a generator nested inside another function that
+ * reads or writes a binding from an enclosing scope (a "capture"). Such a
+ * generator cannot use the Wasm-native generator factory — its state lives in a
+ * struct, with no slot for captured outer-scope bindings, so the native
+ * registration in `nested-declarations.ts` is gated on `captures.length === 0`
+ * and a capturing generator falls through to the eager-buffer host path. In a
+ * no-JS-host target the eager path needs the `__gen_*` host imports; if they
+ * were never registered (because `isNativeGeneratorCandidate` — which does not
+ * model captures — wrongly classified this as native), the emit bakes a
+ * `funcIdx: undefined` and produces invalid Wasm. Flagging the capture here lets
+ * `sourceNeedsGeneratorHostImports` register the host imports so the funcidx is
+ * valid (the test262 standalone runner supplies the `__gen_*` shim). A
+ * non-capturing nested generator stays native and is NOT flagged, so it does not
+ * gain unused host-import dependencies.
+ */
+function generatorCapturesOuterScope(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
+  if (!decl.body) return false;
+  // Only generators nested inside another function-like scope can capture; a
+  // top-level generator's free variables are module globals, which the native
+  // lowering already reads/writes directly (no host buffer needed).
+  let ancestor: ts.Node | undefined = decl.parent;
+  let nested = false;
+  while (ancestor) {
+    if (ts.isSourceFile(ancestor)) break;
+    if (
+      ts.isFunctionDeclaration(ancestor) ||
+      ts.isFunctionExpression(ancestor) ||
+      ts.isArrowFunction(ancestor) ||
+      ts.isMethodDeclaration(ancestor) ||
+      ts.isConstructorDeclaration(ancestor) ||
+      ts.isGetAccessorDeclaration(ancestor) ||
+      ts.isSetAccessorDeclaration(ancestor)
+    ) {
+      nested = true;
+      break;
+    }
+    ancestor = ancestor.parent;
+  }
+  if (!nested) return false;
+
+  let captures = false;
+  const checker = ctx.checker;
+  function scan(node: ts.Node): void {
+    if (captures) return;
+    if (ts.isIdentifier(node) && !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)) {
+      const sym = checker.getSymbolAtLocation(node);
+      const declNode = sym?.declarations?.[0];
+      if (declNode) {
+        // A binding declared OUTSIDE the generator body, yet inside some
+        // enclosing function (i.e. not a module global / global builtin), is a
+        // capture. Walk the declaration's ancestors: if we reach the generator
+        // decl it is local (not a capture); if we reach an enclosing function
+        // first it is captured; if we reach the SourceFile it is a module/global
+        // binding the native path handles directly.
+        let p: ts.Node | undefined = declNode;
+        while (p) {
+          if (p === decl) return; // declared within the generator → local
+          if (p === decl.body) return;
+          if (
+            ts.isFunctionDeclaration(p) ||
+            ts.isFunctionExpression(p) ||
+            ts.isArrowFunction(p) ||
+            ts.isMethodDeclaration(p) ||
+            ts.isConstructorDeclaration(p)
+          ) {
+            // Reached an enclosing function before the SourceFile → captured.
+            captures = true;
+            return;
+          }
+          if (ts.isSourceFile(p)) return; // module-level binding → not a capture
+          p = p.parent;
+        }
+      }
+    }
+    ts.forEachChild(node, scan);
+  }
+  scan(decl.body);
+  return captures;
+}
+
 export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
   let found = false;
   let needsHost = false;
@@ -813,7 +895,12 @@ export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile:
     if (needsHost) return;
     if (ts.isFunctionDeclaration(node) && node.asteriskToken && node.body) {
       found = true;
-      if (!isNativeGeneratorCandidate(ctx, node)) needsHost = true;
+      // A non-native-candidate generator needs the host imports; so does a
+      // nested generator that captures an outer-scope binding (#2203) — it
+      // cannot use the native factory (no capture slot in the state struct) and
+      // falls to the eager-buffer host path, which would otherwise bake an
+      // undefined funcidx in a no-JS-host target.
+      if (!isNativeGeneratorCandidate(ctx, node) || generatorCapturesOuterScope(ctx, node)) needsHost = true;
       return;
     }
     if (ts.isFunctionExpression(node) && node.asteriskToken) {
@@ -1691,11 +1778,14 @@ function buildNativeGeneratorDispatch(
 ): Instr[] {
   const infos = Array.from(ctx.nativeGenerators.values());
   const resultType: ValType = { kind: "ref", typeIdx: ensureNativeGeneratorResultType(ctx) };
-  const fallback: Instr[] = [
-    { op: "f64.const", value: 0 },
-    { op: "i32.const", value: 1 },
-    { op: "struct.new", typeIdx: ctx.nativeGeneratorResultTypeIdx },
-  ];
+  // #1344 — the receiver matched NONE of the native generator state types, i.e.
+  // `[[GeneratorState]]` is absent (e.g. `GeneratorPrototype.next.call({})`).
+  // Per §27.5.3.2 GeneratorValidate step 2 / §27.5.1.2-4, throw a *catchable*
+  // TypeError (a real `__new_TypeError` instance + `throw $exc`), never the old
+  // silent `{value: 0, done: true}` sentinel. `throw` is stack-polymorphic, so
+  // it satisfies the enclosing block's `resultType` without leaving a value.
+  const fallback: Instr[] = [];
+  emitBrandCheckTypeError(ctx, fallback, `Generator.prototype.${methodName} requires that 'this' be a Generator`);
 
   function branch(index: number): Instr[] {
     if (index >= infos.length) return fallback;
@@ -2072,6 +2162,17 @@ export function tryCompileNativeGeneratorForOf(
  * The vec struct layout matches `getVecInfo`: field 0 = `$length` (i32),
  * field 1 = `$data` (ref $arr). `vecTypeIdx`/`arrTypeIdx` are supplied by the
  * caller (an f64 vec from `getOrRegisterVecType`).
+ *
+ * `trimToLength` (#2169 destructure consumer): when true, the backing array is
+ * resized to EXACTLY `len` before the final `struct.new`, so `array.len(data)`
+ * equals the logical `$length`. The default (false) leaves the capacity-padded
+ * array in place — fine for consumers that read the `$length` field (spread,
+ * Array.from), but the array-destructuring path bounds-checks against
+ * `array.len(data)` (`emitBoundsCheckedArrayGet`), so a capacity-padded array
+ * would make an out-of-length index read a default-initialized `0.0` slot
+ * instead of being OOB, silently skipping binding defaults (`const [a,b=9]=g()`
+ * with one yield). Trimming restores the literal-array invariant the destructure
+ * machinery relies on (backing-array length == logical length).
  */
 export function emitNativeGeneratorToVec(
   ctx: CodegenContext,
@@ -2080,6 +2181,7 @@ export function emitNativeGeneratorToVec(
   subjectType: ValType,
   vecTypeIdx: number,
   arrTypeIdx: number,
+  trimToLength = false,
 ): void {
   const resumeIdx = ensureNativeGeneratorResumeFunction(ctx, info);
   const resultRef: ValType = { kind: "ref", typeIdx: info.resultTypeIdx };
@@ -2168,9 +2270,29 @@ export function emitNativeGeneratorToVec(
     body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody } as Instr],
   });
 
-  // Construct ref $vec { length: len, data }. Note: the backing array may be
-  // larger than len (capacity); the vec's $length field is the authoritative
-  // element count, matching every other materialized vec in the codebase.
+  // (#2169) Trim the backing array to exactly `len` when the consumer
+  // bounds-checks against `array.len(data)` rather than the `$length` field
+  // (array-destructuring). trimmed = new f64[len]; array.copy trimmed = data[0..len];
+  // data = trimmed.
+  if (trimToLength) {
+    const trimLocal = allocLocal(fctx, `__gen2vec_trim_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    fctx.body.push({ op: "local.set", index: trimLocal });
+    fctx.body.push({ op: "local.get", index: trimLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.get", index: dataLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx } as Instr);
+    fctx.body.push({ op: "local.get", index: trimLocal });
+    fctx.body.push({ op: "local.set", index: dataLocal });
+  }
+
+  // Construct ref $vec { length: len, data }. When `trimToLength` is false the
+  // backing array may be larger than len (capacity); the vec's $length field is
+  // the authoritative element count, matching every other materialized vec in
+  // the codebase. When true, array.len(data) == len as well.
   fctx.body.push({ op: "local.get", index: lenLocal });
   fctx.body.push({ op: "local.get", index: dataLocal });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });

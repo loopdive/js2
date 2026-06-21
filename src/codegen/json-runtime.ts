@@ -174,7 +174,7 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
           else: [{ op: "i32.const", value: 1 }],
         },
       ],
-    } as unknown as Instr,
+    },
   ];
 
   // Pass 1: outLen = 2 + Σ width(c)
@@ -254,7 +254,7 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
         blockType: { kind: "val", type: i32 },
         then: [{ op: "local.get", index: L_NIB }, { op: "i32.const", value: C_ZERO }, { op: "i32.add" }],
         else: [{ op: "local.get", index: L_NIB }, { op: "i32.const", value: C_LC_A_MINUS_10 }, { op: "i32.add" }],
-      } as unknown as Instr,
+      },
     ]),
   ];
 
@@ -313,21 +313,21 @@ export function emitJsonQuoteString(ctx: CodegenContext): number {
                                   blockType: { kind: "empty" },
                                   then: emitUnicode,
                                   else: emitVerbatim,
-                                } as unknown as Instr,
+                                },
                               ],
-                            } as unknown as Instr,
+                            },
                           ],
-                        } as unknown as Instr,
+                        },
                       ],
-                    } as unknown as Instr,
+                    },
                   ],
-                } as unknown as Instr,
+                },
               ],
-            } as unknown as Instr,
+            },
           ],
-        } as unknown as Instr,
+        },
       ],
-    } as unknown as Instr,
+    },
   ];
 
   // Pass 2: fill
@@ -556,7 +556,7 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
     { op: "local.get", index: L_I },
     { op: "local.get", index: L_END },
     { op: "i32.ge_s" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] } as unknown as Instr,
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
     ...getC,
   ];
 
@@ -591,7 +591,7 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
         { op: "i32.add" },
         { op: "local.set", index: L_I },
       ],
-    } as unknown as Instr,
+    },
     // integer digits: while i<end && '0'<=c<='9' { mant=mant*10+(c-'0'); i++ }
     {
       op: "block",
@@ -695,9 +695,9 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
               ],
             },
           ],
-        } as unknown as Instr,
+        },
       ],
-    } as unknown as Instr,
+    },
     // exponent: if c=='e'|'E' { i++; optional sign; exp += expSign * digits }
     { op: "local.get", index: L_I },
     { op: "local.get", index: L_END },
@@ -754,11 +754,11 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
                         { op: "i32.add" },
                         { op: "local.set", index: L_I },
                       ],
-                    } as unknown as Instr,
+                    },
                   ],
-                } as unknown as Instr,
+                },
               ],
-            } as unknown as Instr,
+            },
             // explicit exponent digits: expMag = Σ digits; exp += expSign*expMag
             { op: "i32.const", value: 0 },
             { op: "local.set", index: L_EXPMAG },
@@ -808,9 +808,9 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
             { op: "i32.add" },
             { op: "local.set", index: L_EXP },
           ],
-        } as unknown as Instr,
+        },
       ],
-    } as unknown as Instr,
+    },
     // result = sign * mant * 10^exp  → L_FRAC
     // Compute 10^exp by repeated multiply/divide (exp is small for the
     // primitive slice; loop |exp| times). pow accumulates in L_FRAC.
@@ -875,7 +875,7 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
           ],
         },
       ],
-    } as unknown as Instr,
+    },
     // L_FRAC = sign * mant * pow
     { op: "local.get", index: L_SIGN },
     { op: "local.get", index: L_MANT },
@@ -920,13 +920,13 @@ export function emitJsonParsePrimitive(ctx: CodegenContext): number {
                   blockType: { kind: "val", type: anyRef },
                   then: [...parseNumber, ...boxF64FromLocal(L_FRAC)],
                   else: [{ op: "unreachable" }],
-                } as unknown as Instr,
+                },
               ],
-            } as unknown as Instr,
+            },
           ],
-        } as unknown as Instr,
+        },
       ],
-    } as unknown as Instr,
+    },
   ];
 
   const body: Instr[] = [...preamble, ...skipWs, ...dispatch];

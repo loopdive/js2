@@ -202,12 +202,85 @@ describe("#2009 R3 — spread-source value resolution + source-order override", 
       `),
     ).toBe("5|1");
   });
+});
 
-  // R3b (separate follow-up): key INSERTION ORDER for spread-result structs.
-  // `{ ...{x:1,y:2}, ...{y:3,z:4} }` should stringify as `{"x":1,"y":3,"z":4}`
-  // but the spread-result anon struct's fields are ordered last-spread-first
-  // (`y,z,x`) by the TypeChecker, so JSON/Object.keys report `{"y":3,"z":4,"x":1}`.
-  // Pre-existing on main (affects named-source spreads too); fixing it needs the
-  // spread-result struct's field registration to follow JS insertion order.
-  it.todo("spread-result keys follow JS insertion order (R3b — struct field-order)");
+/**
+ * #2009 R3b — spread-result key INSERTION ORDER.
+ *
+ * `{ ...{x:1,y:2}, ...{y:3,z:4} }` must enumerate `x,y,z` (each key fixed at its
+ * FIRST occurrence in §13.2.5 PropertyDefinitionEvaluation order). The anon
+ * struct's slot order comes from `ts.Type.getProperties()`, which is
+ * last-spread-first (`y,z,x`), so JSON/Object.keys/for-in reported `y,z,x` and
+ * the named prop `a` landed last. Fix (lowest blast radius): record the literal's
+ * insertion-order name list at construction and permute the host name-export CSV
+ * by it — slots, getters, dedup, and `$shape` are untouched, and since host
+ * enumeration reads the CSV BY NAME the value mapping is unaffected.
+ */
+describe("#2009 R3b — spread-result key insertion order", () => {
+  const stringifyCases: { name: string; lit: string; expected: string }[] = [
+    { name: "two inline spreads", lit: `{ ...{ x: 1, y: 2 }, ...{ y: 3, z: 4 } }`, expected: '{"x":1,"y":3,"z":4}' },
+    {
+      name: "leading named prop then spreads",
+      lit: `{ a: 0, ...{ x: 1, y: 2 }, ...{ y: 3, z: 4 } }`,
+      expected: '{"a":0,"x":1,"y":3,"z":4}',
+    },
+    {
+      name: "trailing named override keeps first slot",
+      lit: `{ ...{ x: 1, y: 2 }, ...{ y: 3, z: 4 }, x: 9 }`,
+      expected: '{"x":9,"y":3,"z":4}',
+    },
+    {
+      name: "re-occurring key keeps first position",
+      lit: `{ ...{ a: 1 }, ...{ b: 2 }, ...{ a: 3 } }`,
+      expected: '{"a":3,"b":2}',
+    },
+    {
+      name: "named-source spreads (variables)",
+      lit: `(() => { const s1 = { x: 1, y: 2 }; const s2 = { y: 3, z: 4 }; return { ...s1, ...s2 }; })()`,
+      expected: '{"x":1,"y":3,"z":4}',
+    },
+    {
+      name: "named props interleaved with spread",
+      lit: `{ p: 0, ...{ q: 1 }, r: 2, ...{ q: 5, s: 6 } }`,
+      expected: '{"p":0,"q":5,"r":2,"s":6}',
+    },
+  ];
+
+  for (const { name, lit, expected } of stringifyCases) {
+    it(`JSON.stringify enumerates insertion order: ${name}`, async () => {
+      expect(await runWasm(`export function test(): string { const o: any = ${lit}; return JSON.stringify(o); }`)).toBe(
+        expected,
+      );
+    });
+  }
+
+  it("Object.keys via binding follows insertion order", async () => {
+    expect(
+      await runWasm(`
+        export function test(): string {
+          const o: any = { ...{ x: 1, y: 2 }, ...{ y: 3, z: 4 } };
+          return Object.keys(o).join(",");
+        }
+      `),
+    ).toBe("x,y,z");
+  });
+
+  it("for-in iterates insertion order", async () => {
+    expect(
+      await runWasm(`
+        export function test(): string {
+          const o: any = { ...{ x: 1, y: 2 }, ...{ y: 3, z: 4 } };
+          let s = "";
+          for (const k in o) s += k;
+          return s;
+        }
+      `),
+    ).toBe("xyz");
+  });
+
+  it("plain (non-spread) literal order is unchanged (no regression)", async () => {
+    expect(await runWasm(`export function test(): string { return JSON.stringify({ p: 1, q: 2, r: 3 }); }`)).toBe(
+      '{"p":1,"q":2,"r":3}',
+    );
+  });
 });

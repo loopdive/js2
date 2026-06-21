@@ -21,15 +21,15 @@ compilation boundaries, and simpler runtime/compiler interfaces.
 |---|-------|--------|--------|----------|
 | **68** | Issue 68: DOM containment — scope wasm module access to a subtree | 0 | done |  |
 | **746** | Inline property tables: struct-based property access for inferred shapes | Backlog | blocked | medium |
-| **773** | Monomorphize functions: compile with call-site types, not generic externref | 45 | ready | critical |
+| **773** | Monomorphize functions: compile with call-site types, not generic externref | Backlog | ready | critical |
 | **905** | Support versioned shapes for compile-time-known prototype mutation | Backlog | ready | medium |
 | **1041** | Pre-bundled single-file stress test scaffold — closed, superseded by #1046 | 41 | wont-fix | low |
 | **1046** | Separate ES-module compilation with consumer-driven import/export type specialization | Backlog | ready | medium |
-| **1058** | Compile the TypeScript compiler itself to Wasm — self-hosting stress test | 45 | ready | high |
+| **1058** | Compile the TypeScript compiler itself to Wasm — self-hosting stress test | Backlog | ready | high |
 | **1124** | Audit current codegen IR and, if needed, define a minimal SSA middle-end | 42 | done | high |
-| **1131** | Middle-end SSA IR: implementation plan | 43 | ready | high |
-| **1166** | Closed-world integer specialization from literal call sites | 46 | blocked | high |
-| **1167** | SSA IR Phase 3 — optimization passes (meta issue — see 1167a/b/c) | 44 | ready | high |
+| **1131** | Middle-end SSA IR: implementation plan | 43 | wont-fix | high |
+| **1166** | Closed-world integer specialization from literal call sites | Backlog | ready | high |
+| **1167** | SSA IR Phase 3 — optimization passes (meta issue — see 1167a/b/c) | 44 | done | high |
 | **1167b** | IR Phase 3b — inline-small: inline direct IR calls before lowering | 44 | done | medium |
 | **1169j** | IR Phase 4 Slice 10 step B — TypedArray construction + index access through IR | 46 | done | medium |
 | **1169k** | IR Phase 4 Slice 10 step C — ArrayBuffer + DataView through IR | 46 | done | medium |

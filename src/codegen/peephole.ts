@@ -57,8 +57,26 @@
  *      array.get $__arr_i32   ;; i32 element load
  *      i32.const 0
  *      i32.or                 ;; redundant — both removed
+ *
+ * 7. `f64.const 0; f64.const 0; f64.div` → `f64.const NaN` (#1920). Several
+ *    emit sites materialize NaN as a 0/0 division (3 instrs) when NaN is
+ *    directly encodable as an f64 const (1 instr) — `f64.const NaN` is already
+ *    used directly in type-coercion.ts and encodes via the raw 8-byte float.
+ *    Normalizes both existing 0/0/div triplets and any future ones (3→1):
+ *      f64.const 0
+ *      f64.const 0
+ *      f64.div        ;; → single f64.const NaN
+ *
+ * 8. `local.set N; local.get N` → `local.tee N` (#1920). A store immediately
+ *    followed by a reload of the SAME local is exactly what `local.tee`
+ *    expresses in one instruction (store + leave a copy on the stack). Safe
+ *    because nothing observes the stack between the two and the local value is
+ *    unchanged (2→1):
+ *      local.set N
+ *      local.get N    ;; → single local.tee N
  */
 import type { Instr, ValType, WasmModule } from "../ir/types.js";
+import { walkChildren } from "./walk-instructions.js";
 
 /**
  * Remove redundant ref.as_non_null after ref.cast in a single instruction list.
@@ -72,32 +90,18 @@ import type { Instr, ValType, WasmModule } from "../ir/types.js";
 function optimizeBody(body: Instr[], localTypes?: ValType[]): number {
   let removed = 0;
 
-  // First, recurse into nested blocks
+  // First, recurse into nested child bodies. #1920 — drive the descent through
+  // the SHARED `walkChildren` enumerator (walk-instructions.ts) instead of a
+  // hand-rolled per-op switch. The old switch silently skipped `try.catchAll`
+  // for a long time (the bug this issue tracks): every pass that re-implements
+  // child enumeration risks diverging from the others. Going through the one
+  // enumerator means peephole automatically covers every nested buffer
+  // (`then`/`else`/`body`/`catches[].body`/`catchAll`) and any future Instr
+  // child field, with no chance of the walkers drifting apart again.
   for (const instr of body) {
-    switch (instr.op) {
-      case "block":
-      case "loop":
-        if (instr.body) removed += optimizeBody(instr.body, localTypes);
-        break;
-      case "if":
-        if (instr.then) removed += optimizeBody(instr.then, localTypes);
-        if (instr.else) removed += optimizeBody(instr.else, localTypes);
-        break;
-      case "try":
-        if (instr.body) removed += optimizeBody(instr.body as Instr[], localTypes);
-        if ((instr as any).catches) {
-          for (const c of (instr as any).catches) {
-            if (c.body) removed += optimizeBody(c.body, localTypes);
-          }
-        }
-        // #1920 — the `catchAll` body was previously skipped, so instruction
-        // bodies built by e.g. wrapAsyncCallInTryCatch (expressions.ts) never
-        // got peephole-optimized (redundant ref.as_non_null after ref.cast left
-        // in). stack-balance's eliminateDeadCode walker handles catchAll; the
-        // two walkers had diverged. Recurse into it too.
-        if (instr.catchAll) removed += optimizeBody(instr.catchAll, localTypes);
-        break;
-    }
+    walkChildren(instr, (children) => {
+      removed += optimizeBody(children, localTypes);
+    });
   }
 
   // Scan for peephole patterns
@@ -162,6 +166,35 @@ function optimizeBody(body: Instr[], localTypes?: ValType[]): number {
       body.splice(i, 2);
       removed += 2;
       // Don't increment i — recheck at same position (a chain of `| 0` collapses).
+      continue;
+    }
+
+    // Pattern 7: f64.const 0; f64.const 0; f64.div → f64.const NaN (#1920).
+    // Collapse the 0/0-division NaN materialization (3 instrs) into the direct
+    // const (1 instr). NaN encodes losslessly via the raw f64 encoder.
+    if (
+      i + 2 < body.length &&
+      cur.op === "f64.const" &&
+      (cur as any).value === 0 &&
+      next.op === "f64.const" &&
+      (next as any).value === 0 &&
+      body[i + 2]!.op === "f64.div"
+    ) {
+      body.splice(i, 3, { op: "f64.const", value: NaN });
+      removed += 2; // net: 3 removed, 1 added
+      // Don't increment i — a following instruction may now form a new pattern.
+      continue;
+    }
+
+    // Pattern 8: local.set N; local.get N → local.tee N (#1920). A store of a
+    // local immediately followed by a reload of the SAME local is precisely
+    // `local.tee` (store + leave a copy on the stack). Nothing observes the
+    // stack between them, so the fusion is value- and effect-preserving.
+    if (cur.op === "local.set" && next.op === "local.get" && (next as any).index === (cur as any).index) {
+      body.splice(i, 2, { op: "local.tee", index: (cur as any).index });
+      removed++; // net: 2 removed, 1 added = 1 instruction saved
+      // Don't increment i — the new `local.tee N` may pair with a following
+      // `drop` (pattern 3 → local.set) for a further reduction.
       continue;
     }
 

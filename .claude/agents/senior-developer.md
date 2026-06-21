@@ -43,3 +43,14 @@ describes: `node scripts/claim-issue.mjs <id> ttraenkler/<your-agent-name>
 `status: in-progress` in the issue frontmatter on your branch. `--release` on
 suspend, `--complete` on merge. When resuming a *suspended* branch, re-claim with
 `--force`. See the `/claim-issue` skill.
+
+**Enqueue EXACTLY ONCE when green, then stand down (2026-06-20):** you follow the
+same merge protocol as developer.md and `/dev-self-merge`. When the required
+checks are green and the self-check says MERGE, **enqueue the PR exactly once**
+via the GraphQL `enqueuePullRequest` mutation (user PAT — NOT `gh pr merge
+--auto`, NOT `GITHUB_TOKEN`), mark the task completed, and stand down. **NEVER
+re-enqueue** on drift / ejection / `hold` / CI failure — the `auto-enqueue.yml`
+backstop (App-token bot, ~30 min + on CI completion; back-off fix #2560) owns ALL
+re-adds. Re-enqueue loops were the sole cause of the merge-queue cancellation
+churn (memory `project_merge_queue_requeue_cancels_run`); escalate to the tech
+lead rather than looping.

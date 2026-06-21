@@ -3,12 +3,12 @@ id: 1000
 title: "Normalize issue frontmatter and repopulate historical sprint issue assignments"
 status: ready
 created: 2026-04-07
-updated: 2026-04-28
+updated: 2026-06-19
 priority: high
 feasibility: medium
 reasoning_effort: high
 goal: contributor-readiness
-sprint: 45
+sprint: Backlog
 required_by: [1003]
 ---
 # #1000 -- Normalize issue frontmatter and repopulate historical sprint issue assignments

@@ -3,7 +3,7 @@ id: 1633
 title: "spec gap: Array.from / Array.of constructor semantics (39 test262 fails, wasm_compile dominant)"
 status: blocked
 created: 2026-05-08
-updated: 2026-05-27
+updated: 2026-06-19
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen+runtime
 language_feature: array
 goal: spec-completeness
-sprint: 50
+sprint: Backlog
 renumbered_from: 1339
 parent: 1328
 blocked_on: 1320, 1620

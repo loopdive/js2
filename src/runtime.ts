@@ -3810,6 +3810,12 @@ function _safeSet(
   val: any,
   exports?: Record<string, Function>,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
+  // (#2017) Strict-mode [[Set]] (§10.1.9 / §13.15.2): a write to a getter-only
+  // accessor or a non-writable / non-extensible-new property must throw a
+  // catchable TypeError instead of silently failing. ESM module code is always
+  // strict, so the `__extern_set_strict` host import passes `strict=true`; the
+  // legacy `__extern_set` keeps `strict=false` (silent) for back-compat.
+  strict?: boolean,
 ): void {
   if (obj == null) return;
   // Coerce WasmGC struct keys to primitives via ToPrimitive (#1090, #1716).
@@ -3864,6 +3870,21 @@ function _safeSet(
         (setter as Function).call(obj, val);
         return;
       }
+      // (#2017) Getter-only sidecar accessor (a `__get_<key>` with no
+      // `__set_<key>`): strict [[Set]] must throw a catchable TypeError; sloppy
+      // callers keep the legacy silent no-op (the write falls through and the
+      // getter continues to shadow any sidecar value).
+      if (strict && sc && typeof sc[`__get_${key}` as string] === "function") {
+        throw new TypeError(`Cannot set property ${key} of #<Object> which has only a getter`);
+      }
+    }
+    // (#2017) Getter-only sidecar accessor under a symbol key (stored in the
+    // dedicated accessor map, not the `__get_`/`__set_` string sidecar).
+    if (strict && typeof key === "symbol") {
+      const acc = _wasmStructAccessors.get(obj)?.get(key);
+      if (acc && acc.get && !acc.set) {
+        throw new TypeError(`Cannot set property ${String(key)} of #<Object> which has only a getter`);
+      }
     }
     // Respect sidecar descriptor flags (non-configurable / non-writable properties)
     const descs = _wasmPropDescs.get(obj);
@@ -3871,6 +3892,9 @@ function _safeSet(
       const propKey = typeof key === "symbol" ? key : String(key);
       const flags = descs.get(propKey);
       if (flags !== undefined && !(flags & _SC_WRITABLE)) {
+        // (#2017) strict-mode write to a non-writable / getter-only sidecar
+        // property → catchable TypeError; otherwise silent (sloppy [[Set]]).
+        if (strict) throw new TypeError(`Cannot assign to read only property '${String(propKey)}' of object`);
         return; // silent fail: read-only property
       }
     }
@@ -3881,6 +3905,8 @@ function _safeSet(
       const hasInSidecar = sc && key in sc;
       const hasInDescs = descs?.has(propKey);
       if (!hasInSidecar && !hasInDescs) {
+        // (#2017) strict-mode add to a non-extensible object → catchable TypeError.
+        if (strict) throw new TypeError(`Cannot add property ${String(propKey)}, object is not extensible`);
         return; // silent fail: non-extensible, new property not added
       }
     }
@@ -3919,14 +3945,47 @@ function _safeSet(
     }
     return;
   }
+  // (#2017) Strict [[Set]] pre-check on a plain JS object. The issue this PR
+  // fixes is narrow: a write to a getter-only OBJECT-LITERAL accessor must throw
+  // a catchable TypeError (§13.15.2 → §10.1.9) instead of silently no-oping.
+  // Object-literal accessors are always OWN properties, so we inspect ONLY the
+  // own descriptor and throw ONLY for a genuine getter-only accessor (has `get`,
+  // no `set`). Deliberately narrowed (#2017 regression fix):
+  //   - We do NOT walk the prototype chain. The old proto-walk called
+  //     `Object.getOwnPropertyDescriptor` on each prototype, which fires a Proxy
+  //     `getOwnPropertyDescriptor` trap as an observable side-effect and changed
+  //     trap ordering (built-ins/Proxy/set/call-parameters-prototype.js).
+  //   - We do NOT throw for non-writable DATA properties. These `__extern_set_strict`
+  //     calls also fire for ordinary member writes like `Math.E = 1` /
+  //     `Number.NaN = 1`, which in sloppy/noStrict script context (the test262
+  //     default) must silently no-op, not throw (S8.5_A9, S8.12.4_A1, S8.6.1_A1).
+  //     A non-writable data-property write that the engine itself surfaces under
+  //     a genuinely-strict caller is still propagated by the catch arm below.
+  if (strict && (typeof key === "string" || typeof key === "symbol")) {
+    const ownDesc = Object.getOwnPropertyDescriptor(obj, key as PropertyKey);
+    if (ownDesc && ownDesc.get && !ownDesc.set) {
+      throw new TypeError(`Cannot set property ${String(key)} of #<Object> which has only a getter`);
+    }
+  }
   try {
     obj[key] = val;
   } catch (e) {
     // #2180 — writing to a revoked proxy throws TypeError; propagate it
     // instead of silently diverting to the sidecar.
     if (_isRevokedProxyError(e)) throw e;
+    // (#2017 regression fix) Do NOT blanket re-throw the engine's TypeError just
+    // because this came through `__extern_set_strict`. The bundled runtime is an
+    // ES module (executes in strict mode), so `obj[key] = val` throws natively
+    // for a non-writable DATA property (`Math.E = 1`, `Number.NaN = 1`) or a
+    // non-extensible/frozen target. In sloppy/noStrict SCRIPT context (the
+    // test262 default) those writes must silently no-op, not throw — re-throwing
+    // here regressed S8.5_A9 / S8.12.4_A1 / S8.6.1_A1. The getter-only ACCESSOR
+    // case (#2017's actual target) is already handled by the explicit pre-check
+    // above (it throws our own catchable TypeError before reaching this write),
+    // so swallowing the engine error here and diverting to the sidecar both
+    // fixes the regression and preserves the feature.
     // For non-WasmGC objects (frozen/sealed JS objects),
-    // fall through to sidecar set — preserves original behavior for non-strict callers.
+    // fall through to sidecar set — preserves original behavior.
     _sidecarSet(obj, key, val);
     // Also store under the "@@name" alias for well-known symbols
     if (typeof key === "symbol") {
@@ -6847,6 +6906,17 @@ assert._isSameValue = isSameValue;
           // host-driven invocation reaches the closure body.
           const wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
           _safeSet(obj, key, wrappedVal, undefined, callbackState);
+        };
+      // (#2017) Strict-mode property write — identical to `__extern_set` except a
+      // [[Set]] failure (getter-only accessor / non-writable / non-extensible)
+      // throws a catchable TypeError (§10.1.9). ESM module code is always strict,
+      // so the compiler routes user `obj.k = v` assignments here; the host-import
+      // exception bridge (lastCaughtException + the compiled catch_all) makes the
+      // throw catchable by the user's try/catch.
+      if (name === "__extern_set_strict")
+        return (obj: any, key: any, val: any) => {
+          const wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+          _safeSet(obj, key, wrappedVal, undefined, callbackState, /* strict */ true);
         };
       if (name === "__extern_length")
         return (obj: any) => {
@@ -11224,6 +11294,16 @@ assert._isSameValue = isSameValue;
         // binding above. Mirrors the by-name path.
         const wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
         _safeSet(obj, key, wrappedVal, undefined, callbackState);
+      };
+    case "extern_set_strict":
+      // (#2017) Strict-mode [[Set]] (§10.1.9): a write to a getter-only accessor
+      // / non-writable / non-extensible-new property throws a catchable
+      // TypeError instead of silently failing. The compiler routes user
+      // `obj.k = v` accessor writes here (ESM is always strict); the throw is
+      // catchable in the user's try/catch via the host-import exception bridge.
+      return (obj: any, key: any, val: any) => {
+        const wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+        _safeSet(obj, key, wrappedVal, undefined, callbackState, /* strict */ true);
       };
     case "host_eq":
       // #1065 — strict equality for two externref operands that the GC path

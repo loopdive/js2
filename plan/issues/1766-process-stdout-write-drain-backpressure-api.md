@@ -3,7 +3,7 @@ id: 1766
 title: "process.stdout.write backpressure / once('drain') pattern not supported"
 status: blocked
 created: 2026-06-01
-updated: 2026-06-02
+updated: 2026-06-19
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: bugfix
 area: host-interop
 language_feature: node-streams
 goal: platform
-sprint: 58
+sprint: Backlog
 depends_on: [1042, 1326, 1575]
 es_edition: n/a
 related: [389, 1042, 1326, 1575, 1753]

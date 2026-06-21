@@ -63,6 +63,15 @@ assignee: "ttraenkler/senior-dev-1"
   - Usually numeric, for example `1006`.
   - Preserve historical alphanumeric suffixes where they are part of the real
     record, for example `797a`.
+  - **A new id MUST be reserved atomically via `claim-issue.mjs --allocate`
+    (#2531), never hand-picked.** Hand-picking "next free off `main`" races: two
+    creators on separate branches pick the same number, the duplicate is green
+    at PR time and only fails in the `merge_group`, wedging the queue.
+    `--allocate` reserves the next id unique against `origin/main` ∪ every open
+    PR's added issue files ∪ ids already reserved on the orphan
+    `issue-assignments` ref (first-push-wins). The required CI gate
+    `check:issue-ids:against-main` rejects any PR introducing a main-colliding
+    id.
 - `title`
   - Human-readable issue title.
 - `status`

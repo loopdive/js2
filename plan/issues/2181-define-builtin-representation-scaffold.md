@@ -2,8 +2,9 @@
 id: 2181
 title: "defineBuiltin(name, {elementKinds, lower}) scaffold — unify per-representation element-load/ToString/null handling"
 status: ready
-sprint: 63
+sprint: 64
 created: 2026-06-16
+updated: 2026-06-17
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -63,3 +64,17 @@ backends). The scaffold should preserve/extend those rather than replace them.
 Senior-dev — touches core builtin-registration code with broad blast radius.
 Spec the migration of `join` + `fromCharCode` first as a bounded first slice
 before generalizing.
+
+## Remaining work (2026-06-17, PO reconcile — NOT started)
+
+The s63 reconciler flagged this issue because merged PR #1550
+(`test(#2181): inject proxyTrapsHelper.js …`) carries `#2181` in its title.
+That is a **title misattribution** — PR #1550 is a test262-runner harness change
+that actually belongs to issue **#2183** (it touches `tests/test262-runner.ts`,
+`tests/issue-2183.test.ts`, and `plan/issues/2183-…`, not any builtin-registration
+code). It implements **none** of this issue's `defineBuiltin` scaffold.
+
+The entire scope is therefore still open: the `defineBuiltin(name, {elementKinds,
+lower})` scaffold, the `join` + `fromCharCode` migration onto it across
+host/native/standalone, and the cross-lane "deliberate bug fails all lanes" guard
+(acceptance-2). Status stays `ready` for senior-dev pickup.

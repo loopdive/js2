@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/se-2175
 sprint: Backlog
 created: 2026-06-16
-updated: 2026-06-16
+updated: 2026-06-17
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -350,6 +350,26 @@ Each stage MUST NOT regress the working static-dispatch path: instance `re.flags
 / `re.test(s)` / `s.match(/re/g)`, instance `o.m()` / `o.field`, and the
 `Array.isArray`/`Object.keys` static closures stay byte-identical (S0 acceptance
 guards this).
+
+#### PREP landed (2026-06-17, dev-1) — brand-table reservations for the whole wave
+
+`BUILTIN_BRAND_TABLE` (native-proto.ts) previously reserved only `RegExp`
+(S1) with the rest deferred in a comment. To let the glue slices (#1616/#2158
+S1-S4) land in parallel without any slice touching the table or risking a
+sibling-slice brand collision, **all builtin-constructor families are now
+reserved up front** with stable append-only offsets: Array, the abstract
+`%TypedArray%` intrinsic + all 9 concrete TypedArrays, ArrayBuffer/
+SharedArrayBuffer/DataView, Object/Function, String/Number/Boolean/BigInt/
+Symbol, Map/Set/WeakMap/WeakSet/WeakRef/Promise/Date/Iterator, and the Error
+family. Math/JSON/Reflect/Atomics/Proxy are namespace objects (not
+prototype-bearing constructors) and are intentionally NOT branded. Reserving a
+brand is inert — `getBuiltinBrand` returns the id, but with no registered glue
+the `.prototype`-as-value read still falls through to the refusal, so this is
+behaviour-preserving (RegExp S1 tests + the byte-identical static path stay
+green). Locked in by `tests/issue-2175-native-proto-brands.test.ts`
+(uniqueness, full coverage, disjointness invariant). A glue slice now only
+calls `getBuiltinBrand(ctx, <name>)` and registers its prologue + member
+bodies — no table edit needed.
 
 ### Edge cases
 

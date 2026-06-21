@@ -94,6 +94,31 @@ export function getOrRegisterErrorStructType(ctx: CodegenContext): number {
       // back as `undefined`, not a trap). Mutable so a future `err.stack = …`
       // write can land here without a struct-type change.
       { name: "stack", type: { kind: "externref" }, mutable: true },
+      // (#2188) $userClassId — fieldIdx 4. Per-user-Error-subclass brand that
+      // distinguishes sibling `extends Error` classes which all share the SAME
+      // builtin parent `$tag` (field 0). `__new_<Parent>` writes the sentinel
+      // `-1` (a plain builtin Error / the shared parent ctor has no user-class
+      // brand); the subclass `super()` site overwrites it with the subclass's
+      // `classTagMap` id (see emitSetSubclassUserBrand in class-bodies.ts). The
+      // standalone `instanceof <UserSubclass>` path reads this field instead of
+      // the shared builtin tag, so `(new A) instanceof B` is false for distinct
+      // siblings A,B. Mutable: the brand is written AFTER struct.new at the
+      // per-subclass construction site, not baked into the shared parent ctor.
+      // Kept LAST so fields 0..3 stay stable.
+      { name: "userClassId", type: { kind: "i32" }, mutable: true },
+      // (#2101a R5) $props — fieldIdx 5. Backing store for user-declared OWN
+      // fields on an externref-backed Error subclass (`class A extends Error {
+      // code = 0 }`). Such an instance IS this `$Error_struct` (no per-subclass
+      // WasmGC struct), so own fields have nowhere to live — `this.code = …`
+      // previously cast `this` to the vestigial `$A` struct and trapped. Holds
+      // an externref to an open `$Object` (the LANDED object-runtime), lazily
+      // allocated via `__new_plain_object()` on the first own-field write;
+      // reads/writes route through `__extern_get`/`__extern_set`. `ref.null`
+      // until first written. Stored as externref (not `ref null $Object`) to
+      // avoid a forward type-reference to `$Object` here — `$Object` is
+      // registered lazily by the object-runtime, which may run AFTER this
+      // struct. Kept LAST so fields 0..4 stay stable.
+      { name: "props", type: { kind: "externref" }, mutable: true },
     ],
   });
   ctx.errorStructTypeIdx = idx;
@@ -151,6 +176,13 @@ export function emitWasiErrorConstructor(ctx: CodegenContext, errorName: WasiErr
     ...nameInstrs,
     // $stack — (#1536) non-standard; standalone has no stack-capture
     // primitive, so initialize to null (reads back as `undefined`).
+    { op: "ref.null.extern" },
+    // $userClassId — (#2188) -1 sentinel: a plain builtin Error (or the shared
+    // parent ctor of a user subclass) carries no per-user-class brand. The
+    // subclass `super()` site overwrites this field after construction.
+    { op: "i32.const", value: -1 },
+    // $props — (#2101a R5) own-field backing store; null until the subclass's
+    // first own-field write lazily allocates an `$Object` here.
     { op: "ref.null.extern" },
     { op: "struct.new", typeIdx: structIdx },
     { op: "extern.convert_any" },

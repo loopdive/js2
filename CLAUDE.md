@@ -21,6 +21,7 @@ TypeScript-to-WebAssembly compiler using WasmGC.
   - Read/Edit/Write tools use absolute paths and are unaffected.
   - The `pre-git-commit.sh` hook injects a "VERIFY BEFORE COMMITTING: pwd=/workspace branch=main" reminder; that's the hook reading the (reset) shell cwd, NOT the actual command's working dir. The reminder is informational — verify by reading the commit's branch in git output (`[issue-1183-string-forof-ir 0527c7c5]`-style line shows the real branch).
 - **Worktree creation**: `git worktree add /workspace/.claude/worktrees/issue-NNN-slug -b issue-NNN-slug origin/main`. Always branch from `origin/main` (post-fetch), never from local `main`.
+- **Branch base — `origin/main`, never the merge-queue tip (#2522)**: for independent work, branch from `origin/main`, then `git merge origin/main` again right before enqueue — that catch-up rebases the work onto future-main but incorporates only PRs that *actually landed*. Do **not** branch from a `gh-readonly-queue/main/pr-N-<sha>` tip or otherwise base work on the queue's *speculative* end-state: queued PRs eject, and a base built on an ejected PR carries phantom commits that force a rebase (forbidden — public main is append-only). **Exception — known dependency (explicit predecessor-stacking)**: when a new task is known to depend on / heavily overlap a specific in-flight PR, branch from *that PR's real branch* (durable, not the ephemeral queue ref) and enqueue only after the predecessor lands; re-merge it if it changes. The inter-PR conflict rate is a queue-*speculation* lever (`max_entries_to_build > 1`, re-raise once runner capacity from #2519 allows), not a dev-branch-base lever.
 - **Push safety**: `.git/config` sets `push.default=current` — `git push` always pushes to the remote branch matching the local branch name, regardless of upstream tracking. This prevents the `git worktree add -b <branch> origin/main` trap where the inherited tracking ref routes pushes to origin/main.
 - **Worktree cleanup after merge**: after a dev self-merges their PR, they remove their own worktree (`git worktree remove /workspace/.claude/worktrees/<branch>`) before claiming the next task. Tech-lead only removes worktrees for suspended or abandoned branches.
 
@@ -51,6 +52,23 @@ TypeScript-to-WebAssembly compiler using WasmGC.
   - `sprints/{N}.md` (the sprint doc) lives directly under `sprints/`; the
     numbered issue files are flat under `plan/issues/`. See
     `plan/issues/SCHEMA.md`.
+  - **New issues MUST get their id from `claim-issue.mjs --allocate` (#2531) —
+    never hand-pick a number.** Hand-picking "next free off main" races: two
+    devs on separate branches each pick the same id (neither file is on `main`
+    yet), the dup is green at PR time and only fails in the `merge_group`,
+    wedging the queue. `--allocate` reserves the next id **atomically** against
+    `origin/main` ∪ every open PR's added issue files ∪ ids already reserved on
+    the orphan `issue-assignments` ref (first-push-wins; loser re-scans). Flow:
+    ```bash
+    NEW=$(node scripts/claim-issue.mjs --allocate)        # prints the reserved id
+    # (or: node scripts/claim-issue.mjs --allocate ttraenkler/<agent> --branch <b>
+    #  to reserve AND claim in one step)
+    # create plan/issues/$NEW-<slug>.md with frontmatter id: $NEW
+    ```
+    `--dry-run` previews without reserving; `--no-pr-scan` skips the slower
+    open-PR scan; `--json` for tooling. The required CI gate
+    `check:issue-ids:against-main` (in `quality`) rejects any PR that introduces
+    an id already taken on `main` — so a hand-picked collision can't merge.
 - Dependency graph: `plan/log/dependency-graph.md`
 - Goals (DAG): `plan/goals/goal-graph.md` — high-level goals with dependencies; issues belong to goals
   - Goals are not sequential milestones — they form a DAG and multiple can be active in parallel
@@ -61,7 +79,7 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 - `VOID_RESULT` sentinel in expressions.ts — `InnerResult = ValType | null | typeof VOID_RESULT`
 - Ref cells for mutable closure captures — `struct (field $value (mut T))`
 - FunctionContext must include `labelMap: new Map()` and `isGenerator?: boolean` in all object literals
-- `as unknown as Instr` for Wasm ops not yet in the Instr union (f64.copysign, f64.min/max) — 158 occurrences, tracked for cleanup
+- `as unknown as Instr` double-casts eliminated (#1095) — the `Instr` union now covers every emitted opcode (i64.store added) and the emitter's `default` case is a `never` exhaustiveness check, so a new union variant without an encoding case is a compile error. Prefer adding the op to the union over any cast; `as Instr` single-assertions remain for the few computed-`op` sites.
 - f64.promote_f32 IS now in the Instr union (added for Math.fround)
 - `return_call` / `return_call_ref` for tail call optimization in return position
 - Peephole pass removes redundant `ref.as_non_null` after `ref.cast`
@@ -282,7 +300,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
   - **Set `owner` immediately** on any task pinned to a specific agent (e.g. an in-flight `[CONFLICT]` for a named senior-dev, or a one-PR migration). An ownerless `in_progress` task is the #1 mis-route cause — the dispatcher re-offers it. Reconcile (`TaskUpdate status=completed` the moment a PR merges) so stale entries never get re-offered.
   - **Tag role/scope in the subject** so agents can self-gate: `[SENIOR-DEV ONLY]`, `[CONFLICT]` (senior-dev), `arch(...)`/`[ARCH]` (architect), `po:`/`[PO]` (product owner), `[PARKED …]`/`[PAUSE]` (not ready). Plain `fix(...)`/`refactor(...)`/`dev:` = developer-claimable. Agents skip tasks owned by others or tagged outside their lane (see the pre-claim gate in `developer.md`/`senior-developer.md`).
 - **Dev loop**: claim task from TaskList → implement → push PR → wait for CI → self-merge if green → mark completed → claim next task.
-- **Dev self-merge**: when `.claude/ci-status/pr-<N>.json` has matching SHA, `net_per_test > 0`, ratio <10%, no bucket >50 — **enqueue via the GraphQL `enqueuePullRequest` mutation**: `PRID=$(gh pr view <N> --json id -q .id); gh api graphql -f query='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){clientMutationId}}' -f id="$PRID"`, then verify the PR appears in the queue. Do **NOT** use `gh pr merge <N> --auto`: `--auto` only arms auto-merge on a *check-state transition*, so on a PR that's already fully green (`CLEAN`) it **silently no-ops and the PR is never queued** — this stranded a 9-PR backlog with an empty queue on 2026-05-29. (Never pass `--merge`/strategy flags either — the queue owns the strategy.) Escalate to tech lead only when criteria fail. `--admin --merge` is reserved for workflow-only / hotfix bypass. See `.claude/skills/dev-self-merge.md`. **Backstop:** `.github/workflows/auto-enqueue.yml` (`scripts/enqueue-green-prs.mjs`) runs on every CI completion + every 10 min and auto-enqueues any open, non-draft, mergeable PR not already in the queue — this catches PRs that strand (already-green when the dev acted) or that the merge queue dropped when main advanced under them. So enqueue failures self-heal within ~10 min; manual `node scripts/enqueue-green-prs.mjs` forces a sweep now. Drafts and PRs labelled `hold`/`do-not-merge`/`wip` are never auto-enqueued.
+- **Dev self-enqueue ONCE, then stand down (2026-06-20)**: when `.claude/ci-status/pr-<N>.json` has matching SHA, `net_per_test > 0`, ratio <10%, no bucket >50 — the dev **enqueues the PR EXACTLY ONCE** via the GraphQL `enqueuePullRequest` mutation: `PRID=$(gh pr view <N> --json id -q .id); gh api graphql -f query='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){clientMutationId}}' -f id="$PRID"`, verifies the PR appears in the queue, marks the task completed, and stands down. Use the **user PAT** for this enqueue — NOT `GITHUB_TOKEN` (which suppresses the `merge_group` event and wedges the queue), and NOT `gh pr merge <N> --auto` (which only arms on a check-state *transition*, so on an already-green `CLEAN` PR it silently no-ops and the PR is never queued — stranded a 9-PR backlog on 2026-05-29; never pass `--merge`/strategy flags either). **NEVER re-enqueue** on drift / ejection / `hold` / CI failure — re-enqueue **loops** were the sole cause of the ~3.5h merge-queue cancellation churn on 2026-06-20 (every re-add rebuilds the merge group and CANCELS the in-flight `merge_group` run; memory `project_merge_queue_requeue_cancels_run`); a single one-shot enqueue does not loop, so it cannot churn. Escalate to tech lead only when criteria fail. `--admin --merge` is reserved for workflow-only / hotfix bypass. See `.claude/skills/dev-self-merge.md`. **Backstop (not primary):** `.github/workflows/auto-enqueue.yml` (`scripts/enqueue-green-prs.mjs`, App-token bot identity) runs on every CI completion + every ~30 min and auto-enqueues any open, non-draft, mergeable PR not already in the queue — it owns ALL re-adds for PRs that strand, drift, or get ejected. The back-off fix #2560 (enqueue trailing PRs while a head forms) makes it a reliable backstop. Its ~30-min cron is too sparse to be the *primary* enqueuer (the "agents never enqueue" experiment left green PRs un-enqueued for long idle stretches), which is why the dev does the one-shot enqueue and the cron only backstops. Manual `node scripts/enqueue-green-prs.mjs` forces a sweep now. Drafts and PRs labelled `hold`/`do-not-merge`/`wip` are never auto-enqueued. **Security:** dev-self-enqueue is for internal/trusted dev agents only — external contributor PRs still go through auto-enqueue's author-trust gate (or a deliberate maintainer enqueue) plus a green `cla-check`.
 - **Tech lead reading ci-status files**: always verify `head_sha` matches current PR HEAD (`gh pr view N --json headRefOid`) before interpreting `net_per_test` or regression counts. A SHA mismatch means CI ran on a stale commit — the numbers are misleading. Also check `baseline_staleness_commits` > 0 as a secondary signal.
 - **Silence vs. pings is the dev health signal.** A dev correctly waiting on CI runs a **background watcher** and goes quiet (see `developer.md` CI-wait protocol) — silence is the healthy state, do NOT poke a silent dev. By contrast, **repeated `idle_notification` pings mean the opposite**: a dev with no background watcher idling in-context, or one wedged (e.g. a tool-param failure loop). Treat a stream of idle pings as an escalation/health signal — redirect to unowned work, send `shutdown_request` if idle, or recognize a wedged agent (it pings but can't ack shutdown; clears on lead-session end). Don't mistake an agent waiting on an already-merged PR for one doing work — reconcile the TaskList (`completed` on merge) so it learns its PR landed.
 - **Devs contact tech lead for**: TaskList empty, blocked >30 min, CI ESCALATE result (immediately — do not wait to be asked), net < 0 result.
@@ -316,7 +334,7 @@ GitHub branch protection is the hard block.
 3. **Dev pushes the branch to origin and opens a PR against `main`** — PRs MUST target the **upstream** repo (`loopdive/js2`), never the fork (`ttraenkler/js2`). **Always pass `-R loopdive/js2 --head ttraenkler:<branch>` to `gh pr create`** — the container's gh 2.23 ignores the pinned default (`remote.upstream.gh-resolved=base`) for `pr create` and silently opens the PR on the fork (verified 2026-06-11: fork PRs #6/#7 both had to be closed as misrouted). After creating, verify the PR URL starts with `github.com/loopdive/`. Note the pre-push integrity gate chokes on the fork/upstream divergence — `git push --no-verify` is sanctioned (CI runs the real gate).
 4. **Dev blocks on CI** — polls `gh pr checks <N>` every 30s for ~2 min wall time, in-context (Sonnet idle is nearly free). Use `gh run watch <run-id>` or a `while ! done; do sleep 30; done` loop with a max timeout (~10 min before noting unusual wait, ~20 min before escalating).
 5. **On CI completion**:
-   - **All required checks green** → run `/dev-self-merge`; if MERGE, enqueue via GraphQL `enqueuePullRequest` (NOT `gh pr merge --auto` — it silently no-ops on already-green `CLEAN` PRs and never queues them), then proceed to step 8
+   - **All required checks green** → run `/dev-self-merge`; if MERGE, enqueue the PR **exactly once** via GraphQL `enqueuePullRequest` (user PAT — NOT `gh pr merge --auto`, which silently no-ops on already-green `CLEAN` PRs; NOT `GITHUB_TOKEN`), verify it queued, then stand down and proceed to step 8. NEVER re-enqueue — the `auto-enqueue` backstop owns all re-adds
    - **Drift detected** (mergeable_state becomes "behind") → `git merge origin/main` in the worktree, resolve conflicts with full PR context, push again, loop back to step 4
    - **CI failure** (any required check failed) → diagnose with full PR context (the agent KNOWS what it changed), fix locally, push again, loop back to step 4
 6. **If regressions per `/dev-self-merge`**: dev fixes on branch, pushes again, loops back to step 4
@@ -339,7 +357,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 3. Update `plan/issues/backlog/backlog.md` if the issue was listed there
 
 <!-- AUTO:conformance-start -->
-**test262 conformance**: 31,357 / 43,135 (72.7 %) — baseline unknown, 2026-06-17T03:03:44.073Z
+**test262 conformance**: 31,425 / 43,135 (72.9 %)
 <!-- AUTO:conformance-end -->
 
 ### Sprint History

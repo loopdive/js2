@@ -158,11 +158,13 @@ function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
   let numImportGlobals = 0;
   let numImportTags = 0;
   let numImportTables = 0;
+  let numImportMemories = 0;
   for (const imp of mod.imports) {
     if (imp.desc.kind === "func") numImportFuncs++;
     else if (imp.desc.kind === "global") numImportGlobals++;
     else if (imp.desc.kind === "tag") numImportTags++;
     else if (imp.desc.kind === "table") numImportTables++;
+    else if (imp.desc.kind === "memory") numImportMemories++;
   }
   let typesAreFlat = true;
   let numTypes = 0;
@@ -180,7 +182,7 @@ function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
     numGlobals: numImportGlobals + mod.globals.length,
     numTags: numImportTags + mod.tags.length,
     numTables: numImportTables + mod.tables.length,
-    numMemories: mod.memories ? mod.memories.length : 0,
+    numMemories: numImportMemories + (mod.memories ? mod.memories.length : 0),
     flatTypes: typesAreFlat ? mod.types : null,
     where: "module",
     maxLocals: -1,
@@ -765,6 +767,18 @@ export function encodeImport(imp: Import, enc: WasmEncoder): void {
     case "table":
       enc.byte(0x01);
       enc.byte(imp.desc.elementType === "funcref" ? TYPE.funcref : TYPE.externref);
+      if (imp.desc.max !== undefined) {
+        enc.byte(0x01);
+        enc.u32(imp.desc.min);
+        enc.u32(imp.desc.max);
+      } else {
+        enc.byte(0x00);
+        enc.u32(imp.desc.min);
+      }
+      break;
+    case "memory":
+      enc.byte(0x02); // import kind: memory
+      // limits: flags byte (0x01 = has max) then min[, max]
       if (imp.desc.max !== undefined) {
         enc.byte(0x01);
         enc.u32(imp.desc.min);
@@ -1447,6 +1461,11 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.u32(instr.align);
       enc.u32(instr.offset);
       break;
+    case "i64.store":
+      enc.byte(OP.i64_store);
+      enc.u32(instr.align);
+      enc.u32(instr.offset);
+      break;
     case "i32.store8":
       enc.byte(OP.i32_store8);
       enc.u32(instr.align);
@@ -1906,13 +1925,14 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
         "encodeInstr: 'br_table' has no payload in the Instr union (needs targets[] + default) — " +
           "cannot be encoded; no codegen path should emit it yet (#1939)",
       );
-    // #1939 — fail loud on an op with no encoding case. The ~170
-    // `as unknown as Instr` casts (#1095) bypass the type union, so a
-    // mistyped/missing op string would otherwise be silently omitted from the
-    // binary — the worst failure shape, surfacing far downstream as an opaque
-    // wasm validation error (stack/type mismatch) with no link to the source
-    // op. The `never` binding is a compile-time exhaustiveness check over the
-    // real union; the throw also catches cast-injected strings at runtime.
+    // #1939 — fail loud on an op with no encoding case. The `never` binding is
+    // a compile-time exhaustiveness check over the real Instr union, so a new
+    // union variant without a matching encoding case is a type error here rather
+    // than a silent omission from the binary (the worst failure shape: it
+    // surfaces far downstream as an opaque wasm validation error with no link to
+    // the source op). The runtime throw is the belt-and-braces backstop for any
+    // remaining `as Instr` assertion that injects an off-union op string. The
+    // double-cast `as unknown as Instr` form (#1095) has been eliminated.
     default: {
       const unknown: never = instr;
       throw new Error(`encodeInstr: unknown op "${(unknown as { op?: string }).op ?? "<no op>"}"`);

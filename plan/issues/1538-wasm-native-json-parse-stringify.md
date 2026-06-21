@@ -1,10 +1,11 @@
 ---
 id: 1538
 title: "Wasm-native JSON.parse and JSON.stringify (standalone, no host)"
-status: in-progress
-assignee: ttraenkler/dv3
+status: done
+assignee: ttraenkler/sd2
 created: 2026-05-20
-updated: 2026-06-16
+updated: 2026-06-19
+completed: 2026-06-19
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -12,9 +13,52 @@ task_type: feature
 area: runtime
 language_feature: json
 goal: standalone-wasm
-sprint: 63
-related: [1535, 1537]
+sprint: 64
+related: [1535, 1537, 2166]
 ---
+
+## CLOSED 2026-06-19 (sd2) — SUPERSEDED by #2166 (already implemented + merged)
+
+The entire scope of this issue — a pure-Wasm, host-import-free JSON parser and
+stringifier for `--target standalone`/`wasi` — was implemented and **merged**
+under **#2166** ("Standalone JSON conformance residual", `status: done`,
+completed 2026-06-18), the #1599 Phase-2 dynamic JSON codec. The codec lives in
+`src/codegen/json-codec-native.ts` (`emitJsonStringifyValue`, `emitJsonParseText`,
+`emitJsonParseTextReviver`), wired into `src/codegen/expressions/calls.ts`
+(`emitJsonStringifyValue` @ ~6149/6208, `emitJsonParseText` @ ~6304,
+`emitJsonParseTextReviver` @ ~6296). Landed PRs: PR-A #1653, PR-C #1657,
+PR-C2 #1658, PR-B #1660, PR-D1 #1665, PR-D2 #1666, PR-D3 (replacer, closes #2166).
+
+**This issue's A1/A2/Phase-B slicing plan (below) is fully covered by #2166's
+PR-A/B/C/C2/D1/D2/D3.** No code left to write here.
+
+### Verification on current main (2026-06-19, sd2)
+
+`--target standalone`, no `env` host-import leak (`WebAssembly.Module.imports`
+empty for every case), internal numeric/length probes (native strings don't
+marshal across the JS export boundary, so assert on `.length`/`.charCodeAt`/
+property reads, per #2166's own test discipline):
+
+| expr | standalone result | note |
+|---|---|---|
+| `JSON.stringify({a:1,b:2}).length` | `13` (`{"a":1,"b":2}`) | ✓ object stringify |
+| `JSON.stringify([1,2,3]).length` | `7` (`[1,2,3]`) | ✓ array stringify |
+| `JSON.parse('{"a":5}').a` | `5` | ✓ object parse |
+| `JSON.parse('[10,20,30]')[1]` | `20` | ✓ array parse + index |
+| `JSON.parse('{"x":[1,2,{"y":3}]}').x[2].y` | `3` | ✓ nested round-trip graph |
+| `JSON.stringify({a:1}).charCodeAt(0)` | `123` (`{`) | ✓ |
+
+The #1599-refusal this issue documented is gone for dynamic object-graph
+stringify/parse standalone. Residual method-lookup items (shorthand/class
+`toJSON`, instance-field stringify, closure-`this`, PR-A2 `number[]` array
+stringify) are the **architect-scale follow-ups** already tracked under #2166's
+closure note — NOT dev-claimable slices of #1538.
+
+**Disposition:** mark `done` (superseded). The dependency it waited on (#1537
+Ryū number formatting) is also merged.
+
+---
+
 # #1538 — Wasm-native JSON.parse / JSON.stringify
 
 ## Problem

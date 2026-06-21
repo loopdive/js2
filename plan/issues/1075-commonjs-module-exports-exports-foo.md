@@ -3,14 +3,14 @@ id: 1075
 title: "CommonJS module.exports / exports.foo support for compiling .cjs and unmodified npm CJS packages"
 status: ready
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-06-19
 priority: high
 feasibility: hard
 reasoning_effort: high
 task_type: feature
 language_feature: commonjs
 goal: npm-library-support
-sprint: 45
+sprint: Backlog
 parent: 1031
 depends_on: [1060, 1061, 1074]
 es_edition: es5

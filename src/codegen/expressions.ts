@@ -942,7 +942,7 @@ function compileExpressionInner(
         blockType: { kind: "val", type: { kind: "externref" } },
         then: thenBody,
         else: elseBody,
-      } as unknown as Instr);
+      });
       releaseTempLocal(fctx, thisTmp);
       return { kind: "externref" };
     }

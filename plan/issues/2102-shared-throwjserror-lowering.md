@@ -1,10 +1,11 @@
 ---
 id: 2102
 title: "shared throwJsError(kind, msg) lowering + trap-site audit — runtime checks must throw catchable JS errors, not Wasm traps"
-status: ready
+status: done
 sprint: 63
 created: 2026-06-11
-updated: 2026-06-12
+updated: 2026-06-17
+completed: 2026-06-17
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -51,3 +52,56 @@ per the sprint proposal.
 
 Member issues filed individually; #581 is the old catchability family
 anchor; no shared-helper issue exists. New (analysis program).
+
+## Resolution (2026-06-17, dev-mech2)
+
+**Shared lowering landed.** `src/codegen/expressions/helpers.ts` now exposes
+the single entry point
+
+```ts
+export type JsErrorKind = "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "Error";
+export function emitThrowJsError(ctx, fctx, kind: JsErrorKind, message): void
+```
+
+which builds a real `<Kind>`-tagged externref via `__new_<Kind>(message)`
+(JS-host) / the in-module `emitWasiErrorConstructor` (standalone/wasi), then
+throws it through the shared `$exc` tag. The three previously-duplicated
+lowerings — #1365 `emitThrowTypeError`, #1473 `emitThrowReferenceError`,
+#2164 `emitThrowRangeError` — are now **thin wrappers** over it (one source
+of truth). Their public signatures are unchanged, so every existing call
+site keeps working.
+
+**Trap-site audit, slice 1 (`object-ops.ts`).** All 19 integrity-check
+`emitThrowString(ctx, fctx, "TypeError: …")` sites — `Cannot redefine
+property`, `Cannot define property, object is not extensible`, and
+`${methodName} called on non-object` — were throwing a *bare string*
+(caught by `catch (e)`, but `e instanceof TypeError` was **false**, and the
+`.message` carried a redundant `"TypeError: "` prefix). They now route
+through `emitThrowTypeError`, producing a real `TypeError` instance with the
+correct `.message` in both modes.
+
+### Test Results
+
+- `tests/issue-2102.test.ts` (2 tests, **pass**): redefining a
+  non-configurable property throws a real `TypeError` instance (JS-host,
+  returns `1`), and the same program compiles + instantiates under
+  `--target standalone` (in-module constructor — no unsatisfiable host
+  import).
+- Manual repro before/after: the redefine path returned `2` (bare string)
+  before, `1` (`instanceof TypeError`) after.
+- `tsc --noEmit` clean.
+
+### Follow-up (remaining audit slices, not in this PR)
+
+The same bare-string→typed-instance migration still applies to the
+~11 remaining `emitThrowString("TypeError: …")` sites in
+`array-methods.ts` (callback-not-function / sort comparator),
+`expressions/assignment.ts` + `expressions/unary-updates.ts`
+("Assignment to constant variable.", frozen-object writes), and
+`statements/control-flow.ts` (derived-ctor return). They were deferred to
+keep this PR a tight, low-risk diff; each is now a one-line swap onto the
+shared `emitThrowTypeError`/`emitThrowJsError` entry point this issue
+established. Array length / `charCodeAt` OOB `RangeError` sites that build
+into `if`-`then` sub-arrays would benefit from an instruction-returning
+variant of `emitThrowJsError` (returns `Instr[]` instead of pushing to
+`fctx.body`) — a small future addition.

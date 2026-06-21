@@ -62,6 +62,8 @@ Options:
   --wit             Generate WIT interface file for Component Model
   --wit-package <p> Package name for --wit output (ns:name[@version]).
                     Implies --wit. Defaults to js2wasm:<input-basename>.
+  -v, --verbose     List every dropped host-import warning individually instead
+                    of collapsing them into a one-line summary (WASI/strict mode)
   -O, --optimize    Run Binaryen wasm-opt optimizer (on by default at -O3)
   -O1..-O4          Set optimization level (1-4)
   --no-optimize, -O0
@@ -69,6 +71,11 @@ Options:
                     is ON by default; this restores the pre-#1950 behaviour.
                     (No-op when binaryen/wasm-opt is unavailable — that path
                     already degrades to a one-line note, never a failure.)
+  --node-io-shim    (WASI, #2524 Phase 1) Route process.std{in,out,err} IO
+                    through the linkable js2wasm:node-io shim: the module imports
+                    stdin_read/stdout_write/stderr_write + its memory from
+                    js2wasm:node-io (no wasi_snapshot_preview1 for stream IO) and
+                    links node-shim.wasm. Off by default (inline fd_* fallback).
   --no-host-imports Strict dual-mode: reject JS-host 'env' imports not on
                     the allowlist (#1524). Implied by --target wasi.
   --allow-host-imports
@@ -104,6 +111,10 @@ const emitWasm = true;
 let emitWat = true;
 let emitDts = true;
 let watOnly = false;
+// #2520 — when false, collapse the (harmless, dead-code-eliminated) per-import
+// "host import not on the dual-mode allowlist" warnings into a one-line summary.
+// --verbose restores the full per-import listing.
+let verbose = false;
 // #1950 — default-on optimization for the CLI. Binaryen wasm-opt does
 // materially valuable, safe work the in-compiler passes don't (small-function
 // inlining, array.len-into-local, post-inline null-check cleanup, dead
@@ -124,6 +135,8 @@ let utf8Storage = false;
 // default (strict-on under `--target wasi`); `true` / `false` = explicit
 // override from `--no-host-imports` / `--allow-host-imports`.
 let strictNoHostImports: boolean | undefined;
+// #2524 Phase 1 — process IO via the linkable js2wasm:node-io shim (WASI only).
+let nodeIoShim = false;
 const defines: Record<string, string> = {};
 
 for (let i = 0; i < args.length; i++) {
@@ -178,10 +191,16 @@ for (let i = 0; i < args.length; i++) {
     quiet = true;
   } else if (arg === "--utf8-storage") {
     utf8Storage = true;
+  } else if (arg === "--node-io-shim") {
+    // #2524 Phase 1 — route process.std* IO through the linkable js2wasm:node-io
+    // shim (WASI only). Off by default; the inline fd_read/fd_write path stays.
+    nodeIoShim = true;
   } else if (arg === "--no-host-imports") {
     strictNoHostImports = true;
   } else if (arg === "--allow-host-imports") {
     strictNoHostImports = false;
+  } else if (arg === "--verbose" || arg === "-v") {
+    verbose = true;
   } else if (arg === "-O" || arg === "--optimize") {
     optimize = true;
   } else if (arg === "--no-optimize" || arg === "-O0") {
@@ -260,6 +279,7 @@ const result = await compile(source, {
   ...(emitWit ? { wit: witPackageName ? { packageName: witPackageName } : true } : {}),
   ...(allowFs ? { allowFs: true } : {}),
   ...(utf8Storage ? { utf8Storage: true } : {}),
+  ...(nodeIoShim ? { nodeIoShim: true } : {}),
   fileName: absInput,
   ...(strictNoHostImports !== undefined ? { strictNoHostImports } : {}),
   ...(Object.keys(defines).length > 0 ? { define: defines } : {}),
@@ -276,11 +296,31 @@ if (!result.success) {
   process.exit(1);
 }
 
-// Print any warnings (e.g. wasm-opt not available)
+// Print any warnings (e.g. wasm-opt not available).
+//
+// #2520 — the per-import "Host import "env.X" … not on the dual-mode allowlist"
+// warnings are noise: under --target wasi essentially any program trips ~60 of
+// them (anything referencing Uint8Array/Date/Map/… pulls in the whole ambient
+// global surface), and those imports are dropped and dead-code-eliminated — they
+// never reach the .wasm. The authoritative check is the emit-time leak scan
+// (assertNoLeakedHostImports, severity "error"), which only fires if a host
+// import actually survives into the binary. So collapse these into a one-line
+// summary by default; --verbose restores the full per-import listing.
+const isAllowlistWarning = (msg: string): boolean => msg.includes("not on the dual-mode allowlist");
+let suppressedAllowlist = 0;
 for (const e of result.errors) {
-  if (e.severity === "warning") {
-    console.error(`warning: ${e.message}`);
+  if (e.severity !== "warning") continue;
+  if (!verbose && isAllowlistWarning(e.message)) {
+    suppressedAllowlist++;
+    continue;
   }
+  console.error(`warning: ${e.message}`);
+}
+if (suppressedAllowlist > 0) {
+  console.error(
+    `warning: ${suppressedAllowlist} host import(s) not on the dual-mode allowlist were dropped ` +
+      `(no-op under WASI/strict mode; not in the emitted .wasm). Re-run with --verbose to list them.`,
+  );
 }
 
 if (watOnly) {
@@ -327,7 +367,13 @@ if (emitWit && result.wit) {
 if (!quiet && emittedWasmPath) {
   if (target === "wasi" || target === "standalone" || target === "linear") {
     // Pure Wasm, no JS host required — runnable directly under Wasmtime.
-    console.log(`\nTo run: wasmtime -W all-proposals=y ${emittedWasmPath}`);
+    // Use the targeted proposal flags this compiler actually emits — gc,
+    // function-references, tail-call, exceptions (reference-types is on by
+    // default). Do NOT recommend `-W all-proposals=y`: it also enables the
+    // stack-switching proposal, which wasmtime 44/45 rejects at module load
+    // with "the wasm_stack_switching feature is not supported on this compiler
+    // configuration" and exits before running anything (#2511).
+    console.log(`\nTo run: wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y ${emittedWasmPath}`);
   } else {
     // Default (gc) target emits JS-host imports; needs the generated helper.
     console.log(

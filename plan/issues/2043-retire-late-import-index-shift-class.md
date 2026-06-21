@@ -189,3 +189,14 @@ Range checks cannot see an **in-range stale** index (captured before a
 3. **fix(#2029)** producer fixes using the new named errors (497 tests).
 4. **#1985** index cells for the three recurring capture sites, then
    opportunistically as sites are touched.
+
+## Harvest update — 2026-06-19 (run `e9579720`, dated 2026-06-18)
+
+The structural validation **worked in the default lane**: only **2** records
+still hit the late-import index-shift class there (down from the dozens of prior
+recurrences). **Standalone is not retired**: **229** records still emit the
+named errors — `function index out of range — … late-import index-shift class
+(#2043)` and `global index out of range — … late-import index-shift` — confirming
+this is now a standalone-codegen producer gap, exactly the **#2029** territory
+(`in-progress`, 497 tests). No regression of the validation itself; the
+remaining producers are owned by #2029. Cross-ref recorded for the harvest.

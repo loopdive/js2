@@ -11,7 +11,7 @@ task_type: test
 area: test-infrastructure, codegen
 language_feature: multi
 goal: self-hosting-dogfood
-sprint: 63
+sprint: 64
 model: opus
 depends_on: [1710, 1711]
 es_edition: multi

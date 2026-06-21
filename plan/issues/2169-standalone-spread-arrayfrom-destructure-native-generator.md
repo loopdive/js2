@@ -1,10 +1,12 @@
 ---
 id: 2169
 title: "standalone: spread / Array.from / array-destructure don't drive a native generator (treat the state struct as a __vec)"
-status: in-progress
+status: done
 sprint: 63
 created: 2026-06-15
-updated: 2026-06-15
+updated: 2026-06-17
+completed: 2026-06-17
+assignee: ttraenkler/dev-3
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -81,3 +83,60 @@ array-destructuring `[a,b]=g()` are separate consumer call sites
 distinct, independently-testable change left as a follow-up to keep this PR
 focused. Their `it.todo` gates in `tests/issue-2157-*.test.ts` stay todo.
 Status kept `in-progress` until those two land.
+
+## Resolution (2026-06-17, dev-3) — Array.from + array-destructure landed; issue done
+
+The two carried-forward consumers are done. `Array.from(g())` had already
+landed (verified: `tests/issue-2169-arrayfrom-native-generator.test.ts` 5/5
+green on main). This slice wires in the **last** consumer,
+array-destructuring `const [a,b]=g()`:
+
+- `compileArrayDestructuring` (`src/codegen/statements/destructuring.ts`) now
+  detects a native-generator subject via `nativeGeneratorInfoForForOfSubject`
+  (the initializer lowered to a ref to the `$__gen_state_*` struct) BEFORE the
+  custom-iterable / unknown-struct fallbacks. It drains the generator into an
+  f64 vec via the shared `emitNativeGeneratorToVec`, then destructures that vec
+  through the proven typed-vec `destructureParamArray` path — exactly mirroring
+  the adjacent `isCustomIterable` → `emitDrainCustomIterableToVec` branch.
+  Previously the generator state struct fell through to the unknown-struct
+  externref fallback (`extern.convert_any` → `__array_from_iter_n` +
+  `__get_undefined` host imports), which don't exist standalone → zero-import
+  instantiation failed.
+
+- **`emitNativeGeneratorToVec` gained a `trimToLength` flag** (default false, so
+  the existing spread/Array.from callers are byte-identical). The destructure
+  path bounds-checks array reads against `array.len(data)` (not the vec's
+  `$length` field), so the capacity-padded backing array (cap starts at 4) made
+  an out-of-length index read a default-initialized `0.0` slot instead of being
+  OOB — silently skipping binding defaults (`const [a,b=9]=g()` with one yield
+  returned `b=0`, not `9`). With `trimToLength=true` the backing array is
+  resized to exactly `len` before `struct.new`, restoring the literal-array
+  invariant (backing-array length == logical length) the destructure machinery
+  relies on. Default-beyond-length now fires correctly.
+
+### Acceptance criteria
+
+- [x] The three SF-2 repros in `tests/issue-2157-*.test.ts` (spread, Array.from,
+  array-destructure) pass — un-todo'd, all green, zero host imports.
+- [x] `for-of` / array / string spread regression guards stay green
+  (`issue-2157` regression-guard block, spread + Array.from suites unchanged).
+
+### Test Results
+
+- `tests/issue-2169-destructure-native-generator.test.ts` — 8/8: 2/3-binding
+  positional values, fewer-than-yields (extras dropped), more-than-yields
+  (out-of-length default fires), rest pattern, elision, control-flow generator,
+  >4-yield grow+trim path. All zero host imports.
+- `tests/issue-2157-iterator-generator-residual.test.ts` — SF-2 spread /
+  Array.from / destructure gates un-todo'd, all green (33 pass across the 2169
+  + 2157 files, 1 remaining todo is SF-1 #2172, unrelated).
+- Spread (`issue-2169-spread-native-generator`) + Array.from
+  (`issue-2169-arrayfrom-native-generator`) suites unchanged — green.
+- Broader destructuring/generator suites (basic-destructuring,
+  array-rest-destructuring, for-of-array-destructuring, generators,
+  for-of-generator, issue-1665, issue-2079, issue-2172) — no new failures.
+  (Pre-existing failures unrelated to this change: ~30 root-level test files
+  import a non-existent `tests/helpers.js`; `#681 typed-array for-of WASI-clean`
+  fails identically on `origin/main` via an IR-fallback — both verified by
+  reverting this diff.)
+- `npm run typecheck` + Biome lint clean on changed files.

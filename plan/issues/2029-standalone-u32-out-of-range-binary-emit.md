@@ -2,10 +2,11 @@
 id: 2029
 title: "standalone: `Binary emit error: u32 out of range: -1` on builtin subclassing, disposal protocol, Object.create, Iterator.prototype (497 tests)"
 status: in-progress
-sprint: 63
+sprint: 64
 created: 2026-06-10
-updated: 2026-06-15
+updated: 2026-06-17
 priority: critical
+assignee: ttraenkler/cs-2160
 feasibility: medium
 reasoning_effort: high
 model: opus
@@ -170,3 +171,44 @@ standalone still leaks the `__new_<Builtin>` HOST import (`class-bodies.ts:1423/
 — a host-import-retirement concern, not the emit crash. Kept #2029 `in-progress`:
 the emit-crash cluster (the headline) is fixed; the `__new_<Builtin>` standalone
 runtime path is the residual. Reassess closing once that lands.
+
+## Slice (2026-06-18, cs-2160) — `extends Error` standalone `__get_undefined` leak
+
+**Status stays `in-progress`** — one more independent host-import-leak slice.
+
+The `__new_Error` leak noted above was already gone by current main (the WASI
+native Error constructor path covers `extends Error`/`TypeError`). The remaining
+leak for `class E extends Error {}` standalone was **`env::__get_undefined`** —
+the module instantiated FINE in gc/host mode but **failed to instantiate with an
+empty import object** standalone (`env: module is not an object or function`),
+so the whole subclass cluster produced zero standalone passes.
+
+**Root cause:** three `__get_undefined` emit sites called `ensureLateImport`
+DIRECTLY and only fell back to `ref.null.extern` when it returned `undefined` —
+but `ensureLateImport` does NOT refuse `__get_undefined` (it's not on any
+refusal/native list), so under `--target standalone` it REGISTERED and leaked
+the host import; the intended fallback never fired. The canonical
+`ensureGetUndefined` (`expressions/late-imports.ts`) already guards on
+`ctx.nativeStrings`; the direct sites did not.
+
+**Fix:** mirror the canonical guard at the two reachable direct sites —
+`emitUndefinedValue` (`src/codegen/type-coercion.ts`, the `pushDefaultValue`
+externref default used by the implicit derived-ctor forwarder) and
+`emitBoundsCheckedArrayGetUndef` (`src/codegen/destructuring-params.ts`). When
+`ctx.nativeStrings`, skip the import and emit `ref.null.extern` (undefined ≡
+null standalone, by design). gc/host mode keeps the host import (the guard is
+`nativeStrings`-only). The third site (`calls.ts` padStart/endsWith) is reached
+only on the JS-host string path and was left unchanged.
+
+**Validation.** `tests/issue-2029-error-subclass-get-undefined-standalone.test.ts`
+(3/3): `extends Error` / `extends TypeError` / `extends Error` with `super(msg)`,
+each instantiated with an EMPTY import object (proves no env leak) standalone +
+WASI, plus a gc-mode no-regression guard. Existing #2029 subclass-emit suite
+(8/8) and standalone string suites green. tsc + prettier + biome lint +
+coercion-sites + any-box gates clean. (Pre-existing unrelated failure on main:
+issue-1025 nested-pattern test — fails identically on pristine `origin/main`.)
+
+**Still open (the bucket):** TypedArray subclass (`class X extends Uint8Array {}`)
+still leaks `__new_<TypedArray>` — needs native vec-struct construction in the
+externref-backed implicit forwarder (overlaps #2159). `DisposableStack` /
+`AsyncDisposableStack` leak `DisposableStack_new`. Both are separate slices.

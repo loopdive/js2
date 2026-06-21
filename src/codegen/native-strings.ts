@@ -7,6 +7,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
+import { emitNativeCaseConversion } from "./case-convert-native.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
@@ -2161,6 +2162,111 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
     });
   }
 
+  // --- $__str_substr(s: ref $NativeString, start: i32, length: i32) -> ref $NativeString ---
+  // Annex B §B.2.2.1 String.prototype.substr(start, length):
+  //   len = s.length
+  //   if start < 0: start = max(len + start, 0)   (negative counts from end)
+  //   length = max(min(length, len - start), 0)   (clamp; absent → len sentinel)
+  //   return substring(start, start + length)
+  // Unlike `substring`/`slice`, the SECOND argument is a *count*, not an end
+  // index, and is never negative-relative. The caller passes 0x7fffffff for an
+  // absent length so the min() clamps it to `len - start` (to the end).
+  {
+    const typeIdx = addFuncType(ctx, [strRef, { kind: "i32" }, { kind: "i32" }], [strRef]);
+    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.nativeStrHelpers.set("__str_substr", funcIdx);
+
+    const substringIdx = ctx.nativeStrHelpers.get("__str_substring")!;
+
+    // locals: len (index 3)
+    const body: Instr[] = [
+      // len = s.len
+      { op: "local.get", index: 0 },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: 3 }, // len
+
+      // Resolve negative start: if start < 0, start = max(len + start, 0)
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 3 }, // len
+          { op: "local.get", index: 1 }, // start (negative)
+          { op: "i32.add" }, // len + start
+          { op: "local.set", index: 1 }, // start = len + start
+          // max(start, 0): (start < 0) ? 0 : start
+          { op: "i32.const", value: 0 }, // a = 0
+          { op: "local.get", index: 1 }, // b = start
+          { op: "local.get", index: 1 }, // start
+          { op: "i32.const", value: 0 },
+          { op: "i32.lt_s" }, // c = (start < 0)
+          { op: "select" }, // c ? 0 : start
+          { op: "local.set", index: 1 },
+        ],
+      },
+      // Clamp start to <= len (a start past the end yields the empty string).
+      { op: "local.get", index: 1 },
+      { op: "local.get", index: 3 },
+      { op: "i32.gt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 3 },
+          { op: "local.set", index: 1 },
+        ],
+      },
+
+      // tail = len - start (chars available from `start` to the end)
+      { op: "local.get", index: 3 }, // len
+      { op: "local.get", index: 1 }, // start
+      { op: "i32.sub" }, // len - start
+      { op: "local.set", index: 4 }, // tail = len - start
+      // length = min(length, tail): (length < tail) ? length : tail
+      { op: "local.get", index: 2 }, // a = length
+      { op: "local.get", index: 4 }, // b = tail
+      { op: "local.get", index: 2 }, // length
+      { op: "local.get", index: 4 }, // tail
+      { op: "i32.lt_s" }, // c = (length < tail)
+      { op: "select" }, // c ? length : tail
+      { op: "local.set", index: 2 }, // length = min(length, tail)
+      // Clamp length to >= 0
+      { op: "local.get", index: 2 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "i32.const", value: 0 },
+          { op: "local.set", index: 2 },
+        ],
+      },
+
+      // return __str_substring(s, start, start + length)
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 }, // start
+      { op: "local.get", index: 1 }, // start
+      { op: "local.get", index: 2 }, // length
+      { op: "i32.add" }, // end = start + length
+      { op: "call", funcIdx: substringIdx },
+    ];
+
+    ctx.mod.functions.push({
+      name: "__str_substr",
+      typeIdx,
+      locals: [
+        { name: "len", type: { kind: "i32" } },
+        { name: "tail", type: { kind: "i32" } },
+      ],
+      body: wrapBodyWithFlatten(body, [0]),
+      exported: false,
+    });
+  }
+
   // --- $__str_indexOf(haystack: ref $NativeString, needle: ref $NativeString, fromIndex: i32) -> i32 ---
   {
     const typeIdx = addFuncType(ctx, [strRef, strRef, { kind: "i32" }], [{ kind: "i32" }]);
@@ -3458,6 +3564,14 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
       exported: false,
     });
   }
+
+  // (#40) Replace the ASCII-only toUpperCase/toLowerCase above with full Unicode
+  // simple + special (1:N) case mapping. emitNativeCaseConversion appends the
+  // Unicode helpers and re-points the public `__str_to{Upper,Lower}Case` names in
+  // nativeStrHelpers at them (the ASCII blocks become dead, wasm-opt drops them).
+  // Emitted here, AFTER __str_flatten is registered, so the Unicode helpers can
+  // flatten a cons-string input.
+  emitNativeCaseConversion(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
 
   // --- $__str_getSubstitution(replacement, matched, prefix, suffix) -> ref $NativeString ---
   // #1822 — expand `$` patterns in a replacement string per ECMAScript
@@ -5531,6 +5645,8 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   // `box` (the $AnyValue ref) lives in local 1; the original anyref param in 0.
   const L_V = 0;
   const L_BOX = 1;
+  // #1910/#1472 S2 — scratch anyref for the tag-5 string-vs-wrapper recovery.
+  const L_RECOVER = 2;
 
   const numberArm = (loadNumeric: Instr[]): Instr[] =>
     numToStrIdx !== undefined
@@ -5541,6 +5657,97 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
           { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr,
         ]
       : litStr("[object Object]");
+
+  // #1910/#1472 S2 — recover the string for an externref that is tagged as a
+  // string (tag 5) but is NOT actually a `$AnyString`. The generic
+  // externref→AnyValue boxing tags EVERY externref as tag-5 (see
+  // value-tags.ts:185), so a boxed-primitive WRAPPER (`new String`/`new Number`/
+  // `new Boolean` → a `$Object` carrying the internal [[PrimitiveValue]] slot)
+  // reaches the tag-5 arm; the raw `ref.cast $AnyString` would trap ("illegal
+  // cast"). When the value is a `$Object`, reduce it with `__to_primitive`
+  // (registered by ensureObjectRuntime BEFORE this helper bakes, so its funcIdx
+  // is known here — same no-intervening-shift invariant the rest of this helper
+  // relies on), which reads the wrapper's internal slot and returns its boxed
+  // primitive. That primitive is then a `$AnyString` (string wrapper) or a
+  // `$__box_number_struct`/`$__box_boolean_struct` (number/boolean wrapper), all
+  // of which the existing $AnyString test + residual box-recovery format
+  // correctly — so we route the reduced value back through that recovery
+  // (`stringifyExtern`). Non-`$Object` tag-5 externrefs (boxed primitive carriers
+  // crossing the open-any boundary) skip straight to that recovery unchanged.
+  const toPrimitiveIdx = ctx.funcMap.get("__to_primitive");
+  const objectRtTypes = ctx.objectRuntimeTypes;
+  const boxNumIdxEarly = ctx.nativeBoxNumberTypeIdx;
+  const boxBoolIdxEarly = ctx.nativeBoxBooleanTypeIdx;
+  // Format an externref already known NOT to be a $AnyString: recover a
+  // $__box_number_struct / $__box_boolean_struct, else "[object Object]".
+  const stringifyBoxedExtern = (loadExtern: Instr[]): Instr[] =>
+    boxNumIdxEarly >= 0 && boxBoolIdxEarly >= 0
+      ? [
+          ...loadExtern,
+          { op: "any.convert_extern" } as Instr,
+          { op: "local.tee", index: L_RECOVER } as Instr,
+          { op: "ref.test", typeIdx: anyStrTypeIdx } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "val", type: strRef },
+            then: [{ op: "local.get", index: L_RECOVER }, { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr],
+            else: [
+              { op: "local.get", index: L_RECOVER },
+              { op: "ref.test", typeIdx: boxNumIdxEarly } as Instr,
+              {
+                op: "if",
+                blockType: { kind: "val", type: strRef },
+                then: numberArm([
+                  { op: "local.get", index: L_RECOVER },
+                  { op: "ref.cast", typeIdx: boxNumIdxEarly } as Instr,
+                  { op: "struct.get", typeIdx: boxNumIdxEarly, fieldIdx: 0 },
+                ]),
+                else: [
+                  { op: "local.get", index: L_RECOVER },
+                  { op: "ref.test", typeIdx: boxBoolIdxEarly } as Instr,
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: strRef },
+                    then: [
+                      { op: "local.get", index: L_RECOVER },
+                      { op: "ref.cast", typeIdx: boxBoolIdxEarly } as Instr,
+                      { op: "struct.get", typeIdx: boxBoolIdxEarly, fieldIdx: 0 },
+                      {
+                        op: "if",
+                        blockType: { kind: "val", type: strRef },
+                        then: litStr("true"),
+                        else: litStr("false"),
+                      } as Instr,
+                    ],
+                    else: litStr("[object Object]"),
+                  } as Instr,
+                ],
+              } as Instr,
+            ],
+          } as Instr,
+        ]
+      : litStr("[object Object]");
+  const recoverNonStringExtern = (loadExtern: Instr[]): Instr[] =>
+    toPrimitiveIdx !== undefined && objectRtTypes !== undefined
+      ? [
+          // if (value is a $Object wrapper) value = __to_primitive(value, default)
+          ...loadExtern,
+          { op: "any.convert_extern" } as Instr,
+          { op: "local.tee", index: L_RECOVER } as Instr,
+          { op: "ref.test", typeIdx: objectRtTypes.objectTypeIdx } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "val", type: strRef },
+            then: stringifyBoxedExtern([
+              { op: "local.get", index: L_RECOVER },
+              { op: "extern.convert_any" } as Instr,
+              { op: "ref.null.extern" } as Instr, // default hint
+              { op: "call", funcIdx: toPrimitiveIdx } as Instr,
+            ]),
+            else: stringifyBoxedExtern([{ op: "local.get", index: L_RECOVER }, { op: "extern.convert_any" } as Instr]),
+          } as Instr,
+        ]
+      : stringifyBoxedExtern(loadExtern);
 
   const tagEq = (tag: number): Instr[] => [
     { op: "local.get", index: L_BOX },
@@ -5605,6 +5812,15 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
                         {
                           op: "if",
                           blockType: { kind: "val", type: strRef },
+                          // tag 5 (string): the externval is USUALLY a real
+                          // `$AnyString`, but the generic externref boxing also
+                          // tags boxed-primitive WRAPPER objects (new String /
+                          // Number / Boolean → $Object) and other open externrefs
+                          // as tag-5 (#1910/#1472 S2). Test $AnyString first; only
+                          // cast when it really is a string, otherwise recover via
+                          // __extern_toString (reads the wrapper's internal slot
+                          // through ToPrimitive). Without this guard the raw cast
+                          // traps with "illegal cast" for `new String("1") + x`.
                           then: [
                             { op: "local.get", index: L_BOX },
                             {
@@ -5613,7 +5829,20 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
                               fieldIdx: 4,
                             },
                             { op: "any.convert_extern" } as Instr,
-                            { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr,
+                            { op: "local.tee", index: L_RECOVER } as Instr,
+                            { op: "ref.test", typeIdx: anyStrTypeIdx } as Instr,
+                            {
+                              op: "if",
+                              blockType: { kind: "val", type: strRef },
+                              then: [
+                                { op: "local.get", index: L_RECOVER },
+                                { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr,
+                              ],
+                              else: recoverNonStringExtern([
+                                { op: "local.get", index: L_RECOVER },
+                                { op: "extern.convert_any" } as Instr,
+                              ]),
+                            } as Instr,
                           ],
                           // tag 6 / unknown → "[object Object]"
                           else: litStr("[object Object]"),
@@ -5727,7 +5956,10 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   ctx.mod.functions.push({
     name: "__any_to_string",
     typeIdx,
-    locals: [{ name: "box", type: { kind: "ref_null", typeIdx: anyValueTypeIdx } }],
+    locals: [
+      { name: "box", type: { kind: "ref_null", typeIdx: anyValueTypeIdx } },
+      { name: "recover", type: { kind: "anyref" } },
+    ],
     body,
     exported: false,
   });

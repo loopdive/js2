@@ -62,7 +62,7 @@ function staticStringValue(ctx: CodegenContext, expr: ts.Expression, seen = new 
  * first 10 characters of a string space (or `min(10, floor(n))` for a number)
  * are used; JS's own `JSON.stringify` applies that, so we just forward.
  */
-function staticSpaceValue(ctx: CodegenContext, expr: ts.Expression): number | string | undefined {
+export function staticSpaceValue(ctx: CodegenContext, expr: ts.Expression): number | string | undefined {
   const cur = unwrapTransparentExpression(expr);
   if (ts.isNumericLiteral(cur)) return Number(cur.text.replace(/_/g, ""));
   if (ts.isPrefixUnaryExpression(cur) && ts.isNumericLiteral(cur.operand)) {
@@ -76,6 +76,22 @@ function staticSpaceValue(ctx: CodegenContext, expr: ts.Expression): number | st
     if (init) return staticSpaceValue(ctx, init);
   }
   return undefined;
+}
+
+/**
+ * (#2166 PR-B) Resolve a static `space` argument to the per-level indent unit
+ * string (the "gap") per §25.5.2 step 6: a Number → `min(10, floor(n))` spaces
+ * (≤0 / NaN → ""); a String → its first 10 code units. Returns `""` for any
+ * gap that produces no indentation (the dynamic-graph codec then serialises
+ * compactly). The caller passes the gap to `__json_stringify_root_indent`.
+ */
+export function jsonGapFromStaticSpace(space: number | string): string {
+  if (typeof space === "number") {
+    if (!Number.isFinite(space)) return "";
+    const n = Math.min(10, Math.floor(space));
+    return n > 0 ? " ".repeat(n) : "";
+  }
+  return space.slice(0, 10);
 }
 
 function staticPropertyName(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
@@ -107,7 +123,20 @@ function staticJsonValue(ctx: CodegenContext, expr: ts.Expression, seen = new Se
     if (cur.text === "Infinity") return Infinity;
     if (cur.text === "undefined") return UNSUPPORTED;
     const init = constInitializerForIdentifier(ctx, cur);
-    if (init) return staticJsonValue(ctx, init, seen);
+    if (init) {
+      // #2166 soundness: a `const`-bound object/array is still MUTABLE in place
+      // (`const o = {}; o.x = f()`), so folding its *declaration* literal would
+      // silently drop later property/element assignments and emit wrong JSON
+      // (it produced `"{}"` for any runtime-built graph). Only follow an
+      // identifier to a PRIMITIVE const initializer; object/array bindings fall
+      // through to UNSUPPORTED, which routes them to the dynamic native codec
+      // (or, before PR-A, the Phase-1 refusal) instead of a wrong static fold.
+      const initUnwrapped = unwrapTransparentExpression(init);
+      if (ts.isObjectLiteralExpression(initUnwrapped) || ts.isArrayLiteralExpression(initUnwrapped)) {
+        return UNSUPPORTED;
+      }
+      return staticJsonValue(ctx, init, seen);
+    }
   }
 
   if (ts.isArrayLiteralExpression(cur)) {

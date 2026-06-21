@@ -108,7 +108,13 @@ export function runAt(
   const unit = (): number => input.charCodeAt(dir > 0 ? sp : sp - 1);
 
   for (;;) {
-    if (++steps > REGEX_STEP_CAP) return null;
+    // (#2091) Cap exhaustion is a hard error, NOT a no-match: a silent `return
+    // null` is indistinguishable from a genuine non-match. Throw a catchable
+    // RangeError so callers (and the Wasm `__regex_run` this VM mirrors) report
+    // it loudly. (A legitimate backtrack failure still returns `null` below.)
+    if (++steps > REGEX_STEP_CAP) {
+      throw new RangeError("regular expression step limit exceeded");
+    }
     const op = prog[pc * 3]!;
     const a = prog[pc * 3 + 1]!;
     const b = prog[pc * 3 + 2]!;

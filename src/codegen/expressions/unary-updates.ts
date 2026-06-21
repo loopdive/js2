@@ -11,6 +11,7 @@ import { ts } from "../../ts-api.js";
 import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
+import { tryEmitLinearU8ElementUpdate } from "../linear-uint8-codegen.js";
 import { reportError } from "../context/errors.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
@@ -413,6 +414,21 @@ function compileMemberIncDec(
 
   // Handle obj[idx] — element access increment/decrement on arrays
   if (ts.isElementAccessExpression(operand)) {
+    // #2045 C.8: linear-backed Uint8Array element update (`b[i]++` / `--b[i]`) —
+    // read-modify-write the linear memory directly. Must run BEFORE
+    // `compileExpression(operand.expression)` below, which materialises the
+    // buffer as a value and routes the write through a path that never touches
+    // linear memory (the byte stayed unchanged / threw at runtime). Falls
+    // through for any non-linear element target.
+    const linU8 = tryEmitLinearU8ElementUpdate(
+      ctx,
+      fctx,
+      operand,
+      /* isIncrement */ arithOp === "add",
+      mode === "prefix",
+    );
+    if (linU8 !== null) return linU8;
+
     const objTsType = ctx.checker.getTypeAtLocation(operand.expression);
     const objResult = compileExpression(ctx, fctx, operand.expression);
     if (!objResult) return null;
@@ -1378,6 +1394,12 @@ function compilePrefixIncrementElement(
   target: ts.ElementAccessExpression,
   isIncrement: boolean,
 ): ValType | null {
+  // #2045 C.8: linear-backed Uint8Array element update — read-modify-write the
+  // linear memory directly (the GC path below requires a ref array and throws on
+  // a (ptr,len) buffer). Prefix → new value. Falls through for any other target.
+  const linU8 = tryEmitLinearU8ElementUpdate(ctx, fctx, target, isIncrement, /* isPrefix */ true);
+  if (linU8 !== null) return linU8;
+
   const arrType = compileExpression(ctx, fctx, target.expression);
   if (!arrType || (arrType.kind !== "ref" && arrType.kind !== "ref_null")) {
     reportError(ctx, target, "Prefix increment on non-array element access");
@@ -1580,6 +1602,11 @@ function compilePostfixIncrementElement(
   target: ts.ElementAccessExpression,
   isIncrement: boolean,
 ): ValType | null {
+  // #2045 C.8: linear-backed Uint8Array element update — read-modify-write the
+  // linear memory directly. Postfix → old value. Falls through for any other.
+  const linU8 = tryEmitLinearU8ElementUpdate(ctx, fctx, target, isIncrement, /* isPrefix */ false);
+  if (linU8 !== null) return linU8;
+
   const arrType = compileExpression(ctx, fctx, target.expression);
   if (!arrType || (arrType.kind !== "ref" && arrType.kind !== "ref_null")) {
     reportError(ctx, target, "Postfix increment on non-array element access");
