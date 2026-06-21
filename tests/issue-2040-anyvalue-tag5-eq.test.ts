@@ -49,9 +49,9 @@ describe("#2040 standalone AnyValue tag-5 equality", () => {
   });
 
   it("distinct arrays are not equal", async () => {
-    expect(
-      await runStandalone(`${EQ} export function test(): number { return eq([1,2,3], [4,5,6]) ? 1 : 0; }`),
-    ).toBe(0);
+    expect(await runStandalone(`${EQ} export function test(): number { return eq([1,2,3], [4,5,6]) ? 1 : 0; }`)).toBe(
+      0,
+    );
   });
 
   it("_isSameValue(1,2) is false, _isSameValue(1,1) is true (the harness shape)", async () => {
@@ -69,8 +69,8 @@ describe("#2040 standalone AnyValue tag-5 equality", () => {
   });
 
   it("array-string indexOf still finds by content (no regression)", async () => {
-    expect(
-      await runStandalone(`export function test(): number { return ["","ab","bca","abc"].indexOf("abc"); }`),
-    ).toBe(3);
+    expect(await runStandalone(`export function test(): number { return ["","ab","bca","abc"].indexOf("abc"); }`)).toBe(
+      3,
+    );
   });
 });
