@@ -71,3 +71,68 @@ generator state/result array.
 
 NEW issue from /harvest-errors 2026-06-04. Default-lane (not standalone) — does
 not bear on the standalone-57% push; tracked separately. Count at filing: 325.
+
+## 2026-06-21 sd-4 re-analysis — original symptom FIXED, residual is architectural
+
+Re-bucketed `async-generator/yield-star-*` against the fresh baseline
+(`.test262-cache/test262-current.jsonl`, run 2026-06-20):
+
+| Bucket | Count |
+|--------|-------|
+| `invalid Wasm` / `array.set` (the FILED symptom) | **0** |
+| `assertion_fail` (execution-order / laziness) | 72 |
+| `runtime_error` | 13 |
+| `illegal_cast` | 1 |
+| **total** | **86** (was 325) |
+
+**The original 325-CE invalid-Wasm `array.set` failures are gone** — that
+codegen-validity bug was fixed by intervening async-generator / native-generator
+work (#2170/#2171 + result-struct fixes). Reproducing the two named sample
+tests now yields an **assertion failure**, not an instantiate error:
+
+```
+yield-star-async-next.js  → fail :: returned 2 | assert #1 at L147:
+                              assert.sameValue(log.length, 0, "log.length")
+```
+
+### Residual root cause — eager-buffer async generators (architectural)
+
+The remaining 86 fails are **execution-order / laziness** failures, not codegen
+validity. The host generator runtime (`src/runtime.ts`) is **eager-buffered**:
+
+```
+src/runtime.ts:135
+ *   buf: any[]   — eager-yield buffer (filled by the generator body)
+```
+
+The generator body runs up front and fills `buf` with every yielded value; the
+consumer's `.next()` just reads from `buf`. So `yield* obj` eagerly drains
+`obj`'s iterator into the buffer **before the consumer pulls the first
+`.next()`**. The execution-order tests assert `log.length === 0` immediately
+after constructing the async generator (nothing should have run yet) — but our
+eager body has already invoked `get next` / `get return` / etc., so `log` is
+non-empty → first assertion fails.
+
+The native-generator `yield*` path (`generators-native.ts:436`, #2170/#2171)
+only handles `yield* inner()` for a **numeric (f64) native-generator
+declaration**; the 86 failing tests use async generators delegating to
+sync/async iterables via `%AsyncFromSyncIteratorPrototype%`, which bail to the
+eager host path.
+
+**Making these pass requires a *lazy / suspending* async-generator runtime**
+(true CPS state machine that suspends at each `yield`/`yield*` and resumes on
+`.next()`), replacing the eager buffer — a multi-PR architectural change that
+touches the generator runtime AND the codegen state-machine lowering. It is NOT
+the localized "coerce one `array.set`" fix this issue was filed for, and it
+overlaps the broader IR / front-end pipeline work (#1927).
+
+### Recommendation (sd-4 → tech lead, escalated)
+
+- **Close the filed symptom**: the 325-CE invalid-Wasm cluster is resolved;
+  acceptance criterion #1 ("the 325 instantiation failures compile to a valid
+  binary") is met on current main.
+- **Re-scope / re-file** the residual 86 as an *architectural* issue —
+  "Lazy/suspending async-generator runtime (replace eager-yield buffer) for
+  `yield*` execution-order conformance" — which needs an architect spec, not a
+  point-fix. sd-4 is NOT taking this as a solo codegen fix; releasing the claim
+  so the lane stays clear.
