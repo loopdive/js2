@@ -1,8 +1,9 @@
 {
   "id": "2565",
   "assignee": "ttraenkler/sd3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2565-dstr-param-shapeid",
   "claimed_at": "2026-06-21T02:09:17Z",
-  "updated_at": "2026-06-21T02:09:17Z"
+  "updated_at": "2026-06-21T02:47:06Z",
+  "released_at": "2026-06-21T02:47:06Z"
 }
