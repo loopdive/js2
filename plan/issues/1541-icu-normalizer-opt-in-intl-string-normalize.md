@@ -50,3 +50,16 @@ Low — `icu_normalizer` is well-bounded and the data tables are static.
 ## Out of scope
 - `Intl.Collator`, `Intl.NumberFormat`, `Intl.DateTimeFormat` — too large; remain host-only.
 - `String.prototype.localeCompare` — depends on collator; remains host-only.
+
+## Current standalone behaviour (verified 2026-06-18, #40 probe)
+Standalone `String.prototype.normalize(form)` is a **no-op stub** today: it
+returns the input string UNCHANGED for every form (`NFC`/`NFD`/`NFKC`/`NFKD`).
+Verified by probe: `"é".normalize("NFC")` returns `"é"` (should be
+`"é"`), `"é".normalize("NFD")` returns `"é"` (should be
+`"é"`), `"ﬁ".normalize("NFKC")` returns `"ﬁ"` (should be `"fi"`).
+A plain ASCII string (already normalised) round-trips correctly only because the
+input already equals the output. This issue (icu4x opt-in, or a pure-Wasm
+canonical decomposition/composition + compatibility-mapping table + the
+recombination algorithm) is the path to real normalization. The #40
+case-conversion work deliberately did NOT touch normalize — it is a separate,
+larger Unicode-data effort, correctly tracked here.

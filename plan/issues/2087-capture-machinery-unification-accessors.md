@@ -2,7 +2,7 @@
 id: 2087
 title: "capture-machinery unification: object-literal accessors must use the canonical boxedCaptures ref-cell path"
 status: ready
-sprint: 63
+sprint: 64
 created: 2026-06-11
 updated: 2026-06-12
 priority: high

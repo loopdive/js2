@@ -74,20 +74,23 @@ describe("#2157 residual sub-fixes — executable gates (currently failing)", ()
     ).toBe(6);
   });
 
-  // SF-2 (#2169) — spread / Array.from / destructure don't drive the native generator.
-  it.todo("SF-2 #2169: spread of generator length is 3", async () => {
+  // SF-2 (#2169) — spread / Array.from / destructure now drive the native
+  // generator via the shared `emitNativeGeneratorToVec` drain (all three
+  // consumers landed: spread + Array.from in earlier slices, array-destructure
+  // in this one).
+  it("SF-2 #2169: spread of generator length is 3", async () => {
     expect(
       await runStandalone(`function* g(){ yield 1; yield 2; yield 3; }
 export function test(): number { const a=[...g()]; return a.length; }`),
     ).toBe(3);
   });
-  it.todo("SF-2 #2169: Array.from(generator) length is 3", async () => {
+  it("SF-2 #2169: Array.from(generator) length is 3", async () => {
     expect(
       await runStandalone(`function* g(){ yield 1; yield 2; yield 3; }
 export function test(): number { const a=Array.from(g()); return a.length; }`),
     ).toBe(3);
   });
-  it.todo("SF-2 #2169: array destructure from generator a+b is 3", async () => {
+  it("SF-2 #2169: array destructure from generator a+b is 3", async () => {
     expect(
       await runStandalone(`function* g(){ yield 1; yield 2; }
 export function test(): number { const [a,b]=g(); return a+b; }`),

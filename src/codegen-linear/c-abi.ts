@@ -21,7 +21,12 @@ import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 // ── Linear-memory aggregate header layout (mirrors runtime.ts) ───────
 //
 // String: [header 8B][len:u32 @ +8][utf8 bytes @ +12...]
-// Array:  [header 8B][len:u32 @ +8][cap:u32 @ +12][elements: i32×cap @ +16...]
+// Array:  [header 8B][len:u32 @ +8][cap:u32 @ +12][elements: 8B×cap @ +16...]
+//
+// #1938: array elements are 8-byte slots (f64 bit pattern). A number[] return
+// payload is therefore 8-byte-strided (read it as a `double*` / Float64Array
+// on the host); a reference/handle array stores the i32 in the low 4 bytes of
+// each 8-byte slot.
 //
 // These constants MUST stay in sync with addStringRuntime / addArrayRuntime
 // in src/codegen-linear/runtime.ts (#1835).

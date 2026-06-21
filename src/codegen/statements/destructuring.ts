@@ -43,6 +43,7 @@ import { emitLocalTdzInit, emitTdzInitForBindingPattern } from "./tdz.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../expressions/proto-override.js";
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "../custom-iterable.js";
+import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
 
 /**
  * (#1719 S1) Gate predicate for the array object-value representation track.
@@ -1035,6 +1036,53 @@ export function compileArrayDestructuring(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   const isVecArray = arrDef && arrDef.kind === "array";
+
+  // (#2169) Array-destructuring a Wasm-native generator (`const [a,b]=g()`).
+  // The initializer lowered to a ref to the generator state struct
+  // (`$__gen_state_*`), NOT a __vec — without this it fell through to the
+  // unknown-struct externref fallback (`extern.convert_any` →
+  // `__array_from_iter_n` host import), which doesn't exist standalone, so the
+  // module failed zero-import instantiation. Spec §8.5.2
+  // IteratorBindingInitialization: array destructuring is a GetIterator
+  // consumer, exactly like for-of / spread / Array.from. Drain the generator
+  // into an f64 vec via the shared `emitNativeGeneratorToVec` resume loop (the
+  // same helper the spread + Array.from consumers use), then destructure that
+  // vec through the proven typed-vec path. This is the SF-2 destructure
+  // consumer carried forward from the spread/Array.from slices.
+  if (!isVecArray) {
+    const genInfo = nativeGeneratorInfoForForOfSubject(ctx, resultType);
+    if (genInfo) {
+      const genVecTypeIdx = getOrRegisterVecType(ctx, "f64");
+      const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);
+      // genState ref is currently on the stack; emitNativeGeneratorToVec
+      // consumes it and leaves (ref $vec_f64). trimToLength=true: the
+      // destructure path bounds-checks against `array.len(data)`, so the
+      // backing array must be sized to exactly the logical length for
+      // out-of-length binding defaults (`const [a,b=9]=g()`) to fire.
+      emitNativeGeneratorToVec(ctx, fctx, genInfo, resultType, genVecTypeIdx, genArrTypeIdx, true);
+      // struct.new yields a non-null ref; type the local `ref` (not `ref_null`)
+      // so the typed-vec destructure's OOB→default logic matches the
+      // literal-array path (mirrors the custom-iterable drain below).
+      const vecLocal = allocLocal(fctx, `__destr_gen_vec_${fctx.locals.length}`, {
+        kind: "ref",
+        typeIdx: genVecTypeIdx,
+      });
+      fctx.body.push({ op: "local.set", index: vecLocal });
+      destructureParamArray(
+        ctx,
+        fctx,
+        vecLocal,
+        pattern,
+        { kind: "ref", typeIdx: genVecTypeIdx },
+        {
+          mode: "decl",
+          bindingKind: recoverBindingKind(pattern) ?? "var",
+        },
+      );
+      syncDestructuredLocalsToGlobals(ctx, fctx, pattern);
+      return;
+    }
+  }
 
   // (#2033) Array-destructuring a user-defined iterable — an object literal /
   // class instance whose struct carries `[Symbol.iterator]()`. Without this it

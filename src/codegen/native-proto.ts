@@ -47,16 +47,82 @@ import { emitWasiErrorConstructor } from "./registry/error-types.js";
 const BUILTIN_BRAND_BASE = -0x4000_0000; // far from any plausible classTag count
 
 /**
- * The fixed builtin-brand table. Each builtin that gets a `$NativeProto` reserves
- * one stable id here. Add entries as stages land (S1: RegExp; S3:
- * %TypedArray%/Int8Array/…). Keep the offsets stable across runs — the value is
- * baked into emitted code as `$NativeProto.$brand`.
+ * The fixed builtin-brand table. Each builtin that gets (or will get) a
+ * `$NativeProto` reserves one stable id here. The value is baked into emitted
+ * code as `$NativeProto.$brand`, so **offsets are an append-only stable
+ * contract — never renumber or reuse a slot** (a changed brand silently
+ * mis-dispatches every program that baked the old value).
+ *
+ * (#2175 PREP) All builtin-constructor families that the native-proto glue
+ * wave (#1616/#2158 slices 1-4) will register are reserved up front so each
+ * glue slice only has to wire its prologue + member bodies against an
+ * already-stable id — no slice has to touch this table or risk colliding with
+ * a sibling slice landed in parallel. Reserving a brand is inert on its own:
+ * `getBuiltinBrand` returns the id, but with no registered glue the
+ * `.prototype`-as-value read still falls through to the refusal (the brand only
+ * becomes load-bearing once a slice registers a prologue for it). The grouping
+ * mirrors the architect's slice order; the numeric offsets do not have to be
+ * contiguous per group, only stable.
+ *
+ * Brand assignment is fixed by `BUILTIN_CTOR_NAMES` (property-access.ts) plus
+ * the `%TypedArray%` abstract intrinsic; keep this list in sync when a new
+ * builtin constructor is added there.
  */
 const BUILTIN_BRAND_TABLE: Readonly<Record<string, number>> = {
+  // ── S1: RegExp (wired) ──────────────────────────────────────────────────
   RegExp: BUILTIN_BRAND_BASE + 1,
-  // S3 (reserved, not yet wired):
-  //   "%TypedArray%": BUILTIN_BRAND_BASE + 2,
-  //   Int8Array: BUILTIN_BRAND_BASE + 3, ...
+
+  // ── S1: Array / TypedArray family + buffers (reserved, not yet wired) ────
+  Array: BUILTIN_BRAND_BASE + 2,
+  // The abstract %TypedArray% intrinsic prototype (parent of every concrete
+  // TypedArray proto). Bracketed name keeps it distinct from any user ident.
+  "%TypedArray%": BUILTIN_BRAND_BASE + 3,
+  Int8Array: BUILTIN_BRAND_BASE + 4,
+  Uint8Array: BUILTIN_BRAND_BASE + 5,
+  Uint8ClampedArray: BUILTIN_BRAND_BASE + 6,
+  Int16Array: BUILTIN_BRAND_BASE + 7,
+  Uint16Array: BUILTIN_BRAND_BASE + 8,
+  Int32Array: BUILTIN_BRAND_BASE + 9,
+  Uint32Array: BUILTIN_BRAND_BASE + 10,
+  Float32Array: BUILTIN_BRAND_BASE + 11,
+  Float64Array: BUILTIN_BRAND_BASE + 12,
+  BigInt64Array: BUILTIN_BRAND_BASE + 13,
+  BigUint64Array: BUILTIN_BRAND_BASE + 14,
+  ArrayBuffer: BUILTIN_BRAND_BASE + 15,
+  SharedArrayBuffer: BUILTIN_BRAND_BASE + 16,
+  DataView: BUILTIN_BRAND_BASE + 17,
+
+  // ── S2: Object / Function (reserved, not yet wired) ──────────────────────
+  Object: BUILTIN_BRAND_BASE + 18,
+  Function: BUILTIN_BRAND_BASE + 19,
+
+  // ── S4: String / Number / Boolean / BigInt / Symbol (reserved) ───────────
+  String: BUILTIN_BRAND_BASE + 20,
+  Number: BUILTIN_BRAND_BASE + 21,
+  Boolean: BUILTIN_BRAND_BASE + 22,
+  BigInt: BUILTIN_BRAND_BASE + 23,
+  Symbol: BUILTIN_BRAND_BASE + 24,
+
+  // ── Collections / misc builtins (reserved for later slices) ──────────────
+  Map: BUILTIN_BRAND_BASE + 25,
+  Set: BUILTIN_BRAND_BASE + 26,
+  WeakMap: BUILTIN_BRAND_BASE + 27,
+  WeakSet: BUILTIN_BRAND_BASE + 28,
+  WeakRef: BUILTIN_BRAND_BASE + 29,
+  Promise: BUILTIN_BRAND_BASE + 30,
+  Date: BUILTIN_BRAND_BASE + 31,
+  Iterator: BUILTIN_BRAND_BASE + 32,
+
+  // ── Error family (reserved) ──────────────────────────────────────────────
+  Error: BUILTIN_BRAND_BASE + 33,
+  TypeError: BUILTIN_BRAND_BASE + 34,
+  RangeError: BUILTIN_BRAND_BASE + 35,
+  SyntaxError: BUILTIN_BRAND_BASE + 36,
+  URIError: BUILTIN_BRAND_BASE + 37,
+  EvalError: BUILTIN_BRAND_BASE + 38,
+  ReferenceError: BUILTIN_BRAND_BASE + 39,
+
+  // Next free slot: BUILTIN_BRAND_BASE + 40 (append only).
 };
 
 /**
@@ -368,6 +434,15 @@ export function ensureStandaloneNativeMethodClosure(
 
     if (!ctx.nativeClosureMeta) ctx.nativeClosureMeta = new Map();
     ctx.nativeClosureMeta.set(funcIdx, { name: member, length: arity });
+  }
+
+  // (#2193 PR-B) A `"method"` closure's first user param is the receiver
+  // (`this`); record its struct type so a reflective `m.call(thisArg, …args)`
+  // threads `thisArg` into param 1 instead of dropping it (the plain-function
+  // `.call` default). Getters carry no user-visible receiver-arg semantics here.
+  if (kind === "method") {
+    if (!ctx.nativeProtoReceiverClosureStructTypes) ctx.nativeProtoReceiverClosureStructTypes = new Set();
+    ctx.nativeProtoReceiverClosureStructTypes.add(wrapperTypes.structTypeIdx);
   }
 
   return { type: { kind: "ref", typeIdx: wrapperTypes.structTypeIdx }, funcIdx };

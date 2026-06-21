@@ -1,10 +1,12 @@
 ---
 id: 1536c
 title: "standalone-native user Error subclass: instance creation via __new_<Parent> + native instanceof tag chain (no host imports)"
-status: ready
+status: done
+completed: 2026-06-17
+assignee: sendev-closures
 sprint: 63
 created: 2026-06-16
-updated: 2026-06-16
+updated: 2026-06-17
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -81,3 +83,44 @@ regression. The architect's plan explicitly sanctioned splitting it here.
 Route to **senior-developer**. Gated `ctx.wasi || ctx.standalone`; JS-host path
 untouched. Local checks: `tsc --noEmit` + a `tests/issue-1536c.test.ts` that
 asserts the three standalone behaviors above with an env-import assertion.
+
+## Resolution (2026-06-17)
+
+All acceptance criteria pass under `--target standalone` with **zero `env::`
+imports**; JS-host mode unchanged. Three gated change-sites (all
+`ctx.wasi || ctx.standalone`):
+
+1. **Instance creation** — `src/codegen/class-bodies.ts`, both the implicit
+   derived-ctor block (`!ctor && isExternrefBacked`) and `compileSuperCall`:
+   when the externref-backed subclass's builtin parent is a WASI error name,
+   emit the native `__new_<Parent>` internal function via
+   `emitWasiErrorConstructor(ctx, parent, arity)` and call it from `ctx.funcMap`
+   instead of `ensureLateImport` (the host import). Produces a real
+   `$Error_struct` (parent `$tag`, `.message`, `.name`). JS-host keeps the
+   import.
+2. **`instanceof`** — `src/codegen/expressions/identifiers.ts`: the host
+   `__tag_user_class` tagging block (`class-bodies.ts`) is skipped standalone;
+   `instance instanceof MyError` / `instanceof Error` resolve natively. The
+   `$Error_struct` `$tag`-discrimination path (#1473) now also fires for a
+   user class whose builtin parent is an error (`userErrorParent`), using the
+   parent's `collectErrorInstanceOfTags` set — guarded by `ref.test
+   $Error_struct` so a non-Error value yields `false`.
+3. **`.message`/`.name`/`.stack`** — `src/codegen/property-access.ts`: the
+   native struct-field read fast-path (`isErrorLhs`) now also treats a
+   user-Error-subclass receiver (`classBuiltinParentMap` → error) as an Error
+   LHS, reading `$Error_struct` fields directly instead of the generic
+   `__extern_get` host path (which returns null standalone).
+
+Verified (`tests/issue-1536c.test.ts`, 7 cases): `new MyError("boom").message`
+=== "boom"; `instanceof Error`/`instanceof MyError` true; non-Error not an
+instance; explicit `super(m)` ctor; `class MyTE extends TypeError` chains to
+both `TypeError` and `Error`. Host mode spot-checked unchanged. Typecheck +
+IR-fallback gate clean.
+
+**Precision note (follow-up #2188):** `instance instanceof MyError` resolves to
+"is an Error-family struct compatible with MyError's *builtin parent*" — exact
+for a single subclass, but two distinct `extends Error` siblings are not
+mutually distinguished (both share the parent `$tag`). Full per-user-class
+discrimination needs a brand on the instance (the `$ClassMeta`/`$parentTag`
+work, #2101). Filed as #2188; out of scope for #1536c's single-subclass
+acceptance.

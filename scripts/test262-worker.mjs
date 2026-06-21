@@ -831,7 +831,7 @@ function makeWorkerRecycleError(reason) {
   return err;
 }
 
-async function doCompile(source, sourceMapUrl, target) {
+async function doCompile(source, sourceMapUrl, target, inferModuleStrictArguments) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
   // interruption scenarios it may not have completed. Doing a cheap pre-
@@ -849,7 +849,7 @@ async function doCompile(source, sourceMapUrl, target) {
   }
   const compileFn = incrementalCompiler ? incrementalCompiler.compile : compile;
   return incrementalCompiler
-    ? compileFn(source, { sourceMapUrl: sourceMapUrl || "test.wasm.map", target })
+    ? compileFn(source, { sourceMapUrl: sourceMapUrl || "test.wasm.map", target, inferModuleStrictArguments })
     : (await compile(source, {
               fileName: "test.ts",
               sourceMap: true,
@@ -857,6 +857,7 @@ async function doCompile(source, sourceMapUrl, target) {
               emitWat: false,
               skipSemanticDiagnostics: true,
               target,
+              inferModuleStrictArguments,
             }));
 }
 
@@ -1042,7 +1043,7 @@ process.on("message", async (msg) => {
 
   let result;
   try {
-    result = await doCompile(source, msg.sourceMapUrl, target);
+    result = await doCompile(source, msg.sourceMapUrl, target, msg.inferModuleStrictArguments);
   } catch (err) {
     // Thrown exception may have poisoned the incremental compiler's internal
     // state.  Recreate immediately so subsequent compilations don't cascade-fail.

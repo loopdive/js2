@@ -4,7 +4,7 @@ title: "standalone Reflect: receiver arg silently dropped, deleteProperty ignore
 status: in-progress
 sprint: Backlog
 created: 2026-06-10
-updated: 2026-06-14
+updated: 2026-06-17
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -141,3 +141,57 @@ issue stays `in-progress`.
   `tests/delete-operator.test.ts` import the broken `tests/helpers.js`;
   `tests/equivalence/reflect-api.test.ts` "Reflect.construct creates a new
   instance" fails identically on clean origin/main (host-mode, not standalone).
+
+## Implementation Plan (architect, 2026-06-17) — s63 gate slice S5 (+ PR-D dependency)
+
+This issue owns slice **S5** of the #1472 gate (see #1472 coordinating spec).
+The `standalone-reflect-refusal` bucket is now almost pure CE (295 CE / 20 fail
+of 315), so S5 is a refusal-retirement slice.
+
+### Bucket breakdown (report 2026-06-16)
+- `Reflect.construct` refusal — 152 rows (largest)
+- `Reflect.defineProperty` refusal — 53 rows
+- `Reflect.getOwnPropertyDescriptor` refusal — 15 rows
+- explicit-receiver `Reflect.get`/`Reflect.set` refusal — 29 rows
+  (these are **correctly** refused per PR-A — leave them, they are honest)
+
+### PR-D dependency (numeric keys) — consume #2042 S1, do NOT duplicate
+The deferred PR-D ("`Reflect.get(o, 1)` still traps on `ref.cast $AnyString` in
+`__obj_hash`") is now subsumed by **#2042 S1** (`__to_property_key` hardening at
+`__obj_find`/`__obj_hash`). Once S1 lands, `Reflect.get(o, 1)` returns `o["1"]`
+with zero extra work here — verify and close PR-D. Coordinate with the S1 dev so
+only ONE coercion helper exists.
+
+### S5 fix (`src/codegen/expressions/calls.ts`, inside the `if (ctx.standalone)`
+Reflect dispatch block)
+- **`Reflect.defineProperty(t, k, desc)`** → route to the #2042 **S3**
+  `__defineProperty_desc` native; return its boolean success as i32 (Reflect
+  returns `false` on failure rather than throwing). **Depends on #2042 S3.**
+- **`Reflect.getOwnPropertyDescriptor(t, k)`** → route to the existing native
+  `__getOwnPropertyDescriptor` (already in `OBJECT_RUNTIME_HELPER_NAMES`). No new
+  runtime work — just replace the refusal with the call. **No dependency** —
+  ship this first as the cheapest win.
+- **`Reflect.construct(target, argsList)`** (152 rows, the big one) → route the
+  2-arg form to the same construct path standalone `new X(...)` uses; **refuse**
+  the 3-arg `newTarget` form (proto override needs the class/proto graph). This
+  one is gated on the standalone construct machinery — coordinate with the
+  #2158 class/construct owner. If construct plumbing isn't ready, keep its
+  refusal and ship the two descriptor wins separately so they aren't blocked.
+
+### Edge cases
+- `Reflect.defineProperty` must return a **boolean**, never throw, even when the
+  underlying define would TypeError (e.g. non-configurable redefine) — wrap the
+  S4 validation so a rejected define returns `false` in the Reflect path while
+  `Object.defineProperty` throws. (Same native, two call-site return shapes.)
+- Non-object target → already TypeError via PR-A's `ref.test $Object` call-site
+  guard; keep it for the new methods too.
+
+### Acceptance signatures
+- `built-ins/Reflect/getOwnPropertyDescriptor/*` and
+  `built-ins/Reflect/defineProperty/*` standalone rows move refusal → pass.
+- `Reflect.get(o, 1)` no longer traps (via #2042 S1).
+- `Reflect.construct` 2-arg form passes where standalone `new` already works;
+  3-arg form refuses loudly (no silent wrong newTarget).
+- Extend `tests/issue-2046.test.ts` / `tests/issue-1905.test.ts` with
+  numeric-key get, `Reflect.defineProperty` data+accessor desc, and
+  `Reflect.getOwnPropertyDescriptor` round-trip.

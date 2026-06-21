@@ -172,7 +172,7 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **1024** | Destructuring rest elements + array holes drop null vs undefined | 41 | done | high |
 | **1025** | BindingElement array-pattern default guards still use ref.is_null | 45 | done | high |
 | **1031** | Compile lodash to Wasm as a real-world stress test; harvest error patterns | 40 | done | high |
-| **1098** | Audit and reduce patch-layer accumulation in codegen (155 workarounds, special cases, fallbacks) | 45 | ready | medium |
+| **1098** | Audit and reduce patch-layer accumulation in codegen (155 workarounds, special cases, fallbacks) | Backlog | ready | medium |
 | **1119** | ES2015 SingleNameBinding anonymous function/class naming from destructuring context | 44 | done | medium |
 | **1120** | Add int32 fast path for bitwise-coerced numeric loops in hot benchmarks | 45 | done | high |
 | **1121** | Infer numeric recursive fast path without JSDoc hints on exported entrypoints | 45 | done | high |
@@ -192,95 +192,105 @@ missing return values, incorrect type coercion, wrong control flow, broken scope
 | **1256** | i32 fast path for `*` is not spec-faithful when true product exceeds 2^53 | 45 | done | medium |
 | **1702** | Residual strict-mode `this` regressions: function-expression direct-call + nested fn-decl in class method | 56 | done |  |
 | **1915** | gc JS-host mode: [...str] / Array.from(str) returns empty array (externref-spread gap) | Backlog | backlog | medium |
-| **1974** | linear backend: % silently evaluates to the right-hand operand (empty PercentToken case leaves operands on the stack) | 61 | ready | high |
-| **1975** | linear backend: NaN and \"\" are truthy (f64.ne 0 / raw i32 pointer truthiness); &&/\|\| return 0/1 instead of operand values | 61 | ready | high |
-| **1976** | linear backend: string relationals compare memory addresses; .length returns UTF-8 byte count; string concat in compound-assign emits invalid module | 61 | ready | high |
-| **1978** | user function named main gets the module-init body spliced into it: top-level state resets on every call; WASI infinite recursion for main() convention | 61 | ready | high |
-| **1986** | strict === between any-typed and number-typed operands applies ToNumber coercion (null === 0 → true, '1' === 1 → true) | 61 | ready | high |
-| **1987** | any-boxed 0 === -0 returns false: __any_strict_eq bails on i32-box vs f64-box tag mismatch before numeric compare | 61 | ready | low |
-| **1988** | __any_add on object/array operands skips ToPrimitive entirely — 1 + {} → NaN, [] + [] → 0 | 61 | ready | medium |
-| **1989** | ToPrimitive valueOf dispatch keyed by struct type name, not object identity — last same-shape literal's valueOf wins for ALL coercions | 61 | ready | high |
-| **1990** | loose == between any object carrying toString/valueOf and a string throws TypeError: host_loose_eq lacks _toPrimitiveSync routing | 61 | ready | medium |
-| **1991** | in operator never consults the prototype chain — inherited class methods and Object.prototype members invisible | 61 | ready | medium |
+| **1974** | linear backend: % silently evaluates to the right-hand operand (empty PercentToken case leaves operands on the stack) | 61 | done | high |
+| **1975** | linear backend: NaN and \"\" are truthy (f64.ne 0 / raw i32 pointer truthiness); &&/\|\| return 0/1 instead of operand values | 63 | done | high |
+| **1976** | linear backend: string relationals compare memory addresses; .length returns UTF-8 byte count; string concat in compound-assign emits invalid module | 63 | done | high |
+| **1978** | user function named main gets the module-init body spliced into it: top-level state resets on every call; WASI infinite recursion for main() convention | 62 | done | high |
+| **1986** | strict === between any-typed and number-typed operands applies ToNumber coercion (null === 0 → true, '1' === 1 → true) | 61 | done | high |
+| **1987** | any-boxed 0 === -0 returns false: __any_strict_eq bails on i32-box vs f64-box tag mismatch before numeric compare | 61 | done | low |
+| **1988** | __any_add on object/array operands skips ToPrimitive entirely — 1 + {} → NaN, [] + [] → 0 | 62 | done | medium |
+| **1989** | ToPrimitive valueOf dispatch keyed by struct type name, not object identity — last same-shape literal's valueOf wins for ALL coercions | 62 | done | high |
+| **1990** | loose == between any object carrying toString/valueOf and a string throws TypeError: host_loose_eq lacks _toPrimitiveSync routing | 62 | done | medium |
+| **1991** | in operator never consults the prototype chain — inherited class methods and Object.prototype members invisible | 62 | done | medium |
 | **1992** | f instanceof Function hard-coded false for function values (collectInstanceOfTags empty → graceful i32.const 0) | 61 | done | low |
 | **1993** | sort() with no comparator sorts numerically instead of lexicographic ToString order ([10,9,1,100] → 1,9,10,100) | 61 | done | medium |
-| **1994** | reduce/reduceRight on string[] trap 'illegal cast' — accumulator local hard-coded to numeric kind | 61 | ready | high |
+| **1994** | reduce/reduceRight on string[] trap 'illegal cast' — accumulator local hard-coded to numeric kind | 63 | done | high |
 | **1995** | flat() with no argument flattens depth 0 instead of default 1 — ref.null arrives as JS null, not undefined | 61 | done | high |
 | **1996** | flat/flatMap host bridge leaves nested WasmGC vecs opaque — [[1,2],[3,4]].flat() → [null,null] (silent data corruption) | 61 | done | high |
-| **1997** | Array.prototype.toString() returns '[object Array]' instead of join() (method call only; String(a) works) | 61 | ready | medium |
-| **1998** | join() traps 'illegal cast' on externref-element arrays — any[] numbers, undefined/null elements, holes, Array(n) results | 61 | ready | high |
+| **1997** | Array.prototype.toString() returns '[object Array]' instead of join() (method call only; String(a) works) | 62 | done | medium |
+| **1998** | join() traps 'illegal cast' on externref-element arrays — any[] numbers, undefined/null elements, holes, Array(n) results | 62 | done | high |
 | **1999** | string += on a closure-captured variable traps 'illegal cast' (and emits invalid wasm when an i32 index is concatenated) — breaks the accumulator-in-callback idiom | 61 | done | critical |
 | **2000** | Array(len) skips the RangeError check for non-integer lengths and materializes dense zeros instead of holes | 61 | done | low |
-| **2001** | sparse arrays: holes materialize as element-type defaults and HOFs visit them — [1,,3].forEach runs 3×, b[5]=9 join shows zeros | 61 | ready | medium |
-| **2002** | startsWith/endsWith/includes silently drop the position/endPosition argument on the JS-host backend (import arity truncation) | 61 | ready | high |
-| **2003** | charCodeAt out-of-range traps 'string offset out of bounds' instead of returning NaN | 61 | ready | medium |
-| **2004** | codePointAt out-of-range returns NaN instead of undefined — ?? / === undefined guards never fire | 61 | ready | medium |
-| **2005** | template literal interpolation stringifies booleans as '1'/'0' and undefined as '0' (i32 spans bypass emitBoolToString) | 61 | ready | high |
-| **2006** | `${null}` in a template literal traps 'illegal cast' — externref spans assumed to be strings | 61 | ready | high |
-| **2007** | array operand in string concatenation traps 'illegal cast' — '+' never routes vecs through ToPrimitive/join | 61 | ready | medium |
-| **2008** | tagged templates broken: cooked elements read as undefined, .raw access traps, String.raw throws (template object unusable) | 61 | ready | high |
-| **2009** | structurally identical struct types share field names at the host boundary — Object.assign/spread/JSON.stringify mislabel keys, spread override order broken | 61 | ready | high |
+| **2001** | sparse arrays: holes materialize as element-type defaults and HOFs visit them — [1,,3].forEach runs 3×, b[5]=9 join shows zeros | 64 | ready | medium |
+| **2002** | startsWith/endsWith/includes silently drop the position/endPosition argument on the JS-host backend (import arity truncation) | 61 | done | high |
+| **2003** | charCodeAt out-of-range traps 'string offset out of bounds' instead of returning NaN | 61 | done | medium |
+| **2004** | codePointAt out-of-range returns NaN instead of undefined — ?? / === undefined guards never fire | 61 | done | medium |
+| **2005** | template literal interpolation stringifies booleans as '1'/'0' and undefined as '0' (i32 spans bypass emitBoolToString) | 61 | done | high |
+| **2006** | `${null}` in a template literal traps 'illegal cast' — externref spans assumed to be strings | 61 | done | high |
+| **2007** | array operand in string concatenation traps 'illegal cast' — '+' never routes vecs through ToPrimitive/join | 63 | done | medium |
+| **2008** | tagged templates broken: cooked elements read as undefined, .raw access traps, String.raw throws (template object unusable) | 63 | done | high |
+| **2009** | structurally identical struct types share field names at the host boundary — Object.assign/spread/JSON.stringify mislabel keys, spread override order broken | 64 | done | high |
 | **2010** | {...null} / {...undefined} in an object literal silently drops ALL named properties (externref fallback skips PropertyAssignment) | 61 | done | high |
-| **2011** | object-literal getter/setter closures capture copies — writes through accessors never reach the outer scope, getter pairs don't share state | 61 | ready | high |
-| **2012** | Object.freeze: no strict-mode TypeError on write, isFrozen false — tracking only fires for identifier args, struct receivers get no integrity bit | 61 | ready | medium |
-| **2013** | JSON.parse reviver argument silently ignored (parse arm compiles only arguments[0]; host import drops it) | 61 | ready | medium |
+| **2011** | object-literal getter/setter closures capture copies — writes through accessors never reach the outer scope, getter pairs don't share state | 63 | done | high |
+| **2012** | Object.freeze: no strict-mode TypeError on write, isFrozen false — tracking only fires for identifier args, struct receivers get no integrity bit | 63 | done | medium |
+| **2013** | JSON.parse reviver argument silently ignored (parse arm compiles only arguments[0]; host import drops it) | 64 | blocked | medium |
 | **2014** | numeric-key element access on any-typed object returns undefined though the property exists (o[2] vs o['2']) | 61 | done | medium |
-| **2015** | method call using `this` on an any-typed object-literal receiver throws bare WebAssembly.Exception (__extern_method_call this-routing) | 61 | ready | medium |
+| **2015** | method call using `this` on an any-typed object-literal receiver throws bare WebAssembly.Exception (__extern_method_call this-routing) | 62 | done | medium |
 | **2016** | hasOwnProperty result stringifies as '1'/'0' instead of 'true'/'false' (i32 result lacks boolean brand) | 61 | done | low |
-| **2017** | assignment to a getter-only object-literal property traps 'illegal cast' instead of throwing strict-mode TypeError | 61 | ready | low |
-| **2018** | any return statement in a base-class constructor makes new C() trap 'dereferencing a null pointer' (bare return, return obj, return primitive) | 61 | ready | high |
-| **2019** | static property ++/-- is a silent no-op (write dropped, NaN pushed) — compileMemberIncDec has no staticProps arm | 61 | ready | high |
-| **2020** | inherited static fields unreachable through subclass name (B.count → null; static method inheritance works) | 61 | ready | medium |
-| **2021** | array literal [new Subclass(), new Base()] traps 'dereferencing a null pointer' — element type taken from first element, contextual annotation ignored | 61 | ready | high |
-| **2022** | obj + '' applies string-hint ToPrimitive (toString) instead of default hint (valueOf first) when one operand is string-typed | 61 | ready | medium |
-| **2023** | new.target compiles to constant i32 1 — identity comparisons (new.target === A) always wrong | 61 | ready | medium |
-| **2024** | class accessor override with partial pair: get-only override silently drops writes (should TypeError); set-only override reads NaN (should undefined) | 61 | ready | medium |
-| **2025** | calling an extracted method (const f = a.m; f()) traps uncatchably instead of throwing catchable TypeError | 61 | ready | low |
-| **2026** | classes are not first-class values: new K() on a parameter throws 'No dependency provided for extern class', .constructor identity broken | 61 | ready | medium |
-| **2027** | (this as any).prop in a static field initializer yields null — static-context arm matches bare ThisKeyword only | 61 | ready | low |
-| **2028** | new Promise(executor): invoking the host-provided resolve/reject from wasm traps null deref — executor pattern fully broken in JS-host mode | 61 | ready | high |
+| **2017** | assignment to a getter-only object-literal property traps 'illegal cast' instead of throwing strict-mode TypeError | 63 | done | low |
+| **2018** | any return statement in a base-class constructor makes new C() trap 'dereferencing a null pointer' (bare return, return obj, return primitive) | 61 | done | high |
+| **2019** | static property ++/-- is a silent no-op (write dropped, NaN pushed) — compileMemberIncDec has no staticProps arm | 61 | done | high |
+| **2020** | inherited static fields unreachable through subclass name (B.count → null; static method inheritance works) | 61 | done | medium |
+| **2021** | array literal [new Subclass(), new Base()] traps 'dereferencing a null pointer' — element type taken from first element, contextual annotation ignored | 63 | done | high |
+| **2022** | obj + '' applies string-hint ToPrimitive (toString) instead of default hint (valueOf first) when one operand is string-typed | 62 | done | medium |
+| **2023** | new.target compiles to constant i32 1 — identity comparisons (new.target === A) always wrong | 63 | done | medium |
+| **2024** | class accessor override with partial pair: get-only override silently drops writes (should TypeError); set-only override reads NaN (should undefined) | 63 | done | medium |
+| **2025** | calling an extracted method (const f = a.m; f()) traps uncatchably instead of throwing catchable TypeError | 63 | done | low |
+| **2026** | classes are not first-class values: new K() on a parameter throws 'No dependency provided for extern class', .constructor identity broken | 63 | done | medium |
+| **2027** | (this as any).prop in a static field initializer yields null — static-context arm matches bare ThisKeyword only | 61 | done | low |
+| **2028** | new Promise(executor): invoking the host-provided resolve/reject from wasm traps null deref — executor pattern fully broken in JS-host mode | 63 | done | high |
 | **2030** | IteratorResult.done stringifies as 0/1 (raw i32, no boolean brand); exhausted .value becomes NaN instead of undefined | 61 | done | medium |
-| **2031** | array destructuring with default + rest + short source traps 'array element access out of bounds' — array.copy keeps unclamped source offset | 61 | ready | high |
-| **2032** | computed-key object destructuring const { [k]: v } = obj silently binds 0 — ComputedPropertyName never evaluated in struct fast path | 61 | ready | high |
-| **2033** | custom iterables ([Symbol.iterator]): spread emits invalid wasm (CE), destructuring reads NaN — only for-of consults the protocol | 61 | ready | high |
+| **2031** | array destructuring with default + rest + short source traps 'array element access out of bounds' — array.copy keeps unclamped source offset | 61 | done | high |
+| **2032** | computed-key object destructuring const { [k]: v } = obj silently binds 0 — ComputedPropertyName never evaluated in struct fast path | 61 | done | high |
+| **2033** | custom iterables ([Symbol.iterator]): spread emits invalid wasm (CE), destructuring reads NaN — only for-of consults the protocol | 63 | done | high |
 | **2034** | Number.isNaN/isInteger/isFinite coerce their argument via f64 hint — Number.isNaN('foo') returns true (should be false, no coercion) | 61 | done | medium |
-| **2035** | generator return value leaks into iteration: spread/for-of/Array.from/yield* include it; final {value, done:true} never materializes | 61 | ready | high |
-| **2044** | architect decision: BigInt value representation — i64-bigint-brand ValType vs TS-type-driven boxing (gates #1644 slices, implicated in #2039 i64 ABI bucket) | Backlog | ready | high |
-| **2049** | o?.m(args) never routed to optional-call codegen: args evaluated on nullish receiver, null class receiver traps | 61 | ready | high |
-| **2050** | a?.[i] compiled as plain a[i]: index side effects fire and no undefined result on nullish base | 61 | ready | high |
-| **2051** | short-circuited ?. produces the type's default value (0 / \"null\") instead of undefined | 61 | ready | high |
-| **2052** | \|\|= / &&= (and ref-typed ??=) on accessor properties call the getter twice on the keep path | 61 | ready | medium |
-| **2053** | f(...arr, x) — trailing positional arg after spread silently miscompiles to NaN | 61 | ready | high |
-| **2054** | Math.max(...arr) / Math.min(...arr) on runtime arrays silently return NaN — generic SpreadElement passthrough hazard | 61 | ready | high |
-| **2055** | relational comparison against an i32-promoted local silently truncates the other f64 operand (i < 2.5 wrong) | 61 | ready | critical |
-| **2056** | % operator loses precision and returns Infinity/0 for extreme operand ratios (a - trunc(a/b)*b is not fmod) | 61 | ready | high |
-| **2057** | Math.min/max constant-fold a reassigned variable to NaN — isStaticNaN traces initializers without const/reassignment check | 61 | ready | critical |
-| **2058** | + and += with a runtime string in an any/externref position do numeric addition instead of concatenation | 61 | ready | high |
-| **2059** | relational operators on two any/externref operands never perform string comparison (\"a\" < \"b\" → false) | 61 | ready | high |
-| **2060** | Math.hypot overflows/underflows: inlined sqrt(a*a+b*b) without scaling | 61 | ready | medium |
-| **2061** | cloned finally branch depths not adjusted for nesting of the abrupt-completion site (return/break inside if inside try) | 61 | ready | high |
-| **2063** | switch violates strict-equality matching across types: switch(true){case 1:} matches; \"1\" matches case 1; mixed cases crash | 61 | ready | high |
-| **2064** | let/const declared in if/else branch blocks leak into the enclosing scope (shadow not restored, const-ness leaks) | 61 | ready | critical |
-| **2068** | nested function declarations: self-recursion and forward sibling calls silently call undefined (fact(5) → 0) | 61 | ready | critical |
-| **2069** | fn.call(thisArg, …) / fn.apply(thisArg, […]) silently discard thisArg for functions that use this | 61 | ready | high |
+| **2035** | generator return value leaks into iteration: spread/for-of/Array.from/yield* include it; final {value, done:true} never materializes | 63 | done | high |
+| **2044** | architect decision: BigInt value representation — i64-bigint-brand ValType vs TS-type-driven boxing (gates #1644 slices, implicated in #2039 i64 ABI bucket) | 64 | blocked | high |
+| **2049** | o?.m(args) never routed to optional-call codegen: args evaluated on nullish receiver, null class receiver traps | 61 | done | high |
+| **2050** | a?.[i] compiled as plain a[i]: index side effects fire and no undefined result on nullish base | 61 | done | high |
+| **2051** | short-circuited ?. produces the type's default value (0 / \"null\") instead of undefined | 63 | done | high |
+| **2052** | \|\|= / &&= (and ref-typed ??=) on accessor properties call the getter twice on the keep path | 61 | done | medium |
+| **2053** | f(...arr, x) — trailing positional arg after spread silently miscompiles to NaN | 61 | done | high |
+| **2054** | Math.max(...arr) / Math.min(...arr) on runtime arrays silently return NaN — generic SpreadElement passthrough hazard | 61 | done | high |
+| **2055** | relational comparison against an i32-promoted local silently truncates the other f64 operand (i < 2.5 wrong) | 61 | done | critical |
+| **2056** | % operator loses precision and returns Infinity/0 for extreme operand ratios (a - trunc(a/b)*b is not fmod) | 61 | done | high |
+| **2057** | Math.min/max constant-fold a reassigned variable to NaN — isStaticNaN traces initializers without const/reassignment check | 61 | done | critical |
+| **2058** | + and += with a runtime string in an any/externref position do numeric addition instead of concatenation | 61 | done | high |
+| **2059** | relational operators on two any/externref operands never perform string comparison (\"a\" < \"b\" → false) | 62 | done | high |
+| **2060** | Math.hypot overflows/underflows: inlined sqrt(a*a+b*b) without scaling | 61 | done | medium |
+| **2061** | cloned finally branch depths not adjusted for nesting of the abrupt-completion site (return/break inside if inside try) | 61 | done | high |
+| **2063** | switch violates strict-equality matching across types: switch(true){case 1:} matches; \"1\" matches case 1; mixed cases crash | 61 | done | high |
+| **2064** | let/const declared in if/else branch blocks leak into the enclosing scope (shadow not restored, const-ness leaks) | 61 | done | critical |
+| **2068** | nested function declarations: self-recursion and forward sibling calls silently call undefined (fact(5) → 0) | 61 | done | critical |
+| **2069** | fn.call(thisArg, …) / fn.apply(thisArg, […]) silently discard thisArg for functions that use this | 61 | done | high |
 | **2071** | constructor returning a foreign plain object cannot override `this` — ctor Wasm return type is (ref $Struct), needs externref-based return ABI | Backlog | ready | low |
 | **2082** | implicit derived-class constructor (WasmGC-struct path) synthesized with zero params — new Dog('rex') constructs with name=null | 61 | done | high |
-| **2084** | module-global object access: reads re-emit null-check+throw per access (survives -O); writes have NO check and trap instead of TypeError | 61 | ready | low |
-| **2085** | array HOF predicate truthiness: buildTruthyCheck treats NaN and boxed 0/'' as truthy — contradicts ensureI32Condition's own spec matrix | Backlog | ready | medium |
-| **2086** | single implicit-derived-ctor synthesis shared by all three representation paths (externref / WasmGC struct / standalone) | Backlog | ready | high |
-| **2087** | capture-machinery unification: object-literal accessors must use the canonical boxedCaptures ref-cell path | Backlog | ready | high |
-| **2088** | per-builtin representation scaffold (element accessor + coercion), starting with fromCharCode + join | Backlog | ready | high |
-| **2091** | REGEX_STEP_CAP overflow silently reports no-match — must throw RangeError | Backlog | ready | medium |
-| **2100** | architect spec: deep-marshaling contract at the host boundary (vec ⇄ array, closure ⇄ callback, struct ⇄ object) | Backlog | ready | high |
-| **2101** | architect spec: class object model — constructor-as-value + prototype chain representation | Backlog | ready | high |
-| **2102** | shared throwJsError(kind, msg) lowering + trap-site audit — runtime checks must throw catchable JS errors, not Wasm traps | Backlog | ready | high |
-| **2104** | value-rep P1: canonical JsTag module (src/codegen/value-tags.ts) + boxToAny consolidation with jsType hint | Backlog | ready | high |
-| **2105** | value-rep P2: boolean brand rollout — ~20 producer + ~12 consumer sites onto {kind:'i32', boolean:true} | Backlog | ready | high |
-| **2106** | value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton | Backlog | ready | high |
+| **2084** | module-global object access: reads re-emit null-check+throw per access (survives -O); writes have NO check and trap instead of TypeError | 62 | done | low |
+| **2085** | array HOF predicate truthiness: buildTruthyCheck treats NaN and boxed 0/'' as truthy — contradicts ensureI32Condition's own spec matrix | 62 | done | medium |
+| **2086** | single implicit-derived-ctor synthesis shared by all three representation paths (externref / WasmGC struct / standalone) | 62 | done | high |
+| **2087** | capture-machinery unification: object-literal accessors must use the canonical boxedCaptures ref-cell path | 64 | ready | high |
+| **2088** | per-builtin representation scaffold (element accessor + coercion), starting with fromCharCode + join | 63 | done | high |
+| **2091** | REGEX_STEP_CAP overflow silently reports no-match — must throw RangeError | 63 | done | medium |
+| **2100** | architect spec: deep-marshaling contract at the host boundary (vec ⇄ array, closure ⇄ callback, struct ⇄ object) | 62 | done | high |
+| **2101** | architect spec: class object model — constructor-as-value + prototype chain representation | 62 | done | high |
+| **2102** | shared throwJsError(kind, msg) lowering + trap-site audit — runtime checks must throw catchable JS errors, not Wasm traps | 63 | done | high |
+| **2104** | value-rep P1: canonical JsTag module (src/codegen/value-tags.ts) + boxToAny consolidation with jsType hint | 62 | done | high |
+| **2105** | value-rep P2: boolean brand rollout — ~20 producer + ~12 consumer sites onto {kind:'i32', boolean:true} | 62 | done | high |
+| **2106** | value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton | 64 | in-progress | high |
 | **2109** | BigInt mixed loose-equality uses parseFloat instead of StringToNumber (accepts trailing garbage, rejects 0x forms) | Backlog | ready | low |
-| **2119** | module code (always strict) gets a mapped arguments object: parameter writes leak into arguments[i] | 61 | ready | medium |
-| **2122** | String.fromCharCode/fromCodePoint silently drop all arguments after the first (host backend; native fromCodePoint too) | 61 | ready | high |
-| **2124** | explicit undefined as optional string-index arg coerced to NaN/0 instead of per-method default (substring/slice/lastIndexOf/endsWith/repeat, both backends) | 61 | ready | high |
+| **2111** | module code (always strict) gets a mapped arguments object: parameter writes leak into arguments[i] | 61 | wont-fix | medium |
+| **2114** | String.fromCharCode/fromCodePoint silently drop all arguments after the first (host backend; native fromCodePoint too) | 61 | wont-fix | high |
+| **2116** | explicit undefined as optional string-index arg coerced to NaN/0 instead of per-method default (substring/slice/lastIndexOf/endsWith/repeat, both backends) | 61 | wont-fix | high |
+| **2119** | module code (always strict) gets a mapped arguments object: parameter writes leak into arguments[i] | 63 | done | medium |
+| **2122** | String.fromCharCode/fromCodePoint silently drop all arguments after the first (host backend; native fromCodePoint too) | 61 | done | high |
+| **2124** | explicit undefined as optional string-index arg coerced to NaN/0 instead of per-method default (substring/slice/lastIndexOf/endsWith/repeat, both backends) | 61 | done | high |
+| **2132** | method call on a null receiver is an uncatchable wasm trap instead of a catchable TypeError | 61 | done | high |
+| **2152** | Array HOF callbacks ignore thisArg; callback `this` is always undefined | 62 | done | high |
+| **2154** | WASI _start wraps only __module_init, never calls a user main() — #1411/#1978 regression (native-messaging smoke red) | 62 | done | high |
+| **2174** | standalone: `arguments` captured by a nested function under async emits invalid Wasm (__closure fallthru i32 vs externref) | Backlog | done | high |
+| **2181** | defineBuiltin(name, {elementKinds, lower}) scaffold — unify per-representation element-load/ToString/null handling | 64 | ready | medium |
+| **2184** | linear backend: &&/\|\| yield 0/1 constants instead of operand values (needs result-type unification) | 63 | done | medium |
+| **2502** | Array.prototype.sort on an externref-element array emits invalid Wasm (__isort_externref f64.gt on externref) — 28 test262 | 64 | done | medium |
 
 <!-- AUTOGENERATED:GOAL-ISSUES-END -->
 

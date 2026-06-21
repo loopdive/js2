@@ -16,8 +16,40 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { noJsHost } from "./expressions/helpers.js";
+import { ensureLateImport } from "./expressions/late-imports.js";
+import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterArrayType, getOrRegisterVecType } from "./registry/types.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ReOp } from "./regex/bytecode.js";
+import { REGEX_STEP_CAP } from "./regex/vm.js";
+
+/** REGEX_STEP_CAP message (§22.2.6.x — cap exhaustion → catchable RangeError). */
+const REGEX_CAP_MESSAGE = "RangeError: regular expression step limit exceeded";
+
+/**
+ * (#2091) Build the instruction sequence for a regex VM step-cap-exhaustion
+ * throw — a catchable `RangeError` instance (via the shared `$exc` tag), NOT a
+ * silent `return 0` (which is indistinguishable from a genuine no-match).
+ *
+ * MUST be called at the TOP of `ensureRegexRun`, BEFORE the `__regex_run`
+ * funcIdx (and `classMatchIdx`) are captured: in JS-host mode `ensureLateImport`
+ * registers `__new_RangeError` as a host import, which shifts every defined
+ * function index. Ensuring it first keeps the later index captures correct.
+ * In no-JS-host mode the in-module `__new_RangeError` constructor is emitted
+ * (also a function push) — same ordering requirement.
+ */
+function regexCapExhaustionThrow(ctx: CodegenContext): Instr[] {
+  if (noJsHost(ctx)) emitWasiErrorConstructor(ctx, "RangeError", 1);
+  addStringConstantGlobal(ctx, REGEX_CAP_MESSAGE);
+  const ctorIdx = ensureLateImport(ctx, "__new_RangeError", [{ kind: "externref" }], [{ kind: "externref" }]);
+  const tagIdx = ensureExnTag(ctx);
+  const instrs: Instr[] = [...stringConstantExternrefInstrs(ctx, REGEX_CAP_MESSAGE)];
+  if (ctorIdx !== undefined) instrs.push({ op: "call", funcIdx: ctorIdx });
+  instrs.push({ op: "throw", tagIdx });
+  return instrs;
+}
 // NOTE: `__regex_replace` / `__regex_split` (below) reuse the native string
 // helpers registered by ensureNativeStringHelpers and never import a JS RegExp
 // or String.prototype host shim.
@@ -64,8 +96,8 @@ function ensureFrameTypes(ctx: CodegenContext): [number, number] {
   return [frameIdx, frameArrIdx];
 }
 
-/** Step cap mirrors `REGEX_STEP_CAP` in regex/vm.ts. */
-const REGEX_STEP_CAP = 1_000_000;
+// (#2091) Step cap is the single source of truth in regex/vm.ts — imported, no
+// longer a drift-prone duplicate constant.
 /** Initial backtrack-stack capacity (frames). Grows on demand. */
 const INITIAL_STACK_CAP = 64;
 
@@ -218,6 +250,12 @@ function emitClassMatch(ctx: CodegenContext): number {
 export function ensureRegexRun(ctx: CodegenContext): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_run");
   if (existing !== undefined) return existing;
+
+  // (#2091) Build the cap-exhaustion RangeError throw FIRST — it may register
+  // the `__new_RangeError` ctor (host import in JS-host mode / in-module
+  // function in standalone), which shifts function indices. Doing it before the
+  // funcIdx captures below keeps those indices correct.
+  const capThrow = regexCapExhaustionThrow(ctx);
 
   const classMatchIdx = emitClassMatch(ctx);
   const [frameIdx, frameArrIdx] = ensureFrameTypes(ctx);
@@ -1202,14 +1240,15 @@ export function ensureRegexRun(ctx: CodegenContext): number {
       op: "loop",
       blockType: { kind: "empty" },
       body: [
-        // steps++; if steps > CAP return 0
+        // steps++; if steps > CAP throw RangeError (#2091 — was a silent
+        // `return 0`, indistinguishable from a genuine no-match).
         { op: "local.get", index: STEPS },
         { op: "i32.const", value: 1 },
         { op: "i32.add" },
         { op: "local.tee", index: STEPS },
         { op: "i32.const", value: REGEX_STEP_CAP },
         { op: "i32.gt_s" },
-        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+        { op: "if", blockType: { kind: "empty" }, then: capThrow },
         // failed = 0
         { op: "i32.const", value: 0 },
         { op: "local.set", index: FAILED },

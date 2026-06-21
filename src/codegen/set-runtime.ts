@@ -1,3 +1,4 @@
+import type { Instr, ValType } from "../ir/types.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #2162 — Wasm-native `Set` runtime for standalone / WASI targets.
@@ -30,12 +31,16 @@
  * (`union`/`intersection`/…) are follow-up slices.
  */
 import { ts } from "../ts-api.js";
-import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import {
+  coerceSetArgToAnyref,
+  compileNativeCollectionIterator,
+  ensureMapHelpers,
+  tryCompileNativeCollectionForEach,
+} from "./map-runtime.js";
 import { addFuncType } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
-import { compileExpression, VOID_RESULT } from "./shared.js";
-import { coerceSetArgToAnyref, ensureMapHelpers } from "./map-runtime.js";
+import { VOID_RESULT, compileExpression } from "./shared.js";
 
 /**
  * Emit the `__set_add(m, v) -> ref $Map` helper (idempotent). `Set.add` stores
@@ -63,7 +68,13 @@ export function ensureSetHelpers(ctx: CodegenContext): void {
   const typeIdx = addFuncType(ctx, [mref, anyref], [mref]);
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   ctx.mapHelpers.set("__set_add", funcIdx);
-  ctx.mod.functions.push({ name: "__set_add", typeIdx, locals: [], body, exported: false });
+  ctx.mod.functions.push({
+    name: "__set_add",
+    typeIdx,
+    locals: [],
+    body,
+    exported: false,
+  });
 }
 
 /**
@@ -100,6 +111,22 @@ export function tryCompileNativeSetMethodCall(
 ): InnerResult | undefined {
   if (!ctx.nativeStrings) return undefined;
   const methodName = propAccess.name.text;
+
+  // forEach drives a callback over the entries vector (24.2.3.6) — for a Set the
+  // (value, key, set) callback gets value === key. Shares the Map helper.
+  if (methodName === "forEach") {
+    ensureSetHelpers(ctx);
+    return tryCompileNativeCollectionForEach(ctx, fctx, propAccess, callExpr, /* isSet */ true);
+  }
+
+  // keys()/values() materialize a canonical externref $Vec — for a Set both yield
+  // the element (24.2.3.*). `entries()` (the `[v, v]`-pair projection) needs the
+  // `__iterator` pair consumer, deferred to a #2162 follow-up — it falls through.
+  if (methodName === "keys" || methodName === "values") {
+    ensureSetHelpers(ctx);
+    return compileNativeCollectionIterator(ctx, fctx, propAccess, callExpr, methodName, /* isSet */ true);
+  }
+
   const handled = methodName === "add" || methodName === "has" || methodName === "delete" || methodName === "clear";
   if (!handled) return undefined;
 

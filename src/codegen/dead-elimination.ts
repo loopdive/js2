@@ -131,8 +131,26 @@ function collectRefsFromTypeDef(td: TypeDef, used: Set<number>): void {
 
 // --- Remapping ---
 
+// (#1302) Shared-array double-remap guard. `walkInstructions` visits every
+// instruction once PER OCCURRENCE in the tree, so when the SAME `Instr` object
+// is aliased into more than one position in a body (e.g. a `rangeThrow` /
+// `capThrow` throw-template spliced into both an index-check and a bounds-check
+// `if.then`, or a helper `Instr[]` const spread into several slots of a
+// hand-built body), a mutate-in-place remapper applies the chained remap to it
+// twice — `53→52` then `52→51` — landing the operand on the wrong index (the
+// observed DataView `call __new_RangeError` → `__to_bigint`, an i64-returning
+// callee, → `throw expected externref, found call of type i64`). Producers have
+// historically worked around this by never sharing instruction objects
+// (iterator-native `buildVecArm`, json-codec `cloneBody`); guarding the remap
+// itself against re-visiting an object fixes the whole class at the sink, so an
+// aliased template is remapped exactly once regardless of how many times the
+// walker reaches it. A `WeakSet` keyed on the instruction object is the right
+// scope: each `call`/`struct.new`/… is remapped at most once.
 function remapFuncIdxInBody(body: Instr[], remap: Map<number, number>): void {
+  const seen = new WeakSet<object>();
   walkInstructions(body, (instr) => {
+    if (seen.has(instr)) return;
+    seen.add(instr);
     const a = instr as any;
     if (typeof a.funcIdx === "number" && remap.has(a.funcIdx)) {
       a.funcIdx = remap.get(a.funcIdx)!;
@@ -141,7 +159,13 @@ function remapFuncIdxInBody(body: Instr[], remap: Map<number, number>): void {
 }
 
 function remapTypeIdxInBody(body: Instr[], remap: Map<number, number>): void {
+  // (#1302) Same shared-object double-remap guard as remapFuncIdxInBody — a
+  // `typeIdx`/`dstTypeIdx`/`blockType` operand on an aliased instruction must be
+  // chained-remapped exactly once.
+  const seen = new WeakSet<object>();
   walkInstructions(body, (instr) => {
+    if (seen.has(instr)) return;
+    seen.add(instr);
     const a = instr as any;
     if (typeof a.typeIdx === "number" && remap.has(a.typeIdx)) {
       a.typeIdx = remap.get(a.typeIdx)!;
@@ -152,8 +176,17 @@ function remapTypeIdxInBody(body: Instr[], remap: Map<number, number>): void {
     if (typeof a.srcTypeIdx === "number" && remap.has(a.srcTypeIdx)) {
       a.srcTypeIdx = remap.get(a.srcTypeIdx)!;
     }
-    // Remap blockType
-    if (a.blockType) {
+    // Remap blockType. (#2564) The double-remap guard above keys on the
+    // *instruction* object, but a `blockType` (and its `.type` ValType) can be
+    // ALIASED across several distinct `if`/`block` instructions — e.g. a
+    // tag-dispatch cascade that shares one `blockType` object across its nested
+    // arms. Each aliasing instruction passes the `seen` check (different `instr`)
+    // and would chain-remap the shared block-type a second time (20→16 then
+    // 16→13 under a compaction map). Guard on the `blockType` object itself so a
+    // shared block-type is remapped exactly once regardless of how many
+    // instructions alias it.
+    if (a.blockType && !seen.has(a.blockType)) {
+      seen.add(a.blockType);
       if (a.blockType.kind === "type" && remap.has(a.blockType.typeIdx)) {
         a.blockType.typeIdx = remap.get(a.blockType.typeIdx)!;
       }

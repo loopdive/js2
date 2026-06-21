@@ -65,6 +65,16 @@ export interface CodegenOptions {
   testRuntime?: boolean;
   /** WASI target: emit WASI imports (fd_write, proc_exit) instead of JS host imports */
   wasi?: boolean;
+  /**
+   * #2524 Phase 1 — route `process.std{in,out,err}` IO through a separately
+   * compiled, linkable `js2wasm:node-io` shim instead of inlining the
+   * `wasi_snapshot_preview1.fd_read`/`fd_write` glue. When set (WASI only), the
+   * user module imports `stdin_read`/`stdout_write`/`stderr_write` plus its
+   * linear memory from `js2wasm:node-io` and carries NO `wasi_snapshot_preview1`
+   * import for the stream IO path; `node-shim.wasm` implements the interface
+   * over WASI. Default off — the inline fd_read/fd_write path stays as fallback.
+   */
+  nodeIoShim?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -102,6 +112,13 @@ export interface CodegenOptions {
   strictNoHostImports?: boolean;
   /** JSX runtime import detected during preprocessing (#1540). */
   jsxRuntime?: import("../../import-resolver.js").JsxRuntimeImport;
+  /**
+   * (#2119) Infer ES-module strictness (→ unmapped `arguments`) from a genuine
+   * top-level `import`/`export`. Default `true`. The test262 harness sets this
+   * `false` for script tests so its synthetic `export function test()` wrapper
+   * does not unmap sloppy (`noStrict`) arguments. See `CompileOptions`.
+   */
+  inferModuleStrictArguments?: boolean;
 }
 
 /** Info about an externally declared class. */
@@ -366,6 +383,18 @@ export interface FunctionContext {
   /** Map from let/const local variable name → local index of its i32 TDZ flag (0 = uninitialized) */
   tdzFlagLocals?: Map<string, number>;
   /**
+   * (#2200 Annex B B.3.3 Phase 1) Block-nested `function F` declarations whose
+   * web-compat outer var-binding is *cancelled* by an intervening lexical
+   * (`let`/`const`/class) shadow or a same-named parameter. Maps the function
+   * name → the source-position range(s) of the block(s) that declare it. A read
+   * of `F` OUTSIDE every such block must NOT resolve to the block-local function
+   * (it has no outer binding) and instead throws ReferenceError; a read INSIDE
+   * the declaring block still resolves normally. Normally empty — the read-site
+   * guard in `compileIdentifier` is gated on `.has(name)`, so non-Annex-B
+   * modules stay byte-identical.
+   */
+  annexBCancelled?: Map<string, Array<{ start: number; end: number }>>;
+  /**
    * For TDZ flag locals that have been boxed in an i32 ref cell so that
    * mutations propagate to closures that captured the flag (#1177).
    *
@@ -556,6 +585,9 @@ export interface CodegenContext {
    * `JS2WASM_LOG_CODEGEN_FALLBACKS=1` turn it on.
    */
   trackSilentFallbacks?: boolean;
+  /** (#2119) Infer module-strictness (→ unmapped arguments) from a genuine
+   *  top-level import/export. Default true; test262 script tests pass false. */
+  inferModuleStrictArguments?: boolean;
   /**
    * #1923 — captured IR post-claim demotions (build/verify/lower/backend-
    * legality failures on a function the selector claimed, which fall back to
@@ -735,6 +767,27 @@ export interface CodegenContext {
   accessorGetDriverReserved?: boolean;
   accessorSetDriverReserved?: boolean;
   /**
+   * (#2166 PR-D1) True once the standalone `JSON.parse(text, reviver)` codec
+   * reserved its `__call_reviver(holder, key, value) -> externref` driver
+   * funcIdx — filled in finalize to wrap `__call_fn_method_2`. Same reserve/fill
+   * funcIdx-authority pattern as the accessor drivers above.
+   */
+  reviverDriverReserved?: boolean;
+  /**
+   * (#2166 PR-D2) True once the standalone `JSON.stringify` codec reserved its
+   * `__call_to_json(value, method, key) -> externref` driver funcIdx — filled in
+   * finalize to wrap `__call_fn_method_1` (value bound as the `toJSON`
+   * receiver).
+   */
+  toJsonDriverReserved?: boolean;
+  /**
+   * (#2166 PR-D3) True once the standalone `JSON.stringify` codec reserved its
+   * `__call_replacer(holder, replacer, key, value) -> externref` driver funcIdx
+   * — filled in finalize to wrap `__call_fn_method_2` (holder bound as the
+   * replacer `this`, key+value the two replacer args).
+   */
+  replacerDriverReserved?: boolean;
+  /**
    * (#1888 Slice 1) True once the standalone open-any method-dispatch bridge
    * `__apply_closure(fn, recv, args) -> externref` has reserved its funcIdx via
    * a placeholder function pushed during `ensureObjectRuntime` (registered in
@@ -769,12 +822,31 @@ export interface CodegenContext {
    */
   closedMethodDispatchNames?: Set<string>;
   /**
+   * (#2151 Slice 4) Method names that need a VARARG closed-struct dispatcher
+   * `__call_m_<name>_vararg(recv, args)` for a DYNAMIC-spread call `o.m(...xs)`
+   * whose arity is unknown at compile time. Filled at FINALIZE by
+   * `fillClosedMethodDispatch` (the vararg pass), sourcing each declared param
+   * from `__extern_get_idx(args, i)` instead of fixed dispatcher params.
+   */
+  closedMethodDispatchVarargNames?: Set<string>;
+  /**
    * (#1904) True once the standalone `__extern_is_array(externref) -> i32`
    * helper placeholder has been emitted by the object runtime. Its body is
    * filled in post-processing after all Wasm array carrier types (`__vec_*`
    * plus `$ObjVec`) are known.
    */
   externIsArrayReserved?: boolean;
+  /**
+   * (#2190) True once `__extern_get_idx` is registered with its static
+   * `$Object`/`$ObjVec` arms (standalone only). The per-element-kind
+   * `__vec_<k>` dispatch arms are appended at FINALIZE by
+   * `fillExternGetIdxVecArms`, after every `__vec_*` carrier type is known —
+   * the same reserve/fill pattern as `externIsArrayReserved`. Without the
+   * deferred fill, an array literal of an element kind compiled after
+   * `ensureObjectRuntime` would have no indexing arm and `(arr as any)[i]`
+   * would read back null/0 (sibling of the #2189 `.length` gap).
+   */
+  externGetIdxReserved?: boolean;
   /**
    * (#2038) True once the native iterator runtime (`ensureNativeIteratorRuntime`,
    * iterator-native.ts) has emitted `__iterator` / `__iterator_next` with a
@@ -986,6 +1058,11 @@ export interface CodegenContext {
   anyStrTypeIdx: number;
   nativeStrTypeIdx: number;
   consStrTypeIdx: number;
+  /**
+   * (#40) Immutable `(array i32)` type index for the Unicode case-mapping tables
+   * (emitNativeCaseConversion). Registered once on first use.
+   */
+  caseTableArrTypeIdx?: number;
   /** #1588 PR-B: i8 backing array + Utf8String subtype indices. -1 when
    *  `utf8Storage` is off (types not registered). */
   utf8StrDataTypeIdx: number;
@@ -1057,6 +1134,41 @@ export interface CodegenContext {
   templateCacheCounter: number;
   /** Type index for template vec struct */
   templateVecTypeIdx: number;
+  /**
+   * (#2186) Type index for the shared `$__vec_base` supertype — a `(length i32)`
+   * struct that every `__vec_<elemKind>` subtypes. Lets standalone runtime
+   * helpers (`__extern_length`) `ref.test`/`ref.cast` a boxed array externref
+   * to read its `.length` uniformly, regardless of element kind. -1 = not yet
+   * registered (created lazily on first `getOrRegisterVecType`).
+   */
+  vecBaseTypeIdx: number;
+  /**
+   * (#2159 / #38) Type index for the standalone `$__dv_window` struct — a
+   * `{buf: (ref null __vec_i32_byte), byteOffset: i32, byteLength: i32}` wrapper
+   * produced by `new DataView(buffer, byteOffset, byteLength)` when the view is
+   * windowed (offset > 0 or an explicit byteLength). Lets the native DataView
+   * accessors add `byteOffset` to every byte index while sharing the parent's
+   * backing array (so windowed writes are visible through the full view), and
+   * lets `dv.byteOffset`/`dv.byteLength` reflect the ctor args. -1 = not yet
+   * registered (created lazily). Offset-0 default-length views keep the bare
+   * i32_byte vec representation (no wrapper, zero new cost).
+   */
+  dvWindowTypeIdx: number;
+  /**
+   * (#2159 / #2357 / #47) Type index for the standalone `$__subview` struct — a
+   * `{base: (ref null __vec_<elem>), byteOffset: i32, length: i32}` view produced
+   * by `TypedArray.prototype.subarray(begin, end)`. It SHARES the parent's backing
+   * `data` array (true aliasing — a sub-write is visible in the parent) and carries
+   * the element offset + windowed length. Element access discriminates view-vs-plain
+   * at COMPILE time via the receiver's resolved ValType (a binding initialised by
+   * `subarray` resolves to `$__subview`), so the plain-array `a[i]` hot path takes
+   * ZERO extra instructions — no per-access runtime branch. Keyed per element kind
+   * in `subviewTypeMap`; this scalar holds the most-recently-registered idx for
+   * back-compat. -1 = not yet registered. (Spec: plan/issues/2357.)
+   */
+  subviewTypeIdx: number;
+  /** (#2357) Per-element-kind `$__subview` struct type indices, keyed by elemKind. */
+  subviewTypeMap: Map<string, number>;
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
   /** Extra properties for empty object variables */
@@ -1065,6 +1177,18 @@ export interface CodegenContext {
   widenedVarStructMap: Map<string, string>;
   /** Widened empty-object fields introduced by Object.defineProperty rather than assignment. */
   widenedDefinePropertyKeys: Set<string>;
+  /**
+   * (#2372) Standalone-only: receiver var names that are the target of at least
+   * one `Object.defineProperty(var, key, desc)` where `desc` is a *dynamic*
+   * (non-inline-literal) descriptor. Such defines are applied via the native
+   * `__obj_define_from_desc` `$Object` runtime, which the struct-widening read
+   * path (`struct.get`) cannot observe. Membership here suppresses
+   * struct-widening for the receiver so it stays on the `$Object` representation
+   * and both the dynamic write and the read-back route through the native
+   * runtime consistently. Empty in host/gc/wasi mode (only populated under
+   * `ctx.standalone`).
+   */
+  dynamicDescriptorWidenVars: Set<string>;
   /**
    * (#1239) Variable names whose initializer is an object literal carrying
    * `get`/`set` accessors. Such variables are stored as plain JS host
@@ -1160,6 +1284,22 @@ export interface CodegenContext {
   inlinableFunctions: Map<string, InlinableFunctionInfo>;
   /** Global index of the __symbol_counter */
   symbolCounterGlobalIdx: number;
+  /** (#2163) Global index of the native symbol id→description table
+   *  (`ref_null` to an array of `$AnyString`), lazily allocated. -1 until first
+   *  use. Standalone-mode native `.description` storage. */
+  symbolDescGlobalIdx: number;
+  /** (#2163) Type index of the symbol description table's array type
+   *  (`array (mut (ref null $AnyString))`). -1 until created. */
+  symbolDescArrTypeIdx: number;
+  /** (#2163) Native `Symbol.for`/`Symbol.keyFor` registry (standalone mode).
+   *  Two parallel growable arrays — slot→key string (reuses
+   *  `symbolDescArrTypeIdx`) and slot→symbol id (`array (mut i32)`) — plus a
+   *  count global. All -1 until the first `Symbol.for`/`keyFor`. */
+  symbolRegKeysGlobalIdx: number;
+  symbolRegIdsGlobalIdx: number;
+  symbolRegCountGlobalIdx: number;
+  /** (#2163) Type index of the registry ids array (`array (mut i32)`). */
+  symbolRegIdsArrTypeIdx: number;
   /** Stack of in-progress parent function bodies for index shifting during closure compilation */
   parentBodiesStack: Instr[][];
   /** All live (allocated but not yet attached to ctx.mod.functions) FunctionContext bodies.
@@ -1185,6 +1325,22 @@ export interface CodegenContext {
   shapeIdByStructName: Map<string, number>;
   /** (#2009) shape-id → ordered field-name CSV, for the host name export. */
   shapeNameCsvById: string[];
+  /**
+   * (#2009 R3b) anon object-literal struct name → its field names in JS
+   * INSERTION order (the order keys were first introduced while evaluating the
+   * literal source: named props left-to-right, spreads contributing each
+   * source's own keys in order, FIRST occurrence wins). The struct's slot order
+   * comes from `ts.Type.getProperties()`, which for spread-result types is
+   * last-spread-first and does NOT match JS enumeration order. Host enumeration
+   * (`Object.keys`/`JSON.stringify`/`for-in`) is driven by the field-name CSV in
+   * `__struct_field_names`, read BY NAME (slot-independent), so reordering the
+   * CSV by this list restores spec enumeration order without touching slots,
+   * getters, dedup, or the `$shape` field. First literal of a deduped canonical
+   * type wins (deterministic by compile order). Empty when a struct's checker
+   * order already matches insertion order (plain literals), so the reorder is a
+   * no-op for the common case.
+   */
+  structInsertionOrder: Map<string, string[]>;
   /** Pending late import shift state */
   pendingLateImportShift: { importsBefore: number } | null;
   /** Map from class name → global index of the prototype externref singleton */
@@ -1269,6 +1425,14 @@ export interface CodegenContext {
    *  member name (e.g. `RegExp.prototype.test.length === 1`,
    *  `.name === "test"`). Populated by `ensureStandaloneNativeMethodClosure`. */
   nativeClosureMeta?: Map<number, { name: string; length: number }>;
+  /** (#2193 PR-B) Struct-type indices of `$NativeProto` member closures whose
+   *  FIRST user param is the receiver (`this`) — e.g. `Array.prototype.slice`'s
+   *  `(self, this, start, end)` closure. Unlike a plain user function (which
+   *  ignores `this`), a reflective `m.call(thisArg, …args)` on one of these MUST
+   *  thread `thisArg` into param 1 instead of dropping it. The generic `.call`
+   *  dispatch in expressions/calls.ts consults this set to decide. Populated by
+   *  `ensureStandaloneNativeMethodClosure`. */
+  nativeProtoReceiverClosureStructTypes?: Set<number>;
   /** (#682) Native standalone RegExp engine hook. Standalone mode currently
    *  enables the reduced literal-substring backend; null means RegExp lowering
    *  must stay on the explicit #1474 refusal path. */
@@ -1287,6 +1451,19 @@ export interface CodegenContext {
    * `IrPlanOptions.supportsAsyncIr` field.
    */
   supportsAsyncIr: boolean;
+  /**
+   * #2524 Phase 1 — when true (WASI only), `process` stream IO is lowered to
+   * imported `js2wasm:node-io` calls (over a shim-owned, imported linear
+   * memory) instead of inline `fd_read`/`fd_write`. See `nodeIoShim` in
+   * `CodegenOptions`.
+   */
+  nodeIoShim: boolean;
+  /** #2524: func index of the imported `js2wasm:node-io::stdout_write` (-1 = not registered). */
+  nodeIoStdoutWriteIdx: number;
+  /** #2524: func index of the imported `js2wasm:node-io::stderr_write` (-1 = not registered). */
+  nodeIoStderrWriteIdx: number;
+  /** #2524: func index of the imported `js2wasm:node-io::stdin_read` (-1 = not registered). */
+  nodeIoStdinReadIdx: number;
   /** WASI import indices */
   wasiFdWriteIdx: number;
   wasiFdReadIdx?: number;
@@ -1344,6 +1521,15 @@ export interface CodegenContext {
    * function is emitted later and reuses this slot. See reserveLinearU8AllocType.
    */
   linearU8AllocTypeIdx?: number;
+  /**
+   * (#2026 #53) Eagerly-reserved `$ObjVecArr` = `(array (mut externref))` type
+   * index, registered in the up-front type-init phase (`reserveObjVecArrType`)
+   * when the source declares a class. The dynamic-`new` runtime-argv path
+   * (`emitDynamicNewFallback`) and `ensureObjectRuntime` both ADOPT this slot
+   * instead of minting the type lazily mid-expression — minting it late baked an
+   * unresolved `-1` heap-type ref (the #2043 / subview type-idx-stability hazard).
+   */
+  reservedObjVecArrTypeIdx?: number;
   /** #1886 Slice B — global index of the page-4 linear-U8 arena bump pointer. */
   linearU8ArenaGlobalIdx?: number;
   /** Whether `node:fs` JS-host imports are permitted (non-WASI target only, #1491). */

@@ -1,9 +1,10 @@
 ---
 id: 1640
 title: "spec gap: Reflect.* invariant checks mirror internal-method bugs (47 test262 fails)"
-status: blocked
+status: wont-fix
 created: 2026-05-08
-updated: 2026-05-28b
+updated: 2026-06-19
+completed: 2026-06-19
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -17,8 +18,15 @@ parent: 1328
 blocked_on: [1629, 1596]
 investigation_done: 2026-05-27
 reverified: 2026-05-28
-related: [1334, 1629, 1596, 1630, 1631, 1130]
+related: [1334, 1345, 1629, 1596, 1630, 1631, 1130]
 ---
+
+> **wont-fix 2026-06-19 (PO audit):** duplicate of **#1345** (same title,
+> same "Reflect invariant checks mirror internal-method bugs" scope; this
+> copy is the `renumbered_from: 1346` drift that references #1335 where #1345
+> references #1334). #1345 is the canonical tracking issue and stays in the
+> backlog. Closing this twin to remove the phantom open issue.
+
 # #1346 — Reflect: invariant checks mirror internal-method bugs
 
 ## Problem

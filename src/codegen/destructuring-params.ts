@@ -192,7 +192,13 @@ function emitBoundsCheckedArrayGetUndef(
     emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elementType);
     return;
   }
-  const getUndefIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+  // (#2029) `ensureLateImport` does not refuse `__get_undefined`, so in
+  // standalone / native-strings mode it would register and LEAK the host import
+  // (module then fails to instantiate). Force the standalone fallback here, as
+  // the canonical `ensureGetUndefined` does.
+  const getUndefIdx = ctx.nativeStrings
+    ? undefined
+    : ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
   if (getUndefIdx === undefined) {
     // standalone mode — can't get JS undefined, fall back to regular path
     emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elementType);
@@ -686,6 +692,21 @@ export function destructureParamObject(
         ctx.liveBodies.add(thenInstrs);
         ctx.liveBodies.add(elseInstrs);
         const savedBody = fctx.body;
+        // (#2158) Also track the OUTER body (savedBody) in liveBodies for the
+        // recursion window. This struct-fast-path swap detaches `fctx.body` to a
+        // branch buffer via a plain JS-local swap (not pushBody), so the outer
+        // body is NOT on `fctx.savedBodies`. A late-import shift triggered deep
+        // inside the recursive `destructureParamObjectExternref` /
+        // `destructureParamArray` calls (e.g. `__array_from_iter_n` /
+        // `__extern_get_idx` for a nested array sub-pattern `{ x: [y] } = …`)
+        // walks fctx.body + savedBodies + liveBodies, but the orphaned outer
+        // body was unreachable from all three — so a `call`/`ref.func` already
+        // emitted into it (the param-default `if (call __extern_is_undefined)`
+        // missing-arg guard) kept a stale-low funcIdx and the `if` consumed an
+        // externref where i32 was expected → invalid Wasm. Tracking the outer
+        // body closes that window (mirrors the then/else tracking above).
+        const outerAlreadyLive = ctx.liveBodies.has(savedBody);
+        if (!outerAlreadyLive) ctx.liveBodies.add(savedBody);
         fctx.body = thenInstrs;
         fctx.body.push({ op: "local.get", index: anyTmp });
         fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });
@@ -701,6 +722,7 @@ export function destructureParamObject(
         fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs, else: elseInstrs });
         ctx.liveBodies.delete(thenInstrs);
         ctx.liveBodies.delete(elseInstrs);
+        if (!outerAlreadyLive) ctx.liveBodies.delete(savedBody);
       } else {
         // No struct type found — use __extern_get for all properties (#852)
         destructureParamObjectExternref(ctx, fctx, paramIdx, pattern, opts);

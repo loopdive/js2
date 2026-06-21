@@ -90,6 +90,38 @@ jobs:
         # depends_on, or broken plan/issues/<id>-<slug>.md links in tracked *.md.
         run: pnpm run check:issues
 
+      - name: Issue-ID fresh-claim gate (#2531)
+        # Rejects a PR that introduces a plan/issues/<id>-*.md whose id already
+        # exists on origin/main under a different filename — the merge-queue-wedge
+        # collision (#2530/#2531). Allocation must go through
+        # `claim-issue.mjs --allocate` (atomic against main ∪ open PRs ∪ the
+        # reservation ref); this gate is the required-CI enforcement. Needs the
+        # base ref for the merge-base diff; skips cleanly if it can't be fetched.
+        # merge_group already carries base ancestry, so the fetch is best-effort.
+        run: |
+          git fetch --no-tags --depth=50 origin main 2>/dev/null || true
+          GATE_BASE=origin/main pnpm run check:issue-ids:against-main
+      - name: Issue integrity vs. merged main (#2530)
+        # Stale-base dup-ID gate. The check above runs on the PR's OWN tip, which
+        # was cut from an older main; an id that a sibling PR has since merged is
+        # invisible there, so it passes — and the collision only surfaces in the
+        # merge_group (main + PR), failing `quality` there and WEDGING the queue
+        # with "N duplicate IDs" (see project_merge_queue_dup_issue_id_churn).
+        # This step fetches fresh origin/main and runs the committed-integrity
+        # check against the SIMULATED MERGE of main into the PR head (via
+        # `git merge-tree --write-tree`, no index/worktree mutation), so the
+        # collision fails the PR's OWN checks before it can reach the queue.
+        # Skips cleanly on push/merge_group (the head already contains main) and
+        # whenever origin/main can't be resolved.
+        if: github.event_name == 'pull_request'
+        run: |
+          # Deepen so the real merge base between origin/main and the PR head is
+          # present and merge-tree can do a true 3-way merge. The script falls
+          # back to --allow-unrelated-histories (tree-union) if the base is still
+          # out of range, so the depth is a quality knob, not a correctness one.
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || git fetch --no-tags origin main 2>/dev/null || true
+          node scripts/check-merged-issue-integrity.mjs origin/main HEAD
+
       - name: Issue→probe coverage gate (#2093)
         # A bugfix issue (created on/after the cutoff) cannot flip to
         # `status: done` without a permanent probe/test reference — either a

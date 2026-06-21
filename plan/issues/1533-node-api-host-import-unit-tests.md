@@ -3,7 +3,7 @@ id: 1533
 title: "test: Node.js API host import unit tests (fs, crypto, process, console)"
 status: ready
 created: 2026-05-20
-updated: 2026-06-12
+updated: 2026-06-19
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -11,7 +11,7 @@ task_type: test
 area: runtime
 language_feature: host-imports
 goal: nodejs-support
-sprint: 52
+sprint: Backlog
 related: [1491, 1492, 1493, 1490, 1494]
 ---
 # #1533 — Node.js API host import unit tests

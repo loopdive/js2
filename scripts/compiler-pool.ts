@@ -166,6 +166,8 @@ export class CompilerPool {
     wasmPath?: string,
     metaPath?: string,
     target?: "gc" | "linear" | "wasi" | "standalone",
+    // (#2119) false ⇒ keep mapped arguments for script tests; see runTest.
+    inferModuleStrictArguments?: boolean,
   ): Promise<PoolResult> {
     return this.enqueue(
       {
@@ -174,6 +176,7 @@ export class CompilerPool {
         wasmPath,
         metaPath,
         target,
+        inferModuleStrictArguments,
         execute: false,
       },
       timeoutMs,
@@ -192,6 +195,9 @@ export class CompilerPool {
       metaPath?: string;
       label?: string;
       target?: "gc" | "linear" | "wasi" | "standalone";
+      // (#2119) false ⇒ do not infer module-strictness (→ keep mapped
+      // arguments) despite the synthetic `export function test()` wrapper.
+      inferModuleStrictArguments?: boolean;
     } = {},
     timeoutMs = 30_000,
   ): Promise<TestResult> {
@@ -205,6 +211,7 @@ export class CompilerPool {
         wasmPath: opts.wasmPath,
         metaPath: opts.metaPath,
         target: opts.target,
+        inferModuleStrictArguments: opts.inferModuleStrictArguments,
       },
       timeoutMs,
       opts.label,

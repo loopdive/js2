@@ -1,10 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 
 /**
  * Helper: compile source, instantiate with callback support, call exported function.
- * Sets up __make_callback and __call_1_f64/__call_2_f64 bridges needed for
- * functional array methods (filter, map, reduce, forEach, find, findIndex, some, every).
+ *
+ * Uses the shared buildImports() host-import builder so every runtime helper
+ * the binary declares is supplied — including the `string_constants` import
+ * namespace and the callback bridges (__make_callback / __call_1_f64 /
+ * __call_2_f64) that functional array methods (filter, map, reduce, forEach,
+ * find, findIndex, some, every) need. The hand-rolled env this replaced was
+ * missing `string_constants`, which masked regressions for every functional
+ * array method. setExports() wires the instance so __make_callback can call
+ * back into the wasm __cb_* exports.
  */
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
   const result = await compile(source);
@@ -14,50 +22,10 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
     );
   }
 
-  // Late-binding reference for __make_callback to call back into exports
-  // biome-ignore lint/style/useConst: assigned later in beforeAll
-  let wasmExports: Record<string, Function>;
-
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_bool: () => {},
-    console_log_string: () => {},
-    console_log_externref: () => {},
-  };
-
-  // String literal thunks
-  for (let i = 0; i < result.stringPool.length; i++) {
-    const value = result.stringPool[i]!;
-    env[`__str_${i}`] = () => value;
-  }
-
-  env["number_toString"] = (v: number) => String(v);
-
-  // Callback support: __make_callback wraps a wasm callback as a JS function
-  env["__make_callback"] =
-    (id: number, captures: any) =>
-    (...args: any[]) =>
-      wasmExports[`__cb_${id}`](captures, ...args);
-
-  // Callback bridges for functional array methods
-  env["__call_1_f64"] = (fn: Function, a: number) => fn(a);
-  env["__call_2_f64"] = (fn: Function, a: number, b: number) => fn(a, b);
-
-  const jsStringPolyfill = {
-    concat: (a: string, b: string) => a + b,
-    length: (s: string) => s.length,
-    equals: (a: string, b: string) => (a === b ? 1 : 0),
-    substring: (s: string, start: number, end: number) => s.substring(start, end),
-    charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-  };
-
-  const { instance } = await WebAssembly.instantiate(result.binary, {
-    env,
-    "wasm:js-string": jsStringPolyfill,
-  } as WebAssembly.Imports);
-
-  wasmExports = instance.exports as Record<string, Function>;
-  return wasmExports[fn]!(...args);
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
+  return (instance.exports as Record<string, Function>)[fn]!(...args);
 }
 
 describe("functional array methods", () => {
@@ -199,7 +167,7 @@ describe("functional array methods", () => {
       const src = `
         export function test(): number {
           const arr = [1, 5, 10, 15, 20];
-          return arr.find((x: number): boolean => x > 8);
+          return arr.find((x: number): boolean => x > 8)!;
         }
       `;
       expect(await run(src, "test")).toBe(10);
@@ -209,7 +177,7 @@ describe("functional array methods", () => {
       const src = `
         export function test(): number {
           const arr = [2, 4, 6, 8];
-          return arr.find((x: number): boolean => x > 3);
+          return arr.find((x: number): boolean => x > 3)!;
         }
       `;
       expect(await run(src, "test")).toBe(4);

@@ -3,7 +3,7 @@ id: 1645
 title: "spec gap: ArrayBuffer resizable + TypedArray detached-buffer guards (100 + 39 test262 fails)"
 status: ready
 created: 2026-05-08
-updated: 2026-06-16
+updated: 2026-06-17
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -81,3 +81,20 @@ We've inlined the methods without this guard.
 - `test262/test/built-ins/ArrayBuffer/prototype/resize/length.js`
 - `test262/test/built-ins/ArrayBuffer/transfer/detaches-source-buffer.js`
 - `test262/test/built-ins/TypedArray/prototype/copyWithin/detached-buffer-throws.js`
+
+## Remaining work (2026-06-17, PO reconcile — NOT started)
+
+The s63 reconciler flagged this issue because merged PR #1532
+(`chore(#2148): drain in-review orphan pool — reconcile #1326, #1645`) carries
+`#1645` in its title. That PR is **docs-only** — it re-classified this issue's
+status during the orphan-pool sweep and explicitly recorded "No implementation
+exists (spec-gap)", setting it to `ready` / `sprint: Backlog`. The other three
+merged PRs that name #1645 (#702/#666/#800) are likewise all `docs(...)`
+escalation/dedup notes, not code.
+
+**No code has landed against any acceptance criterion.** Resizable ArrayBuffer
+(`{maxByteLength}` constructor + `.resize`), `ArrayBuffer.transfer`, and the
+TypedArray/DataView detached-buffer guards are all unimplemented; the
+`built-ins/ArrayBuffer` pass-rate target (44% → ≥75%) is unmet. Status correctly
+stays `ready` / `sprint: Backlog` — the full Implementation Plan above is the work
+to be done.

@@ -12,6 +12,7 @@ import type { CodegenContext, ExternClassInfo, FunctionContext, RestParamInfo } 
 import { addUnionImports, getArrTypeIdxFromVec } from "../index.js";
 import { tryCompileNativeMapMethodCall } from "../map-runtime.js";
 import { tryCompileNativeSetMethodCall } from "../set-runtime.js";
+import { tryCompileNativeSetAlgebraCall } from "../set-algebra.js";
 import { tryCompileNativeWeakMethodCall } from "../weak-collections-runtime.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import type { InnerResult } from "../shared.js";
@@ -71,6 +72,12 @@ function compileExternMethodCall(
   // the Map backing store). Same up-front addUnionImports rationale as Map.
   if (className === "Set" && ctx.nativeStrings) {
     addUnionImports(ctx);
+    // (#2162) ES2025 set-algebra (union/intersection/…/isSubsetOf/…) first — it
+    // returns a new Set or a boolean over two Set operands; the plain method
+    // dispatch below doesn't recognize these names anyway, so this is the only
+    // native handler for them.
+    const algebraResult = tryCompileNativeSetAlgebraCall(ctx, fctx, propAccess, callExpr);
+    if (algebraResult !== undefined) return algebraResult;
     const setResult = tryCompileNativeSetMethodCall(ctx, fctx, propAccess, callExpr);
     if (setResult !== undefined) return setResult;
   }

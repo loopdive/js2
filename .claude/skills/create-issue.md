@@ -11,11 +11,18 @@ Describe the failure pattern: error message, test category, approximate count.
 
 ## Steps
 
-1. Find the next available issue number:
+1. Reserve the next issue id **atomically** (#2531) — never hand-pick a number
+   (a parallel PR may grab the same one; the dup only fails in the merge_group
+   and wedges the queue):
 ```bash
-find plan/issues -maxdepth 1 -type f | grep -oE '[0-9]+[a-z]?(-[^/]+)?\.md$' | grep -oE '^[0-9]+' | sort -n | tail -1
+NEW=$(node scripts/claim-issue.mjs --allocate)   # prints the reserved id
+echo "$NEW"
 ```
-Add 1.
+This reserves the next id unique against `origin/main` ∪ every open PR's added
+issue files ∪ ids already reserved on the orphan ref, with first-push-wins
+atomicity. Use `$NEW` as `{N}` below. (The CI gate `check:issue-ids:against-main`
+rejects any PR that introduces a main-colliding id, so this is enforced, not
+just advised.)
 
 2. Find sample test files matching the pattern:
 ```bash

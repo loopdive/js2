@@ -32,6 +32,7 @@ import {
 } from "./index.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   cacheParamDefaultArgc,
@@ -418,6 +419,54 @@ function emitSetSubclassProto(
   });
 }
 
+/**
+ * (#2188) Brand a standalone-native user Error subclass instance with its own
+ * `classTagMap` id, so sibling `extends Error` subclasses (which all share the
+ * SAME builtin parent `$tag`) can be told apart by `instanceof`.
+ *
+ * `selfLocal` holds the instance externref produced by `__new_<Parent>` (a real
+ * `$Error_struct`, see emitWasiErrorConstructor). We convert it back to anyref,
+ * `ref.test` that it is genuinely an `$Error_struct` (defensive — the standalone
+ * `__new_<Parent>` fallback can leave a non-struct value here), and when it is,
+ * write the subclass's unique tag into `$Error_struct.$userClassId` (fieldIdx 4).
+ * The standalone `instanceof <UserSubclass>` path (identifiers.ts) reads this
+ * field. No host import — pure WasmGC, so it works in `--target wasi`.
+ *
+ * Only emitted in standalone / WASI mode: in JS-host mode the instance is a real
+ * JS Error object (not an `$Error_struct`), `instanceof` routes through the host,
+ * and the brand field does not exist on it. Guarded by the caller.
+ */
+function emitSetSubclassUserBrand(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  selfLocal: number,
+  subName: string,
+): void {
+  if (!(ctx.wasi || ctx.standalone)) return;
+  const brand = ctx.classTagMap.get(subName);
+  if (brand === undefined) return;
+  const structIdx = getOrRegisterErrorStructType(ctx);
+  // anyref view of the instance, stash it so the `ref.test`-guarded write can
+  // re-read it without recomputing.
+  const anyLocalIdx = allocLocal(fctx, `__err_brand_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  fctx.body.push({ op: "local.get", index: selfLocal });
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "local.set", index: anyLocalIdx });
+  fctx.body.push({ op: "local.get", index: anyLocalIdx });
+  fctx.body.push({ op: "ref.test", typeIdx: structIdx } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: anyLocalIdx },
+      { op: "ref.cast", typeIdx: structIdx } as Instr,
+      { op: "i32.const", value: brand },
+      { op: "struct.set", typeIdx: structIdx, fieldIdx: 4 } as Instr,
+    ],
+    else: [],
+  });
+}
+
 export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
   if (ts.isIdentifier(name)) return name.text;
   if (ts.isPrivateIdentifier(name)) return "__priv_" + name.text.slice(1);
@@ -495,6 +544,26 @@ export function collectClassDeclaration(
           // user-class collection bookkeeping (struct registration, tag).
           if (parentStructTypeIdx === undefined && isHostConstructibleBuiltin(parentClassName)) {
             ctx.classBuiltinParentMap.set(className, parentClassName);
+            ctx.classExternrefBackedSet.add(className);
+          } else if (
+            ctx.classExternrefBackedSet.has(parentClassName) &&
+            ctx.classBuiltinParentMap.has(parentClassName)
+          ) {
+            // (#2188 follow-up) Multi-level user Error chain: the direct parent is
+            // itself a user class that is externref-backed by a builtin Error
+            // ancestor (e.g. `class D extends A {}` where `A extends Error`).
+            // The parent carries a vestigial struct slot, so we do NOT gate on
+            // `parentStructTypeIdx === undefined` here — the discriminator is the
+            // parent's externref-backing, not its struct presence. `super()` must
+            // thread through the SAME builtin ancestor's `__new_<builtin>` so D is
+            // constructed as a real `$Error_struct` (carrying the builtin Error
+            // `$tag`, `.message`, catchability, and `instanceof Error`) instead of
+            // chaining through A's user `_init`, which leaves D un-tagged. Parents
+            // are collected in source order before their children, so the
+            // ancestor's mapping is already present; propagate the builtin
+            // ANCESTOR name (not the immediate parent).
+            const builtinAncestor = ctx.classBuiltinParentMap.get(parentClassName)!;
+            ctx.classBuiltinParentMap.set(className, builtinAncestor);
             ctx.classExternrefBackedSet.add(className);
           }
           // Mark parent struct as non-final so it can be extended
@@ -1508,8 +1577,20 @@ function compileClassBodiesInner(
       if (parentName) {
         const importName = `__new_${parentName}`;
         const forwardParams = externrefParams(implicitForwarderArity);
-        const funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
-        flushLateImportShifts(ctx, fctx);
+        // (#1536c) Standalone / WASI: route the parent instance creation through
+        // the native `__new_<Parent>` internal function (a real `$Error_struct`
+        // with the parent's `$tag`, `.message`, `.name`) instead of a host
+        // import, so `class MyError extends Error {}` instantiates with zero
+        // env:: imports. The native function is emitted idempotently and
+        // registered in `ctx.funcMap`. JS-host mode keeps the host import.
+        let funcIdx: number | undefined;
+        if ((ctx.wasi || ctx.standalone) && isWasiErrorName(parentName)) {
+          emitWasiErrorConstructor(ctx, parentName, implicitForwarderArity);
+          funcIdx = ctx.funcMap.get(importName);
+        } else {
+          funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
+          flushLateImportShifts(ctx, fctx);
+        }
         if (funcIdx !== undefined) {
           for (let i = 0; i < implicitForwarderArity; i++) {
             fctx.body.push({ op: "local.get", index: i });
@@ -1529,6 +1610,9 @@ function compileClassBodiesInner(
         // `instance instanceof Sub` walks through it, in addition to
         // `instance instanceof Parent` (already true via Parent.prototype).
         emitSetSubclassProto(ctx, fctx, selfLocal, className, parentName);
+        // (#2188) Brand the standalone instance with this subclass's tag so
+        // sibling `extends Error` subclasses are distinguishable by instanceof.
+        emitSetSubclassUserBrand(ctx, fctx, selfLocal, className);
       }
     }
 
@@ -1656,7 +1740,12 @@ function compileClassBodiesInner(
     // `instance instanceof Sub` by walking the registered tag chain. The
     // direct user-class parent (or null when the direct parent is a builtin)
     // is registered idempotently on first call.
-    if (isExternrefBacked) {
+    // (#1536c) Skipped under standalone / WASI: `__tag_user_class` is a JS host
+    // import (it would leak `env::__tag_user_class` and fail to instantiate).
+    // Standalone resolves `instance instanceof Sub`/`Parent` natively via the
+    // `$Error_struct` `$tag` discrimination (identifiers.ts) — no host tagging
+    // needed.
+    if (isExternrefBacked && !(ctx.wasi || ctx.standalone)) {
       const builtinParent = ctx.classBuiltinParentMap.get(className);
       // Direct user-class parent: classParentMap[className] is set to the
       // immediate parent name; if it equals the builtin parent, the user
@@ -2272,8 +2361,17 @@ export function compileSuperCall(
     const importName = `__new_${builtinParent}`;
     const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
     const forwardParams = externrefParams(forwardArity);
-    const funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
+    // (#1536c) Standalone / WASI: emit the native `__new_<Parent>` internal
+    // function (real `$Error_struct`) and call it instead of a host import, so
+    // `super(msg)` in a user Error subclass works with zero env:: imports.
+    let funcIdx: number | undefined;
+    if ((ctx.wasi || ctx.standalone) && isWasiErrorName(builtinParent)) {
+      emitWasiErrorConstructor(ctx, builtinParent, forwardArity);
+      funcIdx = ctx.funcMap.get(importName);
+    } else {
+      funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+    }
     if (funcIdx !== undefined) {
       const flatArgs = hasSpread ? flattenStaticallyKnownArgs(args) : [...args];
       if (flatArgs) {
@@ -2320,6 +2418,9 @@ export function compileSuperCall(
     // so `instance instanceof childClassName` returns true. Without this step
     // the chain only reaches `<builtinParent>.prototype`.
     emitSetSubclassProto(ctx, fctx, selfLocal, childClassName, builtinParent);
+    // (#2188) Brand the standalone instance with this subclass's tag so sibling
+    // `extends Error` subclasses are distinguishable by instanceof.
+    emitSetSubclassUserBrand(ctx, fctx, selfLocal, childClassName);
     return;
   }
 

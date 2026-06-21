@@ -2,7 +2,7 @@
 id: 1927
 title: "One front-end pipeline driver — compileSourceSync/compileMultiSource/compileFilesSource are divergent clones"
 status: ready
-sprint: 63
+sprint: 64
 created: 2026-06-10
 updated: 2026-06-12
 priority: high

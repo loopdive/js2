@@ -48,11 +48,6 @@ function fmtPercent(pass, total) {
   return ((pass / total) * 100).toFixed(1);
 }
 
-function shortSha(sha) {
-  if (!sha) return "unknown";
-  return String(sha).slice(0, 8);
-}
-
 function loadReport() {
   if (!existsSync(REPORT_PATH)) {
     throw new Error(
@@ -75,8 +70,6 @@ function loadReport() {
   return {
     pass: summary.pass,
     total: summary.total,
-    sha: json.baseline_sha || json.gitHash || "",
-    generatedAt: json.baseline_generated_at || json.timestamp || "",
   };
 }
 
@@ -89,9 +82,26 @@ function renderBlock(report) {
   const passStr = fmtNumber(report.pass);
   const totalStr = fmtNumber(report.total);
   const pct = fmtPercent(report.pass, report.total);
-  const sha = shortSha(report.sha);
-  const ts = report.generatedAt || "unknown";
-  return `**test262 conformance**: ${passStr} / ${totalStr} (${pct} %) — baseline ${sha}, ${ts}`;
+  // Render ONLY the stable pass/total/percentage — no volatile suffix.
+  //
+  // The earlier fix here dropped the baseline *timestamp* because the
+  // forced-baseline-refresh bot bumped it ~hourly with no change to
+  // pass/total, making `sync:conformance:check` flag drift on every open PR
+  // and perpetually block the merge queue (#1522). The `— baseline <sha>`
+  // suffix has the *same* defect: promote-baseline rewrites it into CLAUDE.md,
+  // README.md, ROADMAP.md and goal-graph.md on EVERY push to main, so the sha
+  // changes even when pass/total are unchanged. Every open PR that had merged
+  // main once then conflicted on this single line the next time main advanced
+  // — stranding the whole queue as DIRTY (the 2026-06-18 6-PR pile-up).
+  //
+  // Dropping the sha makes the line a pure function of pass/total: all
+  // branches and main render an IDENTICAL string for a given count, so a sha
+  // bump no longer diverges anything, and a real count change resolves
+  // cleanly via 3-way merge (the branch line equals the merge-base line, so
+  // git takes main's side without a conflict). The baseline sha is still
+  // authoritative in benchmarks/results/test262-current.json (committed) and
+  // surfaced on the landing page — it does not belong in branch-merged prose.
+  return `**test262 conformance**: ${passStr} / ${totalStr} (${pct} %)`;
 }
 
 /**

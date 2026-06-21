@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
+import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
   const result = await compile(source);
@@ -9,27 +9,12 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_bool: () => {},
-    console_log_string: () => {},
-  };
-  // number_toString
-  env["number_toString"] = (v: number) => String(v);
-
-  const jsStringPolyfill = {
-    concat: (a: string, b: string) => a + b,
-    length: (s: string) => s.length,
-    equals: (a: string, b: string) => (a === b ? 1 : 0),
-    substring: (s: string, start: number, end: number) => s.substring(start, end),
-    charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-  };
-
-  const { instance } = await WebAssembly.instantiate(result.binary, {
-    env,
-    "wasm:js-string": jsStringPolyfill,
-    string_constants: buildStringConstants(result.stringPool),
-  } as WebAssembly.Imports);
+  // Use the shared host-import builder so every runtime helper the binary
+  // declares (e.g. __unbox_number, __box_number) is supplied — a hand-rolled
+  // env masks regressions when codegen starts importing a new helper.
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
   return (instance.exports as any)[fn](...args);
 }
 
@@ -127,7 +112,7 @@ describe("array methods", () => {
       const src = `
         export function test(): number {
           let arr = [10, 20, 30];
-          return arr.pop();
+          return arr.pop()!;
         }
       `;
       expect(await run(src, "test")).toBe(30);
@@ -150,7 +135,7 @@ describe("array methods", () => {
       const src = `
         export function test(): number {
           let arr = [10, 20, 30];
-          return arr.shift();
+          return arr.shift()!;
         }
       `;
       expect(await run(src, "test")).toBe(10);

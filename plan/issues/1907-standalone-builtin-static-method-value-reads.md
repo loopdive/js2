@@ -153,3 +153,20 @@ standalone refusal.
   `origin/main` is still an ancestor of `symphony/1907`, reran the scoped
   validation successfully, and found PR #1292 open, ready/non-draft,
   mergeable, and waiting on queued GitHub checks on remote head `749580d52`.
+
+## Harvest update — 2026-06-19 (run `e9579720`, dated 2026-06-18) — residual, improved
+
+The `#1888`/`#1907` S6-b family ("built-in static property/method value read is
+not supported in --target standalone … Add a native built-in method closure for
+this pair") **improved from ~8,163 → ~4,575** records (by message match; 5,339
+records cite #1888 / 4,724 cite #1907 — many cite both). It is still the
+**largest standalone codegen-refusal family** and the **#1 standalone blocker**.
+The mechanism landed (PR #1292); the residual is the **incomplete per-builtin
+whitelist** — top unmapped pairs by record count: `Symbol.iterator` 805,
+`Int8Array.prototype` 394, `String.prototype` 306, `Date.prototype` 260,
+`Symbol.species` 185, `Function.prototype` 127, `Number.prototype` 125,
+`DataView.prototype` 119, `ArrayBuffer.prototype` 115, plus a long tail
+(`Set/Map/Iterator/TypedArray.*.prototype`, `Symbol.toPrimitive`,
+`Symbol.toStringTag`, `*.BYTES_PER_ELEMENT`). Not a regression (count fell);
+flagged so the residual under umbrella #1888 stays visible for the next
+standalone-mode push.

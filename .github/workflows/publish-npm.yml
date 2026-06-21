@@ -20,9 +20,56 @@ permissions:
   id-token: write   # for npm provenance + JSR OIDC
 
 jobs:
+  # Guard against the drift bug (loopdive/js2#389): a `v*` tag is cut as a bare
+  # lightweight tag that never bumps package.json, so publish-npm would publish
+  # whatever stale version package.json happens to carry. This job fails the
+  # publish unless BOTH package.json versions equal the tag version. It only
+  # runs on the real publish path (tag push); the workflow_dispatch dry-run has
+  # no version tag in github.ref_name, so it is skipped there.
+  verify-version:
+    name: verify tag matches package.json versions
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check tag == package versions
+        run: |
+          tag="${{ github.ref_name }}"
+          version="${tag#v}"
+          root_version=$(node -p "require('./package.json').version")
+          proxy_version=$(node -p "require('./packages/js2wasm/package.json').version")
+          echo "tag=$tag → version=$version"
+          echo "root package.json: $root_version"
+          echo "proxy package.json (packages/js2wasm): $proxy_version"
+          fail=0
+          if [ "$root_version" != "$version" ]; then
+            echo "::error::root package.json version ($root_version) does not match tag version ($version)."
+            fail=1
+          fi
+          if [ "$proxy_version" != "$version" ]; then
+            echo "::error::proxy package.json version ($proxy_version) does not match tag version ($version)."
+            fail=1
+          fi
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Refusing to publish. Run 'node scripts/release.mjs <x.y.z>' to bump both package.json files in lockstep, land it as a release PR, then tag the merge commit. See docs/releasing.md."
+            exit 1
+          fi
+          echo "Tag and package versions match ($version) — proceeding to publish."
+
   publish-npm:
     name: npm publish (@loopdive/js2 + js2wasm proxy)
     runs-on: ubuntu-latest
+    # On a tag push, gate on verify-version (it must succeed). On
+    # workflow_dispatch, verify-version is skipped (no version tag to check), so
+    # allow the job to proceed: a `needs:` on a skipped job would otherwise skip
+    # this one too. !failure() && !cancelled() lets a skipped dependency through
+    # while still blocking on a verify-version failure.
+    needs: verify-version
+    if: |
+      always() &&
+      needs.verify-version.result != 'failure' &&
+      needs.verify-version.result != 'cancelled'
     steps:
       - uses: actions/checkout@v5
 

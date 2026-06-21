@@ -1,9 +1,10 @@
 ---
 id: 1095
 title: "Eliminate `as unknown as Instr` casts — extend Instr union to cover all emitted opcodes"
-status: ready
+status: done
 created: 2026-04-12
-updated: 2026-06-12
+updated: 2026-06-17
+completed: 2026-06-17
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -66,3 +67,50 @@ baseline + `quality`-job wiring (clone of `check:ir-fallbacks`); growth
 fails CI, decreases auto-bank with `--update-on-decrease`. The remaining
 union extension is sprint-63 mop-up. Status reset from stale `in-review`
 (sprint 45) to `ready`.
+
+## Resolution (2026-06-17, sprint 63)
+
+Done in full — the `as unknown as Instr` double-cast is **gone** (188 code
+sites → 0; the only remaining textual occurrence is a comment in
+`src/emit/binary.ts` explaining the now-historical motivation for the loud-fail
+`default` exhaustiveness check). The sprint-62 ratchet script was never actually
+landed, so this PR did the underlying union-extension mop-up directly.
+
+Findings: the overwhelming majority of the 188 casts were **stale** — the op
+they cast (`struct.get`, `struct.set`, `extern.convert_any`, `i64.const`,
+`array.get/set/new`, etc.) was already in the `Instr` union, so the double-cast
+defeated type-checking for no reason. Mechanically stripping ` as unknown as
+Instr` and re-running `tsc --noEmit` surfaced only three genuine gaps the casts
+had been hiding:
+
+1. **`i64.store` was missing entirely** from the `Instr` union AND the emitter.
+   `__wasi_sleep_ms` (poll_oneoff subscription struct) cast `i64.store` through,
+   so it would have hit the `#1939` loud-fail `default` at emit time. Added the
+   union variant (`src/ir/types.ts`), the opcode `0x37` (`src/emit/opcodes.ts`),
+   and the encode case (`src/emit/binary.ts`). `wasi-timers.test.ts` passes.
+2. **`{ op: "ref.null", refType: "extern" }`** (calls.ts eval/import-no-args) —
+   the `refType` field is not in the union and the emitter would have read
+   `typeIdx` as `undefined`, LEB-encoding it as heaptype index `0` (a latent
+   bug). Replaced with the semantically-correct `{ op: "ref.null.extern" }`,
+   which emits `ref_null externref`. Exactly the kind of bug the casts masked.
+3. **map-runtime.ts forEach** — conditional-spread inner array literals widened
+   bare `{ op: "struct.get", ... }` literals' `op` to `string`; annotated the
+   three inner arrays as `Instr[]` so they get contextual typing.
+
+`dead-elimination.ts` defensive `default` catch-all left intact: it is correct
+and conservative, and with `as Instr` single-assertions still permitted it
+remains a useful backstop; narrowing it adds DCE-corruption risk for no
+behavioural gain.
+
+Validation: `tsc --noEmit` clean · `npm run build` clean · biome lint +
+prettier format:check + stack-balance gate clean · full `tests/equivalence/`
+suite (207 files) exit 0 · map/set (17 tests), wasi-timers (8 tests) green. The
+one FAIL seen during scoped testing (`#681 typed-array for-of WASI-clean`,
+`IR-FALLBACK`) reproduces identically on pristine `origin/main` — pre-existing,
+unrelated to this refactor.
+
+Acceptance criteria: union now covers all emitted opcodes (i64.store added);
+double-cast count 188 → 0 (met the stretch 0). No regressions. The optional
+"CI lint rule" criterion is moot — with the count at 0 and the emit-side `never`
+exhaustiveness check already failing the build on any new off-union op, the type
+system itself now prevents reintroducing the gap that motivated the casts.

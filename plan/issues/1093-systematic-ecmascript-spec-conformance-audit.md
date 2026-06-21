@@ -3,14 +3,14 @@ id: 1093
 title: "Systematic ECMAScript spec conformance audit — review compiled semantics against tc39.es/ecma262"
 status: ready
 created: 2026-04-12
-updated: 2026-04-12
+updated: 2026-06-19
 priority: high
 feasibility: hard
 reasoning_effort: max
 task_type: investigation
 language_feature: spec-conformance
 goal: async-model
-sprint: 45
+sprint: Backlog
 es_edition: multi
 ---
 # #1093 — Systematic ECMAScript spec conformance audit

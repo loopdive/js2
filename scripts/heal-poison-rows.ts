@@ -46,6 +46,38 @@ import { isPoisonCompileError } from "./test262-poison-error.mjs";
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 const TEST262_ROOT = resolve(ROOT, "test262");
 
+// #2099 promotion-blocker: a re-run of a contaminating test can throw AFTER its
+// `await` has already settled — e.g. a `dynamic-import` test drives Node's
+// `importModuleDynamicallyCallback` into a runaway `Maximum call stack size
+// exceeded` and emits the rejection as a deferred microtask, which lands as an
+// uncaught exception/unhandled rejection OUTSIDE the per-test try/catch and
+// crashes the process with exit 1 once `main()` has finished. That failed the
+// `promote-baseline` job and froze the baseline (≈16h stale, every PR's
+// regression gate blinded). This script's contract (see header) is "exit 0
+// unless args are malformed or input is unreadable" — a contaminating re-run
+// must NEVER block promotion. Swallow deferred async errors so they can't flip
+// the exit code; the affected row is already left as-is (still-poison) by the
+// loop's own logic before the deferred error fires.
+//
+// Exported so the regression test can verify the contract directly without
+// paying the multi-minute cost of compiling the contaminating test262 file.
+export function installDeferredErrorGuards(): void {
+  process.on("uncaughtException", (err) => {
+    console.error(
+      `heal-poison-rows: swallowed deferred uncaughtException (non-fatal — promotion must not be blocked): ${
+        (err as Error)?.message ?? String(err)
+      }`,
+    );
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error(
+      `heal-poison-rows: swallowed deferred unhandledRejection (non-fatal — promotion must not be blocked): ${
+        (reason as Error)?.message ?? String(reason)
+      }`,
+    );
+  });
+}
+
 interface Row {
   file?: string;
   status?: string;
@@ -107,6 +139,7 @@ function isPoisonRow(row: Row): boolean {
 }
 
 async function main(): Promise<void> {
+  installDeferredErrorGuards();
   const args = parseArgs(process.argv.slice(2));
 
   // Read every line first (the in/out paths may be identical).
@@ -201,7 +234,22 @@ async function main(): Promise<void> {
   writeFileSync(args.out, lines.join("\n"));
 }
 
-main().catch((e) => {
-  console.error("heal-poison-rows: fatal:", e);
-  process.exit(1);
-});
+// Only run when invoked as the entry script, not when imported (the regression
+// test imports `installDeferredErrorGuards` and must not trigger a `main()` run
+// that would exit(64) on its missing `--in`).
+const INVOKED_AS_SCRIPT = process.argv[1] === fileURLToPath(import.meta.url);
+
+if (INVOKED_AS_SCRIPT) {
+  // `main()` writes the healed JSONL and resolves; the output is durable at that
+  // point. Force a clean exit(0) so any lingering microtask/timer left behind by
+  // a runaway re-run (e.g. the dynamic-import callstack blowup above) can neither
+  // keep the event loop alive nor fire a deferred error that flips the exit code
+  // and fails the promote-baseline job (#2099). The guards above already swallow
+  // such errors, but exiting immediately removes the window entirely.
+  main()
+    .then(() => process.exit(0))
+    .catch((e) => {
+      console.error("heal-poison-rows: fatal:", e);
+      process.exit(1);
+    });
+}

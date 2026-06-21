@@ -2,7 +2,7 @@
 id: 1926
 title: "Remove backend ValType/typeIdx from IrType — unions and boxing must be backend-symbolic"
 status: ready
-sprint: 63
+sprint: 64
 created: 2026-06-10
 updated: 2026-06-12
 priority: medium

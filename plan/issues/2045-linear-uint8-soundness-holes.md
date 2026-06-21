@@ -2,9 +2,9 @@
 id: 2045
 title: "linear Uint8Array (WASI): silent-corruption holes — name-keyed buffer registry, no bounds checks — plus escape-analysis demotion gaps (#1886 follow-up)"
 status: in-progress
-sprint: 63
+sprint: 64
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-17
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -12,6 +12,7 @@ task_type: bugfix
 area: codegen, wasi
 language_feature: typed-arrays, linear-memory
 goal: standalone-mode
+assignee: ttraenkler/cs-2164
 related: [1886, 817]
 origin: "2026-06-10 sprint-61 code review of merged PR #1288 (#1886 Slice C): two pre-existing Slice-B silent-corruption routes were materially widened to function parameters, and the new interprocedural escape analysis has two fail-closed demotion gaps that break previously-valid WASI programs."
 ---
@@ -144,6 +145,51 @@ failures unrelated to this change — verified identical on main.)
   function-value escapes of rewritten helpers) — these are fail-closed
   `reportError`s on otherwise-valid WASI programs, a larger interprocedural
   change split out from the corruption fixes.
-- **C.5–C.8** loop-arena rewind ordering, the all-target while-loop
-  restructure gate, `process.stdin.read` offset clamp + errno, and compound
-  element writes (`b[i] += 1`).
+- **C.5–C.7** loop-arena rewind ordering, the all-target while-loop
+  restructure gate, `process.stdin.read` offset clamp + errno.
+
+## C.8 — compound element write + `++`/`--` on a linear buffer (LANDED 2026-06-18, cs-2164)
+
+**Done — another silent-corruption route.** `b[i] op= rhs` (`+=`, `-=`, `*=`,
+`&=`, …) and `b[i]++` / `++b[i]` / `b[i]--` on a linear-backed `Uint8Array`
+(WASI) **silently failed to update linear memory**: `b[0] = 5; b[0] += 1`
+read back `5`, and the `++`/`--` forms threw a `WebAssembly.Exception` at
+runtime.
+
+**Root cause.** The plain `b[i] = v` write goes through
+`compileElementAssignment`, which tries `tryEmitLinearU8ElementSet` first — but
+the *compound* and *update* forms have separate lowerings that had no linear
+path: `compileElementCompoundAssignment` (assignment.ts) compiled
+`target.expression` as a value (materialising the GC vec) and wrote the result
+through the externref/GC path — never touching linear memory; `compileMemberIncDec`
+(unary-updates.ts) required a `ref`/`ref_null` array and hit
+`compileExpression`'s `(ptr,len)` shape → runtime throw.
+
+**Fix** (`linear-uint8-codegen.ts` + the two call sites). Two new emitters do a
+bounds-checked read-modify-write at a single `addr = ptr + trunc(i)` (index
+evaluated once), mirroring the existing get/set:
+- `tryEmitLinearU8ElementCompound` — `i32.load8_u` → f64, run the caller's
+  compound op (a closure over `emitCompoundOp` + the rhs, threaded to dodge the
+  assignment.ts↔linear-uint8-codegen.ts import cycle), `i32.store8` the low
+  byte; leaves the (untruncated) f64 result for the expression value. Wired at
+  the top of `compileElementCompoundAssignment`.
+- `tryEmitLinearU8ElementUpdate` — `load → ±1 → store`, leaving the **new**
+  value (prefix) or **old** value (postfix) per §13.4. Wired into
+  `compileMemberIncDec` (the live `++`/`--` dispatch) **before** its
+  `compileExpression(operand.expression)`, plus defensive guards in the
+  `compilePrefix/PostfixIncrementElement` handlers (reached via the alt postfix
+  dispatch). Both fall through to the GC path for any non-linear element target.
+
+The store truncates to the byte, so `200 += 100 → 44` and `255++ → 0` wrap
+correctly (matching JS `Uint8Array` semantics).
+
+**Validation.** New `tests/issue-2045-linear-u8-compound.test.ts` (11, WASI run
+via the `runWasiMain` fd_write harness): `+=`/`-=`/`*=`/`&=`, byte-wrap on
+compound, `++`/`++`-prefix/`--`, postfix-returns-old, prefix-returns-new, and
+`255++`→0 wrap. The 14 #2045/#1886-slice-b and 150 linear/WASI suite cases stay
+green. tsc + prettier + biome(error) + coercion-sites + any-box + stack-balance
+gates clean.
+
+**Still open:** B.3/B.4 (escape-analysis demotion) and C.5–C.7 (loop-arena
+rewind ordering, all-target while-loop gate, `process.stdin.read` clamp/errno).
+**#2045 stays in-progress.**

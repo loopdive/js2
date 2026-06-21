@@ -50,9 +50,14 @@ process.on("message", async (msg) => {
   try {
     try {
       const compileFn = incrementalCompiler ? incrementalCompiler.compile : compile;
+      // (#2119) honour the script/module strictness signal from the dispatcher
+      // so the synthetic `export function test()` wrapper does not unmap sloppy
+      // `arguments`. Undefined ⇒ default true (module input is strict).
+      const inferModuleStrictArguments = msg.inferModuleStrictArguments;
       const result = incrementalCompiler
         ? await compileFn(msg.source, {
             sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",
+            inferModuleStrictArguments,
           })
         : await compile(msg.source, {
             fileName: "test.ts",
@@ -60,6 +65,7 @@ process.on("message", async (msg) => {
             sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",
             emitWat: false,
             skipSemanticDiagnostics: true,
+            inferModuleStrictArguments,
           });
       const compileMs = performance.now() - start;
 

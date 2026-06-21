@@ -11,7 +11,7 @@ task_type: feature
 area: ir, codegen
 language_feature: async
 goal: ir-full-coverage
-sprint: 63
+sprint: 64
 depends_on: [1326c]
 note: "Verified 2026-05-21: src/codegen/async-scheduler.ts exists; src/codegen/async-cps.ts does NOT exist yet (still pending #1042 introducing it). async-cluster-architect-spec.md exists. Unblocked 2026-06-16 (se1): sole dependency #1326c flipped done — Phase 1C microtask queue + chained .then landed on main."
 ---

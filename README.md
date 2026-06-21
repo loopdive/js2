@@ -57,7 +57,7 @@ STATUS.md rather than duplicating numbers that go stale. Standalone
 README until the current standalone regression is fixed.
 
 <!-- AUTO:conformance-start -->
-**test262 conformance**: 31,357 / 43,135 (72.7 %) — baseline unknown, 2026-06-17T03:03:44.073Z
+**test262 conformance**: 31,424 / 43,135 (72.9 %)
 <!-- AUTO:conformance-end -->
 
 ## Current Status
@@ -233,10 +233,10 @@ Most are on by default in current engines, but **WasmGC and typed function
 references are not enabled by default in stable Wasmtime**, so a bare
 `wasmtime out.wasm` fails with a validation error until they are turned on.
 
-The simplest way to run the output is to enable all proposals:
+Enable exactly the proposals the compiler emits:
 
 ```bash
-wasmtime -W all-proposals=y out.wasm
+wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y out.wasm
 ```
 
 The proposals the compiler actually relies on are:
@@ -248,24 +248,21 @@ The proposals the compiler actually relies on are:
 | Exception handling | `exceptions=y` | `throw` / `try` / `catch` lowering |
 | Tail calls | `tail-call=y` | `return_call` optimization in tail position |
 
-So the minimal explicit flag set is:
+Bulk memory, sign-extension, saturating float-to-int, multi-value, mutable
+globals, and reference types are also emitted but are enabled by default in
+current Wasmtime, so they do not need explicit flags. `js2wasm` deliberately
+avoids the custom-descriptors proposal, which stable Wasmtime does not yet
+accept.
 
-```bash
-wasmtime -W gc=y -W function-references=y -W exceptions=y -W tail-call=y out.wasm
-```
-
-Bulk memory, sign-extension, saturating float-to-int, multi-value, and mutable
-globals are also emitted but are enabled by default in current Wasmtime, so they
-do not need explicit flags. `js2wasm` deliberately avoids the custom-descriptors
-proposal, which stable Wasmtime does not yet accept.
+**Do not use `-W all-proposals=y`.** It also enables the **stack-switching**
+proposal, which Wasmtime 44/45 does not support in its compiler configuration —
+the runtime then fails at module load with `the wasm_stack_switching feature is
+not supported on this compiler configuration` and exits before running anything,
+regardless of module content (js2wasm output contains zero stack-switching
+opcodes). Stick to the targeted flag set above.
 
 **Minimum version:** Wasmtime **44+** (the first release with a stable WasmGC
 implementation). Older versions reject the GC types.
-
-> The flag table reflects the proposals the compiler emits (see
-> `src/optimize.ts`). The exact minimal `-W` subset was not re-verified by
-> running each flag combination in this environment; if `all-proposals=y` is
-> what you reach for, it is always safe.
 
 Other standalone runtimes: WasmGC support in WAMR and WasmEdge is still
 maturing, so compiled output is not guaranteed to run there yet. Browser hosts

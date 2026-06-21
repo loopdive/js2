@@ -33,7 +33,7 @@ case-sensitive and whitespace-sensitive.
 |---|---|---|
 | `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix) |
 | `merge shard reports` | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
-| `quality` | `.github/workflows/ci.yml` | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen |
+| `quality` | `.github/workflows/ci.yml` | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)** |
 | `equivalence-gate` | `.github/workflows/ci.yml` | merges the equivalence shards and fails if the shard baseline regresses |
 | `linear-tests` | `.github/workflows/ci.yml` | runs the linear-backend (`tests/linear-*.test.ts`), C-ABI (`tests/c-abi.test.ts`), and SIMD (`tests/simd*.test.ts`) suites — the 20 files that previously had no CI job, so every linear-memory lowering change landed ungated (#2139) |
 | `check for test262 regressions` | `.github/workflows/test262-sharded.yml` | full rolling-baseline test262 diff; required so pass→fail regressions cannot merge just because the aggregate hard guards stayed below threshold |
@@ -386,3 +386,13 @@ gate becomes a **UX layer**, not the merge authority:
 
 See #1391 (staleness escalation) for the prior state where the skill was
 the sole hard-block path.
+
+---
+
+## 10. Releasing (npm + JSR)
+
+Version tags (`v*`) drive `publish-npm.yml`, which publishes whatever
+`package.json` `version` the tagged commit carries. Bump both packages in
+lockstep with `node scripts/release.mjs <x.y.z>`, land a `release:` PR, then
+tag the merge commit — the workflow's `verify-version` job fails the publish
+if the tag and `package.json` versions disagree. Full flow: [releasing.md](releasing.md).

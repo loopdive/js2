@@ -3,7 +3,7 @@ id: 744
 title: "Function monomorphization for polymorphic call sites"
 status: ready
 created: 2026-03-21
-updated: 2026-04-16
+updated: 2026-06-19
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: performance
 area: codegen
 language_feature: monomorphization
 goal: performance
-sprint: 45
+sprint: Backlog
 depends_on: [743, 1124]
 files:
   src/codegen/index.ts:

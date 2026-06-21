@@ -1073,3 +1073,241 @@ computed-key path still builds the variadic sources list with the JS-host
 `$ObjVec` builders. This is a regression that predates this branch and belongs
 to a separate Object.assign call-site-retargeting follow-up — left untouched
 here to keep this slice's regression surface clean.
+
+---
+
+## Implementation Plan — REMAINING gate decomposition (architect, 2026-06-17)
+
+This is the s63 coordinating spec. Phases A/B/C above landed the open-`$Object`
+runtime core; the gate is no longer "everything refuses." The remaining ~5,866
+standalone failures across the four buckets are now a **mix of**: a few
+high-yield runtime semantics bugs, two compiler-bug clusters, and a residual
+loud-refusal tail. This plan decomposes that remainder into **6 independently
+shippable slices**, ordered by impact-per-effort.
+
+### Authoritative measurement (report 2026-06-16T16:47, standalone 20,274/43,135 = 47.0%)
+
+| Bucket | total | CE | fail | dominant error shape |
+|---|---:|---:|---:|---|
+| `standalone-dynamic-object-property` (#1472) | 3217 | 1611 | 1606 | `Cannot convert object to primitive` (~980), `__defineProperty_desc` refusal (404), `__get_builtin` refusal (386), `illegal cast [in __obj_find]` (~170), wasm_compile (123) |
+| `object-property-semantics` (#1472/#176/#281/#1466) | 1575 | 655 | 920 | defineProperty/defineProperties `verifyProperty` asserts (~300), `__getOwnPropertyNames` refusal (63), `accessed !== true` accessor-not-invoked (~80) |
+| `object-to-primitive` (#1910/#1525b/#1900/#1472) | 759 | 206 | 553 | `Cannot convert object to primitive` (~700) over **boxed wrapper objects** (`new Number`/`new String`) + Symbol.toPrimitive/toStringTag static reads (43) |
+| `standalone-reflect-refusal` (#1472) | 315 | 295 | 20 | `Reflect.construct` (152), `Reflect.defineProperty` (53), `Reflect.getOwnPropertyDescriptor` (15), explicit-receiver get/set refusals (29) |
+
+NOTE on counts: bucketing is first-match-wins over an ordered list, so
+`with`-statement (264), Temporal (3738), Atomics, TypedArray-static-read,
+dynamic-import rows are claimed by **earlier** buckets and are NOT in these four
+totals — do not chase them here. The error-shape percentages above were derived
+by re-classifying the JSONL (`benchmarks/results/test262-standalone-results.jsonl`)
+with the report's own matchers; absolute sub-counts are indicative (±, because
+earlier buckets skim some rows) but the **ranking is reliable**.
+
+### The 6 slices (ordered by impact-per-effort)
+
+| # | Slice | Issue | Bucket(s) hit | Est. CE/fail reduction | Effort |
+|---|---|---|---|---|---|
+| S1 | `__obj_find`/`__obj_hash` key ToPropertyKey hardening (kill `illegal_cast`) | #2042 PR-B-pre + #2046 PR-D | dyn-obj-prop, reflect | ~180–230 | S (½ day) |
+| S2 | Boxed primitive-wrapper ToPrimitive (`new Number`/`new String`/`new Boolean` `valueOf`) | #1910/#1900 (new sub) | object-to-primitive, dyn-obj-prop | ~600–750 | M (1–2 day) |
+| S3 | Descriptor reflection natives: `__getOwnPropertyNames` / `__getOwnPropertySymbols` / `__getOwnPropertyDescriptors` / `__defineProperty_desc` | #2042 PR-B | dyn-obj-prop, object-property-semantics | ~450–550 | M (1–2 day) |
+| S4 | ValidateAndApplyPropertyDescriptor semantics over `$PropEntry` flags (defaults, redefine TypeError, `verifyProperty`) | #2042 PR-C | object-property-semantics | ~250–350 | L (2–3 day) |
+| S5 | Reflect.construct / Reflect.defineProperty / getOwnPropertyDescriptor natives | #2046 PR-E | reflect-refusal | ~200–250 | M (1–2 day) |
+| S6 | Array.prototype generic borrowed-receiver: stop invalid-Wasm bleed for search/`filter` arms | #2036 PR-2 | (array bucket + dyn-obj-prop tail) | ~150–430 | M–L (depends on emit bug) |
+
+Slices are **independent** except S4 depends on S3 (descriptor readers/writers
+must exist before validating their semantics), and S1 unblocks S5's numeric-key
+Reflect cases. Recommended dispatch order: **S1 → (S2 ∥ S3 ∥ S6) → S4 → S5**.
+S2 is the single biggest pass-rate lever and shares no files with S3/S6, so it
+should go to a dedicated dev immediately after S1.
+
+Per-slice detail lives in the target issue files:
+- **S1, S3, S4** → `plan/issues/2042-standalone-defineproperty-descriptor-semantics.md`
+- **S2** → see "## Implementation Plan — S2 boxed-wrapper ToPrimitive" below (new sub-issue recommended under #1910)
+- **S5** → `plan/issues/2046-standalone-reflect-spec-gaps.md`
+- **S6** → `plan/issues/2036-standalone-array-generics-arraylike-invalid-wasm.md`
+
+### S1 — `__obj_find` / `__obj_hash` key ToPropertyKey hardening (kill `illegal_cast`)
+
+**Root cause.** `src/codegen/object-runtime.ts` `__obj_find` (~L482, `ref.cast
+$AnyString` on the key at L496) and `__obj_hash` (the same unconditional cast,
+~L289 per #2046) trap with `illegal cast` whenever a **non-string externref key**
+reaches them: a boxed number (computed numeric key `o[0]`, `Reflect.get(o, 1)`),
+or a key arriving from `__getOwnPropertyDescriptor` / `__extern_set` that wasn't
+pre-stringified. #2042 PR-A fixed it only at the `Object.defineProperty` call
+site; the runtime helpers themselves are still unguarded for every other caller.
+
+**Fix.** Make the **runtime** ToPropertyKey-coerce the key once, centrally,
+instead of patching N call sites. Add a `__to_property_key(externref) ->
+externref` native that returns the key unchanged if it `ref.test $AnyString`,
+else routes a boxed number through the existing `number_toString` path (canonical
+decimal), and refuses Symbol keys loudly for now (the string-keyed `$Object`
+cannot represent them — emit the existing #1472 refusal, not a trap). Call it at
+the **top of `__obj_find` and `__obj_hash`** (or once in each public entry that
+forwards to them — `__extern_get`/`__extern_set`/`__extern_has`/
+`__getOwnPropertyDescriptor`/`__delete_property`) so the `ref.cast $AnyString` is
+always safe. Reuse the `number_toString` + boxing helpers already registered
+early by `ensureObjectRuntime` (see #2036 PR-1, which did exactly this for the
+array-like arm). This is the shared key-coercion helper #2046 PR-D and #2042
+PR-A both said to factor out.
+
+**Wasm IR pattern** (guard before the cast in `__obj_find`):
+```wasm
+local.get $key            ;; externref
+any.convert_extern
+ref.test $AnyString
+i32.eqz
+if                         ;; not already a string → coerce
+  local.get $key
+  call $__to_property_key  ;; boxed-number → decimal string; symbol → refuse
+  local.set $key
+end
+;; ... existing ref.cast $AnyString is now safe
+```
+
+**Acceptance signatures.** Zero `illegal cast [in __obj_find() ← __extern_set …]`
+and `← __getOwnPropertyDescriptor …` rows under standalone; `Reflect.get(o, 1)`
+returns `o["1"]` (closes #2046 PR-D); `o[0]` computed numeric get/set round-trips.
+
+### S2 — Boxed primitive-wrapper ToPrimitive (the biggest single lever)
+
+**Root cause.** ~700 of the 759 `object-to-primitive` rows and a large share of
+the dyn-obj-prop `Cannot convert object to primitive` rows are **boxed wrapper
+objects** in operator contexts: `new Number(1) % "1"`, `new String("1") +
+new Number(1)`, etc. (e.g. `language/expressions/compound-assignment/
+S11.13.2_A4.3_T2.2.js`). The native `__to_primitive` (object-runtime.ts ~L1670)
+correctly handles plain `$Object` (returns `"[object Object]"` when toString is
+missing), but a wrapper has an internal `[[NumberData]]`/`[[StringData]]`/
+`[[BooleanData]]` slot whose `valueOf` must return that primitive. Standalone
+ships no `Number.prototype.valueOf`, so `__to_primitive` falls through every arm
+to `throwTypeError`.
+
+**Fix.** Give the standalone wrapper objects a recoverable internal-slot value
+and teach `__to_primitive` to read it FIRST (before the toString/valueOf own-prop
+probe), per §7.1.1.1 OrdinaryToPrimitive being shadowed by the wrapper's
+`[[Get]]("valueOf")` resolving to the intrinsic. Two viable representations —
+pick the one that matches how `new Number(x)` is already lowered:
+1. If `new Number(x)` lowers to a `$Object` today, store the primitive under a
+   reserved well-known key (e.g. an interned `"__prim__"` `$PropEntry` with a
+   non-enumerable flag) at construction, and have `__to_primitive`'s number/
+   default arm read it via `__obj_find` before the valueOf probe.
+2. Cleaner: a dedicated `$BoxedPrimitive (struct (field $tag i32) (field $value
+   anyref))` brand that `new Number/String/Boolean` produce; `__to_primitive`
+   does `ref.test $BoxedPrimitive` first and returns `$value`.
+
+Coordinate with the owner of `new Number`/`new String` lowering
+(`src/codegen/expressions/new-super.ts` / `calls.ts`) and #1910/#1900. This
+slice should land as a **new sub-issue under #1910** (ToPrimitive family) since
+the four buckets share the `object-to-primitive` classification but the fix is
+wrapper-construction + `__to_primitive`, not the open-`$Object` runtime.
+
+**Acceptance signatures.** `new Number(1) % "1" === 0`; `String(new Number(1))
+=== "1"`; `new String("1") + new Number(1) === "11"`; the
+`compound-assignment/S11.13.2_*` and `left-shift`/`right-shift`/`relational`
+`*_A4.*`/`*_A3*` wrapper rows pass. Re-measure both buckets after landing.
+
+### S3 — Descriptor reflection natives
+
+**Root cause.** `__getOwnPropertyNames`, `__getOwnPropertySymbols`,
+`__getOwnPropertyDescriptors` (plural), and `__defineProperty_desc` are still in
+`STANDALONE_REFUSED_IMPORT` (`src/codegen/expressions/late-imports.ts` L52-70 via
+the `__getOwn*` / `__defineProperty*` prefixes) — they were never added to
+`OBJECT_RUNTIME_HELPER_NAMES`. The singular `__getOwnPropertyDescriptor` and
+`__defineProperty_value`/`__defineProperty_accessor` already exist natively, so
+these are mechanical extensions over the same `$Object`/`$PropEntry`/`$ObjVec`
+machinery.
+
+**Fix** (all in `src/codegen/object-runtime.ts`, add each to
+`OBJECT_RUNTIME_HELPER_NAMES`):
+- `__getOwnPropertyNames(externref) -> externref`: like `__object_keys` but
+  includes **non-enumerable** live entries (drop the enumerable filter); insertion
+  order. Returns `$ObjVec`.
+- `__getOwnPropertySymbols(externref) -> externref`: returns an **empty** `$ObjVec`
+  (the string-keyed `$Object` holds no symbol keys) — correct approximation, not a
+  refusal; lets symbol-free tests pass.
+- `__getOwnPropertyDescriptors(externref) -> externref`: build a fresh `$Object`,
+  for each own key call the existing `__getOwnPropertyDescriptor` and
+  `__extern_set` the descriptor under that key.
+- `__defineProperty_desc(externref obj, externref key, externref descriptor)`:
+  read `value`/`get`/`set`/`writable`/`enumerable`/`configurable` off the
+  descriptor `$Object` (via `__extern_get` + `__to_bool`), then dispatch to the
+  existing `__defineProperty_value` (data) or `__defineProperty_accessor`
+  (accessor) helper. This is the generic `Object.defineProperty(o, k, descObj)`
+  entry the call site uses when the descriptor shape isn't statically known.
+
+**Acceptance signatures.** `built-ins/Object/getOwnPropertyNames/*` and
+`getOwnPropertyDescriptors/*` standalone rows move from refusal to pass;
+`Object.defineProperty(o, k, {value, enumerable})` with a runtime-shaped
+descriptor object compiles+runs (was `__defineProperty_desc` refusal, 404 rows).
+
+### S4 — ValidateAndApplyPropertyDescriptor semantics (depends on S3)
+
+**Root cause.** The ~300 `verifyProperty`-based `assertion_fail` rows in
+`object-property-semantics` (`assert(propertyDefineCorrect)`,
+`assert.sameValue(beforeWrite, true)`, `assert.throws(TypeError, …
+defineProperty …)`) fail because the native define path does not implement
+§10.1.6.3 ValidateAndApplyPropertyDescriptor / §6.2.6.6
+CompletePropertyDescriptor: attribute defaults (writable/enumerable/configurable
+default **false** for a fresh descriptor), [[Configurable]]:false transition
+rejection, and catchable TypeError on invalid redefinition.
+
+**Fix.** In `__defineProperty_value`/`__defineProperty_accessor` (and the S3
+`__defineProperty_desc`), before writing the `$PropEntry`:
+1. Look up the existing entry (`__obj_find`).
+2. If absent and object non-extensible → TypeError.
+3. If present and non-configurable → enforce the §10.1.6.3 transition table
+   (reject changing configurable/enumerable, reject data↔accessor flip, reject
+   writable false→true, reject value change when writable:false) → throw a
+   catchable TypeError via the existing `emitThrowTypeError`/exn-tag pattern.
+4. Apply CompletePropertyDescriptor defaults to the flag word for new entries.
+
+Follow §10.1.6.3 step order exactly — `verifyProperty` makes the order
+observable. Reuse the freeze/seal `OBJ_FLAG_*` + `$PropEntry` `FLAG_*` bits.
+
+**Acceptance signatures.** `built-ins/Object/defineProperty/*` `verifyProperty`
+and `15.2.3.6-4-*` redefinition-throws rows pass; ≥150 of the ~300 class-B rows
+in #2042.
+
+### S5 — Reflect.construct / defineProperty / getOwnPropertyDescriptor natives
+
+**Root cause.** `standalone-reflect-refusal` is now almost pure CE (295/315):
+`Reflect.construct` (152), `Reflect.defineProperty` (53),
+`Reflect.getOwnPropertyDescriptor` (15) still hit the Phase C refuse branch in
+`src/codegen/expressions/calls.ts` (the `if (ctx.standalone)` Reflect block).
+
+**Fix.**
+- `Reflect.defineProperty(t, k, desc)` → route to the S3 `__defineProperty_desc`
+  native and return its boolean success (don't throw — Reflect variant returns
+  false on failure). Depends on S3.
+- `Reflect.getOwnPropertyDescriptor(t, k)` → route to the existing native
+  `__getOwnPropertyDescriptor`.
+- `Reflect.construct(target, argsList[, newTarget])` → the hard one; refuse the
+  `newTarget` form, but route the 2-arg form to the same construct path the
+  standalone `new` uses (coordinate with the class/construct owner, #2158). If
+  construct plumbing isn't ready, keep the refusal but split it out so the
+  cheaper defineProperty/getOwnPropertyDescriptor wins land first.
+
+**Acceptance signatures.** `Reflect.defineProperty`/`Reflect.getOwnProperty
+Descriptor` standalone rows pass; explicit-receiver get/set already refuse
+correctly (#2046 PR-A) — leave them.
+
+### S6 — Array.prototype generic borrowed-receiver invalid-Wasm
+
+See #2036. #2036 PR-1 fixed the callback methods (`forEach`/`some`/`every`/
+`findIndex`) over an array-like `$Object`. The remaining bleed is the
+**search methods** (`indexOf`/`lastIndexOf`/`includes`) and `filter`, which still
+emit invalid Wasm (`local.set expected f64, found call externref`) — a
+binary-emitter/local-type-layout bug, likely needs senior/infra. Interim: route
+those arms to the same loud `#1888 Slice 3/4` refusal so invalid-Wasm rows become
+honest refusals (protects the conformance number) before the real generic arm.
+
+### Out of scope for this gate (route elsewhere)
+- `with`-statement (264, #1387 — own bucket), Temporal (3738), Atomics static
+  reads, TypedArray `BYTES_PER_ELEMENT` static reads (#1907/#1888 S6-b built-in
+  static property reads), dynamic-import/import-defer syntax — all land in
+  **earlier** buckets and are not in the four targets.
+- `__get_builtin` refusal (386 in dyn-obj-prop) — this is the built-in
+  prototype-graph / `globalThis[name]` lookup, architecturally part of the
+  **#2158 class/prototype/builtin epic**, not the open-object runtime. Cross-link
+  but do not slice here.
+- Bare method-call forms (`o.hasOwnProperty(k)`, `o.isPrototypeOf(x)`) route
+  through `__extern_method_call` / `__proto_method_call` — the any-receiver method
+  dispatch slice (#2151), already a separate task.

@@ -21,7 +21,8 @@ import { collectShapes } from "../shape-inference.js";
 import { ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { collectClassDeclaration, compileClassBodies } from "./class-bodies.js";
-import { collectFunctionOwnLocals, collectReferencedIdentifiers } from "./closures.js";
+import { collectReferencedIdentifiers } from "./closures.js";
+import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
 import { reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, registerInlinableFunction } from "./function-body.js";
@@ -53,6 +54,7 @@ import {
 } from "./index.js";
 import { ensureNativeStringExternBridge, ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
+import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import {
   isNativeGeneratorCandidate,
@@ -397,7 +399,17 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   if (ts.isTemplateExpression(node)) {
     for (const span of node.templateSpans) {
       const spanType = ctx.checker.getTypeAtLocation(span.expression);
-      if (isNumberType(spanType) || isBooleanType(spanType) || isBigIntType(spanType)) {
+      // An `any`/`unknown`-typed span (common in .js files / untyped params,
+      // where the checker can't narrow but codegen still lowers the value as a
+      // numeric f64/i32/i64) must also pre-register number_toString. Otherwise
+      // the checker-based pre-pass and codegen's value-type resolution diverge:
+      // codegen reaches the numeric substitution branch with no helper to call
+      // and hard-errors ("Template literal numeric substitution requires
+      // number_toString"), aborting compilation. Registering the helper is
+      // harmless when the span turns out non-numeric — codegen only calls it on
+      // the numeric branch.
+      const isAnyOrUnknown = (spanType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+      if (isNumberType(spanType) || isBooleanType(spanType) || isBigIntType(spanType) || isAnyOrUnknown) {
         state.primitiveNeeded.add("number_toString");
       }
     }
@@ -1194,10 +1206,39 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectURIImports finalize ──
-  for (const name of state.uriNeeded) {
-    if (ctx.funcMap.has(name)) continue;
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", name, { kind: "func", typeIdx });
+  // #2500 — the four URI globals are JS-host `env.*` imports in host mode. Under
+  // `--target wasi`/`--target standalone` there is no host, so the call site
+  // previously fell through to a `ref.test`/`ref.cast` of the argument and
+  // returned `null`. Emit the pure-Wasm `__uri_encode` / `__uri_decode` helpers
+  // instead (registered as DEFINED funcs; the batched late-import shift keeps
+  // their funcMap index + sibling-call targets correct as later imports
+  // register). The four NAMES remain mapped to the host import in host mode; in
+  // standalone mode the call site (calls.ts) routes each name through the native
+  // helper with its per-function preserved/reserved mask.
+  {
+    let needsNativeEncode = false;
+    let needsNativeDecode = false;
+    for (const name of state.uriNeeded) {
+      if (ctx.funcMap.has(name)) continue;
+      if (ctx.wasi || ctx.standalone) {
+        if (name === "encodeURI" || name === "encodeURIComponent") {
+          needsNativeEncode = true;
+          continue;
+        }
+        if (name === "decodeURI" || name === "decodeURIComponent") {
+          needsNativeDecode = true;
+          continue;
+        }
+      }
+      const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+      addImport(ctx, "env", name, { kind: "func", typeIdx });
+    }
+    if (needsNativeEncode) {
+      emitNativeUriEncode(ctx);
+    }
+    if (needsNativeDecode) {
+      emitNativeUriDecode(ctx);
+    }
   }
 
   // ── collectStringStaticImports finalize ──
@@ -1438,14 +1479,28 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     // (#1104 Phase 1) In WASI/standalone mode, the JS host is unavailable —
     // emit Wasm-native `__new_<ErrorName>` functions that build a
     // `$Error_struct` for the 8 built-in Error constructors instead of
-    // unsatisfiable `env.__new_<ErrorName>` host imports. Other unknown
-    // constructors still emit host imports (they may resolve via user-supplied
-    // imports at instantiation time, or fail loudly if missing). JS-host mode
-    // is unchanged.
+    // unsatisfiable `env.__new_<ErrorName>` host imports. JS-host mode is
+    // unchanged.
     // #1473 — standalone mode has no JS host either, so it needs the same
     // in-module Error constructors as WASI mode.
     if ((ctx.wasi || ctx.standalone) && isWasiErrorName(name)) {
       emitWasiErrorConstructor(ctx, name, argCount);
+      continue;
+    }
+    // (#2026 PR-1b) In no-JS-host mode (WASI / standalone) an `env.__new_<name>`
+    // import is *never* satisfiable — there is no host to provide it — and the
+    // strict-import allowlist gate (#1524/#2094) rejects it at registration
+    // time, so a single `new K()` on a value-bound class identifier fails the
+    // whole standalone compile (the original "Host import env.__new_K …" error).
+    // Skip the host import entirely here: the dynamic-new fallback in
+    // `compileNewExpression` (`emitDynamicNewFallback`) is the resolution path
+    // in standalone — it reads the class-object descriptor's `__tag` and
+    // dispatches to the matching `<Class>_new` with pure Wasm (no host import),
+    // and on a no-match descriptor it yields a null externref (the same result
+    // the absent-import `else` branch produced before). Genuine JS-host
+    // builtins cannot exist in standalone anyway, so there is nothing to lose.
+    // Host (JS) mode still registers the import for those builtins.
+    if (ctx.wasi || ctx.standalone) {
       continue;
     }
     const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
@@ -1949,6 +2004,21 @@ export function collectEmptyObjectWidening(
           // Scan all following statements in the same block for property assignments
           collectPropsFromStatements(checker, ctx, stmts, varName, extraProps, seenProps);
 
+          // (#2372) Standalone: if any `Object.defineProperty(varName, …)` on
+          // this receiver used a *dynamic* (non-inline-literal) descriptor, the
+          // struct-widening fast path is unsound — the dynamic define is applied
+          // through the native `__obj_define_from_desc` `$Object` runtime, but a
+          // widened struct would make the read-back `varName.key` lower to
+          // `struct.get` against a different object (returns 0). Suppress
+          // widening entirely for such receivers so they stay on the `$Object`
+          // representation and writes + reads route through the native runtime
+          // consistently. (`collectPropsFromStatements` sets the poison flag
+          // above, before this decision point.) Host mode is unaffected — it
+          // keeps the struct fast path via the live-mirror Proxy writeback.
+          if (ctx.dynamicDescriptorWidenVars.has(varName)) {
+            continue;
+          }
+
           if (extraProps.length > 0) {
             ctx.widenedTypeProperties.set(varName, extraProps);
 
@@ -2075,6 +2145,24 @@ export function collectPropsFromStatements(
         const descArg = call.arguments[2]!;
         if (ts.isIdentifier(objArg) && objArg.text === varName && ts.isStringLiteral(propArg)) {
           const propName = propArg.text;
+          // (#2372) The struct-widening fast path only works when the
+          // descriptor is a statically-resolvable inline object literal: the
+          // define lowers to `struct.set` and the read-back to `struct.get` on
+          // the SAME widened struct field. A *dynamic* descriptor (a variable /
+          // call result) cannot be applied via `struct.set` — standalone routes
+          // it to the native `__obj_define_from_desc` helper, which writes the
+          // `$Object` open-hash runtime. If we widen the receiver to a struct
+          // anyway, the read-back `o.x` lowers to `struct.get` against the
+          // struct while the write landed in the `$Object` — different objects,
+          // so the read returns 0. Mark this var as define-poisoned so the
+          // widening is suppressed for it (below): the receiver then stays on
+          // the `$Object` representation and BOTH the dynamic write and the
+          // read route through the native runtime consistently. Host mode keeps
+          // the struct fast path (the host `__defineProperty_desc` import
+          // reflects back through the live-mirror Proxy onto the struct sidecar).
+          if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
+            ctx.dynamicDescriptorWidenVars.add(varName);
+          }
           if (!seenProps.has(propName)) {
             seenProps.add(propName);
             // Try to get value type from descriptor.value
@@ -2280,7 +2368,7 @@ function functionDeclarationCapturesEnclosingLocal(ctx: CodegenContext, stmt: ts
   if (!stmt.body) return false;
   const referenced = new Set<string>();
   const ownLocals = new Set<string>();
-  collectFunctionOwnLocals(stmt, ownLocals);
+  addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
   for (const s of stmt.body.statements) {
     collectReferencedIdentifiers(s, referenced, ownLocals);
   }

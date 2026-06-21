@@ -2,7 +2,7 @@
 id: 1919
 title: "Transactional speculative-compile API — 23 probe/rollback sites leak locals, imports, and types"
 status: ready
-sprint: 63
+sprint: 64
 created: 2026-06-10
 updated: 2026-06-12
 priority: medium

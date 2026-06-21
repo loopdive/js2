@@ -3,7 +3,7 @@ id: 1345
 title: "spec gap: Reflect.* invariant checks mirror internal-method bugs (46 test262 fails as of 2026-05-28)"
 status: blocked
 created: 2026-05-08
-updated: 2026-05-28
+updated: 2026-06-19
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -11,7 +11,7 @@ task_type: bugfix
 area: runtime
 language_feature: reflection
 goal: spec-completeness
-sprint: 50
+sprint: Backlog
 parent: 1328
 blocked_on: [1130, 1596]
 reverified: 2026-05-28

@@ -13,7 +13,7 @@ import { emitUndefined } from "../expressions/late-imports.js";
 import { needsTdzFlag, resolveWasmType } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { localGlobalIdx } from "../registry/imports.js";
-import { getOrRegisterArrayType, getOrRegisterVecType } from "../registry/types.js";
+import { getOrRegisterArrayType, getOrRegisterSubviewType, getOrRegisterVecType } from "../registry/types.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { emitGuardedRefCast } from "../type-coercion.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
@@ -161,6 +161,41 @@ function inferStandaloneRegExpMatchArrayType(
     return isStaticRegExpExpression(ctx, unwrapped.arguments[0]!) ? nativeStringVecType(ctx) : null;
   }
   return null;
+}
+
+/**
+ * (#2357/#47) A `let s = <typedArray>.subarray(...)` binding in standalone/WASI
+ * mode holds a `$__subview` that shares the parent's backing array (true aliasing).
+ * Resolve the binding's local type to that subview here — at the real
+ * variable-declaration site — so the local can hold the `struct.new $__subview` the
+ * subarray lowering emits, and so element access on `s` picks the windowed lowering
+ * at compile time. The receiver's element kind comes from its struct name
+ * (`__vec_<elem>` for a plain typed array, `__subview_<elem>` for a nested
+ * subarray). The subview type is reserved up-front (idx-stable), so this returns the
+ * same index the lowering + inference use. `slice` is excluded — it returns an
+ * independent copy (a plain vec), not a view.
+ */
+function inferSubarraySubviewType(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  initializer: ts.Expression | undefined,
+): ValType | null {
+  if (!(ctx.standalone || ctx.wasi) || !initializer) return null;
+  const unwrapped = stripInferenceWrapper(initializer);
+  if (!ts.isCallExpression(unwrapped) || !ts.isPropertyAccessExpression(unwrapped.expression)) return null;
+  if (unwrapped.expression.name.text !== "subarray") return null;
+  const receiver = unwrapped.expression.expression;
+  let receiverType: ValType | undefined;
+  if (ts.isIdentifier(receiver)) {
+    const localIdx = fctx.localMap.get(receiver.text);
+    if (localIdx !== undefined) receiverType = getLocalType(fctx, localIdx);
+  }
+  receiverType ??= resolveWasmType(ctx, ctx.checker.getTypeAtLocation(receiver));
+  if (receiverType.kind !== "ref" && receiverType.kind !== "ref_null") return null;
+  const recvName = ctx.typeIdxToStructName.get(receiverType.typeIdx);
+  const elemKind = recvName?.replace(/^__vec_/, "").replace(/^__subview_/, "");
+  if (elemKind === undefined || elemKind === recvName) return null;
+  return { kind: "ref_null", typeIdx: getOrRegisterSubviewType(ctx, elemKind) };
 }
 
 function nullishLiteralKind(expr: ts.Expression): "null" | "undefined" | null {
@@ -588,6 +623,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     }
 
     const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, decl.initializer);
+    const subarraySubviewType = inferSubarraySubviewType(ctx, fctx, decl.initializer);
     const wasmType: ValType = initIsAccessorLiteral
       ? { kind: "externref" as const }
       : isI32CoercedLocal
@@ -596,7 +632,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
           : widenedTypeIdx !== undefined
             ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-            : (inferredVecType ??
+            : (subarraySubviewType ??
+              inferredVecType ??
               standaloneRegExpMatchArrayType ??
               (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                 ? { kind: "externref" as const }

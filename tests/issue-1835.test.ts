@@ -105,9 +105,25 @@ describe("#1835 C ABI array return marshaling", () => {
     expect(Array.isArray(ret)).toBe(true);
     const [ptr, len] = ret;
     expect(len).toBe(3);
-    // Elements are stored as i32 in the linear array runtime.
-    const ints = new Int32Array(mem.buffer, ptr, len);
-    expect(Array.from(ints)).toEqual([10, 20, 30]);
+    // #1938: number[] elements are 8-byte f64 slots (stride 8) — the payload is
+    // a contiguous block of doubles, read it as a Float64Array (the C header
+    // advertises a `double*` for number-array returns).
+    const doubles = new Float64Array(mem.buffer, ptr, len);
+    expect(Array.from(doubles)).toEqual([10, 20, 30]);
+  });
+
+  it("preserves fractional number[] elements across the C ABI boundary (#1938)", async () => {
+    const result = await compile(`export function mk(): number[] { return [1.5, -2.25, 3.75]; }`, {
+      target: "linear",
+      abi: "c",
+    });
+    expect(result.success).toBe(true);
+    const { instance } = await WebAssembly.instantiate(result.binary);
+    const mem = instance.exports.memory as WebAssembly.Memory;
+    const [ptr, len] = (instance.exports.mk as () => [number, number])();
+    expect(len).toBe(3);
+    const doubles = new Float64Array(mem.buffer, ptr, len);
+    expect(Array.from(doubles)).toEqual([1.5, -2.25, 3.75]);
   });
 });
 

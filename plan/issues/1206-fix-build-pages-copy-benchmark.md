@@ -3,14 +3,14 @@ id: 1206
 title: "fix(build-pages): copy benchmark JSONs + frame-nav-sync.js to top-level pages-dist paths (404s on landing page)"
 status: ready
 created: 2026-04-27
-updated: 2026-06-12
+updated: 2026-06-19
 priority: medium
 feasibility: easy
 reasoning_effort: low
 task_type: bugfix
 area: infrastructure
 goal: developer-experience
-sprint: 45
+sprint: Backlog
 es_edition: n/a
 related: [1188]
 origin: surfaced 2026-04-27 during PR #76 investigation. Browser console on https://loopdive.github.io/js2wasm/#goals showed 404s for files the landing page references.

@@ -61,3 +61,90 @@ describe("#2164 standalone Date.now() / new Date() (no host-import leak)", () =>
     ).toBe(1970);
   });
 });
+
+describe("#2164 slice 2 — pure-Wasm Date.parse / new Date(str) (ISO 8601, no host)", () => {
+  // 2000-01-01T00:00:00Z = 946684800000. Expected values are UTC-based so the
+  // assertions are deterministic regardless of the host machine's timezone
+  // (a no-timezone date-time form is treated as UTC standalone — there is no
+  // timezone database in a pure-Wasm module; see slice 1's clock decision).
+  const parse = (s: string) => `export function run(): number { return Date.parse(${JSON.stringify(s)}); }`;
+
+  it("full ISO date-time with Z", async () => {
+    expect(await runStandalone(parse("2000-01-01T00:00:00.000Z"))).toBe(946684800000);
+  });
+
+  it("date-only form (interpreted as UTC)", async () => {
+    expect(await runStandalone(parse("2000-01-01"))).toBe(946684800000);
+  });
+
+  it("epoch", async () => {
+    expect(await runStandalone(parse("1970-01-01T00:00:00Z"))).toBe(0);
+  });
+
+  it("milliseconds component", async () => {
+    expect(await runStandalone(parse("2021-12-31T23:59:59.999Z"))).toBe(1640995199999);
+  });
+
+  it("positive timezone offset shifts UTC earlier", async () => {
+    // 00:00+05:30 == previous-tz 18:30 UTC == 946665000000
+    expect(await runStandalone(parse("2000-01-01T00:00:00+05:30"))).toBe(946665000000);
+  });
+
+  it("negative timezone offset shifts UTC later", async () => {
+    expect(await runStandalone(parse("2000-01-01T00:00:00-08:00"))).toBe(946713600000);
+  });
+
+  it("no-timezone date-time treated as UTC", async () => {
+    expect(await runStandalone(parse("2000-01-01T12:00"))).toBe(946728000000);
+  });
+
+  it("leap day", async () => {
+    expect(await runStandalone(parse("2000-02-29"))).toBe(951782400000);
+  });
+
+  it("expanded negative year", async () => {
+    expect(await runStandalone(parse("-000001-01-01T00:00:00Z"))).toBe(-62198755200000);
+  });
+
+  it("expanded year 10000", async () => {
+    expect(await runStandalone(parse("+010000-01-01T00:00:00Z"))).toBe(253402300800000);
+  });
+
+  it("year-only form", async () => {
+    expect(await runStandalone(parse("2000"))).toBe(946684800000);
+  });
+
+  it("invalid month → NaN (returned as 0 sentinel via Number.isNaN check)", async () => {
+    expect(
+      await runStandalone(`export function run(): number { return Number.isNaN(Date.parse("2000-13-01")) ? 1 : 0; }`),
+    ).toBe(1);
+  });
+
+  it("garbage string → NaN", async () => {
+    expect(
+      await runStandalone(`export function run(): number { return Number.isNaN(Date.parse("garbage")) ? 1 : 0; }`),
+    ).toBe(1);
+  });
+
+  it("new Date(str).getTime() parses the string", async () => {
+    expect(
+      await runStandalone(`export function run(): number { return new Date("2000-01-01T00:00:00.000Z").getTime(); }`),
+    ).toBe(946684800000);
+  });
+
+  it("new Date(invalidStr).getTime() is NaN", async () => {
+    expect(
+      await runStandalone(
+        `export function run(): number { return Number.isNaN(new Date("not-a-date").getTime()) ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("round-trips through UTC component getters", async () => {
+    expect(
+      await runStandalone(
+        `export function run(): number { const d = new Date("2021-07-15T13:45:30.500Z"); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(); }`,
+      ),
+    ).toBe(20210715);
+  });
+});

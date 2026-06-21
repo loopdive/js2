@@ -55,8 +55,12 @@ export function tryCompileNodeProcessCall(
   // #1886 Slice B: zero-copy `process.std*.write(buf)` for a linear-backed
   // Uint8Array — fd_write reads straight from `ptr` for `len` bytes (no
   // GC→linear staging copy). Only fires for a registered linear-safe buffer.
-  if (ctx.wasiFdWriteIdx !== undefined && ctx.wasiFdWriteIdx >= 0) {
-    if (tryEmitLinearU8StdWrite(ctx, fctx, argExpr, ctx.wasiFdWriteIdx, useStderr)) {
+  // #2524: under the node-io shim there is no fd_write idx; `tryEmitLinearU8StdWrite`
+  // routes to the imported `stdout_write`/`stderr_write` instead (the passed idx
+  // is unused on that branch).
+  const writeSinkIdx = ctx.nodeIoShim ? ctx.nodeIoStdoutWriteIdx : ctx.wasiFdWriteIdx;
+  if (writeSinkIdx !== undefined && writeSinkIdx >= 0) {
+    if (tryEmitLinearU8StdWrite(ctx, fctx, argExpr, writeSinkIdx, useStderr)) {
       // Match the GC Uint8Array write path's contract: push `1` (write
       // succeeded) and return i32, so the expression-statement wrapper drops it
       // exactly like the GC path. (#1886)
@@ -138,7 +142,12 @@ function matchProcessStdStreamWrite(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): { useStderr: boolean } | null {
-  if (!ctx.wasi || ctx.wasiFdWriteIdx === undefined || ctx.wasiFdWriteIdx < 0) return null;
+  // #2524 — under the node-io shim there is no fd_write import; the write sink
+  // is `js2wasm:node-io::stdout_write`/`stderr_write` instead.
+  const haveWriteSink = ctx.nodeIoShim
+    ? ctx.nodeIoStdoutWriteIdx >= 0
+    : ctx.wasiFdWriteIdx !== undefined && ctx.wasiFdWriteIdx >= 0;
+  if (!ctx.wasi || !haveWriteSink) return null;
   if (expr.questionDotToken || expr.arguments.length !== 1) return null;
   const writeAccess = expr.expression;
   if (!ts.isPropertyAccessExpression(writeAccess) || writeAccess.name.text !== "write") return null;
@@ -165,7 +174,12 @@ function matchProcessStdStreamDrainOnce(ctx: CodegenContext, fctx: FunctionConte
 }
 
 function matchProcessStdinRead(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): boolean {
-  if (!ctx.wasi || ctx.wasiFdReadIdx === undefined || ctx.wasiFdReadIdx < 0) return false;
+  // #2524 — under the node-io shim there is no fd_read import; stdin is read via
+  // `js2wasm:node-io::stdin_read` instead.
+  const haveReadSink = ctx.nodeIoShim
+    ? ctx.nodeIoStdinReadIdx >= 0
+    : ctx.wasiFdReadIdx !== undefined && ctx.wasiFdReadIdx >= 0;
+  if (!ctx.wasi || !haveReadSink) return false;
   if (expr.questionDotToken || expr.arguments.length < 1 || expr.arguments.length > 2) return false;
   const readAccess = expr.expression;
   if (!ts.isPropertyAccessExpression(readAccess) || readAccess.name.text !== "read") return false;
@@ -175,12 +189,16 @@ function matchProcessStdinRead(ctx: CodegenContext, fctx: FunctionContext, expr:
 }
 
 function emitProcessStdinRead(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult | null {
-  const fdReadIdx = ctx.wasiFdReadIdx;
-  if (fdReadIdx === undefined || fdReadIdx < 0) return null;
+  // #2524 — under the node-io shim there is no fd_read import; stdin is read via
+  // `js2wasm:node-io::stdin_read`. `readSinkIdx` is the func index to call
+  // (fd_read inline, or stdin_read under the shim).
+  const readSinkIdx = ctx.nodeIoShim ? ctx.nodeIoStdinReadIdx : ctx.wasiFdReadIdx;
+  if (readSinkIdx === undefined || readSinkIdx < 0) return null;
 
-  // #1886 Slice B: when the buffer arg is a linear-backed Uint8Array, fd_read
-  // straight into `ptr+off` — no GC↔linear element-copy loop.
-  const linRead = tryEmitLinearU8StdinRead(ctx, fctx, expr, fdReadIdx);
+  // #1886 Slice B: when the buffer arg is a linear-backed Uint8Array, read
+  // straight into `ptr+off` — no GC↔linear element-copy loop. (`readSinkIdx` is
+  // unused on the shim branch of the linear helper.)
+  const linRead = tryEmitLinearU8StdinRead(ctx, fctx, expr, readSinkIdx);
   if (linRead !== null) return linRead;
 
   const bufType = compileExpression(ctx, fctx, expr.arguments[0]!);
@@ -250,24 +268,33 @@ function emitProcessStdinRead(ctx: CodegenContext, fctx: FunctionContext, expr: 
     ],
   } as Instr);
 
-  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
-  fctx.body.push({ op: "i32.const", value: WASI_STDIN_BUF_START } as Instr);
-  fctx.body.push({ op: "i32.store", align: 2, offset: 0 } as Instr);
-  fctx.body.push({ op: "i32.const", value: 4 } as Instr);
-  fctx.body.push({ op: "local.get", index: capLocal } as Instr);
-  fctx.body.push({ op: "i32.store", align: 2, offset: 0 } as Instr);
-
-  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
-  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
-  fctx.body.push({ op: "i32.const", value: 1 } as Instr);
-  fctx.body.push({ op: "i32.const", value: 8 } as Instr);
-  fctx.body.push({ op: "call", funcIdx: fdReadIdx } as Instr);
-  fctx.body.push({ op: "drop" } as Instr);
-
   const nreadLocal = allocLocal(fctx, `__stdin_nread_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "i32.const", value: 8 } as Instr);
-  fctx.body.push({ op: "i32.load", align: 2, offset: 0 } as Instr);
-  fctx.body.push({ op: "local.set", index: nreadLocal } as Instr);
+  if (ctx.nodeIoShim) {
+    // #2524 — nread = stdin_read(WASI_STDIN_BUF_START, cap); the shim builds the
+    // iovec + calls fd_read into the shared memory and returns the byte count.
+    fctx.body.push({ op: "i32.const", value: WASI_STDIN_BUF_START } as Instr);
+    fctx.body.push({ op: "local.get", index: capLocal } as Instr);
+    fctx.body.push({ op: "call", funcIdx: readSinkIdx } as Instr);
+    fctx.body.push({ op: "local.set", index: nreadLocal } as Instr);
+  } else {
+    // iovec.buf = WASI_STDIN_BUF_START (memory[0]); iovec.buf_len = cap (memory[4])
+    fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+    fctx.body.push({ op: "i32.const", value: WASI_STDIN_BUF_START } as Instr);
+    fctx.body.push({ op: "i32.store", align: 2, offset: 0 } as Instr);
+    fctx.body.push({ op: "i32.const", value: 4 } as Instr);
+    fctx.body.push({ op: "local.get", index: capLocal } as Instr);
+    fctx.body.push({ op: "i32.store", align: 2, offset: 0 } as Instr);
+    // fd_read(fd=0, iovs=0, iovs_len=1, nread=8)
+    fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+    fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+    fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+    fctx.body.push({ op: "i32.const", value: 8 } as Instr);
+    fctx.body.push({ op: "call", funcIdx: readSinkIdx } as Instr);
+    fctx.body.push({ op: "drop" } as Instr);
+    fctx.body.push({ op: "i32.const", value: 8 } as Instr);
+    fctx.body.push({ op: "i32.load", align: 2, offset: 0 } as Instr);
+    fctx.body.push({ op: "local.set", index: nreadLocal } as Instr);
+  }
 
   const jLocal = allocLocal(fctx, `__stdin_j_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "i32.const", value: 0 } as Instr);

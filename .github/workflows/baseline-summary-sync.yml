@@ -137,6 +137,12 @@ jobs:
             echo "WARN: generate-editions failed (non-fatal) — edition buckets may lag"
           node scripts/sync-conformance-numbers.mjs || \
             echo "WARN: sync-conformance-numbers failed (non-fatal) — docs may drift"
+          # #2108 — coercion-site drift baseline (pure source-grep). The
+          # promote-baseline job in test262-sharded.yml is the primary refresher
+          # on every push to main; this hourly fallback re-anchors it too so a
+          # deferred/failed promote can't leave main drifted. Non-fatal.
+          node scripts/check-coercion-sites.mjs --update || \
+            echo "WARN: coercion-site baseline update failed (non-fatal)"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -156,6 +162,8 @@ jobs:
               git add -f website/public/benchmarks/results/test262-editions.json || true
             [ -f website/public/benchmarks/results/test262-category-editions.json ] && \
               git add -f website/public/benchmarks/results/test262-category-editions.json || true
+            # #2108 — coercion-site drift baseline, refreshed just above.
+            git add -f scripts/coercion-sites-baseline.json 2>/dev/null || true
             git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
               2>/dev/null || true
           }

@@ -3,12 +3,12 @@ id: 1132
 title: "Publish compiler as @loopdive/js2 on npm + JSR"
 status: ready
 created: 2026-04-19
-updated: 2026-06-12
+updated: 2026-06-19
 priority: high
 feasibility: medium
 reasoning_effort: medium
 goal: platform
-sprint: 42
+sprint: Backlog
 ---
 ## Problem
 

@@ -316,27 +316,29 @@ jobs:
   # =====================================================================
 
   test262-shard:
-    # Heavy 57-shard test262 fires on all gate-relevant events:
-    #   pull_request → per-PR validation (serial queue model — each PR is
-    #     validated alone before entering the queue).
-    #   merge_group → final gate before merge (catches main-drift regressions).
+    # Heavy 57-shard test262 (#2519) fires ONLY when a PR is at the front of
+    # the merge queue, plus baseline/manual contexts — NOT on every PR:
+    #   merge_group → the authoritative pre-merge gate (the PR has reached the
+    #     front of the queue; catches main-drift regressions on the merged
+    #     state). This is the single per-PR heavy run.
     #   push to main → baseline update.
     #   workflow_dispatch → manual reruns.
-    # Cheap-gate must pass first (typecheck + lint). If shards fail, the
-    # regression-gate reports per-test transitions; bad PRs bounce back to
-    # their authors with actionable feedback rather than slipping into a
-    # batch.
+    # Deliberately NOT on pull_request: the heavy matrix used to run twice per
+    # PR (once at PR-time, once in merge_group), doubling the most expensive CI
+    # cost and adding to the event volume that can soft-throttle merge_group
+    # webhook delivery. PR-time validation is now the cheap gate (typecheck +
+    # lint) only; the merge_group is the authoritative test262 gate. Trade-off:
+    # a real regression is caught when the PR reaches the front of the queue
+    # (it fails there and is ejected) rather than at PR-open time.
     #
-    # merge_group arm now also requires `needs.changes.outputs.run_shards`
-    # to be 'true' — the `changes` job skips the heavy matrix for queued
+    # merge_group arm requires `needs.changes.outputs.run_shards` to be 'true'
+    # — the `changes` job skips the heavy matrix for queued
     # website/plan/doc-only changes (and fails safe to 'true' on any doubt,
-    # see that job). The other arms are unchanged: pull_request/push are
-    # already gated by the workflow-level `paths:` filter, and
+    # see that job). push is gated by the workflow-level `paths:` filter, and
     # workflow_dispatch always runs.
     needs: [changes]
     if: |
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
-      (github.event_name == 'pull_request' && github.actor != 'github-actions[bot]') ||
       (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
       github.event_name == 'workflow_dispatch'
     # Runs in PARALLEL with `gate` — both are independently required by the
@@ -348,7 +350,12 @@ jobs:
     # --no-verify pushes and contributors without the hook.
     name: test262 ${{ matrix.target.name }} shard ${{ matrix.chunk }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # A shard normally finishes in ~5-8 min; the prior 90-min cap let a single
+    # hung shard (intermittent test262/runner stall, or the setup-node@v6 Node-25
+    # tool-cache miss → flaky direct download) wedge the whole merge queue for up
+    # to 90 min before failing. 25 min fails a hung shard fast so the merge_group
+    # ejects + re-runs instead of stalling every other PR behind it.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -507,22 +514,23 @@ jobs:
   merge-report:
     # Aggregate the 57 shard artifacts per target into test262 reports and gate
     # on shard results. Produces the "merge shard reports" required check
-    # for all gate-relevant contexts. Serial-queue model: this is the same
-    # job whether the trigger is pull_request (PR-level validation) or
-    # merge_group (final pre-merge validation).
+    # for all gate-relevant contexts. Slim-down model (#2519): the heavy
+    # shards run only in merge_group, so on pull_request this job ALWAYS
+    # green-skips (no shards ran); in merge_group it builds the real report.
     # CRITICAL — this job produces the required check "merge shard reports".
-    # It MUST run and report green in BOTH of these cases, or the PR is
-    # permanently BLOCKED (the cascade-skip trap documented in
-    # test262-pr-stub.yml):
-    #   (a) shards ran and succeeded                        → real merged report
-    #   (b) shards were intentionally skipped on merge_group
+    # It MUST run and report green in these cases, or the PR is permanently
+    # BLOCKED (the cascade-skip trap documented in test262-pr-stub.yml):
+    #   (a) shards ran and succeeded (merge_group)          → real merged report
+    #   (b) shards intentionally skipped on merge_group
     #       because run_shards=='false' (no test262-relevant
     #       change in the queue)                            → trivial PASS
-    # `needs.test262-shard.result` is 'skipped' in case (b), so the job runs
-    # under `always()` and decides explicitly:
+    #   (c) pull_request — heavy shards never run at PR-time
+    #       under the #2519 slim-down                       → trivial PASS
+    # `needs.test262-shard.result` is 'skipped' in (b)/(c), so the job runs
+    # under `always()` and decides explicitly via SHARD_SKIP_OK:
     #   - shards succeeded                       -> build real merged report
     #   - merge_group no-shards path             -> trivial PASS
-    #   - github-actions[bot] PR synchronize     -> trivial PASS
+    #   - any pull_request                       -> trivial PASS
     #   - any other failed/skipped shard result   -> FAIL the required check
     # Steps that touch shard artifacts are guarded by `SHARDS_RAN`.
     if: |
@@ -535,7 +543,10 @@ jobs:
       # 'true' when the heavy matrix actually executed and produced artifacts;
       # 'false' on the merge_group skip path (no test262-relevant change).
       SHARDS_RAN: ${{ needs.test262-shard.result == 'success' && 'true' || 'false' }}
-      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || (github.event_name == 'pull_request' && github.actor == 'github-actions[bot]')) && 'true' || 'false' }}
+      # Green-skip when shards legitimately did not run: a merge_group with no
+      # test262-relevant change, OR any pull_request (heavy shards are
+      # merge_group-only under the #2519 slim-down).
+      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || github.event_name == 'pull_request') && 'true' || 'false' }}
 
     steps:
       - name: Fail if required test262 shards did not succeed
@@ -553,9 +564,10 @@ jobs:
             echo "   (changes.run_shards=='false'); the heavy 114-job target matrix was"
             echo "   intentionally skipped. Reporting 'merge shard reports' green."
           else
-            echo "-> github-actions[bot] refreshed the PR branch; PR-level heavy shards"
-            echo "   are intentionally skipped to avoid an N-PR test262 storm."
-            echo "   The merge queue still runs the full matrix on the merge_group ref."
+            echo "-> pull_request: heavy test262 shards are merge_group-only under the"
+            echo "   #2519 slim-down, so they do not run at PR-time. The cheap gate"
+            echo "   (typecheck + lint) validated this PR; the full 114-job matrix runs"
+            echo "   in the merge_group when the PR reaches the front of the queue."
           fi
 
       - name: Checkout
@@ -1111,32 +1123,94 @@ jobs:
             echo "::warning::#1956 predecessor artifact missing host JSONL — keeping baseline from (b)/(c)."
           fi
 
-      - name: Check baseline staleness (#1235)
+      - name: Check baseline staleness (#1235, src-aware #2562)
         id: staleness
-        if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.fetch_baseline.outputs.baseline_ts != '0'
+        # (#2379) Include `push` so the drift footer renders on push-to-main runs
+        # too — the baselines-repo JSONL is frequently several merges behind main
+        # HEAD there (serialization lag), and the footer is what tells a reader
+        # the listed "regressions" are drift, not real PR-caused failures.
+        if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && steps.fetch_baseline.outputs.baseline_ts != '0'
         run: |
-          # If the baselines-repo JSONL hasn't been refreshed since several
-          # commits landed on main, the regression-gate's wasm_change count
-          # is contaminated by drift — tests that flipped on main since the
-          # last baseline refresh appear as PR regressions even though the
-          # PR didn't cause them. Emit a warning so devs/tech-lead can read
-          # the regression report skeptically.
+          # #2562 — measure staleness by the count of TEST262-RELEVANT (src)
+          # commits between the baseline's recorded main-sha and main HEAD, NOT
+          # by clock time. The old clock-based warning (#1235) fired whenever the
+          # baselines-repo JSONL was >30m older than main HEAD, but a stretch of
+          # docs/CI-only merges advances main without changing any src — so the
+          # baseline goes clock-stale while its CONTENT stays current. Counting
+          # only test262-relevant commits (via test262-paths-match.sh, the same
+          # filter the #1668 stale-baseline guard uses) tells the difference:
+          #   src_behind == 0  → content-current; any "regressions" below are
+          #                      drift/flake, NOT real PR-caused failures, and the
+          #                      ratio gate is waived (--baseline-content-current).
+          #   src_behind  > 0  → the baseline is genuinely behind src; warn, and
+          #                      the ratio gate stays fully active.
+          # The baseline's main-sha is recorded in the baselines-repo commit
+          # subject: "chore(test262): refresh baselines — N/T host, ... (<sha>)".
           MAIN_HEAD_TS=$(git log -1 --format=%ct origin/main 2>/dev/null || git log -1 --format=%ct main 2>/dev/null || echo 0)
           BASELINE_TS="${{ steps.fetch_baseline.outputs.baseline_ts }}"
           BASELINE_SHA="${{ steps.fetch_baseline.outputs.baseline_sha }}"
-          if [ "$MAIN_HEAD_TS" = "0" ] || [ "$BASELINE_TS" = "0" ]; then
-            echo "stale_minutes=0" >> "$GITHUB_OUTPUT"
+          DIFF_M=0
+          if [ "$MAIN_HEAD_TS" != "0" ] && [ "$BASELINE_TS" != "0" ]; then
+            DIFF_M=$(( (MAIN_HEAD_TS - BASELINE_TS) / 60 ))
+          fi
+          echo "stale_minutes=$DIFF_M" >> "$GITHUB_OUTPUT"
+
+          # Parse the baseline's recorded main-sha from the baselines-repo commit
+          # subject (same approach as the #1668 stale-baseline guard).
+          BMAIN_SHA=""
+          if [ -d /tmp/js2wasm-baselines/.git ]; then
+            BMAIN_SHA=$(git -C /tmp/js2wasm-baselines log -1 --format=%s 2>/dev/null | grep -oE '[0-9a-f]{7,40}' | tail -1 || true)
+          fi
+          if [ -z "$BMAIN_SHA" ]; then
+            # Can't determine the baseline main-sha → conservatively treat as
+            # NOT content-current (ratio gate stays active). Fall back to the old
+            # clock signal for the warning only.
+            echo "::notice::#2562 could not parse baseline main-sha from commit subject — ratio waiver disabled (gate stays strict)."
+            echo "baseline_content_current=false" >> "$GITHUB_OUTPUT"
+            if [ "$DIFF_M" -ge 30 ]; then
+              echo "::warning::Baseline drift: js2wasm-baselines JSONL is ${DIFF_M}m older than main HEAD (baseline=${BASELINE_SHA}). Some 'regressions' below may be drift, not real PR-caused failures. See #1235."
+            fi
             exit 0
           fi
-          DIFF_S=$(( MAIN_HEAD_TS - BASELINE_TS ))
-          DIFF_M=$(( DIFF_S / 60 ))
-          # Threshold: baseline older than main HEAD by ≥ 30 minutes. Tunable.
-          if [ "$DIFF_M" -ge 30 ]; then
-            echo "::warning::Baseline drift: js2wasm-baselines JSONL is ${DIFF_M}m older than main HEAD (baseline=${BASELINE_SHA}). Some 'regressions' below may be drift, not real PR-caused failures. See #1235."
-            echo "stale_minutes=$DIFF_M" >> "$GITHUB_OUTPUT"
+
+          # Make sure the baseline main-sha is reachable in this checkout
+          # (full history via fetch-depth:0, but the sha may pre-date the shallow
+          # window on a freshly-built merge_group ref — fetch defensively).
+          git cat-file -e "${BMAIN_SHA}^{commit}" 2>/dev/null || \
+            git fetch --no-tags --filter=blob:none origin "$BMAIN_SHA" 2>/dev/null || true
+
+          # Count test262-relevant commits between the baseline main-sha and main
+          # HEAD. Baseline-refresh commits and docs/CI-only merges are excluded
+          # by test262-paths-match.sh, so only genuine src/config drift counts.
+          SRC_BEHIND=0
+          TOTAL_BEHIND=0
+          if git cat-file -e "${BMAIN_SHA}^{commit}" 2>/dev/null; then
+            COMMITS=$(git rev-list "${BMAIN_SHA}..origin/main" 2>/dev/null || true)
+            for sha in $COMMITS; do
+              TOTAL_BEHIND=$((TOTAL_BEHIND + 1))
+              CHANGED=$(git diff-tree --no-commit-id --name-only -r "$sha" 2>/dev/null)
+              if [ "$(printf '%s\n' "$CHANGED" | bash scripts/test262-paths-match.sh)" = "true" ]; then
+                SRC_BEHIND=$((SRC_BEHIND + 1))
+              fi
+            done
           else
-            echo "Baseline freshness OK: ${DIFF_M}m behind main HEAD."
-            echo "stale_minutes=$DIFF_M" >> "$GITHUB_OUTPUT"
+            # Baseline main-sha unreachable even after fetch → can't prove
+            # content-currency. Stay strict.
+            echo "::notice::#2562 baseline main-sha ${BMAIN_SHA} unreachable — ratio waiver disabled (gate stays strict)."
+            echo "baseline_content_current=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "src_commits_behind=$SRC_BEHIND" >> "$GITHUB_OUTPUT"
+          echo "Baseline main-sha ${BMAIN_SHA}: ${SRC_BEHIND} test262-relevant commit(s) behind origin/main (${TOTAL_BEHIND} total, ${DIFF_M}m clock)."
+          if [ "$SRC_BEHIND" -eq 0 ]; then
+            # Content-current: the baseline reflects current src. Any regressions
+            # below are drift/flake; enable the ratio waiver. No drift warning.
+            echo "baseline_content_current=true" >> "$GITHUB_OUTPUT"
+            echo "Baseline is CONTENT-CURRENT (#2562): 0 test262-relevant commits behind, despite ${DIFF_M}m clock age — ratio gate waiver enabled."
+          else
+            echo "baseline_content_current=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Baseline drift: js2wasm-baselines JSONL is ${SRC_BEHIND} test262-relevant commit(s) behind main HEAD (${DIFF_M}m clock; baseline=${BASELINE_SHA}). Some 'regressions' below may be drift, not real PR-caused failures. See #1235/#2562."
           fi
 
       # Build the merged host JSONL directly from the per-shard artifacts
@@ -1239,20 +1313,61 @@ jobs:
           node scripts/check-test262-hard-errors.mjs \
             --jsonl merged-reports/test262-results-merged.jsonl
 
+      # (#2379) Do NOT hard-fail on `push` to main. On a push-to-main run the
+      # merge already happened, so this fine-grained regression gate cannot
+      # block anything — and the baselines-repo JSONL it diffs against is
+      # routinely several merges behind main HEAD (serialization lag), so the
+      # listed "regressions" are drift, not real failures (e.g. a run showing
+      # pass 29587 → 32818, +3231 NET, was hard-failed on 695 drift "regressions"
+      # — 7+ consecutive main runs failed identically, freezing the HW/baseline
+      # reporting). Push-to-main is already protected against a genuine break by
+      # the #1668 Catastrophic guard (threshold 200) inside the required "merge
+      # shard reports" check; this fine gate stays active for `pull_request` /
+      # `merge_group`, where pre-merge gating is the point.
       - name: Fail on regressions
-        if: env.SHARDS_RAN == 'true' && steps.regression_diff.outputs.regressions == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES')
+        if: env.SHARDS_RAN == 'true' && steps.regression_diff.outputs.regressions == 'true' && github.event_name != 'push' && !(github.event_name == 'workflow_dispatch' && inputs.force_baseline_refresh == true && inputs.confirm_force == 'YES')
         run: |
           echo "test262 regressions detected relative to benchmarks/results/test262-current.jsonl"
           cat merged-reports/test262-regressions.txt
-          # #1235 — append staleness footer so devs reading the failed-job log
-          # see the warning even when not scrolling up to the workflow-level
-          # ::warning::. The footer is informational; the gate still fails.
+          # #1235/#2562 — append staleness footer so devs reading the failed-job
+          # log see the warning even when not scrolling up to the workflow-level
+          # ::warning::. The footer is purely INFORMATIONAL; the gate's
+          # pass/fail decision is UNCHANGED by this step. Use the SRC-aware
+          # signal: a content-current baseline (0 test262-relevant commits
+          # behind) cannot be the source of drift, so the drift footer only
+          # shows when src_commits_behind > 0. When content-current, a failure
+          # here is far more likely a REAL regression than baseline drift — say
+          # so explicitly so nobody dismisses a genuine failure as drift.
+          SRC_BEHIND="${{ steps.staleness.outputs.src_commits_behind || '' }}"
+          CONTENT_CURRENT="${{ steps.staleness.outputs.baseline_content_current || '' }}"
           STALE_M="${{ steps.staleness.outputs.stale_minutes || '0' }}"
-          if [ "$STALE_M" -ge 30 ]; then
+          if [ "$CONTENT_CURRENT" = "true" ]; then
+            echo ""
+            echo "==============================================================="
+            echo "  ❌  LIKELY-REAL REGRESSION (baseline content-current, #2562)"
+            echo "  0 test262-relevant commits separate the baseline from main"
+            echo "  HEAD (${STALE_M}m clock age is irrelevant) — the baseline"
+            echo "  reflects current src, so these regressions are far more"
+            echo "  likely PR-caused than baseline drift. Do not dismiss them."
+            echo "==============================================================="
+          elif [ -n "$SRC_BEHIND" ] && [ "$SRC_BEHIND" -gt 0 ] 2>/dev/null; then
+            echo ""
+            echo "==============================================================="
+            echo "  ⚠️  BASELINE DRIFT WARNING (#1235/#2562)"
+            echo "  The js2wasm-baselines JSONL is ${SRC_BEHIND} test262-relevant"
+            echo "  commit(s) behind main HEAD (${STALE_M}m clock age)."
+            echo "  Some 'regressions' above may be drift, not real PR-caused"
+            echo "  failures. Cross-check against another open PR's regression"
+            echo "  list — overlapping clusters across unrelated PRs are drift."
+            echo "==============================================================="
+          elif [ "$STALE_M" -ge 30 ]; then
+            # src_commits_behind not computed (e.g. baseline main-sha unparseable)
+            # — fall back to the legacy clock-based footer.
             echo ""
             echo "==============================================================="
             echo "  ⚠️  BASELINE DRIFT WARNING (#1235)"
             echo "  The js2wasm-baselines JSONL is ${STALE_M}m older than main HEAD."
+            echo "  (src-commit count unavailable — clock-based fallback.)"
             echo "  Some 'regressions' above may be drift, not real PR-caused"
             echo "  failures. Cross-check against another open PR's regression"
             echo "  list — overlapping clusters across unrelated PRs are drift."
@@ -1635,6 +1750,24 @@ jobs:
           # (pre-#1853 summaries) — the gate treats absent as zero.
           node scripts/check-test262-hard-errors.mjs --update || \
             echo "WARN: hard-error baseline update failed (non-fatal)"
+          # #2108 — refresh the coercion-site drift baseline to the freshly
+          # merged source tree. The gate (scripts/check-coercion-sites.mjs) is a
+          # PURE source-grep over src/codegen/** — it has no dependency on the
+          # test262 run, so the merged HEAD's source IS the new ground truth.
+          # PRs cannot regenerate this committed baseline (a PR's own source is
+          # checked against the *old* committed baseline at PR time), so the
+          # gate's useful work — recording the new floor — must happen here,
+          # post-merge, exactly like the #1853 hard-error baseline above. Growth
+          # is still caught at PR time (a PR adding an un-sanctioned coercion
+          # site fails the gate); this banks sanctioned additions that landed via
+          # the merge so main never drifts internally inconsistent. Without this,
+          # an admin-bypass merge / concurrent-PR baseline conflict / lost manual
+          # bump leaves main's source ahead of its committed baseline and EVERY
+          # open PR fails the gate until someone hand-bumps it (the 2026-06-18
+          # #1670 wedge). Non-fatal — a transient grep failure must not block the
+          # baseline commit.
+          node scripts/check-coercion-sites.mjs --update || \
+            echo "WARN: coercion-site baseline update failed (non-fatal)"
           stage_files() {
             git add -f benchmarks/results/test262-current.json \
               benchmarks/results/test262-report.json \
@@ -1642,6 +1775,9 @@ jobs:
               public/benchmarks/results/test262-standalone-report.json
             # #1853 — hard-error stability baseline, refreshed just above.
             git add -f scripts/test262-hard-error-baseline.json 2>/dev/null || true
+            # #2108 — coercion-site drift baseline, refreshed just above. Staged
+            # so the new floor lands atomically with the merged source.
+            git add -f scripts/coercion-sites-baseline.json 2>/dev/null || true
             # #2097 — the standalone high-water mark (raised just above when
             # conformance improved). Staged so the new floor lands atomically
             # with the refreshed summary.

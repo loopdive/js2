@@ -2564,7 +2564,7 @@ export interface TestResult {
 /** Default per-test timeout in milliseconds (prevents infinite-loop hangs) */
 const TEST_TIMEOUT_MS = 15000;
 
-function isModuleGoal(category: string, meta: Test262Meta, source: string): boolean {
+export function isModuleGoal(category: string, meta: Test262Meta, source: string): boolean {
   if (category === "language/module-code") return true;
   if (category === "language/import") return true;
   if (category === "language/export") return true;
@@ -3042,6 +3042,11 @@ export async function runTest262File(
       fileName: "test.ts",
       sourceMap: true,
       emitWat: false,
+      // (#2119) keep the in-process runner aligned with the sharded worker:
+      // only genuine module-goal tests infer module-strictness; script tests
+      // keep mapped `arguments` despite the synthetic `export function test()`
+      // wrapper. Matches `test262-shared.ts`.
+      inferModuleStrictArguments: isModuleGoal(category, meta, source),
       // (#2095) standalone lane for the baseline validator (default host/gc).
       ...(target ? { target } : {}),
       // #1251: align with the sharded runner — both `scripts/compiler-fork-worker.mjs`

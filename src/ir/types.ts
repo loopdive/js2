@@ -288,6 +288,7 @@ type InstrBase =
   | { op: "i32.load8_s"; align: number; offset: number }
   | { op: "i32.load16_u"; align: number; offset: number }
   | { op: "i32.store"; align: number; offset: number }
+  | { op: "i64.store"; align: number; offset: number }
   | { op: "i32.store8"; align: number; offset: number }
   | { op: "i32.store16"; align: number; offset: number }
   // Integer division and remainder
@@ -423,6 +424,7 @@ export type ImportDesc =
   | { kind: "func"; typeIdx: number }
   | { kind: "table"; elementType: string; min: number; max?: number }
   | { kind: "global"; type: ValType; mutable: boolean }
+  | { kind: "memory"; min: number; max?: number }
   | { kind: "tag"; typeIdx: number };
 
 export interface WasmExport {

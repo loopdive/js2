@@ -3,7 +3,7 @@ id: 2013
 title: "JSON.parse reviver argument silently ignored (parse arm compiles only arguments[0]; host import drops it)"
 status: blocked
 blocked_on: [23]
-sprint: 63
+sprint: 64
 created: 2026-06-10
 updated: 2026-06-14
 priority: medium

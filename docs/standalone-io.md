@@ -15,8 +15,13 @@ js2wasm program.ts --target wasi -O2
 and run with the proposal flags WasmGC output needs:
 
 ```bash
-wasmtime -W all-proposals=y program.wasm
+wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y program.wasm
 ```
+
+> Use this targeted flag set, **not** `-W all-proposals=y`: all-proposals also
+> enables the stack-switching proposal, which Wasmtime 44/45 rejects at module
+> load (`the wasm_stack_switching feature is not supported on this compiler
+> configuration`), so the module exits before running anything.
 
 ## Writing STDOUT
 
@@ -29,7 +34,7 @@ export function main(): void {
 ```
 
 ```bash
-$ wasmtime -W all-proposals=y program.wasm
+$ wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y program.wasm
 hello from wasm
 ```
 
@@ -44,7 +49,7 @@ export function main(): void {
 ```
 
 ```bash
-$ wasmtime -W all-proposals=y program.wasm 2>err.txt
+$ wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y program.wasm 2>err.txt
 $ cat err.txt
 this goes to stderr
 ```
@@ -68,7 +73,7 @@ export function main(): void {
 Pipe input to the module on the command line:
 
 ```bash
-$ echo "some input" | wasmtime -W all-proposals=y program.wasm
+$ echo "some input" | wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y program.wasm
 ```
 
 `readStdin()` reads until EOF and returns the entire stream as one string. It
@@ -94,7 +99,7 @@ export function main(): void {
 ```
 
 ```bash
-$ wasmtime -W all-proposals=y --dir . program.wasm
+$ wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y --dir . program.wasm
 $ cat out.txt
 file contents
 ```

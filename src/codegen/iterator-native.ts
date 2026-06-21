@@ -304,7 +304,15 @@ function buildIteratorBody(types: IterRuntimeTypes, deps: UserCarrierDeps | unde
   const { iterRecTypeIdx, vecTypeIdx } = types;
   // VEC arm: $IterRec{VEC, vec, 0, userIter:null}. Field order/arity is
   // load-bearing — struct.new pushes all 4 fields (userIter = ref.null.extern).
-  const vecArm: Instr[] = [
+  //
+  // (#2169b) Build a FRESH arm each call — never reuse one `Instr[]`/`struct.new`
+  // object across the `then` and the `deps===undefined` `else` branches. A shared
+  // instruction object aliased into both branches is walked twice by any
+  // mutate-in-place body pass (DCE's `remapTypeIdxInBody`), which double-applies a
+  // chained type-index remap (e.g. 46→40 then 40→34) to the single `struct.new`,
+  // emitting it at the wrong type index → `invalid struct index`. Distinct objects
+  // per branch keep each `struct.new` remapped exactly once.
+  const buildVecArm = (): Instr[] => [
     { op: "i32.const", value: ITER_KIND_VEC },
     { op: "local.get", index: 1 },
     { op: "ref.cast", typeIdx: vecTypeIdx },
@@ -327,7 +335,7 @@ function buildIteratorBody(types: IterRuntimeTypes, deps: UserCarrierDeps | unde
           // No @@iterator → obj is itself the iterator (has `next`).
           then: [{ op: "local.get", index: 0 }],
           else: [{ op: "local.get", index: 2 }],
-        } as unknown as Instr,
+        },
         { op: "local.set", index: 2 },
         // $IterRec{USER, vec:null, idx:0, userIter}
         { op: "i32.const", value: ITER_KIND_USER },
@@ -338,8 +346,10 @@ function buildIteratorBody(types: IterRuntimeTypes, deps: UserCarrierDeps | unde
         { op: "extern.convert_any" } as Instr,
       ]
     : // USER carrier not filled — preserve the legacy hard cast so the failure
-      // mode is unchanged (loud trap) rather than silently wrong.
-      vecArm;
+      // mode is unchanged (loud trap) rather than silently wrong. A FRESH vec arm
+      // (not the `then` arm's array) so the two branches never share a
+      // `struct.new` object (#2169b).
+      buildVecArm();
 
   return [
     // objAny = any.convert_extern(obj)
@@ -350,9 +360,9 @@ function buildIteratorBody(types: IterRuntimeTypes, deps: UserCarrierDeps | unde
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
-      then: vecArm,
+      then: buildVecArm(),
       else: elseArm,
-    } as unknown as Instr,
+    },
   ];
 }
 
@@ -414,7 +424,7 @@ function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | 
         { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 } as Instr,
       ],
       else: [],
-    } as unknown as Instr,
+    },
   ];
 
   if (!deps) {
@@ -452,7 +462,7 @@ function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | 
       blockType: { kind: "val", type: { kind: "externref" } },
       then: [{ op: "ref.null.extern" } as Instr],
       else: [{ op: "local.get", index: 6 }, { op: "call", funcIdx: deps.sgetValueIdx } as Instr],
-    } as unknown as Instr,
+    },
     { op: "local.set", index: 5 },
   ];
 
@@ -472,7 +482,7 @@ function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | 
       blockType: { kind: "empty" },
       then: userStep,
       else: vecStep,
-    } as unknown as Instr,
+    },
     // results in ABI order: (done, value)
     { op: "local.get", index: 4 },
     { op: "local.get", index: 5 },
@@ -510,7 +520,7 @@ function buildIteratorRestBody(iterRecTypeIdx: number, vecTypeIdx: number, arrTy
         { op: "ref.as_non_null" } as Instr,
         { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
       ],
-    } as unknown as Instr,
+    },
     { op: "local.set", index: 4 },
     // out = new externref[ (i < len) ? len - i : 0 ]   (clamp negative to 0).
     // Compute the count cleanly: the if's condition (i < len) is the ONLY value
@@ -523,7 +533,7 @@ function buildIteratorRestBody(iterRecTypeIdx: number, vecTypeIdx: number, arrTy
       blockType: { kind: "val", type: { kind: "i32" } },
       then: [{ op: "local.get", index: 4 }, { op: "local.get", index: 3 }, { op: "i32.sub" }],
       else: [{ op: "i32.const", value: 0 }],
-    } as unknown as Instr,
+    },
     { op: "array.new_default", typeIdx: arrTypeIdx },
     { op: "local.set", index: 5 },
     // j = 0

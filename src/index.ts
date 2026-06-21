@@ -20,6 +20,7 @@ export type ImportIntent =
   | { type: "unbox"; targetType: string }
   | { type: "extern_get" }
   | { type: "extern_set" }
+  | { type: "extern_set_strict" } // (#2017) strict-mode [[Set]] — throws on getter-only / non-writable
   | { type: "truthy_check" }
   | { type: "date_new" }
   | { type: "date_method"; method: string }
@@ -186,6 +187,23 @@ export interface CompileOptions {
   target?: "gc" | "linear" | "wasi" | "standalone";
   /** Enable fast mode — i32 default numbers, performance optimizations */
   fast?: boolean;
+  /**
+   * (#2119) Whether to infer ES-module strictness (module code is always strict,
+   * ECMA-262 11.2.2) from a genuine top-level `import`/`export`. Drives the
+   * unmapped `arguments` object for module functions. Defaults to `true` — the
+   * product compiles real module input, so this is the spec-correct behaviour.
+   *
+   * The test262 harness sets this to `false` for *script* tests: its `wrapTest`
+   * injects a synthetic `export function test()` entry point that makes
+   * TypeScript flag *every* wrapped source as a module
+   * (`externalModuleIndicator`). Inferring module-strictness from that synthetic
+   * export wrongly unmaps `arguments` for sloppy (`noStrict`) tests asserting
+   * mapped behaviour. The harness passes `false` for non-module-goal tests and
+   * leaves it `true` (default) for genuine module tests, so the compiler sees
+   * the source's *true* strictness rather than the wrapper artifact. An explicit
+   * `"use strict"` prologue and class context still force strict regardless.
+   */
+  inferModuleStrictArguments?: boolean;
   /** Use WasmGC-native strings (array i16) instead of wasm:js-string imports.
    *  Enabled automatically when fast: true or target: "wasi".
    *  Required for non-browser runtimes (wasmtime, wasmer, etc.) */
@@ -221,8 +239,10 @@ export interface CompileOptions {
   };
   /** Packages to keep as host imports (not resolved/bundled) */
   externals?: string[];
-  /** Enable tree-shaking to eliminate unused exports (default: false) */
-  treeshake?: boolean;
+  // NOTE: there is no `treeshake` compile option. The standalone `treeshake()`
+  // helper (exported below) is used directly by callers/tests; no compile path
+  // ever read a `CompileOptions.treeshake` flag, so the dead option was removed
+  // (#1931) rather than left as documented-but-inert API surface.
   /** ABI for exported functions: "default" (normal) or "c" (C-compatible calling conventions).
    *  C ABI is only supported with target: "linear". Strings/arrays become (ptr, len) pairs. */
   abi?: "default" | "c";
@@ -255,6 +275,17 @@ export interface CompileOptions {
    *  to prevent accidental capability leakage when compiling third-party code.
    *  Default: false (calls to fs.readFileSync / fs.writeFileSync raise a compile error). */
   allowFs?: boolean;
+  /**
+   * #2524 Phase 1 — route `process.std{in,out,err}` IO through a separately
+   * compiled, linkable `js2wasm:node-io` shim instead of inlining the
+   * `wasi_snapshot_preview1.fd_read`/`fd_write` glue. WASI-only (ignored for
+   * other targets). When set, the user module imports `stdin_read`/
+   * `stdout_write`/`stderr_write` plus its linear memory from `js2wasm:node-io`
+   * and carries no `wasi_snapshot_preview1` import for stream IO; link against
+   * `node-shim.wasm` (or `--preload js2wasm:node-io=node-shim.wasm` under
+   * wasmtime). Default off — the inline path stays as fallback.
+   */
+  nodeIoShim?: boolean;
   /**
    * Enforce dual-mode discipline (#1524): when true, codegen rejects any
    * JS-host `env` import that is not on
