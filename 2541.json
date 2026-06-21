@@ -1,8 +1,9 @@
 {
   "id": "2541",
   "assignee": "ttraenkler/sd-2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2541-propertyisenumerable",
   "claimed_at": "2026-06-21T14:57:16Z",
-  "updated_at": "2026-06-21T14:57:16Z"
+  "updated_at": "2026-06-21T15:24:53Z",
+  "released_at": "2026-06-21T15:24:53Z"
 }
