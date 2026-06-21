@@ -1,8 +1,9 @@
 {
   "id": "2087",
   "assignee": "ttraenkler/sd-1",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2087-capture-machinery-accessors",
   "claimed_at": "2026-06-21T09:44:05Z",
-  "updated_at": "2026-06-21T09:44:05Z"
+  "updated_at": "2026-06-21T09:47:43Z",
+  "released_at": "2026-06-21T09:47:43Z"
 }
