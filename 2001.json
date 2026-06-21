@@ -1,8 +1,8 @@
 {
   "id": "2001",
-  "assignee": "ttraenkler/sd-1",
+  "assignee": "ttraenkler/sendev-holes-s1",
   "status": "in-progress",
-  "branch": "issue-2001-sparse-holes",
-  "claimed_at": "2026-06-21T10:10:10Z",
-  "updated_at": "2026-06-21T10:10:10Z"
+  "branch": "issue-2001-s1-hole-literal",
+  "claimed_at": "2026-06-21T10:29:32Z",
+  "updated_at": "2026-06-21T10:29:32Z"
 }
