@@ -12930,6 +12930,41 @@ function compileCallExpression(
     }
   }
 
+  // (#983d) Dynamic method call on a host/externref object before the graceful
+  // null fallback. A call `obj.method(args)` whose `method` is a *host function
+  // value* stored in `obj` (e.g. `var o = {}; o.pop = Array.prototype.pop;
+  // o.pop()`) falls past every static/struct-method handler above — there is no
+  // wasm impl to dispatch and `compileCallablePropertyCall` only matches wasm
+  // closures. The legacy behaviour (the fallback below) drops the method and
+  // returns `ref.null.extern`, so the call is never made: `o.pop()` yields
+  // `null` instead of `undefined`, and any mutation the method would perform on
+  // `o` never happens.
+  //
+  // Route it to `__extern_method_call(receiver, "method", argsArray)` instead,
+  // which runs the host function with the live-mirror `_wrapForHost` proxy as
+  // `this`. That gives BOTH the correct return value AND mutation
+  // observability: the proxy's get/set traps read/write the WasmGC struct
+  // fields (the `__sget_`/`__sset_` exports), so subsequent wasm reads of `o`
+  // observe the change. JS-host mode only — standalone has no
+  // `__extern_method_call` host function, so it falls through to the graceful
+  // null below (a Wasm-native dynamic dispatch is a separate follow-up).
+  //
+  // Syntactic gate only (never static-classify the receiver — a possibly-proxy
+  // value carries no TS-type brand, #2501): the callee is a non-optional
+  // property access with an identifier method name, and we are in host mode.
+  if (
+    !ctx.standalone &&
+    !ctx.wasi &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    !ts.isPrivateIdentifier(expr.expression.name) &&
+    !expr.questionDotToken &&
+    !ts.isOptionalChain(expr)
+  ) {
+    const propAccess = expr.expression;
+    const dyn = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, propAccess.name.text, expr);
+    if (dyn !== null) return dyn;
+  }
+
   // Graceful fallback: compile the callee expression and all arguments for side effects,
   // then push ref.null.extern. This avoids hard compile errors for unrecognized call patterns
   // (e.g. chained calls, dynamic dispatch, uncommon AST shapes).
