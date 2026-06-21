@@ -1,9 +1,8 @@
 {
   "id": "2202",
-  "assignee": "ttraenkler/dev-dstr2203",
-  "status": "released",
+  "assignee": "ttraenkler/sd-1",
+  "status": "in-progress",
   "branch": "issue-2202-arguments-length-generator",
-  "claimed_at": "2026-06-21T02:27:14Z",
-  "updated_at": "2026-06-21T02:30:49Z",
-  "released_at": "2026-06-21T02:30:49Z"
+  "claimed_at": "2026-06-21T09:16:24Z",
+  "updated_at": "2026-06-21T09:16:24Z"
 }
