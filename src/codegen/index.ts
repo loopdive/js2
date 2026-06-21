@@ -46,6 +46,7 @@ import { emitUndefined, reconcileNativeStrFinalizeShift } from "./expressions/la
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
 import { fillApplyClosure, fillExternGetIdxVecArms, fillExternIsArray, fillProxyDispatch } from "./object-runtime.js";
+import { fillArrayToPrimitive } from "./array-to-primitive.js";
 import {
   fixupExternConvertAny,
   fixupStructNewArgCounts,
@@ -1726,6 +1727,15 @@ export function generateModule(
     // `.length` fix, so `(arr as any)[i]` through the externref boundary reads
     // the element instead of null/0. Standalone only (no-op otherwise).
     fillExternGetIdxVecArms(ctx);
+
+    // (#2358 #10) Fill the reserved `__array_to_primitive_string` body now that
+    // `__extern_length`/`__extern_get_idx` (filled just above) and the native
+    // string helpers exist. `__to_primitive`'s array-reduce arm baked a `call`
+    // to this reserved funcIdx at emit time; here it gets the real
+    // Array.prototype.toString (`join(",")`) loop so `Number([1])` / `1 + [2]` /
+    // `"1,2" == [1,2]` reduce a runtime `$Vec` host-free. No-op when no standalone
+    // `__to_primitive` reserved it (`ctx.arrayToPrimitiveReserved`).
+    fillArrayToPrimitive(ctx);
 
     // #1504: emit __is_closure(externref) -> i32 so the JS-side wrapExports
     // can discriminate a closure struct return from a vec/struct return

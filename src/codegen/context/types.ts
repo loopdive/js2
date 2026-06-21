@@ -848,6 +848,17 @@ export interface CodegenContext {
    */
   externGetIdxReserved?: boolean;
   /**
+   * (#2358 #10) True once `__to_primitive` reserved the
+   * `__array_to_primitive_string` placeholder. Filled by `fillArrayToPrimitive`
+   * (array-to-primitive.ts) in post-processing, AFTER `__extern_length` /
+   * `__extern_get_idx` are registered — `__to_primitive` is emitted before those
+   * helpers, so the array-ToPrimitive join arm can only call a RESERVED funcIdx
+   * (mirror of `externGetIdxReserved` / the accessor-driver reserve/fill). Lets
+   * `Number([1])` / `"1,2" == [1,2]` / `1 + [2]` reduce a runtime `$Vec` to its
+   * Array.prototype.toString (`join(",")`) host-free, standalone only.
+   */
+  arrayToPrimitiveReserved?: boolean;
+  /**
    * (#2038) True once the native iterator runtime (`ensureNativeIteratorRuntime`,
    * iterator-native.ts) has emitted `__iterator` / `__iterator_next` with a
    * vec-only body and is awaiting its USER-iterator arm. The USER arm dispatches

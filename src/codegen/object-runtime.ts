@@ -70,6 +70,7 @@ import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
+import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1). */
 const INITIAL_CAP = 8;
@@ -1965,6 +1966,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const externGetIdx = ctx.funcMap.get("__extern_get")!;
     const externHasIdx = ctx.funcMap.get("__extern_has")!;
     const callMethod0Idx = reserveAccessorGetDriver(ctx);
+    // (#2358 #10) Standalone Array → primitive. A real array (a `__vec_<k>`
+    // struct subtyping `$__vec_base`) is NOT a `$Object`, so the
+    // `ref.test objectTypeIdx` arm below misses it and ToPrimitive would return
+    // the array unchanged → `__unbox_number(array)` → NaN. Reduce it via
+    // `Array.prototype.toString` (`join(",")`) instead. The join helper depends
+    // on `__extern_length`/`__extern_get_idx`, which are registered AFTER
+    // `__to_primitive`, so we reserve the placeholder here (stable call target)
+    // and fill it in post-processing. `$__vec_base` is the shared supertype with
+    // `length` at field 0 (#2186) — one `ref.test` detects every element kind.
+    const arrayLikeReduce = ctx.standalone;
+    const vecBaseTypeIdx = arrayLikeReduce ? getOrRegisterVecBaseType(ctx) : -1;
+    const arrayToPrimIdx = arrayLikeReduce ? reserveArrayToPrimitiveString(ctx) : -1;
     const typeofNumberIdx = ctx.funcMap.get("__typeof_number")!;
     const typeofStringIdx = ctx.funcMap.get("__typeof_string")!;
     const typeofBooleanIdx = ctx.funcMap.get("__typeof_boolean")!;
@@ -2109,7 +2122,25 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 0 }, { op: "return" }],
+        then:
+          arrayLikeReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
+            ? [
+                // (#2358 #10) A real array (`$__vec_base`) reduces to its
+                // Array.prototype.toString (`join(",")`) — a primitive string the
+                // caller's hint then coerces (`__str_to_number` / string concat).
+                // Any other non-$Object value (a nominal struct without a user
+                // ToPrimitive, a closure, etc.) returns unchanged as before.
+                { op: "local.get", index: L_ANY },
+                { op: "ref.test", typeIdx: vecBaseTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: arrayToPrimIdx }, { op: "return" }],
+                } as Instr,
+                { op: "local.get", index: 0 },
+                { op: "return" },
+              ]
+            : [{ op: "local.get", index: 0 }, { op: "return" }],
       },
       // #1910/#1472 S2 — boxed primitive wrapper short-circuit. A `new Number`/
       // `new String`/`new Boolean` wrapper carries its [[PrimitiveValue]] in the

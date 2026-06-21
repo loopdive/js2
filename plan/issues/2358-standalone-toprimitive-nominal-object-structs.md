@@ -1,11 +1,11 @@
 ---
 id: 2358
 title: "Standalone native __to_primitive can't reduce typed (nominal) object structs through the externref boundary"
-status: ready
+status: done
 sprint: 64
 model: opus
 created: 2026-06-18
-updated: 2026-06-18
+updated: 2026-06-21
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -210,3 +210,104 @@ path on the shared engine.
 static `*`/`-` + plain-data-struct→externref byte-identical; reuse the #1917
 engine (keep `check-coercion-sites.mjs` flat); helpers BY NAME (late-import
 funcidx-shift class).
+
+## Current status (sd-3, 2026-06-21) — nominal-object half DONE; #10 ARRAY fold OPEN
+
+PR-1 (#1697), the spec (#1689), and the struct→`$Object` materialize PR-2
+(#1709) are all **merged**; the nominal-object-struct half is closed on `main`.
+Re-measured residual on fresh `origin/main` (c60786802), `--target standalone`:
+
+| expr | actual | expected |
+|------|--------|----------|
+| `Number([1])` / `Number([42])` / `Number([])` | NaN | 1 / 42 / 0 |
+| `"1,2" == [1,2]` | false | true |
+| `1 + [2]` | NaN | `"12"` |
+| `[1] + ""` / `[1,2] + "!"` | OK | OK |
+
+So the ONLY open part is the **#10 array fold**: `__to_primitive` cannot reduce a
+runtime `$Vec`. Object/wrapper/nominal-struct reduction all work now.
+
+### Runtime root cause (array half, precise)
+
+`[1] + ""` works because `compileNativeConcatOperand` (`string-ops.ts:197`)
+detects the array at **compile time** (concrete vec type known) and emits the
+Array.prototype.join lowering directly. But the NUMERIC ToPrimitive paths
+(`Number(arr)`, `arr == str`, `num + arr`) route through the **runtime**
+`__to_primitive` (`object-runtime.ts:1950`) over an **externref** whose concrete
+vec element type is erased. `__to_primitive` does `ref.test objectTypeIdx`
+(`$Object` only) → a `$Vec` misses → the array is returned UNCHANGED →
+`__unbox_number(array)` → NaN. The `$__any_to_string` tag-dispatcher
+(`native-strings.ts:5604`) likewise maps a generic ref to `"[object Object]"`
+(tag 6) — it does NOT join arrays.
+
+### Approach for the impl session (engine — non-trivial)
+
+Add a **runtime** vec-detection arm to `__to_primitive` (mirror it in
+`$__any_to_string`): before the "return unchanged" fallback at the
+`ref.test objectTypeIdx` miss, test the `any.convert_extern` value against the
+registered vec carriers and, on a hit, reduce via a native Array.prototype
+`toString`/join (`","`). This is a **polymorphic runtime join over all vec
+element kinds** — `ctx.vecTypeMap` holds a vec type per elem kind
+(`object-runtime.ts:6973` already iterates them for another helper), so the join
+loop must dispatch element stringification by elem kind (numeric →
+`number_toString`, string → pass-through, nested ref → recurse via
+`$__any_to_string`). Reuse `number_toString` + `__str_concat`; register the join
+helper by NAME after the last `flushLateImportShifts` (late-import funcidx-shift
+discipline). Guardrails as above (HW floor 20,706; WAT-diff hot paths; coercion
+sites flat). This is sized as its own focused max-reasoning session, not a
+tail-end add.
+
+### Key implementation hazard (registration ordering) — sd-3 confirmed
+
+`__to_primitive` is registered at `object-runtime.ts:~1950`, BUT
+`__extern_length` (~3224) and `__extern_get_idx` (~3265) are registered AFTER
+it. So at `__to_primitive` body-build time `funcMap.get("__extern_length")` /
+`get("__extern_get_idx")` are **undefined** — a naive `funcMap.get` in the body
+fails. The array arm must therefore either:
+- use a **deferred-fill** like `fillExternGetIdxVecArms` (the existing precedent:
+  `externGetIdxReserved` reserves the funcIdx, the body is patched in place LATE
+  after all helpers exist, so no funcIdx churn — `object-runtime.ts:6959`), or
+- be registered as its own helper AFTER `__extern_length`/`__extern_get_idx` and
+  CALLED from `__to_primitive` via a reserved index resolved post-flush.
+Recommended: a new `__array_to_primitive_string(externref)->externref` helper
+registered after the array-like helpers, reusing `__extern_length` +
+`__extern_get_idx` + `$__any_to_string` + `__str_concat` (join `,`), and have
+`__to_primitive` call it through a reserved index (mirror the
+`reserveAccessorGetDriver` pattern). Empty array → `""`. This keeps
+`__to_primitive`'s body funcIdx-stable.
+
+### `$__vec_base` supertype — the clean array-detection key (sd-3)
+
+`getOrRegisterVecBaseType(ctx)` (`object-runtime.ts:3186`) is a SHARED supertype
+of every `__vec_<elemKind>` carrier with `length` at field 0 — so array
+detection in `__to_primitive` is a SINGLE `ref.test vecBaseIdx` (no per-carrier
+iteration) and the length read is `struct.get vecBase 0`. Element access stays
+polymorphic via `__extern_get_idx(arr, i)` (returns the i-th element boxed as
+externref), then `$__any_to_string` per element, `__str_concat` join `,`. This
+is the same machinery `__extern_length`'s `vecBaseArm` already uses (#2186).
+
+### Cleanest landing shape (sd-3 final)
+
+Add the join as a deferred-fill arm so ordering is safe:
+1. In `__to_primitive`, at the `ref.test objectTypeIdx` MISS arm (before "return
+   unchanged", `object-runtime.ts:2107`), insert `ref.test vecBaseIdx` → on hit,
+   `call <reserved __array_to_primitive_string>` and `return`.
+2. Reserve `__array_to_primitive_string` (placeholder `unreachable`, like
+   `reserveAccessorGetDriver`) so `__to_primitive`'s `call` is funcIdx-stable.
+3. After `__extern_length`/`__extern_get_idx` register, FILL the placeholder body
+   (a `fillArrayToPrimitive(ctx)` step alongside `fillExternGetIdxVecArms`):
+   read length via `__extern_length`, loop `[0..len)` appending
+   `$__any_to_string(__extern_get_idx(arr,i))` with a `,` separator (skip
+   separator before index 0), empty → `""`. A hole/undefined element →
+   `""` per Array.prototype.join.
+4. **Number(array)** then reduces automatically: `Number([42])` →
+   `__to_primitive(arr,"number")` → string `"42"` → `__str_to_number` → 42.
+
+This is additive (only the cold ToPrimitive-on-array path changes), keeps the hot
+static paths byte-identical, and needs the HW-floor + WAT-diff guardrails above.
+Status: ANALYSIS COMPLETE, implementation-ready — sized for a focused
+max-reasoning session (deferred-fill + per-element loop + HW-floor validation).
+
+### Repro probe
+`.tmp/probe-2358.mts` (Number([N]) / arr==str / num+arr / arr+"") reproduces all
+rows above standalone.
