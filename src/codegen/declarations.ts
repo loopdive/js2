@@ -346,6 +346,24 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         state.primitiveNeeded.add("bigint_toString_radix");
       }
     }
+    // (#2160) `Number.prototype.toLocaleString()` with no arguments, STANDALONE/
+    // WASI only. With no ECMA-402 (Intl) implementation, §21.1.3.4 specifies the
+    // result is the same as `Number.prototype.toString()` (base 10) — the
+    // implementation-defined locale formatting reduces to plain ToString. In
+    // standalone/WASI there is no host `__extern_toLocaleString`, so register the
+    // native `number_toString` helper and route the call to it (see the matching
+    // codegen arm). Host (gc) mode keeps the `__extern_toLocaleString` import,
+    // which gives real Intl grouping (`(1234).toLocaleString() === "1,234"`), so
+    // this registration is gated off there. The 0-arg guard keeps a
+    // locale-argument form (which would need real Intl) on the host fallback.
+    if (
+      (ctx.standalone || ctx.wasi) &&
+      isNumberType(receiverType) &&
+      methodName === "toLocaleString" &&
+      node.arguments.length === 0
+    ) {
+      state.primitiveNeeded.add("number_toString");
+    }
     if (isNumberType(receiverType) && methodName === "toFixed") {
       state.primitiveNeeded.add("number_toFixed");
     }

@@ -7444,6 +7444,39 @@ function compileCallExpression(
         return { kind: "externref" };
       }
     }
+    // (#2160) Number.prototype.toLocaleString() with no arguments, STANDALONE/
+    // WASI only. Without ECMA-402 the result equals ToString(value) base 10
+    // (§21.1.3.4), so route it to the same `number_toString` lowering as the
+    // 0-arg `.toString()` arm above. This removes the standalone/WASI
+    // `__extern_toLocaleString` dynamic-shape refusal (a host-only import with
+    // no native fallback). Host (gc) mode is intentionally excluded: it keeps
+    // the `__extern_toLocaleString` path below for real Intl grouping. A call
+    // WITH a locale argument also falls through to that host path.
+    if (
+      (ctx.standalone || ctx.wasi) &&
+      isNumberType(receiverType) &&
+      propAccess.name.text === "toLocaleString" &&
+      expr.arguments.length === 0
+    ) {
+      const exprType = compileExpression(ctx, fctx, propAccess.expression);
+      if (exprType && exprType.kind === "i32") {
+        fctx.body.push({ op: "f64.convert_i32_s" });
+      }
+      const funcIdx = ctx.funcMap.get("number_toString");
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx });
+        // #1335: native number_toString returns an externref wrapping a
+        // $NativeString; unwrap once in standalone/WASI so consumers see a
+        // native receiver directly (mirrors the toString arm).
+        const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && (ctx.standalone || ctx.wasi);
+        if (unwrapToNative) {
+          fctx.body.push({ op: "any.convert_extern" } as Instr);
+          fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr);
+          return nativeStringType(ctx);
+        }
+        return { kind: "externref" };
+      }
+    }
     // (#1644 Slice D) BigInt.prototype.toString — bigint receivers cross the
     // boundary as i64. Mirror the number branch: validate radix range (2-36),
     // throw RangeError otherwise, then call bigint_toString_radix (or the
