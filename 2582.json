@@ -1,8 +1,8 @@
 {
   "id": "2582",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-21T16:41:17Z",
-  "updated_at": "2026-06-21T16:41:17Z"
+  "assignee": "ttraenkler/sendev-acorn-identity",
+  "status": "in-progress",
+  "branch": "issue-2582-numkey-objread",
+  "claimed_at": "2026-06-21T16:47:13Z",
+  "updated_at": "2026-06-21T16:47:13Z"
 }
