@@ -1,8 +1,9 @@
 {
   "id": "983d",
   "assignee": "ttraenkler/sd-4",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-983d-live-mirror-writeback",
   "claimed_at": "2026-06-21T11:41:50Z",
-  "updated_at": "2026-06-21T11:41:50Z"
+  "updated_at": "2026-06-21T12:34:27Z",
+  "released_at": "2026-06-21T12:34:27Z"
 }
