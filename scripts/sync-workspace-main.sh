@@ -39,17 +39,18 @@ if [ "$cur_branch" != "main" ]; then
   say "checkout is on '$cur_branch', not main — skipping (won't switch branches)"; exit 0
 fi
 
-# Refuse to touch a dirty tree — surface, don't discard. EXCEPTION: ignore
-# changes under .claude/memory/ (see header) so the hook isn't permanently
-# blocked by live team-memory writes.
-if ! git -C "$WS" diff --quiet -- . ':(exclude).claude/memory' 2>/dev/null \
-   || ! git -C "$WS" diff --cached --quiet -- . ':(exclude).claude/memory' 2>/dev/null; then
-  say "WARNING: $WS has uncommitted changes outside .claude/memory/ — NOT syncing (commit/clean it, then rerun)."
-  exit 0
-fi
-
+# Fast-forward. `git merge --ff-only` is SAFE on a dirty tree: it preserves
+# uncommitted changes to unrelated files and refuses (non-zero) ONLY when an
+# incoming commit would overwrite a locally-modified file — so it never
+# discards local work. This is deliberately more robust than pre-refusing on
+# any dirt: the old pre-check left /workspace rotting behind main whenever the
+# tree carried incidental uncommitted changes (a regenerated artifact, a stray
+# edit) outside .claude/memory — the very drift this hook exists to prevent.
 if git -C "$WS" merge --ff-only origin/main >/dev/null 2>&1; then
   say "fast-forwarded $local_sha -> $main_sha"
+elif ! git -C "$WS" diff --quiet -- . ':(exclude).claude/memory' 2>/dev/null \
+   || ! git -C "$WS" diff --cached --quiet -- . ':(exclude).claude/memory' 2>/dev/null; then
+  say "WARNING: cannot ff — $WS has uncommitted changes that conflict with incoming main. Commit/stash them, then rerun."
 else
   say "WARNING: cannot fast-forward (diverged?) — left at $local_sha. Resolve manually."
 fi

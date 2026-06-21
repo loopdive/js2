@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 // Sprint progress statusline for Claude Code.
-// Prefers dashboard/data/sprints.json (accurate deduplicated view) when available.
-// Falls back to scanning the flat plan/issues/*.md tree, reading the `sprint:`
-// and `status:` frontmatter fields (#1616 — sprint membership is frontmatter,
-// not directory).
+// LIVE source of truth: scans the flat plan/issues/*.md tree (the synced
+// working copy), reading `sprint:`/`status:` frontmatter (#1616 — sprint
+// membership is frontmatter, not directory) and the sprints/<N>.md doc
+// `status: active` marker to pick the current sprint. This recomputes on
+// every render, so the badge never freezes. The committed
+// dashboard/data/sprints.json is only a LAST-RESORT fallback: it is rebuilt
+// solely by `npm run dashboard`/deploys (NOT on PR merge), so it goes stale
+// between rebuilds — which is exactly what used to freeze the badge on an
+// old sprint.
 // Emits a colored badge: "sprint N  NN%"
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -12,7 +17,36 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ISSUES_DIR = join(ROOT, "plan", "issues");
+const SPRINTS_DIR = join(ISSUES_DIR, "sprints");
 const SPRINTS_JSON = join(ROOT, "website", "dashboard", "data", "sprints.json");
+
+// The current sprint = the highest-numbered sprints/<N>.md whose doc carries
+// `status: active`. Authoritative over "highest sprint number that has issues"
+// because it won't jump ahead when a single future-sprint issue is groomed in.
+function activeSprintFromDocs() {
+  let names = [];
+  try {
+    names = readdirSync(SPRINTS_DIR);
+  } catch {
+    return null;
+  }
+  let best = null;
+  for (const f of names) {
+    const m = f.match(/^(\d+)\.md$/);
+    if (!m) continue;
+    let content;
+    try {
+      content = readFileSync(join(SPRINTS_DIR, f), "utf8");
+    } catch {
+      continue;
+    }
+    if (/^status:\s*active\b/m.test(content)) {
+      const n = Number(m[1]);
+      if (best === null || n > best) best = n;
+    }
+  }
+  return best;
+}
 
 function fromJson() {
   if (!existsSync(SPRINTS_JSON)) return null;
@@ -100,9 +134,16 @@ function interpolateColor(pct) {
   return [Math.round(r * 220), Math.round(g * 200), Math.round(b * 20)];
 }
 
-const jsonData = fromJson();
-const sprint = jsonData ? jsonData.sprint : currentSprint();
-const { done, total } = jsonData ?? sprintProgress(sprint);
+// LIVE-first: active sprint from the sprints/<N>.md `status: active` marker,
+// else the highest sprint number with issues; progress counted from the flat
+// issue tree. The committed sprints.json is consulted only if the live scan
+// finds nothing (e.g. the issues dir is unavailable).
+let sprint = activeSprintFromDocs() ?? currentSprint();
+let { done, total } = sprintProgress(sprint);
+if (total === 0) {
+  const jsonData = fromJson();
+  if (jsonData) ({ sprint, done, total } = jsonData);
+}
 const pct = total === 0 ? 0 : done / total;
 const pctInt = Math.round(pct * 100);
 
