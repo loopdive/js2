@@ -533,12 +533,26 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   let externToStringIdx = -1;
   let anyToStringIdx = -1;
   let strConcatIdx = -1;
+  // (#2036/#2575) Native string content-equality for the tag-5 strict-eq arm.
+  // Standalone/WASI has no `wasm:js-string` host (strEqualsIdx === -1), so the
+  // tag-5 arm of `__any_strict_eq` previously emitted `i32.const 0`
+  // (always-false): two equal strings boxed in `$AnyValue` (e.g. `any`-array
+  // elements compared by indexOf/includes via __any_from_extern + __any_strict_eq,
+  // or a boxed `===`) never matched. Route to the same `__str_equals` (content
+  // compare, with `__str_flatten` for cons-strings) that binary-ops uses for a
+  // static `===`. Field 4 (externval) holds the native string as
+  // `extern.convert_any($AnyString)`, so recover it via any.convert_extern + a
+  // `ref.test $AnyString` guard. Host/gc mode keeps the wasm:js-string path.
+  let strEqualsNativeIdx = -1;
+  let strFlattenIdx = -1;
   if ((ctx.standalone === true || ctx.wasi === true) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureNativeStringHelpers(ctx);
     ensureObjectRuntime(ctx); // registers native __extern_toString + __to_primitive
     anyToStringIdx = ensureAnyToStringHelper(ctx); // (anyref AnyValue) → ref $AnyString, tag-dispatched
     externToStringIdx = ctx.funcMap.get("__extern_toString") ?? -1;
     strConcatIdx = ctx.nativeStrHelpers.get("__str_concat") ?? -1;
+    strEqualsNativeIdx = ctx.nativeStrHelpers.get("__str_equals") ?? -1;
+    strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten") ?? -1;
   }
   // True when the standalone concat arm can be built (all pieces present).
   const anyAddCanConcat = anyToStringIdx >= 0 && externToStringIdx >= 0 && strConcatIdx >= 0 && ctx.anyStrTypeIdx >= 0;
@@ -1441,15 +1455,59 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                                 op: "if",
                                 blockType: { kind: "val", type: { kind: "i32" } },
                                 then:
-                                  strEqualsIdx >= 0
+                                  // (#2036/#2575) Standalone/WASI: route tag-5
+                                  // string equality to the native `__str_equals`
+                                  // (content compare) on the field-4 externval,
+                                  // recovered to `$AnyString` and flattened — the
+                                  // same helper binary-ops uses for a static `===`.
+                                  // ref.test-guarded so a non-string-rep field-4
+                                  // carrier falls to 0 rather than trapping. Host/gc
+                                  // mode keeps the wasm:js-string `equals`; the
+                                  // legacy standalone `i32.const 0` (always-false)
+                                  // stub is gone (it made boxed string === / `any`
+                                  // array indexOf/includes always miss — #2036).
+                                  strEqualsNativeIdx >= 0 && strFlattenIdx >= 0 && ctx.anyStrTypeIdx >= 0
                                     ? [
+                                        // seA = any.convert_extern(a.externval)
                                         { op: "local.get", index: 0 },
                                         { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                                        { op: "any.convert_extern" },
+                                        { op: "local.set", index: 4 },
+                                        // seB = any.convert_extern(b.externval)
                                         { op: "local.get", index: 1 },
                                         { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
-                                        { op: "call", funcIdx: strEqualsIdx },
+                                        { op: "any.convert_extern" },
+                                        { op: "local.set", index: 5 },
+                                        // both $AnyString? (defensive guard)
+                                        { op: "local.get", index: 4 },
+                                        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+                                        { op: "local.get", index: 5 },
+                                        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+                                        { op: "i32.and" },
+                                        {
+                                          op: "if",
+                                          blockType: { kind: "val", type: { kind: "i32" } },
+                                          then: [
+                                            { op: "local.get", index: 4 },
+                                            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                                            { op: "call", funcIdx: strFlattenIdx },
+                                            { op: "local.get", index: 5 },
+                                            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                                            { op: "call", funcIdx: strFlattenIdx },
+                                            { op: "call", funcIdx: strEqualsNativeIdx },
+                                          ],
+                                          else: [{ op: "i32.const", value: 0 }],
+                                        },
                                       ]
-                                    : [{ op: "i32.const", value: 0 }],
+                                    : strEqualsIdx >= 0
+                                      ? [
+                                          { op: "local.get", index: 0 },
+                                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                                          { op: "local.get", index: 1 },
+                                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                                          { op: "call", funcIdx: strEqualsIdx },
+                                        ]
+                                      : [{ op: "i32.const", value: 0 }],
                                 else: [
                                   // null/undefined (tag < 2): both same tag → equal
                                   { op: "local.get", index: 2 },
@@ -1473,6 +1531,9 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
     [
       { name: "tagA", type: { kind: "i32" } },
       { name: "tagB", type: { kind: "i32" } },
+      // (#2036/#2575) anyref temps for the native tag-5 string-equality arm.
+      { name: "seA", type: { kind: "anyref" } },
+      { name: "seB", type: { kind: "anyref" } },
     ],
   );
 
@@ -1613,15 +1674,59 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                                 op: "if",
                                 blockType: { kind: "val", type: { kind: "i32" } },
                                 then:
-                                  strEqualsIdx >= 0
+                                  // (#2036/#2575) Standalone/WASI: route tag-5
+                                  // string equality to the native `__str_equals`
+                                  // (content compare) on the field-4 externval,
+                                  // recovered to `$AnyString` and flattened — the
+                                  // same helper binary-ops uses for a static `===`.
+                                  // ref.test-guarded so a non-string-rep field-4
+                                  // carrier falls to 0 rather than trapping. Host/gc
+                                  // mode keeps the wasm:js-string `equals`; the
+                                  // legacy standalone `i32.const 0` (always-false)
+                                  // stub is gone (it made boxed string === / `any`
+                                  // array indexOf/includes always miss — #2036).
+                                  strEqualsNativeIdx >= 0 && strFlattenIdx >= 0 && ctx.anyStrTypeIdx >= 0
                                     ? [
+                                        // seA = any.convert_extern(a.externval)
                                         { op: "local.get", index: 0 },
                                         { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                                        { op: "any.convert_extern" },
+                                        { op: "local.set", index: 4 },
+                                        // seB = any.convert_extern(b.externval)
                                         { op: "local.get", index: 1 },
                                         { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
-                                        { op: "call", funcIdx: strEqualsIdx },
+                                        { op: "any.convert_extern" },
+                                        { op: "local.set", index: 5 },
+                                        // both $AnyString? (defensive guard)
+                                        { op: "local.get", index: 4 },
+                                        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+                                        { op: "local.get", index: 5 },
+                                        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+                                        { op: "i32.and" },
+                                        {
+                                          op: "if",
+                                          blockType: { kind: "val", type: { kind: "i32" } },
+                                          then: [
+                                            { op: "local.get", index: 4 },
+                                            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                                            { op: "call", funcIdx: strFlattenIdx },
+                                            { op: "local.get", index: 5 },
+                                            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                                            { op: "call", funcIdx: strFlattenIdx },
+                                            { op: "call", funcIdx: strEqualsNativeIdx },
+                                          ],
+                                          else: [{ op: "i32.const", value: 0 }],
+                                        },
                                       ]
-                                    : [{ op: "i32.const", value: 0 }],
+                                    : strEqualsIdx >= 0
+                                      ? [
+                                          { op: "local.get", index: 0 },
+                                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                                          { op: "local.get", index: 1 },
+                                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                                          { op: "call", funcIdx: strEqualsIdx },
+                                        ]
+                                      : [{ op: "i32.const", value: 0 }],
                                 else: [
                                   // null/undefined (tag < 2): both same tag → equal
                                   { op: "local.get", index: 2 },
@@ -1645,6 +1750,9 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
     [
       { name: "tagA", type: { kind: "i32" } },
       { name: "tagB", type: { kind: "i32" } },
+      // (#2036/#2575) anyref temps for the native tag-5 string-equality arm.
+      { name: "seA", type: { kind: "anyref" } },
+      { name: "seB", type: { kind: "anyref" } },
     ],
   );
 
