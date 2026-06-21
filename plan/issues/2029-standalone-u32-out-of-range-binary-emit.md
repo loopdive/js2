@@ -170,3 +170,52 @@ standalone still leaks the `__new_<Builtin>` HOST import (`class-bodies.ts:1423/
 — a host-import-retirement concern, not the emit crash. Kept #2029 `in-progress`:
 the emit-crash cluster (the headline) is fixed; the `__new_<Builtin>` standalone
 runtime path is the residual. Reassess closing once that lands.
+
+## Slice (2026-06-21, dev-agent) — `Object.create(proto, descriptors)` emit crash
+
+**Status stays `in-progress`** — one independent emit-crash slice of the bucket.
+
+The PR-1 audit said `built-ins/Object/create` "all COMPILE in standalone", but
+that was the **1-arg** form. `Object.create(proto, descriptors)` with a
+**non-empty** properties object still died at emit with
+`Binary emit error: global index out of range — -1` (the documented #1174
+string-global -1 sentinel).
+
+**Producer (confirmed):** the compile-time descriptor expansion in the
+`Object.create` handler (`src/codegen/expressions/calls.ts`) materialized each
+property KEY with a raw `{ op: "global.get", index: stringGlobalMap.get(key) }`,
+guarding only `=== undefined`. Under standalone/nativeStrings the key string is
+stored as the -1 sentinel, so `global.get -1` reached the encoder and crashed.
+Two sites: the static `__defineProperty_value` arm and the dynamic-flag
+`__defineProperty_desc` arm.
+
+**Fix:** emit the key via the existing dual-mode `stringConstantExternrefInstrs`
+helper (native-string externref standalone; `global.get` for a valid host
+global; already guards the -1 sentinel) at both sites. Mirrors the
+`emitSetSubclassProto` fix shape from PR-1. gc/host mode is unchanged (real
+globals, never the sentinel).
+
+**Measured (60-file `built-ins/Object/create` standalone sample):**
+main `pass 3 / fail 1 / CE 49` → fix `pass 8 / fail 13 / CE 32` — **+5 pass,
+17 tests moved out of compile_error**. Zero host regressions (host
+`Object.create(null, {a:{value:1},b:{value:2}})` returns correctly before and
+after).
+
+**Validation.** `tests/issue-2029-object-create-descriptors-standalone-emit.test.ts`
+(9/9): single/multi/string-literal-key/static-flag descriptors compile
+standalone; value-descriptor read-back (42, 5); no `-1` global emitted; host
+no-regression guard. Existing `issue-2029-subclass-builtin-standalone-emit`
+(8/8) green. tsc + prettier + coercion-sites clean.
+
+**Still open (separate, NOT this slice):**
+- 4 `Object/create` files still emit `-1` via a DIFFERENT producer
+  (`Object.create({}, undefined)` + `instanceof Object` — the assert/instanceof
+  string-global path, not the descriptor path).
+- `o.a + o.b` arithmetic over TWO `any`-typed properties read off an
+  `Object.create(null, …)` result traps standalone with `illegal cast` — a
+  native dynamic-property-read/unbox gap on the `__object_create` result object
+  (reading `o.b` alone works; a plain `{}` two-prop add works). Overlaps the
+  value-rep / `__defineProperty_value` runtime, not the emit crash.
+- `__defineProperty_value` / `__defineProperty_desc` / `__getOwnPropertyDescriptor`
+  remain host-only imports refused standalone (`dynamic-shape`) — the
+  descriptor-read clusters need native runtime impls (separate slice).

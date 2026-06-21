@@ -4702,14 +4702,16 @@ function compileCallExpression(
             if (dpIdx !== undefined) {
               // obj
               fctx.body.push({ op: "local.get", index: objLocal });
-              // prop name as string constant
+              // prop name as string constant. (#2029) Use the dual-mode
+              // helper instead of a raw `global.get`: under standalone /
+              // nativeStrings `addStringConstantGlobal` stores the documented
+              // -1 sentinel in `stringGlobalMap` (#1174 — "no host import,
+              // materialize inline"), and emitting `global.get -1` crashed the
+              // encoder with `global index out of range — -1`. The helper
+              // materializes a native string externref standalone and falls
+              // back to `global.get` only for a valid host global.
               addStringConstantGlobal(ctx, propName);
-              const strGlobalIdx = ctx.stringGlobalMap.get(propName);
-              if (strGlobalIdx !== undefined) {
-                fctx.body.push({ op: "global.get", index: strGlobalIdx } as Instr);
-              } else {
-                fctx.body.push({ op: "ref.null.extern" });
-              }
+              fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
               // value (or null for accessor descriptors)
               if (valueExpr) {
                 const vt = compileExpression(ctx, fctx, valueExpr);
@@ -4769,13 +4771,11 @@ function compileCallExpression(
 
             if (dpDescIdx !== undefined) {
               fctx.body.push({ op: "local.get", index: objLocal });
+              // (#2029) dual-mode key materialization — see the
+              // __defineProperty_value arm above for why a raw `global.get`
+              // crashes the encoder standalone (the -1 string-global sentinel).
               addStringConstantGlobal(ctx, propName);
-              const strGlobalIdx = ctx.stringGlobalMap.get(propName);
-              if (strGlobalIdx !== undefined) {
-                fctx.body.push({ op: "global.get", index: strGlobalIdx } as Instr);
-              } else {
-                fctx.body.push({ op: "ref.null.extern" });
-              }
+              fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
               const descValType = compileExpression(ctx, fctx, prop.initializer);
               if (!descValType) {
                 fctx.body.push({ op: "ref.null.extern" });
