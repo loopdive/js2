@@ -79,3 +79,46 @@ same helper to `parseNeeded`. Regression test:
 acceptance criteria's `__new_String`/`__new_Number` leak) plus the harder
 String/Number coercion edges that overlap the coercion engine (#1917). Those
 remain the value-rep / #1917 territory called out in the original notes.
+
+---
+
+## Slice (2026-06-21, dev-agent) — `Number.prototype.toLocaleString` for standalone
+
+**Status stays `ready`** — one more independent slice of the 635-bucket,
+unblocked (no wrapper substrate / #1917 dependency).
+
+**Bug:** `(n).toLocaleString()` on a number receiver CE'd in standalone / WASI
+with `'__extern_toLocaleString' (dynamic-shape object)`. The generic
+`toLocaleString` fallback (`src/codegen/expressions/calls.ts`) unconditionally
+routes the receiver to the host `__extern_toLocaleString` import; a bare number
+is not an extern object, so the standalone codegen refuses it. (Host mode worked
+via real Intl, returning grouped output like `"1,234"`.)
+
+**Fix (no-JS-host only):** §21.1.3.4 — there is no Intl in standalone/WASI, and
+the no-Intl default is implementation-defined. For a number receiver in
+no-JS-host targets, delegate `toLocaleString` to the base-10
+`Number.prototype.toString` (the existing native `number_toString`), mirroring
+the `toLocaleString → toString` delegation already used elsewhere. The
+import-collector (`src/codegen/declarations.ts`) pre-registers `number_toString`
+for the `toLocaleString` call shape (gated on `standalone || wasi`) so the call
+lowers without a late module-function shift; the call-site (calls.ts) emits the
+native call and unwraps to a native string. Locale/options args are ignored.
+**JS-host mode is untouched** — it keeps the Intl-backed `__extern_toLocaleString`
+(grouping preserved), so no host regression.
+
+**Scope guards:** number receiver only; non-number receivers (Array/TypedArray/
+Date/object) keep the host `__extern_toLocaleString` fallback unchanged.
+
+**Validation.** `tests/issue-2160-number-tolocalestring.test.ts` (11/11):
+integer/single-digit/fractional/negative number toLocaleString + string
+concat across host & standalone, plus a standalone no-`__extern_toLocaleString`-leak
+assertion. tsc + prettier clean.
+
+**Follow-ups noted (not in this slice):** the `new String`/`new Number` wrapper
+method-dispatch + `.length` + indexing residual is BLOCKED on a native wrapper
+constructor — `new String`/`new Number`/`new Boolean` always emit the host
+`__new_String`/`__new_Number` imports (new-super.ts), and `__unbox_string` is
+host-only, so there is no native wrapper struct / primitive slot to read. That
+slice needs the value-rep #2072/#2104/#1910-S2 native wrapper representation
+first (senior-dev/value-rep). Separately, `String.raw` emits an invalid
+standalone binary (distinct slice).

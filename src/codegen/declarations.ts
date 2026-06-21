@@ -337,6 +337,16 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         state.primitiveNeeded.add("number_toString");
       }
     }
+    // (#2160) Number.prototype.toLocaleString in no-JS-host targets — without an
+    // Intl implementation the default result is the base-10
+    // `Number.prototype.toString`, so register the same `number_toString` helper.
+    // Pre-registering here lets the codegen path (calls.ts) emit the call without
+    // a late module-function shift and keeps a number receiver off the
+    // `__extern_toLocaleString` host import (which CEs in standalone —
+    // `dynamic-shape object`). JS-host mode keeps the Intl-backed fallback.
+    if ((ctx.standalone || ctx.wasi) && isNumberType(receiverType) && methodName === "toLocaleString") {
+      state.primitiveNeeded.add("number_toString");
+    }
     // (#1644 Slice D) BigInt.prototype.toString — bigint-typed receiver routes
     // to bigint_toString / bigint_toString_radix (i64 → externref). Without
     // this registration the property-access path falls through and returns null.

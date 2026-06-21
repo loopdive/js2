@@ -7444,6 +7444,33 @@ function compileCallExpression(
         return { kind: "externref" };
       }
     }
+    // (#2160) Number.prototype.toLocaleString in no-JS-host targets
+    // (standalone / WASI) — §21.1.3.4. There is no Intl implementation, and the
+    // generic `__extern_toLocaleString` host fallback below CEs on a number
+    // receiver (`dynamic-shape object` — a bare number is not an extern object).
+    // Per spec the no-Intl default is implementation-defined; delegating to the
+    // base-10 `Number.prototype.toString` (the decimal form) is conformant and
+    // matches the existing `toLocaleString → toString` delegation elsewhere
+    // (calls-closures.ts). Locale/options args are ignored. JS-host mode is left
+    // on the real Intl-backed `__extern_toLocaleString` (locale grouping). Mirrors
+    // the number `toString` native-string unwrap so consumers see a native ref.
+    if (noJsHost(ctx) && isNumberType(receiverType) && propAccess.name.text === "toLocaleString") {
+      const exprType = compileExpression(ctx, fctx, propAccess.expression);
+      if (exprType && exprType.kind === "i32") {
+        fctx.body.push({ op: "f64.convert_i32_s" });
+      }
+      const funcIdx = ctx.funcMap.get("number_toString");
+      if (funcIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx });
+        const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && (ctx.standalone || ctx.wasi);
+        if (unwrapToNative) {
+          fctx.body.push({ op: "any.convert_extern" } as Instr);
+          fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr);
+          return nativeStringType(ctx);
+        }
+        return { kind: "externref" };
+      }
+    }
     // (#1644 Slice D) BigInt.prototype.toString — bigint receivers cross the
     // boundary as i64. Mirror the number branch: validate radix range (2-36),
     // throw RangeError otherwise, then call bigint_toString_radix (or the
