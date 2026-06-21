@@ -633,6 +633,37 @@ function compileStringRaw(
   substitutions: readonly ts.Expression[],
 ): ValType | null {
   addStringImports(ctx);
+
+  // (#2160 standalone slice) Native-strings (standalone / WASI) path. Every
+  // operand fed to the native `__str_concat` must be a `ref $AnyString`.
+  // `compileStringLiteral` already yields one here, but a numeric / any
+  // substitution leaves an f64 / externref that the host externref-concat path
+  // below mishandles — a numeric substitution (`String.raw\`a${1}b\``) drove an
+  // f64 straight into `any.convert_extern` → an INVALID standalone binary. Reuse
+  // the proven `compileNativeConcatOperand` coercion (number_toString +
+  // ref-from-extern, bool→literal, string passthrough, any→ToString) so every
+  // operand is a native string ref before each `__str_concat`. JS-host mode keeps
+  // the wasm:js-string concat path below unchanged.
+  if (noJsHost(ctx) && ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    const nativeConcatIdx = ctx.nativeStrHelpers.get("__str_concat");
+    if (nativeConcatIdx === undefined) {
+      reportError(ctx, expr, "String.raw: native string concat helper unavailable");
+      return null;
+    }
+    compileNativeStringLiteral(ctx, fctx, rawParts[0] ?? "");
+    for (let i = 0; i < substitutions.length; i++) {
+      if (!compileNativeConcatOperand(ctx, fctx, substitutions[i]!)) {
+        // Unknown operand kind — fall back to "undefined" so the module stays valid.
+        compileNativeStringLiteral(ctx, fctx, "undefined");
+      }
+      fctx.body.push({ op: "call", funcIdx: nativeConcatIdx });
+      // Append the following raw part.
+      compileNativeStringLiteral(ctx, fctx, rawParts[i + 1] ?? "");
+      fctx.body.push({ op: "call", funcIdx: nativeConcatIdx });
+    }
+    return nativeStringType(ctx);
+  }
+
   const concatIdx = ctx.jsStringImports.get("concat") ?? ctx.nativeStrHelpers.get("__str_concat");
   if (concatIdx === undefined) {
     reportError(ctx, expr, "String.raw: string concat helper unavailable");
