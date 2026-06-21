@@ -166,3 +166,22 @@ with/without this change — a worktree-harness artifact, not this fix).
 - **NewPromiseCapability(C) for custom constructors + resolver-element-function
   object semantics** (the original ~163-fail combinator residual) — unchanged by
   PR-A; remains the senior-scale body of this issue.
+
+---
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN (senior-dev, folds into #1042)
+
+This is a senior-scale Promise-semantics residual (`feasibility: hard`,
+`reasoning_effort: high`, `routing: senior-dev — fold into the #1042 async epic`).
+PR-A (executor invocation) landed; the ~163-fail combinator residual
+(`NewPromiseCapability(C)` for custom constructors + resolve/reject element-function
+object semantics + `@@species`) is unchanged and remains the body of the issue —
+it spans the shared async-capability machinery in `src/runtime.ts` (no isolated
+low-risk plain-dev slice exists, by the issue's own analysis).
+
+**Stays `status: ready` for SENIOR-DEV, routed into #1042.** Real sprint-64 dev
+work but high blast radius and tightly coupled to the async epic — lower
+impact-per-effort than the standalone-object (#2515) and string/number (#2160)
+conformance issues. Needs no new architect spec (root-cause distribution + fix
+direction already documented). Sequence behind #2515/#2160 unless an async-focused
+senior-dev slot opens.

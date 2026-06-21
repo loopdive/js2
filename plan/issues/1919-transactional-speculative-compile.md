@@ -53,3 +53,15 @@ of the module (interacts with #1916).
 ## Source
 
 Compiler quality review 2026-06. Related: #1847 (snapshotLocals), #1916.
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN (pure refactor, no functional repro)
+
+Verified the structural premise still holds: `git grep '.body.length = '` under
+`src/codegen/` shows **25** raw rollback assignments (issue cited 23 — the count
+has if anything grown). The unguarded truncation idiom is still pervasive. No
+functional repro (this is a heisenbug-prevention refactor, not a failing test).
+
+**Stays `status: ready`. BACKLOG candidate for a conformance sprint** — zero
+test262 pass-count movement, high blast radius. De-prioritise out of the active
+sprint-64 dispatch queue (standalone/conformance focus) unless architecture-focused.
+See #1927 disposition for the cluster-wide recommendation.

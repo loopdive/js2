@@ -764,3 +764,22 @@ After Slice 3 lands and the gate is flipped:
 | `addFuncType` interning shifts funcIdx mid-emission | All state fns added in Phase 1 of `compileIrPathFunctions` before Phase 3 lowering — same pattern as monomorphize clones (line 434–452). |
 | Async fn called from a non-IR (legacy) caller has signature mismatch | The entry fn's signature is unchanged: `(params...) -> externref` (the Promise). Callers' `call $f` ops keep working. |
 | Slice 2 breaks `tests/ir/issue-1373b.test.ts` Slice 1 tests | Slice 2 must NOT modify Slice 1's FULFILLED/REJECTED inline branches — those remain the fast path for `await` on an already-settled Promise. The new PENDING branch is additive. |
+
+---
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN (hard async IR; spec already in-file)
+
+Not a quick smoke-test issue — it is a multi-slice IR CPS-lowering feature, not a
+bug repro. Verified the gate is still closed: `src/ir/select.ts` `isAsyncIrReady`
+still short-circuits async functions to the legacy path (the `async-function`
+fallback bucket is non-zero), so the IR async path is dormant. The dependency
+#1326c is `done` (microtask queue + `Promise.then` standalone substrate landed),
+so Slices 1b/2/3 are genuinely unblocked.
+
+**Stays `status: ready`. Needs NO further architect spec** — the joint S53 spec
+(Slices 1/1b/2/3, frame-struct strategy, uniform-arity continuations, file:line
+anchors re-anchored 2026-06-16) is complete in-file. This is `feasibility: hard`,
+`reasoning_effort: max`, `priority: top` — a senior-dev pickup. It is real
+sprint-64 dev work but the **largest** remaining slice; the standalone-conformance
+issues (#2515/#2160) are higher impact-per-effort for the sprint. Sequence
+behind those unless an async-IR-dedicated senior-dev slot is free.

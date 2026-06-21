@@ -213,3 +213,27 @@ This satisfies the task directive: 4 questions resolved, no live repro confirmed
 disposition = defer-with-ratified-blueprint (not wont-fix — the class can recur
 via #1888; the design is locked in so the next occurrence is a mechanical
 implementation, not a re-investigation).
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — NO LIVE REPRO, DROP FROM DISPATCH QUEUE
+
+Independently re-ran the documented repro + two sibling forms under
+`--target standalone` on current main — all **compile, VALIDATE, and run
+correctly** (the `__str_flatten ... call[0] expected (ref null 5), found i32.const`
+validation failure does NOT reproduce):
+
+| case | result |
+|---|---|
+| `let g:any; g = function(){return 42;}; test(){ return g(); }` (the #1899 repro) | validate=true RAN → 42 |
+| closure-assign + native-string `.slice` | validate=true RAN → 4 |
+| native-string-heavy (`+`, `.slice`, `.repeat`) + assign | validate=true RAN → 6 |
+
+Confirms the architect's 2026-06-16 ratification: PR #1225's `ensureGetUndefined`
+fix removed the specific late finalize-import trigger. **There is no failing test
+to anchor a high-blast-radius (35 bake sites) refactor against** — implementing
+(B2) now would violate the verify-still-repros-then-fix discipline.
+
+**Stays `status: ready` (per architect — the class can recur via #1888 and the
+B2 blueprint is locked in), but DROP from the sprint-64 dispatch queue.**
+Re-activate only when #1888 S2/Slice-5 surfaces a concrete `expected (ref null N),
+found i32.const`-class failure, or a new finalize-import re-triggers the mismatch.
+NOT dispatchable as sprint-64 dev work.

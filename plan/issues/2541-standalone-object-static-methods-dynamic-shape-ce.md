@@ -5,7 +5,7 @@ title: "standalone: Object.fromEntries / o.propertyIsEnumerable / Object.is refu
 status: ready
 sprint: 64
 created: 2026-06-19
-updated: 2026-06-19
+updated: 2026-06-21
 priority: low
 task_type: bugfix
 area: codegen, standalone
@@ -56,3 +56,29 @@ Before any gate/refusal change, VALIDATE against the real test262 standalone
 harness — a host-import "leak" or refusal seen against an empty importObject may
 be benign because the harness provides the import. A native lowering (additive)
 is always safe; demoting a working path is not.
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — PARTIAL
+
+Smoke-tested all three forms under `--target standalone`, instantiated under
+empty imports:
+
+| form | result |
+|---|---|
+| `Object.is(NaN, NaN)` | RAN → `true` ✅ FIXED |
+| `Object.is(0, -0)` | RAN → `false` ✅ FIXED |
+| `Object.is(1, 1)` | RAN → `true` ✅ FIXED |
+| `Object.fromEntries([["a",5]]).a` | RAN → `5` ✅ FIXED |
+| `Object.fromEntries([["a",5],["b",7]]).b` | RAN → `7` ✅ FIXED |
+| `({x:1}).propertyIsEnumerable("x")` | **CE** `'__propertyIsEnumerable' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B)` ❌ STILL OPEN |
+
+**Two of three sub-cases are already fixed on main** (`Object.is`,
+`Object.fromEntries` both lower natively in standalone with zero host imports —
+likely landed via the #1472 / #2374 dynamic-property runtime work). The scope of
+this issue is now reduced to the single remaining refusal: **`propertyIsEnumerable`**.
+
+Issue stays `status: ready` with narrowed scope. `propertyIsEnumerable` is a
+clean graceful refusal (a clear CE, not a miscompile / host-import leak), so it
+keeps `priority: low`. It is bound to the same dynamic own-key machinery as
+#2374 (any-receiver dispatch); likely follows that. No regression test exists for
+the now-fixed `Object.is`/`Object.fromEntries` standalone behaviour — a dev should
+add a guard when closing the residual.

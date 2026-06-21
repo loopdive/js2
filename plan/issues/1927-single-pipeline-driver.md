@@ -81,3 +81,18 @@ Added acceptance criteria:
 Scheduled sprint 62, `model: fable` (the proposal's "blocks nothing in the
 June corpus" parking applied a conformance lens; under the architecture
 lens this is the keystone).
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN (pure refactor, no functional repro)
+
+Verified the structural premise still holds on current main: `compiler.ts` still
+has **3 divergent driver clones** — `compileSourceSync:515`, `compileMultiSource:977`,
+`compileFilesSource:1321` — plus the 4th `generateMultiModule` overlay gap. No
+functional repro to smoke-test (this is a maintainability/correctness-of-plumbing
+refactor, not a bug with a failing test).
+
+**Stays `status: ready`, but this is a BACKLOG candidate for a conformance sprint:**
+it yields no test262 pass-count movement and has high blast radius (touches every
+compile path). `priority: high` is an *architecture-lens* priority. For sprint-64
+(which is standalone/conformance-driven), the real dev value is in #2515 / #2160 /
+#2541. Recommend de-prioritising the refactor cluster (#1919/#1926/#1927/#2146/#2083)
+out of the active dispatch queue unless explicitly architecture-focused.

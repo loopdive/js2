@@ -52,3 +52,18 @@ expected 5-10x smaller small modules. Related size lever: #1950
 
 #1094 (JS-side runtime), #1308 (introduced trampolines), #1888, upstream
 #1950 — orthogonal; none gate exports on escape analysis. New.
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN (perf, no functional repro)
+
+Re-measured the one-closure repro (`makeCounter()` + `c()`) with `optimize: true`
+on current main: the binary is 3,021 B and exports **17 trampoline helpers** —
+`__vec_len`/`__vec_get`/`__vec_mut_supported`/`__vec_push`/`__vec_pop` (despite no
+arrays in the program), `__call_fn_0..4`, `__call_fn_method_0..5`, `__is_closure`.
+The full export suite still fires on existence, not on a host-boundary escape.
+Premise confirmed.
+
+**Stays `status: ready`. Perf/size optimization — no test262 pass-count movement.**
+BACKLOG candidate for a conformance sprint; the value is small-binary size, not
+conformance. De-prioritise out of the active sprint-64 dispatch queue. Escape
+analysis is the right fix but it is `feasibility: medium` perf work, not a sprint-64
+standalone-conformance priority. See #1927 disposition for the cluster.

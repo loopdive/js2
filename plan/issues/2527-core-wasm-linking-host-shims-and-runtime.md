@@ -174,3 +174,17 @@ Split from the #389-driven modularization discussion. The Component Model + WIT
 alternative is #2525 (deferred). Corrects an earlier framing that called GC
 cross-module sharing "blocked" — it is not; runtimes canonicalize identical
 structs.
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — OPEN (architecture project, no functional repro)
+
+This is a multi-phase architecture/module-linking project (`task_type:
+architecture`, `feasibility: hard`), not a bug. Phase 0 spike is GREEN/DONE; the
+remaining Phase 1 (`process` IO shim as a linkable core module) is a substantial
+new codegen + build-tooling effort with no test262 pass-count movement — its
+acceptance is "the native-messaging example imports `js2wasm:node-io` and
+round-trips under wasmtime," a runtime-harness goal.
+
+**Stays `status: ready`. BACKLOG candidate** — this is host-independence/runtime
+modularization, not sprint-64 conformance. It should be its own dedicated effort
+(architect + senior-dev), not pulled into a standalone-conformance sprint. Drop
+from the active sprint-64 dispatch queue; schedule deliberately.

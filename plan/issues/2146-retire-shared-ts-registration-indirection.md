@@ -42,3 +42,15 @@ churn twice.
 ## Notes
 
 Routine dev, S-size, sprint 63 (sequenced behind #1916's spec).
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN (pure refactor, no functional repro), STILL SEQUENCED BEHIND #1916
+
+Verified the structural premise: `src/codegen/shared.ts` still has the
+`register*` DI slots that throw `"... not yet registered"` (e.g.
+`flushLateImportShifts` L266, `ensureLateImport` L262, plus `compileExpression` /
+`compileArrowAsClosure` / `coerceType`). No functional repro.
+
+**Stays `status: ready` but BLOCKED-in-practice**: the issue itself says "Sequence
+AFTER the #1916 A2 spec is ratified so this doesn't churn twice." #1916 is not yet
+ratified — dispatching this now risks a double-churn refactor. BACKLOG candidate;
+do not dispatch before #1916's spec lands. See #1927 disposition for the cluster.

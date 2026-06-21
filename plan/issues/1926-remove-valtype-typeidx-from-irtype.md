@@ -56,3 +56,16 @@ symbolic-ref premise that makes the IR backend-agnostic:
 
 Compiler quality review 2026-06. Related: #1851 (legalization boundary),
 #1852 (per-backend value representation), #1714.
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN (pure refactor, no functional repro)
+
+Verified the structural premise still holds in `src/ir/nodes.ts`:
+`union.members: ValType[]` (~L60/216), `boxed.inner: ValType` (L216), and the
+`typeIdx`-comparison branch in `irTypeEquals` (L338) all still embed
+backend-concrete indices in `IrType`. No functional repro (this is an
+IR-serialization/backend-agnosticism refactor — acceptance is byte-identical
+WasmGC output + a JSON round-trip, not a test262 row).
+
+**Stays `status: ready`. BACKLOG candidate for a conformance sprint** — no
+test262 movement, broad IR-wide blast radius. De-prioritise out of the active
+sprint-64 dispatch queue. See #1927 disposition for the cluster recommendation.

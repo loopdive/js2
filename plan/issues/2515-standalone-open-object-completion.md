@@ -4,6 +4,7 @@ title: "host-independence: complete the standalone Wasm-native open-object/prope
 status: ready
 sprint: 64
 created: 2026-06-19
+updated: 2026-06-21
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -450,6 +451,32 @@ still falls through to `throwTypeError` for some wrapper/hint combinations.
 - `src/codegen/expressions/calls.ts` (L5558+ Reflect block; L5684 refusal; `Object.defineProperty`/`Object.create` handlers) — S1/S4
 - `src/codegen/property-access.ts` (locate the `Object.prototype.toString.call` refusal) — S3
 - `tests/issue-2515.test.ts` (new) — per-slice run-tests
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN
+
+Smoke-tested the slice repros under `--target standalone`, instantiated under
+empty imports. The issue is **genuinely open** — multiple slices still reproduce
+the documented failure modes:
+
+| slice | repro | result |
+|---|---|---|
+| **S0 (keystone)** | `Object.defineProperty(o,'x',{value:1}); Object.defineProperty(o,'x',{value:2})` (redefine path) | **`Binary emit error: Codegen error: global index out of range — -1 (valid: [0,3)) at function 'test'. This is the late-import index-shift class (#2043)`** — the documented S0 emit bug STILL reproduces |
+| S0 happy path | `Object.create(proto, {x:{value:7,enumerable:true}})` simple literal | RAN → 7 (some happy paths now work; the index-shift CE persists on the harder forms above) |
+| S2 | redefine-non-configurable should throw catchable TypeError | `WebAssembly.Exception` / CE — no catchable TypeError |
+| S2 | fresh `{value:1}` descriptor → `writable` default false | `WebAssembly.Exception` (getOwnPropertyDescriptor path) |
+| **S3** | `Object.prototype.toString.call([])` | RAN → **`undefined`** (should be `"[object Array]"`) ❌ |
+| **S4** | `Reflect.defineProperty(o,'x',{value:5})` | **CE** `Reflect.defineProperty not supported in standalone mode (#1472 Phase C)` ❌ |
+| **S4** | `Reflect.getOwnPropertyDescriptor(o,'x')` | **CE** `Reflect.getOwnPropertyDescriptor not supported in standalone mode (#1472 Phase C)` ❌ |
+| **S4** | `Reflect.construct(C, [])` | **CE** `Reflect.construct not supported in standalone mode (#1472 Phase C)` ❌ |
+| S5 | `new Number(1) % "1"` | RAN → 0 (works in this case; the residual is operator/hint-specific per the slice notes) |
+
+**Stays `status: ready`.** This is the real remaining sprint-64 standalone dev
+work — `feasibility: hard`, `reasoning_effort: max`, with a **complete
+architect implementation plan already in the issue** (S0→S1→S2/S3/S4/S5,
+file:line anchors verified on 45dab28e0). S0 is the keystone and is
+independently dispatchable now; S3/S4 are independent and can run in parallel.
+**Needs no further architect spec** — it is ready for senior-dev pickup against
+the existing plan.
 
 ## Cross-links
 

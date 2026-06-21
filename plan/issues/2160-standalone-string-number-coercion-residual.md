@@ -197,3 +197,18 @@ equality, and all four prior #2160 suites (47). tsc + prettier + biome lint +
 coercion-sites + any-box gates clean. (Pre-existing unrelated failures on main:
 issue-929 accessor descriptor, imported-string-constants e2e, bigint-string —
 all fail identically on pristine `origin/main`.)
+
+---
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — OPEN, OWNED (cs-2160) — verify-only
+
+Per tech-lead direction this issue is **owned by `cs-2160`** — verified, not
+claimed. Confirmed still open: the landed wrapper-valueOf slice test
+(`tests/issue-2160-wrapper-valueof-standalone.test.ts`) is **green** (3/3), but
+the bulk of the 635-test bucket remains — an `any`-typed `new String("ab").valueOf()`
+still null-derefs in standalone (the cs-2160 slice gated the fix on the
+`isStringWrapperType` *binding* shape; the `any`-typed receiver still hits the
+`$AnyString` fast-path), and the remaining wrapper-object / coercion-edge
+residuals (gated on value-rep #2072/#2104 and the #1917 coercion engine) are
+untouched. This is incremental slice work proceeding correctly under its owner.
+Leave `status: ready`, owner cs-2160. Real ongoing sprint-64 dev work.

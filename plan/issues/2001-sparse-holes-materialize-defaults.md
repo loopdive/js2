@@ -4,7 +4,7 @@ title: "sparse arrays: holes materialize as element-type defaults and HOFs visit
 status: ready
 sprint: 64
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-21
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -88,3 +88,18 @@ feasibility is `hard` / reasoning_effort `high`. Routing back to
 architect for the representation ratification (as #2001/#1852/#1931) before
 any dev implementation — dev-1 is moving to standalone-priority work per
 tech-lead direction.
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN, ARCHITECT-GATED
+
+Re-smoke-tested 3 of the 4 documented cases on current main (host mode) — **still
+live**: `[1,,3].forEach` count → `3` (exp `2`); `b=[1]; b[5]=9; b.join(",")` →
+`"1,0,0,0,0,9"` (exp `"1,,,,,9"`); `const [p,q]=[1]; String(q)` → `"0"` (exp
+`"undefined"`). Unchanged from the 2026-06-17 re-validation.
+
+**NOT dispatchable to a dev as-is.** The fix is gated on a representation
+decision (hole sentinel vs side bitmap vs accept-divergence for typed arrays) the
+issue itself flags as "Architect input recommended before dev dispatch; intersects
+#1852 per-backend value representation." Blast radius = the whole dense-WasmGC-vec
+representation. **Needs an architect representation ratification (the S0 of #2001
+/ #1852 / #1931) before any dev slice.** Keep `status: ready` but do NOT put a
+plain-dev on it without the architect decision first.

@@ -78,3 +78,19 @@ The entire scope is therefore still open: the `defineBuiltin(name, {elementKinds
 lower})` scaffold, the `join` + `fromCharCode` migration onto it across
 host/native/standalone, and the cross-lane "deliberate bug fails all lanes" guard
 (acceptance-2). Status stays `ready` for senior-dev pickup.
+
+## Disposition (PO true-up 2026-06-21, sprint-64, origin/main d0bf058bc) — CONFIRMED OPEN (senior-dev refactor, no functional repro)
+
+Verified the misattribution: PR #1550 (`test(#2181): …`) is a test262-runner
+harness change (belongs to #2183), and implements **none** of the `defineBuiltin`
+scaffold. The scaffold and the `join`/`fromCharCode` migration are entirely
+un-started. No functional repro — this is a refactor whose acceptance is "their
+historical issue suites stay green + a deliberate bug fails all lanes," not a
+test262 row.
+
+**Stays `status: ready` for SENIOR-DEV.** `feasibility: hard`, `reasoning_effort:
+high`, broad blast radius across the builtin-registration scanner sites. It is a
+maintainability/bug-density refactor with no direct test262 pass-count movement —
+lower sprint-64 priority than the standalone-conformance issues. Needs a bounded
+first-slice spec (`join` + `fromCharCode` migration) before generalizing, per the
+Routing note. BACKLOG candidate unless a senior-dev slot is free after #2515/#2160.
