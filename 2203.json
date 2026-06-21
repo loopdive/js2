@@ -1,8 +1,9 @@
 {
   "id": "2203",
   "assignee": "ttraenkler/dev-dstr2203",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2203-array-dstr-elision-default",
   "claimed_at": "2026-06-21T01:39:41Z",
-  "updated_at": "2026-06-21T01:39:41Z"
+  "updated_at": "2026-06-21T02:26:50Z",
+  "released_at": "2026-06-21T02:26:50Z"
 }
