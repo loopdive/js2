@@ -19,6 +19,7 @@ import {
 } from "./index.js";
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { compileObjectLiteralAsExternref } from "./literals.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitLocalTdzInit } from "./statements/tdz.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -536,7 +537,25 @@ export function destructureParamObjectExternref(
           const initThen: Instr[] = [];
           fctx.body = initThen;
           // Compile initializer; coerce to externref so we can store back.
-          const initType = compileExpression(ctx, fctx, element.initializer, elemType);
+          // (#2568) In a no-JS-host target the nested binding's value is read
+          // back through `__extern_get` (this is the externref destructuring
+          // path). A plain object-literal default compiled with the externref
+          // hint materializes as a CLOSED STRUCT (`extern.convert_any` of a
+          // WasmGC struct), which `__extern_get` cannot index → the inner
+          // bindings read 0. Build the default as a `$Object` instead (same fix
+          // as literals.ts:272 for nested struct-consumed literals) so the
+          // subsequent `__extern_get` reads its fields. Only for resolvable
+          // key/value object literals; everything else keeps the normal path.
+          const initIsPlainObjectLiteral =
+            (ctx.standalone || ctx.wasi) &&
+            ts.isObjectLiteralExpression(element.initializer) &&
+            element.initializer.properties.length > 0 &&
+            element.initializer.properties.every(
+              (p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p),
+            );
+          const initType = initIsPlainObjectLiteral
+            ? compileObjectLiteralAsExternref(ctx, fctx, element.initializer as ts.ObjectLiteralExpression)
+            : compileExpression(ctx, fctx, element.initializer, elemType);
           if (initType && initType.kind !== "externref") {
             if (initType.kind === "ref" || initType.kind === "ref_null") {
               fctx.body.push({ op: "extern.convert_any" } as Instr);
@@ -599,6 +618,48 @@ export function emitExternrefDestructureGuard(ctx: CodegenContext, fctx: Functio
     fctx.body.push({ op: "call", funcIdx: undefIdx });
     fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildDestructureNullThrow(ctx, fctx), else: [] });
   }
+}
+
+/**
+ * (#2568) Derive the WasmGC struct type a destructuring object binding pattern
+ * resolves to, as a `ref`-typed compile hint for the pattern's default object
+ * literal. Mirrors the struct-type derivation in `destructureParamObject` below
+ * so an outer param default materializes in the SAME shape the destructuring
+ * `ref.test`/`ref.cast` expects (otherwise the default boxes its nested fields
+ * to externref → a `{ field: externref }` struct that fails the `ref.test`, drops
+ * to the `__extern_get` else-branch, and reads 0). Returns `undefined` when no
+ * resolvable struct exists (rest pattern, missing fields, primitive) — the
+ * caller then keeps the externref hint. Shared by the class-method
+ * (class-bodies.ts) and plain-function (function-body.ts) param-default sites.
+ */
+export function structHintForBindingPattern(
+  ctx: CodegenContext,
+  pattern: ts.ObjectBindingPattern,
+): ValType | undefined {
+  if (pattern.elements.some((e) => ts.isBindingElement(e) && !!e.dotDotDotToken)) return undefined;
+  const tsType = ctx.checker.getTypeAtLocation(pattern);
+  if (!tsType) return undefined;
+  ensureStructForType(ctx, tsType);
+  const typeName = ctx.anonTypeMap.get(tsType) ?? tsType.getSymbol()?.name ?? tsType.aliasSymbol?.name;
+  const structTypeIdx = typeName ? ctx.structMap.get(typeName) : undefined;
+  if (structTypeIdx === undefined) return undefined;
+  // Only hint the struct when every named pattern property is declared on it —
+  // otherwise the destructuring itself abandons the struct fast path and a
+  // struct hint would just mismatch.
+  const structName = ctx.typeIdxToStructName.get(structTypeIdx);
+  const fields = structName ? ctx.structFields.get(structName) : undefined;
+  if (!fields) return undefined;
+  for (const element of pattern.elements) {
+    if (!ts.isBindingElement(element) || element.dotDotDotToken) continue;
+    const pn = element.propertyName ?? element.name;
+    let propText: string | undefined;
+    if (ts.isIdentifier(pn)) propText = pn.text;
+    else if (ts.isStringLiteral(pn)) propText = pn.text;
+    else if (ts.isNumericLiteral(pn)) propText = pn.text;
+    if (propText === undefined) continue;
+    if (!fields.some((f) => f.name === propText)) return undefined;
+  }
+  return { kind: "ref", typeIdx: structTypeIdx };
 }
 
 /**

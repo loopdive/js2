@@ -84,3 +84,39 @@ that Wasm subsequently re-reads.
   proxy trap + boundary coercion, and the indexed-store path for Arrays.
 - Overlaps the descriptor/struct-target-writeback design in #1630/#1631 —
   coordinate so both share one struct-setter export mechanism rather than two.
+
+## 2026-06-21 sd-4 — root cause revised, attempt REVERTED (net-negative), retry guidance
+
+**Framing was stale.** This is NOT a missing-`__sset_` host write-back build:
+the `__sset_<field>` setters already exist and `_safeSet` already wires them.
+The real bug is a **codegen dispatch gap**: a call `obj.method(args)` where
+`method` is a **host function value** stored in `obj`
+(`var o = {}; o.pop = Array.prototype.pop; o.pop()`) falls past every
+static/struct-method handler and hits the **graceful-null fallback** in
+`compileCallExpression`, which compiles the callee property-access, **drops**
+the method, and pushes `ref.null.extern` — so the call is never made
+(`o.pop()` yields `null` not `undefined`, no mutation).
+
+**Attempt (PR #1844) reverted + closed.** The dual-path fix — route such calls
+to `__extern_method_call(receiver, method, args)` with the live-mirror proxy
+before the graceful-null fallback — fixed the 19-file generic-method-on-
+plain-object cluster locally (0 → 11/19) but was **net −200 / 323 regressions
+on the full merge_group test262 gate**. The graceful-null `undefined`-return is
+**load-bearing for far more call shapes** than the targeted cluster; the
+syntactic gate (any unresolved `obj.method()`) was far too broad.
+
+**Retry requirements (MANDATORY before any re-attempt):**
+1. **Gate MUCH tighter** — route to `__extern_method_call` ONLY when the callee
+   field is *provably a host function value* (e.g. the receiver is statically an
+   object/struct whose `<method>` is a known externref field assigned a host
+   function), NOT every unresolved property-access call. The broad
+   "fell-through-to-fallback" trigger caused the −200.
+2. **Validate via the FULL gate** — `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh`
+   (full local test262, ~68 min) OR accepted-into-the-merge_group-as-validator.
+   A scoped sweep / N-file sample CANNOT validate a dispatch/call-path change
+   (standing team rule, 2026-06-21). Confirm net ≥ 0, ratio < 10%, no bucket
+   > 50 before enqueue.
+
+Residual carved to **#2573** (reading a missing property on a plain `{}` object
+returns `null` not `undefined` — the `obj.length === undefined` assertions in
+the longer cluster variants), an orthogonal property-read bug.

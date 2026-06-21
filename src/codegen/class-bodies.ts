@@ -19,6 +19,7 @@ import {
   destructureParamArray,
   destructureParamObject,
   isNullOrUndefinedLiteral,
+  structHintForBindingPattern,
 } from "./destructuring-params.js";
 import { emitThrowReferenceError, getFuncParamTypes } from "./expressions/helpers.js";
 import { pushDefaultValue } from "./type-coercion.js";
@@ -1982,14 +1983,36 @@ function compileClassBodiesInner(
           if (isArrayPatternExternref) {
             (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
           }
+          // (#2568) For an OBJECT binding pattern whose param lowers to externref
+          // (standalone / dynamic object), compile the default object literal
+          // against the binding pattern's STRUCT type rather than externref.
+          // Hinting externref boxes each nested field to externref, producing a
+          // struct shape (`{ w: externref }`) that does NOT match the shape the
+          // destructuring `ref.test`/`ref.cast` derives from the pattern's TS type
+          // (`{ w: (ref null $inner) }`). The mismatch makes the fast struct path's
+          // `ref.test` fail, dropping to the __extern_get else-branch which can't
+          // read the boxed nested fields → the bindings read 0. Materializing the
+          // default as the pattern's struct (then `extern.convert_any` to the
+          // externref param local, which preserves struct identity) makes the
+          // later `ref.test` succeed — exactly the shape the call-site (provided
+          // value) path already builds. Host mode is uniform-JS-object and uses
+          // the externref hint unchanged.
+          const objectPatternStructHint =
+            ts.isObjectBindingPattern(param.name) && paramType.kind === "externref"
+              ? structHintForBindingPattern(ctx, param.name)
+              : undefined;
           let methDfltType: ValType | null;
           try {
-            methDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
+            methDfltType = compileExpression(ctx, fctx, param.initializer, objectPatternStructHint ?? paramType);
           } finally {
             if (isArrayPatternExternref) {
               (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = prevForceVec;
             }
           }
+          // Coerce the materialized value to the param's wasm type (externref).
+          // When we hinted a struct, this is the struct→externref `extern.convert_any`
+          // that boxes the struct ref into the externref param while preserving its
+          // concrete struct identity for the downstream `ref.test`.
           if (methDfltType && !valTypesMatch(methDfltType, paramType)) {
             coerceType(ctx, fctx, methDfltType, paramType);
           }

@@ -1,9 +1,10 @@
 ---
 id: 820
 title: "Nullish TypeError / null-pointer / illegal-cast umbrella (6,993 FAIL)"
-status: ready
+status: in-progress
+assignee: sd-4
 created: 2026-03-28
-updated: 2026-04-09
+updated: 2026-06-21
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -306,3 +307,47 @@ individual sub-issues.
 - **Temporal contamination**: ensure all baselines filter
   `proposal:` scopes out — Temporal contributes 700+ similar-looking
   null derefs that are not codegen bugs.
+
+## 2026-06-21 sd-4 — async-gen-meth-dflt-* illegal-cast cluster fixed (PR pending)
+
+Re-bucketed against the fresh baseline (`.test262-cache/test262-current.jsonl`,
+run 2026-06-20): umbrella now **680 official fails** (null_deref 211 /
+type_error 248 / illegal_cast 221). The single largest concrete `illegal_cast`
+cluster was the **100-file `async-gen-meth-dflt-*` family** (all 50 unique
+`dflt`-template variants × static/non-static × statements/expressions), every
+one failing with `illegal cast in __closure_3/4()` *before* the test's intended
+error path could run.
+
+**Root cause (deeper than #1543's destructure-default theory):** the failure
+is in the **inline dynamic call dispatcher**, `tryEmitInlineDynamicCall` in
+`src/codegen/expressions/calls.ts`. An async-generator method extracted as a
+value (`var m = C.prototype.method; m()`) is wrapped into a closure struct and
+called through this dispatcher. Two defects:
+
+1. **Struct-typed `ref.test` over-matched across arities.** Every `__fn_wrap_*`
+   wrapper struct subtypes a single *root* wrapper
+   (`getOrCreateFuncRefWrapperTypes`, closures.ts:3270). So
+   `ref.test (ref <root-wrapper-struct>)` is TRUE for wrapper values of *every*
+   arity. A 0-arg call to a 1-formal method matched an arity-0 dispatch arm,
+   did `struct.get 0` + `ref.cast (ref <arity-0 funcType>)` on the arity-1
+   funcref → **`illegal cast`**.
+2. **No arity adaptation.** Candidates were filtered to *exact* arity, so a
+   0-arg call to a 1-formal method found no candidate and silently returned
+   `undefined` instead of invoking the method (which must apply its default
+   param and run the spec-mandated destructure).
+
+**Fix:** discriminate by the **funcref signature** (`ref.test (ref funcTypeIdx)`
+on field 0 — encodes the exact param count + result, so each arm fires only for
+its own signature regardless of struct subtyping), and accept candidates with
+`paramTypes.length >= arity`, padding missing trailing args with `undefined`.
+
+**Result:** 96/100 of the cluster now pass; 0 regressions in a 160-file
+previously-passing sample (dstr / closure / default-param families), 0 new
+hard errors, stack-balance gate OK. The directly-affected `issue-1063` /
+`issue-1712-dynamic-dispatch` unit tests stay green. Regression test:
+`tests/issue-820-async-gen-dstr-default-dispatch.test.ts`.
+
+**Residual carved to #2569:** the 4 `…-dflt-obj-ptrn-prop-eval-err` variants
+(`{ [thrower()]: x }`) — a distinct, orthogonal defect: a **computed property
+key in a destructuring pattern is not evaluated**, so the throwing key never
+fires. See `plan/issues/2569-computed-key-dstr-pattern-not-evaluated.md`.

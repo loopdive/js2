@@ -7380,7 +7380,21 @@ function collectStringMethodImports(ctx: CodegenContext, sourceFile: ts.SourceFi
       const prop = node.expression;
       const receiverType = ctx.checker.getTypeAtLocation(prop.expression);
       const methodName = prop.name.text;
-      if (isStringType(receiverType) && Object.prototype.hasOwnProperty.call(STRING_METHODS, methodName)) {
+      // (#2576, extends #2187) An `any`/unknown receiver in native-string mode may
+      // hold a native `$AnyString` at runtime; calls.ts emits a runtime-guarded
+      // native string method for it (compileGuardedNativeStringMethodCall). That
+      // guard's then-arm needs the same native helpers (`__str_charAt`,
+      // `__str_slice`, `__str_indexOf`, …) registered, so include `any`-typed
+      // receivers calling a STRING_METHODS name in the pre-scan. Without this the
+      // funcMap lookup misses and the guarded dispatch has no helper to call.
+      const anyReceiverNativeString =
+        (ctx.wasi || ctx.standalone) &&
+        ctx.nativeStrings &&
+        (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+      if (
+        (isStringType(receiverType) || anyReceiverNativeString) &&
+        Object.prototype.hasOwnProperty.call(STRING_METHODS, methodName)
+      ) {
         needed.add(methodName);
         // Track if the method has a non-string arg (RegExp or custom object
         // implementing Symbol.replace/Symbol.match/etc). The native helpers

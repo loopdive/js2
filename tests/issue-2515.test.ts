@@ -179,6 +179,41 @@ describe("#2515 S0 — standalone late-import global-index-shift emit bug", () =
       expect((instance.exports as { test?: () => number }).test?.()).toBe(1);
     }
   });
+
+  // ── S1: Object.create(o, descs) generic descriptor apply ──────────────────
+
+  it("Object.create(proto, descriptorMapLiteral) compiles standalone (no __defineProperty_desc refusal)", async () => {
+    // The `Object.create(o, { x: descObj })` path emitted the refused
+    // `env::__defineProperty_desc` host import in standalone (#1472 Phase B),
+    // a hard compile error. S0 unblocked routing it to the native
+    // `__obj_define_from_desc` (the same native `Object.defineProperty` uses).
+    const r = await compile(
+      `export function test(): number {
+         const o = Object.create(null, { x: { value: 7 }, y: { value: 4 } });
+         return (o as any).x;
+       }`,
+      { fileName: "test.ts", target: "standalone" },
+    );
+    expect(r.success, r.success ? "" : r.errors.map((e) => e.message).join("\n")).toBe(true);
+    // No leaked `env::__defineProperty_desc` host import.
+    const hostImports = r.imports.map((i) => `${i.module}::${i.name}`);
+    expect(hostImports.some((l) => l === "env::__defineProperty_desc")).toBe(false);
+    // Value descriptor is applied + readable (single-property read).
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as { test?: () => number }).test?.()).toBe(7);
+  });
+
+  it("Object.create with an identifier descriptor value compiles + applies the value", async () => {
+    const res = await runStandalone(`
+      export function test(): number {
+        const dv: any = { value: 11, enumerable: true };
+        const o = Object.create(null, { x: dv });
+        return (o as any).x;
+      }
+    `);
+    expect(res.success, res.errors).toBe(true);
+    expect(res.value).toBe(11);
+  });
 });
 
 describe("#2515 S0 — host (GC) mode unchanged", () => {

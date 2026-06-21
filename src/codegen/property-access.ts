@@ -1881,6 +1881,62 @@ export function receiverIsNativeStringValType(
 }
 
 /**
+ * (#2576, extends #2187) Generalisation of {@link receiverIsNativeStringValType}
+ * (which only catches a bare identifier whose *compiled local ValType* is a
+ * native string ref) to *any* `any`/`unknown`-typed receiver whose *runtime*
+ * value may be a native `$AnyString` even though no local ValType says so —
+ * object property values (`o.v`), generator yield reads, catch bindings, indexed
+ * element reads (`Object.values(o)[0]`), nested reads (`o.a.b`). These compile to
+ * an opaque `externref`, so the value can only be recognised at runtime: callers
+ * MUST emit a `ref.test $AnyString` guard (see
+ * {@link emitGuardedNativeStringLength} and `compileGuardedNativeStringMethodCall`)
+ * and keep the prior behaviour in the else arm for non-string values.
+ *
+ * Narrow scope: `any`/`unknown` only (NOT `object`/`{}`, NOT unions containing
+ * `string`), native-string mode only (host/gc mode's generic `__extern_get`
+ * already returns the correct length from the real JS value).
+ */
+export function receiverMayBeNativeStringAtRuntime(ctx: CodegenContext, recv: ts.Expression): boolean {
+  if (!(ctx.wasi || ctx.standalone)) return false;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  const t = ctx.checker.getTypeAtLocation(recv);
+  return (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+}
+
+/**
+ * (#2576, extends #2187) Emit a runtime-guarded native-string `.length` read for
+ * an `any`-typed receiver whose value is already on the stack as an `externref`.
+ * The externref is saved to a temp; on a `ref.test $AnyString` hit the value is
+ * cast to `$AnyString` and its `len` (field 0, valid for FlatString & ConsString
+ * — no flatten needed for length) is read; on a miss the caller-supplied builder
+ * produces the prior generic behaviour (e.g. `__extern_length` for an
+ * array-in-`any`, or `i32.const 0`). The builder receives the externref temp's
+ * local index so it can re-push the original externref. Both arms produce i32.
+ */
+function emitGuardedNativeStringLength(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  buildElseInstrs: (recvExternLocal: number) => Instr[],
+): void {
+  const recvExtern = allocLocal(fctx, `__strlen_ext_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvExtern });
+  fctx.body.push({ op: "local.get", index: recvExtern });
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      { op: "local.get", index: recvExtern } as Instr,
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+      { op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 } as Instr,
+    ],
+    else: buildElseInstrs(recvExtern),
+  } as Instr);
+}
+
+/**
  * (#2179) When the module uses `delete <member>` (JS-host mode only), route an
  * `any`/`unknown`-typed property READ through the tombstone-aware `__extern_get`
  * host helper instead of the inline `ref.test`+`struct.get` fast-path. Returns
@@ -3620,6 +3676,29 @@ export function compilePropertyAccess(
           }
           const lenFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
           flushLateImportShifts(ctx, fctx);
+          // (#2576, extends #2187) The `any`/unknown value may actually be a
+          // native `$AnyString` (object string-value read, generator yield read,
+          // catch binding, indexed element read). `__extern_length` reads
+          // $ObjVec/array length and returns 0 for a bare string, so guard with
+          // `ref.test $AnyString` first: a string hit reads `$AnyString.len`
+          // (field 0); the miss falls to the existing `__extern_length`
+          // array/$ObjVec reader. Always computes an i32 length, converted to f64
+          // once below in !fast mode. sd-3's `receiverIsNativeStringValType` arm
+          // (above) already handles the bare-identifier-with-string-ref-local
+          // case; this covers the opaque-externref cases it cannot see statically.
+          if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+            emitGuardedNativeStringLength(ctx, fctx, (recvExternLocal) =>
+              lenFn !== undefined
+                ? [
+                    { op: "local.get", index: recvExternLocal } as Instr,
+                    { op: "call", funcIdx: lenFn } as Instr,
+                    { op: "i32.trunc_sat_f64_s" } as Instr,
+                  ]
+                : [{ op: "i32.const", value: 0 } as Instr],
+            );
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          }
           if (lenFn !== undefined) {
             fctx.body.push({ op: "call", funcIdx: lenFn } as Instr);
             if (ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);

@@ -3754,6 +3754,164 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
 
+  // ── __object_is(externref a, externref b) -> i32 (#2042 S3 — Object.is) ────
+  //
+  // SameValue (§7.2.10) over two boxed externrefs. Tag-dispatched like the
+  // union-helper `===` lowering, but with the SameValue numeric rule:
+  // NaN is SameValue NaN, and +0 is NOT SameValue -0. Comparing the f64 bit
+  // patterns (`i64.reinterpret_f64` + `i64.eq`) gives exactly that — equal NaN
+  // bit patterns compare equal, and +0 (0x0…) vs -0 (0x8000…) compare unequal.
+  // boolean → unbox i32; bigint → i64; both-null → equal; else ref identity.
+  // standalone-only (host mode owns `__object_is` via its JS import).
+  if (ctx.standalone) {
+    addUnionImportsViaRegistry(ctx);
+    const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
+    const typeofBoolIdx = ctx.funcMap.get("__typeof_boolean")!;
+    const typeofBigIdx = ctx.funcMap.get("__typeof_bigint")!;
+    const unboxNumIdx = ctx.funcMap.get("__unbox_number")!;
+    const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean")!;
+    const toBigIdx = ctx.funcMap.get("__to_bigint")!;
+    const EQ_HEAP = -19; // WasmGC `eq` abstract heap type
+
+    // params: a=0, b=1 ; locals: aa=2 (anyref), ba=3 (anyref)
+    const bothTag = (tagIdx: number): Instr[] => [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: tagIdx } as Instr,
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: tagIdx } as Instr,
+      { op: "i32.and" },
+    ];
+    // Reference identity over the WasmGC `eq` heap (the anyref temps are already
+    // materialised in locals 2/3 by `identityArm`'s preamble below).
+    const refIdentityArm: Instr[] = [
+      { op: "local.get", index: 2 },
+      { op: "ref.test", typeIdx: EQ_HEAP } as Instr,
+      { op: "local.get", index: 3 },
+      { op: "ref.test", typeIdx: EQ_HEAP } as Instr,
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: EQ_HEAP } as Instr,
+          { op: "local.get", index: 3 },
+          { op: "ref.cast", typeIdx: EQ_HEAP } as Instr,
+          { op: "ref.eq" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      } as Instr,
+    ];
+    // String SameValue = value equality (flatten both, __str_equals); else ref
+    // identity. `__str_flatten`/`__str_equals` are resolved at the top of this
+    // same `ensureObjectRuntime` pass (object-runtime helpers already call them,
+    // e.g. __obj_hash/__obj_find), so the call indices are regime-consistent.
+    const stringOrIdentityArm: Instr[] =
+      strFlattenIdx !== undefined && strEqualsIdx !== undefined && anyStrTypeIdx >= 0
+        ? [
+            { op: "local.get", index: 2 },
+            { op: "ref.test", typeIdx: anyStrTypeIdx } as Instr,
+            { op: "local.get", index: 3 },
+            { op: "ref.test", typeIdx: anyStrTypeIdx } as Instr,
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [
+                { op: "local.get", index: 2 },
+                { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr,
+                { op: "call", funcIdx: strFlattenIdx } as Instr,
+                { op: "local.get", index: 3 },
+                { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr,
+                { op: "call", funcIdx: strFlattenIdx } as Instr,
+                { op: "call", funcIdx: strEqualsIdx } as Instr,
+              ],
+              else: refIdentityArm,
+            } as Instr,
+          ]
+        : refIdentityArm;
+    const identityArm: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" } as Instr,
+      { op: "local.set", index: 2 },
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" } as Instr,
+      { op: "local.set", index: 3 },
+      ...stringOrIdentityArm,
+    ];
+    const bigintArm = (elseArm: Instr[]): Instr[] => [
+      ...bothTag(typeofBigIdx),
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: toBigIdx } as Instr,
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: toBigIdx } as Instr,
+          { op: "i64.eq" },
+        ],
+        else: elseArm,
+      } as Instr,
+    ];
+    const boolArm = (elseArm: Instr[]): Instr[] => [
+      ...bothTag(typeofBoolIdx),
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: unboxBoolIdx } as Instr,
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: unboxBoolIdx } as Instr,
+          { op: "i32.eq" },
+        ],
+        else: elseArm,
+      } as Instr,
+    ];
+    const numberArm = (elseArm: Instr[]): Instr[] => [
+      ...bothTag(typeofNumIdx),
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          // SameValue numbers: compare f64 bit patterns (NaN==NaN, +0!=-0).
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: unboxNumIdx } as Instr,
+          { op: "i64.reinterpret_f64" } as Instr,
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: unboxNumIdx } as Instr,
+          { op: "i64.reinterpret_f64" } as Instr,
+          { op: "i64.eq" },
+        ],
+        else: elseArm,
+      } as Instr,
+    ];
+    const nullArm = (rest: Instr[]): Instr[] => [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      { op: "local.get", index: 1 },
+      { op: "ref.is_null" },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: 1 }],
+        else: rest,
+      } as Instr,
+    ];
+    registerNative(
+      "__object_is",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+      [
+        { name: "aa", type: { kind: "anyref" } },
+        { name: "ba", type: { kind: "anyref" } },
+      ],
+      nullArm(numberArm(boolArm(bigintArm(identityArm)))),
+    );
+  }
+
   // ── __defineProperty_value (#1629 S6 — native data-descriptor define) ─────
   //
   // `Object.defineProperty(obj, key, { value, writable?, enumerable?,
@@ -3786,8 +3944,181 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //
   // params: 0=obj 1=key 2=value 3=flagsF64
   // locals: 4=o(ref null $Object) 5=any(anyref) 6=cap 7=load 8=nflags(i32) 9=hf(i32)
+  //         10=e(ref null $PropEntry) 11=efl(i32)  — #2042 S4 ValidateAndApply
   {
     const NATIVE_ATTR_MASK = FLAG_WRITABLE | FLAG_ENUMERABLE | FLAG_CONFIGURABLE; // 0x07
+
+    // #2042 S4 — ValidateAndApplyPropertyDescriptor (§10.1.6.3) preflight for the
+    // DATA-descriptor define. The host flags f64 carries, beyond the value bits
+    // 0/1/2, "specified" bits 3/4/5 and a hasValue bit 7 (see encoding comment
+    // above), so we can tell which attributes the descriptor actually mentions —
+    // exactly what the spec's "Desc has a [[X]] field" conditions need. We throw a
+    // catchable TypeError (same exn-tag pattern as __defineProperties) instead of
+    // silently inserting when a (re)definition is invalid. Defaults
+    // (CompletePropertyDescriptor, §6.2.6.4) are already correct on insert.
+    addUnionImportsViaRegistry(ctx);
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    const s4TypeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
+    const s4ExnTagIdx = ensureExnTag(ctx);
+    const s4ObjectIsIdx = ctx.funcMap.get("__object_is")!;
+    const HOST_WRITABLE_SPECIFIED = 1 << 3;
+    const HOST_ENUMERABLE_SPECIFIED = 1 << 4;
+    const HOST_CONFIGURABLE_SPECIFIED = 1 << 5;
+    const HOST_HAS_VALUE = 1 << 7;
+    const s4Throw = (message: string): Instr[] => {
+      addStringConstantGlobal(ctx, message);
+      return [
+        ...stringConstantExternrefInstrs(ctx, message),
+        { op: "call", funcIdx: s4TypeErrorCtorIdx },
+        { op: "throw", tagIdx: s4ExnTagIdx } as Instr,
+      ];
+    };
+    // `(hf & valueBit) != 0` as an i32 0/1.
+    const hfBit = (bit: number): Instr[] => [
+      { op: "local.get", index: 9 },
+      { op: "i32.const", value: bit },
+      { op: "i32.and" },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ne" },
+    ];
+    // `(efl & flagBit) != 0` as an i32 0/1 (existing entry's flag word, local 12).
+    const eflBit = (bit: number): Instr[] => [
+      { op: "local.get", index: 12 },
+      { op: "i32.const", value: bit },
+      { op: "i32.and" },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ne" },
+    ];
+    // The preflight body, emitted after `o` (local 4) and `hf` (local 9) are set,
+    // before the grow/insert. §10.1.6.3 in spec order.
+    const s4Preflight: Instr[] = [
+      // e = __obj_find(o, key)  (local 11)
+      { op: "local.get", index: 4 },
+      { op: "ref.as_non_null" },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: objFindIdx },
+      { op: "local.tee", index: 11 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        // current is undefined (new property): §10.1.6.3 step 2 — reject if the
+        // object is non-extensible.
+        then: [
+          { op: "local.get", index: 4 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+          { op: "i32.const", value: OBJ_FLAG_NONEXTENSIBLE },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: s4Throw("TypeError: Cannot define property, object is not extensible"),
+          } as Instr,
+        ],
+        // current exists: §10.1.6.3 step 4 — if current is non-configurable, gate
+        // the forbidden transitions.
+        else: [
+          // efl = e.flags  (local 12)
+          { op: "local.get", index: 11 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+          { op: "local.set", index: 12 },
+          // if (efl & FLAG_CONFIGURABLE) == 0  → current is non-configurable
+          ...eflBit(FLAG_CONFIGURABLE),
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              // 4.a: Desc specifies configurable:true → reject.
+              ...hfBit(HOST_CONFIGURABLE_SPECIFIED),
+              ...hfBit(1 << 2), // configurable value bit
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: s4Throw(
+                  "TypeError: Cannot redefine property: configurable attribute of a non-configurable property",
+                ),
+              } as Instr,
+              // 4.b: Desc specifies enumerable that differs from current → reject.
+              ...hfBit(HOST_ENUMERABLE_SPECIFIED),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  ...hfBit(1 << 1), // desc enumerable value
+                  ...eflBit(FLAG_ENUMERABLE), // current enumerable
+                  { op: "i32.ne" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: s4Throw(
+                      "TypeError: Cannot redefine property: enumerable attribute of a non-configurable property",
+                    ),
+                  } as Instr,
+                ],
+              } as Instr,
+              // 4.c: data↔accessor conversion. This is the DATA define path; if the
+              // current entry is an accessor, converting it to data is forbidden.
+              ...eflBit(FLAG_ACCESSOR),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: s4Throw(
+                  "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+                ),
+              } as Instr,
+              // 4.d: both data, current non-writable (FLAG_WRITABLE clear) → reject
+              // a writable:true request OR a value change (SameValue).
+              ...eflBit(FLAG_WRITABLE),
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  // writable false→true
+                  ...hfBit(HOST_WRITABLE_SPECIFIED),
+                  ...hfBit(1 << 0), // desc writable value
+                  { op: "i32.and" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: s4Throw(
+                      "TypeError: Cannot redefine property: writable attribute of a non-configurable, non-writable property",
+                    ),
+                  } as Instr,
+                  // value change: Desc has a value (hasValue) AND
+                  // !SameValue(descValue, e.value) → reject.
+                  ...hfBit(HOST_HAS_VALUE),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      // __object_is(descValue (param 2), e.value)
+                      { op: "local.get", index: 2 },
+                      { op: "local.get", index: 11 },
+                      { op: "ref.as_non_null" },
+                      { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+                      { op: "extern.convert_any" } as Instr,
+                      { op: "call", funcIdx: s4ObjectIsIdx },
+                      { op: "i32.eqz" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: s4Throw("TypeError: Cannot assign to read only property of a non-configurable property"),
+                      } as Instr,
+                    ],
+                  } as Instr,
+                ],
+              } as Instr,
+            ],
+          } as Instr,
+        ],
+      } as Instr,
+    ];
+
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → return obj (lenient no-op,
       // matches the host import returning O unchanged)
@@ -3817,6 +4148,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "i32.const", value: NATIVE_ATTR_MASK },
       { op: "i32.and" },
       { op: "local.set", index: 8 },
+      // #2042 S4 — ValidateAndApplyPropertyDescriptor preflight (throws on an
+      // invalid (re)definition before any table mutation).
+      ...s4Preflight,
       // load = o.count + o.tombstones ; cap = o.props.len ; grow at LF 0.7
       { op: "local.get", index: 4 },
       { op: "ref.as_non_null" },
@@ -3881,6 +4215,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "nflags", type: { kind: "i32" } },
         { name: "hf", type: { kind: "i32" } },
         { name: "seq", type: { kind: "i32" } },
+        { name: "e", type: entryRefNull }, // #2042 S4 — existing entry (local 11)
+        { name: "efl", type: { kind: "i32" } }, // #2042 S4 — existing flags (local 12)
       ],
       body,
     );
@@ -5152,164 +5488,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // its OBJECT_RUNTIME_HELPER_NAMES entry land as a follow-up). The read-side
   // reflection natives above (__getOwnPropertyNames / __getOwnPropertySymbols /
   // __object_getOwnPropertyDescriptors) are the shipped S3 slice.
-
-  // ── __object_is(externref a, externref b) -> i32 (#2042 S3 — Object.is) ────
-  //
-  // SameValue (§7.2.10) over two boxed externrefs. Tag-dispatched like the
-  // union-helper `===` lowering, but with the SameValue numeric rule:
-  // NaN is SameValue NaN, and +0 is NOT SameValue -0. Comparing the f64 bit
-  // patterns (`i64.reinterpret_f64` + `i64.eq`) gives exactly that — equal NaN
-  // bit patterns compare equal, and +0 (0x0…) vs -0 (0x8000…) compare unequal.
-  // boolean → unbox i32; bigint → i64; both-null → equal; else ref identity.
-  // standalone-only (host mode owns `__object_is` via its JS import).
-  if (ctx.standalone) {
-    addUnionImportsViaRegistry(ctx);
-    const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
-    const typeofBoolIdx = ctx.funcMap.get("__typeof_boolean")!;
-    const typeofBigIdx = ctx.funcMap.get("__typeof_bigint")!;
-    const unboxNumIdx = ctx.funcMap.get("__unbox_number")!;
-    const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean")!;
-    const toBigIdx = ctx.funcMap.get("__to_bigint")!;
-    const EQ_HEAP = -19; // WasmGC `eq` abstract heap type
-
-    // params: a=0, b=1 ; locals: aa=2 (anyref), ba=3 (anyref)
-    const bothTag = (tagIdx: number): Instr[] => [
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: tagIdx } as Instr,
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: tagIdx } as Instr,
-      { op: "i32.and" },
-    ];
-    // Reference identity over the WasmGC `eq` heap (the anyref temps are already
-    // materialised in locals 2/3 by `identityArm`'s preamble below).
-    const refIdentityArm: Instr[] = [
-      { op: "local.get", index: 2 },
-      { op: "ref.test", typeIdx: EQ_HEAP } as Instr,
-      { op: "local.get", index: 3 },
-      { op: "ref.test", typeIdx: EQ_HEAP } as Instr,
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: 2 },
-          { op: "ref.cast", typeIdx: EQ_HEAP } as Instr,
-          { op: "local.get", index: 3 },
-          { op: "ref.cast", typeIdx: EQ_HEAP } as Instr,
-          { op: "ref.eq" },
-        ],
-        else: [{ op: "i32.const", value: 0 }],
-      } as Instr,
-    ];
-    // String SameValue = value equality (flatten both, __str_equals); else ref
-    // identity. `__str_flatten`/`__str_equals` are resolved at the top of this
-    // same `ensureObjectRuntime` pass (object-runtime helpers already call them,
-    // e.g. __obj_hash/__obj_find), so the call indices are regime-consistent.
-    const stringOrIdentityArm: Instr[] =
-      strFlattenIdx !== undefined && strEqualsIdx !== undefined && anyStrTypeIdx >= 0
-        ? [
-            { op: "local.get", index: 2 },
-            { op: "ref.test", typeIdx: anyStrTypeIdx } as Instr,
-            { op: "local.get", index: 3 },
-            { op: "ref.test", typeIdx: anyStrTypeIdx } as Instr,
-            { op: "i32.and" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "i32" } },
-              then: [
-                { op: "local.get", index: 2 },
-                { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr,
-                { op: "call", funcIdx: strFlattenIdx } as Instr,
-                { op: "local.get", index: 3 },
-                { op: "ref.cast", typeIdx: anyStrTypeIdx } as Instr,
-                { op: "call", funcIdx: strFlattenIdx } as Instr,
-                { op: "call", funcIdx: strEqualsIdx } as Instr,
-              ],
-              else: refIdentityArm,
-            } as Instr,
-          ]
-        : refIdentityArm;
-    const identityArm: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" } as Instr,
-      { op: "local.set", index: 2 },
-      { op: "local.get", index: 1 },
-      { op: "any.convert_extern" } as Instr,
-      { op: "local.set", index: 3 },
-      ...stringOrIdentityArm,
-    ];
-    const bigintArm = (elseArm: Instr[]): Instr[] => [
-      ...bothTag(typeofBigIdx),
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: toBigIdx } as Instr,
-          { op: "local.get", index: 1 },
-          { op: "call", funcIdx: toBigIdx } as Instr,
-          { op: "i64.eq" },
-        ],
-        else: elseArm,
-      } as Instr,
-    ];
-    const boolArm = (elseArm: Instr[]): Instr[] => [
-      ...bothTag(typeofBoolIdx),
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: unboxBoolIdx } as Instr,
-          { op: "local.get", index: 1 },
-          { op: "call", funcIdx: unboxBoolIdx } as Instr,
-          { op: "i32.eq" },
-        ],
-        else: elseArm,
-      } as Instr,
-    ];
-    const numberArm = (elseArm: Instr[]): Instr[] => [
-      ...bothTag(typeofNumIdx),
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          // SameValue numbers: compare f64 bit patterns (NaN==NaN, +0!=-0).
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: unboxNumIdx } as Instr,
-          { op: "i64.reinterpret_f64" } as Instr,
-          { op: "local.get", index: 1 },
-          { op: "call", funcIdx: unboxNumIdx } as Instr,
-          { op: "i64.reinterpret_f64" } as Instr,
-          { op: "i64.eq" },
-        ],
-        else: elseArm,
-      } as Instr,
-    ];
-    const nullArm = (rest: Instr[]): Instr[] => [
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      { op: "local.get", index: 1 },
-      { op: "ref.is_null" },
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [{ op: "i32.const", value: 1 }],
-        else: rest,
-      } as Instr,
-    ];
-    registerNative(
-      "__object_is",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "i32" }],
-      [
-        { name: "aa", type: { kind: "anyref" } },
-        { name: "ba", type: { kind: "anyref" } },
-      ],
-      nullArm(numberArm(boolArm(bigintArm(identityArm)))),
-    );
-  }
 
   // ── Object integrity predicates (#1472 Phase B Blocker A Half 1, PR #1074) ─
   //

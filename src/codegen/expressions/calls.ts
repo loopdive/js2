@@ -59,6 +59,7 @@ import {
   hoistVarDeclarations,
   nativeStringType,
   resolveWasmType,
+  STRING_METHODS,
 } from "../index.js";
 import {
   compileArrayConstructorCall,
@@ -86,6 +87,7 @@ import {
   emitNullCheckThrow,
   receiverIsCaughtErrorStringRead,
   receiverIsNativeStringValType,
+  receiverMayBeNativeStringAtRuntime,
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
@@ -100,7 +102,12 @@ import {
   ensureExtrasArgvGlobal,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
-import { compileNativeStringMethodCall, compileStringLiteral, emitBoolToString } from "../string-ops.js";
+import {
+  compileGuardedNativeStringMethodCall,
+  compileNativeStringMethodCall,
+  compileStringLiteral,
+  emitBoolToString,
+} from "../string-ops.js";
 import { tryCompileNodeProcessCall } from "../node-process-api.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import {
@@ -2105,9 +2112,32 @@ function isGlobalEvalIdentifier(ident: ts.Identifier, checker: ts.TypeChecker): 
  * runtime (e.g. `function outer(op: any) { return function (x) { return op(x); } }`).
  *
  * Emits a `ref.test`/`ref.cast`/`struct.get`/`call_ref` chain against every
- * closure struct type in the module whose arity matches the call's arg count.
- * Mirrors `emitClosureCallExport` (__call_fn_0) but specialized to arity N
- * with inline arg marshalling.
+ * closure struct type in the module whose arity can satisfy the call's arg
+ * count. Mirrors `emitClosureCallExport` (__call_fn_0) but specialized to
+ * arity N with inline arg marshalling.
+ *
+ * (#820 / #1543) Two correctness fixes vs. the original exact-arity form:
+ *
+ *  1. **Discriminate by funcref signature, not struct type.** All
+ *     `__fn_wrap_*` closure structs subtype a single *root* wrapper struct
+ *     (`getOrCreateFuncRefWrapperTypes` chains every later signature under
+ *     the first one created). So `ref.test (ref <some-wrapper-struct>)`
+ *     matches wrapper values of *every* arity, not just the candidate's.
+ *     A 0-arg call to an extracted 1-formal async-generator method then
+ *     matched the arity-0 root arm, did `struct.get 0` + `ref.cast (ref
+ *     <arity-0 funcType>)` on an arity-1 funcref, and trapped with `illegal
+ *     cast` — the entire `async-gen-meth-dflt-*` test262 cluster. We instead
+ *     test the *funcref* (`ref.test (ref funcTypeIdx)`), which encodes the
+ *     exact param count + result, so each arm fires only for its own
+ *     signature regardless of struct subtyping.
+ *
+ *  2. **Adapt arity by padding missing trailing args with `undefined`.**
+ *     A candidate whose formal-param count is *greater than* the call arity
+ *     is now eligible (ES calls a function with fewer args than formals,
+ *     filling the rest with `undefined`). Without this a 0-arg call to a
+ *     1-formal method found no candidate and silently returned `undefined`
+ *     instead of invoking the method (which must apply its default param and
+ *     run the destructure / initializer the spec mandates).
  *
  * Returns `{ kind: "externref" }` on success, or `null` to let the caller
  * fall back to the existing `ref.null.extern` behavior.
@@ -2122,8 +2152,10 @@ function tryEmitInlineDynamicCall(
 
   const arity = expr.arguments.length;
 
-  // Pre-filter candidates: matching arity, and all param/return types
-  // supported by inline marshalling (f64 / i32 / externref / ref / ref_null).
+  // Pre-filter candidates: formal-param count must be able to satisfy the
+  // call arity (>= arity — missing trailing args are padded with `undefined`,
+  // see #820/#1543), and all param/return types supported by inline
+  // marshalling (f64 / i32 / externref / ref / ref_null).
   type Cand = { structTypeIdx: number; info: ClosureInfo };
   const supported = (t: ValType | null): boolean => {
     if (t === null) return true;
@@ -2132,7 +2164,12 @@ function tryEmitInlineDynamicCall(
 
   const allCandidates: Cand[] = [];
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.paramTypes.length !== arity) continue;
+    if (info.paramTypes.length < arity) continue;
+    // (#1837) Over-arity padding only for candidates with a NON-VOID result.
+    // Void-result closures (Promise resolve/reject element fns) marshal their
+    // padded self/args into a stack-invalid call_ref; the async-gen-meth-dflt
+    // win (the reason for padding) all have a non-void result (the generator).
+    if (info.paramTypes.length > arity && info.returnType === null) continue;
     if (!supported(info.returnType)) continue;
     let ok = true;
     for (const p of info.paramTypes) {
@@ -2155,12 +2192,34 @@ function tryEmitInlineDynamicCall(
     seenFuncType.add(c.info.funcTypeIdx);
     candidates.push(c);
   }
+  // Emit exact-arity arms first (most-specific), then padded over-arity arms,
+  // so a value that satisfies an exact wrapper takes that arm before a
+  // wider, undefined-padded one.
+  candidates.sort((a, b) => a.info.paramTypes.length - arity - (b.info.paramTypes.length - arity));
 
   // Ensure box/unbox helpers.
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const unboxNumberIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
   if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
+
+  // (#820/#1543) `undefined` externref source for padding missing trailing
+  // args (call arity < a candidate's formal count). Host mode pulls it from
+  // `__get_undefined`; if that import can't be added, `ref.null.extern`
+  // stands in (a wasm method's `__extern_is_undefined` default-param guard
+  // treats host `undefined` and a null externref alike).
+  const maxFormals = candidates.reduce((m, c) => Math.max(m, c.info.paramTypes.length), 0);
+  const needsUndefinedPad = maxFormals > arity;
+  const undefinedIdx = needsUndefinedPad
+    ? ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }])
+    : undefined;
+  const pushUndefinedExternref = (body: Instr[]): void => {
+    if (undefinedIdx !== undefined) {
+      body.push({ op: "call", funcIdx: undefinedIdx } as Instr);
+    } else {
+      body.push({ op: "ref.null.extern" } as Instr);
+    }
+  };
 
   // Compile callee (externref) → anyref → temp local.
   const calleeType = compileExpression(ctx, fctx, expr.expression);
@@ -2204,9 +2263,27 @@ function tryEmitInlineDynamicCall(
     callBody.push({ op: "local.get", index: anyLocal } as Instr);
     callBody.push({ op: "ref.cast", typeIdx: selfTypeIdx } as Instr);
 
-    // Push each call arg, unboxing per the candidate's declared param type.
-    for (let i = 0; i < arity; i++) {
+    // Push each FORMAL of the candidate, marshalling per its declared param
+    // type. Call-site args (i < arity) come from the saved arg locals;
+    // missing trailing formals (i >= arity) are padded with `undefined`
+    // (#820/#1543) so the lifted method applies its default / runs the
+    // spec-mandated destructure of the default value.
+    for (let i = 0; i < cand.info.paramTypes.length; i++) {
       const pType = cand.info.paramTypes[i]!;
+      if (i >= arity) {
+        // Missing arg → `undefined`. For ref/ref_null formals there is no
+        // valid concrete struct to cast `undefined` to; pass the typed null.
+        if (pType.kind === "f64") {
+          callBody.push({ op: "f64.const", value: Number.NaN } as Instr);
+        } else if (pType.kind === "i32") {
+          callBody.push({ op: "i32.const", value: 0 } as Instr);
+        } else if (pType.kind === "externref") {
+          pushUndefinedExternref(callBody);
+        } else if (pType.kind === "ref" || pType.kind === "ref_null") {
+          callBody.push({ op: "ref.null", typeIdx: (pType as { typeIdx: number }).typeIdx } as Instr);
+        }
+        continue;
+      }
       callBody.push({ op: "local.get", index: argLocals[i]! } as Instr);
       if (pType.kind === "f64") {
         callBody.push({ op: "call", funcIdx: unboxNumberIdx } as Instr);
@@ -2242,9 +2319,36 @@ function tryEmitInlineDynamicCall(
     }
     // externref: no conversion
 
-    dispatch = [
+    // (#820/#1543) Discriminate by the *funcref* signature, not the struct
+    // type. Every `__fn_wrap_*` struct subtypes the single root wrapper, so
+    // `ref.test (ref <wrapper-struct>)` matches wrapper values of every arity
+    // — an arity-0 arm would then fire for an extracted arity-1 method and
+    // `ref.cast` its arity-1 funcref to the arity-0 funcType, trapping with
+    // `illegal cast`. The funcref's type encodes the exact param count +
+    // result, so `ref.test (ref funcTypeIdx)` on field 0 fires this arm only
+    // for its own signature. A struct guard is still needed before the
+    // `struct.get` (you can't read a field off a non-struct); the *root*
+    // wrapper struct is a safe supertype to cast any wrapper to for that read.
+    const rootStructIdx =
+      (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx ?? selfTypeIdx;
+    const testCond: Instr[] = [
       { op: "local.get", index: anyLocal } as Instr,
-      { op: "ref.test", typeIdx: selfTypeIdx } as Instr,
+      { op: "ref.test", typeIdx: rootStructIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: anyLocal } as Instr,
+          { op: "ref.cast", typeIdx: rootStructIdx } as Instr,
+          { op: "struct.get", typeIdx: rootStructIdx, fieldIdx: 0 } as Instr,
+          { op: "ref.test", typeIdx: cand.info.funcTypeIdx } as Instr,
+        ],
+        else: [{ op: "i32.const", value: 0 } as Instr],
+      } as Instr,
+    ];
+
+    dispatch = [
+      ...testCond,
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
@@ -5250,13 +5354,27 @@ function compileCallExpression(
           const objLocal = allocLocal(fctx, `__ocreate_obj_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: objLocal });
 
-          const dpDescIdx = ensureLateImport(
-            ctx,
-            "__defineProperty_desc",
-            [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-            [{ kind: "externref" }],
-          );
-          flushLateImportShifts(ctx, fctx);
+          // (#2515 S1) Per-property descriptor apply. In `--target standalone`
+          // there is no JS host, so the `__defineProperty_desc` host import is
+          // refused (#1472 Phase B) — route instead to the Wasm-native
+          // `__obj_define_from_desc(obj, key, descObj)` helper, the SAME native
+          // `Object.defineProperty` standalone uses (object-ops.ts). It performs
+          // ToPropertyDescriptor over the descriptor `$Object` and dispatches to
+          // the native `__defineProperty_value`/`__defineProperty_accessor`
+          // store. Host/gc/wasi keep the precise `__defineProperty_desc` import.
+          let dpDescIdx: number | undefined;
+          if (ctx.standalone) {
+            ensureObjectRuntime(ctx);
+            dpDescIdx = ctx.funcMap.get("__obj_define_from_desc");
+          } else {
+            dpDescIdx = ensureLateImport(
+              ctx,
+              "__defineProperty_desc",
+              [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+              [{ kind: "externref" }],
+            );
+            flushLateImportShifts(ctx, fctx);
+          }
 
           for (const prop of descsLiteral.properties) {
             if (!ts.isPropertyAssignment(prop)) continue;
@@ -8793,6 +8911,31 @@ function compileCallExpression(
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" };
       }
+    }
+
+    // (#2576, extends #2187) Runtime-guarded native string method on an
+    // `any`/unknown receiver whose value MAY be a native `$AnyString` at runtime
+    // but whose receiver is an opaque externref (object property value, generator
+    // yield read, indexed element read, …) — i.e. the value-rep cases that
+    // #2187's static `receiverIsNativeStringValType` (bare-identifier-with-
+    // string-ref-local) cannot recognise. A runtime `ref.test $AnyString` keeps a
+    // non-string `any` (array, number, null) on its benign default. Scoped to a
+    // known STRING_METHODS name (+`charCodeAt`, which has a dedicated arm but is
+    // not in the table), native-string mode, and an `any`/unknown receiver NOT
+    // already handled by the static string arms below.
+    if (
+      ctx.nativeStrings &&
+      ctx.nativeStrTypeIdx >= 0 &&
+      (Object.prototype.hasOwnProperty.call(STRING_METHODS, propAccess.name.text) ||
+        propAccess.name.text === "charCodeAt") &&
+      !isStringType(receiverType) &&
+      !receiverIsCaughtErrorStringRead(ctx, propAccess.expression) &&
+      !receiverIsNativeStringValType(ctx, fctx, propAccess.expression) &&
+      receiverMayBeNativeStringAtRuntime(ctx, propAccess.expression)
+    ) {
+      const guarded = compileGuardedNativeStringMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text);
+      if (guarded !== null) return guarded;
+      // Fall through to the generic dispatch on a build failure.
     }
 
     // String method calls

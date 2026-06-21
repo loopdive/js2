@@ -18,6 +18,7 @@ import {
   destructureParamArray,
   destructureParamObject,
   isNullOrUndefinedLiteral,
+  structHintForBindingPattern,
 } from "./destructuring-params.js";
 import {
   cacheStringLiterals,
@@ -860,9 +861,18 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       if (isArrayPatternExternref) {
         (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
       }
+      // (#2568) Mirror the class-method param-default fix: compile an object
+      // binding pattern's default literal against the pattern's STRUCT type (not
+      // the externref param type) so it materializes in the shape the
+      // destructuring `ref.test`/`ref.cast` expects, instead of boxing the nested
+      // fields to externref. See structHintForBindingPattern.
+      const objectPatternStructHint =
+        ts.isObjectBindingPattern(param.name) && paramType.kind === "externref"
+          ? structHintForBindingPattern(ctx, param.name)
+          : undefined;
       let defaultResultType: ValType | null;
       try {
-        defaultResultType = compileExpression(ctx, fctx, param.initializer, paramType);
+        defaultResultType = compileExpression(ctx, fctx, param.initializer, objectPatternStructHint ?? paramType);
       } finally {
         if (isArrayPatternExternref) {
           (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = prevForceVec;
