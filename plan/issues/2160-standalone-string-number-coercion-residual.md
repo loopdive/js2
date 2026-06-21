@@ -79,3 +79,40 @@ same helper to `parseNeeded`. Regression test:
 acceptance criteria's `__new_String`/`__new_Number` leak) plus the harder
 String/Number coercion edges that overlap the coercion engine (#1917). Those
 remain the value-rep / #1917 territory called out in the original notes.
+
+---
+
+## Slice (2026-06-21, dev-agent) — `String.raw` invalid standalone binary
+
+**Status stays `ready`** — one more independent slice; unblocked (no wrapper /
+#1917 dependency).
+
+**Bug:** `` String.raw`a${1}b` `` (and even the no-substitution form) emitted an
+INVALID standalone / WASI binary. `compileTaggedTemplateExpression`
+(`src/codegen/string-ops.ts`) built the `externref`-element template-strings vec
+(`array.new_fixed`) BEFORE dispatching the `String.raw` builtin short-circuit.
+In native-strings mode the literals lower to `ref $AnyString`, not externref, so
+that (unused-for-`String.raw`) vec failed validation: `array.new_fixed expected
+type externref, found struct.new of type (ref 6)`. With substitutions the
+`compileStringRaw` concat path additionally mis-fed an f64 into
+`any.convert_extern` (`expected externref, found f64`).
+
+**Fix (two parts):**
+1. Dispatch `isStringRawTag` at the **top** of `compileTaggedTemplateExpression`,
+   before any template-vec scaffolding (cache global + `array.new_fixed`) is
+   emitted — so `String.raw` never builds the dead, mistyped vec.
+2. Give `compileStringRaw` a native-strings branch (`noJsHost && nativeStrings`)
+   that coerces every operand to `ref $AnyString` via the existing
+   `compileNativeConcatOperand` helper (number_toString + ref-from-extern,
+   bool→literal, string passthrough, any→ToString) and concatenates with the
+   native `__str_concat`. JS-host mode keeps the wasm:js-string concat path
+   unchanged.
+
+**Validation.** `tests/issue-2160-string-raw-standalone.test.ts` (13/13):
+no-subst / single / multiple / boolean / string substitutions + raw-escape
+length, across host & standalone, plus a standalone-validates regression guard.
+Host & standalone return identical results. tsc + prettier clean. Existing
+tagged-template suites (issue-2008 incl. its `String.raw` case, issue-2176) green
+(20/20). (`tests/iife-tagged-templates.test.ts` /
+`template-literal-type-coercion.test.ts` fail identically on pristine
+`origin/main` — missing `tests/helpers.js`, unrelated.)

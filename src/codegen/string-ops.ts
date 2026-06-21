@@ -610,6 +610,36 @@ function compileStringRaw(
   substitutions: readonly ts.Expression[],
 ): ValType | null {
   addStringImports(ctx);
+
+  // (#2160 standalone slice) Native-strings (standalone / WASI) path: the
+  // operands must all be `ref $AnyString` for the native `__str_concat` helper.
+  // `compileStringLiteral` already yields a native ref here, but a numeric / any
+  // substitution leaves an f64 / externref that the host externref-concat path
+  // below would mis-feed (`any.convert_extern expected externref, found f64` →
+  // invalid binary). Reuse the proven `compileNativeConcatOperand` coercion
+  // (number_toString + ref-from-extern, bool→literal, any→ToString) so every
+  // operand is a native string ref before each `__str_concat`.
+  if (noJsHost(ctx) && ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    const nativeConcatIdx = ctx.nativeStrHelpers.get("__str_concat");
+    if (nativeConcatIdx === undefined) {
+      reportError(ctx, expr, "String.raw: native string concat helper unavailable");
+      return null;
+    }
+    compileNativeStringLiteral(ctx, fctx, rawParts[0] ?? "");
+    for (let i = 0; i < substitutions.length; i++) {
+      // Stringify + native-coerce the substitution, then concat onto the accumulator.
+      if (!compileNativeConcatOperand(ctx, fctx, substitutions[i]!)) {
+        // Unknown operand kind — fall back to "undefined" so the module stays valid.
+        compileNativeStringLiteral(ctx, fctx, "undefined");
+      }
+      fctx.body.push({ op: "call", funcIdx: nativeConcatIdx });
+      // Append the following raw part.
+      compileNativeStringLiteral(ctx, fctx, rawParts[i + 1] ?? "");
+      fctx.body.push({ op: "call", funcIdx: nativeConcatIdx });
+    }
+    return nativeStringType(ctx);
+  }
+
   const concatIdx = ctx.jsStringImports.get("concat") ?? ctx.nativeStrHelpers.get("__str_concat");
   if (concatIdx === undefined) {
     reportError(ctx, expr, "String.raw: string concat helper unavailable");
@@ -711,6 +741,20 @@ export function compileTaggedTemplateExpression(
     }
   }
 
+  // `String.raw` is a builtin whose result is the RAW (uncooked) parts
+  // interleaved with the stringified substitutions, computed entirely at compile
+  // time (the raw parts are literals). Dispatch BEFORE building the template vec
+  // below: that path constructs an `externref`-element strings array via
+  // `array.new_fixed`, but in standalone / native-strings mode the string
+  // literals lower to `ref $AnyString` (not externref), so the unused template
+  // vec produced an INVALID binary (`array.new_fixed expected externref, found
+  // struct.new`) for `String.raw` even though `compileStringRaw` never reads it
+  // (#2160 standalone slice). Short-circuiting here also avoids emitting the
+  // dead template-cache global + host-bridge scaffolding for `String.raw`. (#2008)
+  if (isStringRawTag(expr.tag)) {
+    return compileStringRaw(ctx, fctx, expr, rawParts, substitutions);
+  }
+
   // Build the strings array as a WasmGC template vec (vec + raw field)
   // Per spec, template objects are cached per call site — the same source location
   // must yield the same template object on every call. We use a module global
@@ -753,9 +797,19 @@ export function compileTaggedTemplateExpression(
   // Use savedBody pattern so compileStringLiteral pushes into a separate array
   const savedBody = pushBody(fctx);
 
+  // (#2160) The strings array is typed `externref` (the #1888 tagged-template
+  // ABI), but in standalone / native-strings mode `compileStringLiteral` yields
+  // a `ref $AnyString` (not externref). `array.new_fixed` then rejected the
+  // element type (`expected externref, found struct.new of (ref $AnyString)`) —
+  // an INVALID binary for every generic `tag\`…\`` standalone. Lift each native
+  // string ref to externref with `extern.convert_any` before the array build.
+  // gc/host mode leaves the literals as externref already (no-op guard).
+  const liftNativeStringToExternref = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0;
+
   // First: build the raw strings array as a regular vec
   for (const raw of rawParts) {
     compileStringLiteral(ctx, fctx, raw, expr);
+    if (liftNativeStringToExternref) fctx.body.push({ op: "extern.convert_any" } as Instr);
   }
   fctx.body.push({
     op: "array.new_fixed",
@@ -779,6 +833,7 @@ export function compileTaggedTemplateExpression(
   // Second: build the cooked strings array
   for (const str of stringParts) {
     compileStringLiteral(ctx, fctx, str, expr);
+    if (liftNativeStringToExternref) fctx.body.push({ op: "extern.convert_any" } as Instr);
   }
   fctx.body.push({
     op: "array.new_fixed",
@@ -813,14 +868,8 @@ export function compileTaggedTemplateExpression(
   fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
   fctx.body.push({ op: "local.set", index: stringsLocal });
 
-  // `String.raw` is a builtin whose result is the RAW (uncooked) parts
-  // interleaved with the stringified substitutions. Lower it in-module rather
-  // than routing the template struct through the `__tagged_template` host
-  // bridge, which can't index a WasmGC struct from JS (#2008). The raw parts
-  // are known at compile time, so this "compiles away" to a plain concat.
-  if (isStringRawTag(expr.tag)) {
-    return compileStringRaw(ctx, fctx, expr, rawParts, substitutions);
-  }
+  // (`String.raw` is dispatched earlier, before the template vec is built —
+  // see the isStringRawTag short-circuit above.)
 
   // Now compile the call to the tag function.
   // The tag function receives (stringsArray, ...substitutions).
