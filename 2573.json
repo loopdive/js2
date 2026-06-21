@@ -1,9 +1,9 @@
 {
   "id": "2573",
   "assignee": "ttraenkler/sd-6",
-  "status": "done",
+  "status": "released",
   "branch": "issue-2573-missing-prop-undefined",
   "claimed_at": "2026-06-21T14:12:59Z",
-  "updated_at": "2026-06-21T14:42:27Z",
-  "released_at": "2026-06-21T14:42:27Z"
+  "updated_at": "2026-06-21T15:00:50Z",
+  "released_at": "2026-06-21T15:00:50Z"
 }
