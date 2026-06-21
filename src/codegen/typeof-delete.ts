@@ -780,6 +780,44 @@ function staticTypeofForType(ctx: CodegenContext, tsType: ts.Type): string | nul
 }
 
 /**
+ * (#2200 Phase 2) Emit the runtime `typeof F` branch for an Annex B B.3.3
+ * block-nested function whose outer var-binding is pre-allocated with a TDZ
+ * flag: flag set ⇒ the function's `"function"`, flag 0 (uninitialised / block
+ * not yet run) ⇒ `"undefined"`. Returns the result ValType, or `null` when `F`
+ * is not such a binding (caller falls through to its normal path). Shared by the
+ * undeclared-identifier branch AND the late guard so both honor Annex B
+ * identically.
+ *
+ * The TS checker reports the outer-binding symbol with NO `valueDeclaration` at
+ * the reference site (the binding is synthetic), so the undeclared-identifier
+ * branch would otherwise const-fold `typeof F` to `"undefined"` even after the
+ * block ran — this is the bypass that left the binding looking unresolvable.
+ */
+function emitAnnexBTypeofFlagBranch(ctx: CodegenContext, fctx: FunctionContext, name: string): ValType | null {
+  if (!fctx.annexBOuterBindings?.has(name)) return null;
+  const flagLocal = fctx.tdzFlagLocals?.get(name);
+  if (flagLocal === undefined) return null;
+  // Materialise BOTH string constants into the MAIN body first (so any lazy
+  // NativeString global-setup / late-import shifts compileStringLiteral emits
+  // land in the main stream, not inside an if-arm), stash each in a temp local,
+  // then select on the TDZ flag.
+  const strType = compileStringLiteral(ctx, fctx, "function") ?? { kind: "externref" };
+  const fnStrLocal = allocLocal(fctx, `__typeof_fn_${fctx.locals.length}`, strType);
+  fctx.body.push({ op: "local.set", index: fnStrLocal });
+  compileStringLiteral(ctx, fctx, "undefined");
+  const undefStrLocal = allocLocal(fctx, `__typeof_undef_${fctx.locals.length}`, strType);
+  fctx.body.push({ op: "local.set", index: undefStrLocal });
+  fctx.body.push({ op: "local.get", index: flagLocal });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: strType },
+    then: [{ op: "local.get", index: fnStrLocal }],
+    else: [{ op: "local.get", index: undefStrLocal }],
+  });
+  return strType;
+}
+
+/**
  * Compile `typeof x` as a standalone expression that returns a type string (externref).
  * For statically known types, emits the string constant directly.
  * For externref/union types, calls the __typeof host helper.
@@ -845,6 +883,15 @@ export function compileTypeofExpression(
       ident = (ident as ts.ParenthesizedExpression | ts.AsExpression).expression;
     }
     if (ts.isIdentifier(ident)) {
+      // (#2200 Phase 2) An Annex B B.3.3 block-fn outer binding must be handled
+      // BEFORE the `!hasValueDecl` const-fold below: the checker reports its
+      // symbol with no `valueDeclaration` at the reference site (the binding is
+      // synthetic), so the undeclared-path would wrongly fold `typeof F` to
+      // "undefined" even after the block ran. Emit the runtime TDZ-flag branch
+      // instead. Gated on the normally-empty `annexBOuterBindings` set, so every
+      // other typeof path is byte-identical.
+      const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
+      if (annexB) return annexB;
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
         return compileStringLiteral(ctx, fctx, staticTypeofForWasmType(withBinding.field.type));
@@ -854,6 +901,32 @@ export function compileTypeofExpression(
       if (!hasValueDecl) {
         return compileStringLiteral(ctx, fctx, "undefined");
       }
+    }
+  }
+
+  // (#2200 Phase 2) `typeof F` where F is an Annex B block-nested function with a
+  // pre-allocated TDZ outer var-binding. The TS checker reports F's symbol as a
+  // function type (it models the hoist), so the static-fold below would wrongly
+  // yield "function" even before the block runs. Override with a runtime branch
+  // on the TDZ flag: flag set ⇒ "function", flag 0 (uninitialised / block not yet
+  // run) ⇒ "undefined". Gated on the normally-empty annexBOuterBindings set →
+  // every other typeof path is byte-identical.
+  {
+    let bare: ts.Expression = operand;
+    while (
+      ts.isParenthesizedExpression(bare) ||
+      ts.isAsExpression(bare) ||
+      ts.isTypeAssertionExpression(bare) ||
+      ts.isNonNullExpression(bare)
+    ) {
+      bare = (bare as ts.ParenthesizedExpression | ts.AsExpression).expression;
+    }
+    if (ts.isIdentifier(bare)) {
+      // (#2200 Phase 2) Late fallback for an Annex B outer binding that reached
+      // here (the undeclared-identifier branch above already handles the common
+      // `typeof F` case; this covers any path where the operand resolved past it).
+      const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, bare.text);
+      if (annexB) return annexB;
     }
   }
 

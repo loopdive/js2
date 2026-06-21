@@ -62,6 +62,28 @@ import {
  * the zero-initialized local (the original bug: a `ComputedPropertyName` has
  * no `.text`, so `fields.findIndex` returned -1 and the binding was skipped).
  */
+/**
+ * (#2569) Evaluate a destructuring ComputedPropertyName expression for its SIDE
+ * EFFECT (and throw propagation), discarding the resulting key. §13.15.5.3
+ * BindingInitialization / 13.2.5.5 → "Evaluation of ComputedPropertyName" runs
+ * the expression as part of destructuring, so `{ [thrower()]: x }` must run
+ * `thrower()` (and propagate its throw) even when the static fast-path can't map
+ * the runtime key to a struct field. Compiles the key expression and drops
+ * whatever it leaves on the stack (the value type is irrelevant — we only need
+ * the effect); a `null`/`VOID_RESULT` producer leaves nothing to drop.
+ */
+function emitComputedKeyForEffect(ctx: CodegenContext, fctx: FunctionContext, keyExpr: ts.Expression): void {
+  const t = compileExpression(ctx, fctx, keyExpr);
+  // Drop only when the expression left a concrete value on the stack. A `null`
+  // result (no value) or a `VOID_RESULT` sentinel (a void-typed expression, e.g.
+  // a call to a `void` function) pushes nothing droppable — `t` is then not a
+  // `{ kind }`-bearing ValType, so this guard skips the drop and avoids a stack
+  // underflow.
+  if (t !== null && t !== undefined && typeof t === "object" && "kind" in t) {
+    fctx.body.push({ op: "drop" } as Instr);
+  }
+}
+
 function resolveStaticPropKey(ctx: CodegenContext, element: ts.BindingElement): string | undefined {
   const pn = element.propertyName ?? element.name;
   if (ts.isIdentifier(pn)) return pn.text;
@@ -423,6 +445,16 @@ export function destructureParamObjectExternref(
       propNameText = propNameNode.text;
     } else if (ts.isNumericLiteral(propNameNode)) {
       propNameText = propNameNode.text;
+    } else if (ts.isComputedPropertyName(propNameNode)) {
+      // (#2569) A non-constant computed key (`{ [thrower()]: x }`) has no static
+      // text to map to a property read, but §13.15.5.3 requires the key
+      // expression to be EVALUATED during destructuring (side effect + throw
+      // propagation). Run it for its effect and drop the result before skipping
+      // the field bind. A constant computed key would have folded above (via
+      // resolveStaticPropKey upstream); this externref path only sees the
+      // unresolved runtime case.
+      emitComputedKeyForEffect(ctx, fctx, propNameNode.expression);
+      continue;
     }
     if (!propNameText) continue;
 
@@ -894,16 +926,18 @@ export function destructureParamObject(
     // zero-initialized local. Unresolvable computed keys fail loudly below.
     const propKey = resolveStaticPropKey(ctx, element);
     if (propKey === undefined && element.propertyName && ts.isComputedPropertyName(element.propertyName)) {
-      // #2032 + #2031-revival regression fix: a computed key that does NOT fold
-      // to a compile-time constant (e.g. `{ [thrower()]: x }`, where the key is
-      // a runtime call) must NOT hard-error — that regressed 7 test262 cases
-      // (for/for-await-of `obj-ptrn-prop-eval-err`) which compiled+ran on main.
-      // Fall back to the pre-#2032 behaviour: skip this binding element (the
-      // local was pre-allocated by `ensureBindingLocals`). The static
-      // fast-path simply can't map a runtime key to a struct field index; the
-      // generic/runtime destructuring path handles the key-evaluation order
-      // (and its abrupt completion) as before. Only the constant-computed-key
-      // improvement from #2032 stays active above.
+      // #2569 — a computed key that does NOT fold to a compile-time constant
+      // (e.g. `{ [thrower()]: x }`, a runtime call) cannot be mapped to a struct
+      // field index on this static fast path, so the binding is skipped (the
+      // local was pre-allocated by `ensureBindingLocals`). BUT §13.15.5.3
+      // requires the ComputedPropertyName expression to be EVALUATED as part of
+      // the destructuring — for its side effect and, critically, so a throwing
+      // key propagates (`assert.throws(... { [thrower()]: x } ...)`). The
+      // pre-#2032 `continue` dropped the key expression entirely, so the poison
+      // never fired and the side effect never ran. Compile the key expression
+      // for its effect (ToPropertyKey ordering is observable via the throw), then
+      // drop its value, before skipping the field bind.
+      emitComputedKeyForEffect(ctx, fctx, element.propertyName.expression);
       continue;
     }
     if (!ts.isIdentifier(element.name)) {

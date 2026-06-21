@@ -15,6 +15,7 @@
  *   - statements/shared.ts         — utilities shared across all sub-modules
  */
 import { ts } from "../ts-api.js";
+import { emitCachedFuncClosureAccess } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -220,6 +221,35 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // bodyless pre-registration is only a reserved slot; fill it here if the
     // hoist pre-pass did not.
     const funcName = stmt.name?.text;
+    // (#2200 Phase 2) Annex B B.3.3 outer-binding init at the textual position.
+    // For an *eligible* block-nested `function F`, the hoist pre-pass pre-allocated
+    // an outer var-binding (TDZ local + flag). Now that control flow has reached
+    // the declaration (inside the block), assign the function value to the outer
+    // local and mark the TDZ flag initialised — so a read before/skip of the block
+    // sees flag 0 (→ typeof "undefined" / ReferenceError) and a read after sees the
+    // value. Emitted BEFORE the funcMap.has early-return (the body was compiled in
+    // the hoist pre-pass, so funcMap already has F). Gated on the normally-empty
+    // annexBOuterBindings set → non-Annex-B decls untouched.
+    if (funcName && fctx.annexBOuterBindings?.has(funcName)) {
+      const outerLocal = fctx.localMap.get(funcName);
+      const flagLocal = fctx.tdzFlagLocals?.get(funcName);
+      const fnIdx = ctx.funcMap.get(funcName);
+      if (outerLocal !== undefined && flagLocal !== undefined && fnIdx !== undefined) {
+        const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+        if (closureType) {
+          // Closure value is on the stack; widen to externref for the outer local.
+          if (closureType.kind !== "externref") {
+            fctx.body.push({ op: "extern.convert_any" });
+          }
+          fctx.body.push({ op: "local.set", index: outerLocal });
+          fctx.body.push({ op: "i32.const", value: 1 });
+          fctx.body.push({ op: "local.set", index: flagLocal });
+        }
+      }
+      // The function body itself was already compiled during the hoist pre-pass;
+      // nothing else to emit at this textual position.
+      return;
+    }
     const hasReservedBodylessEntry = funcName ? (ctx.preRegisteredBodyless?.has(funcName) ?? false) : false;
     if (funcName && ctx.funcMap.has(funcName) && !hasReservedBodylessEntry) return;
     // Re-attempt compilation even if hoisting failed — the failure may have been

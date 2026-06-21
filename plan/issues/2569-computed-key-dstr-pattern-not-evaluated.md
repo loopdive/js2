@@ -1,7 +1,9 @@
 ---
 id: 2569
 title: "Computed property key in a destructuring pattern is not evaluated (no side effect / throw)"
-status: ready
+status: done
+completed: 2026-06-21
+assignee: ttraenkler/sd-6
 created: 2026-06-21
 priority: medium
 feasibility: medium

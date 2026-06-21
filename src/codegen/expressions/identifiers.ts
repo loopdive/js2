@@ -29,7 +29,7 @@ import {
 import { emitNullGuardedStructGet } from "../property-access.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { emitTdzCheck } from "../statements.js";
-import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
+import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { BUILTIN_TYPE_TAGS, isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
@@ -531,6 +531,37 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
         fctx.body.push({ op: "ref.null.extern" } as Instr);
         fctx.body.push({ op: "throw", tagIdx });
       }
+      return { kind: "externref" };
+    }
+  }
+
+  // (#2552 Phase 2) A bare value READ of an Annex B B.3.3 block-nested function
+  // whose web-compat outer var-binding is pre-allocated (an externref local + a
+  // TDZ flag). Unlike a let/const TDZ binding, the outer binding is `var`-style:
+  // it EXISTS before the block runs, just uninitialised — so a read before/when
+  // the block is skipped yields `undefined`, NOT a ReferenceError. The generic
+  // localMap path below would instead apply the shared `tdzFlagLocals` let/const
+  // throw semantics (a textually-before read → emitStaticTdzThrow → "f is not
+  // defined"), which is wrong for Annex B. Intercept here with a flag-gated read:
+  // flag 1 ⇒ the outer-binding value, flag 0 ⇒ `undefined`. Gated on the
+  // normally-empty `annexBOuterBindings` set so every other read is byte-identical.
+  if (fctx.annexBOuterBindings?.has(name)) {
+    const outerLocal = fctx.localMap.get(name);
+    const flagLocal = fctx.tdzFlagLocals?.get(name);
+    if (outerLocal !== undefined && flagLocal !== undefined) {
+      // Materialise `undefined` into the MAIN body first (so any late-import
+      // shift from ensureGetUndefined lands in the main stream, not inside an
+      // if-arm), stash it in a temp, then select on the flag.
+      emitUndefined(ctx, fctx);
+      const undefLocal = allocLocal(fctx, `__annexb_undef_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: undefLocal });
+      fctx.body.push({ op: "local.get", index: flagLocal });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "local.get", index: outerLocal }],
+        else: [{ op: "local.get", index: undefLocal }],
+      });
       return { kind: "externref" };
     }
   }

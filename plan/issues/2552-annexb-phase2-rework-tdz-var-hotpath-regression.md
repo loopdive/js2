@@ -1,9 +1,10 @@
 ---
 id: 2552
 title: "Annex B B.3.3 Phase 2 rework — TDZ-var outer-binding allocation perturbs hot-path codegen (-1180 test262 regression)"
-status: ready
+status: in-progress
 sprint: 64
 created: 2026-06-19
+assignee: ttraenkler/sendev-funcidx
 priority: medium
 feasibility: hard
 reasoning_effort: max
@@ -97,3 +98,149 @@ typeof fix + the full regression diagnosis live there. Phase 1 floor is on main
 - The full test262-regression gate is **net ≥ 0** with no bucket >50 and ratio
   <10% (no Array/prototype/* or */dstr regression).
 - `#2200` can then close (both phases complete).
+
+## Resolution (2026-06-21, sendev-funcidx)
+
+Reintroduced the reverted Phase-2 source (the inverse of revert `925db38df`:
+`context/types.ts` `annexBOuterBindings`, `statements.ts` decl-site init,
+`nested-declarations.ts` eligibility+alloc, `typeof-delete.ts`
+`emitAnnexBTypeofFlagBranch`) onto current upstream/main, then **narrowed the
+allocation breadth** — the single root cause of the -1180.
+
+**The narrowing.** `annexBBlockNestedEligible` (nested-declarations.ts) now
+additionally requires `annexBNameObservedOutsideBlock(name, block)`: the
+block-fn's name must be referenced as a value (read / `typeof` / call / arg —
+`isAnnexBValueReference`) somewhere in the enclosing Annex-B scope OUTSIDE its
+declaring block. The scan walks the enclosing function/SourceFile body, skips the
+declaring block and any nested function scope, and excludes property/declaration/
+label names. When the name is NOT observed outside its block — the dominant
+test262 harness shape (a function that merely *contains* block-nested helpers) —
+NO outer-binding local, NO `__tdz_` flag, and NO `annexBOuterBindings` entry are
+emitted, so codegen is byte-identical to pre-Phase-2. The case-B lifecycle is
+implemented exactly where it is observable.
+
+**Byte-identity verified** (compile-and-hash, my branch vs clean upstream/main):
+single-helper, multi-helper, dstr-style, nested-block, and a realistic
+Array.prototype verifyProperty-style harness (multiple block-nested helpers used
+only within their blocks) — ALL produce identical binaries. This is the direct
+evidence the -1180 hot-path perturbation does not recur.
+
+**Case-B behaviours verified** (`tests/issue-2552-annexb-phase2.test.ts`, 10
+cases): `typeof F` after-block→"function", skip/before→"undefined", `F()` after
+block→value, unobserved-helper still callable in-block, undeclared→"undefined",
+normal fn-body decl→"function", numeric local→"number", and case-A cancellation
+(let-shadow → ReferenceError) intact. `typecheck` + `format:check` + `lint` +
+`check:stack-balance` + `check:issues` clean.
+
+Pre-existing failures `tests/finally-block.test.ts` (5) and
+`tests/issue-1712-capture-closure-dispatch.test.ts` (1) reproduce identically on
+clean upstream/main — NOT regressions.
+
+**Full-gate is the final arbiter** (the -1180 could not be pre-validated locally;
+byte-identity on the flagged shapes is the local proxy). On the gate landing
+net ≥ 0, `#2200` closes (both phases complete).
+
+## Merge_group result + diagnosis (2026-06-21, sendev-funcidx review)
+
+PR #1817 was un-held and enqueued once (GraphQL `enqueuePullRequest`, user PAT)
+to let the merge_group test262 gate arbitrate. It **EJECTED** on the
+`check for test262 regressions` job (runs 27901419024 + 27901413332, both
+completed/failure). The hold was re-applied; **not re-enqueued** (one-shot rule;
+auto-enqueue backstop owns re-adds).
+
+**The narrowing WORKED — the -1180 is gone.** Gate output:
+`net -10` (32920→32910 pass), **regression bucket signature `a0df2c22d5af927e`,
+10 non-CT files, 0 improvements**, ratio ∞ (10/0). The gate fails purely on
+`net < 0` / ratio ≥ 10 %, NOT on the old hot-path buckets. There is **zero**
+`Array/prototype/*` or `*/dstr` regression. Independent byte-identity (7
+unobserved harness shapes, hash-identical PR-HEAD vs merge-base `1f88850a`) is
+confirmed sound.
+
+**All 10 regressed files are the Annex B feature's OWN observed-case path**
+(diffed merged-report jsonl vs baseline):
+
+- 8× `test/annexB/language/function-code/*-func-existing-block-fn-no-init.js`
+  (`block-decl`, `if-decl-else-decl-a/b`, `if-decl-else-stmt`,
+  `if-decl-no-else`, `if-stmt-else-decl`, `switch-case`, `switch-dflt`):
+  error **`f is not defined`** (error_category `other`).
+- 2× `*-block-scoping.js` (`block-decl-func-block-scoping`,
+  `block-decl-global-block-scoping`): `initialBV()`/value assertions
+  (`assertion_fail`).
+
+**Root cause (confirmed by local repro on the PR branch).** Phase 2 wires the
+`annexBOuterBindings` outer-binding local for exactly TWO consumers — the
+decl-site init (`statements.ts`) and `typeof F` (`typeof-delete.ts`). A **bare
+value READ** of an observed Annex B name is NOT wired to the synthetic externref
+outer-binding local. So for the `no-init` shape:
+
+```js
+(function () {
+  init = f;            // observed READ before block → resolves via the normal
+                       // identifier path, which does NOT find the synthetic
+                       // outer-binding local → "f is not defined"
+  { function f() {} }
+  { function f() {} }
+}());
+assert.sameValue(init, undefined);   // spec: binding EXISTS, uninitialised → undefined
+```
+
+Local repro on `99cf4c0a1`: `init = f` before the block throws **`f is not
+defined`** (should yield `undefined` — the var binding exists, just
+uninitialised, so a read is NOT a ReferenceError). `typeof f` works (it's wired);
+a *call* `f()` after the block works (resolves via `funcMap`); but a bare
+read/assignment-read and the mutable-binding read/`f = 123` value semantics
+(`block-scoping`: `initialBV()`/`currentBV`) are unwired.
+
+**The -10 FIX (2026-06-21, sendev-funcidx — three coordinated changes).**
+
+1. **Bare value-read interception** (`identifiers.ts`, in `compileIdentifier`,
+   BEFORE the generic localMap/`tdzFlagLocals` path). A bare read of an
+   `annexBOuterBindings` name now emits a flag-gated read: flag 1 ⇒ the
+   outer-binding externref local; flag 0 ⇒ `emitUndefined(...)`. Crucially this
+   yields `undefined` — NOT a ReferenceError — because the var-style binding
+   EXISTS. The previous behaviour reused the shared let/const `tdzFlagLocals`
+   path, so a textually-before read hit `emitStaticTdzThrow` → "f is not defined"
+   (the 8 `*-no-init` files). `undefined` is materialised into the MAIN body
+   first (late-import-shift-safe), stashed, then `select`ed on the flag — same
+   pattern as `emitAnnexBTypeofFlagBranch`. Gated on the normally-empty
+   `annexBOuterBindings` set → byte-identical for every other read.
+
+2. **Mutable-binding exclusion** (`annexBNameReassignedInBlock`,
+   nested-declarations.ts). The 2 `*-block-scoping` files use
+   `{ function f() { f = 123; … } }` — the in-block reassignment splits the
+   block-local binding from the outer var binding (per §B.3.3 the outer binding
+   captured the function at block entry and is independent of the later mutation).
+   The single-slot flag-gated machinery can't model that split, so a name
+   reassigned anywhere in its declaring block subtree is excluded from the outer
+   binding and reverts to the (passing) pre-Phase-2 path.
+
+3. **Existing-`var` exclusion** (`annexBSameNameVarIn­Scope`,
+   nested-declarations.ts). Per §B.3.3 step 2 ("If instantiatedVarNames does not
+   contain F"), a same-named `var F` already in the enclosing function/global
+   scope means NO fresh outer binding — the function uses the existing var. The
+   existing var may be a non-externref slot (e.g. an f64 number, as in
+   `block-decl-func-existing-var-no-init`: `var f = 123`); allocating an externref
+   outer binding on top desyncs the type and the new read path emits
+   `expected externref, got f64`. This was a regression my read-interception
+   newly EXPOSED (the file was `pass` on PR-HEAD because nothing consumed the
+   stray binding); the var-scan eligibility exclusion is order-independent and
+   restores it.
+
+**Validation (all local, on the fixed branch).**
+- **All 10 merge_group-regressed files now PASS** (`runTest262File`): the 8
+  `*-no-init` + 2 `*-block-scoping`.
+- **Whole-tree no-regression**: `annexB/language/{function,global}-code` swept
+  (312 files) on the fixed branch vs the pre-Phase-2 merge-base — **104/312 on
+  both, ZERO new failures, zero recoveries** (i.e. exact base-parity; Phase-2
+  now adds the case-B feature with no collateral). The `var-no-init` file the
+  read-path first broke is included and passes.
+- **Byte-identity intact**: all 7 unobserved harness shapes still hash-identical
+  to the merge-base — the -1180 fix is undisturbed (the three new gates only make
+  eligibility STRICTER; the read interception is `annexBOuterBindings`-gated).
+- **Unit tests**: `tests/issue-2552-annexb-phase2.test.ts` now 13/13 (added
+  bare-read-before-block→undefined, read-after→function, reassigned-in-block
+  in-block-use). `typecheck` + `format:check` + `lint`(changed files) +
+  `check:stack-balance` clean.
+
+Expected merge_group delta: the -10 recovered, no new regressions → **net ≥ 0**.
+On landing, `#2200` closes (both Annex B phases complete).

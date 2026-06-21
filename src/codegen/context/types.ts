@@ -395,6 +395,17 @@ export interface FunctionContext {
    */
   annexBCancelled?: Map<string, Array<{ start: number; end: number }>>;
   /**
+   * (#2200 Annex B B.3.3 Phase 2) Block-nested `function F` declarations that ARE
+   * eligible for the web-compat outer var-binding (no cancelling shadow/param).
+   * The outer binding is pre-allocated as a TDZ var (`localMap[F]` + a
+   * `tdzFlagLocals[F]` flag, zero-init = uninitialised); it is assigned the
+   * function value + flag←1 at the declaration's textual position (so it only
+   * initialises when control reaches the block). Membership gates the
+   * declaration-site init and the `typeof F` runtime-flag branch; normally empty,
+   * so non-Annex-B function decls are byte-identical.
+   */
+  annexBOuterBindings?: Set<string>;
+  /**
    * For TDZ flag locals that have been boxed in an i32 ref cell so that
    * mutations propagate to closures that captured the flag (#1177).
    *
