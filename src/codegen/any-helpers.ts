@@ -503,6 +503,24 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // String content comparison via wasm:js-string equals (tag 5)
   const strEqualsIdx = ctx.jsStringImports.get("equals") ?? -1;
 
+  // (#2040) NATIVE string-content equality + flatten for the tag-5 arms of
+  // `__any_eq` / `__any_strict_eq` in standalone/WASI. The JS-host `equals`
+  // import (`strEqualsIdx`) is -1 there, so the tag-5 arm was a DEAD
+  // `i32.const 0` → EVERY tag-5 `===`/`==` returned false, INCLUDING a NUMBER
+  // `any` boxed as tag-5 by the #1888 box-the-externref policy (`5 === 5` →
+  // false → the `_isSameValue` standalone break). The fix (arch-2040 spec)
+  // replaces the dead ternary with a 3-WAY field-4 cascade — number / native
+  // string / else — disambiguating by the RUNTIME externref WITHOUT changing the
+  // #1888 boxing (so the −794 baseline gain is preserved). `__str_equals` takes
+  // `ref $NativeString`, so flatten the `$AnyString` (BASE-type) field-4 first.
+  let nativeStrEqualsIdx = -1;
+  let nativeStrFlattenIdx = -1;
+  if ((ctx.standalone === true || ctx.wasi === true) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    ensureNativeStringHelpers(ctx);
+    nativeStrEqualsIdx = ctx.nativeStrHelpers.get("__str_equals") ?? -1;
+    nativeStrFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten") ?? -1;
+  }
+
   // (#2081) StringToNumber scanner (§7.1.4.1) for the cross-tag String⇄Number
   // loose-equality arm in `__any_eq`. Only the standalone/WASI native-string
   // path has it (signature `(externref) -> f64`; converts the externref back to
@@ -917,6 +935,123 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   const toF64Idx = ctx.funcMap.get("__any_to_f64")!;
   const boxI32Idx = ctx.funcMap.get("__any_box_i32")!;
   const boxF64Idx = ctx.funcMap.get("__any_box_f64")!;
+
+  // (#2040, arch-2040 spec) Build the canonical 3-WAY tag-5 equality cascade for
+  // `__any_eq` / `__any_strict_eq`. Both operands are KNOWN tag-5 here (the caller
+  // already matched tag 5 on both). A tag-5 box's field-4 externref (after
+  // `any.convert_extern`) is exactly one of: a `$__box_number` struct (a NUMBER,
+  // boxed by the #1888 `__any_box_string` blanket policy), an `$AnyString` subtree
+  // (a STRING), or a host/object externref. Disambiguate by the runtime type:
+  //   - both NUMBER  → `__any_to_f64` both + `f64.eq`  (`5===5` true, NaN-safe)
+  //   - both STRING  → flatten ($AnyString→$NativeString) + native `__str_equals`
+  //   - else (mixed / host / object) → 0  (different JS type ⇒ strictly unequal)
+  // TRAP-avoidance from the 3 reverted attempts:
+  //  (1) `ref.test` the $AnyString BASE (`ctx.anyStrTypeIdx`), NOT $NativeString —
+  //      cons/utf8 strings are SUBTYPES; a Flat-only test mis-routed them (indexOf −1).
+  //  (2) THREE-WAY: a host/object tag-5 falls to ELSE, never forced into a string arm.
+  //  (3) The CALLER must REPLACE the dead `strEqualsIdx>=0 ? … : i32.const 0`
+  //      ternary entirely with this — not nest it inside the dead ternary.
+  // Standalone/WASI + nativeStrings only; returns null when unavailable (caller
+  // keeps the host/`strEqualsIdx` path).
+  const tag5NativeEqInstrs = (): Instr[] | null => {
+    if (
+      !(ctx.standalone === true || ctx.wasi === true) ||
+      !ctx.nativeStrings ||
+      ctx.anyStrTypeIdx < 0 ||
+      ctx.nativeBoxNumberTypeIdx < 0 ||
+      nativeStrEqualsIdx < 0 ||
+      nativeStrFlattenIdx < 0
+    ) {
+      return null;
+    }
+    const boxNumIdx = ctx.nativeBoxNumberTypeIdx;
+    const anyStrIdx = ctx.anyStrTypeIdx;
+    // field-4 externref → anyref `ref.test` predicate for operand `paramIdx`.
+    const isKind = (paramIdx: number, typeIdx: number): Instr[] => [
+      { op: "local.get", index: paramIdx },
+      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.test", typeIdx } as Instr,
+    ];
+    const strEqArm: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.cast", typeIdx: anyStrIdx } as Instr,
+      { op: "call", funcIdx: nativeStrFlattenIdx },
+      { op: "local.get", index: 1 },
+      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.cast", typeIdx: anyStrIdx } as Instr,
+      { op: "call", funcIdx: nativeStrFlattenIdx },
+      { op: "call", funcIdx: nativeStrEqualsIdx },
+    ];
+    const numEqArm: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: toF64Idx },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: toF64Idx },
+      { op: "f64.eq" },
+    ];
+    return [
+      // both NUMBER?
+      ...isKind(0, boxNumIdx),
+      ...isKind(1, boxNumIdx),
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: numEqArm,
+        else: [
+          // both native STRING?
+          ...isKind(0, anyStrIdx),
+          ...isKind(1, anyStrIdx),
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: strEqArm,
+            // mixed primitive (number⇄string) ⇒ different JS type ⇒ unequal; BUT a
+            // tag-5 OBJECT/ARRAY/host externref pair compares by REFERENCE IDENTITY
+            // (`a === a` over an array `any` must be true — the `_isSameValue`
+            // `a!==a` self-test). `ref.eq` the two field-4 externrefs via
+            // `any.convert_extern`+the eq heap type; non-eqref (e.g. a host string
+            // externref that slipped the $AnyString test) → 0.
+            else: (() => {
+              const EQ_HEAP = -19; // WasmGC `eq` abstract heap type
+              return [
+                { op: "local.get", index: 0 },
+                { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                { op: "any.convert_extern" } as Instr,
+                { op: "ref.test", typeIdx: EQ_HEAP } as Instr,
+                { op: "local.get", index: 1 },
+                { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                { op: "any.convert_extern" } as Instr,
+                { op: "ref.test", typeIdx: EQ_HEAP } as Instr,
+                { op: "i32.and" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [
+                    { op: "local.get", index: 0 },
+                    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                    { op: "any.convert_extern" } as Instr,
+                    { op: "ref.cast", typeIdx: EQ_HEAP } as Instr,
+                    { op: "local.get", index: 1 },
+                    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                    { op: "any.convert_extern" } as Instr,
+                    { op: "ref.cast", typeIdx: EQ_HEAP } as Instr,
+                    { op: "ref.eq" },
+                  ],
+                  else: [{ op: "i32.const", value: 0 }],
+                } as Instr,
+              ] as Instr[];
+            })(),
+          } as Instr,
+        ],
+      } as Instr,
+    ];
+  };
 
   // __any_add(a: ref $AnyValue, b: ref $AnyValue) -> ref $AnyValue
   //
@@ -1441,7 +1576,12 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                                 op: "if",
                                 blockType: { kind: "val", type: { kind: "i32" } },
                                 then:
-                                  strEqualsIdx >= 0
+                                  // (#2040) Prefer the native 3-way field-4 cascade in
+                                  // standalone/WASI (number / string / else); fall back to the
+                                  // JS-host `equals` import when present; else (host with no
+                                  // equals import) the legacy conservative `0`.
+                                  tag5NativeEqInstrs() ??
+                                  (strEqualsIdx >= 0
                                     ? [
                                         { op: "local.get", index: 0 },
                                         { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
@@ -1449,7 +1589,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                                         { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
                                         { op: "call", funcIdx: strEqualsIdx },
                                       ]
-                                    : [{ op: "i32.const", value: 0 }],
+                                    : [{ op: "i32.const", value: 0 }]),
                                 else: [
                                   // null/undefined (tag < 2): both same tag → equal
                                   { op: "local.get", index: 2 },
@@ -1613,7 +1753,12 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                                 op: "if",
                                 blockType: { kind: "val", type: { kind: "i32" } },
                                 then:
-                                  strEqualsIdx >= 0
+                                  // (#2040) Prefer the native 3-way field-4 cascade in
+                                  // standalone/WASI (number / string / else); fall back to the
+                                  // JS-host `equals` import when present; else (host with no
+                                  // equals import) the legacy conservative `0`.
+                                  tag5NativeEqInstrs() ??
+                                  (strEqualsIdx >= 0
                                     ? [
                                         { op: "local.get", index: 0 },
                                         { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
@@ -1621,7 +1766,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                                         { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
                                         { op: "call", funcIdx: strEqualsIdx },
                                       ]
-                                    : [{ op: "i32.const", value: 0 }],
+                                    : [{ op: "i32.const", value: 0 }]),
                                 else: [
                                   // null/undefined (tag < 2): both same tag → equal
                                   { op: "local.get", index: 2 },
