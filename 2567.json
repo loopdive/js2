@@ -1,8 +1,8 @@
 {
   "id": "2567",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-21T02:26:45Z",
-  "updated_at": "2026-06-21T02:26:45Z"
+  "assignee": "ttraenkler/sd3",
+  "status": "in-progress",
+  "branch": "issue-2567-dstr-throwing-init",
+  "claimed_at": "2026-06-21T02:49:10Z",
+  "updated_at": "2026-06-21T02:49:10Z"
 }
