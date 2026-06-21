@@ -308,6 +308,45 @@ destructuring / all HOFs / at / pop / slice, typed no-regression + deterministic
 bytes). Gates green: tsc, prettier, biome lint, `check-test262-hard-errors` (0,
 no growth), `check:ir-fallbacks` (no increase).
 
+### S2 landed (2026-06-21, sd-1838)
+
+**Done.** HOF visit-SKIP semantics on the dense WasmGC vec, the headline fix
+(`*-ary-forEach-15.4.4.18-2-9` family + the `does-not-visit-deleted/absent`
+suite). Two reusable gate helpers in `src/codegen/array-holes.ts`:
+
+- `holeSkipGate(ctx, data, i, arrTy, work, onHole?)` — wraps a branch-free
+  per-iteration `work` in `if ($Hole) onHole else work`; used by
+  `forEach`/`filter`/`map`. For `map`, `onHole` writes `$Hole` into the result
+  slot (and the result vec is forced to externref-element so it can hold the
+  sentinel) → a source hole yields a **result hole** (`[1,,3].map(x=>x*10)` →
+  `"10,,30"`).
+- `holeContinueGate(ctx, data, i, arrTy, onHole?, reverse?)` — for loop bodies
+  whose `work` contains its OWN `br` into the loop/block (`some`/`every`
+  early-exit `br 2`, `indexOf`/`lastIndexOf` match-break, `reduce`/`reduceRight`
+  fold). Emits the hole test at the SAME control depth and, on a hole, does
+  `i±1; br 1` (continue) directly — so the present-index work that follows is
+  UNGUARDED and its branch depths are unchanged (avoids the depth-off-by-one
+  hazard of nesting the work in an extra `if`). `reverse` flips `i++`→`i--` for
+  reduceRight / lastIndexOf.
+
+Per-method: `forEach`/`some`/`every` skip (callback not called, scan continues);
+`map` skips + result-hole; `filter` omits; `indexOf`/`lastIndexOf` skip (a hole
+never matches — supersedes S1's hole→undefined read-map for these two);
+`reduce`/`reduceRight` skip the fold AND seek the first/last **present** element
+for the no-initial-value seed (empty/all-holes ⇒ TypeError). `includes` is
+UNCHANGED (uses Get → `[,].includes(undefined) === true`, keeps S1's read-map),
+and `find`/`findIndex`/`findLast`/`findLastIndex` are UNCHANGED (Get semantics —
+they VISIT a hole observing `undefined`, not HasProperty-skip). All gated on
+`ctx.usesArrayHoles && elemType.kind === "externref"` → typed `number[]`
+(f64/i32) kernels are byte-identical (no `ref.test`).
+
+Tests: `tests/issue-2001-s2-hof-skip.test.ts` (21 cases — forEach/map/filter
+visit-skip, some/every skip-not-undefined, indexOf/lastIndexOf skip vs
+includes/find Get, reduce/reduceRight skip+seed-seek+empty-throw, typed
+no-regression + deterministic bytes + standalone). The S1 read-boundary HOF
+assertions in `issue-2001-s1-hole-literal.test.ts` were updated from S1's interim
+"visit-as-undefined" to S2's spec-correct visit-skip.
+
 #### S2 — HOF visit-skip on the dense vec (forEach/map/filter/some/every/reduce/indexOf). **[depends on S1]**
 
 The headline fix. The `$Object`-backed array-like path already has the

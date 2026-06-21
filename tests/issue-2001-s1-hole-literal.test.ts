@@ -156,13 +156,18 @@ describe("#2001 S1 — sparse-array literal holes ($Hole sentinel, any[] only)",
   });
 
   describe("read-boundary invariant — a hole never leaks the sentinel to a value reader", () => {
-    // S1 does NOT yet skip holes in HOFs (that is S2) — forEach/map/etc still
-    // VISIT the hole — but the visited value MUST be `undefined`, never the
-    // `$Hole` sentinel struct. These lock in the no-regression contract: before
-    // S1 a hole was stored as `undefined`, so every reader saw `undefined`;
-    // after S1 it is stored as `$Hole`, so every value reader must map it back.
+    // The §ToObject/Get readers (for-of, destructuring, find, at, pop, includes)
+    // VISIT a hole observing `undefined` — never the `$Hole` sentinel struct. The
+    // HasProperty readers (forEach/map/filter/some/every/indexOf/lastIndexOf/
+    // reduce) SKIP a hole entirely (S2, #2001). Both invariants are checked here;
+    // in neither case may the raw sentinel leak to user code.
+    //
+    // NOTE (#2001 S2): the HOF assertions below were written for S1's interim
+    // "visit-as-undefined" behaviour and have been updated to S2's spec-correct
+    // visit-SKIP — the dedicated S2 acceptance suite is in
+    // `tests/issue-2001-s2-hof-skip.test.ts`.
 
-    it("for-of yields undefined at a hole", async () => {
+    it("for-of yields undefined at a hole (Get)", async () => {
       expect(
         await run(
           `export function run(): string { const a: any[] = [1, , 3]; let r = ""; for (const x of a) { r += typeof x + ","; } return r; }`,
@@ -170,72 +175,74 @@ describe("#2001 S1 — sparse-array literal holes ($Hole sentinel, any[] only)",
       ).toBe("number,undefined,number,");
     });
 
-    it("array destructuring binds undefined at a hole", async () => {
+    it("array destructuring binds undefined at a hole (Get)", async () => {
       expect(
         await run(`export function run(): string { const a: any[] = [1, , 3]; const [p, q, r] = a; return typeof q; }`),
       ).toBe("undefined");
     });
 
-    it("forEach callback receives undefined (visited, not the sentinel)", async () => {
+    it("forEach SKIPS a hole — the callback is not invoked for it (S2)", async () => {
       expect(
         await run(
           `export function run(): string { const a: any[] = [1, , 3]; let r = ""; a.forEach((x) => { r += typeof x; }); return r; }`,
         ),
-      ).toBe("numberundefinednumber");
+      ).toBe("numbernumber");
     });
 
-    it("map produces undefined at a hole's index in S1", async () => {
+    it("map preserves a result hole at the skipped index (S2)", async () => {
+      // The hole index is skipped (callback not called) and the result slot is a
+      // hole, so join renders it "": [number, <hole>, number] → "number,,number".
       expect(
         await run(
-          `export function run(): string { const a: any[] = [1, , 3]; return a.map((x) => typeof x).join(","); }`,
+          `export function run(): string { const a: any[] = [1, , 3]; return a.map((x: any) => typeof x).join(","); }`,
         ),
-      ).toBe("number,undefined,number");
+      ).toBe("number,,number");
     });
 
-    it("filter callback sees undefined", async () => {
+    it("filter omits a hole — the callback never sees it (S2)", async () => {
       expect(
         await run(
-          `export function run(): number { const a: any[] = [1, , 3]; return a.filter((x) => x === undefined).length; }`,
-        ),
-      ).toBe(1);
-    });
-
-    it("some/every observe undefined at a hole", async () => {
-      expect(
-        await run(
-          `export function run(): boolean { const a: any[] = [1, , 3]; return a.some((x) => x === undefined); }`,
-        ),
-      ).toBe(1);
-      expect(
-        await run(
-          `export function run(): boolean { const a: any[] = [1, , 3]; return a.every((x) => x !== undefined); }`,
+          `export function run(): number { const a: any[] = [1, , 3]; return a.filter((x: any) => x === undefined).length; }`,
         ),
       ).toBe(0);
     });
 
-    it("find returns the undefined element for a matching hole", async () => {
+    it("some/every SKIP a hole — not observed as undefined (S2)", async () => {
       expect(
         await run(
-          `export function run(): string { const a: any[] = [1, , 3]; return typeof a.find((x) => x === undefined); }`,
+          `export function run(): boolean { const a: any[] = [1, , 3]; return a.some((x: any) => x === undefined); }`,
+        ),
+      ).toBe(0);
+      expect(
+        await run(
+          `export function run(): boolean { const a: any[] = [1, , 3]; return a.every((x: any) => x !== undefined); }`,
+        ),
+      ).toBe(1);
+    });
+
+    it("find VISITS a hole observing undefined (Get, NOT HasProperty)", async () => {
+      expect(
+        await run(
+          `export function run(): string { const a: any[] = [1, , 3]; return typeof a.find((x: any) => x === undefined); }`,
         ),
       ).toBe("undefined");
     });
 
-    it("indexOf/includes treat a hole as undefined (Get semantics)", async () => {
+    it("indexOf SKIPS a hole (HasProperty → -1); includes treats it as undefined (Get → true)", async () => {
       expect(
         await run(`export function run(): number { const a: any[] = [1, , 3]; return a.indexOf(undefined); }`),
-      ).toBe(1);
+      ).toBe(-1);
       expect(
         await run(`export function run(): boolean { const a: any[] = [1, , 3]; return a.includes(undefined); }`),
       ).toBe(1);
     });
 
-    it("reduce folds the hole as undefined", async () => {
+    it("reduce SKIPS a hole in the fold (S2)", async () => {
       expect(
         await run(
-          `export function run(): string { const a: any[] = [1, , 3]; return a.reduce((acc, x) => acc + "," + typeof x, "s"); }`,
+          `export function run(): string { const a: any[] = [1, , 3]; return a.reduce((acc: any, x: any) => acc + "," + typeof x, "s"); }`,
         ),
-      ).toBe("s,number,undefined,number");
+      ).toBe("s,number,number");
     });
 
     it("at() of a hole is undefined", async () => {

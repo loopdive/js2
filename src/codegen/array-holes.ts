@@ -117,9 +117,17 @@ export function ensureHoleType(ctx: CodegenContext): number {
  * Stack: `[] → [externref]`.
  */
 export function emitHoleSentinel(ctx: CodegenContext, fctx: FunctionContext): void {
+  for (const instr of holeSentinelInstrs(ctx)) fctx.body.push(instr);
+}
+
+/**
+ * Detached-`Instr[]` form of {@link emitHoleSentinel} — pushes the `$Hole`
+ * sentinel as an `externref` for splicing into a loop body (e.g. the `map`
+ * result-hole write in S2). Stack: `[] → [externref]`.
+ */
+export function holeSentinelInstrs(ctx: CodegenContext): Instr[] {
   const globalIdx = ensureHoleType(ctx);
-  fctx.body.push({ op: "global.get", index: globalIdx } as Instr);
-  fctx.body.push({ op: "extern.convert_any" } as Instr);
+  return [{ op: "global.get", index: globalIdx } as Instr, { op: "extern.convert_any" } as Instr];
 }
 
 /**
@@ -187,4 +195,108 @@ export function holeTestInstrs(ctx: CodegenContext): Instr[] {
   ensureHoleType(ctx);
   const holeTypeIdx = ctx.holeTypeIdx;
   return [{ op: "any.convert_extern" } as Instr, { op: "ref.test", typeIdx: holeTypeIdx } as Instr];
+}
+
+/**
+ * (#2001 S2) HOF visit-SKIP gate. Wraps a per-iteration `work` instruction list
+ * so it runs ONLY when the element at `data[i]` is NOT the `$Hole` sentinel; a
+ * hole index runs `onHole` instead (default: nothing). This is the §23.1.3.*
+ * "HasProperty(O, ‹k›) is false ⇒ skip" semantics that the S1 read-mapping
+ * (which only made a *visited* hole read as `undefined`) could not provide.
+ *
+ * Emits, given the loop's `data` array local + index local `i`:
+ *   data[i]; ref.test (ref $Hole)
+ *   if (i32)            ;; element IS a hole
+ *     then: onHole      ;; skipped — callback NOT called (forEach/map/etc.)
+ *     else: work        ;; present — the normal per-iteration body
+ *
+ * The caller still appends its `loopIncrement` AFTER this gate (unconditional),
+ * so a skipped hole falls through to `i++`/`br 0` and the scan continues
+ * (`some`/`find` keep scanning; `indexOf` never matches a hole; `every` does not
+ * falsify). For `map`, `onHole` writes `$Hole` into the result slot so the
+ * result preserves the hole at the same index.
+ *
+ * Gating is the CALLER's responsibility: only call this when
+ * `ctx.usesArrayHoles && elemType.kind === "externref"`. Typed (f64/i32/…) vecs
+ * never reach here, so their loop bodies are byte-identical (no `ref.test`).
+ * `getOp` is the loop's element read op (`array.get` for externref).
+ */
+export function holeSkipGate(
+  ctx: CodegenContext,
+  dataLocal: number,
+  idxLocal: number,
+  arrTypeIdx: number,
+  work: Instr[],
+  onHole: Instr[] = [],
+): Instr[] {
+  ensureHoleType(ctx);
+  const typeIdx = ctx.holeTypeIdx;
+  return [
+    { op: "local.get", index: dataLocal } as Instr,
+    { op: "local.get", index: idxLocal } as Instr,
+    { op: "array.get", typeIdx: arrTypeIdx } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: onHole,
+      else: work,
+    } as Instr,
+  ];
+}
+
+/**
+ * (#2001 S2) "Skip-and-continue" hole gate — the variant for loop bodies whose
+ * `work` contains its OWN branches into the loop/block (`some`/`every` early-exit
+ * `br depth: 2`, `indexOf` break, etc.). Wrapping such work inside the
+ * `holeSkipGate` `if`/`else` would nest it one control-frame deeper and silently
+ * off-by-one every `br` depth inside it (the §array-methods.ts depth hazard).
+ *
+ * Instead, this emits — at the SAME control depth as the rest of the loop body —
+ * a hole test that, on a hole, runs `onHole` then `i++; br 0` (continue the loop)
+ * directly, so the caller's `work` follows UNGUARDED at its original depth:
+ *
+ *   data[i]; ref.test (ref $Hole)
+ *   if (hole) { onHole; i++; br 0 }   ;; continue — skip the rest of this iter
+ *   …work… (runs only for a present index; its own `br`s keep their depths)
+ *
+ * The caller emits this as the FIRST thing after `loopExitCheck` and still
+ * appends its normal `loopIncrement` at the end (reached only by present
+ * indices). `idxLocal`/`dataLocal`/`arrTypeIdx` identify the slot; `onHole` is
+ * spliced before the continue (e.g. nothing for some/every/indexOf).
+ */
+export function holeContinueGate(
+  ctx: CodegenContext,
+  dataLocal: number,
+  idxLocal: number,
+  arrTypeIdx: number,
+  onHole: Instr[] = [],
+  reverse = false,
+): Instr[] {
+  ensureHoleType(ctx);
+  const typeIdx = ctx.holeTypeIdx;
+  return [
+    { op: "local.get", index: dataLocal } as Instr,
+    { op: "local.get", index: idxLocal } as Instr,
+    { op: "array.get", typeIdx: arrTypeIdx } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...onHole,
+        // step the index (i++ forward, i-- for a reverse loop like reduceRight /
+        // lastIndexOf), then continue. We are inside the gate's own `if`
+        // (depth 0), so the enclosing `loop` is at depth 1 — `br 1` re-enters the
+        // loop, skipping the present-index work that follows the gate.
+        { op: "local.get", index: idxLocal } as Instr,
+        { op: "i32.const", value: 1 } as Instr,
+        { op: reverse ? "i32.sub" : "i32.add" } as Instr,
+        { op: "local.set", index: idxLocal } as Instr,
+        { op: "br", depth: 1 } as Instr,
+      ],
+    } as Instr,
+  ];
 }

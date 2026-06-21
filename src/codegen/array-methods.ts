@@ -11,7 +11,14 @@ import { isBooleanType, isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
-import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1)
+import {
+  emitHoleToUndefined,
+  holeContinueGate,
+  holeSentinelInstrs,
+  holeSkipGate,
+  holeTestInstrs,
+  holeToUndefinedInstrs,
+} from "./array-holes.js"; // (#2001 S1/S2)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { addArrayIteratorImports, addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
@@ -3861,17 +3868,13 @@ function compileArrayIndexOf(
   }
   fctx.body.push({ op: "local.set", index: resTmp });
 
-  // (#2001 S1) An `any[]` hole reads `$Hole`; map it to `undefined` before the
-  // strict-eq so `indexOf(undefined)` matches the hole index (an absent index
-  // reads as undefined via Get). Pre-ensure `__get_undefined` while we own
-  // `fctx.body` so the detached `holeToUndefinedInstrs` flush can't shift the
-  // already-captured `__host_eq` funcIdx.
-  let holeMap: Instr[] = [];
-  if (ctx.usesArrayHoles && elemType.kind === "externref") {
-    ensureGetUndefined(ctx);
-    flushLateImportShifts(ctx, fctx);
-    holeMap = holeToUndefinedInstrs(ctx, fctx);
-  }
+  // (#2001 S2) indexOf SKIPS holes — a hole is never a match (§23.1.3.14 uses
+  // HasProperty, not Get, so `[,].indexOf(undefined) === -1`, UNLIKE `includes`
+  // which uses Get). This supersedes S1's hole→undefined read-map for indexOf
+  // (which wrongly made `indexOf(undefined)` match a hole). Skip via the
+  // continue-gate so the present-index strict-eq + match-break depths are intact.
+  const iofSkip =
+    ctx.usesArrayHoles && elemType.kind === "externref" ? holeContinueGate(ctx, dataTmp, iTmp, arrTypeIdx) : [];
 
   const loopBody: Instr[] = [
     { op: "local.get", index: iTmp },
@@ -3879,10 +3882,11 @@ function compileArrayIndexOf(
     { op: "i32.ge_s" },
     { op: "br_if", depth: 1 },
 
+    ...iofSkip,
+
     { op: "local.get", index: dataTmp },
     { op: "local.get", index: iTmp },
     { op: getOp, typeIdx: arrTypeIdx } as Instr,
-    ...holeMap,
     { op: "local.get", index: valTmp },
     ...eqInstrs,
     {
@@ -6329,9 +6333,10 @@ function compileArrayFilter(
     "truthy",
   );
 
-  const loopBody: Instr[] = [
-    ...loopExitCheck(loop),
-
+  // (#2001 S2) filter does NOT call the callback for a hole, and a hole
+  // contributes nothing to the result (§23.1.3.7). Wrap the elem-read + call +
+  // append work so a hole skips straight to the increment (no `onHole`).
+  const fltWork: Instr[] = [
     // elem = data[i]
     { op: "local.get", index: loop.dataTmp } as Instr,
     { op: "local.get", index: loop.iTmp } as Instr,
@@ -6355,9 +6360,13 @@ function compileArrayFilter(
         { op: "local.set", index: resLen } as Instr,
       ],
     } as Instr,
-
-    ...loopIncrement(loop),
   ];
+  const fltGated =
+    ctx.usesArrayHoles && elemType.kind === "externref"
+      ? holeSkipGate(ctx, loop.dataTmp, loop.iTmp, arrTypeIdx, fltWork)
+      : fltWork;
+
+  const loopBody: Instr[] = [...loopExitCheck(loop), ...fltGated, ...loopIncrement(loop)];
 
   emitArrayLoop(fctx, loopBody);
 
@@ -6415,6 +6424,21 @@ function compileArrayMap(
     mapVecTypeIdx = getOrRegisterVecType(ctx, mapResultElemType.kind, mapResultElemType);
   }
 
+  // (#2001 S2) map preserves a source hole as a RESULT hole at the same index
+  // (§23.1.3.18 step 6.c skips the callback when HasProperty is false, leaving
+  // the result index absent). To store `$Hole` at the skipped index the RESULT
+  // vec must be externref-element. When the source is a hole-bearing `any[]`
+  // (externref) and the callback would otherwise map to a typed numeric result,
+  // force the result element to externref so the hole is representable (the
+  // present-index callback results box via the coercion below). Hole-free or
+  // typed sources are unaffected — result type stays as inferred.
+  const mapSkipHoles = ctx.usesArrayHoles && elemType.kind === "externref";
+  if (mapSkipHoles && mapResultElemType.kind !== "externref") {
+    mapResultElemType = { kind: "externref" };
+    mapArrTypeIdx = getOrRegisterArrayType(ctx, "externref", mapResultElemType);
+    mapVecTypeIdx = getOrRegisterVecType(ctx, "externref", mapResultElemType);
+  }
+
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "map");
 
   const resData = allocLocal(fctx, `__arr_map_rd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: mapArrTypeIdx });
@@ -6450,17 +6474,27 @@ function compileArrayMap(
     ];
   }
 
-  const loopBody: Instr[] = [
-    ...loopExitCheck(loop),
-
+  const mapWork: Instr[] = [
     // resData[i] = cb(data[i])
     { op: "local.get", index: resData } as Instr,
     { op: "local.get", index: loop.iTmp } as Instr,
     ...callInstrs,
     { op: "array.set", typeIdx: mapArrTypeIdx } as Instr,
-
-    ...loopIncrement(loop),
   ];
+  // (#2001 S2) For a hole index, do NOT call the callback; write `$Hole` into the
+  // result slot so the result preserves the hole (result vec was forced to
+  // externref above, so it can hold the sentinel).
+  const mapOnHole: Instr[] = mapSkipHoles
+    ? [
+        { op: "local.get", index: resData } as Instr,
+        { op: "local.get", index: loop.iTmp } as Instr,
+        ...holeSentinelInstrs(ctx),
+        { op: "array.set", typeIdx: mapArrTypeIdx } as Instr,
+      ]
+    : [];
+  const mapGated = mapSkipHoles ? holeSkipGate(ctx, loop.dataTmp, loop.iTmp, arrTypeIdx, mapWork, mapOnHole) : mapWork;
+
+  const loopBody: Instr[] = [...loopExitCheck(loop), ...mapGated, ...loopIncrement(loop)];
 
   emitArrayLoop(fctx, loopBody);
 
@@ -6528,14 +6562,66 @@ function compileArrayReduce(
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "red");
   const accTmp = allocLocal(fctx, `__arr_red_acc_${fctx.locals.length}`, accType);
+  // (#2001 S2) reduce skips holes for BOTH the no-initial seed seek and the fold
+  // (§23.1.3.21 — uses HasProperty). Gate on externref element.
+  const redSkipHoles = ctx.usesArrayHoles && elemType.kind === "externref";
+  const redGetOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
 
   // Compile initial value or use arr[0] as default
   if (callExpr.arguments.length >= 2) {
     compileExpression(ctx, fctx, callExpr.arguments[1]!, accType);
     fctx.body.push({ op: "local.set", index: accTmp });
     // i already = 0 from setupArrayLoop
+  } else if (redSkipHoles) {
+    // (#2001 S2) No initial value on a hole-bearing `any[]`: the seed is the
+    // FIRST PRESENT element (per spec the initial-accumulator seek advances past
+    // absent indices), and the fold starts at the index AFTER it. Empty OR
+    // all-holes ⇒ TypeError "Reduce of empty array with no initial value".
+    // Forward-scan: while (i < len && data[i] is $Hole) i++; if (i>=len) throw;
+    // acc = data[i]; i++.
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            // if (i >= len) break → all holes / empty
+            { op: "local.get", index: loop.iTmp } as Instr,
+            { op: "local.get", index: loop.lenTmp } as Instr,
+            { op: "i32.ge_s" } as Instr,
+            { op: "br_if", depth: 1 } as Instr,
+            // if (data[i] is NOT a hole) break → found the seed
+            ...holeContinueGate(ctx, loop.dataTmp, loop.iTmp, arrTypeIdx),
+            // present element at i: break out of the seek loop
+            { op: "br", depth: 1 } as Instr,
+          ],
+        } as Instr,
+      ],
+    } as Instr);
+    // if (i >= len) throw — empty or all-holes
+    fctx.body.push({ op: "local.get", index: loop.iTmp });
+    fctx.body.push({ op: "local.get", index: loop.lenTmp });
+    fctx.body.push({ op: "i32.ge_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: throwStringInstrs(ctx, "TypeError: Reduce of empty array with no initial value"),
+    } as Instr);
+    // acc = data[i]  (i points at the first present element)
+    fctx.body.push({ op: "local.get", index: loop.dataTmp });
+    fctx.body.push({ op: "local.get", index: loop.iTmp });
+    fctx.body.push({ op: redGetOp, typeIdx: arrTypeIdx });
+    coercionInstrs(ctx, elemType, accType, fctx).forEach((i) => fctx.body.push(i));
+    fctx.body.push({ op: "local.set", index: accTmp });
+    // i = i + 1  (fold starts after the seed)
+    fctx.body.push({ op: "local.get", index: loop.iTmp });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: loop.iTmp });
   } else {
-    // No initial value: throw TypeError on empty array, else acc = data[0], start from i = 1
+    // No initial value (no holes): throw TypeError on empty array, else acc = data[0], start from i = 1
     fctx.body.push({ op: "local.get", index: loop.lenTmp });
     fctx.body.push({ op: "i32.eqz" });
     fctx.body.push({
@@ -6545,13 +6631,7 @@ function compileArrayReduce(
     } as Instr);
     fctx.body.push({ op: "local.get", index: loop.dataTmp });
     fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({
-      op: elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get",
-      typeIdx: arrTypeIdx,
-    });
-    // (#2001 S1) If data[0] is a `$Hole` (the no-initial-value seed), map it to
-    // `undefined` before it becomes the accumulator.
-    if (ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
+    fctx.body.push({ op: redGetOp, typeIdx: arrTypeIdx });
     // Coerce the seed element to the accumulator type (e.g. element externref
     // string → accumulator externref, or i32 element → f64 accumulator).
     coercionInstrs(ctx, elemType, accType, fctx).forEach((i) => fctx.body.push(i));
@@ -6577,8 +6657,9 @@ function compileArrayReduce(
             { op: "local.get", index: loop.dataTmp } as Instr,
             { op: "local.get", index: loop.iTmp } as Instr,
             { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
-            // (#2001 S1) A `$Hole` element reaches the reducer as `undefined`.
-            ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
+            // (#2001 S2) The element at this index is guaranteed present — the
+            // fold loop's continue-gate already skipped any hole index — so the
+            // reducer never receives a hole (no S1 hole→undefined map needed here).
             ...elemCoerce,
           ]
         : []),
@@ -6631,7 +6712,10 @@ function compileArrayReduce(
     ];
   }
 
-  const loopBody: Instr[] = [...loopExitCheck(loop), ...callInstrs, ...loopIncrement(loop)];
+  // (#2001 S2) Skip hole indices in the fold (the reducer is never invoked for an
+  // absent index). Continue-gate keeps the present-index `callInstrs` at depth 0.
+  const redFoldSkip = redSkipHoles ? holeContinueGate(ctx, loop.dataTmp, loop.iTmp, arrTypeIdx) : [];
+  const loopBody: Instr[] = [...loopExitCheck(loop), ...redFoldSkip, ...callInstrs, ...loopIncrement(loop)];
 
   emitArrayLoop(fctx, loopBody);
 
@@ -6683,6 +6767,8 @@ function compileArrayReduceRight(
 
   const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
   const accTmp = allocLocal(fctx, `__arr_rr_acc_${fctx.locals.length}`, accType);
+  // (#2001 S2) reduceRight skips holes (HasProperty) for the seed-seek and fold.
+  const rrSkipHoles = ctx.usesArrayHoles && elemType.kind === "externref";
 
   // Compile initial value or use arr[length-1] as default
   if (callExpr.arguments.length >= 2) {
@@ -6693,8 +6779,57 @@ function compileArrayReduceRight(
     fctx.body.push({ op: "i32.const", value: 1 });
     fctx.body.push({ op: "i32.sub" });
     fctx.body.push({ op: "local.set", index: iTmp });
+  } else if (rrSkipHoles) {
+    // (#2001 S2) No initial value on a hole-bearing `any[]`: the seed is the LAST
+    // PRESENT element (the reduceRight initial-accumulator seek walks DOWN past
+    // absent indices), fold starts at the index below it. Empty / all-holes ⇒
+    // TypeError. Backward-scan from length-1: while (i>=0 && data[i] is hole) i--;
+    // if (i<0) throw; acc = data[i]; i--.
+    fctx.body.push({ op: "local.get", index: lenTmp });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.sub" });
+    fctx.body.push({ op: "local.set", index: iTmp });
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            // if (i < 0) break → empty / all holes
+            { op: "local.get", index: iTmp } as Instr,
+            { op: "i32.const", value: 0 } as Instr,
+            { op: "i32.lt_s" } as Instr,
+            { op: "br_if", depth: 1 } as Instr,
+            // if (data[i] is a hole) i--; continue; else break (found seed)
+            ...holeContinueGate(ctx, dataTmp, iTmp, arrTypeIdx, [], /*reverse*/ true),
+            { op: "br", depth: 1 } as Instr,
+          ],
+        } as Instr,
+      ],
+    } as Instr);
+    // if (i < 0) throw
+    fctx.body.push({ op: "local.get", index: iTmp });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.lt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: throwStringInstrs(ctx, "TypeError: Reduce of empty array with no initial value"),
+    } as Instr);
+    // acc = data[i]; i--
+    fctx.body.push({ op: "local.get", index: dataTmp });
+    fctx.body.push({ op: "local.get", index: iTmp });
+    fctx.body.push({ op: getOp, typeIdx: arrTypeIdx });
+    coercionInstrs(ctx, elemType, accType, fctx).forEach((i) => fctx.body.push(i));
+    fctx.body.push({ op: "local.set", index: accTmp });
+    fctx.body.push({ op: "local.get", index: iTmp });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.sub" });
+    fctx.body.push({ op: "local.set", index: iTmp });
   } else {
-    // No initial value: throw TypeError on empty array, else acc = data[length-1], start from length - 2
+    // No initial value (no holes): throw TypeError on empty array, else acc = data[length-1], start from length - 2
     fctx.body.push({ op: "local.get", index: lenTmp });
     fctx.body.push({ op: "i32.eqz" });
     fctx.body.push({
@@ -6707,8 +6842,6 @@ function compileArrayReduceRight(
     fctx.body.push({ op: "i32.const", value: 1 });
     fctx.body.push({ op: "i32.sub" });
     fctx.body.push({ op: getOp, typeIdx: arrTypeIdx });
-    // (#2001 S1) data[length-1] seed may be a `$Hole` → bind `undefined`.
-    if (ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
     // Coerce the seed element to the accumulator type (e.g. element externref
     // string → accumulator externref, or i32 element → f64 accumulator).
     coercionInstrs(ctx, elemType, accType, fctx).forEach((i) => fctx.body.push(i));
@@ -6751,8 +6884,8 @@ function compileArrayReduceRight(
             { op: "local.get", index: dataTmp } as Instr,
             { op: "local.get", index: iTmp } as Instr,
             { op: getOp, typeIdx: arrTypeIdx } as Instr,
-            // (#2001 S1) A `$Hole` element reaches the reducer as `undefined`.
-            ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
+            // (#2001 S2) The fold's reverse continue-gate already skipped any hole
+            // index, so the element here is always present (no S1 map needed).
             ...elemCoerce,
           ]
         : []),
@@ -6803,6 +6936,8 @@ function compileArrayReduceRight(
     ];
   }
 
+  // (#2001 S2) Skip hole indices in the reverse fold (reducer never sees a hole).
+  const rrFoldSkip = rrSkipHoles ? holeContinueGate(ctx, dataTmp, iTmp, arrTypeIdx, [], /*reverse*/ true) : [];
   // Loop: while (i >= 0) { acc = cb(acc, data[i], i, arr); i--; }
   const loopBody: Instr[] = [
     // Exit check: if (i < 0) break
@@ -6810,6 +6945,7 @@ function compileArrayReduceRight(
     { op: "i32.const", value: 0 } as Instr,
     { op: "i32.lt_s" } as Instr,
     { op: "br_if", depth: 1 } as Instr,
+    ...rrFoldSkip,
     // Callback
     ...callInstrs,
     // i--
@@ -6848,20 +6984,28 @@ function compileArrayForEach(
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fe");
+  // (#2001 S2) forEach does NOT call the callback for a hole index (§23.1.3.15
+  // step 6.c: skip when HasProperty is false). Wrap the call+drop work so a hole
+  // falls straight through to `loopIncrement`. Gated on externref element.
+  const skipHoles = ctx.usesArrayHoles && elemType.kind === "externref";
 
   if (setup.closureInfo) {
     const callInstrs = buildClosureCallInstrs(ctx, fctx, setup, elemType, vecTypeIdx, arrTypeIdx, loop, {
       kind: "inline",
     });
     const dropInstrs: Instr[] = setup.closureInfo.returnType ? [{ op: "drop" } as Instr] : [];
+    const work = [...callInstrs, ...dropInstrs];
+    const gated = skipHoles ? holeSkipGate(ctx, loop.dataTmp, loop.iTmp, arrTypeIdx, work) : work;
 
-    const loopBody: Instr[] = [...loopExitCheck(loop), ...callInstrs, ...dropInstrs, ...loopIncrement(loop)];
+    const loopBody: Instr[] = [...loopExitCheck(loop), ...gated, ...loopIncrement(loop)];
 
     emitArrayLoop(fctx, loopBody);
   } else {
     const callInstrs = buildBridgeCallInstrs(ctx, setup, elemType, arrTypeIdx, loop, { kind: "inline" });
+    const work = [...callInstrs, { op: "drop" } as Instr];
+    const gated = skipHoles ? holeSkipGate(ctx, loop.dataTmp, loop.iTmp, arrTypeIdx, work) : work;
 
-    const loopBody: Instr[] = [...loopExitCheck(loop), ...callInstrs, { op: "drop" } as Instr, ...loopIncrement(loop)];
+    const loopBody: Instr[] = [...loopExitCheck(loop), ...gated, ...loopIncrement(loop)];
 
     emitArrayLoop(fctx, loopBody);
   }
@@ -7275,8 +7419,17 @@ function compileArraySome(
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: resTmp });
 
+  // (#2001 S2) some does NOT call the callback for a hole (§23.1.3.6); a hole is
+  // skipped, NOT observed as `undefined`, and the scan continues. Use the
+  // continue-gate so the early-exit `br depth: 2` inside the work keeps its depth.
+  const someSkip =
+    ctx.usesArrayHoles && elemType.kind === "externref"
+      ? holeContinueGate(ctx, loop.dataTmp, loop.iTmp, arrTypeIdx)
+      : [];
+
   const loopBody: Instr[] = [
     ...loopExitCheck(loop),
+    ...someSkip,
 
     ...callAndCheck,
     {
@@ -7337,8 +7490,17 @@ function compileArrayEvery(
   fctx.body.push({ op: "i32.const", value: 1 });
   fctx.body.push({ op: "local.set", index: resTmp });
 
+  // (#2001 S2) every does NOT call the callback for a hole (§23.1.3.5) and a hole
+  // does NOT falsify the result — it is simply skipped. Continue-gate keeps the
+  // early-exit `br depth: 2` depth intact.
+  const evrSkip =
+    ctx.usesArrayHoles && elemType.kind === "externref"
+      ? holeContinueGate(ctx, loop.dataTmp, loop.iTmp, arrTypeIdx)
+      : [];
+
   const loopBody: Instr[] = [
     ...loopExitCheck(loop),
+    ...evrSkip,
 
     ...callAndCheck,
     {
@@ -8497,15 +8659,13 @@ function compileArrayLastIndexOf(
   }
   fctx.body.push({ op: "local.set", index: liofResTmp });
 
-  // (#2001 S1) Map a `$Hole` element to `undefined` before the strict-eq so
-  // `lastIndexOf(undefined)` matches a hole index. Pre-ensure `__get_undefined`
-  // so the detached mapping flush can't shift the captured `__host_eq` funcIdx.
-  let liofHoleMap: Instr[] = [];
-  if (ctx.usesArrayHoles && elemType.kind === "externref") {
-    ensureGetUndefined(ctx);
-    flushLateImportShifts(ctx, fctx);
-    liofHoleMap = holeToUndefinedInstrs(ctx, fctx);
-  }
+  // (#2001 S2) lastIndexOf SKIPS holes — a hole never matches (§23.1.3.17 uses
+  // HasProperty), so `[,].lastIndexOf(undefined) === -1`. Supersedes S1's
+  // hole→undefined read-map. Reverse continue-gate keeps the match-break depth.
+  const liofSkip =
+    ctx.usesArrayHoles && elemType.kind === "externref"
+      ? holeContinueGate(ctx, dataTmp, iTmp, arrTypeIdx, [], /*reverse*/ true)
+      : [];
 
   // Loop: while (i >= 0) { if data[i] == val, store i and break; i--; }
   const loopBody: Instr[] = [
@@ -8515,11 +8675,12 @@ function compileArrayLastIndexOf(
     { op: "i32.lt_s" },
     { op: "br_if", depth: 1 },
 
+    ...liofSkip,
+
     // if (data[i] == val) store result and break
     { op: "local.get", index: dataTmp },
     { op: "local.get", index: iTmp },
     { op: getOp, typeIdx: arrTypeIdx } as Instr,
-    ...liofHoleMap,
     { op: "local.get", index: valTmp },
     ...liofEqInstrs,
     {
