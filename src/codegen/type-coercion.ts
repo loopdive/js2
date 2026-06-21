@@ -2579,7 +2579,15 @@ export function emitSafeExternrefToF64(ctx: CodegenContext, fctx: FunctionContex
  * This is a local version to avoid circular deps with expressions.ts.
  */
 function emitUndefinedValue(ctx: CodegenContext, fctx: FunctionContext): void {
-  const funcIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+  // (#2029) Mirror the canonical `ensureGetUndefined` guard: under
+  // native-strings (auto-on for `--target standalone`/`wasi`) there is no JS
+  // host to satisfy `__get_undefined`, and undefined is conflated with null.
+  // Calling `ensureLateImport` directly here LEAKED the host import standalone
+  // (`ensureLateImport` does not refuse `__get_undefined`), so a builtin-subclass
+  // `new X()` whose implicit derived-ctor forwarder `pushDefaultValue`s an
+  // externref slot failed to instantiate with an empty import object. Emit the
+  // native `ref.null.extern` sentinel instead. gc/host keeps the host import.
+  const funcIdx = ctx.nativeStrings ? undefined : ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
   if (funcIdx !== undefined) {
     flushLateImportShifts(ctx, fctx);
     fctx.body.push({ op: "call", funcIdx });

@@ -170,3 +170,43 @@ standalone still leaks the `__new_<Builtin>` HOST import (`class-bodies.ts:1423/
 — a host-import-retirement concern, not the emit crash. Kept #2029 `in-progress`:
 the emit-crash cluster (the headline) is fixed; the `__new_<Builtin>` standalone
 runtime path is the residual. Reassess closing once that lands.
+
+## Slice (2026-06-21, dev-agent) — builtin-subclass host-import leak (__get_undefined + __tag_user_class)
+
+**Status stays `in-progress`.** Two of the three builtin-subclass standalone
+host-import leaks fixed; `__new_<Builtin>` construction remains a separate slice.
+
+A builtin subclass (`class X extends Uint8Array {}` / `extends Error` etc.) +
+`new X()` leaked THREE host imports standalone (module fails to instantiate with
+an empty import object): `__get_undefined`, `__tag_user_class`, `__new_<Builtin>`.
+This slice clears the first two:
+
+1. **`__get_undefined`** — `compileNewExpression` → `pushDefaultValue` →
+   `emitUndefinedValue` (`src/codegen/type-coercion.ts`) called `ensureLateImport`
+   DIRECTLY, bypassing the canonical `ensureGetUndefined` `ctx.nativeStrings`
+   guard (`ensureLateImport` does not refuse `__get_undefined`), so the host
+   import leaked into the implicit derived-ctor forwarder's externref default.
+   Fix: gate on `ctx.nativeStrings` → emit `ref.null.extern` (undefined ≡ null
+   standalone). Same defect class as the #1702 Error-subclass slice, different
+   site (the `new`-expression default path, not the destructuring/coercion one).
+
+2. **`__tag_user_class`** — the externref-backed-class instanceof tag
+   (`src/codegen/class-bodies.ts`, #1455) was emitted unconditionally. Its ONLY
+   consumer is the host `__instanceof` import, which does not exist standalone
+   (`instanceof` on a builtin subclass already routes host-only there; a plain
+   class uses native WasmGC type checks and needs no tag). So the tag was dead
+   weight that leaked. Fix: skip it under `ctx.nativeStrings` — mirrors the
+   #1500 `emitSetSubclassProto` host-only-adjustment skip. gc/host keeps it so
+   the host instanceof-tag-chain still resolves.
+
+Both fixes verified by direct import inspection (the test262 runner masks the
+leak because it doesn't instantiate the standalone lane with a strictly empty
+import object). `tests/issue-2029-ta-subclass-host-leak-standalone.test.ts` (5/5):
+TypedArray/Error subclass new X() asserts neither `__get_undefined` nor
+`__tag_user_class` is imported; empty-declaration guard; host no-regression
+(tag + import still present in gc mode). tsc + prettier + coercion-sites clean.
+
+**Still open (the harder remaining leak):** `__new_<Builtin>` (`__new_Uint8Array`,
+`__new_Error`, …) — the builtin base constructor. Needs a native WasmGC
+construction path for the externref-backed base (overlaps #2159). Even an empty
+`class X extends Uint8Array {}` declaration emits it. Separate slice.

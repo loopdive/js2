@@ -1656,7 +1656,17 @@ function compileClassBodiesInner(
     // `instance instanceof Sub` by walking the registered tag chain. The
     // direct user-class parent (or null when the direct parent is a builtin)
     // is registered idempotently on first call.
-    if (isExternrefBacked) {
+    //
+    // (#2029) Skip this entirely under native-strings (standalone / wasi): the
+    // tag's ONLY consumer is the host `__instanceof` import, which does not
+    // exist standalone (`instanceof` on a builtin-subclass already routes to the
+    // host path there). Emitting it leaked the `__tag_user_class` host import
+    // into an otherwise host-free builtin-subclass `new X()`, so the module
+    // failed to instantiate with an empty import object. Mirrors the #1500
+    // `emitSetSubclassProto` skip (the host-only proto adjustment is likewise
+    // dropped standalone). The native instanceof story for builtin subclasses
+    // (a Wasm-side tag registry) is a separate slice.
+    if (isExternrefBacked && !ctx.nativeStrings) {
       const builtinParent = ctx.classBuiltinParentMap.get(className);
       // Direct user-class parent: classParentMap[className] is set to the
       // immediate parent name; if it equals the builtin parent, the user
