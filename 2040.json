@@ -1,8 +1,9 @@
 {
   "id": "2040",
   "assignee": "ttraenkler/sd-3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2040-isamevalue-fix",
   "claimed_at": "2026-06-21T12:15:00Z",
-  "updated_at": "2026-06-21T12:15:00Z"
+  "updated_at": "2026-06-21T13:53:36Z",
+  "released_at": "2026-06-21T13:53:36Z"
 }
