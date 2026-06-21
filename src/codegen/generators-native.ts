@@ -791,6 +791,125 @@ function thenBody(stmt: ts.Statement): readonly ts.Statement[] {
   return [stmt];
 }
 
+/** The nearest function-like ancestor of `node`, or undefined at module scope. */
+function enclosingFunctionLike(node: ts.Node): ts.Node | undefined {
+  let cur: ts.Node | undefined = node.parent;
+  while (cur) {
+    if (
+      ts.isFunctionDeclaration(cur) ||
+      ts.isFunctionExpression(cur) ||
+      ts.isArrowFunction(cur) ||
+      ts.isMethodDeclaration(cur) ||
+      ts.isConstructorDeclaration(cur) ||
+      ts.isGetAccessorDeclaration(cur) ||
+      ts.isSetAccessorDeclaration(cur)
+    ) {
+      return cur;
+    }
+    cur = cur.parent;
+  }
+  return undefined;
+}
+
+/**
+ * (#2203) Whether a `function*` declaration captures a binding from an
+ * **enclosing function** scope.
+ *
+ * The Wasm-native generator path (`compileNativeGeneratorFunction`) runs the
+ * resume body detached from the enclosing frame and has no machinery to thread
+ * captured cells into the state struct — so the emission gate in
+ * `nested-declarations.ts` only takes the native path when `captures.length ===
+ * 0` and otherwise falls through to the JS-host buffer path (`__create_generator`
+ * …). In standalone/WASI those host imports are registered **only** when
+ * `sourceNeedsGeneratorHostImports` reports a generator that is NOT a native
+ * candidate; if `isNativeGeneratorCandidate` ignored captures, a capturing
+ * nested generator was deemed "native" (host imports skipped) yet emitted via
+ * the host path (host imports required) — so the baked
+ * `funcMap.get("__gen_create_buffer")!` resolved to `undefined` and the emitter
+ * raised "function index out of range — undefined at function 'g'". Making
+ * candidacy capture-aware keeps both decisions in agreement: a capturing
+ * generator is non-native everywhere, so its host imports are registered.
+ *
+ * Only **enclosing-function** bindings count. Module-/global-scope references
+ * (a top-level `let` read by a top-level generator) are NOT captures — they are
+ * resolved through globals, and such generators stay on the native path.
+ */
+function generatorCapturesEnclosingScope(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
+  if (!decl.body) return false;
+  // A top-level generator (no enclosing function) cannot capture a function
+  // local — its free names are module globals, handled separately.
+  if (enclosingFunctionLike(decl) === undefined) return false;
+
+  let captures = false;
+  const visit = (node: ts.Node): void => {
+    if (captures) return;
+    // Do not descend into nested function scopes — their captures belong to
+    // them, not to `decl`.
+    if (
+      node !== decl &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node))
+    ) {
+      return;
+    }
+    if (ts.isIdentifier(node) && isFreeValueReference(node)) {
+      const symbol = ctx.checker.getSymbolAtLocation(node);
+      const valueDecl = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+      if (valueDecl) {
+        const bindingScope = enclosingFunctionLike(valueDecl);
+        // Captured iff the binding lives in a function that strictly contains
+        // `decl` (an enclosing function), i.e. the binding's scope is a
+        // function AND it is not `decl` itself nor one of `decl`'s own
+        // descendants. Module-scope bindings (bindingScope === undefined) are
+        // globals, not captures.
+        if (bindingScope && bindingScope !== decl && isAncestorOf(bindingScope, decl)) {
+          captures = true;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(decl.body, visit);
+  return captures;
+}
+
+/** True when `maybeAncestor` is a strict ancestor of `node` in the AST. */
+function isAncestorOf(maybeAncestor: ts.Node, node: ts.Node): boolean {
+  let cur: ts.Node | undefined = node.parent;
+  while (cur) {
+    if (cur === maybeAncestor) return true;
+    cur = cur.parent;
+  }
+  return false;
+}
+
+/**
+ * An identifier that is a value *reference* (not a declaration name, property
+ * name, or label) — the subset that can be a capture.
+ */
+function isFreeValueReference(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (!parent) return false;
+  // Property access `obj.id` — `id` is a member name, not a binding.
+  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return false;
+  // `{ id: ... }` property name, `{ id }` shorthand handled below.
+  if (ts.isPropertyAssignment(parent) && parent.name === id) return false;
+  // Declaration names (the binding site itself, not a use).
+  if (
+    (ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isBindingElement(parent)) &&
+    (parent as { name?: ts.Node }).name === id
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
   if (!noJsHostTarget(ctx)) return false;
   if (!decl.name || !decl.body || !decl.asteriskToken) return false;
@@ -801,6 +920,15 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: ts.Functio
   for (const param of decl.parameters) {
     if (param.dotDotDotToken || !ts.isIdentifier(param.name)) return false;
   }
+  // (#2203) A generator that captures an enclosing-function binding cannot take
+  // the Wasm-native path (the resume body runs detached from that frame). The
+  // emission gate in nested-declarations.ts already requires `captures.length
+  // === 0`; mirror that here so the host-import predicate
+  // (`sourceNeedsGeneratorHostImports`) agrees and registers the JS-host buffer
+  // imports it falls back to — otherwise the baked
+  // `funcMap.get("__gen_create_buffer")!` resolves to `undefined` and the
+  // emitter raises "function index out of range — undefined".
+  if (generatorCapturesEnclosingScope(ctx, decl)) return false;
   const plan = buildNativeGeneratorPlan(ctx, decl);
   return plan !== null && plan.states.some((s) => s.terminator.kind === "yield" || s.terminator.kind === "yield-star");
 }
