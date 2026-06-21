@@ -635,3 +635,112 @@ disambiguate the receiver. Turning the arm off reverts the canary to the
 PRE-EXISTING #2580 bug (NOT a new regression), keeps M0 inert, and is zero-regression
 (validated 12/13 + skip). The `{}.length`→undefined fix folds into M2's acceptance.
 M1 over-scoped the value-semantics; M0 (the inert scaffold) is the landable M1.
+
+## M2 — SCOPE (read-only plan, HOLD deep work until lead confirms)
+
+M1a landed the M0 scaffold (`emitDynGet`/`ensureDynReadHelpers` + the closure-base
+helper, registered + inert on `origin/main` post-#1894). M2 builds the **first real
+consumer** of that scaffold: a tag-aware dynamic reader, and applies it to the
+`Array.prototype.X.call(arrayLike)` generic-method cluster + the `.length`-on-any
+canary.
+
+### (1) The ~139 substrate-addressable residual, mapped to root causes
+
+The "~640-row" framing in §1 was STALE. Re-grounding against the current baseline
+JSONL (fetched fresh; `Array/prototype/**`): **1308 / 2810 fail**, but only **139**
+are substrate-class (the rest: ~931 `assertion_fail` spec-edge cases the substrate
+will not touch — coercion order, descriptor flags, realm/species, `assert.throws`
+shapes — + ~198 test-infra `other`). The 139 substrate-class, by error category and
+mapped to the underlying gap:
+
+| Category        | n  | Root cause (the M2 reader fixes these) |
+|-----------------|----|----------------------------------------|
+| `runtime_error` | 37 | `[].flat.call(arrayLike)`, `slice/splice/map.call(arrayLike)` → host-side `Cannot read properties of null` / `Cannot convert undefined to object`: the generic method reads the receiver's indexed props / `length` through a path that nulls out on a non-array (array-like object / `Arguments` / `ToObject(primitive)`). Needs `__extern_length` + indexed `__dyn_get`. |
+| `wasm_compile`  | 30 | `Array.prototype.forEach/every/some.call(arrayLike, cb)` → `object is not a function`: the generic-method-on-non-array dispatch fails to COMPILE (the receiver isn't a vec, so the vec-typed callback-application path can't be emitted). The #983d / PR#1844 over-broad `__extern_method_call` gate class. |
+| `illegal_cast`  | 26 | dynamic `arrayLike` receiver `ref.cast` to a vec type it is not (a real JS array-like object / boxed value) → cast trap. Needs a `ref.test`-guarded dynamic read, not an unconditional vec cast. |
+| `oob`           | 25 | `indexOf/lastIndexOf/splice/pop.call(arrayLike)` indexed access reads past the backing vec because the receiver's `length` is a dynamic property, not the vec's field-0. Needs `__extern_length`-bounded `__dyn_get(recv, i)`. |
+| `type_error`    | 17 | `reduce/reduceRight.call(arrayLike)` → "Reduce of empty array" / "Cannot access property on null or undefined": the empty/absent-element spec paths + the no-initialValue TypeError need the dynamic property-PRESENCE check (`__dyn_has`) to drive the §22.1.3.x algorithm. |
+| `null_deref`    | 4  | `flatMap/reduceRight/concat` on array-like / non-array → null pointer: same dynamic-receiver read gap surfacing as a WasmGC null deref. |
+
+Per-method concentration (substrate-class only): reduceRight 15 · concat 14 ·
+reduce 13 · slice 12 · splice 10 · map 9 · filter 8 · flatMap 7 · lastIndexOf 7 ·
+every 6 · indexOf 6 · forEach 5 · some 5 · includes 4 · (tail: flat/join/sort/…).
+**One unifying gap:** `Array.prototype.X.call(<receiver that is not a real
+compiled array>)` must read the receiver's `length` and indexed elements through
+the DYNAMIC property-presence path (`__extern_length` / `__dyn_has` / `__dyn_get`),
+not vec-typed field/index access. The canonical corpus shape (e.g.
+`built-ins/Array/prototype/flat/array-like-objects.js`):
+`[].flat.call({length: 1, 0: [1]})` and `Array.prototype.forEach.call(2.5, cb)`.
+
+### (2) M2's FIRST PRIMITIVE — the `$AnyValue`-tag-aware dynamic reader
+
+The exact gap M1 hit: at the bare-externref level a non-null `{}` lacking `length`
+(want `undefined`) and a non-null wrapped builtin / `$AnyValue`-boxed vec / host
+array-like (want the real value/count) are RUNTIME-INDISTINGUISHABLE — no
+`ref.test` / `ref.is_null` / `__extern_has` predicate separates them. The
+distinction lives in the **boxed `$AnyValue` tag** (0 null · 1 undefined · 2 i32 ·
+3 f64 · 4 bool · 5 string/externref · 6 GC-ref → `$Object`/`$Vec`). So M2's first
+primitive is a reader that **tag-dispatches** rather than calling `__extern_get`
+blind:
+
+- Build it INTO the M0 `__dyn_get` / `__dyn_has` bodies (currently they delegate to
+  `__extern_get`; M2 gives them the real tag-dispatch + the `$Vec` / `$Hole` /
+  native-string arms the M0 doc reserved).
+- tag 6 → unwrap the GC ref, `ref.test $Vec` (read field-0 length / `data[i]`),
+  else `ref.test $Object` (host/native open-object read), else the host
+  `__extern_get` for a genuine JS object;
+- tag 0/1/2/3/4 → a primitive/null/undefined has no own indexable props (string
+  `.length`/index rides the tag-5 native-string arm) → `undefined`;
+- tag 5 → native-string `.length`/index.
+
+This reader is BOTH the `Array.prototype.X.call(arrayLike)` element/length read AND
+the `.length`-on-any value-semantics fix — one primitive, two consumers. It is the
+thing a bare-externref `ref.test` cannot do (it inspects the box), which is exactly
+why M1's surgical arm could not work.
+
+### (3) ACCEPTANCE CRITERIA
+
+- **`var o = {}; o.length === undefined` → true** (the M1 canary — the headline
+  #2580 bug; M2 is where it gets fixed, via the tag-aware reader distinguishing an
+  absent `$Object` property from a host-builtin/boxed receiver).
+- `var o = {}; typeof o.length === "undefined"` → true.
+- The 5 host-builtin-method `.length` arity tests AND the 8 for-await array-rest
+  `.length` tests (the #1894 eject's 13) stay GREEN (they pass today via the origin
+  path — the reader must not regress them; faithful-runner gate below).
+- A measurable dent in the 139-row Array/prototype substrate cluster — target the
+  `wasm_compile` "object is not a function" (30) + `oob` (25) + `illegal_cast` (26)
+  buckets first (the clearest generic-method-dispatch gaps); `runtime_error` /
+  `type_error` (54) are second-order (host-path null-outs + spec algorithm paths).
+- ZERO net regression (merge_group net-guard).
+
+### (4) VALIDATION METHOD — faithful runner, NOT reduced probes
+
+M1 burned multiple cycles because reduced `compile()`+probe shapes LIED repeatedly
+about dynamic-receiver behavior: a user closure ≠ a host builtin; a hand-rolled
+`for ([x,...y] of …)` ≠ the async-generator test262 harness; both returned values
+that disagreed with the real runner. **M2 MUST validate dynamic-receiver
+value-semantics against the REAL `runTest262File`** (the pattern: a `.tmp/run-N.mjs`
+that imports `tests/test262-runner.ts`'s `runTest262File` and runs the exact
+target test262 files) — or the merge_group. A reduced probe is acceptable ONLY for
+a first directional smoke test, never as the acceptance gate. And per the broad-
+impact rule: M2 is a value-rep / call-path touch → full-gate via merge_group or
+full local-ci, NEVER a scoped sweep.
+
+### Staging (each its own full-gated PR; stop-the-line on eject)
+
+- **M2.1** — give `__dyn_get`/`__dyn_has` the real tag-6 dispatch (`$Vec` +
+  `$Object` arms); wire the host `.length`-on-any consumer through it (the M1 arm,
+  re-enabled but now tag-aware) → the `{}.length === undefined` canary + the 13
+  eject tests green via the faithful runner. This is the keystone.
+- **M2.2** — route the `Array.prototype.X.call(arrayLike)` generic-method
+  element/length reads through the same reader → dent the `wasm_compile` / `oob` /
+  `illegal_cast` buckets. (Overlaps #983d / PR#1844 — supersede the over-broad
+  `__extern_method_call` gate, do not stack on it.)
+- **M2.3** — the `runtime_error` / `type_error` second-order paths (empty-reduce
+  TypeError, species/realm) as a follow-up, scoped per spec section.
+
+Cost/risk: the reader itself is bounded (it's the M0 bodies filled in), but it is
+a value-rep CORE touch — every PR full-gated, stop-the-line on the first eject, one
+primitive landed and proven before widening consumers. The ROI question (M1's cost
+vs M2's ~139-row addressable target, of which the clean-dispatch buckets are ~81)
+is the lead/user's call before deep work begins.
