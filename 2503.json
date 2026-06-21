@@ -1,9 +1,8 @@
 {
   "id": "2503",
-  "assignee": "ttraenkler/sen-1",
-  "status": "done",
-  "branch": "issue-2503-dstr-param-shape-arity",
-  "claimed_at": "2026-06-19T09:03:46Z",
-  "updated_at": "2026-06-19T09:19:48Z",
-  "released_at": "2026-06-19T09:19:48Z"
+  "assignee": "ttraenkler/sd-3",
+  "status": "in-progress",
+  "branch": "issue-2503-toprim",
+  "claimed_at": "2026-06-21T11:00:16Z",
+  "updated_at": "2026-06-21T11:00:16Z"
 }
