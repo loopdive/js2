@@ -1,10 +1,12 @@
 ---
 id: 2040
 title: "standalone: generator/destructuring runtime-semantics residual — rest-pattern iterator consumption, lazy defaults, private elements (~1,750 tests)"
-status: ready
+status: done
+assignee: ttraenkler/sd-3
 sprint: 64
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-21
+completed: 2026-06-21
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -223,3 +225,50 @@ co-existence needs the representation design.
 - Private/static generator-method `next().value` rows pass.
 - Standalone baseline runtime-fail count in `dstr/` halves (≤550); host
   unchanged.
+
+## Implementation Plan (arch-2040 spec → implemented by sd-3, 2026-06-21)
+
+Cluster A's `assert.notSameValue/_isSameValue` failures were NOT a destructuring
+bug (the rest array IS fresh, `Object.is` is correct in pure standalone). The
+root cause is the **standalone AnyValue tag-5 equality arm**, fixed here.
+
+**Root cause.** The tag-5 (string) arm of `__any_eq` / `__any_strict_eq`
+(`any-helpers.ts`) was `strEqualsIdx >= 0 ? [host __str_equals] : [i32.const 0]`.
+`strEqualsIdx = ctx.jsStringImports.get("equals")` is **-1 in standalone**, so the
+arm was a **dead `i32.const 0`** → EVERY tag-5 `===`/`==` returned false. A NUMBER
+`any` is boxed as tag-5 by the #1888 `boxToAny` blanket policy, so `5 === 5` →
+false → the test262 harness `assert._isSameValue` (`if(a===b){…} return a!==a &&
+b!==b`, `a`/`b` `any`) broke, failing every numeric-`any` sameValue/notSameValue
+once any prior `any`-op set `anyValueTypeIdx`.
+
+**Design (consumer-side ONLY — NO #1888 boxing change, preserves the −794 gain).**
+The producers are already type-consistent: a tag-5 field-4 externref (after
+`any.convert_extern`) is exactly one of `$__box_number` (number), an `$AnyString`
+subtree (string), or a host/object externref. `__any_from_extern` already peels
+number→tag3 / bool→tag4 before its tag-5 fallback (no change). We make CONSUMERS
+run a 3-way discriminant instead of trusting "tag-5 ⟹ string":
+1. `__any_strict_eq` / `__any_eq` tag-5 arm — **REPLACE** the dead ternary with
+   `tag5NativeEqInstrs()`: both `$__box_number` → `__any_to_f64`+`f64.eq`; both
+   `$AnyString` (BASE type) → flatten + native `__str_equals`; **else** →
+   REFERENCE IDENTITY (`ref.eq` via the eq heap type) so `a===a` over an
+   array/object `any` is true; mixed primitive → 0.
+2. `__any_eq` cross-tag str⇄num, `__any_typeof`, `__any_to_string`, `__any_to_f64`
+   — AUDITED: already correct (the `__any_to_f64` #1888 `$BoxedNumber` recovery is
+   the precedent the whole contract follows). `typeof`(any-number)="number",
+   `String`(any-number) decimal, loose `5=="5"` all verified.
+
+**Traps avoided (from 3 reverted attempts):** (1) `ref.test` the `$AnyString`
+BASE (`ctx.anyStrTypeIdx`), NOT `$NativeString` (cons/utf8 subtypes → indexOf −1);
+(2) a true 3-way so objects fall to ELSE; (3) REPLACE the whole dead ternary, not
+nest inside it; (4) the ELSE must be ref-identity, not `0`, or `a!==a` over arrays
+mis-returns.
+
+**Validation.** 9 scoped tests + comprehensive probe pass; broad standalone sweep
+equals/strict-equals/addition/Number/indexOf/Object.is **444 vs 440 (+4, indexOf
+flat)**; wider sweep includes/lastIndexOf/find/Math/Boolean **0 regressions**;
+gates hard-error/any-box/coercion OK; #1461 array-search + equality/AnyValue test
+suites green. The authoritative −794-catching gate is the FULL standalone
+merge_group (#2097 floor) — enqueued for that.
+
+The carved-out class/object-literal METHOD-generator host-import leak is #2571
+(separate); the orthogonal `[a=9]=[undefined]→NaN` default slice is #2574.
