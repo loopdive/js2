@@ -208,3 +208,36 @@ tsc + prettier + coercion-sites clean.
 props of an accessor-routed object traps standalone (`illegal cast`) — the same
 native dynamic-read/unbox gap noted for the Object.create slice, not the emit
 crash. The 1 residual emit-CE in the sample is a different producer.
+
+## Slice (2026-06-21, dev-agent) — DisposableStack/AsyncDisposableStack static-read emit crash
+
+**Status stays `in-progress`.** Folded into the same PR as the object-literal
+slice above.
+
+`DisposableStack` and `AsyncDisposableStack` were missing from
+`BUILTIN_CTOR_NAMES` (`src/codegen/property-access.ts`). A static value read like
+`DisposableStack.prototype` fell through BOTH the standalone built-in handler
+(refuse-loud / native proto) AND the host `__get_builtin` fallback, into a
+generic member path that emitted `global.get -1` (the -1 string-global sentinel)
+→ `global index out of range — -1` encoder crash standalone (whole file lost).
+`new DisposableStack()` and `typeof` were fine; only the static `.prototype`/
+member reads crashed.
+
+**Fix:** add both names to `BUILTIN_CTOR_NAMES`. The read now routes to the
+dual-mode handler — a loud, located `reportUnsupportedStandaloneBuiltinValueRead`
+refusal standalone (no poisoned index, satisfies the #2029 "refuse loudly"
+criterion), `__get_builtin` under gc/host. This makes them behave identically to
+every other builtin ctor (`Map.prototype`/`Map.length` already refuse-loud
+standalone).
+
+**Measured (50-file DisposableStack/AsyncDisposableStack standalone sample):**
+main `emit-CE 19` → fix `emit-CE 3` (16 opaque encoder crashes converted to clean
+refusals). One test (`DisposableStack/length.js`) goes pass→compile_error — that
+"pass" was anomalous: `DisposableStack.length` returned 0 via the accidental
+generic fall-through, whereas `Map/length.js`, `Set/length.js`,
+`WeakMap/length.js` already refuse-loud standalone. The change normalizes
+DisposableStack to the standard builtin behavior. Zero host regressions.
+
+**Validation.** `tests/issue-2029-disposablestack-static-read-standalone.test.ts`
+(5/5): `.prototype` / chained `.prototype.move` no encoder crash + named refusal,
+host no-regression, `new DisposableStack()` unaffected.

@@ -118,6 +118,19 @@ const BUILTIN_CTOR_NAMES = new Set([
   "Float64Array",
   "BigInt64Array",
   "BigUint64Array",
+  // (#2029) Explicit-resource-management constructors. Without these, a
+  // `DisposableStack.prototype` / `AsyncDisposableStack.prototype` value read
+  // fell through BOTH the standalone built-in path (refuse-loud / native proto)
+  // AND the host `__get_builtin` fallback, landing in a generic member path that
+  // emitted `global.get -1` (the -1 string-global sentinel) → `global index out
+  // of range — -1` encoder crash standalone (whole file lost). Listing them
+  // routes the read to the dual-mode handler: a loud, located
+  // `reportUnsupportedStandaloneBuiltinValueRead` refusal standalone (no poisoned
+  // index), `__get_builtin` under gc/host. This brings them in line with every
+  // other builtin ctor — e.g. `Map.length`/`Map.prototype` already refuse-loud
+  // standalone, so DisposableStack static reads now behave identically.
+  "DisposableStack",
+  "AsyncDisposableStack",
 ]);
 
 // Well-known Symbol IDs (inlined from literals.ts to avoid circular deps)
