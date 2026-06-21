@@ -1,9 +1,8 @@
 {
   "id": "1712",
-  "assignee": "ttraenkler/dv1",
-  "status": "released",
-  "branch": "issue-1712-acorn-acceptance",
-  "claimed_at": "2026-06-16T05:52:50Z",
-  "updated_at": "2026-06-16T05:53:23Z",
-  "released_at": "2026-06-16T05:53:23Z"
+  "assignee": "ttraenkler/sendev-acorn-identity",
+  "status": "in-progress",
+  "branch": "issue-1712-acorn-identity",
+  "claimed_at": "2026-06-21T12:29:03Z",
+  "updated_at": "2026-06-21T12:29:03Z"
 }
