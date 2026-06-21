@@ -6342,6 +6342,75 @@ function compileCallExpression(
           }
           return fallbackReturn(1, "extern-null");
         }
+
+        if (reflectMethod === "getOwnPropertyDescriptor" && expr.arguments.length >= 2) {
+          // (#2046 S5) Route to the native __getOwnPropertyDescriptor, the same
+          // helper backing standalone Object.getOwnPropertyDescriptor. It reads
+          // the $PropEntry back into a descriptor `$Object` (data → { value,
+          // writable, enumerable, configurable }, accessor → { get, set,
+          // enumerable, configurable }) and returns `undefined` for a missing own
+          // property — §26.1.7 step 3 (FromPropertyDescriptor over
+          // [[GetOwnProperty]]). The key is coerced with ToPropertyKey inside the
+          // native via __to_property_key (#2042 S1), so numeric keys work.
+          //
+          // §26.1.7 step 1 requires a TypeError when the target is not an Object.
+          // The native returns `undefined` for a non-$Object receiver (correct
+          // for Object.getOwnPropertyDescriptor, which forwards a coerced
+          // primitive wrapper), so — exactly as the deleteProperty PR-A guard —
+          // gate at the CALL SITE with a `ref.test $Object` and throw a catchable
+          // TypeError instead. The shared native is untouched.
+          const ort = ensureObjectRuntime(ctx);
+          const targetLocal = allocTempLocal(fctx, externRef);
+          {
+            const tArg = expr.arguments[0];
+            if (tArg !== undefined) {
+              const tTy = compileExpression(ctx, fctx, tArg, externRef);
+              if (tTy && tTy.kind !== "externref") coerceType(ctx, fctx, tTy, externRef);
+              else if (tTy === null) fctx.body.push({ op: "ref.null.extern" });
+            } else {
+              fctx.body.push({ op: "ref.null.extern" });
+            }
+          }
+          fctx.body.push({ op: "local.set", index: targetLocal });
+          // Pre-register the TypeError throw BEFORE the nested `if` so the splice
+          // that captures its instrs cannot interleave a late-import index shift
+          // into the block (same hazard handled in the deleteProperty guard).
+          const throwInstrs: Instr[] = (() => {
+            const before = fctx.body.length;
+            emitThrowTypeError(ctx, fctx, "Reflect.getOwnPropertyDescriptor called on non-object");
+            return fctx.body.splice(before);
+          })();
+          // if !ref.test $Object(target) → throw TypeError
+          fctx.body.push({ op: "local.get", index: targetLocal });
+          fctx.body.push({ op: "any.convert_extern" } as Instr);
+          fctx.body.push({ op: "ref.test", typeIdx: ort.objectTypeIdx } as Instr);
+          fctx.body.push({ op: "i32.eqz" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: throwInstrs,
+          } as Instr);
+          // target is an $Object — push [target, key] and read the descriptor.
+          fctx.body.push({ op: "local.get", index: targetLocal });
+          releaseTempLocal(fctx, targetLocal);
+          {
+            const kArg = expr.arguments[1];
+            if (kArg !== undefined) {
+              const kTy = compileExpression(ctx, fctx, kArg, externRef);
+              if (kTy && kTy.kind !== "externref") coerceType(ctx, fctx, kTy, externRef);
+              else if (kTy === null) fctx.body.push({ op: "ref.null.extern" });
+            } else {
+              fctx.body.push({ op: "ref.null.extern" });
+            }
+          }
+          const funcIdx = ensureLateImport(ctx, "__getOwnPropertyDescriptor", [externRef, externRef], [externRef]);
+          flushLateImportShifts(ctx, fctx);
+          if (funcIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx });
+            return { kind: "externref" };
+          }
+          return fallbackReturn(0, "extern-null");
+        }
         // Boolean-returning methods need an i32 on the stack; the rest return
         // externref. Pick the fallback shape per method so the surrounding
         // expression still type-checks even though the module is already marked

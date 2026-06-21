@@ -4,7 +4,7 @@ title: "standalone Reflect: receiver arg silently dropped, deleteProperty ignore
 status: in-progress
 sprint: 64
 created: 2026-06-10
-updated: 2026-06-17
+updated: 2026-06-21
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -195,3 +195,47 @@ Reflect dispatch block)
 - Extend `tests/issue-2046.test.ts` / `tests/issue-1905.test.ts` with
   numeric-key get, `Reflect.defineProperty` data+accessor desc, and
   `Reflect.getOwnPropertyDescriptor` round-trip.
+
+## S5 slice landed — getOwnPropertyDescriptor + PR-D confirmation (2026-06-21)
+
+PROBE-VERIFIED against current main HEAD (075d90ee5) before any change:
+
+- **PR-D (numeric-key `Reflect.get`) — already fixed, no code change.** `#2042
+  S1`'s `__to_property_key` hardening landed, so `Reflect.get(o, 1)` returns
+  `o["1"]` (probe: `=> 42`) instead of trapping on the `ref.cast $AnyString` in
+  `__obj_hash`. Closed PR-D; pinned with a regression test.
+- **`Reflect.getOwnPropertyDescriptor` — was still refused; now routed.** The
+  native `__getOwnPropertyDescriptor` (registered in `OBJECT_RUNTIME_HELPER_NAMES`)
+  is now reachable end-to-end under standalone — verified independently via
+  `Object.getOwnPropertyDescriptor` (value/writable/missing all correct). The
+  stale registration comment near it (claiming "not reached end-to-end") predates
+  #2042's read-side wiring.
+
+**Change** (`src/codegen/expressions/calls.ts`, inside the `if (ctx.standalone)`
+Reflect dispatch block, after the `ownKeys` arm): replaced the
+`getOwnPropertyDescriptor` refusal with a route to the native
+`__getOwnPropertyDescriptor`, returning the descriptor `$Object` (or `undefined`
+for a missing own prop). §26.1.7 step 1 (non-object target → TypeError) is
+enforced at the CALL SITE with the same `ref.test $Object`-guard /
+`emitThrowTypeError` pattern PR-A introduced for `deleteProperty` — the shared
+native (which returns `undefined` for non-`$Object` receivers, correct for the
+`Object.*` caller) is untouched. ToPropertyKey on the key is handled inside the
+native via `__to_property_key`, so numeric keys work.
+
+New tests in `tests/issue-2046.test.ts` (16/16 green; 1905 4/4 unchanged): gOPD
+data value, writable+enumerable+configurable flags, missing-prop→undefined,
+numeric-key coercion, non-object→TypeError, and the PR-D numeric-key get pin.
+
+**Still refused (out of this PR, issue stays `in-progress`):**
+- **`Reflect.defineProperty`** — blocked on the write-side native
+  `__defineProperty_desc` (generic `{value|get|set, writable?, …}` descriptor),
+  which is deferred to **#2043** (see the NOTE near `__getOwnPropertyDescriptor`'s
+  registration in `object-runtime.ts`). Route it the moment that native lands;
+  remember the Reflect path returns `false` on a rejected define rather than
+  throwing.
+- **`Reflect.construct`** (152 rows, the big one) — gated on the standalone
+  construct machinery (coordinate with the #2158 class/construct owner). 2-arg
+  form → standalone `new X(...)` path; 3-arg `newTarget` form refuses loudly.
+- **PR-C (real receiver plumbing)** — senior/deferred, coordinates with #1888
+  Slice 5 accessor invocation; the explicit-receiver get/set refusal stays correct
+  meanwhile.

@@ -72,6 +72,55 @@ after the first WAT-level diagnosis.
    failing `new-sc-line-gen-rs-privatename-identifier-initializer.js` form to
    find where method-position generators diverge.
 
+## Investigation (sd-3, 2026-06-21) — cluster A rest-identity diagnosis
+
+Reproduced on current origin/main via `runTest262File` (HOST vs STANDALONE):
+`class/dstr/*ary-ptrn-rest*` → **HOST 12/12 pass, STANDALONE 6/12**; the 6 fails
+are all `assert.notSameValue(x, values)` (`returned 7`, assert #6): the rest
+array `x` reads as **reference-identical** to the source `values`.
+
+**Ruled OUT — the codegen DOES build a fresh rest array in BOTH lanes:**
+- Typed `method([...x]: number[])` → fresh (`array.new_default`+`array.copy`+
+  `struct.new`, the `__rest_arr` build at destructuring-params.ts:1644-1681).
+- UNTYPED `method([...x])` (the exact test262 shape, externref param arm) →
+  the full `$C_method` WAT *also* contains `array.copy:1` + `array.new_default:5`:
+  the externref param is materialized to a fresh `resultLocal` vec, then the rest
+  copies that into `x`. So `x` is a copy-of-a-copy — structurally NOT the source.
+
+**So the alias is NOT a missing rest copy. PROVED via pure-standalone probes
+(no harness, bare `{}` instantiate):**
+- `class C { method([...x]){ x.push(99); ... } }; method(values)` → after the
+  call `values.length === 3` and `x.length === 4`: **`x` is structurally a fresh,
+  independent array** (mutating it does not touch `values`).
+- `Object.is(x, values)` for the rest case returns **`0` (NOT same)** — correct;
+  `Object.is(distinct arrays)`=0, `Object.is(same)`=1, `===` on distinct arrays=0
+  all correct standalone.
+
+**Conclusion: the destructuring rest codegen AND `Object.is`/reference-identity
+are CORRECT in pure standalone.** The `assert.notSameValue(x, values)` failure
+manifests ONLY through the test262 **harness-wrapped** path (the harness
+`assert.js` + `env`-import instantiate the runner provides; a bare `{}`
+instantiate of the harness traps on `Import #0 "env"`). So the headline ~450-row
+cluster A is most likely NOT a destructuring/generator lowering bug at all — it is
+either a `harness/assert.js` `notSameValue` lowering issue or a host-bridge
+marshaling-identity artifact specific to the runner, surfacing only when the two
+vecs cross the `env` boundary for the assert.
+
+**NEXT SESSION (re-scope before coding):** run ONE failing file under the runner
+with the rest binding replaced by an in-wasm `Object.is(x, values)` return (no
+`assert`) to confirm the codegen value is right and isolate `assert.notSameValue`;
+then inspect `assert.notSameValue`/`SameValue` lowering + the runner's `env`
+marshaling (`__make_iterable`, vec→JS) for an identity collapse. The fix is very
+likely in the marshaling/`SameValue` path, NOT destructuring-params.ts — which
+would re-scope cluster A's count substantially. The `directCastInstrs` fast-path
+(destructuring-params.ts:1122-1126, `resultLocal = param` no-copy for an already-
+`__vec_externref` param) was checked and is NOT the cause (the rest still builds a
+fresh vec downstream: the untyped `$C_method` WAT has `array.copy:1`).
+
+Orthogonal smaller slice found: `const [a=9] = [undefined]` → NaN (default not
+applied when the element value is `undefined`); spec §8.5.3 applies the default on
+`undefined`, not just `done`. Independent of the rest-identity question.
+
 ## Acceptance criteria
 
 - `assert.notSameValue(x, values)` family passes: rest pattern yields a fresh
