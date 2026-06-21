@@ -1167,6 +1167,23 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     return { kind: "i32" };
   }
 
+  // (#2029) Standalone / native-strings has no JS host to satisfy `__instanceof`,
+  // and the constructor-name string global is the `-1` sentinel there — the old
+  // path emitted `global.get -1` → `global index out of range -1` encoder crash
+  // (whole file lost) for `x instanceof <builtin>` like `sub instanceof WeakRef`/
+  // `instanceof Map`. The static fast-path (tryStaticInstanceOf, #1325) and the
+  // native Error-tag path (above) already cover the resolvable cases; anything
+  // reaching here is a genuinely-dynamic builtin test with no native answer. Emit
+  // a valid `false` (drop the LHS) instead of poisoning the encoder + leaking the
+  // host import. A native instanceof tag-registry for builtin subclasses is a
+  // separate slice; this removes the hard CE. gc/host keeps the real host call.
+  if (noJsHost(ctx)) {
+    const leftType = compileExpression(ctx, fctx, expr.left);
+    if (leftType) fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+
   // Ensure the __instanceof host import exists
   const instanceofIdx = ensureLateImport(
     ctx,

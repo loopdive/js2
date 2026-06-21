@@ -170,3 +170,31 @@ standalone still leaks the `__new_<Builtin>` HOST import (`class-bodies.ts:1423/
 — a host-import-retirement concern, not the emit crash. Kept #2029 `in-progress`:
 the emit-crash cluster (the headline) is fixed; the `__new_<Builtin>` standalone
 runtime path is the residual. Reassess closing once that lands.
+
+## Slice (2026-06-21, dev-agent) — `instanceof <builtin>` standalone emit crash
+
+**Status stays `in-progress`.** Another -1-sentinel emit-crash slice.
+
+`x instanceof <builtin>` (e.g. `sub instanceof WeakRef`, `m instanceof Map`)
+crashed the encoder standalone. `compileHostInstanceOf`
+(`src/codegen/expressions/identifiers.ts`), when the static fast-path
+(`tryStaticInstanceOf`, #1325) and the native Error-tag path do NOT resolve,
+fell through to the host `__instanceof(value, ctorName)` call. It pushed the
+constructor name with a raw `global.get <stringGlobalMap.get(name)>` (guarding
+only `=== undefined`). Standalone the name string is the -1 sentinel, so
+`global.get -1` → `global index out of range — -1` (whole file lost); it also
+leaked the host-only `__instanceof` import. `instanceof Error` was fine (native
+Error-tag path); `instanceof Array`/`Object`/user-class were fine (static path).
+
+**Fix:** under `noJsHost`, emit a valid `false` (drop the LHS) before the host
+block — the host `__instanceof` cannot run standalone anyway, and the resolvable
+cases already returned via the static / Error-tag paths above. Removes the hard
+CE and the import leak. gc/host keeps the real `__instanceof` call. A native
+instanceof tag-registry for dynamic builtin-subclass tests is a separate slice
+(the same registry the ta-subclass `__tag_user_class` slice noted).
+
+**Validation.** `tests/issue-2029-instanceof-builtin-standalone-emit.test.ts`
+(7/7): `instanceof Map`/`WeakRef` compile + no `-1` global + no `__instanceof`
+leak; static-resolvable `instanceof Array`/user-class/`Error` still return 1
+standalone; host no-regression (keeps `__instanceof`). tsc + prettier +
+coercion-sites clean. Zero host regressions (noJsHost-gated).
