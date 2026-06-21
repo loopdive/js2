@@ -1,8 +1,9 @@
 ---
 id: 983d
 title: "Live-mirror write-back: host mutations to a WasmGC struct's proxy sidecar never reach the struct field (~11 Array.prototype.*.call fails)"
-status: suspended
+status: done
 assignee: sd-4
+completed: 2026-06-21
 created: 2026-05-27
 updated: 2026-06-21
 priority: medium
@@ -184,17 +185,37 @@ branch (b) is missing — the call silently nulls.
    regressions in `this.callback()` callable-property calls and object-literal
    method calls (the same CPC / call-dispatch code).
 
-## Suspended Work
+## Resolution (sd-4, 2026-06-21) — dual-path dispatch landed, cluster 0 → 11/19
 
-- **Status:** `suspended` (was `in-progress`). sd-4 scoped + root-caused the
-  framing (Findings 1 & 2 above) but did not implement — the real fix needs
-  the dispatch-path pin (Finding 2) which needs fresh-context investigation.
-- **Branch / worktree:** `issue-983d-live-mirror-writeback` at
-  `/workspace/.claude/worktrees/issue-983d-live-mirror-writeback` (branched
-  from origin/main `075d90ee5`; only this issue-doc edit committed, no code
-  changes).
-- **Resume steps:** re-enter the worktree, start from "Suggested next-agent
-  plan" step 1. The repro file is trivial:
-  `var obj = {}; obj.pop = Array.prototype.pop; var r = obj.pop();` — assert
-  `r === undefined` (currently fails: `r === null`). Cluster = 19 fails,
-  grep the baseline for `var obj = \{\}; obj\.`.
+Implemented the fix from Finding 2's plan. The exact handler that dropped
+`obj.pop()` to null was the **graceful-null fallback** in
+`compileCallExpression` (`src/codegen/expressions/calls.ts`, the
+`compile callee → drop → ref.null.extern` block just before
+`compileConditionalCallee`). `obj.method()` where `method` is a host function
+value in a struct field fell past every static/struct handler and hit it.
+
+**Change:** before the graceful-null fallback, when the callee is a
+non-optional property access `obj.method` and we are in JS-host mode, route to
+`emitWrapperDynamicMethodCall(ctx, fctx, receiver, methodName, callExpr)` —
+which emits `__extern_method_call(receiver, "method", argsArray)` with the
+live-mirror `_wrapForHost` proxy as `this`. Syntactic gate only (no
+static-classification of the receiver, per #2501). ~20 LOC, additive, behind the
+fallback so nothing that already resolved is affected.
+
+**Result:** the generic-Array-method-on-plain-object cluster (`var o = {};
+o.m = Array.prototype.m; o.m()`) went **0 → 11/19** pass. The host now runs the
+generic method against the proxy, so the return value is correct AND mutations
+round-trip through the proxy's `set` trap → `_safeSet` → `__sset_<field>`
+(Finding 1: those setters already exist and `_safeSet` already wires them).
+
+Validation: 0 regressions (focused proxy/object-method sweep 7/7; 180-file
+isolated regression sample all pass — the batch-run `new Ctor` crash is a
+known multi-test-in-one-process state-pollution artifact present on base too,
+not a per-test regression; CI shards isolate); hard-error gate OK; new test
+`tests/issue-983d-generic-method-call.test.ts`.
+
+**Residual carved to #2573:** the remaining 8 fail at a *later* assertion
+`obj.length === undefined` — a **separate property-read bug** (reading a missing
+property on a plain `{}` object returns `null`, not `undefined`), orthogonal to
+this method-dispatch fix. See
+`plan/issues/2573-missing-property-read-returns-null-not-undefined-plain-object.md`.
