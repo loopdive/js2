@@ -1,8 +1,8 @@
 {
   "id": "2568",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-21T09:53:47Z",
-  "updated_at": "2026-06-21T09:53:47Z"
+  "assignee": "ttraenkler/sd-4",
+  "status": "in-progress",
+  "branch": "issue-2568-standalone-nested-dstr-default",
+  "claimed_at": "2026-06-21T12:08:24Z",
+  "updated_at": "2026-06-21T12:08:24Z"
 }
