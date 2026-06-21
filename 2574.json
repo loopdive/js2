@@ -1,8 +1,8 @@
 {
   "id": "2574",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-21T12:12:30Z",
-  "updated_at": "2026-06-21T12:12:30Z"
+  "assignee": "ttraenkler/sd-3",
+  "status": "in-progress",
+  "branch": "issue-2574-dstr-undefined-default",
+  "claimed_at": "2026-06-21T12:54:22Z",
+  "updated_at": "2026-06-21T12:54:22Z"
 }
