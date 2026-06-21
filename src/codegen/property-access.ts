@@ -1841,6 +1841,89 @@ export function receiverIsCaughtErrorStringRead(ctx: CodegenContext, recv: ts.Ex
 }
 
 /**
+ * (#2187) Generalisation of {@link receiverIsCaughtErrorStringRead}: in
+ * standalone/WASI native-string mode, an `any`/`unknown`-typed receiver MAY hold
+ * a native `$AnyString` ref at runtime even though its TS static type does not
+ * say so (object property values, generator yield vars, catch bindings, indexed
+ * element reads, etc.). The string `.length` / method dispatch sites gate on
+ * `isStringType(<static type>)`, which is false for these, so they fall to the
+ * generic dynamic path (`__extern_get`/`__extern_length`), returning 0 in
+ * standalone even though the value IS a string (see the issue's probe table).
+ *
+ * Unlike the caught-Error predicate — which recognises a statically-known shape
+ * that ALWAYS lowers to a `$AnyString` and can be read unconditionally — the
+ * general `any` case is NOT statically a string, so callers that act on this
+ * predicate MUST emit a runtime `ref.test $AnyString` guard (see
+ * {@link emitGuardedNativeStringLength}) and keep the prior behaviour in the
+ * else arm for non-string values (arrays, numbers, null, …).
+ *
+ * Scope is kept narrow: `any`/`unknown` only (NOT `object`/`{}`, which keep the
+ * struct/host path, and NOT unions containing `string`, which TS already
+ * resolves via the existing `isStringType` arm), and native-string mode only
+ * (host/gc mode is untouched — there the generic `__extern_get` path already
+ * returns the correct length from the real JS value).
+ */
+/**
+ * (#2187) True when a Wasm type index is one of the native-string struct types
+ * (`$AnyString` supertype or its `$NativeString`/`$ConsString` subtypes). Used
+ * to recognize a local/param whose ValType is a native string ref even when its
+ * TS static type is `any`/unknown. Field 0 (`len`) is shared across all three,
+ * so a direct `struct.get <idx> 0` reads the length for any of them. Returns
+ * false outside native-string mode.
+ */
+function isNativeStringFamilyTypeIdx(ctx: CodegenContext, typeIdx: number): boolean {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  return typeIdx === ctx.anyStrTypeIdx || typeIdx === ctx.nativeStrTypeIdx || typeIdx === ctx.consStrTypeIdx;
+}
+
+export function receiverMayBeNativeStringAtRuntime(ctx: CodegenContext, recv: ts.Expression): boolean {
+  if (!(ctx.wasi || ctx.standalone)) return false;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  const t = ctx.checker.getTypeAtLocation(recv);
+  return (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+}
+
+/**
+ * (#2187) Emit a runtime-guarded native-string `.length` read for an
+ * `any`-typed receiver. The receiver's value is assumed to already be on the
+ * stack as an `externref` (the dynamic read — `__extern_get` /
+ * `__extern_get_idx` / generator value / catch binding — yields it that way).
+ *
+ * The externref is saved to a temp; on a `ref.test $AnyString` hit the value is
+ * cast to `$AnyString` and its `len` (field 0, valid for both FlatString and
+ * ConsString — no flatten needed for length) is read; on a miss the
+ * caller-supplied builder produces the prior generic length behaviour (e.g.
+ * `__extern_length` for an array-in-`any`, or `i32.const 0`). The builder
+ * receives the externref temp's local index so it can re-push the original
+ * externref (the test/cast path consumed only the saved copy). Both arms produce
+ * an i32 length.
+ */
+function emitGuardedNativeStringLength(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  buildElseInstrs: (recvExternLocal: number) => Instr[],
+): void {
+  // Save the receiver externref so both arms can use it (the test/cast path
+  // reads a converted copy; the else builder re-pushes the original externref).
+  const recvExtern = allocLocal(fctx, `__strlen_ext_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvExtern });
+  fctx.body.push({ op: "local.get", index: recvExtern });
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      { op: "local.get", index: recvExtern } as Instr,
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr,
+      { op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 } as Instr,
+    ],
+    else: buildElseInstrs(recvExtern),
+  } as Instr);
+}
+
+/**
  * (#2179) When the module uses `delete <member>` (JS-host mode only), route an
  * `any`/`unknown`-typed property READ through the tombstone-aware `__extern_get`
  * host helper instead of the inline `ref.test`+`struct.get` fast-path. Returns
@@ -3426,6 +3509,20 @@ export function compilePropertyAccess(
         // obj.length is undefined on opaque externref objects in V8.
         if ((localType?.kind === "ref" || localType?.kind === "ref_null") && localType.typeIdx !== undefined) {
           const vecTypeIdx = (localType as { typeIdx: number }).typeIdx;
+          // (#2187) Native-string-ref local whose TS static type is `any`/unknown
+          // (e.g. a string-yield generator's `for (const v of g())` loop var, which
+          // has no lib types so it infers `any` but is compiled to a `$AnyString`
+          // ref). The `isStringType(objType)` `.length` arm misses (objType is
+          // `any`), and the generic multi-struct dispatch below only tests vec
+          // types — never `$AnyString` — so the read fell through to 0. Read
+          // `$AnyString.len` (field 0, valid for FlatString & ConsString) directly
+          // from the typed local. Standalone/WASI native-string mode only.
+          if (isNativeStringFamilyTypeIdx(ctx, vecTypeIdx)) {
+            fctx.body.push({ op: "local.get", index: localIdx });
+            fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          }
           const typeDef = ctx.mod.types[vecTypeIdx];
           if (
             typeDef?.kind === "struct" &&
@@ -3564,6 +3661,26 @@ export function compilePropertyAccess(
           }
           const lenFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
           flushLateImportShifts(ctx, fctx);
+          // #2187 — the `any`/unknown value may actually be a native `$AnyString`
+          // (object string-value read, generator yield var, catch binding,
+          // indexed element read). `__extern_length` reads $ObjVec/array length
+          // and returns 0 for a bare string, so guard with `ref.test $AnyString`
+          // first: a string hit reads `$AnyString.len` (field 0); the miss falls
+          // to the existing `__extern_length` array/$ObjVec reader. Always
+          // computes an i32 length, converted to f64 once below in !fast mode.
+          if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+            emitGuardedNativeStringLength(ctx, fctx, (recvExternLocal) =>
+              lenFn !== undefined
+                ? [
+                    { op: "local.get", index: recvExternLocal } as Instr,
+                    { op: "call", funcIdx: lenFn } as Instr,
+                    { op: "i32.trunc_sat_f64_s" } as Instr,
+                  ]
+                : [{ op: "i32.const", value: 0 } as Instr],
+            );
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          }
           if (lenFn !== undefined) {
             fctx.body.push({ op: "call", funcIdx: lenFn } as Instr);
             if (ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);

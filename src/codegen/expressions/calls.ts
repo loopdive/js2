@@ -59,6 +59,7 @@ import {
   hoistVarDeclarations,
   nativeStringType,
   resolveWasmType,
+  STRING_METHODS,
 } from "../index.js";
 import {
   compileArrayConstructorCall,
@@ -85,6 +86,7 @@ import {
   emitArrayIsArrayExternrefPredicate,
   emitNullCheckThrow,
   receiverIsCaughtErrorStringRead,
+  receiverMayBeNativeStringAtRuntime,
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
@@ -99,7 +101,12 @@ import {
   ensureExtrasArgvGlobal,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
-import { compileNativeStringMethodCall, compileStringLiteral, emitBoolToString } from "../string-ops.js";
+import {
+  compileGuardedNativeStringMethodCall,
+  compileNativeStringMethodCall,
+  compileStringLiteral,
+  emitBoolToString,
+} from "../string-ops.js";
 import { tryCompileNodeProcessCall } from "../node-process-api.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import {
@@ -8718,6 +8725,35 @@ function compileCallExpression(
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" };
       }
+    }
+
+    // (#2187) Runtime-guarded native string method on an `any`/unknown receiver
+    // whose value MAY be a native `$AnyString` at runtime (object property
+    // value, generator yield var, indexed element read, …). The static
+    // `isStringType` / caught-Error arms below miss these, so the call fell to
+    // the host/dynamic path (null/0 standalone) even though the value is a real
+    // string. Scoped tightly: native-string mode, a known STRING_METHODS name,
+    // and an `any`/unknown receiver that is NOT already a static string (those
+    // take the unconditional arm below). A runtime `ref.test $AnyString` keeps a
+    // non-string `any` (array, number, null) on its benign default.
+    if (
+      ctx.nativeStrings &&
+      ctx.nativeStrTypeIdx >= 0 &&
+      // `compileNativeStringMethodCall` handles the STRING_METHODS table plus
+      // `charCodeAt`, which has a dedicated arm but is not in the table. Gate on
+      // that union so an `any`-receiver `charCodeAt` (an explicit #2187
+      // acceptance criterion) is not left to the generic `__call_m_<name>`
+      // dispatcher. `concat` is deliberately excluded — it collides with
+      // `Array.prototype.concat` on an `any` array and is out of #2187 scope.
+      (Object.prototype.hasOwnProperty.call(STRING_METHODS, propAccess.name.text) ||
+        propAccess.name.text === "charCodeAt") &&
+      !isStringType(receiverType) &&
+      !receiverIsCaughtErrorStringRead(ctx, propAccess.expression) &&
+      receiverMayBeNativeStringAtRuntime(ctx, propAccess.expression)
+    ) {
+      const guarded = compileGuardedNativeStringMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text);
+      if (guarded !== null) return guarded;
+      // Fall through to the generic dispatch on a build failure.
     }
 
     // String method calls

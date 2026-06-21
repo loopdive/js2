@@ -8,7 +8,7 @@ import type { Instr, ValType } from "../ir/types.js";
  */
 import { ts } from "../ts-api.js";
 import { compileNumericBinaryOp } from "./binary-ops.js";
-import { pushBody } from "./context/bodies.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
@@ -2099,10 +2099,25 @@ export function compileNativeStringMethodCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
   method: string,
+  /**
+   * (#2187) Optional receiver emitter. When provided, the method arms push the
+   * receiver via this callback instead of re-compiling `propAccess.expression`.
+   * Used by {@link compileGuardedNativeStringMethodCall} to feed a pre-evaluated,
+   * guard-cast `$AnyString` receiver (so an `any`-typed receiver is evaluated
+   * exactly once and only after a runtime `ref.test $AnyString` succeeds). The
+   * callback must push one value (a native-string ref / `$AnyString`) and return
+   * its ValType, mirroring `compileExpression`'s contract.
+   */
+  receiverOverride?: () => ValType | null,
 ): ValType | null {
   const strTypeIdx = ctx.nativeStrTypeIdx;
   const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
+
+  // (#2187) Single indirection for emitting the receiver. Default re-compiles
+  // `propAccess.expression`; the guarded `any`-receiver path overrides it.
+  const emitReceiver = (): ValType | null =>
+    receiverOverride ? receiverOverride() : compileExpression(ctx, fctx, propAccess.expression);
 
   // Helper: emit a flatten call to convert ref $AnyString → ref $NativeString
   const emitFlatten = () => fctx.body.push({ op: "call", funcIdx: flattenIdx });
@@ -2135,7 +2150,7 @@ export function compileNativeStringMethodCall(
   // ECMA-262 §22.1.3.3: ToIntegerOrInfinity(pos), then return NaN when
   // the resulting position is outside [0, string length).
   if (method === "charCodeAt") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     // Flatten to FlatString (handles ConsString → FlatString)
     const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
     fctx.body.push({ op: "call", funcIdx: flattenIdx });
@@ -2178,7 +2193,7 @@ export function compileNativeStringMethodCall(
 
   // charAt: native helper
   if (method === "charAt") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     if (expr.arguments.length > 0) {
       compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
@@ -2192,7 +2207,7 @@ export function compileNativeStringMethodCall(
 
   // at: like charAt but supports negative indices
   if (method === "at") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     const strTmp = allocLocal(fctx, `__str_at_tmp_${fctx.locals.length}`, flatStringType(ctx));
     fctx.body.push({ op: "local.tee", index: strTmp });
@@ -2262,7 +2277,7 @@ export function compileNativeStringMethodCall(
   if (method === "concat") {
     const concatIdx = ctx.nativeStrHelpers.get("__str_concat")!;
     // Receiver is the running accumulator.
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     if (expr.arguments.length === 0) {
       // `"x".concat()` returns the receiver unchanged.
       return nativeStringType(ctx);
@@ -2277,7 +2292,7 @@ export function compileNativeStringMethodCall(
 
   // substring: native helper
   if (method === "substring") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // start
     if (expr.arguments.length > 0) {
@@ -2302,7 +2317,7 @@ export function compileNativeStringMethodCall(
 
   // slice: native helper (handles negative indices)
   if (method === "slice") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // start
     if (expr.arguments.length > 0) {
@@ -2325,7 +2340,7 @@ export function compileNativeStringMethodCall(
   // end index; an absent length means "to the end" → pass 0x7fffffff sentinel
   // and let __str_substr clamp to `len - start`.
   if (method === "substr") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // start
     if (expr.arguments.length > 0 && !isStaticUndefinedArg(expr.arguments[0])) {
@@ -2419,7 +2434,7 @@ export function compileNativeStringMethodCall(
 
   // trim, trimStart, trimEnd: native helpers
   if (method === "trim" || method === "trimStart" || method === "trimEnd") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     const helperName = `__str_${method}`;
     const funcIdx = ctx.nativeStrHelpers.get(helperName)!;
@@ -2429,7 +2444,7 @@ export function compileNativeStringMethodCall(
 
   // repeat: native helper with RangeError validation
   if (method === "repeat") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     if (expr.arguments.length > 0) {
       // BigInt / Symbol args → TypeError per ToNumber spec (#1445)
@@ -2486,7 +2501,7 @@ export function compileNativeStringMethodCall(
 
   // padStart: native helper
   if (method === "padStart") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // targetLength (ToLength per spec — throws TypeError on BigInt/Symbol)
     if (expr.arguments.length > 0) {
@@ -2517,7 +2532,7 @@ export function compileNativeStringMethodCall(
 
   // padEnd: native helper
   if (method === "padEnd") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // targetLength (ToLength per spec — throws TypeError on BigInt/Symbol)
     if (expr.arguments.length > 0) {
@@ -2557,7 +2572,7 @@ export function compileNativeStringMethodCall(
     // toLowerCase/toUpperCase except for locale-sensitive mappings, which a
     // standalone module has no ICU tables for). Previously these fell through
     // to "Unknown string method" and got demoted to a numeric-zero stub.
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // Locale arguments are still evaluated, in order, for side effects.
     for (const arg of expr.arguments) {
@@ -2578,7 +2593,7 @@ export function compileNativeStringMethodCall(
   // consistency requirement (every pair compared "equal"). The locales /
   // options arguments are evaluated for side effects and ignored.
   if (method === "localeCompare") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     const thatLocal = compileStringValueToLocal(expr.arguments[0], "undefined", "__lc_that");
     for (let ai = 1; ai < expr.arguments.length; ai++) {
       const argType = compileExpression(ctx, fctx, expr.arguments[ai]!);
@@ -2622,7 +2637,7 @@ export function compileNativeStringMethodCall(
 
   // replace(search, replacement): native helper
   if (method === "replace" && firstArgIsStringLike) {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // search arg
     if (expr.arguments.length > 0) {
@@ -2653,7 +2668,7 @@ export function compileNativeStringMethodCall(
 
   // replaceAll(search, replacement): native helper
   if (method === "replaceAll" && firstArgIsStringLike) {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // search arg
     if (expr.arguments.length > 0) {
@@ -2684,7 +2699,7 @@ export function compileNativeStringMethodCall(
 
   // split: native helper, returns native string array
   if (method === "split" && firstArgIsStringLike) {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     // separator arg
     if (expr.arguments.length > 0) {
@@ -2721,7 +2736,7 @@ export function compileNativeStringMethodCall(
   // sentinel, and combines a valid UTF-16 surrogate pair when one starts at
   // position.
   if (method === "codePointAt") {
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     const tmpLocal = allocLocal(fctx, "__codePointAt_tmp", flatStringType(ctx));
     fctx.body.push({ op: "local.set", index: tmpLocal });
@@ -2839,7 +2854,7 @@ export function compileNativeStringMethodCall(
       // (preserving its side effects in order), then compile + drop the form
       // argument (still evaluated for its side effects, after the receiver),
       // then read the receiver temp back as the (identity) result.
-      const recvType = compileExpression(ctx, fctx, propAccess.expression);
+      const recvType = emitReceiver();
       const recvValType = (recvType ?? nativeStringType(ctx)) as ValType;
       const recvLocal = allocLocal(fctx, `__normalize_recv_${fctx.locals.length}`, recvValType);
       fctx.body.push({ op: "local.set", index: recvLocal });
@@ -2850,7 +2865,7 @@ export function compileNativeStringMethodCall(
       fctx.body.push({ op: "local.get", index: recvLocal });
       return recvType;
     }
-    return compileExpression(ctx, fctx, propAccess.expression);
+    return emitReceiver();
   }
 
   // #1474/#1539 — These host-routed string methods build/consume a JS RegExp
@@ -2933,7 +2948,7 @@ export function compileNativeStringMethodCall(
     ensureNativeStringExternBridge(ctx);
     flushLateImportShifts(ctx, fctx);
     // Marshal receiver: flatten + native string -> externref
-    compileExpression(ctx, fctx, propAccess.expression);
+    emitReceiver();
     emitFlatten();
     const toExternIdx = ctx.nativeStrHelpers.get("__str_to_extern")!;
     fctx.body.push({ op: "call", funcIdx: toExternIdx });
@@ -2975,6 +2990,90 @@ export function compileNativeStringMethodCall(
 
   reportError(ctx, expr, `Unknown string method: ${method}`);
   return null;
+}
+
+/**
+ * (#2187) Runtime-guarded native string method dispatch for an `any`/unknown
+ * receiver whose value MAY be a native `$AnyString` at runtime (object property
+ * values, generator yield vars, catch bindings, indexed element reads — see
+ * {@link receiverMayBeNativeStringAtRuntime}). The static `isStringType` gate
+ * misses these, so without this the call fell to the host/dynamic path
+ * (null/0 standalone).
+ *
+ * Evaluates the receiver EXACTLY ONCE into an externref temp (preserving side
+ * effects and ordering), then `ref.test $AnyString`:
+ *   - hit  → cast the saved externref to `$AnyString` and run the normal native
+ *            method lowering against it (via `compileNativeStringMethodCall`'s
+ *            receiver override — the receiver is NOT re-compiled),
+ *   - miss → the method's spec default for its result type (so a non-string
+ *            `any` — array, number, null — does not trap and yields a benign
+ *            default rather than a wrong value).
+ *
+ * Standalone/WASI native-string mode only; the caller gates on
+ * `ctx.nativeStrings && ctx.anyStrTypeIdx >= 0`.
+ */
+export function compileGuardedNativeStringMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  method: string,
+): ValType | null {
+  // Evaluate the receiver once → externref temp (side effects happen here only).
+  const recvType = compileExpression(ctx, fctx, propAccess.expression);
+  if (recvType && recvType.kind !== "externref") {
+    // Box/convert whatever the dynamic read produced into an externref so the
+    // ref.test/cast operate on a uniform representation. A native-string ref
+    // round-trips losslessly via extern.convert_any.
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+  } else if (!recvType) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+  }
+  const recvExt = allocLocal(fctx, `__strm_ext_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvExt });
+
+  // Build the then-arm (native method on the cast $AnyString receiver) into a
+  // separate body so we can learn its result ValType before shaping the else.
+  const savedBody = pushBody(fctx);
+  const resultType = compileNativeStringMethodCall(ctx, fctx, expr, propAccess, method, () => {
+    // Receiver override: re-push the saved externref, cast to $AnyString.
+    fctx.body.push({ op: "local.get", index: recvExt } as Instr);
+    fctx.body.push({ op: "any.convert_extern" } as Instr);
+    fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr);
+    return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  });
+  const thenInstrs = fctx.body;
+  popBody(fctx, savedBody);
+
+  if (resultType === null) return null;
+
+  // else-arm: the spec default for the result ValType (non-string receiver).
+  const elseInstrs: Instr[] = [];
+  if (resultType.kind === "f64") {
+    // index-returning methods (indexOf/lastIndexOf/search) default to -1; the
+    // value-returning numeric methods (codePointAt) default to NaN. Use NaN as
+    // the conservative "no result" — these only fire on a non-string `any`,
+    // which is already out-of-contract, and NaN is the safe undefined-number.
+    elseInstrs.push({ op: "f64.const", value: NaN } as Instr);
+  } else if (resultType.kind === "i32") {
+    elseInstrs.push({ op: "i32.const", value: 0 } as Instr);
+  } else if (resultType.kind === "ref" || resultType.kind === "ref_null") {
+    elseInstrs.push({ op: "ref.null", typeIdx: (resultType as { typeIdx: number }).typeIdx } as Instr);
+  } else {
+    elseInstrs.push({ op: "ref.null.extern" } as Instr);
+  }
+
+  // Guard: if the saved value is a $AnyString, run the method; else default.
+  fctx.body.push({ op: "local.get", index: recvExt });
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: resultType },
+    then: thenInstrs,
+    else: elseInstrs,
+  } as Instr);
+  return resultType;
 }
 
 // Register the compileStringLiteral delegate so property-access.ts can emit
