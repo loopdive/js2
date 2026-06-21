@@ -1,8 +1,9 @@
 {
   "id": "2564",
   "assignee": "ttraenkler/sd3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2564-privatefield",
   "claimed_at": "2026-06-21T00:36:05Z",
-  "updated_at": "2026-06-21T00:36:05Z"
+  "updated_at": "2026-06-21T01:57:00Z",
+  "released_at": "2026-06-21T01:57:00Z"
 }
