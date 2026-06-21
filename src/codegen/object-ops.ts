@@ -717,24 +717,31 @@ export function emitDefinePropertyFlagCheck(
 
   if (!getIdx || !setIdx || !unboxIdx || !boxIdx) return;
 
-  // Register the flag key and non-extensible key as string constants
+  // Register the flag key and non-extensible key as string constants.
+  // (#2515 S0) Materialize them via `stringConstantExternrefInstrs` rather than
+  // a raw `global.get <stringGlobalMap.get(key)!>`: in standalone /
+  // `nativeStrings` mode `addStringConstantGlobal` stores the `-1` sentinel
+  // (no host `string_constants` global), so a raw `global.get` would bake
+  // `global.get -1` and fail binary emit via the #2043 index validator. The
+  // helper takes the inline `$NativeString`-struct path in that mode.
   addStringConstantGlobal(ctx, flagKey);
   addStringConstantGlobal(ctx, neKey);
-  const flagKeyGlobal = ctx.stringGlobalMap.get(flagKey)!;
-  const neKeyGlobal = ctx.stringGlobalMap.get(neKey)!;
+  const flagKeyInstrs = stringConstantExternrefInstrs(ctx, flagKey);
+  const neKeyInstrs = stringConstantExternrefInstrs(ctx, neKey);
 
   // Helper to build a TypeError throw instruction sequence
   const typeErrorMessage = "TypeError: Cannot redefine property";
   addStringConstantGlobal(ctx, typeErrorMessage);
-  const errMsgGlobal = ctx.stringGlobalMap.get(typeErrorMessage)!;
   const tagIdx = ensureExnTag(ctx);
-  const throwInstrs: Instr[] = [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr];
+  const throwInstrs: Instr[] = [
+    ...stringConstantExternrefInstrs(ctx, typeErrorMessage),
+    { op: "throw", tagIdx } as Instr,
+  ];
 
   const neErrMessage = "TypeError: Cannot define property, object is not extensible";
   addStringConstantGlobal(ctx, neErrMessage);
-  const neErrMsgGlobal = ctx.stringGlobalMap.get(neErrMessage)!;
   const neThrowInstrs: Instr[] = [
-    { op: "global.get", index: neErrMsgGlobal } as Instr,
+    ...stringConstantExternrefInstrs(ctx, neErrMessage),
     { op: "throw", tagIdx } as Instr,
   ];
 
@@ -744,7 +751,7 @@ export function emitDefinePropertyFlagCheck(
 
   // Read existing flags: __extern_get(obj, "__pf_<propName>") -> externref, unbox to f64
   fctx.body.push({ op: "local.get", index: objLocal });
-  fctx.body.push({ op: "global.get", index: flagKeyGlobal } as Instr);
+  for (const instr of flagKeyInstrs) fctx.body.push(instr);
   fctx.body.push({ op: "call", funcIdx: getIdx });
   fctx.body.push({ op: "call", funcIdx: unboxIdx }); // externref -> f64 (NaN if undefined)
   fctx.body.push({ op: "local.set", index: existingFlagsLocal });
@@ -850,7 +857,7 @@ export function emitDefinePropertyFlagCheck(
   // Check: If property was NOT defined yet, check non-extensibility
   const neCheckBody: Instr[] = [
     { op: "local.get", index: objLocal } as Instr,
-    { op: "global.get", index: neKeyGlobal } as Instr,
+    ...neKeyInstrs,
     { op: "call", funcIdx: getIdx } as Instr,
     { op: "call", funcIdx: unboxIdx } as Instr,
     { op: "i32.trunc_sat_f64_s" },
@@ -871,7 +878,7 @@ export function emitDefinePropertyFlagCheck(
 
   // Store the new flags: __extern_set(obj, "__pf_<propName>", box(newFlags))
   fctx.body.push({ op: "local.get", index: objLocal });
-  fctx.body.push({ op: "global.get", index: flagKeyGlobal } as Instr);
+  for (const instr of flagKeyInstrs) fctx.body.push(instr);
   fctx.body.push({ op: "f64.const", value: newFlags });
   fctx.body.push({ op: "call", funcIdx: boxIdx });
   fctx.body.push({ op: "call", funcIdx: setIdx });
@@ -1679,7 +1686,8 @@ export function compileObjectDefineProperty(
       const tagIdx = ensureExnTag(ctx);
       const errMsg = "TypeError: Cannot redefine property";
       addStringConstantGlobal(ctx, errMsg);
-      const errMsgGlobal = ctx.stringGlobalMap.get(errMsg)!;
+      // (#2515 S0) sentinel-safe message push (see compilePropertyDescriptorOps).
+      const errMsgInstrs = stringConstantExternrefInstrs(ctx, errMsg);
 
       if (fieldType.kind === "f64") {
         // f64 comparison using SameValue semantics (ECMA-262 §7.2.10):
@@ -1693,10 +1701,7 @@ export function compileObjectDefineProperty(
         // pushes reversed, computing copysign(value, 1) = abs(value), which
         // collapsed `+0` and `-0` to the same sign and silently allowed
         // `Object.defineProperty(obj, "x", { value: -0 })` on a frozen +0.
-        const compareBody: Instr[] = [
-          { op: "global.get", index: errMsgGlobal } as Instr,
-          { op: "throw", tagIdx } as Instr,
-        ];
+        const compareBody: Instr[] = [...errMsgInstrs, { op: "throw", tagIdx } as Instr];
         // Part 1: (old == new) && (copysign(1,old) == copysign(1,new))
         fctx.body.push({ op: "local.get", index: oldValLocal });
         fctx.body.push({ op: "local.get", index: newValLocal });
@@ -1727,10 +1732,7 @@ export function compileObjectDefineProperty(
           then: compareBody,
         });
       } else if (fieldType.kind === "i32") {
-        const compareBody: Instr[] = [
-          { op: "global.get", index: errMsgGlobal } as Instr,
-          { op: "throw", tagIdx } as Instr,
-        ];
+        const compareBody: Instr[] = [...errMsgInstrs, { op: "throw", tagIdx } as Instr];
         fctx.body.push({ op: "local.get", index: oldValLocal });
         fctx.body.push({ op: "local.get", index: newValLocal });
         fctx.body.push({ op: "i32.ne" });
@@ -2826,7 +2828,8 @@ export function compileObjectDefineProperties(
                 const tagIdx = ensureExnTag(ctx);
                 const errMsg = "TypeError: Cannot redefine property";
                 addStringConstantGlobal(ctx, errMsg);
-                const errMsgGlobal = ctx.stringGlobalMap.get(errMsg)!;
+                // (#2515 S0) sentinel-safe message push.
+                const errMsgInstrs = stringConstantExternrefInstrs(ctx, errMsg);
                 if (fieldType.kind === "f64") {
                   fctx.body.push({ op: "local.get", index: oldValLocal });
                   fctx.body.push({ op: "local.get", index: newValLocal });
@@ -2834,7 +2837,7 @@ export function compileObjectDefineProperties(
                   fctx.body.push({
                     op: "if",
                     blockType: { kind: "empty" },
-                    then: [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr],
+                    then: [...errMsgInstrs, { op: "throw", tagIdx } as Instr],
                   });
                 } else if (fieldType.kind === "i32") {
                   fctx.body.push({ op: "local.get", index: oldValLocal });
@@ -2843,7 +2846,7 @@ export function compileObjectDefineProperties(
                   fctx.body.push({
                     op: "if",
                     blockType: { kind: "empty" },
-                    then: [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr],
+                    then: [...errMsgInstrs, { op: "throw", tagIdx } as Instr],
                   });
                 }
 
@@ -2879,7 +2882,8 @@ export function compileObjectDefineProperties(
                 const tagIdx = ensureExnTag(ctx);
                 const errMsg = "TypeError: Cannot redefine property";
                 addStringConstantGlobal(ctx, errMsg);
-                const errMsgGlobal = ctx.stringGlobalMap.get(errMsg)!;
+                // (#2515 S0) sentinel-safe message push.
+                const errMsgInstrs = stringConstantExternrefInstrs(ctx, errMsg);
                 if (fieldType.kind === "f64") {
                   fctx.body.push({ op: "local.get", index: oldValLocal });
                   fctx.body.push({ op: "local.get", index: newValLocal });
@@ -2887,7 +2891,7 @@ export function compileObjectDefineProperties(
                   fctx.body.push({
                     op: "if",
                     blockType: { kind: "empty" },
-                    then: [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr],
+                    then: [...errMsgInstrs, { op: "throw", tagIdx } as Instr],
                   });
                 } else if (fieldType.kind === "i32") {
                   fctx.body.push({ op: "local.get", index: oldValLocal });
@@ -2896,7 +2900,7 @@ export function compileObjectDefineProperties(
                   fctx.body.push({
                     op: "if",
                     blockType: { kind: "empty" },
-                    then: [{ op: "global.get", index: errMsgGlobal } as Instr, { op: "throw", tagIdx } as Instr],
+                    then: [...errMsgInstrs, { op: "throw", tagIdx } as Instr],
                   });
                 }
 

@@ -1577,7 +1577,10 @@ function resolvePromiseSubclassThisArg(ctx: CodegenContext, fctx: FunctionContex
   // string backends.
   addStringConstantGlobal(ctx, resolved);
   const nameIdx = ctx.stringGlobalMap.get(resolved);
-  if (nameIdx !== undefined) {
+  // (#2515 S0) `>= 0`, not `!== undefined`: standalone/nativeStrings stores the
+  // `-1` sentinel, which would bake `global.get -1` and fail binary emit. Fall
+  // to the inline-materializing `compileStringLiteral` for the sentinel.
+  if (nameIdx !== undefined && nameIdx >= 0) {
     fctx.body.push({ op: "global.get", index: nameIdx } as Instr);
   } else {
     compileStringLiteral(ctx, fctx, resolved);
@@ -5567,7 +5570,9 @@ function compileCallExpression(
         const builtinName = (arg0 as ts.Identifier).text;
         addStringConstantGlobal(ctx, builtinName);
         const strIdx = ctx.stringGlobalMap.get(builtinName);
-        if (strIdx !== undefined) {
+        // (#2515 S0) `>= 0`, not `!== undefined`: the standalone `-1` sentinel
+        // must fall to the inline-materializing path, not bake `global.get -1`.
+        if (strIdx !== undefined && strIdx >= 0) {
           fctx.body.push({ op: "global.get", index: strIdx } as Instr);
         } else {
           compileStringLiteral(ctx, fctx, builtinName);
@@ -9185,9 +9190,9 @@ function compileCallExpression(
       if (ts.isIdentifier(propAccess.expression)) {
         const captured = ctx.funcSourceText.get(propAccess.expression.text);
         if (captured) {
+          // (#2515 S0) sentinel-safe materialization (standalone bakes `-1`).
           addStringConstantGlobal(ctx, captured);
-          const idx = ctx.stringGlobalMap.get(captured)!;
-          fctx.body.push({ op: "global.get", index: idx });
+          fctx.body.push(...stringConstantExternrefInstrs(ctx, captured));
           return { kind: "externref" };
         }
       }
@@ -9238,14 +9243,14 @@ function compileCallExpression(
           const captured = ctx.funcSourceText.get(propAccess.expression.text);
           if (captured) toStrStr = captured;
         }
+        // (#2515 S0) sentinel-safe — standalone stores `-1` for the string
+        // constant, so materialize inline rather than baking `global.get -1`.
         addStringConstantGlobal(ctx, toStrStr);
-        const idx = ctx.stringGlobalMap.get(toStrStr)!;
-        fctx.body.push({ op: "global.get", index: idx });
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, toStrStr));
       } else {
         const str = isArray ? "[object Array]" : "[object Object]";
         addStringConstantGlobal(ctx, str);
-        const idx = ctx.stringGlobalMap.get(str)!;
-        fctx.body.push({ op: "global.get", index: idx });
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, str));
       }
       return { kind: "externref" };
     }

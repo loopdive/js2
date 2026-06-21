@@ -4,7 +4,7 @@ title: "standalone: Array.prototype generics over array-like receivers emit inva
 status: in-progress
 sprint: 64
 created: 2026-06-10
-updated: 2026-06-14
+updated: 2026-06-21
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -178,3 +178,63 @@ generic-receiver root. Fold into Step 2 (senior/infra) or file separately.
 
 Issue stays `in-progress` — Step 2 (the real generic `$Object` arm +
 binary-emitter local-type fix) is senior/infra and unshipped.
+
+## Step 2a — native-string element search equality (2026-06-21, sdev-reflect)
+
+PROBE-VERIFIED on current main HEAD (075d90ee5). The picture had shifted since
+the last update: the **S6 Step 1 loud refusal is no longer firing** (a later PR
+made the borrowed array-like `$Object` search/result methods compile + RUN
+instead of refuse — so the `issue-2036.test.ts` "refuses loudly" cases are now
+**stale and fail on clean main**, byte-identical with/without this change; that
+behavior question belongs to the array-like `$Object` value-read path, #2187).
+
+The probe surfaced a distinct, broader, in-scope root cause that the prior
+notes had folded into a vague "binary-emitter bug":
+
+**Native-string array elements were compared by reference identity, not
+content.** Under native strings (auto-enabled standalone/WASI) a `string[]`
+element ValType is `ref_null $AnyString` (typeIdx === `ctx.anyStrTypeIdx`), so
+the four search arms took their `ref`/`ref_null` → `ref.eq` branch. Every string
+literal/slice materialises a distinct `$AnyString` allocation, so value-equal
+strings never matched:
+- `['a','b','c'].indexOf('c')` → -1 (should be 2)
+- `['a','b','c'].includes('b')` → false; `lastIndexOf` likewise
+- `Array.prototype.indexOf.call(['a','b'], 'b')` → -1 (shape-inferred call path)
+
+This is NOT the #2187 dynamic-read substrate — it is a **static-type codegen
+bug** in the typed-array search path, independent of any `$Object` receiver, and
+affects everyday `string[].indexOf/includes/lastIndexOf`, not just array-likes.
+
+**Fix** (`src/codegen/array-methods.ts`): new `nativeStringElementEqInstrs(ctx,
+fctx, elemType)` helper — when `elemType` is a `ref`/`ref_null` to
+`ctx.anyStrTypeIdx` under native strings, it spills the two operands, null-guards
+(null===null via `ref.eq`; null-vs-string → false — `__str_equals` would trap on
+a null param), and otherwise routes to `__str_equals` (flattens cons-strings,
+compares code units, §7.2.16). Returns `undefined` for non-string refs so the
+existing `ref.eq` arm still serves genuine object-identity elements. Wired into
+all four search sites: `compileArrayIndexOf`, `compileArrayLastIndexOf`,
+`compileArrayIncludes`, and `compileArrayPrototypeIndexOf` (the shape-inferred
+`Array.prototype.indexOf.call(realArray, …)` arm). SameValueZero (`includes`)
+and Strict Equality coincide for strings, so one helper serves all three.
+
+Host/gc mode is untouched — the helper is gated on `ctx.nativeStrings` (false in
+host/fast mode, which uses `wasm:js-string`), so its output is byte-identical
+there.
+
+**Tests** (`tests/issue-2036.test.ts`, +9, new describe block): indexOf
+later/first/absent, includes match/absent, lastIndexOf last-duplicate, the
+borrowed real-array call form, a cons-string needle (flatten path), and a
+`number[]` control. All 9 green; object-identity element search verified
+unchanged by separate probe. tsc + prettier clean.
+
+**Pre-existing failures (NOT this change, identical on clean main HEAD):**
+`tests/issue-2036.test.ts` S6 "refuses loudly" cases (behavior changed
+upstream); `tests/issue-1360.test.ts` lastIndexOf null/undefined; the
+`tests/array-externref-indexof.test.ts` suite (imports the broken
+`tests/helpers.js`); `tests/issue-1131.test.ts` IR fib. Verified by running each
+on a clean `origin/main` worktree — same 9 failures with and without this PR.
+
+**Still out of scope (issue stays `in-progress`):** the array-like `$Object`
+search/result-method value path (number elements already work; string elements
+need the #2187 dynamic-read substrate); whether those should refuse vs run; and
+the broader #1888 Slice 4 generic-receiver arm.

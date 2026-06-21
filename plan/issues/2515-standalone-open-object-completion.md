@@ -1,7 +1,8 @@
 ---
 id: 2515
 title: "host-independence: complete the standalone Wasm-native open-object/property runtime (residual of #1472)"
-status: ready
+status: in-progress
+assignee: ttraenkler/sd-6
 sprint: 64
 created: 2026-06-19
 priority: high
@@ -160,6 +161,62 @@ refusal into a messier #2043 binary-emit error with no test gain").
 - New unit test in `tests/issue-2515.test.ts`: emit a module that forces a late
   global-import shift after a `global.get`, assert `validateFuncRefs` reports a
   located error (not an encoder panic) when artificially poisoned.
+
+#### S0 — IMPLEMENTATION NOTE (sd-6, PR slice 1 of S0)
+
+**Reproduce-first re-bucketing (the snapshot was 5 days stale).** Re-running the
+626 stale-snapshot rows against current `origin/main` (`d619ce2a9`) showed only
+**91** still hit `global index out of range — -1`; **479** already compile (fixed
+by intervening PRs, e.g. #2358/#2503). So S0's live count was 91, not 626 — trust
+reproduction over the in-file count.
+
+**Root cause (confirmed, NOT what the spec's `binary.ts` ask assumed).** The
+`-1` is **NOT** a stale-shift off-by-delta and the global validator is **already
+always-on and already covers globals** (`vIdx("global", …)` in `binary.ts:988`,
+`makeValidationCtx`) — the reporting half the spec asked for is done. Every `-1`
+is a **failed/sentinel lookup baked into a `global.get`**: in standalone /
+`nativeStrings`, `addStringConstantGlobal` stores the documented **`-1`
+sentinel** ("no host `string_constants` global — materialize inline",
+`registry/imports.ts:98`). Multiple call sites looked the value back up with
+`ctx.stringGlobalMap.get(word)!` (or a guard that only checked `=== undefined`,
+missing the in-pool `-1`) and emitted a raw `global.get -1`. The validator then
+correctly rejects the whole module. So `binary.ts` needed **no change** — the
+fix is purely making the producers sentinel-safe (the `#2029`/`#1623`/`#51`
+pattern: route through `compileStringLiteral` / `stringConstantExternrefInstrs`,
+which take the inline `$NativeString` path in standalone, a real `global.get`
+under host).
+
+**Producers fixed in this slice (91 → 26 live; +65 standalone rows off CE):**
+- `src/codegen/string-ops.ts` — null/undefined/void → string-constant in
+  `compileTemplateExpression`, `compileStringRaw`, `compileAndCoerceConcatOperand`,
+  `compileStringBinaryOp` (left+right). Added a local `pushStringConstant` helper.
+  (The `emitBoolToString` `"true"/"false"` and the `__throw_type_error` sites were
+  already guarded by an early `nativeStrings && nativeStrTypeIdx >= 0` return.)
+- `src/codegen/object-ops.ts` — `Object.defineProperty` flag-key reads + the
+  redefine/non-extensible **TypeError-throw message** materializations
+  (the canonical S0 repro: `defineProperty` redefine of a non-configurable prop).
+  This clears the entire `built-ins/Object/defineProperty` + `defineProperties`
+  descriptor cluster — the **S1 prerequisite**.
+- `src/codegen/expressions/assignment.ts` — the object-rest excluded-keys CSV and
+  a destructuring key read (the unfixed twins of the already-fixed
+  `destructuring-params.ts` #1623 / `loops.ts` #51 sites). `{ a, ...rest } = obj`.
+
+**Net:** host (`gc`) mode unchanged (verified); `check:test262-hard-errors` OK
+(0, no growth); `tests/issue-2515.test.ts` (8 cases) green; per-file
+issue-1472/2042/2046 + string suites show **zero delta vs main** (issue-1472's 9
+failures are pre-existing on `main`).
+
+**S0 RESIDUAL (follow-up slice — the remaining 26 live rows).** These are a
+diverse long tail of **distinct** producers, each a separate `global.get -1`
+before a `call` (string arg to a host import / helper / class-name path), NOT one
+shared root: `SuppressedError` (ctor/proto, ~8), `Set.prototype.<setop>` subclass
+receiver dispatch (`MySet_size`, ~8), `Promise.all/race/any/allSettled` ctx-ctor
+(~5), `Number/Boolean.prototype.toString`, `Error.isError`, a property-accessor
+case. Each needs individual diagnosis (different host imports / class-name
+globals). Carved out so the high-value 65 land now; tracked here for the next S0
+slice. (Out-of-scope here and confirmed: `DisposableStack`/`AsyncDisposableStack`
+built-in static-read refusals = the #2193/#2158/#49 prototype-graph epic; the
+`with`-statement rows = #1387.)
 
 ---
 

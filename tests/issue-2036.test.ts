@@ -264,3 +264,89 @@ describe("#2036 S6 step 1 — borrowed search/result-building methods refuse lou
     expect(r.success).toBe(true);
   });
 });
+
+// #2036 — native-string element search equality. Under native strings
+// (auto-enabled for standalone/WASI) a `string[]` element ValType is a
+// `ref_null $AnyString`, so the search loops (indexOf/lastIndexOf/includes)
+// took the `ref.eq` (reference-identity) arm. Every string literal/slice
+// materialises a distinct $AnyString allocation, so value-equal strings never
+// matched: `['a','b','c'].indexOf('c')` returned -1, and the borrowed
+// `Array.prototype.indexOf.call(realArray, str)` form likewise. Strict equality
+// on strings is by content (§7.2.16), so these now route to __str_equals.
+describe("#2036 native-string element search equality (indexOf/includes/lastIndexOf)", () => {
+  it("string[].indexOf finds a later element by content", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const a: string[] = ['a','b','c']; return a.indexOf('c'); }`,
+      ),
+    ).toBe(2);
+  });
+
+  it("string[].indexOf finds the first element", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const a: string[] = ['a','b','c']; return a.indexOf('a'); }`,
+      ),
+    ).toBe(0);
+  });
+
+  it("string[].indexOf returns -1 when absent", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const a: string[] = ['a','b','c']; return a.indexOf('z'); }`,
+      ),
+    ).toBe(-1);
+  });
+
+  it("string[].includes matches by content", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const a: string[] = ['a','b','c']; return a.includes('b') ? 1 : 0; }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("string[].includes returns false when absent", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const a: string[] = ['a','b','c']; return a.includes('z') ? 1 : 0; }`,
+      ),
+    ).toBe(0);
+  });
+
+  it("string[].lastIndexOf finds the LAST duplicate by content", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const a: string[] = ['a','b','b']; return a.lastIndexOf('b'); }`,
+      ),
+    ).toBe(2);
+  });
+
+  it("Array.prototype.indexOf.call(realArray, str) compares by content", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const a: string[] = ['a','b']; return Array.prototype.indexOf.call(a, 'b'); }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("matches a cons-string (flattened) needle", async () => {
+    // The needle is built by concatenation → a cons-string; __str_equals must
+    // flatten before comparing so it still matches the flat stored 'bc'.
+    expect(
+      await runStandalone(
+        `export function test(): number {
+           const a: string[] = ['ab','bc','cd'];
+           const needle = 'b' + 'c';
+           return a.indexOf(needle);
+         }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("number[] search is unchanged (control)", async () => {
+    expect(
+      await runStandalone(`export function test(): number { const a: number[] = [1,2,3]; return a.indexOf(3); }`),
+    ).toBe(2);
+  });
+});

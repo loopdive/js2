@@ -282,6 +282,32 @@ export function compileNativeStringLiteral(ctx: CodegenContext, fctx: FunctionCo
   return nativeStringType(ctx);
 }
 
+/**
+ * (#2515 S0) Push a literal string constant onto the stack as an externref-typed
+ * value, sentinel-safe across both host and standalone/nativeStrings modes.
+ *
+ * Root cause this fixes: several stringify sites materialised a fixed word
+ * (`"null"`/`"undefined"`) by calling `addStringConstantGlobal(ctx, word)` and
+ * then emitting `global.get ctx.stringGlobalMap.get(word)!`. In standalone /
+ * `nativeStrings` mode `addStringConstantGlobal` stores the documented `-1`
+ * sentinel ("no host `string_constants` global — materialize inline", see
+ * registry/imports.ts) rather than a real global index, so the non-null
+ * assertion happily baked `global.get -1` into the body. That `-1` later
+ * tripped the always-on #2043 emit-time index validator with
+ * `global index out of range — -1`, failing binary emit for the whole module
+ * (the #2515 S0 / #2029 late-import-index-shift residual cluster).
+ *
+ * Routing through `compileStringLiteral` is correct in BOTH modes: in
+ * standalone it takes the `nativeStrings && nativeStrTypeIdx >= 0` fast path and
+ * builds a `$NativeString` GC struct inline (no global, no host import); in
+ * host mode it resolves/registers the real `string_constants` global and emits
+ * the `global.get`. Either way the value left on the stack is concat-ready
+ * externref-or-native-string, matching what the old `global.get` produced.
+ */
+function pushStringConstant(ctx: CodegenContext, fctx: FunctionContext, word: string): void {
+  compileStringLiteral(ctx, fctx, word);
+}
+
 export function compileTemplateExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -340,8 +366,9 @@ export function compileTemplateExpression(
       // matching string constant (#2005 undefined, #2006 null).
       fctx.body.push({ op: "drop" });
       const word = spanIsNullType ? "null" : "undefined";
-      addStringConstantGlobal(ctx, word);
-      fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get(word)! });
+      // (#2515 S0) sentinel-safe: standalone materializes inline, host uses the
+      // string_constants global — never bakes `global.get -1`.
+      pushStringConstant(ctx, fctx, word);
     } else if (
       spanType &&
       spanType.kind === "i32" &&
@@ -369,12 +396,10 @@ export function compileTemplateExpression(
       const spanIsUndef = (spanTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
       if (spanIsNull) {
         fctx.body.push({ op: "drop" });
-        addStringConstantGlobal(ctx, "null");
-        fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("null")! });
+        pushStringConstant(ctx, fctx, "null");
       } else if (spanIsUndef) {
         fctx.body.push({ op: "drop" });
-        addStringConstantGlobal(ctx, "undefined");
-        fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("undefined")! });
+        pushStringConstant(ctx, fctx, "undefined");
       } else if (!isStringType(spanTsType)) {
         const externToStrIdx = ensureLateImport(
           ctx,
@@ -686,8 +711,7 @@ function compileStringRaw(
     if ((subIsUndef || subIsNull) && subType && subType.kind !== "externref") {
       fctx.body.push({ op: "drop" });
       const word = subIsNull ? "null" : "undefined";
-      addStringConstantGlobal(ctx, word);
-      fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get(word)! });
+      pushStringConstant(ctx, fctx, word);
     } else if (subType && subType.kind === "i32" && isBooleanType(subTsType)) {
       emitBoolToString(ctx, fctx);
     } else if (subType && subType.kind === "f64" && toStrIdx !== undefined) {
@@ -701,12 +725,10 @@ function compileStringRaw(
     } else if (subType && subType.kind === "externref") {
       if (subIsNull) {
         fctx.body.push({ op: "drop" });
-        addStringConstantGlobal(ctx, "null");
-        fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("null")! });
+        pushStringConstant(ctx, fctx, "null");
       } else if (subIsUndef) {
         fctx.body.push({ op: "drop" });
-        addStringConstantGlobal(ctx, "undefined");
-        fctx.body.push({ op: "global.get", index: ctx.stringGlobalMap.get("undefined")! });
+        pushStringConstant(ctx, fctx, "undefined");
       } else if (!isStringType(subTsType)) {
         const externToStrIdx = ensureLateImport(
           ctx,
@@ -1401,11 +1423,7 @@ function compileAndCoerceConcatOperand(ctx: CodegenContext, fctx: FunctionContex
 
   if (!valType) {
     // Void function return → push "undefined"
-    addStringConstantGlobal(ctx, "undefined");
-    fctx.body.push({
-      op: "global.get",
-      index: ctx.stringGlobalMap.get("undefined")!,
-    });
+    pushStringConstant(ctx, fctx, "undefined");
   } else if (valType.kind === "f64" || valType.kind === "i32" || valType.kind === "i64") {
     // #2016/#2030: honour the boolean brand on the ValType, not just the TS type.
     // i32-returning predicates (hasOwnProperty, IteratorResult.done, …) carry
@@ -1423,18 +1441,10 @@ function compileAndCoerceConcatOperand(ctx: CodegenContext, fctx: FunctionContex
     const isUndef = (tsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
     if (isNull) {
       fctx.body.push({ op: "drop" });
-      addStringConstantGlobal(ctx, "null");
-      fctx.body.push({
-        op: "global.get",
-        index: ctx.stringGlobalMap.get("null")!,
-      });
+      pushStringConstant(ctx, fctx, "null");
     } else if (isUndef) {
       fctx.body.push({ op: "drop" });
-      addStringConstantGlobal(ctx, "undefined");
-      fctx.body.push({
-        op: "global.get",
-        index: ctx.stringGlobalMap.get("undefined")!,
-      });
+      pushStringConstant(ctx, fctx, "undefined");
     }
   } else if (valType.kind === "ref" || valType.kind === "ref_null") {
     // #2022 — `+` applies ToPrimitive with the DEFAULT hint (valueOf-first),
@@ -1737,9 +1747,7 @@ export function compileStringBinaryOp(
   const leftType = compileExpression(ctx, fctx, expr.left);
   if (op === ts.SyntaxKind.PlusToken && !leftType) {
     // Void function return used in string concat → push "undefined"
-    addStringConstantGlobal(ctx, "undefined");
-    const undefGIdx = ctx.stringGlobalMap.get("undefined")!;
-    fctx.body.push({ op: "global.get", index: undefGIdx });
+    pushStringConstant(ctx, fctx, "undefined");
   } else if (
     op === ts.SyntaxKind.PlusToken &&
     leftType &&
@@ -1760,18 +1768,10 @@ export function compileStringBinaryOp(
     const leftIsUndef = (leftTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
     if (leftIsNull) {
       fctx.body.push({ op: "drop" });
-      addStringConstantGlobal(ctx, "null");
-      fctx.body.push({
-        op: "global.get",
-        index: ctx.stringGlobalMap.get("null")!,
-      });
+      pushStringConstant(ctx, fctx, "null");
     } else if (leftIsUndef) {
       fctx.body.push({ op: "drop" });
-      addStringConstantGlobal(ctx, "undefined");
-      fctx.body.push({
-        op: "global.get",
-        index: ctx.stringGlobalMap.get("undefined")!,
-      });
+      pushStringConstant(ctx, fctx, "undefined");
     } else if (!isStringType(leftTsType)) {
       // #2022 — `+` applies ToPrimitive with the DEFAULT hint (valueOf before
       // toString), not the string hint, even when the other operand is a
@@ -1830,9 +1830,7 @@ export function compileStringBinaryOp(
   const rightType = compileExpression(ctx, fctx, expr.right);
   if (op === ts.SyntaxKind.PlusToken && !rightType) {
     // Void function return used in string concat → push "undefined"
-    addStringConstantGlobal(ctx, "undefined");
-    const undefGIdx = ctx.stringGlobalMap.get("undefined")!;
-    fctx.body.push({ op: "global.get", index: undefGIdx });
+    pushStringConstant(ctx, fctx, "undefined");
   } else if (
     op === ts.SyntaxKind.PlusToken &&
     rightType &&
@@ -1852,18 +1850,10 @@ export function compileStringBinaryOp(
     const rightIsUndef = (rightTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
     if (rightIsNull) {
       fctx.body.push({ op: "drop" });
-      addStringConstantGlobal(ctx, "null");
-      fctx.body.push({
-        op: "global.get",
-        index: ctx.stringGlobalMap.get("null")!,
-      });
+      pushStringConstant(ctx, fctx, "null");
     } else if (rightIsUndef) {
       fctx.body.push({ op: "drop" });
-      addStringConstantGlobal(ctx, "undefined");
-      fctx.body.push({
-        op: "global.get",
-        index: ctx.stringGlobalMap.get("undefined")!,
-      });
+      pushStringConstant(ctx, fctx, "undefined");
     } else if (!isStringType(rightTsType)) {
       // #2022 — see left-operand branch above. `+` uses ToPrimitive(default),
       // so route opaque externref operands through `__extern_to_string_default`

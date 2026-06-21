@@ -610,12 +610,13 @@ function compileDestructuringAssignment(
 
           // Read prop value: tmp = __extern_get(rhs, "name")
           addStringConstantGlobal(ctx, name);
-          const strGlobalIdx = ctx.stringGlobalMap.get(name);
-          if (strGlobalIdx === undefined) continue;
 
           const tmpVal = allocLocal(fctx, `__destruct_val_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.get", index: rhsTmp });
-          fctx.body.push({ op: "global.get", index: strGlobalIdx });
+          // (#2515 S0 / #1623) sentinel-safe key push — nativeStrings stores `-1`
+          // for the string-constant global, so materialize the key inline as
+          // externref instead of `global.get -1`.
+          for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
           fctx.body.push({ op: "call", funcIdx: getIdx });
           fctx.body.push({ op: "local.set", index: tmpVal });
 
@@ -1024,15 +1025,17 @@ function compileDestructuringAssignment(
         if (restObjIdx !== undefined) {
           const excludedStr = excludedKeys.join(",");
           addStringConstantGlobal(ctx, excludedStr);
-          const excludedStrIdx = ctx.stringGlobalMap.get(excludedStr);
-          if (excludedStrIdx !== undefined) {
-            // Convert struct ref to externref
-            fctx.body.push({ op: "local.get", index: tmpLocal });
-            fctx.body.push({ op: "extern.convert_any" } as Instr);
-            fctx.body.push({ op: "global.get", index: excludedStrIdx });
-            fctx.body.push({ op: "call", funcIdx: restObjIdx });
-            fctx.body.push({ op: "local.set", index: restIdx });
-          }
+          // Convert struct ref to externref
+          fctx.body.push({ op: "local.get", index: tmpLocal });
+          fctx.body.push({ op: "extern.convert_any" } as Instr);
+          // (#2515 S0 / #1623) nativeStrings stores a `-1` sentinel global index
+          // for string constants; a raw `global.get <stringGlobalMap.get(excludedStr)>`
+          // would bake `global.get -1` and fail binary emit (the #2043 validator).
+          // Materialize the excluded-keys CSV inline as externref — the twin fix
+          // already applied to the destructuring-params rest path.
+          for (const instr of stringConstantExternrefInstrs(ctx, excludedStr)) fctx.body.push(instr);
+          fctx.body.push({ op: "call", funcIdx: restObjIdx });
+          fctx.body.push({ op: "local.set", index: restIdx });
         }
       }
     }

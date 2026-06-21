@@ -54,6 +54,78 @@ import { coerceType, coercionInstrs, defaultValueInstrs } from "./type-coercion.
 
 type ArrayMethodAccess = ts.PropertyAccessExpression | ts.ElementAccessExpression;
 
+/**
+ * #2036 — content-equality for native-string array elements in the search
+ * methods (`indexOf`/`lastIndexOf`/`includes`).
+ *
+ * For a `string[]` under native strings the element ValType is a
+ * `ref_null $AnyString` (typeIdx === ctx.anyStrTypeIdx). The search loops used
+ * `ref.eq` (reference identity) for the `ref`/`ref_null` arm, which is wrong for
+ * strings: every string literal/slice materialises a distinct `$AnyString`
+ * allocation, so `['a','b','c'].indexOf('c')` and
+ * `Array.prototype.indexOf.call(['a','b'], 'b')` returned -1 (and the `any`-vec
+ * `__host_eq` stub mismatched the other direction). Strict equality on strings
+ * is by content (§7.2.16), so route native-string elements to `__str_equals`
+ * (which flattens cons-strings and compares code units) instead.
+ *
+ * Returns `undefined` when `elemType` is NOT a native-string ref, so the caller
+ * keeps its existing `ref.eq` arm for genuine reference elements (objects).
+ *
+ * The returned Instrs consume TWO operands already on the stack — the element
+ * and the search value, both `ref_null $AnyString` — and leave an i32 (0/1).
+ * SameValueZero (`includes`) and Strict Equality (`indexOf`/`lastIndexOf`)
+ * coincide for strings (no NaN/±0 string subtlety), so one helper serves all
+ * three. A null element (array hole / explicit null search value) is handled by
+ * a ref.eq fast-path first: null===null → true, null vs a string → false,
+ * matching strict-equality semantics without trapping in `__str_equals`.
+ */
+function nativeStringElementEqInstrs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemType: ValType,
+): Instr[] | undefined {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return undefined;
+  if (elemType.kind !== "ref" && elemType.kind !== "ref_null") return undefined;
+  if (elemType.typeIdx !== ctx.anyStrTypeIdx) return undefined;
+
+  ensureNativeStringHelpers(ctx);
+  const strEqIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (strEqIdx === undefined) return undefined;
+
+  const anyStrNull: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+  const elemTmp = allocLocal(fctx, `__str_eq_el_${fctx.locals.length}`, anyStrNull);
+  const valTmp = allocLocal(fctx, `__str_eq_val_${fctx.locals.length}`, anyStrNull);
+
+  // Stack on entry: [elem, val]. Spill val then elem.
+  return [
+    { op: "local.set", index: valTmp } as Instr,
+    { op: "local.set", index: elemTmp } as Instr,
+    // Null fast-path: if either side is null, equality is ref.eq (null===null
+    // → true; null vs string → false). __str_equals would trap on a null param.
+    { op: "local.get", index: elemTmp } as Instr,
+    { op: "ref.is_null" } as Instr,
+    { op: "local.get", index: valTmp } as Instr,
+    { op: "ref.is_null" } as Instr,
+    { op: "i32.or" } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: elemTmp } as Instr,
+        { op: "local.get", index: valTmp } as Instr,
+        { op: "ref.eq" } as Instr,
+      ],
+      else: [
+        { op: "local.get", index: elemTmp } as Instr,
+        { op: "ref.as_non_null" } as Instr,
+        { op: "local.get", index: valTmp } as Instr,
+        { op: "ref.as_non_null" } as Instr,
+        { op: "call", funcIdx: strEqIdx } as Instr,
+      ],
+    } as Instr,
+  ];
+}
+
 /** Emit throw with a string message (local version to avoid circular dep on expressions.ts) */
 function emitThrowString(ctx: CodegenContext, fctx: FunctionContext, message: string): void {
   addStringConstantGlobal(ctx, message);
@@ -2056,7 +2128,8 @@ function compileArrayPrototypeIndexOf(
     const equalsIdx = ctx.jsStringImports.get("equals")!;
     apcEqInstrs = [{ op: "call", funcIdx: equalsIdx } as Instr];
   } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-    apcEqInstrs = [{ op: "ref.eq" }];
+    // #2036 — native-string elements compare by content (§7.2.16), not identity.
+    apcEqInstrs = nativeStringElementEqInstrs(ctx, fctx, elemType) ?? [{ op: "ref.eq" }];
   } else {
     const eqOp = elemType.kind === "f64" ? "f64.eq" : "i32.eq";
     apcEqInstrs = [{ op: eqOp } as Instr];
@@ -3757,7 +3830,8 @@ function compileArrayIndexOf(
     }
     eqInstrs = [{ op: "call", funcIdx: finalHostEqIdx } as Instr];
   } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-    eqInstrs = [{ op: "ref.eq" }];
+    // #2036 — native-string elements compare by content (§7.2.16), not identity.
+    eqInstrs = nativeStringElementEqInstrs(ctx, fctx, elemType) ?? [{ op: "ref.eq" }];
   } else {
     const eqOp = elemType.kind === "f64" ? "f64.eq" : "i32.eq";
     eqInstrs = [{ op: eqOp } as Instr];
@@ -3973,12 +4047,15 @@ function compileArrayIncludes(
       { op: "call", funcIdx: finalSvzIdx } as Instr,
     ];
   } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
+    // #2036 — native-string elements use SameValueZero by content (which equals
+    // strict equality for strings — no NaN/±0 subtlety), not reference identity.
+    const strEq = nativeStringElementEqInstrs(ctx, fctx, elemType);
     comparisonInstrs = [
       { op: "local.get", index: dataTmp } as Instr,
       { op: "local.get", index: iTmp } as Instr,
       { op: getOp, typeIdx: arrTypeIdx } as Instr,
       { op: "local.get", index: valTmp } as Instr,
-      { op: "ref.eq" } as Instr,
+      ...(strEq ?? [{ op: "ref.eq" } as Instr]),
     ];
   } else {
     const eqOp = "i32.eq";
@@ -8261,7 +8338,8 @@ function compileArrayLastIndexOf(
     }
     liofEqInstrs = [{ op: "call", funcIdx: finalHostEqIdx } as Instr];
   } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-    liofEqInstrs = [{ op: "ref.eq" }];
+    // #2036 — native-string elements compare by content (§7.2.16), not identity.
+    liofEqInstrs = nativeStringElementEqInstrs(ctx, fctx, elemType) ?? [{ op: "ref.eq" }];
   } else {
     const eqOp = elemType.kind === "f64" ? "f64.eq" : "i32.eq";
     liofEqInstrs = [{ op: eqOp } as Instr];
