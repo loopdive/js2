@@ -1,8 +1,9 @@
 {
   "id": "2575",
   "assignee": "ttraenkler/sd-6",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2575-array-forin-index",
   "claimed_at": "2026-06-21T13:41:25Z",
-  "updated_at": "2026-06-21T13:41:25Z"
+  "updated_at": "2026-06-21T14:12:52Z",
+  "released_at": "2026-06-21T14:12:52Z"
 }
