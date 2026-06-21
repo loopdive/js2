@@ -1,8 +1,8 @@
 {
   "id": "2568",
-  "assignee": "ttraenkler/sd-4",
+  "assignee": "ttraenkler/sd-5",
   "status": "in-progress",
-  "branch": "issue-2568-standalone-nested-dstr-default",
-  "claimed_at": "2026-06-21T12:08:24Z",
-  "updated_at": "2026-06-21T12:08:24Z"
+  "branch": "issue-2568-nested-dstr-default",
+  "claimed_at": "2026-06-21T12:19:21Z",
+  "updated_at": "2026-06-21T12:19:21Z"
 }
