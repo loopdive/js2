@@ -543,3 +543,60 @@ that falls past the static guards.
 ## Frontmatter reconcile (2026-06-12)
 
 Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).
+
+## 2026-06-21 sd-4 re-analysis — cluster moved to the host-bridge case; blocked on #1632b-2
+
+Re-bucketed the cluster against the fresh baseline
+(`.test262-cache/test262-current.jsonl`, run 2026-06-20). **110 official
+fails**, two signatures:
+
+| Signature | Count | Categories |
+|-----------|-------|------------|
+| `Promise resolve or reject function is not callable` | 52 | all `built-ins/Promise` |
+| `… is not a constructor` | 58 | Promise 11, Proxy 8, language/expressions 6, TypedArray 5, DataView 4, Reflect 3, … |
+
+**The dynamic-`new` codegen path (#1528a) lands 0 of these.** I implemented
+the architect-spec'd `compileDynamicConstruct` (route the catch-all to host
+`__reflect_construct`) on this branch and measured it: **0 / 58** "is not a
+constructor" tests flip, **0 regressions** in a 140-file sample. The two
+genuine `new <runtimevalue>()` tests it *would* fix
+(`ctorExpr-isCtor-after-args-eval{,-fn-wrapup}.js`) **already pass on main**.
+The implementation also repeats the two problems the 2026-05-28 note flagged
+as blocking (it calls `flushLateImportShifts` mid-compile, and it routes the
+*entire* catch-all rather than only genuinely-dynamic shapes), so I reverted
+it rather than ship a zero-movement change that re-introduces a known hazard.
+
+### Real root cause — wasm class/function passed as combinator `C` isn't wrapped constructible
+
+Every failing test in the current cluster has the shape
+`Promise.{all,allSettled,any,race}.call(C, iterable)` where `C` is a
+**user-defined wasm class** (`class BadPromise { constructor(executor){…} }`,
+`class NotPromise`) or a non-Promise constructor. The combinators delegate to
+V8's native `Promise.X.call(C, …)`, whose `NewPromiseCapability(C)` does
+`Construct(C, «executor»)`.
+
+`_resolveCtor` in `src/runtime.ts:9961-9998` only wraps `C` as a
+callable/constructible host proxy (`_wrapCallableForHost`) when
+`__is_closure(C) === 1` — i.e. **only for function values**. A wasm **class
+struct** is not a closure, so it falls through to `return thisArg` (a bare
+non-constructible `_wrapForHost` proxy) → V8 throws `[object Object] is not a
+constructor` (the 58 bucket) or, once construct *partially* proceeds, the
+executor capture path yields a non-callable resolve/reject (the 52 bucket).
+
+The runtime comment at `src/runtime.ts:4783-4786` is explicit: the
+**compiled-class-as-dynamic-constructor** case is **`#1632b-2`** (a dedicated
+`__construct_closure` / class-construct host export), "intentionally NOT
+handled here." So broadening `_resolveCtor` to wrap class structs constructible
+**requires #1632b-2 to land first** — there is no class-construct export to
+back the `construct` trap today.
+
+### Recommendation (sd-4 → tech lead, escalated)
+
+- #1528 is **blocked on #1632b-2** (compiled-class-as-dynamic-constructor host
+  bridge), NOT on the dynamic-`new` codegen path. The 110-test cluster is the
+  class-as-combinator-`C` case end-to-end.
+- The #1528a codegen path is spec-correct infrastructure but has **0 current
+  test262 impact** and repeats a flagged hazard — do **not** ship it standalone.
+  If/when #1632b-2 lands, the codegen path can be re-attempted *narrowed* (only
+  genuinely-dynamic callee shapes, no mid-compile import flush) and bundled.
+- Releasing the #1528 claim; the lane stays clear. sd-4, 2026-06-21.
