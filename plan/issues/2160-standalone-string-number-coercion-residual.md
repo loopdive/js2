@@ -228,3 +228,26 @@ dispatch + native concat.)
 **Validation.** `tests/issue-2160-string-raw-standalone.test.ts` (13/13):
 no-subst / single / multiple / boolean / string substitutions + raw-escape
 length, host & standalone, plus a standalone-validates regression guard.
+
+---
+
+## Follow-ups — DO NOT re-dispatch as plain dev slices (2026-06-21, dev-agent)
+
+These two were probed this sprint; recording explicitly so the
+auto-dispatcher / future planning does not re-offer them as quick dev wins.
+
+1. **Wrapper method-dispatch / `.length` / indexing on `new String(x)` /
+   `new Number(x)` (standalone)** — BLOCKED on the native-wrapper substrate.
+   `new String`/`new Number`/`new Boolean` unconditionally emit the host
+   `__new_String`/`__new_Number`/`__new_Boolean` imports
+   (`src/codegen/expressions/new-super.ts`), and `__unbox_string` is host-only —
+   so a standalone wrapper has no native struct and no primitive-slot reader.
+   Even `new String("x").valueOf()` leaks `__new_String`+`__unbox_string`. A
+   method-dispatch fix therefore CANNOT be contained: it needs the value-rep
+   native wrapper representation first → **#2072 / #2104 / #1910-S2,
+   senior-dev/value-rep.** Measured: `new String("h").charCodeAt(0)` /
+   `.length` / `s[0]` all null-deref/illegal-cast standalone (pass in host).
+
+2. **`String.raw` invalid standalone binary** — FIXED this sprint (PR #1812):
+   early `isStringRawTag` dispatch + `compileStringRaw` native-concat branch.
+   (Listed here only so it is not re-mined as an open standalone gap.)
