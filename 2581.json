@@ -1,8 +1,9 @@
 {
   "id": "2581",
   "assignee": "ttraenkler/sd-2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2581-objlit-method-generators",
   "claimed_at": "2026-06-21T16:03:31Z",
-  "updated_at": "2026-06-21T16:03:31Z"
+  "updated_at": "2026-06-21T16:25:17Z",
+  "released_at": "2026-06-21T16:25:17Z"
 }
