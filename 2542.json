@@ -1,8 +1,9 @@
 {
   "id": "2542",
   "assignee": "ttraenkler/sd-2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2542-standalone-dynamic-key",
   "claimed_at": "2026-06-21T09:16:31Z",
-  "updated_at": "2026-06-21T09:16:31Z"
+  "updated_at": "2026-06-21T14:56:42Z",
+  "released_at": "2026-06-21T14:56:42Z"
 }
