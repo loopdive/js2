@@ -1,8 +1,9 @@
 {
   "id": "2608",
   "assignee": "ttraenkler/dev-acorn",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2608-new-this-fnctor-construct-bridge",
   "claimed_at": "2026-06-22T19:11:44Z",
-  "updated_at": "2026-06-22T19:11:44Z"
+  "updated_at": "2026-06-22T19:49:37Z",
+  "released_at": "2026-06-22T19:49:37Z"
 }
