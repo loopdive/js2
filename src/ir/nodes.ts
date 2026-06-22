@@ -57,20 +57,31 @@ export type IrSymRef = IrFuncRef | IrGlobalRef | IrTypeRef;
 //   { kind: "val",   val: ValType }      A single concrete Wasm value type —
 //                                        the 1:1 wrapper around a backend
 //                                        ValType (i32, f64, externref, …).
-//   { kind: "union", members: ValType[] } A tagged union of ValTypes, lowered
+//   { kind: "union", members: IrType[] }  A tagged union of IrTypes, lowered
 //                                        to a canonical WasmGC struct with a
 //                                        `$tag: i32` discriminator + one or
 //                                        more `$val` fields. V1 scope:
-//                                        homogeneous-width members only
-//                                        (e.g. `f64|bool`, `f64|null`).
-//                                        Members containing `externref` /
-//                                        `ref` / `funcref` fall back to
-//                                        `dynamic` upstream.
-//   { kind: "boxed", inner: ValType }    A heap-allocated single-field box
+//                                        homogeneous-width SCALAR members only
+//                                        (e.g. `f64|i32`). Members are
+//                                        themselves IrTypes (#1926) so a union
+//                                        composes with the symbolic
+//                                        string/object/etc. kinds without
+//                                        baking a backend ValType (and its
+//                                        module-relative typeIdx) into the IR
+//                                        type system. The backend resolver
+//                                        unwraps each member's underlying
+//                                        ValType at lowering time. Members
+//                                        containing `externref` / `ref` /
+//                                        `funcref` fall back to `dynamic`
+//                                        upstream.
+//   { kind: "boxed", inner: IrType }     A heap-allocated single-field box
 //                                        (`struct (field $val inner)`) —
 //                                        lets the middle-end materialise
 //                                        scalars on the heap when a
 //                                        downstream pass needs a reference.
+//                                        The `inner` is an IrType (#1926); the
+//                                        backend resolver unwraps it to a
+//                                        concrete ValType at lowering time.
 //
 // Every IrType use-site that would have passed a raw `ValType` now either
 //   (a) wraps with `irVal(v)` to produce `{ kind: "val", val: v }`, or
@@ -81,9 +92,13 @@ export type IrSymRef = IrFuncRef | IrGlobalRef | IrTypeRef;
 //   { kind: "val",   val }     → `val` (unchanged).
 //   { kind: "union", members } → ref to the canonical `$union_<members>`
 //                                struct (registered once per module via
-//                                `passes/tagged-union-types.ts`).
+//                                `passes/tagged-union-types.ts`). Each member
+//                                IrType is unwrapped to its ValType
+//                                (`asVal`) at the resolver boundary.
 //   { kind: "boxed", inner }   → ref to a single-field struct with the
-//                                inner ValType as its `$val`.
+//                                inner IrType's ValType as its `$val`
+//                                (unwrapped via `asVal` at the resolver
+//                                boundary).
 
 /**
  * A canonical object shape — a sorted list of named fields with their IR
@@ -208,12 +223,19 @@ export type IrType =
   // without a TS-checker round trip. See `src/ir/from-ast.ts`'s
   // `lowerExternMethodCall` and the `extern.*` IR instr kinds.
   | { readonly kind: "extern"; readonly className: string }
-  | { readonly kind: "union"; readonly members: readonly ValType[] }
+  // #1926 — union members are IrTypes, not raw ValTypes. V1 still only
+  // admits scalar (`f64`/`i32`) members upstream (see
+  // `passes/tagged-unions.ts`), but typing them as IrType keeps the IR
+  // backend-symbolic (no module-relative `ref { typeIdx }` reachable
+  // through the type system) and lets the resolver unwrap each member's
+  // ValType at lowering time.
+  | { readonly kind: "union"; readonly members: readonly IrType[] }
   // Slice 3 (#1169c) repurposes `boxed` as the ref-cell type for mutable
-  // captures. The inner ValType is the cell's stored type; the resolver
-  // delegates to `getOrRegisterRefCellType` so legacy and IR ref cells
-  // share the same WasmGC struct.
-  | { readonly kind: "boxed"; readonly inner: ValType };
+  // captures. The inner IrType is the cell's stored type (#1926 — an IrType,
+  // not a raw ValType); the resolver unwraps it to a ValType and delegates
+  // to `getOrRegisterRefCellType` so legacy and IR ref cells share the same
+  // WasmGC struct.
+  | { readonly kind: "boxed"; readonly inner: IrType };
 
 /** Wrap a plain ValType as an IrType — the common path for Phase 1/2 callers. */
 export function irVal(v: ValType): IrType {
@@ -264,11 +286,13 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
     return aSigned === bSigned;
   }
   if (a.kind === "string" && b.kind === "string") return true;
-  if (a.kind === "boxed" && b.kind === "boxed") return valTypeEquals(a.inner, b.inner);
+  // #1926 — `inner`/`members` are IrTypes now, so recurse via irTypeEquals
+  // (a boxed-of-string or union-of-symbolic-kind compares structurally).
+  if (a.kind === "boxed" && b.kind === "boxed") return irTypeEquals(a.inner, b.inner);
   if (a.kind === "union" && b.kind === "union") {
     if (a.members.length !== b.members.length) return false;
     for (let i = 0; i < a.members.length; i++) {
-      if (!valTypeEquals(a.members[i]!, b.members[i]!)) return false;
+      if (!irTypeEquals(a.members[i]!, b.members[i]!)) return false;
     }
     return true;
   }

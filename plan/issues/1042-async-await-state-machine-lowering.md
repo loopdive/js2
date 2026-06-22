@@ -1392,3 +1392,31 @@ correct; the remaining work is reconciling the two consumption contracts. Until
 then the gate stays `false` (byte-identical legacy codegen — the equivalence
 suite and `async-await.test.ts` are unchanged on this branch). Re-route to
 architect for the consumption-contract decision before the next flip attempt.
+
+---
+
+## ASYNC-lane re-measurement (arch, 2026-06-22 — sprint 65)
+
+Re-measured the full async test262 gap (see the detailed table + verdict in
+**#1373b → "RE-MEASUREMENT + VERDICT"**). Key conclusion for #1042: the CPS
+gate-flip is blocked on the **synchronous-consumption contract** decision
+(documented above by sd-1665), which is a larger-than-one-sprint architecture
+effort, NOT a sprint-65 conformance win. The async cluster is already **76.6%
+passing (2449/3199)** via the legacy path.
+
+The sprint-65 ASYNC-lane conformance is therefore harvested via three bounded
+slices that do **not** require flipping `ASYNC_CPS_ENABLED`:
+
+- **#2612** — async fn via var/expr binding consumed as thenable not Promise-
+  wrapped (~18 fails, dev). Fixes the `Cannot read properties of null (reading
+  'then')` cluster in `async-function` expression tests.
+- **#2613** — `await <thenable>`/`<non-Promise>` assimilation in JS-host mode
+  via host `PromiseResolve` (~15 fails, dev). The only suspension-shaped
+  bucket; standalone thenable-await stays deferred to the CPS epic.
+- **#2614** — Promise combinators read the constructor's own `resolve` +
+  expose callable resolve/reject element functions (~45 fails, senior-dev).
+
+#1042 remains the **acceptance owner** for the CPS model (its acceptance
+criteria still gate the eventual gate-flip), but is not the sprint-65 driver.
+The consumption-contract architecture decision is the true predecessor to any
+further #1042/#1373b progress.

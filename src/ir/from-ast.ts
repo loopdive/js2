@@ -1203,8 +1203,9 @@ function describeIrType(t: IrType): string {
   }
   if (t.kind === "class") return `class<${t.shape.className}>`;
   if (t.kind === "extern") return `extern<${t.className}>`;
-  if (t.kind === "union") return `union<${t.members.map((m) => m.kind).join(",")}>`;
-  return `boxed<${t.inner.kind}>`;
+  // #1926 — union members / boxed inner are IrTypes; recurse.
+  if (t.kind === "union") return `union<${t.members.map(describeIrType).join(",")}>`;
+  return `boxed<${describeIrType(t.inner)}>`;
 }
 
 /**
@@ -2174,7 +2175,8 @@ function lowerNestedFuncCall(
           throw new Error(`ir/from-ast: mutable nested capture "${cap.name}" must be a primitive (${cx.funcName})`);
         }
         const cell = cx.builder.emitRefCellNew(live.value, innerVal);
-        cx.scope.set(cap.name, { kind: "local", value: cell, type: { kind: "boxed", inner: innerVal } });
+        // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
+        cx.scope.set(cap.name, { kind: "local", value: cell, type: { kind: "boxed", inner: irVal(innerVal) } });
         args.push(cell);
       } else {
         throw new Error(`ir/from-ast: nested mutable capture "${cap.name}" not in scope (${cx.funcName})`);
@@ -4241,7 +4243,8 @@ function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, 
       if (!innerVal) {
         throw new Error(`ir/from-ast: mutable closure capture "${cap.name}" must be a primitive (${cx.funcName})`);
       }
-      const fieldType: IrType = { kind: "boxed", inner: innerVal };
+      // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
+      const fieldType: IrType = { kind: "boxed", inner: irVal(innerVal) };
       captureFieldTypes.push(fieldType);
       const live = cx.scope.get(cap.name);
       if (live?.kind === "local" && live.type.kind === "boxed") {
@@ -4332,7 +4335,8 @@ function liftNestedFunction(
   // Prepend capture params before the user's params.
   for (const cap of captures) {
     const innerVal = asVal(cap.type);
-    const paramType: IrType = cap.mutable && innerVal ? { kind: "boxed", inner: innerVal } : cap.type;
+    // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
+    const paramType: IrType = cap.mutable && innerVal ? { kind: "boxed", inner: irVal(innerVal) } : cap.type;
     const v = builder.addParam(cap.name, paramType);
     scope.set(cap.name, { kind: "local", value: v, type: paramType });
   }
@@ -4535,9 +4539,10 @@ function analyseCaptures(
       );
     }
     // If the local is already a refcell (a sibling closure boxed it),
-    // the capture's logical type is the inner ValType — we deref on
-    // read in `lowerClosureExpression`.
-    const logicalType: IrType = binding.type.kind === "boxed" ? irVal(binding.type.inner) : binding.type;
+    // the capture's logical type is the inner IrType — we deref on
+    // read in `lowerClosureExpression`. #1926 — boxed.inner is already an
+    // IrType, so use it directly (no irVal re-wrap).
+    const logicalType: IrType = binding.type.kind === "boxed" ? binding.type.inner : binding.type;
     const isMutable = written.has(name) || outerWrites.has(name);
     captures.push({
       name,

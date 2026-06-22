@@ -12,6 +12,16 @@ description: Regression self-check for a green PR. Reads CI JSON, applies the ha
 > (enqueue once, then stand down) or **ESCALATE** (to tech lead). After that one
 > enqueue the PR is handed off — the dev does NOT touch the queue again.
 >
+> **Enqueue PROACTIVELY — the moment the three required checks are green.**
+> The required checks are `cheap gate (main-ancestor + lint)`, `merge shard
+> reports`, and `quality`. Enqueue as soon as **those three** pass — do NOT wait
+> for the full equivalence-shard matrix to finish, do NOT wait for a background
+> watcher to "settle everything", and do NOT leave the enqueue to the
+> `auto-enqueue` backstop (it's sparse and only catches strays). Actively
+> enqueuing your own PR the instant it's mergeable is the dev's job; a PR that
+> sits green-but-un-enqueued is a process failure. The tech lead also sweeps +
+> enqueues green PRs every loop (see CLAUDE.md "Tech lead discipline").
+>
 > **Enqueue EXACTLY ONCE — never re-enqueue.** The `auto-enqueue.yml` backstop
 > (App-token bot identity, sweeps green PRs on every CI completion + ~30-min
 > cron) owns ALL re-adds for any PR that strands, drifts, or gets ejected; the

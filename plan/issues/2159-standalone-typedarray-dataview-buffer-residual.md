@@ -279,3 +279,57 @@ read, `TypedArray.fill`, `DataView(buf, off, len).byteLength`, `subarray`,
   invalid packed valType).
 Both are in #2159's lane (owner ttraenkler/sdev-json3, live claim) — flagged here
 for that owner, not claimed by triage.
+
+---
+
+## Sprint-65 slicing (2026-06-22, architect) — verified residuals → 6 sub-issues
+
+Re-probed the standalone TypedArray/DataView/ArrayBuffer surface against current
+upstream/main (compile + instantiate + run, `.tmp/` battery). The original
+compile-error class (525+ `(none)`-leak CEs) is **largely fixed** by the prior
+slices — most byte/short element ops, DataView get/set Int/Float, `fill`, `set`,
+`subarray`, `copyWithin`, `slice`, iterators (`values`/`entries`/for-of/spread)
+all compile AND run correctly standalone now. The remaining residual is a mix of
+a few CEs, host-import leaks, and **runtime value-fidelity** gaps (which compile
+clean but fail test262 assertions). Sliced into 6 dev-tractable sub-issues:
+
+| # | title | rows | feasibility |
+|---|---|---|---|
+| **#2592** | TypedArray.of / TypedArray.from static factories (CE `__get_builtin`) | ~40-90 | medium |
+| **#2593** | Integer element-width wrapping (ToInt8/ToUint16/Uint8Clamp) + signed read | ~120-220 | hard |
+| **#2594** | Host-import leaks: `ArrayBuffer.isView`, BigInt64Array ctor, DataView BigInt accessors | ~30-70 | medium |
+| **#2595** | `BYTES_PER_ELEMENT` (static CE + instance returns 0) | ~15-40 | easy |
+| **#2596** | `.buffer` accessor — `illegal cast` at runtime | ~20-50 | hard |
+| **#2597** | `@@toStringTag` — `Object.prototype.toString.call(ta)` returns `[object Object]` | ~15-35 | easy |
+
+**Verified-good standalone (NOT sliced — already correct):** byte/short element
+read+write, `fill`, `set` (with offset), `copyWithin`, `slice`, `subarray`,
+DataView get/set Int8/Uint8/Int16/Uint16/Uint32/Int32/Float32/Float64 + LE,
+DataView OOB→RangeError, `DataView(buf,off,len).byteLength`, `byteLength`/
+`byteOffset` interception, iterators (`values`/`entries`/for-of/spread),
+`map`/`filter`/`reduce`/`forEach`/`find`/`some`/`every`, `indexOf` on byte views,
+`Uint8Array` element wrapping (correct via packed i8 storage).
+
+**Dispatch overlap notes:**
+- #2592 + #2593 both touch `calls.ts`/`new-super.ts` element-init paths —
+  sequence #2592 first (additive arm) then #2593 (changes storage selection),
+  or give both to one dev to avoid a `[CONFLICT]`.
+- #2595 + #2596 + #2597 are largely property-access.ts (#2595/#2596 in the
+  typed-array property block, disjoint `propName` arms; #2597 in `calls.ts`
+  `resolveObjectToStringTag`). Land-order independent.
+- #2593 is the biggest win and the hardest (element-representation level, but
+  bounded — confined to storage selection + packed read/write + a clamp helper;
+  does NOT touch the value-rep substrate #2580).
+
+**Residual NOT covered by these 6 slices (tracked, deferred):**
+- True write-through byte-aliasing between an f64 view and its `.buffer` (needs
+  the unified byte-storage rep; pairs with #2593's packed migration — #2596
+  delivers non-trapping `.buffer` + correct byteLength/identity first).
+- `subarray`/`slice` `.buffer` identity is partly gated on the #2357 subview rep.
+- `TypedArray.from(string | Set | Map | arbitrary iterator)` — only array-like /
+  vec sources are in #2592; iterator sources stay on the existing host path.
+- Atomics (132 in the original gap) — a separate concern (SharedArrayBuffer +
+  atomic ops), not a TypedArray-element slice; out of this umbrella's 6 slices.
+- Detached-buffer semantics beyond the DataView bounds case (#2199, done) —
+  `ArrayBuffer.transfer`/`resize` detach + post-detach TypedArray traps are a
+  separate ArrayBuffer-lifecycle concern, not sliced here.

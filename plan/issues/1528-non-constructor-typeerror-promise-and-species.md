@@ -1,9 +1,10 @@
 ---
 id: 1528
 title: "spec gap: non-constructor TypeError — Promise.all / allSettled species and executor paths"
-status: ready
+status: in-progress
 created: 2026-05-20
-updated: 2026-06-19
+updated: 2026-06-22
+assignee: ttraenkler/senior-developer
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -543,3 +544,140 @@ that falls past the static guards.
 ## Frontmatter reconcile (2026-06-12)
 
 Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).
+
+## #1528a-arrow subset landed (2026-06-22)
+
+Landed the **arrow-function-value** subset of the #1528a non-constructor cluster
+— a small, substrate-independent slice that reuses the **existing, tested**
+`__construct` brand-check path (#1732 S1), avoiding the
+`flushLateImportShifts`-mid-function index corruption that forced the PR #608
+revert of the broad `compileDynamicConstruct`.
+
+**Change** — `src/codegen/expressions/new-super.ts`,
+`resolvesToNonConstructableValue` (the #1732 S1 helper): an **arrow-function
+initializer** (`const f = () => 1; new f()`) is now recognised as a provably-
+non-constructable value (§15.3.4 — arrows have no [[Construct]]), so `new f()`
+routes through the `__construct` brand check and throws a real
+`TypeError("… is not a constructor")` instead of slipping into the unknown-ctor
+path and silently not throwing. 8 lines, additive, alongside the existing
+prototype-method / `.bind`/`.call`/`.apply` shapes. No runtime.ts change; no new
+coercion site.
+
+**Tests** — `tests/issue-1528.test.ts` gains a `#1528a — arrow-function value`
+describe (5 cases: arrow value, cast-wrapped arrow, arrow-with-params throw;
+class + function-declaration construct regression guards). 11/11 pass. Full
+constructor/new suite (issue-1732-s1/s2, issue-1519, fn-constructor,
+issue-2026-constructor-identity-any) green — zero regressions.
+
+**Still open (substrate-blocked, #1632b-2):** dynamically **CONSTRUCTING** a
+runtime function VALUE (factory-returned `function C(){}` → `new C()`) — verified
+this needs the closure-construct host bridge (`_wrapCallableForHost`'s construct
+trap) PLUS the `__call_fn_*` arity dispatcher to be reachable for the value, and
+behaves inconsistently depending on `setExports` timing. That is the deeper
+closure-as-dynamic-constructor work, NOT a clean dev slice. The non-constructor
+**throw** cases (arrows, bound functions, prototype methods, call-only callables)
+are the substrate-independent, test262-cluster-dominant part and are now covered.
+Issue stays `ready` for the remaining construct-a-fn-value cluster.
+
+## #1632b-2 closure-construct-bridge — implementation plan (2026-06-22, sd, task #56)
+
+**Re-grounded root cause (current main).** `new Ctor(args)` where `Ctor` is a
+factory-returned `function C(){}` value (an `any`/function-typed identifier, not
+a declared class) is mis-classified: codegen routes it to the **extern-class**
+path (`new-super.ts:3999` `externClasses.get(className)`), emitting a
+`<prefix>_new` host call that fails at instantiation with
+`No dependency provided for extern class "Ctor"`. It never reaches a construct
+bridge. (Confirmed via `.tmp/probe-construct.js` → that exact runtime error.)
+
+The existing `__construct` host helper (`runtime.ts:9275`) wraps the callee with
+`_wrapForHost` (NON-callable proxy), so its `IsConstructor` probe FAILS for a
+real constructable closure and it throws "not a constructor" — correct for
+arrows/bound/methods (#1921 routes those here to throw), WRONG for a genuine
+`function C(){}` value.
+
+**Fix (two narrow parts; host-helper, NOT a wasm `__construct_closure` codegen
+export — sidesteps the #608/#794 `flushLateImportShifts`-mid-function index
+corruption entirely):**
+
+1. **runtime.ts** — new host helper `__construct_closure(callee, argsArray)`:
+   when `callee` is a wasm closure, wrap with **`_wrapCallableForHost`** (its
+   construct trap = ECMA-262 §10.2.2 OrdinaryCallEvaluateBody, already present at
+   `runtime.ts:4874`) and `Reflect.construct(callableProxy, args)`. Non-closure
+   structs / non-functions still throw the spec TypeError (keeps ctx-non-ctor).
+   Distinct helper name so the arrow/bound/method NON-constructable throw path
+   (`__construct`) is untouched.
+
+2. **new-super.ts** — a NARROW guard placed BEFORE the extern-class branch
+   (3999): when the `new` callee is an identifier whose value is a **function
+   type that is NOT a declared/extern class** (a runtime function value), and
+   `!noJsHost`, materialize args into a `__js_array_new`/`__js_array_push` JS
+   array and emit a single `__construct_closure(callee, argv)` call. ONE terminal
+   `flushLateImportShifts` after the call (the safe pattern the existing
+   `__construct` site at 3663 uses), never mid-emission. Gate strictly on the
+   function-value shape so no declared-class / intrinsic-ctor / typed-array path
+   is intercepted (those branches precede or are matched by `classSet`/
+   `externClasses` with real dependencies).
+
+**Validation:** broad-impact construct path ⇒ full-gate via merge_group, never a
+scoped sweep. Regression-watch the constructor/new suites (issue-1732-s1/s2,
+issue-1519, fn-constructor, issue-2026-constructor-identity-any, issue-1528) +
+the Promise capability tests (this also resolves #2614's any/invoke-resolve
+illegal-cast — the combinator's NewPromiseCapability(C)→Construct(C, executor)
+goes through the same bridge). Add `tests/issue-1528-closure-construct.test.ts`.
+
+## #1632b-2 closure-construct bridge LANDED (2026-06-22, task #56)
+
+The **ordinary-function-value** construct-a-fn-value cluster is now supported
+JS-host: `const C = makeCtor(); new C(args)` constructs via the new
+`__construct_closure` host helper (`_wrapCallableForHost`'s construct trap runs
+the compiled closure body). New `tests/issue-1528-closure-construct.test.ts`
+(4 pass, 1 skip = the explicit-object-return override follow-up). The 48-test
+constructor/new regression suite stays green; the #1921 non-constructable throw
+cases are untouched (separate `__construct` path). Also unblocks the Promise
+combinator capability path's `any/invoke-resolve` (same bridge).
+
+**Still open (follow-up, out of this slice):** the compiled-CLASS-as-dynamic-ctor
+sub-case — `__fn_tramp_Constructor_*` `illegal cast` (e.g.
+`allSettled/call-resolve-element.js`, `race/resolve-from-same-thenable.js`). That
+is the `__construct_closure` *codegen export* (spec step 4), distinct from the
+host-helper ordinary-function path delivered here. Issue stays `in-progress` for
+that arm; #2614 remains blocked on it.
+
+## Class-ctor arm — implemented + measured verdict (2026-06-22, sd-1838, post-#1940-merge)
+
+**The bounded surface fix is done; the headline cluster is a larger follow-up.**
+
+### Done (committed, branch issue-1528-classctor-arm, 0 regressions)
+`calleeIsCapabilityCtorParam` (calls.ts) — syntactic gate: a param whose declaring
+function flows to a `Promise.{all,allSettled,race,any}.call(fn, …)` site. Such a
+param (`executor`) is UNTYPED (`any`, no call signatures) and V8 fills it with a
+HOST function when it does `Construct(Constructor, «executor»)` (via #1940's
+bridge). The no-call-signature fallback `ref.cast`s it to a closure struct →
+`illegal cast in Constructor()`. Fixed by routing the call through the existing
+`__call_function` host helper via an early-return BEFORE the call-sig gate
+(alongside the bound-function path). Min repro passes; +2 peripheral rows
+(`capability-executor-called-twice`, `species-get-error`). JS-host only; the
+narrow gate preserves the #1941 dual-mode guarantee.
+
+### NOT closed (larger follow-up — beyond the param-call surface fix)
+1. **Multi-hop host→wasm callback cast** (`allSettled/call-resolve-element`,
+   `race/resolve-from-same-thenable`): `Constructor` passes its INNER `resolve`
+   (a wasm closure) to the host `executor`; when the host thenable later calls
+   `resolve(value)` BACK, the host→wasm callback path casts and traps. The
+   executor-call fix routes the OUTBOUND call; the INBOUND callback of a
+   wasm-closure-passed-to-host is a separate cast site.
+2. **Species / ctor identity** (all `ctx-ctor` rows): `instance.constructor ===
+   SubPromise` requires the capability's `.constructor`/prototype identity to
+   survive the bridge — a `_wrapCallableForHost` `.prototype`/species concern.
+3. **Observable-resolve identity** (`invoke-resolve` all/race): still asserts
+   `nextValue === current` (the #2614 sandbox-`Promise.resolve` coupling); the
+   observable-resolve change was deliberately NOT stacked here (it couples to
+   #1 and #2).
+
+### Recommendation
+The executor-routing substrate is useful and clean, but the cluster's dominant
+rows need #1 (multi-hop callback cast) + #2 (species identity) + #3
+(observable-resolve), which together are a sprint-scale capability-cluster effort,
+not this arm. Ship the arm small OR fold it into that larger effort. #2614 stays
+blocked on #1/#2/#3; #2618 (Proxy apply/construct) shares the same
+`__fn_tramp_Constructor` dispatch and sequences after.

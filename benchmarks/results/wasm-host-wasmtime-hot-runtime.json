@@ -211,24 +211,26 @@
     "starlingMonkeyMinUs": 11011.333,
     "starlingMonkeyMaxUs": 11540.750000000002,
     "starlingMonkeyStdUs": 158.0714775179063,
-    "lanesProvenance": "cold javyUs/starlingMonkeyUs measured by scripts/generate-wasmtime-hot-runtime.mjs with benchmarks/wasmtime-cold-host: warm Wasmtime Engine + compiled artifacts, fresh Store + Instance per sample, fixed-argument no-return wrapper for Javy WIT compatibility."
+    "lanesProvenance": "cold javyUs/starlingMonkeyUs measured by scripts/generate-wasmtime-hot-runtime.mjs with benchmarks/wasmtime-cold-host: warm Wasmtime Engine + compiled artifacts, fresh Store + Instance per sample, fixed-argument no-return wrapper for Javy WIT compatibility.",
+    "wasmProvenance": "cold wasmUs NOT refreshed in #2619: a faithful cold measurement needs the Rust cold-host (pnpm run refresh:benchmarks:wasmtime, cargo) on a matching-wasmtime box; neither is on the container used for #2619's warm refresh. Follow-up: regen on a cargo-equipped runner — the benchmark-refresh CI on push-to-main may also cover it. Value here predates the #2619 warm refresh and is likely similarly pessimistic."
   },
   {
     "name": "string-hash",
     "scenario": "warm",
-    "wasmUs": 3930.4160000000084,
+    "wasmUs": 944.625,
     "jsUs": 330.8749999999989,
-    "wasmMinUs": 3887.6670000000004,
-    "wasmMaxUs": 4020.207999999997,
+    "wasmMinUs": 927.5,
+    "wasmMaxUs": 1007.25,
     "jsMinUs": 316.91700000000014,
     "jsMaxUs": 334.74999999999966,
-    "wasmStdUs": 45.59289355026234,
+    "wasmStdUs": 31.812,
     "jsStdUs": 6.196625750671094,
     "ratioStd": 0.0016719334885040252,
     "warmupRounds": 2,
     "measuredRounds": 7,
     "javyUs": 36000,
     "starlingMonkeyUs": 14200,
-    "lanesProvenance": "warm javyUs/starlingMonkeyUs from verified 2026-04-27 wasmtime 44.0.0 aarch64-linux labs measurements (compare-runtimes.ts). Javy = dynamic-link with javy-default-plugin-v3 preload. StarlingMonkey = ComponentizeJS 0.20.0 + Wizer + Weval AOT."
+    "lanesProvenance": "warm javyUs/starlingMonkeyUs from verified 2026-04-27 wasmtime 44.0.0 aarch64-linux labs measurements (compare-runtimes.ts). Javy = dynamic-link with javy-default-plugin-v3 preload. StarlingMonkey = ComponentizeJS 0.20.0 + Wizer + Weval AOT.",
+    "wasmProvenance": "warm wasmUs re-measured 2026-06-22 (#2619), wasmtime 44.0.0, generator warm driver (5 warmup + 40 measured, min-per-call), optimize:3, n=20000, median of 7 outer samples. Supersedes the stale 3930us (#1580-era; intervening string-codegen improvements closed it). Run with -W gc,function-references,exceptions,tail-call (this wasmtime needs exceptions+tail-call to precompile current output). COLD wasmUs left as-is: a faithful cold refresh needs the Rust cold-host (pnpm run refresh:benchmarks:wasmtime, cargo) on a matching-wasmtime box."
   }
 ]

@@ -275,14 +275,14 @@ if [ -z "$in_worktree" ] && [ "$branch" = "main" ]; then
   sprint_n=""
   sprint_done=0
   sprint_total=0
-  sprints_json="/workspace/website/dashboard/data/sprints.json"
-  if [ -f "$sprints_json" ]; then
-    # Read from pre-built sprints.json (deduplicated, wont-fix counted as done)
-    sprint_data=$(jq -r '
-      [ .[] | select(.sprintNumber != null and .isClosed == false and .isPlanning == false) ]
-      | sort_by(.sprintNumber) | last
-      | "\(.sprintNumber) \(.completedIssueIds | length) \(.issueIds | length)"
-    ' "$sprints_json" 2>/dev/null)
+  # LIVE-FIRST: statusline-sprint.mjs scans the working-tree plan/issues/*.md
+  # frontmatter (always current) and only falls back to the sprints.json cache
+  # internally when the flat scan finds nothing. Reading the cache here FIRST is
+  # what made the statusline go stale — sprints.json only rebuilds on
+  # push-to-main, so it reported a closed sprint for days.
+  sprint_mjs="/workspace/scripts/statusline-sprint.mjs"
+  if [ -f "$sprint_mjs" ] && command -v node >/dev/null 2>&1; then
+    sprint_data=$(node "$sprint_mjs" --porcelain 2>/dev/null)
     if [ -n "$sprint_data" ]; then
       sprint_n=$(echo "$sprint_data" | awk '{print $1}')
       sprint_done=$(echo "$sprint_data" | awk '{print $2}')
@@ -290,14 +290,15 @@ if [ -z "$in_worktree" ] && [ "$branch" = "main" ]; then
     fi
   fi
   if [ -z "$sprint_n" ]; then
-    # Fallback when sprints.json is absent: delegate to statusline-sprint.mjs,
-    # which scans the flat plan/issues/*.md tree by `sprint:`/`status:`
-    # frontmatter (#1616). The previous shell fallback scanned per-sprint
-    # DIRECTORIES, which broke after the #576 flatten (issues are now flat
-    # files; sprint docs are sprints/<N>.md). --porcelain emits "N done total".
-    sprint_mjs="/workspace/scripts/statusline-sprint.mjs"
-    if [ -f "$sprint_mjs" ] && command -v node >/dev/null 2>&1; then
-      sprint_data=$(node "$sprint_mjs" --porcelain 2>/dev/null)
+    # Fallback only when node/the script is unavailable: read the (possibly
+    # stale) pre-built cache directly (deduplicated, wont-fix counted as done).
+    sprints_json="/workspace/website/dashboard/data/sprints.json"
+    if [ -f "$sprints_json" ]; then
+      sprint_data=$(jq -r '
+        [ .[] | select(.sprintNumber != null and .isClosed == false and .isPlanning == false) ]
+        | sort_by(.sprintNumber) | last
+        | "\(.sprintNumber) \(.completedIssueIds | length) \(.issueIds | length)"
+      ' "$sprints_json" 2>/dev/null)
       if [ -n "$sprint_data" ]; then
         sprint_n=$(echo "$sprint_data" | awk '{print $1}')
         sprint_done=$(echo "$sprint_data" | awk '{print $2}')
@@ -408,13 +409,19 @@ elif [ -f "$report" ]; then
     # excluded, matching the host bar's denominator.
     sa_bar=""
     sa_pass=""; sa_total=""
-    if [ -f "$standalone_report" ]; then
-      sa_pass=$(jq -r '.summary.pass // 0' "$standalone_report" 2>/dev/null)
-      sa_total=$(jq -r '.summary.total // 1' "$standalone_report" 2>/dev/null)
-    elif [ -f "$standalone_highwater" ]; then
-      # high-water official_* fields = standalone pass/total WITHOUT proposals
+    # Prefer the committed high-water mark (official_* = standalone pass/total
+    # WITHOUT proposals): the promote-baseline CI job refreshes it on every push
+    # to main, so it tracks the latest js2wasm-baselines numbers. The local
+    # test262-standalone-report.json is an UNtracked dev-run artifact that goes
+    # stale (a 5-day-old 47% shadowed the fresh 52.6% high-water), so use it only
+    # when it is genuinely newer than the high-water file.
+    if [ -f "$standalone_highwater" ]; then
       sa_pass=$(jq -r '.official_pass // empty' "$standalone_highwater" 2>/dev/null)
       sa_total=$(jq -r '.official_total // empty' "$standalone_highwater" 2>/dev/null)
+    fi
+    if [ -f "$standalone_report" ] && [ "$standalone_report" -nt "$standalone_highwater" ]; then
+      sa_pass=$(jq -r '.summary.pass // 0' "$standalone_report" 2>/dev/null)
+      sa_total=$(jq -r '.summary.total // 1' "$standalone_report" 2>/dev/null)
     fi
     if [ -n "$sa_total" ] && [ "$sa_total" -gt 0 ] 2>/dev/null; then
       sa_pct=$(awk "BEGIN {printf \"%.1f\", $sa_pass * 100 / $sa_total}")

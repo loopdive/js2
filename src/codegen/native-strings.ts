@@ -4502,6 +4502,491 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
       exported: false,
     });
   }
+
+  // --- $__regex_escape(s: ref $AnyString) -> ref $AnyString --- (#2590)
+  // Implements ES2025 RegExp.escape / EncodeForRegExpEscape: a pure string
+  // transform that escapes regex-syntax-significant code points so the result
+  // can be embedded safely in a pattern. No regex engine, no host import.
+  //
+  // Iterates the input's UTF-16 code units. For each code point c:
+  //   - First code point only, if c ∈ [0-9A-Za-z] → "\xHH" (lowercase hex).
+  //   - Syntax chars  ^ $ \ . * + ? ( ) [ ] { } |  and solidus /  → "\c".
+  //   - ControlEscape  \t \n \v \f \r  (U+0009..U+000D)            → "\t" etc.
+  //   - otherPunctuators / WhiteSpace / LineTerminator / lone surrogate:
+  //        c ≤ 0xFF  → "\xHH"          (lowercase hex, 2 digits)
+  //        else      → "\uHHHH"        (lowercase hex, 4 digits, per code unit)
+  //   - Everything else → the code point's UTF-16 code units, unescaped.
+  // A high+low surrogate pair forms a scalar code point > 0xFFFF that falls into
+  // the final "unescaped" branch and is copied through; only *lone* surrogates
+  // hit the \uHHHH branch.
+  {
+    const concatIdx = ctx.nativeStrHelpers.get("__str_concat")!;
+    const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
+    const typeIdx = addFuncType(ctx, [strRef], [strRef]);
+    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.nativeStrHelpers.set("__regex_escape", funcIdx);
+
+    // params: s(0)
+    // locals: flat(1) ref $NativeString, data(2) ref $__str_data, off(3),
+    //         len(4), i(5), out(6) ref $AnyString, cu(7), cu2(8), n0(9), n1(10)
+    const FLAT = 1,
+      DATA = 2,
+      OFF = 3,
+      LEN = 4,
+      I = 5,
+      OUT = 6,
+      CU = 7,
+      CU2 = 8,
+      N0 = 9,
+      N1 = 10;
+
+    // nibble→ascii hex char (lowercase): d<10 ? d+0x30 : d+0x57
+    const hexNibble = (load: Instr[]): Instr[] => [
+      ...load,
+      { op: "local.tee", index: N0 },
+      { op: "i32.const", value: 10 },
+      { op: "i32.lt_u" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "local.get", index: N0 }, { op: "i32.const", value: 0x30 }, { op: "i32.add" }],
+        else: [{ op: "local.get", index: N0 }, { op: "i32.const", value: 0x57 }, { op: "i32.add" }],
+      } as Instr,
+    ];
+
+    // Build "\uHHHH" flat $NativeString for code unit CU (6 code units).
+    const uEscape: Instr[] = [
+      { op: "i32.const", value: 6 }, // len
+      { op: "i32.const", value: 0 }, // off
+      { op: "i32.const", value: 0x5c }, // '\'
+      { op: "i32.const", value: 0x75 }, // 'u'
+      ...hexNibble([
+        { op: "local.get", index: CU },
+        { op: "i32.const", value: 12 },
+        { op: "i32.shr_u" },
+        { op: "i32.const", value: 0xf },
+        { op: "i32.and" },
+      ]),
+      ...hexNibble([
+        { op: "local.get", index: CU },
+        { op: "i32.const", value: 8 },
+        { op: "i32.shr_u" },
+        { op: "i32.const", value: 0xf },
+        { op: "i32.and" },
+      ]),
+      ...hexNibble([
+        { op: "local.get", index: CU },
+        { op: "i32.const", value: 4 },
+        { op: "i32.shr_u" },
+        { op: "i32.const", value: 0xf },
+        { op: "i32.and" },
+      ]),
+      ...hexNibble([{ op: "local.get", index: CU }, { op: "i32.const", value: 0xf }, { op: "i32.and" }]),
+      { op: "array.new_fixed", typeIdx: strDataTypeIdx, length: 6 },
+      { op: "struct.new", typeIdx: strTypeIdx },
+    ];
+
+    // Build "\xHH" flat $NativeString for code unit CU (4 code units).
+    const xEscape: Instr[] = [
+      { op: "i32.const", value: 4 }, // len
+      { op: "i32.const", value: 0 }, // off
+      { op: "i32.const", value: 0x5c }, // '\'
+      { op: "i32.const", value: 0x78 }, // 'x'
+      ...hexNibble([
+        { op: "local.get", index: CU },
+        { op: "i32.const", value: 4 },
+        { op: "i32.shr_u" },
+        { op: "i32.const", value: 0xf },
+        { op: "i32.and" },
+      ]),
+      ...hexNibble([{ op: "local.get", index: CU }, { op: "i32.const", value: 0xf }, { op: "i32.and" }]),
+      { op: "array.new_fixed", typeIdx: strDataTypeIdx, length: 4 },
+      { op: "struct.new", typeIdx: strTypeIdx },
+    ];
+
+    // Build "\<char>" (backslash + the code unit itself), 2 code units.
+    const backslashEscape: Instr[] = [
+      { op: "i32.const", value: 2 }, // len
+      { op: "i32.const", value: 0 }, // off
+      { op: "i32.const", value: 0x5c }, // '\'
+      { op: "local.get", index: CU }, // the char
+      { op: "array.new_fixed", typeIdx: strDataTypeIdx, length: 2 },
+      { op: "struct.new", typeIdx: strTypeIdx },
+    ];
+
+    // Build "\<ctrl>" where the named-escape letter is in N1, 2 code units.
+    const namedCtrlEscape: Instr[] = [
+      { op: "i32.const", value: 2 }, // len
+      { op: "i32.const", value: 0 }, // off
+      { op: "i32.const", value: 0x5c }, // '\'
+      { op: "local.get", index: N1 }, // mapped letter t/n/v/f/r
+      { op: "array.new_fixed", typeIdx: strDataTypeIdx, length: 2 },
+      { op: "struct.new", typeIdx: strTypeIdx },
+    ];
+
+    // Build a 1-code-unit flat string from CU (pass-through single).
+    const oneUnit: Instr[] = [
+      { op: "i32.const", value: 1 }, // len
+      { op: "i32.const", value: 0 }, // off
+      { op: "local.get", index: CU },
+      { op: "array.new_fixed", typeIdx: strDataTypeIdx, length: 1 },
+      { op: "struct.new", typeIdx: strTypeIdx },
+    ];
+
+    // Build a 2-code-unit flat string from CU,CU2 (valid surrogate pair).
+    const twoUnit: Instr[] = [
+      { op: "i32.const", value: 2 }, // len
+      { op: "i32.const", value: 0 }, // off
+      { op: "local.get", index: CU },
+      { op: "local.get", index: CU2 },
+      { op: "array.new_fixed", typeIdx: strDataTypeIdx, length: 2 },
+      { op: "struct.new", typeIdx: strTypeIdx },
+    ];
+
+    // out = concat(out, piece); i += adv
+    const emitAppend = (piece: Instr[], adv: number): Instr[] => [
+      { op: "local.get", index: OUT },
+      ...piece,
+      { op: "call", funcIdx: concatIdx },
+      { op: "local.set", index: OUT },
+      { op: "local.get", index: I },
+      { op: "i32.const", value: adv },
+      { op: "i32.add" },
+      { op: "local.set", index: I },
+    ];
+
+    // Is CU a syntax char or solidus? (^ $ \ . * + ? ( ) [ ] { } | /)
+    const isSyntaxChar = (): Instr[] => {
+      const codes = [0x5e, 0x24, 0x5c, 0x2e, 0x2a, 0x2b, 0x3f, 0x28, 0x29, 0x5b, 0x5d, 0x7b, 0x7d, 0x7c, 0x2f];
+      const parts: Instr[] = [];
+      codes.forEach((c, idx) => {
+        parts.push({ op: "local.get", index: CU }, { op: "i32.const", value: c }, { op: "i32.eq" });
+        if (idx > 0) parts.push({ op: "i32.or" });
+      });
+      return parts;
+    };
+
+    // Is CU in the "hex-escape" set? otherPunctuators ∪ WhiteSpace ∪
+    // LineTerminator ∪ lone-surrogate (control 0x09..0x0D handled earlier).
+    // otherPunctuators: , - = < > # & ! % : ; @ ~ ' ` "
+    // WhiteSpace (Zs + special): 0x20 0xA0 0x1680 0x2000..0x200A 0x202F 0x205F 0x3000 0xFEFF
+    // LineTerminator: 0x2028 0x2029  (0x0A/0x0D are control, handled earlier)
+    // lone surrogate: 0xD800..0xDFFF
+    const isHexEscapeChar = (): Instr[] => {
+      const eqs = [
+        0x2c,
+        0x2d,
+        0x3d,
+        0x3c,
+        0x3e,
+        0x23,
+        0x26,
+        0x21,
+        0x25,
+        0x3a,
+        0x3b,
+        0x40,
+        0x7e,
+        0x27,
+        0x60,
+        0x22, // otherPunctuators
+        0x20,
+        0xa0,
+        0x1680,
+        0x202f,
+        0x205f,
+        0x3000,
+        0xfeff, // WhiteSpace singletons
+        0x2028,
+        0x2029, // LineTerminator
+      ];
+      const parts: Instr[] = [];
+      eqs.forEach((c) => {
+        parts.push({ op: "local.get", index: CU }, { op: "i32.const", value: c }, { op: "i32.eq" });
+      });
+      // 0x2000..0x200A range (general punctuation spaces)
+      parts.push(
+        { op: "local.get", index: CU },
+        { op: "i32.const", value: 0x2000 },
+        { op: "i32.ge_u" },
+        { op: "local.get", index: CU },
+        { op: "i32.const", value: 0x200a },
+        { op: "i32.le_u" },
+        { op: "i32.and" },
+      );
+      // 0xD800..0xDFFF lone surrogate range
+      parts.push(
+        { op: "local.get", index: CU },
+        { op: "i32.const", value: 0xd800 },
+        { op: "i32.ge_u" },
+        { op: "local.get", index: CU },
+        { op: "i32.const", value: 0xdfff },
+        { op: "i32.le_u" },
+        { op: "i32.and" },
+      );
+      const total = eqs.length + 2; // singletons + 2 ranges
+      for (let k = 1; k < total; k++) parts.push({ op: "i32.or" });
+      return parts;
+    };
+
+    // Per-iteration body, executed while i < len.
+    // The escape classification cascade (everything except the valid-surrogate-
+    // pair passthrough). `cu` is already loaded. Wrapped in the `else` of the
+    // pair check so a high surrogate forming a valid astral code point never
+    // reaches the lone-surrogate `\uHHHH` branch (StringToCodePoints decodes a
+    // valid pair into one >0xFFFF code point, which is in no escape set).
+    const classifyBody: Instr[] = [
+      // First code point && cu ∈ [0-9A-Za-z] → "\xHH"
+      { op: "local.get", index: I },
+      { op: "i32.eqz" },
+      // digit 0x30..0x39
+      { op: "local.get", index: CU },
+      { op: "i32.const", value: 0x30 },
+      { op: "i32.ge_u" },
+      { op: "local.get", index: CU },
+      { op: "i32.const", value: 0x39 },
+      { op: "i32.le_u" },
+      { op: "i32.and" },
+      // upper 0x41..0x5A
+      { op: "local.get", index: CU },
+      { op: "i32.const", value: 0x41 },
+      { op: "i32.ge_u" },
+      { op: "local.get", index: CU },
+      { op: "i32.const", value: 0x5a },
+      { op: "i32.le_u" },
+      { op: "i32.and" },
+      { op: "i32.or" },
+      // lower 0x61..0x7A
+      { op: "local.get", index: CU },
+      { op: "i32.const", value: 0x61 },
+      { op: "i32.ge_u" },
+      { op: "local.get", index: CU },
+      { op: "i32.const", value: 0x7a },
+      { op: "i32.le_u" },
+      { op: "i32.and" },
+      { op: "i32.or" },
+      { op: "i32.and" }, // && (i==0)
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: emitAppend(xEscape, 1),
+        else: [
+          // Syntax char / solidus → "\c"
+          ...isSyntaxChar(),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: emitAppend(backslashEscape, 1),
+            else: [
+              // ControlEscape 0x09..0x0D → named \t \n \v \f \r
+              { op: "local.get", index: CU },
+              { op: "i32.const", value: 0x09 },
+              { op: "i32.ge_u" },
+              { op: "local.get", index: CU },
+              { op: "i32.const", value: 0x0d },
+              { op: "i32.le_u" },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  // N1 = letter: 0x09→t 0x0A→n 0x0B→v 0x0C→f 0x0D→r
+                  { op: "local.get", index: CU },
+                  { op: "i32.const", value: 0x09 },
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "i32" } },
+                    then: [{ op: "i32.const", value: 0x74 }], // t
+                    else: [
+                      { op: "local.get", index: CU },
+                      { op: "i32.const", value: 0x0a },
+                      { op: "i32.eq" },
+                      {
+                        op: "if",
+                        blockType: { kind: "val", type: { kind: "i32" } },
+                        then: [{ op: "i32.const", value: 0x6e }], // n
+                        else: [
+                          { op: "local.get", index: CU },
+                          { op: "i32.const", value: 0x0b },
+                          { op: "i32.eq" },
+                          {
+                            op: "if",
+                            blockType: { kind: "val", type: { kind: "i32" } },
+                            then: [{ op: "i32.const", value: 0x76 }], // v
+                            else: [
+                              { op: "local.get", index: CU },
+                              { op: "i32.const", value: 0x0c },
+                              { op: "i32.eq" },
+                              {
+                                op: "if",
+                                blockType: { kind: "val", type: { kind: "i32" } },
+                                then: [{ op: "i32.const", value: 0x66 }], // f
+                                else: [{ op: "i32.const", value: 0x72 }], // r (0x0D)
+                              } as Instr,
+                            ],
+                          } as Instr,
+                        ],
+                      } as Instr,
+                    ],
+                  } as Instr,
+                  { op: "local.set", index: N1 },
+                  ...emitAppend(namedCtrlEscape, 1),
+                ],
+                else: [
+                  // hex-escape set (otherPunctuators/WS/LT/lone surrogate)
+                  ...isHexEscapeChar(),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      // c ≤ 0xFF → \xHH ; else → \uHHHH
+                      { op: "local.get", index: CU },
+                      { op: "i32.const", value: 0xff },
+                      { op: "i32.le_u" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: emitAppend(xEscape, 1),
+                        else: emitAppend(uEscape, 1),
+                      } as Instr,
+                    ],
+                    // Unescaped single code unit. (Valid surrogate pairs are
+                    // handled by the outer pair check; a lone surrogate matched
+                    // the hex-escape branch above; so here cu is a plain BMP
+                    // scalar or a lone surrogate that already routed to \uHHHH.)
+                    else: emitAppend(oneUnit, 1),
+                  } as Instr,
+                ],
+              } as Instr,
+            ],
+          } as Instr,
+        ],
+      } as Instr,
+    ];
+
+    // isValidPair = cu ∈ [0xD800,0xDBFF] && i+1 < len &&
+    //               data[off+i+1] ∈ [0xDC00,0xDFFF]   (sets CU2 = next unit)
+    const loopBody: Instr[] = [
+      // cu = data[off + i]
+      { op: "local.get", index: DATA },
+      { op: "local.get", index: OFF },
+      { op: "local.get", index: I },
+      { op: "i32.add" },
+      { op: "array.get_u", typeIdx: strDataTypeIdx },
+      { op: "local.set", index: CU },
+      // high surrogate?
+      { op: "local.get", index: CU },
+      { op: "i32.const", value: 0xd800 },
+      { op: "i32.ge_u" },
+      { op: "local.get", index: CU },
+      { op: "i32.const", value: 0xdbff },
+      { op: "i32.le_u" },
+      { op: "i32.and" },
+      // && i+1 < len
+      { op: "local.get", index: I },
+      { op: "i32.const", value: 1 },
+      { op: "i32.add" },
+      { op: "local.get", index: LEN },
+      { op: "i32.lt_u" },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          // cu2 = data[off+i+1]; check it is a low surrogate
+          { op: "local.get", index: DATA },
+          { op: "local.get", index: OFF },
+          { op: "local.get", index: I },
+          { op: "i32.add" },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "array.get_u", typeIdx: strDataTypeIdx },
+          { op: "local.tee", index: CU2 },
+          { op: "i32.const", value: 0xdc00 },
+          { op: "i32.ge_u" },
+          { op: "local.get", index: CU2 },
+          { op: "i32.const", value: 0xdfff },
+          { op: "i32.le_u" },
+          { op: "i32.and" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: emitAppend(twoUnit, 2), // valid astral pair → passthrough
+        else: classifyBody,
+      } as Instr,
+    ];
+
+    const body: Instr[] = [
+      // flat = flatten(s)
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: flattenIdx },
+      { op: "local.set", index: FLAT },
+      // data = flat.data ; off = flat.off ; len = flat.len
+      { op: "local.get", index: FLAT },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+      { op: "local.set", index: DATA },
+      { op: "local.get", index: FLAT },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+      { op: "local.set", index: OFF },
+      { op: "local.get", index: FLAT },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: LEN },
+      // out = "" (empty NativeString)
+      { op: "i32.const", value: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "array.new_default", typeIdx: strDataTypeIdx },
+      { op: "struct.new", typeIdx: strTypeIdx },
+      { op: "local.set", index: OUT },
+      // i = 0
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: I },
+      // while (i < len) { loopBody }
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: I },
+              { op: "local.get", index: LEN },
+              { op: "i32.ge_u" },
+              { op: "br_if", depth: 1 },
+              ...loopBody,
+              { op: "br", depth: 0 },
+            ],
+          } as Instr,
+        ],
+      } as Instr,
+      // return out
+      { op: "local.get", index: OUT },
+    ];
+
+    ctx.mod.functions.push({
+      name: "__regex_escape",
+      typeIdx,
+      locals: [
+        { name: "flat", type: flatStrRef },
+        { name: "data", type: strDataRef },
+        { name: "off", type: { kind: "i32" } },
+        { name: "len", type: { kind: "i32" } },
+        { name: "i", type: { kind: "i32" } },
+        { name: "out", type: strRef },
+        { name: "cu", type: { kind: "i32" } },
+        { name: "cu2", type: { kind: "i32" } },
+        { name: "n0", type: { kind: "i32" } },
+        { name: "n1", type: { kind: "i32" } },
+      ],
+      body: wrapBodyWithFlatten(body, []),
+      exported: false,
+    });
+  }
 }
 
 /**

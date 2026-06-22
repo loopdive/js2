@@ -434,11 +434,12 @@ function irTypeKey(t: IrType): string {
   if (t.kind === "class") return `cls:${t.shape.className}`;
   // Slice 10 (#1169i): extern is keyed solely on className.
   if (t.kind === "extern") return `ext:${t.className}`;
+  // #1926 — union members / boxed inner are IrTypes; recurse via irTypeKey.
   if (t.kind === "union") {
-    const parts = [...t.members].map(valTypeKey).sort();
+    const parts = [...t.members].map(irTypeKey).sort();
     return `u:${parts.join("|")}`;
   }
-  return `b:${valTypeKey(t.inner)}`;
+  return `b:${irTypeKey(t.inner)}`;
 }
 
 function valTypeKey(v: ValType): string {

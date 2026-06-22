@@ -444,11 +444,13 @@ export class IrFunctionBuilder {
 
   /**
    * Wrap a primitive value in a fresh ref cell. The SSA def's type is
-   * `{ kind: "boxed", inner }`.
+   * `{ kind: "boxed", inner }`. #1926 — the `boxed` IrType carries an IrType
+   * `inner`, so the ValType arg is wrapped with `irVal` here; the resolver
+   * unwraps it back to the ValType at lowering time.
    */
   emitRefCellNew(value: IrValueId, inner: ValType): IrValueId {
     const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "boxed", inner };
+    const resultType: IrType = { kind: "boxed", inner: irVal(inner) };
     this.valueTypes.set(result, resultType);
     const alloc = this.allocId("refcell", resultType);
     this.pushInstr({
@@ -462,13 +464,16 @@ export class IrFunctionBuilder {
   }
 
   /**
-   * Read the inner value out of a ref cell. The SSA def's type is
-   * `irVal(inner)` — caller passes the same `inner` they used for
-   * `emitRefCellNew`.
+   * Read the inner value out of a ref cell. The SSA def's type is the cell's
+   * `inner` IrType. #1926 — `inner` is now the `boxed` IrType's `inner`
+   * field (an IrType), passed straight through as the result type. Callers
+   * pass the same `inner` they used for the matching `boxed` cell (for V1
+   * primitive cells this is `irVal(scalar)`, so the result type is
+   * `{ kind: "val", val: scalar }` exactly as before).
    */
-  emitRefCellGet(cell: IrValueId, inner: ValType): IrValueId {
+  emitRefCellGet(cell: IrValueId, inner: IrType): IrValueId {
     const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "val", val: inner };
+    const resultType: IrType = inner;
     this.valueTypes.set(result, resultType);
     this.pushInstr({
       kind: "refcell.get",

@@ -1500,6 +1500,7 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
   // concrete native-string data the call site passes split out for the matcher.
   const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
 
+  const i32ArrType = regexI32ArrayType(ctx);
   const typeIdx = addFuncType(
     ctx,
     [
@@ -1513,6 +1514,7 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
       strRef, // replacement (flattened)
       { kind: "i32" }, // global flag
       { kind: "i32" }, // nScratch (#1959 — PROGRESS guard slots)
+      { kind: "ref", typeIdx: i32ArrType }, // namesTable (#2588 — $<name> map)
     ],
     [strRef],
   );
@@ -1529,15 +1531,16 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
     SUBJ = 6,
     REPL = 7,
     GLOBAL = 8,
-    NSCRATCH = 9;
+    NSCRATCH = 9,
+    NAMES = 10; // #2588 names table
   // locals
-  const NSLOTS = 10; // 2 * nGroups + nScratch
-  const CAPS = 11; // ref array<i32> capture slots
-  const POS = 12; // current search start
-  const LASTEND = 13; // end of last replaced match (start of next kept slice)
-  const RESULT = 14; // ref $NativeString accumulator
-  const MSTART = 15;
-  const MEND = 16;
+  const NSLOTS = 11; // 2 * nGroups + nScratch
+  const CAPS = 12; // ref array<i32> capture slots
+  const POS = 13; // current search start
+  const LASTEND = 14; // end of last replaced match (start of next kept slice)
+  const RESULT = 15; // ref $NativeString accumulator
+  const MSTART = 16;
+  const MEND = 17;
 
   const body: Instr[] = [
     // nSlots = 2 * nGroups + nScratch (#1959 scratch slots ride in caps)
@@ -1611,6 +1614,7 @@ export function ensureRegexReplace(ctx: CodegenContext): number {
             { op: "local.get", index: NGROUPS },
             { op: "local.get", index: CAPS },
             { op: "local.get", index: REPL },
+            { op: "local.get", index: NAMES }, // #2588 names table
             { op: "call", funcIdx: getSubIdx },
             { op: "call", funcIdx: concatIdx },
             { op: "local.set", index: RESULT },
@@ -1673,6 +1677,12 @@ export const REGEXP_MATCH_VEC_STRUCT = "__regexp_match_vec";
 /** Field indices of `$__regexp_match_vec` (base vec prefix + result fields). */
 export const MATCH_VEC_FIELD_INDEX = 2;
 export const MATCH_VEC_FIELD_INPUT = 3;
+// #2588 — the named-groups result object (`m.groups`), `null` (≙ `undefined`)
+// when the pattern has no named captures.
+export const MATCH_VEC_FIELD_GROUPS = 4;
+// #2589 — the `d`-flag match-indices array (`m.indices`), `null` (≙
+// `undefined`) when the pattern lacks the `d` flag.
+export const MATCH_VEC_FIELD_INDICES = 5;
 
 /**
  * Ensure the `$__regexp_match_vec` struct type (#1914) — the match-result
@@ -1711,6 +1721,16 @@ export function ensureRegexMatchVecType(ctx: CodegenContext): number {
     { name: "data", type: { kind: "ref", typeIdx: nstrArrTypeIdx } as ValType, mutable: true },
     { name: "index", type: { kind: "i32" } as ValType, mutable: false },
     { name: "input", type: { kind: "ref", typeIdx: anyStrTypeIdx } as ValType, mutable: false },
+    // #2588 — named-groups result object; `externref` ($Object), null when the
+    // pattern has no `(?<name>…)` groups (spec: `groups` is `undefined`). Stored
+    // as externref so `m.groups.<name>` reads flow through the standalone
+    // open-object (externref) property path with no extra conversion.
+    { name: "groups", type: { kind: "externref" } as ValType, mutable: false },
+    // #2589 — `d`-flag match-indices array; `externref` ($ObjVec), null when the
+    // pattern lacks the `d` flag (spec: no `indices` property at all, surfaced
+    // as `undefined`). Stored as externref so `m.indices[i][j]` are native
+    // $ObjVec index reads.
+    { name: "indices", type: { kind: "externref" } as ValType, mutable: false },
   ];
   ctx.mod.types.push({
     kind: "struct",
@@ -1762,6 +1782,8 @@ export function ensureRegexCaptureArray(ctx: CodegenContext): number {
       { kind: "i32" }, // nGroups
       strRef, // subject (flattened)
       i32ArrRef, // caps
+      { kind: "externref" }, // groups object (#2588) — null when no named groups
+      { kind: "externref" }, // indices array (#2589) — null when no `d` flag
     ],
     [nstrVecRef],
   );
@@ -1771,12 +1793,14 @@ export function ensureRegexCaptureArray(ctx: CodegenContext): number {
   // params
   const NGROUPS = 0,
     SUBJ = 1,
-    CAPS = 2;
+    CAPS = 2,
+    GROUPS = 3, // #2588
+    INDICES = 4; // #2589
   // locals
-  const RARR = 3;
-  const I = 4;
-  const CSTART = 5;
-  const CEND = 6;
+  const RARR = 5;
+  const I = 6;
+  const CSTART = 7;
+  const CEND = 8;
 
   const body: Instr[] = [
     // result array length is nGroups (group 0 + captures).
@@ -1841,7 +1865,8 @@ export function ensureRegexCaptureArray(ctx: CodegenContext): number {
       ],
     },
     // struct.new $__regexp_match_vec(length=nGroups, data=RARR,
-    //                                index=caps[0], input=subject)
+    //                                index=caps[0], input=subject,
+    //                                groups=GROUPS, indices=INDICES)
     { op: "local.get", index: NGROUPS },
     { op: "local.get", index: RARR },
     { op: "ref.as_non_null" },
@@ -1849,6 +1874,8 @@ export function ensureRegexCaptureArray(ctx: CodegenContext): number {
     { op: "i32.const", value: 0 },
     { op: "array.get", typeIdx: i32Arr },
     { op: "local.get", index: SUBJ },
+    { op: "local.get", index: GROUPS }, // #2588
+    { op: "local.get", index: INDICES }, // #2589
     { op: "struct.new", typeIdx: nstrVecTypeIdx },
   ];
 
@@ -2445,6 +2472,12 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
         { op: "ref.as_non_null" },
         { op: "local.get", index: FIRSTMS },
         { op: "local.get", index: SUBJ },
+        // groups/indices (#2588/#2589): a global `String.prototype.match`
+        // result is a flat array of matched strings, not a capture object, so
+        // neither named-groups nor `d`-flag indices apply per-element here.
+        // The `groups`/`indices` fields are externref → push null externref.
+        { op: "ref.null.extern" } as Instr,
+        { op: "ref.null.extern" } as Instr,
         { op: "struct.new", typeIdx: matchVecTypeIdx },
       ],
     } as Instr,
@@ -2638,12 +2671,17 @@ export function ensureRegexMatchAllArrays(ctx: CodegenContext): number {
                 { op: "local.set", index: RARR },
               ],
             },
-            // result[rlen] = __regex_capture_array(nGroups, subject, caps)
+            // result[rlen] = __regex_capture_array(nGroups, subject, caps, null, null)
+            // #2588/#2589 — per-matchAll-element groups/indices are a follow-up
+            // (the parser map isn't threaded into this eager walk yet); pass null
+            // so each element keeps its existing capture-array shape.
             { op: "local.get", index: RARR },
             { op: "local.get", index: RLEN },
             { op: "local.get", index: NGROUPS },
             { op: "local.get", index: SUBJ },
             { op: "local.get", index: CAPS },
+            { op: "ref.null.extern" },
+            { op: "ref.null.extern" },
             { op: "call", funcIdx: captureArrIdx },
             { op: "array.set", typeIdx: elemArrTypeIdx },
             { op: "local.get", index: RLEN },
@@ -2752,6 +2790,7 @@ export function ensureRegexGetSubstitution(ctx: CodegenContext): number {
       { kind: "i32" }, // nGroups (incl. group 0)
       i32ArrRef, // caps
       strRef, // repl (flattened)
+      i32ArrRef, // namesTable (#2588) — [count, (idx,len,ch...)*]; empty ⇒ no named groups
     ],
     [strRef],
   );
@@ -2763,20 +2802,30 @@ export function ensureRegexGetSubstitution(ctx: CodegenContext): number {
     SLEN = 1,
     NG = 2,
     CAPS = 3,
-    REPL = 4;
+    REPL = 4,
+    NAMES = 5; // #2588 names table
   // locals
-  const RDATA = 5; // ref array<i16> — repl backing data
-  const ROFF = 6;
-  const RLEN = 7;
-  const RESULT = 8; // ref $AnyString accumulator
-  const I = 9; // scan cursor in repl
-  const SEG = 10; // start of the pending literal segment
-  const C = 11; // current code unit
-  const D1 = 12; // unit after '$'
-  const GRP = 13; // resolved capture index
-  const CONSUME = 14; // chars consumed by a digit escape (0 = literal)
-  const CS = 15; // capture start
-  const CE = 16; // capture end
+  const RDATA = 6; // ref array<i16> — repl backing data
+  const ROFF = 7;
+  const RLEN = 8;
+  const RESULT = 9; // ref $AnyString accumulator
+  const I = 10; // scan cursor in repl
+  const SEG = 11; // start of the pending literal segment
+  const C = 12; // current code unit
+  const D1 = 13; // unit after '$'
+  const GRP = 14; // resolved capture index
+  const CONSUME = 15; // chars consumed by a digit escape (0 = literal)
+  const CS = 16; // capture start
+  const CE = 17; // capture end
+  // #2588 — `$<name>` resolution scratch
+  const NAMEEND = 18; // index of the closing '>' in repl (-1 if none)
+  const NLEN = 19; // length of the parsed name
+  const TI = 20; // names-table cursor
+  const TC = 21; // names-table entry count
+  const TLEN = 22; // current table entry name length
+  const TIDX = 23; // current table entry capture index
+  const MATCHED = 24; // 1 when the current table entry name matches
+  const K = 25; // inner char-compare loop cursor
 
   /** result = concat(result, substring(repl, SEG, <endInstrs>)) */
   const flush = (endInstrs: Instr[]): Instr[] => [
@@ -3052,11 +3101,280 @@ export function ensureRegexGetSubstitution(ctx: CodegenContext): number {
           },
         ],
         else: [
-          // Unknown '$x' (incl. '$<' — no named groups) → literal per spec.
+          // d1 == '<' → `$<name>` named-group substitution (#2588, §22.2.6.11).
+          // The names table is `[count, (idx,len,ch...)*]`; count==0 means the
+          // pattern has no named groups, so `$<…>` is literal (Annex B).
+          { op: "local.get", index: D1 },
+          { op: "i32.const", value: 0x3c },
+          { op: "i32.eq" },
+          { op: "local.get", index: NAMES },
+          { op: "i32.const", value: 0 },
+          { op: "array.get", typeIdx: i32Arr },
+          { op: "i32.const", value: 0 },
+          { op: "i32.gt_s" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: namedGroupArm(),
+            else: [
+              // Unknown '$x' (or `$<` with no named groups) → literal per spec.
+              { op: "local.get", index: I },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: I },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+
+  /**
+   * `$<name>` substitution arm (#2588). Scans the replacement from `i+2` for the
+   * closing `>`; if absent, `$<` is literal. Otherwise the parsed name is
+   * linear-searched in the `NAMES` table (`[count, (idx,len,ch...)*]`); on a hit
+   * the matched capture substring is appended (empty if the slot is unmatched or
+   * the name is unknown — §22.2.6.11). The cursor advances past `>`.
+   */
+  function namedGroupArm(): Instr[] {
+    return [
+      // Flush pending literal up to the '$'.
+      ...flush([{ op: "local.get", index: I } as Instr]),
+      // nameEnd = indexOf('>', from = i+2)
+      { op: "local.get", index: I },
+      { op: "i32.const", value: 2 },
+      { op: "i32.add" },
+      { op: "local.set", index: NAMEEND },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              // if nameEnd >= rlen: not found → nameEnd = -1; break
+              { op: "local.get", index: NAMEEND },
+              { op: "local.get", index: RLEN },
+              { op: "i32.ge_s" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: -1 },
+                  { op: "local.set", index: NAMEEND },
+                  { op: "br", depth: 2 },
+                ],
+              },
+              // if rdata[roff + nameEnd] == '>': break (found)
+              { op: "local.get", index: RDATA },
+              { op: "local.get", index: ROFF },
+              { op: "local.get", index: NAMEEND },
+              { op: "i32.add" },
+              { op: "array.get_u", typeIdx: strDataIdx } as Instr,
+              { op: "i32.const", value: 0x3e },
+              { op: "i32.eq" },
+              { op: "br_if", depth: 1 },
+              // nameEnd++
+              { op: "local.get", index: NAMEEND },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: NAMEEND },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      // No closing '>' → literal '$'; resume scan at i+1.
+      { op: "local.get", index: NAMEEND },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // append the literal '$' (substring repl[i, i+1]) then advance i+=1.
+          ...appendReplChar(),
           { op: "local.get", index: I },
           { op: "i32.const", value: 1 },
           { op: "i32.add" },
-          { op: "local.set", index: I },
+          { op: "local.tee", index: I },
+          { op: "local.set", index: SEG },
+        ],
+        else: [
+          // nlen = nameEnd - (i+2)
+          { op: "local.get", index: NAMEEND },
+          { op: "local.get", index: I },
+          { op: "i32.const", value: 2 },
+          { op: "i32.add" },
+          { op: "i32.sub" },
+          { op: "local.set", index: NLEN },
+          // Search the names table. tc = NAMES[0]; ti = 1; grp = -1.
+          { op: "local.get", index: NAMES },
+          { op: "i32.const", value: 0 },
+          { op: "array.get", typeIdx: i32Arr },
+          { op: "local.set", index: TC },
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: TI },
+          { op: "i32.const", value: -1 },
+          { op: "local.set", index: GRP },
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  // while tc-- > 0 (use TC as remaining counter)
+                  { op: "local.get", index: TC },
+                  { op: "i32.eqz" },
+                  { op: "br_if", depth: 1 },
+                  // tidx = NAMES[ti]; tlen = NAMES[ti+1]; name chars at ti+2..
+                  { op: "local.get", index: NAMES },
+                  { op: "local.get", index: TI },
+                  { op: "array.get", typeIdx: i32Arr },
+                  { op: "local.set", index: TIDX },
+                  { op: "local.get", index: NAMES },
+                  { op: "local.get", index: TI },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.add" },
+                  { op: "array.get", typeIdx: i32Arr },
+                  { op: "local.set", index: TLEN },
+                  // if tlen == nlen: compare chars
+                  { op: "local.get", index: TLEN },
+                  { op: "local.get", index: NLEN },
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "i32.const", value: 1 },
+                      { op: "local.set", index: MATCHED },
+                      { op: "i32.const", value: 0 },
+                      { op: "local.set", index: K },
+                      {
+                        op: "block",
+                        blockType: { kind: "empty" },
+                        body: [
+                          {
+                            op: "loop",
+                            blockType: { kind: "empty" },
+                            body: [
+                              { op: "local.get", index: K },
+                              { op: "local.get", index: NLEN },
+                              { op: "i32.ge_s" },
+                              { op: "br_if", depth: 1 },
+                              // NAMES[ti+2+k] vs rdata[roff + i+2 + k]
+                              { op: "local.get", index: NAMES },
+                              { op: "local.get", index: TI },
+                              { op: "i32.const", value: 2 },
+                              { op: "i32.add" },
+                              { op: "local.get", index: K },
+                              { op: "i32.add" },
+                              { op: "array.get", typeIdx: i32Arr },
+                              { op: "local.get", index: RDATA },
+                              { op: "local.get", index: ROFF },
+                              { op: "local.get", index: I },
+                              { op: "i32.const", value: 2 },
+                              { op: "i32.add" },
+                              { op: "local.get", index: K },
+                              { op: "i32.add" },
+                              { op: "i32.add" },
+                              { op: "array.get_u", typeIdx: strDataIdx } as Instr,
+                              { op: "i32.ne" },
+                              {
+                                op: "if",
+                                blockType: { kind: "empty" },
+                                then: [
+                                  { op: "i32.const", value: 0 },
+                                  { op: "local.set", index: MATCHED },
+                                  { op: "br", depth: 2 },
+                                ],
+                              },
+                              { op: "local.get", index: K },
+                              { op: "i32.const", value: 1 },
+                              { op: "i32.add" },
+                              { op: "local.set", index: K },
+                              { op: "br", depth: 0 },
+                            ],
+                          },
+                        ],
+                      },
+                      // if matched: grp = tidx; (break outer via tc=0)
+                      { op: "local.get", index: MATCHED },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "local.get", index: TIDX },
+                          { op: "local.set", index: GRP },
+                          { op: "i32.const", value: 1 },
+                          { op: "local.set", index: TC }, // becomes 0 after decrement below
+                        ],
+                      },
+                    ],
+                  },
+                  // ti += 2 + tlen; tc -= 1
+                  { op: "local.get", index: TI },
+                  { op: "i32.const", value: 2 },
+                  { op: "i32.add" },
+                  { op: "local.get", index: TLEN },
+                  { op: "i32.add" },
+                  { op: "local.set", index: TI },
+                  { op: "local.get", index: TC },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.sub" },
+                  { op: "local.set", index: TC },
+                  { op: "br", depth: 0 },
+                ],
+              },
+            ],
+          },
+          // If grp >= 0 and caps[2*grp] >= 0: append subject[caps[2*grp], caps[2*grp+1]].
+          { op: "local.get", index: GRP },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ge_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              // cs = caps[2*grp]; ce = caps[2*grp+1]
+              ...capsAt([
+                { op: "local.get", index: GRP } as Instr,
+                { op: "i32.const", value: 2 } as Instr,
+                { op: "i32.mul" } as Instr,
+              ]),
+              { op: "local.set", index: CS },
+              ...capsAt([
+                { op: "local.get", index: GRP } as Instr,
+                { op: "i32.const", value: 2 } as Instr,
+                { op: "i32.mul" } as Instr,
+                { op: "i32.const", value: 1 } as Instr,
+                { op: "i32.add" } as Instr,
+              ]),
+              { op: "local.set", index: CE },
+              // if cs >= 0: append (unmatched named group → empty string).
+              { op: "local.get", index: CS },
+              { op: "i32.const", value: 0 },
+              { op: "i32.ge_s" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: appendSubject(
+                  [{ op: "local.get", index: CS } as Instr],
+                  [{ op: "local.get", index: CE } as Instr],
+                ),
+              },
+            ],
+          },
+          // Advance past '>': i = nameEnd + 1; seg = i.
+          { op: "local.get", index: NAMEEND },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.tee", index: I },
+          { op: "local.set", index: SEG },
         ],
       },
     ];
@@ -3165,6 +3483,15 @@ export function ensureRegexGetSubstitution(ctx: CodegenContext): number {
       { name: "consume", type: { kind: "i32" } },
       { name: "cs", type: { kind: "i32" } },
       { name: "ce", type: { kind: "i32" } },
+      // #2588 — `$<name>` resolution scratch
+      { name: "nameEnd", type: { kind: "i32" } },
+      { name: "nlen", type: { kind: "i32" } },
+      { name: "ti", type: { kind: "i32" } },
+      { name: "tc", type: { kind: "i32" } },
+      { name: "tlen", type: { kind: "i32" } },
+      { name: "tidx", type: { kind: "i32" } },
+      { name: "matched", type: { kind: "i32" } },
+      { name: "k", type: { kind: "i32" } },
     ],
     body,
     exported: false,

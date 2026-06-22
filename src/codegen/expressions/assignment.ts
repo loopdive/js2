@@ -7,7 +7,7 @@ import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../chec
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
-import { emitAnyAdd, emitModulo, emitToInt32 } from "../binary-ops.js";
+import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
@@ -25,6 +25,7 @@ import {
   getArrTypeIdxFromVec,
   localGlobalIdx,
   resolveWasmType,
+  TYPED_ARRAY_NAMES,
 } from "../index.js";
 import { getSubviewArrTypeIdx, isSubviewTypeIdx } from "../registry/types.js"; // (#2357/#47) subview write
 import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
@@ -82,6 +83,21 @@ import { compileWithBindingAssignment, findWithBinding } from "../with-scope.js"
  * Throws TypeError if the value in `srcLocal` is null or the JS undefined sentinel.
  * Per spec §14.3.3.1 RequireObjectCoercible / §8.4.2 GetIterator.
  */
+/**
+ * (#2593) Recover the typed-array VIEW NAME of an element-assignment receiver
+ * (`a[i] = v`) from its TS type, so the write site can special-case
+ * `Uint8ClampedArray` (ToUint8Clamp) vs the modulo-truncating integer views.
+ * Returns undefined when the receiver is not a recognised typed-array view.
+ */
+function elementAccessTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
+  const t = ctx.checker.getTypeAtLocation(receiver);
+  let name = t.getSymbol()?.name ?? t.aliasSymbol?.name;
+  if ((!name || !TYPED_ARRAY_NAMES.has(name)) && ts.isNewExpression(receiver) && ts.isIdentifier(receiver.expression)) {
+    name = receiver.expression.text;
+  }
+  return name && TYPED_ARRAY_NAMES.has(name) ? name : undefined;
+}
+
 function emitExternrefAssignDestructureGuard(ctx: CodegenContext, fctx: FunctionContext, srcLocal: number): void {
   // ref.is_null check (catches JS null when encoded as ref.null.extern).
   // Build a fresh Instr[] for each if-then: sharing a single array across two
@@ -3055,11 +3071,37 @@ function compileElementAssignment(
       kind: "i32",
     });
     fctx.body.push({ op: "local.set", index: idxLocal });
-    // Compile value
-    const elemValResult = compileExpression(ctx, fctx, value, arrDef.element);
+    // Compile value. (#2593) Hint the UNPACKED value type (i32 for packed
+    // i8/i16 storage), NOT the packed `i8`/`i16` element type — `i8`/`i16` are
+    // storage-only and have no value-position encoding, so passing them as the
+    // compile hint produced an invalid local/value (the Int16/Uint16 element-write
+    // INVALID). `array.set` into the packed element re-truncates the i32 store
+    // value to the element width (free ToInt8/ToInt16/ToInt32/ToUint*). Float
+    // views keep their f64 element hint.
+    // (#2593) `Uint8ClampedArray` write is NOT modulo — it is ToUint8Clamp
+    // (clamp to [0,255] + round-half-even). Detect the view by name so the value
+    // routes through `emitToUint8Clamp` below instead of the plain i32 truncation.
+    const isUint8Clamped = elementAccessTypedArrayName(ctx, target.expression) === "Uint8ClampedArray";
+    const valueHint: ValType =
+      arrDef.element.kind === "i8" || arrDef.element.kind === "i16"
+        ? isUint8Clamped
+          ? { kind: "f64" } // keep f64 for the clamp helper
+          : { kind: "i32" }
+        : arrDef.element;
+    const elemValResult = compileExpression(ctx, fctx, value, valueHint);
     if (!elemValResult) {
       reportError(ctx, target, "Failed to compile element value");
       return null;
+    }
+    if (isUint8Clamped) {
+      // ToUint8Clamp: f64 → clamped i32 in [0,255], round-half-even. Ensure the
+      // value is f64 first (a literal/i32 may have compiled to i32).
+      if (elemValResult.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+      emitToUint8Clamp(fctx);
+    } else if ((arrDef.element.kind === "i8" || arrDef.element.kind === "i16") && elemValResult.kind === "f64") {
+      // (#2593) Other packed i8/i16 views: truncate the f64 store value to i32
+      // (ToInt32 modulo); `array.set` re-packs to the element width.
+      fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
     }
     // #2159 — `i8`/`i16` are *packed storage* types, valid only inside array
     // elements / struct fields. The value temp holds the unpacked Wasm value

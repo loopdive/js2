@@ -28,6 +28,7 @@
 - [project_bigint_i64_brand_gate.md](project_bigint_i64_brand_gate.md) — #1349/#1644 BigInt fixes gated on architect i64-bigint-brand ValType decision; not a dev codegen guard
 - [project_linear_backend_no_console_log.md](project_linear_backend_no_console_log.md) — Linear backend (target:"linear", non-WASI) drops console.log; it's return-value-oriented — cross-backend/diff tests must assert return values, not stdout (#1854)
 - [project_proxy_no_ts_type_brand.md](project_proxy_no_ts_type_brand.md) — A JS Proxy carries no TS-type brand (types as its target); never static-classify a possibly-proxy receiver — detect syntactically + defer to host (#2501 proxy-revoked regression)
+- [project_2602_forawait_rest_aliases_source_recompile.md](project_2602_forawait_rest_aliases_source_recompile.md) — #2602: for-await array-rest `y` aliases the SOURCE array under a fresh compileExpression (recompile→source len 3, not rest slice 2); blocks #2580 M2 slice 1; async-lane local-versioning, not substrate — recompiling an identifier ≠ its live local in the async state machine
 
 ### Team & agents (rules not in plan/method/team-setup.md)
 - [feedback_architect_worktree_isolation.md](feedback_architect_worktree_isolation.md) — Always spawn architects with isolation:worktree — they stall and request respawn without it
@@ -55,7 +56,7 @@
 - [feedback_ignore_unreliable_autodispatch.md](feedback_ignore_unreliable_autodispatch.md) — SUPERSEDED 2026-05-23 by native auto-dispatch switch. Devs now trust auto-dispatch; only verify live state (is it merged/owned?) before claiming. Ignoring auto-dispatch wholesale is break-glass only.
 - [feedback_sendmessage_discipline.md](feedback_sendmessage_discipline.md) — SendMessage = blockers/decisions/completions only; status/idle/ack → TaskUpdate or silence
 - [feedback_dev_silence_protocol.md](feedback_dev_silence_protocol.md) — No idle_notification messages ever; devs silent during CI-wait; TL keeps queue full, devs escalate only
-- [feedback_idle_notification_silence.md](feedback_idle_notification_silence.md) — Don't respond to idle notifications unless CI landed or work to assign; silence breaks the ping loop
+- [feedback_idle_notification_silence.md](feedback_idle_notification_silence.md) — An idle ping is a STATE signal: resolve it (TaskList task w/owner / shutdown / recognize stale), never just stay silent — "silence breaks the loop" is false (pings are timer-driven)
 - [feedback_no_ci_wait.md](feedback_no_ci_wait.md) — Dev agents open PR then immediately move on; CI monitoring = tech lead's job via auto-merge monitor
 - [feedback_no_keep_pane.md](feedback_no_keep_pane.md) — Never tell agents "do NOT kill your pane" — always terminate after PR; wait for a slot to open instead
 - [feedback_agent_self_termination.md](feedback_agent_self_termination.md) — Architects idle after finishing instead of self-terminating; added Termination section to architect.md; always include kill-pane in spawn prompts
@@ -64,6 +65,7 @@
 - [feedback_dispatch_status.md](feedback_dispatch_status.md) — Update issue status to in-progress when dispatching an agent
 - [feedback_dedicated_pr_shepherd.md](feedback_dedicated_pr_shepherd.md) — Always staff a dedicated PR-queue shepherd as a standing team role; don't hand-shepherd the merge queue ad-hoc (it strands/wedges when the lead is busy)
 - [feedback_auto_ff_workspace_main.md](feedback_auto_ff_workspace_main.md) — Auto-ff /workspace main to origin/main whenever origin is ahead (Stop+SessionStart hook in .claude/settings.json); stale /workspace gave a wrong 14/67 sprint count
+- [feedback_slice_claim_collision_check_assignments_log.md](feedback_slice_claim_collision_check_assignments_log.md) — Slice-granular (id:slice) claims can double-dispatch; check issue-assignments log for sole ownership + watch for foreign edits in your worktree before committing
 
 ### Issue management
 - [feedback_issue_completion.md](feedback_issue_completion.md) — Completion procedure: move, frontmatter, summary, log, unblock
@@ -164,9 +166,12 @@ Most project context lives in `/workspace/CLAUDE.md`.
 - [reference_2193_call_ref_funcref_not_wrapper.md](reference_2193_call_ref_funcref_not_wrapper.md) — #2193 PR-B call_ref `expected (ref funcType) found (ref wrapStruct)` was a missing struct.get-field-0 funcref extraction, NOT a type-renumber off-by-one
 - [reference_2372_dynamic_descriptor_struct_widening.md](reference_2372_dynamic_descriptor_struct_widening.md) — reference 2372 dynamic descriptor struct widening
 - [reference_2375_typedarray_valueread_postsubstrate_verdict.md](reference_2375_typedarray_valueread_postsubstrate_verdict.md) — reference 2375 typedarray valueread postsubstrate verdict
+- [reference_2042_s4_callsite_vs_2515_redefine_throw.md](reference_2042_s4_callsite_vs_2515_redefine_throw.md) — #2042 S4 = TWO disjoint redefine paths (native $Object runtime / typed-struct call-site); #2515 fixed the call-site -1-global emit but left a bare-string throw → S4 call-site net contribution is bare-string→TypeError-instance via emitThrowTypeError body-swap
 - [reference_2379_new_array_n_arraymethod_invalid_cast.md](reference_2379_new_array_n_arraymethod_invalid_cast.md) — reference 2379 new array n arraymethod invalid cast
 - [reference_2379_new_array_n_boxed_any_elem_rep.md](reference_2379_new_array_n_boxed_any_elem_rep.md) — #2379: standalone `new Array(N)` builds a boxed-any element array (type 1) while `[a,b,c]` builds a typed numeric element array (type 3) — sort/join stringify then ref.casts a boxed-any element to $AnyString = invalid Wasm; representation-scale, NOT a cast-site guard
 - [reference_2524_node_io_shim_memory_ownership.md](reference_2524_node_io_shim_memory_ownership.md) — reference 2524 node io shim memory ownership
+- [reference_2583_any_strict_eq_tag5_host_only.md](reference_2583_any_strict_eq_tag5_host_only.md) — #2583: standalone __any_strict_eq/__any_eq tag-5 string compare was host-only (wasm:js-string equals → const 0); native __str_flatten+__str_equals fallback. Plus any.indexOf routing intercept by the guarded-string else-arm. Touches same tag-5 field-4 arm as parked #2585.
+- [reference_2040_tag5_field4_three_way_classifier.md](reference_2040_tag5_field4_three_way_classifier.md) — #2040/#2585: tag-5 field-4 overloaded (string/$BoxedNumber/object); fix = 3-way classifier INSIDE the both-tags-5 arm of __any_eq/__any_strict_eq, numeric branch gated on nativeBoxNumberTypeIdx>=0 ONLY (not nativeStrings). NOT the rejected cross-tag-arm broadening. Stacks on #1883.
 - [reference_baseline_gates_need_postmerge_autorefresh.md](reference_baseline_gates_need_postmerge_autorefresh.md) — Every prescriptive baseline gate must self-refresh post-merge in promote-baseline or it wedges all PRs via drift
 - [reference_fork_origin_behind_upstream.md](reference_fork_origin_behind_upstream.md) — The fork origin/main is ~1185+ commits behind upstream/main — branch dev work from upstream/main, not origin/main, or PRs land DIRTY
 - [reference_gh_remove_label_rest_not_pr_edit.md](reference_gh_remove_label_rest_not_pr_edit.md) — gh pr edit --remove-label/--add-label silently no-ops (projectCards deprecation aborts the mutation); use the REST API to change PR/issue labels

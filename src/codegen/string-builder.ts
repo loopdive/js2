@@ -31,6 +31,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { collectReferencedIdentifiers } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { compileExpression } from "./shared.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
@@ -762,13 +763,15 @@ function emitPresizedBufferAlloc(
   capLocalIdx: number,
   strDataTypeIdx: number,
 ): boolean {
-  // Snapshot the body so we can roll back if the bound compile fails.
-  const savedLen = fctx.body.length;
+  // #1919 — snapshot the full speculative state so a failed bound-compile rolls
+  // back not just the body but also any locals / late imports / errors it leaked
+  // (the caller falls back to the doubling buffer, which re-emits independently).
+  const snap = snapshotSpeculative(ctx, fctx);
   // Compile the bound expression, requesting an i32 (loop counters/bounds are
   // typically i32 or f64). compileExpression returns the produced ValType.
   const boundType = compileExpression(ctx, fctx, presize.boundExpr, { kind: "i32" });
   if (boundType === null) {
-    fctx.body.length = savedLen;
+    rollbackSpeculative(ctx, fctx, snap);
     return false;
   }
   if (boundType.kind === "f64") {
@@ -777,7 +780,7 @@ function emitPresizedBufferAlloc(
     fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
   } else if (boundType.kind !== "i32") {
     // Unexpected type — roll back, keep the doubling buffer.
-    fctx.body.length = savedLen;
+    rollbackSpeculative(ctx, fctx, snap);
     return false;
   }
   // Stash bound in a temp so we can reference it three times for the clamp.

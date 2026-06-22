@@ -37,11 +37,23 @@
  * arguments fall through to the existing path (the dispatcher is not used).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
+import { addUnionImportsViaRegistry } from "./shared.js";
+
+/**
+ * (#2583) The callback-free, argument-taking array search/predicate methods
+ * that get a native `$__vec_base` brand arm in the closed-method dispatcher so a
+ * genuinely-`any` array receiver (`const a:any=[…]; a.indexOf(x)`) runs instead
+ * of falling to the open-`$Object` arm (which returns `undefined`). Slice 1 of
+ * the deferred #1888 Slice-4 brand-arm residual. `includes` uses SameValueZero;
+ * `indexOf`/`lastIndexOf` use Strict Equality.
+ */
+const VEC_SEARCH_METHODS = new Set(["indexOf", "lastIndexOf", "includes"]);
 
 /**
  * Mangle a method name + arg count into the reserved dispatcher export/funcMap
@@ -90,6 +102,24 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // `__extern_method_call(recv, "<name>", [args…])`.
   ensureObjVecBuilders(ctx);
   addStringConstantGlobal(ctx, methodName);
+
+  // (#2583) For the callback-free array search/predicate methods, the fill adds
+  // a native `$__vec_base` brand arm so a genuinely-`any` array receiver runs
+  // instead of falling to the open-`$Object` arm. Register ALL of that arm's
+  // dependencies NOW (reserve time) so their funcIdx values are stable before
+  // `fillClosedMethodDispatch` (which only READS funcMap — #1719). The arm is
+  // standalone-only (the helpers self-gate on `ctx.standalone || ctx.wasi`);
+  // `ensureObjVecBuilders`→`ensureObjectRuntime` already pulled in
+  // `__extern_length`/`__extern_get_idx`, and the $__vec_base supertype is
+  // idempotently registered here.
+  if ((ctx.standalone || ctx.wasi) && VEC_SEARCH_METHODS.has(methodName) && arity >= 1) {
+    getOrRegisterVecBaseType(ctx);
+    ensureExternStrictEqHelper(ctx); // indexOf / lastIndexOf (also a SameValueZero dep)
+    if (methodName === "includes") ensureExternSameValueZeroHelper(ctx);
+    // `__box_boolean` (for `includes`) is a union import; `__box_number`
+    // (for indexOf/lastIndexOf) too. Register them so both are in funcMap by fill.
+    addUnionImportsViaRegistry(ctx);
+  }
 
   // Signature: (recv, arg0..arg{arity-1}) all externref → externref.
   const params: ValType[] = Array.from({ length: arity + 1 }, () => ({ kind: "externref" }) as ValType);
@@ -316,6 +346,147 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       current = [{ op: "ref.null.extern" } as Instr];
     }
 
+    // (#2583) `$__vec_base` brand arm for callback-free array search/predicate
+    // methods (indexOf/lastIndexOf/includes, arity 1). A genuinely-`any` array
+    // receiver compiles to a `$__vec_base`-subtyped struct, NOT an object-literal
+    // struct, so it never matches an `entries` arm; without this arm it would
+    // fall to the open-`$Object` bottom arm and return `undefined`. We service it
+    // natively (no closure bridge) via `__extern_length`/`__extern_get_idx` +
+    // `__extern_strict_eq`/`__extern_same_value_zero`, mirroring the typed
+    // array-method path's semantics (#1461/#54). Standalone/wasi only — gated on
+    // the deps being present (all registered at reserve time).
+    //
+    // Scratch locals `$len`/`$i` (f64) sit AFTER `__any`/`__argvec`; their
+    // indices are computed from the locals array below so they stay in sync.
+    const externLengthIdx = ctx.funcMap.get("__extern_length");
+    const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+    const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+    const strictEqIdx = ctx.funcMap.get("__extern_strict_eq");
+    const sameValueZeroIdx = ctx.funcMap.get("__extern_same_value_zero");
+    const eqIdx = methodName === "includes" ? sameValueZeroIdx : strictEqIdx;
+    const wantVecArm =
+      (ctx.standalone || ctx.wasi) &&
+      VEC_SEARCH_METHODS.has(methodName) &&
+      arity >= 1 &&
+      ctx.vecBaseTypeIdx >= 0 &&
+      externLengthIdx !== undefined &&
+      externGetIdxIdx !== undefined &&
+      ci.boxNumIdx !== undefined &&
+      eqIdx !== undefined &&
+      (methodName !== "includes" || boxBoolIdx !== undefined);
+
+    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
+    if (arity > 0 && objVecNewIdx !== undefined && objVecPushIdx !== undefined) {
+      locals.push({ name: "__argvec", type: { kind: "externref" } });
+    }
+    if (wantVecArm) {
+      const lenLocalIdx = arity + 1 + locals.length; // first slot after the existing locals
+      const iLocalIdx = lenLocalIdx + 1;
+      locals.push({ name: "__veclen", type: { kind: "f64" } });
+      locals.push({ name: "__veci", type: { kind: "f64" } });
+
+      const boxNum = ci.boxNumIdx as number;
+      // Per-iteration: eq = eqIdx(__extern_get_idx(recv, i), arg0)
+      const elemEq: Instr[] = [
+        { op: "local.get", index: 0 } as Instr,
+        { op: "local.get", index: iLocalIdx } as Instr,
+        { op: "call", funcIdx: externGetIdxIdx } as Instr,
+        { op: "local.get", index: 1 } as Instr, // search target (arg0)
+        { op: "call", funcIdx: eqIdx } as Instr,
+      ];
+      // On match: return boxed index (indexOf/lastIndexOf) or boxed-true (includes).
+      const onMatch: Instr[] =
+        methodName === "includes"
+          ? [
+              { op: "i32.const", value: 1 } as Instr,
+              { op: "call", funcIdx: boxBoolIdx as number } as Instr,
+              { op: "return" } as Instr,
+            ]
+          : [
+              { op: "local.get", index: iLocalIdx } as Instr,
+              { op: "call", funcIdx: boxNum } as Instr,
+              { op: "return" } as Instr,
+            ];
+      // Not-found result (loop fell through): boxed-false / boxed -1.
+      const notFound: Instr[] =
+        methodName === "includes"
+          ? [{ op: "i32.const", value: 0 } as Instr, { op: "call", funcIdx: boxBoolIdx as number } as Instr]
+          : [{ op: "f64.const", value: -1 } as Instr, { op: "call", funcIdx: boxNum } as Instr];
+
+      const forward = methodName !== "lastIndexOf";
+      // len = __extern_length(recv)
+      const setLen: Instr[] = [
+        { op: "local.get", index: 0 } as Instr,
+        { op: "call", funcIdx: externLengthIdx } as Instr,
+        { op: "local.set", index: lenLocalIdx } as Instr,
+      ];
+      // Loop body. Forward: i=0; while i<len { … i+=1 }. Backward: i=len-1; while i>=0 { … i-=1 }.
+      let loopInit: Instr[];
+      let loopExitTest: Instr[];
+      let loopStep: Instr[];
+      if (forward) {
+        loopInit = [{ op: "f64.const", value: 0 } as Instr, { op: "local.set", index: iLocalIdx } as Instr];
+        loopExitTest = [
+          { op: "local.get", index: iLocalIdx } as Instr,
+          { op: "local.get", index: lenLocalIdx } as Instr,
+          { op: "f64.ge" } as Instr, // i >= len → exit
+        ];
+        loopStep = [
+          { op: "local.get", index: iLocalIdx } as Instr,
+          { op: "f64.const", value: 1 } as Instr,
+          { op: "f64.add" } as Instr,
+          { op: "local.set", index: iLocalIdx } as Instr,
+        ];
+      } else {
+        loopInit = [
+          { op: "local.get", index: lenLocalIdx } as Instr,
+          { op: "f64.const", value: 1 } as Instr,
+          { op: "f64.sub" } as Instr,
+          { op: "local.set", index: iLocalIdx } as Instr,
+        ];
+        loopExitTest = [
+          { op: "local.get", index: iLocalIdx } as Instr,
+          { op: "f64.const", value: 0 } as Instr,
+          { op: "f64.lt" } as Instr, // i < 0 → exit
+        ];
+        loopStep = [
+          { op: "local.get", index: iLocalIdx } as Instr,
+          { op: "f64.const", value: 1 } as Instr,
+          { op: "f64.sub" } as Instr,
+          { op: "local.set", index: iLocalIdx } as Instr,
+        ];
+      }
+      // (block $done (loop $scan exitTest br_if $done; if(eq) onMatch; step; br $scan)) notFound
+      const vecArmBody: Instr[] = [
+        ...setLen,
+        ...loopInit,
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                ...loopExitTest,
+                { op: "br_if", depth: 1 } as Instr, // exit to $done
+                ...elemEq,
+                { op: "if", blockType: { kind: "empty" }, then: onMatch } as Instr,
+                ...loopStep,
+                { op: "br", depth: 0 } as Instr, // continue $scan
+              ],
+            } as Instr,
+          ],
+        } as Instr,
+        ...notFound,
+      ];
+      current = [
+        { op: "local.get", index: anyLocalIdx } as Instr,
+        { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx } as Instr,
+        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: vecArmBody, else: current } as Instr,
+      ];
+    }
+
     for (const entry of entries) {
       const callAndCoerce = buildEntryArm(ci, anyLocalIdx, entry, (a) => [{ op: "local.get", index: 1 + a } as Instr]);
       current = [
@@ -325,10 +496,6 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       ];
     }
 
-    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
-    if (arity > 0 && objVecNewIdx !== undefined && objVecPushIdx !== undefined) {
-      locals.push({ name: "__argvec", type: { kind: "externref" } });
-    }
     dispFn.locals = locals;
     dispFn.body = [
       { op: "local.get", index: 0 } as Instr,

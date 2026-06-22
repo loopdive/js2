@@ -1,8 +1,9 @@
 ---
 id: 2580
 title: "`.length` on an any/dynamically-mutated receiver returns numeric 0, not undefined (runtime property-presence)"
-status: ready
-sprint: Backlog
+status: in-progress
+assignee: ttraenkler/sd-value-rep
+sprint: 65
 created: 2026-06-21
 priority: medium
 feasibility: hard
@@ -319,3 +320,355 @@ commitment — is the USER's call.** This spec sizes the payoff (390 floor / 1,0
 ceiling), the cost (~2–3 weeks), and the risk (hot-`.length` path, mitigated by
 the M1 canary + per-slice full-gate validation, never a #1844 big-bang) for that
 decision.
+
+---
+
+# Implementation log
+
+## M0 — `__dyn_has`/`__dyn_get` scaffold (LANDED, PR #1880, 2026-06-21)
+
+The two Wasm-native read primitives + a `ctx.usesDynRead` gate + finalize-phase
+wiring (`src/codegen/dyn-read.ts`). **Provably inert / 0-risk**: the helpers are
+gated on `usesDynRead`, which M0 sets nowhere, so they are never emitted and every
+module is byte-identical (the *gate*, not dead-elim, is the guarantee — an
+uncalled *defined* function is not import-pruned). Validated three ways: inert for
+normal programs (incl. `any[].length`, `o.length===undefined`); valid when
+force-emitted (`JS2WASM_FORCE_DYN_READ=1`, host + standalone — the bodies-are-sound
+self-test); 0 regression on the array/object suites. Merged clean through the
+merge_group (no eject), exactly as the byte-identity proof predicted.
+
+## M1 — `any`-receiver `.length` canary (CANARY VERDICT: REPRESENTATION CALL, NOT landed)
+
+The canary did its job — it surfaced the return-type-change as a **representation
+decision before M2 sank any effort**, with the typed-`.length` safety property
+cleanly bounded. Branch `issue-2580-m1-length-canary` (WIP, NOT pushed).
+
+- **SOLVED — the #2043 `-1` type-index desync.** In HOST mode `__extern_get` is a
+  JS *import*, not the native `$Object` runtime; the call-site helper called
+  `ensureObjectRuntime`, which in host mode registers `$PropEntry` with
+  `key: ref $AnyString` where `anyStrTypeIdx === -1` → a struct field referencing
+  typeidx -1 → binary-emit fail. Fix: host uses `ensureLateImport("__extern_get")`,
+  `ensureObjectRuntime` only in standalone. (Same family as
+  `project_type_index_shift_and_deadelim`.)
+- **SOLID — the typed safety property HOLDS.** `number[]`/`string`/`arguments`/
+  `rest` `.length` are byte-identical: they return from the typed arms *above* the
+  new `any`-gated arm and never reach it. The substrate's hot-path risk is bounded.
+- **THE FINDING (the re-assessment).** `.length` on an `any` receiver returning a
+  uniform externref fights every downstream *numeric* consumer. Scouting the five
+  `obj.length` consumer contexts (`const x = obj.length` inference, `===`,
+  arithmetic `+`, `String()`, `if`-truthiness) shows **none route through the
+  `compilePropertyAccess` arm** — `obj.length`-on-`any` is lowered *independently*
+  by multiple expression handlers (the `===` HasProperty fold, the arithmetic
+  numeric-coercion path, …), each with its own `.length` handling. So the
+  uniform-externref `.length` representation is **not one front-end change** but
+  either (a2) a refactor making `compilePropertyAccess` the single `.length`-on-any
+  chokepoint all consumers defer to, (a1) a per-handler patch, or (b) a narrower
+  absent-sentinel that keeps `.length` numeric (smaller, but does not generalize to
+  M2/M3's arbitrary `obj[i]` reads). **The canary proved the rep has
+  distributed-lowering integration cost the scoping doc under-estimated** — a
+  scope/investment decision (escalated to the user).
+
+### Known follow-ups (track for M2/M3)
+
+- **M0 `__dyn_has` semantic bug** — the M0 form returns "present" iff
+  `__extern_get` is non-null, which **conflates "present with value `undefined`"
+  vs "absent"** (`{}.x === undefined` own-property edge, and a real `undefined`
+  value). HasProperty-proper (own + prototype-chain presence, independent of the
+  *value*) is needed in M2/M3 where the distinction matters. M1's `.length` /
+  the array-like cluster only need non-null-Get ⇔ present, so this is deferred,
+  not a blocker for M0/M1.
+- **`__dyn_get` standalone arm** — M0 delegates to `__extern_get`; the
+  native-string indexed/`length` arm + the `$Vec` `$Hole→undefined` arm are M2/M3.
+
+---
+
+# M1 (a2) chokepoint-refactor plan — APPROVED path (a); CONFIRM before deep work
+
+User greenlit path (a) end-to-end any-typing via the (a2) chokepoint refactor.
+Scoped here as **its own bounded slice** (guardrail 1) for lead review BEFORE the
+days go in; each step **full-gate validated** (guardrail 2).
+
+## Re-scoping finding (good news — smaller than the M1 verdict feared)
+
+A read-only map of EVERY `.length`-on-`any` consumer (`===`, arithmetic `+`,
+truthiness, `const x = obj.length` inference, `String()`/template) found
+**`compilePropertyAccess` is ALREADY the universal chokepoint**:
+`compileExpression` (expressions.ts:~1171) routes every `PropertyAccessExpression`
+through it with no exceptions, and **no consumer structurally special-cases
+`.length`** before `compileExpression`. The apparent "bypass" (M1's first read)
+is an *illusion of type coercion*: my arm returns externref, then each consumer's
+existing coercion converts it — sometimes WRONGLY (unboxing the externref back to
+numeric, losing `undefined`).
+
+**So (a2) is NOT a multi-handler rewrite.** It is: (i) make the
+`compilePropertyAccess` `.length`-on-`any` arm return externref cleanly (done in
+the WIP, gated on static `any`/`unknown`), and (ii) fix the FEW consumer-coercion
+sites that mishandle the externref. The hot-path (typed `.length`) never enters
+this arm → byte-identical (verified: number[]/string/arguments/rest return from
+the typed arms above).
+
+## Consumer-coercion sites to audit + fix (the actual work)
+
+Audit each `compileExpression(obj.length)` → my externref arm → consumer
+coercion; fix only where the externref is mishandled:
+
+1. **`x === undefined`** — binary-ops.ts:420-440 has a correct externref arm
+   (`__extern_is_undefined`). The WIP showed a `__dyn_has`-flavored fold for the
+   `propaccess === undefined` shape — INVESTIGATE whether the `===` path
+   const-folds `.length === undefined` into a presence check and, if so, route it
+   to the externref-from-`__dyn_get` (not a separate `__dyn_has`). PRIMARY canary
+   assertion: `var obj={}; obj.length === undefined` → true.
+2. **`const x = obj.length` inference** — variables.ts:~563/648/837. For
+   `obj: any`, TS types `obj.length` as `any` → externref; the binding local
+   SHOULD be externref. The WIP showed `typeof x === "number"`, so the local got
+   a numeric ValType — fix the `.length`-on-any initializer's binding local to
+   externref.
+3. **Truthiness `if (obj.length)`** — control-flow.ts:568 + externref `__is_truthy`
+   (index.ts:~13551). Likely already coerces; VERIFY (`if ({}.length)` falsy,
+   `if ([1].length)` truthy).
+4. **Arithmetic `obj.length + 1`** — binary-ops.ts:929/935. externref→f64 via
+   `__unbox_number`; absent → NaN, spec-correct. VERIFY `[1,2].length + 1 === 3`,
+   `({}).length + 1` is NaN.
+5. **`String(obj.length)` / template** — calls.ts:~10427 / string-ops.ts:~363.
+   externref→string via `__extern_toString`. VERIFY `String([1,2].length)==="2"`,
+   `String({}.length)==="undefined"`.
+
+Expect **2–4 small consumer fixes + the arm**, not a sweeping refactor.
+
+## Staging (each its own full-gated PR; stop-the-line on a typed-`.length` eject)
+
+- **M1a — the arm + `=== undefined` canary** (smallest, highest-signal). Land the
+  externref arm + whatever the `=== undefined` path needs so `var obj={};
+  obj.length === undefined` → true and the S15.4.4 `.length`-property rows flip.
+  Full-gate. **The viability proof.**
+- **M1b — binding-inference + truthiness + arithmetic + String** consumer fixes
+  (only the ones M1a's audit flags). Full-gate.
+- Each PR: typed-`.length` byte-identity guard + determinism guard.
+  STOP-THE-LINE if either ejects.
+
+## Cost / risk (revised DOWN from the M1 pessimistic estimate)
+
+The chokepoint already exists; the work is the arm (done) + 2–4 consumer-coercion
+fixes. **~2–4 days** (M1a ~1–2d incl. the `=== undefined` fold investigation,
+M1b ~1–2d), each full-gated. Risk bounded by the static-`any` gate (hot-path
+untouched) + per-PR full-gate. The M1 WIP (`d9956bfa3`, branch
+`issue-2580-m1-length-canary`) is the starting point — the arm + the
+host/standalone `__extern_get` #2043 fix already land.
+
+**CONFIRM-WITH-LEAD checkpoint (guardrail 1):** posted for review BEFORE the deep
+work. The material change from the M1 verdict: the chokepoint already exists, so
+(a2) is a ~2–4-day arm+consumer-coercion slice, not a multi-handler refactor —
+which de-risks the whole substrate's M1 cost. Awaiting go-ahead to execute M1a.
+
+## Concurrency seam — vs. the parallel tag-5 equality wave (#1888/#1864/#1883)
+
+A parallel value-rep wave rewrites the **tag-5 content-equality classifier**
+(#2040 field-4 / #2579 any-str strict-eq / #2583 any-array search). My (a2)
+`.length`-externref result flows into the `===` consumer, which meets their
+classifier — so the question is collision vs. clean layering.
+
+**VERDICT: CLEAN LAYERING — zero overlapping lines** (read-only `binary-ops.ts`
+trace). My canary's `===` shapes land in arms DISJOINT from theirs:
+- `obj.length === undefined` (my PRIMARY assertion) → the **presence arm**,
+  `binary-ops.ts:429-435` (`__extern_is_undefined`). Not the classifier.
+- `obj.length === <number>` → the **numeric-fallback arm**, `binary-ops.ts:
+  2853-2876` (`__unbox_number` + `f64.eq`). Not the classifier.
+- Their tag-5 content-equality rewrite lives at `binary-ops.ts:2804-2823`
+  (`__any_from_extern` → `__any_eq` tag-dispatch), and is **strict-vs-loose
+  disjoint** from mine: that arm is the LOOSE-equality (`==`/`!=`) + standalone
+  branch; my shapes are STRICT (`===`/`!==`). They never execute the same code.
+
+**No DIRECT collision.** My `.length`-externref just lands in the
+presence/numeric arms unchanged; their classifier overhauls a different arm. So
+the two waves can proceed **in parallel** with no sequencing dependency on the
+`===` seam — my externref does NOT feed their classifier (it takes the
+`=== undefined` / numeric arms before reaching tag-5 content comparison). If a
+future (a2) shape compared two `any` VALUES for content (e.g. `obj.length ===
+otherObj.prop`, both externref), THAT would route into their classifier and want
+their base first — but the M1 `.length` canary (`=== undefined` / `=== <number>`)
+does not. Flagged for the lead's wave-sequencing: **parallel-safe at the `===`
+seam.**
+
+## M1a — IMPLEMENTED (this PR)
+
+The `.length`-on-`any` HOST arm landed as a clean **2-file** change
+(`src/codegen/dyn-read.ts` + `src/codegen/property-access.ts`); the M0 scaffold,
+#1899, and the typed `.length` hot-path are all untouched.
+
+**Where the arm sits (the key root-cause fix).** It is NOT a new `propName ===
+"length"` block placed ahead of the existing ones — that was the first (wrong)
+attempt and it *clobbered the working array path*. Origin already reads
+`const o: any = [1,2,3]; o.length` correctly as `3` because `o`'s value is an
+externref wrapping a WasmGC vec; the existing handler eventually reaches a generic
+externref reader that ref.test-dispatches the vec. Intercepting `any`-`.length`
+BEFORE the vec detection forced every array through `__extern_get(vec,"length")`,
+which the host evaluates to `undefined` (V8 sees an opaque struct). So the arm is
+folded into the **`savedLen` fallback block** (`property-access.ts` ~3644): it
+runs only AFTER the length-bearing-vec-struct detection misses, i.e. the genuinely
+non-vec dynamic receiver.
+
+**`emitDynGet` host path = runtime receiver-kind dispatch (no funcidx hazard).**
+For the `length` key it emits, inline:
+```
+ref.test $vec_i  → if hit:  box_number(f64(struct.get $vec_i 0))   // the array length
+                   else:    __extern_get(recv, "length")            // value or undefined
+```
+nested as one if/else chain over every registered `{length,data}` vec type in
+`ctx.vecTypeMap`. `ref.test typeIdx` uses **type** indices (append-only /
+dead-elim-stable via the rec-group), so unlike a `call __is_vec` it carries no
+funcidx-ordering / late-import-shift hazard — which is what derailed the earlier
+`__dyn_get`-wrapper attempt (a DEFINED-func `call` whose index floated when a
+consumer added a late import). `__extern_get` + `__box_number` are host IMPORTS
+(stable), ensured up-front before any baked index is resolved. Non-`length` keys
+skip the vec arm and go straight to `__extern_get` (vec indexed reads are a later
+slice). Standalone is unchanged (M1a is host-scoped; it still routes through the
+`__dyn_get` wrapper, which is correct there because `__extern_get` is a defined
+native helper).
+
+**Representation = uniform externref, and consumers coerce for free.** The arm
+returns `{ kind: "externref" }` (a boxed number for an array length, JS
+`undefined` for an absent property). Every numeric consumer tested
+(`+`/`*`/`<`/`for`-bound) unboxes it via the existing externref→f64 coercion;
+`=== undefined` hits the presence arm; `typeof`/`String()`/truthiness all correct.
+So M1a needed **no** separate M1b consumer-coercion work for these shapes — the
+pessimistic M1 verdict over-scoped it.
+
+**Validation.** New regression suite `tests/issue-2580-any-length.test.ts` (13
+cases) green; `tsc`/`prettier` clean; the 3 pre-existing `strings.test.ts`
+failures are an unrelated worktree test-infra artifact (identical on origin/main).
+Conformance is the merge_group full-Test262 gate's call (this is a value-rep /
+chokepoint touch → authoritative gate per `project_broad_impact_validate_full_ci`,
+NOT a scoped sweep). Stop-the-line on any typed-`.length` eject.
+
+## M1a — MERGE_GROUP EJECT (PR #1894 v1, 13 regressions) + ROOT CAUSE
+
+PR #1894 v1 (the `ctx.vecTypeMap`-dispatch arm above) passed every PR check and
+all 117 merge_group test262 shards, but the merge_group **net-regression gate**
+ejected it: **13 regressions** (pass→fail), all `assertion_fail`, all with a
+wasm-hash change, **0 improvements** (fails net AND ratio). `auto-park` applied
+the `hold` label. Confirmed NOT cross-PR drift (only #1894's merge_group shows
+bucket `964d9207`). Pulled the merged-report artifact + diffed vs baseline → the
+exact 13 split into two clusters, BOTH the `.length`-on-any arm firing on a
+receiver the prior numeric path handled correctly:
+
+- **A (5): function/closure `.length` = ARITY.** `verifyProperty(IteratorProto[
+  Symbol.iterator], 'length', {value:0})` etc. `(fn as any).length`: origin = `0`
+  (matches the arity the tests assert), my arm = **NaN** (a closure externref →
+  `__extern_get(closure,"length")` → undefined → NaN coercion).
+- **B (8): for-await-of array-rest destructuring `.length`.** `for ([x, ...y] of
+  …)` then `y.length`. The rest binding `y` is `let`-declared → `any`, and in the
+  loop-head-destructuring desugaring it ends up as a boxed/wrapped externref that
+  is NEITHER a directly-`ref.test`-able vec NOR a plain host object — so my vec
+  chain misses and `__extern_get` returns undefined → **NaN** (origin returned the
+  correct count). (A reduced `for ([x,...y] of [[1,2,3]]) {}; return y.length`
+  reproduces NaN locally; note `typeof y` is `"undefined"` / `Array.isArray(y)`
+  false in this reduced shape — there is a *separate* for-of-rest-binding
+  representation quirk here, orthogonal to M1a, that the prior numeric `.length`
+  path happened to read correctly.)
+
+**Unified root cause:** the gate `objType.flags & (Any|Unknown)` is too broad. My
+arm intercepts `.length` for ANY boxed/wrapped non-plain-object receiver (closure,
+loop-destructured rest array, …) and emits a uniform-externref `undefined` →` NaN`
+where the prior numeric path returned a usable value. The substrate CORE is sound
+(the `{}.length === undefined` canary still passes); the gate just over-reached.
+
+**FIX — option 2 (positive `$Object` gate) is NOT VIABLE in host mode; use
+option 3 (decline-for-struct).** Option 2 fails twice: (a) `objectTypeIdx` only
+exists when `ensureObjectRuntime` runs, and that registers `$PropEntry` with
+`key: ref $anyStrTypeIdx` — host mode `anyStrTypeIdx = -1` → the original −1
+type-index crash; (b) more fundamentally, in HOST mode a plain `{}` is NOT a
+WasmGC `$Object` struct — it's a host JS object (externref). There is no struct to
+`ref.test`. So a positive `$Object` gate can't work host-side.
+
+The host-mode picture (confirmed by probing): plain `{}` is a host externref that
+`ref.test`-misses ALL structs (→ `__extern_get` → undefined, the canary —
+*already* works via the current vec-MISS branch); array/closure are WasmGC
+structs; the for-of/await rest binding points at a vec (the v1 arm matched it and
+read the SOURCE array's length 3, hence "returned 3" for expected 2).
+
+**Option 3 — decline-for-struct:** the dyn-read `.length` arm DECLINES (return
+false → caller falls through to the prior numeric `.length` path) when the
+receiver `ref.test`s as a VEC **or** a CLOSURE base type
+(`collectClosureBaseWrapperTypeIdxs(ctx)`, same body-compile mechanism as the vec
+types); it fires `__extern_get(recv,"length")` ONLY for the residual genuine host
+externref. Effect: array → declines → prior path reads vec field-0 = 3 ✓ (this
+also DROPS the v1 box-number vec arm, eliminating the Cluster-B wrong-vec-match);
+`{}` → all struct-tests miss → `__extern_get` → undefined ✓ (canary); closure →
+declines → prior path → 0 ✓ (Cluster A); rest binding (vec) → declines → prior
+path → correct count ✓ (Cluster B). SIMPLER than v1 (removes the box-number arm —
+the prior path already read array `.length` correctly). Arm shrinks to
+"`ref.test` vec OR closure → decline; else `__extern_get(recv,'length')`". One
+gate, all 13 fixed, canary preserved, no `$Object` struct needed. **Validate
+against the REAL async-generator rest test262 file** (the reduced
+`for ([x,...y] of …)` probe is unfaithful — origin ALSO returns 0 there).
+Re-validate via merge_group (one-shot); stop-the-line on re-eject.
+
+## M1a — FINAL VERDICT (faithful runner): NOT a surgical slice; defer to M2
+
+Built a faithful local gate — call the REAL `runTest262File` (tests/test262-runner.ts)
+on all 13 regressed files directly (`.tmp/run13.mjs`). Reduced `compile()`+probe
+shapes repeatedly MISLED (a user closure ≠ a host builtin; `for([x,...y]of)` ≠ the
+async-gen harness). Results:
+
+- **Arm OFF → 12/13 pass** (the 13th `[skip]`s on Temporal). ZERO regression,
+  identical to origin — the prior path is correct for every one of the 13.
+- Arm ON v1 → 0/13. Closure-arm v2 → STILL 0/13 (the real Cluster-A receivers are
+  host-builtin functions reached via Symbol-keyed prototype walks, NOT user
+  closures the `ref.test` catches). Receiver-`ref.is_null` guard → STILL 0/13 (the
+  13's receivers are NON-null wrapped externrefs). Decline-for-struct → can't
+  separate them (the 13 `ref.test`-MISS all structs, exactly like the canary `{}`).
+
+**Root cause = TOTAL ENTANGLEMENT.** Every one of the 13 reaches
+`__extern_get(recv,"length")` → undefined → NaN, where the prior numeric path
+returned a usable value (0 via `__extern_length`'s null-guard, or the real count).
+The canary (`{}.length` → undefined) needs that SAME `__extern_get`-undefined
+result to STAY undefined. A non-null `{}` lacking `length` and a non-null wrapped
+builtin / rest-binding are the SAME externref shape — **no `ref.test` /
+`ref.is_null` / `__extern_has` predicate separates them.** The distinction lives in
+the boxed `$AnyValue` tag, which only a TAG-AWARE reader (M2's job) can inspect; a
+bare-externref runtime test cannot. So options (a)/(3) are dead — there is no
+surgical gate.
+
+**RESOLUTION = turn the arm OFF (option c).** The `.length`-on-any value-semantics
+is not a surgical M1 slice; it requires M2's tag-aware dynamic reader to
+disambiguate the receiver. Turning the arm off reverts the canary to the
+PRE-EXISTING #2580 bug (NOT a new regression), keeps M0 inert, and is zero-regression
+(validated 12/13 + skip). The `{}.length`→undefined fix folds into M2's acceptance.
+M1 over-scoped the value-semantics; M0 (the inert scaffold) is the landable M1.
+
+## M2.2c — reduce/reduceRight-no-init un-refuse: WONT-FIX (A/B proven net-negative, 2026-06-22, sd-2611)
+
+**Do not re-attempt the un-refuse without first landing the parked native
+no-init arm.** M2.2c was framed as "un-refuse `reduce`/`reduceRight` no-init on
+array-likes by fixing the #2043 funcidx desync (re-resolve-by-name) at the
+hole-scan's baked `__extern_has_idx`/`__extern_get_idx`." Measured against
+CURRENT main, all three premises are stale:
+
+1. **The funcidx desync is ALREADY fixed.** The native no-init arm already
+   re-resolves by name (`getIdxFnNow`/`hasIdxFnNow`, array-methods.ts ~L867, the
+   #16 fix) and #2611's `flushLateImportShifts` hardening closed the remaining
+   leak. Instrumented build + A/B over the whole corpus: compile-validity is
+   IDENTICAL refusal-ON vs OFF (450/520 valid both ways), ZERO invalid-Wasm from
+   the no-init path. There is nothing left for the re-resolve-by-name pattern to
+   fix here.
+2. **The refusal is ROW-PROTECTIVE, not a graceful CE.** Its `reportError` fires
+   only in a SPECULATIVE compile pass; the final emit routes the no-init shape to
+   the WORKING host `__proto_method_call` path. So removing the refusal does not
+   "un-block a graceful CE" — it diverts working rows to the incomplete native arm.
+3. **Un-refusing REGRESSES rows.** A/B harness = compile + instantiate + run every
+   `built-ins/Array/prototype/{reduce,reduceRight}` test262 file standalone:
+   - **refusal ON (current main): PASS 363, FAIL 8, CE 68** (520 files)
+   - **refusal OFF (the un-refuse): PASS 306 (−57), FAIL 57 (+49)**
+   The native no-init arm returns WRONG results for the real corpus shapes
+   (defineProperty-getter array-likes, sparse holes, proto-chain receivers,
+   `arguments`); a bare object-literal array-like (`{0:..,1:..,length:n}`) is the
+   only best-case shape that returns correctly, and it is not representative.
+
+**A genuine un-refuse requires a CORRECT native no-init arm** (handle
+defineProperty getters / holes / proto-chain / `arguments`) — that is the M2
+value-rep / tag-aware-reader substrate (this issue's parked work; see the
+S15.4.4 cluster row in the scoping doc above, and the M2 slices). It is NOT an
+index-shift point-fix. Until that lands, the `arguments.length < 3` refusal in
+`standaloneArrayLikeMethodRefused` (array-methods.ts) stays — it is strictly
+better than the alternatives (working host path > incomplete native arm).
+Tracking task #74 set WONT-FIX on this basis.

@@ -49,9 +49,10 @@ describe("#1168 — IrType discriminated union", () => {
   });
 
   it("asVal returns null for non-val IrType", () => {
-    const u: IrType = { kind: "union", members: [{ kind: "f64" }, { kind: "i32" }] };
+    // #1926 — union members / boxed inner are IrTypes (wrapped via irVal).
+    const u: IrType = { kind: "union", members: [irVal({ kind: "f64" }), irVal({ kind: "i32" })] };
     expect(asVal(u)).toBeNull();
-    const b: IrType = { kind: "boxed", inner: { kind: "f64" } };
+    const b: IrType = { kind: "boxed", inner: irVal({ kind: "f64" }) };
     expect(asVal(b)).toBeNull();
   });
 
@@ -61,15 +62,37 @@ describe("#1168 — IrType discriminated union", () => {
     const c = irVal({ kind: "i32" });
     expect(irTypeEquals(a, b)).toBe(true);
     expect(irTypeEquals(a, c)).toBe(false);
-    const u1: IrType = { kind: "union", members: [{ kind: "f64" }, { kind: "i32" }] };
-    const u2: IrType = { kind: "union", members: [{ kind: "f64" }, { kind: "i32" }] };
-    const u3: IrType = { kind: "union", members: [{ kind: "f64" }] };
+    // #1926 — union members / boxed inner are IrTypes (wrapped via irVal).
+    const u1: IrType = { kind: "union", members: [irVal({ kind: "f64" }), irVal({ kind: "i32" })] };
+    const u2: IrType = { kind: "union", members: [irVal({ kind: "f64" }), irVal({ kind: "i32" })] };
+    const u3: IrType = { kind: "union", members: [irVal({ kind: "f64" })] };
     expect(irTypeEquals(u1, u2)).toBe(true);
     expect(irTypeEquals(u1, u3)).toBe(false);
     expect(irTypeEquals(a, u1)).toBe(false);
-    const x: IrType = { kind: "boxed", inner: { kind: "f64" } };
-    const y: IrType = { kind: "boxed", inner: { kind: "f64" } };
+    const x: IrType = { kind: "boxed", inner: irVal({ kind: "f64" }) };
+    const y: IrType = { kind: "boxed", inner: irVal({ kind: "f64" }) };
     expect(irTypeEquals(x, y)).toBe(true);
+  });
+
+  // #1926 acceptance criterion 1 — IrType is JSON-serializable and survives a
+  // round-trip. With union/boxed members carrying backend-symbolic IrTypes
+  // (no module-relative `ref { typeIdx }` reachable through the type system),
+  // a union/boxed type can be serialized and reconstructed identically. This
+  // is what unblocks IR caching / cross-backend reuse.
+  it("union/boxed IrTypes JSON round-trip (criterion 1)", () => {
+    const types: IrType[] = [
+      irVal({ kind: "f64" }),
+      { kind: "string" },
+      { kind: "union", members: [irVal({ kind: "f64" }), irVal({ kind: "i32" })] },
+      { kind: "boxed", inner: irVal({ kind: "i32" }) },
+      // Nested: a union-of-symbolic-member composes structurally now.
+      { kind: "boxed", inner: { kind: "union", members: [irVal({ kind: "f64" }), irVal({ kind: "i32" })] } },
+    ];
+    for (const t of types) {
+      const round = JSON.parse(JSON.stringify(t)) as IrType;
+      expect(round).toEqual(t);
+      expect(irTypeEquals(round, t)).toBe(true);
+    }
   });
 });
 
@@ -154,7 +177,8 @@ describe("#1168 — lowerTypeToIrType for unions", () => {
     const ir = lowerTypeToIrType(t);
     expect(ir).not.toBeNull();
     if (ir && ir.kind === "union") {
-      const kinds = ir.members.map((m) => m.kind).sort();
+      // #1926 — members are IrTypes now; unwrap each to its ValType kind.
+      const kinds = ir.members.map((m) => asVal(m)?.kind).sort();
       expect(kinds).toEqual(["f64", "i32"]);
     } else {
       throw new Error(`expected union, got ${ir?.kind}`);
@@ -280,8 +304,9 @@ describe("#1168 — tag.test lowering (criterion 4)", () => {
 
   it("tag.test emits struct.get $tag; i32.const <N>; i32.eq", () => {
     const unionType: IrType = {
+      // #1926 — union members are IrTypes (wrapped via irVal).
       kind: "union",
-      members: [{ kind: "f64" }, { kind: "i32" }],
+      members: [irVal({ kind: "f64" }), irVal({ kind: "i32" })],
     };
     // Handwire an IrFunction: the entry block has a raw.wasm producing a
     // union-typed value (stub), followed by a tag.test.

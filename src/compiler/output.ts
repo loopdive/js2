@@ -249,14 +249,26 @@ export function compileToObjectSource(source: string, options: CompileOptions = 
   const processedSource = preprocessed.source;
   const defaultFileName = options.fileName ?? (options.allowJs ? "input.js" : "input.ts");
   const effectiveFileName = options.moduleName ?? defaultFileName;
-  const ast = analyzeSource(processedSource, effectiveFileName, { allowJs: options.allowJs });
+  const ast = analyzeSource(processedSource, effectiveFileName, {
+    allowJs: options.allowJs,
+    emulateNode: options.emulateNode,
+  });
 
   for (const diag of ast.diagnostics) {
     if (diag.category === 1) {
       const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
       const severity = DOWNGRADE_DIAG_CODES.has(diag.code) ? "warning" : "error";
+      let message = typeof diag.messageText === "string" ? diag.messageText : diag.messageText.messageText;
+      // #2603: TS2580 ("Cannot find name 'X'. Do you need to install type
+      // definitions for node?") flags a Node global. When node-emulation is
+      // off, point the user at the flag that turns it on (and silences this)
+      // rather than at @types/node.
+      if (!options.emulateNode && diag.code === 2580) {
+        const name = message.match(/Cannot find name '([^']+)'/)?.[1] ?? "process";
+        message = `Cannot find name '${name}'. Add \`--emulate node\` to enable Node API emulation (or install @types/node).`;
+      }
       errors.push({
-        message: typeof diag.messageText === "string" ? diag.messageText : diag.messageText.messageText,
+        message,
         line: pos.line + 1,
         column: pos.character + 1,
         severity: severity as "error" | "warning",

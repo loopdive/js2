@@ -1,5 +1,5 @@
 ---
-id: 2586
+id: 2608
 title: "compiled-acorn parse() infinite-loops in parseTopLevel after instantiation (4th dogfood blocker)"
 status: blocked
 assignee: sd-acorn

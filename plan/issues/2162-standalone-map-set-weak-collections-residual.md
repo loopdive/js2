@@ -301,3 +301,48 @@ out wasi/nativeStrings-with-host. The proper fix is to make
 before any shiftable funcidx is baked (or re-resolve `__defineProperty_value` by
 name after the registration), then it can be un-gated for wasi. Owner: whoever
 takes the entries-mode substrate slice (#2162 / #2542 family).
+
+## RE-MEASUREMENT (2026-06-22, architect) — Map/WeakMap/WeakSet CLOSED; residual is ALL Set
+
+Re-ran the FULL host-vs-standalone diff on main `6d76f5b2d` over every
+`built-ins/{Map,Set,WeakMap,WeakSet}` test262 file (813 total) via
+`runTest262File(..., "standalone")` host vs standalone:
+
+```
+bothPass = 79   hostFail = 494 (out-of-scope: fail in host too)   GAP = 240
+```
+
+**The host-pass / standalone-fail gap is 240, and ALL 240 are in `Set`.**
+Map, WeakMap, WeakSet have **zero** host-pass/standalone-fail rows — the landed
+slices closed them. The original 532-row estimate (`Set` 286, `Map` 148,
+`WeakMap` 101) is stale: Map/Weak are done; the live residual is the Set tail.
+
+### Verified Set buckets (root cause probed, not guessed)
+
+| Bucket | Rows | Tractable? | Slice |
+|---|---|---|---|
+| `[[SetData]]` brand-check: `Set.prototype.METHOD.call(nonSet)` must throw TypeError | ~84 | YES (needs native `.call` dispatch + `ref.test $Map` guard) | **#2604** |
+| `x instanceof Set/Map/Weak` → false for native collections | ~21 | YES (add `ref.test $Map` arm to `compileInstanceOf`) | **#2605** |
+| `s.add(null)`/`s.has(null/undefined)` invalid-Wasm + `extends Set` `MySet_size -1` late-import desync | ~14 | YES (pure compiler bugs) | **#2606** |
+| set-algebra GetSetRecord ARG validation (TypeError on primitive/array/non-Set arg) | ~8–10 | YES (validation/throw half) | **#2607** |
+| **DEFER → value-rep substrate (#2580 M2)** | | | |
+| `assert.sameValue(s.has(0), true)` boxed-bool / boxed-value `=== literal` confounds (s.has/predicate `compares-*` all PASS natively — probed) | ~40 | NO — value-rep | #2580 / #2104 |
+| set-algebra over a genuine *set-like object* (read `.size`/`.has`/`.keys` from `any`) — `allows-set-like-object`, `set-like-class-mutation`, `compares-Map`, `converts-negative-zero` | ~12 | NO — `__dyn_get` dynamic read | #2580 M2 |
+| `Symbol.species`/`Symbol.iterator`/`Symbol.toStringTag`/`__get_builtin`/`Set.name`/`Set.length`/`size` descriptor reflection | ~20 | NO — #1472 Phase B / #1888/#1907 / #2158 | #1472 / #2158 |
+| `set.entries()`/`set.values()` returning a real **iterator object** with `.next()` (currently `Cannot convert object to primitive value`) | ~5 | substrate-ish (needs a standalone Set/Map iterator-result object) | #2162 follow-up |
+
+### Verification probes (key root-cause confirmations)
+- `new Set(); s.add(0); s.has(0)` → **111 (true)** standalone — Set core SameValueZero works. The `has/returns-*` test262 fails are the boxed `assert.sameValue(.., true)` confound (value-rep), NOT a Set bug. **Do not slice.**
+- `s1.isSubsetOf(s2)` with typed Sets → **true** standalone — predicate core works; `compares-*` fails are the same boxed-bool confound. **Do not slice.**
+- `Set.prototype.has.call(realSet, 5)` → no-op sentinel — the `.call` form does NOT reach the native runtime (root cause for the brand-check cluster, #2604).
+- `Set.prototype.has.call(null, 1)` → returns 0, **no throw** — confirms the missing brand check (#2604).
+
+### New slices (this PR)
+- **#2604** — Set.prototype.METHOD.call(nonSet) native dispatch + brand-check TypeError (~84, the big one; needs `calls.ts` `.call` path — possibly senior-dev)
+- **#2605** — native-collection `instanceof` (~21, easy, `typeof-delete.ts`)
+- **#2606** — null-element coercion + `extends Set` late-import compile errors (~14, pure bugs)
+- **#2607** — set-algebra GetSetRecord arg-validation throws (~8–10; sequence after #2604 for the shared brand-check helper)
+
+Combined tractable reachable: **~125–130 Set rows.** The remaining ~75 Set rows
+are value-rep substrate (#2580 M2) / reflection (#1472/#2158) / iterator-object —
+**deferred, not sliced here.**

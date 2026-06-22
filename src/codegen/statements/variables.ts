@@ -294,6 +294,106 @@ function isPromiseHostCall(_ctx: CodegenContext, expr: ts.Expression): boolean {
 }
 
 /**
+ * (#2615) Check if an initializer is a `new Proxy(target, handler)` construction.
+ *
+ * A Proxy carries NO TypeScript-type brand — `ProxyConstructor` is typed to
+ * return its TARGET type `T`, so the checker types `const p = new Proxy(t, h)`
+ * as `T` (e.g. the object-literal struct of `t`). The `new Proxy` codegen
+ * (new-super.ts) correctly returns `{ kind: "externref" }` (host) / the native
+ * `$Proxy` externref (standalone) — but if the receiving local is slotted as
+ * the target's WasmGC struct type, the externref is coerced into that struct
+ * with `any.convert_extern` + `ref.test (ref <struct>)`, which FAILS for a
+ * host/native Proxy (it is not that struct). The value becomes `ref.null`, and
+ * the subsequent `p.attr` lowers to a direct `struct.get` on the null/struct
+ * local → traps (empty-message Wasm trap). `"k" in p` works only because it
+ * routes via `__extern_has`.
+ *
+ * The fix: force the local's storage ValType to `externref` for a `new Proxy`
+ * initializer, so member reads/writes/has/delete lower through the dynamic
+ * boundary helpers (`__extern_get` / `__extern_set` / `__extern_has`), which
+ * are the only paths that run the Proxy MOP (the trap). Mirrors the
+ * `isBindHostCall` / `isPromiseHostCall` slot-type overrides. Mode-agnostic:
+ * both host and standalone emit a Proxy externref, so both need the override.
+ */
+function isProxyConstruction(expr: ts.Expression): boolean {
+  return ts.isNewExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy";
+}
+
+/**
+ * (#2615 narrowing) Does the Proxy-bound variable `name` ever ESCAPE into a
+ * call/new as a by-value argument, or get used as a generic-method receiver
+ * (`Array.prototype.X.call(p, …)` / `Object.getPrototypeOf(p)` /
+ * `Object.prototype.toString.call(p)`) anywhere in the enclosing function?
+ *
+ * Why this matters: forcing the slot to `externref` (so member READS route
+ * through `__extern_get` — the read-trap fix) breaks the regression cases where
+ * the Proxy is handed to a host generic-method / global. For a struct-typed
+ * slot those host paths received a wasm struct they could introspect (IsArray,
+ * getPrototypeOf, the Array.prototype.* spec walk); the bare externref Proxy
+ * goes through a different host path that loses Array-ness / prototype identity
+ * (regressed `Object/prototype/toString/proxy-array`, `copyWithin/*-proxy-*`,
+ * `getOwnPropertySymbols/proxy-invariant-*`, `getPrototypeOf/*-target-is-proxy`).
+ *
+ * So: only flip the slot to externref when the Proxy stays LOCAL and is used
+ * purely in member position (`p.x` / `p[k]` / `delete p.x` / `k in p`). If it
+ * escapes into a call argument, keep the struct typing — the keystone read-trap
+ * fix still lands for the common direct-read case, and the escaping-into-host
+ * paths keep working. A receiver of `p.method()` (member-then-call) is NOT an
+ * escape; only `p` appearing as a CALL/NEW ARGUMENT (incl. `.call`/`.apply`
+ * first arg) counts.
+ */
+function proxyResultEscapesToCall(decl: ts.VariableDeclaration, name: string): boolean {
+  const fn = findEnclosingFunctionOrSource(decl);
+  if (!fn) return false;
+  let escapes = false;
+  const visit = (node: ts.Node): void => {
+    if (escapes) return;
+    if (ts.isIdentifier(node) && node.text === name) {
+      const p = node.parent;
+      // `f(…, p, …)` or `new C(…, p, …)` — p is a by-value argument.
+      if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.arguments?.some((a) => a === node)) {
+        escapes = true;
+        return;
+      }
+      // `<receiver>.call(p, …)` / `<receiver>.apply(p, …)` — p is the `this`
+      // arg of a generic-method dispatch (Array.prototype.X.call(p), etc.).
+      if (
+        ts.isCallExpression(p) &&
+        ts.isPropertyAccessExpression(p.expression) &&
+        (p.expression.name.text === "call" || p.expression.name.text === "apply") &&
+        p.arguments?.[0] === node
+      ) {
+        escapes = true;
+        return;
+      }
+    }
+    node.forEachChild(visit);
+  };
+  visit(fn);
+  return escapes;
+}
+
+function findEnclosingFunctionOrSource(node: ts.Node): ts.Node | undefined {
+  let n: ts.Node | undefined = node.parent;
+  while (n) {
+    if (
+      ts.isFunctionDeclaration(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isArrowFunction(n) ||
+      ts.isMethodDeclaration(n) ||
+      ts.isConstructorDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n) ||
+      ts.isSourceFile(n)
+    ) {
+      return n;
+    }
+    n = n.parent;
+  }
+  return undefined;
+}
+
+/**
  * (#1337) Check if an initializer is a `Function.prototype.bind` call whose
  * result is a real JS bound-function exotic (externref), NOT a wasm closure
  * struct. In JS-host mode `fn.bind(...)` / `Function.prototype.bind.call(fn, ...)`
@@ -624,6 +724,18 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
 
     const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, decl.initializer);
     const subarraySubviewType = inferSubarraySubviewType(ctx, fctx, decl.initializer);
+    // (#2615) `new Proxy(...)` initializer — the slot must be externref so reads
+    // route through `__extern_get` (the Proxy MOP), not a static `struct.get`.
+    // NARROWED (#2615 regression fix): only when the Proxy variable stays local
+    // and is member-accessed; if it escapes into a call/new argument or a
+    // generic-method `.call`/`.apply` receiver, keep the struct typing so the
+    // host generic-method / global paths (IsArray, getPrototypeOf, the
+    // Array.prototype.* spec walk) still work on a wasm-struct receiver.
+    const initIsProxy =
+      decl.initializer !== undefined &&
+      isProxyConstruction(decl.initializer) &&
+      ts.isIdentifier(decl.name) &&
+      !proxyResultEscapesToCall(decl, decl.name.text);
     const wasmType: ValType = initIsAccessorLiteral
       ? { kind: "externref" as const }
       : isI32CoercedLocal
@@ -639,13 +751,23 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                 ? { kind: "externref" as const }
                 : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                   ? { kind: "externref" as const }
-                  : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
-                    // returns a host bound-function externref in JS-host mode;
-                    // force an externref local so the value isn't ref.cast to
-                    // the target's closure struct (which traps → null binding).
-                    decl.initializer && !ctx.standalone && !noJsHost(ctx) && isBindHostCall(decl.initializer)
+                  : // (#2615) `new Proxy(target, handler)` returns a host/native
+                    // Proxy externref. The checker types it as the TARGET's
+                    // struct (ProxyConstructor returns T), so the default slot
+                    // would `ref.test` the Proxy against that struct, fail, null
+                    // it, and trap every read via a direct `struct.get`. Force an
+                    // externref local so reads route through `__extern_get` (the
+                    // only path that runs the Proxy MOP / trap). Both modes emit
+                    // a Proxy externref, so this is mode-agnostic.
+                    initIsProxy
                     ? { kind: "externref" as const }
-                    : localTypeForDeclaration(ctx, varType)));
+                    : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
+                      // returns a host bound-function externref in JS-host mode;
+                      // force an externref local so the value isn't ref.cast to
+                      // the target's closure struct (which traps → null binding).
+                      decl.initializer && !ctx.standalone && !noJsHost(ctx) && isBindHostCall(decl.initializer)
+                      ? { kind: "externref" as const }
+                      : localTypeForDeclaration(ctx, varType)));
 
     // If this var/let/const was already pre-hoisted at function entry, reuse that slot.
     // For let/const: the pre-pass (hoistLetConstWithTdz) always pre-allocates a slot
@@ -725,6 +847,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // is the same "undefined" sentinel a hoisted externref would carry
         // before its first assignment).
         if (initIsAccessorLiteral && existingIsRef && wasmType.kind === "externref") {
+          localSlot.type = wasmType;
+        } else if (initIsProxy && existingIsRef && wasmType.kind === "externref") {
+          // (#2615) A `const p = new Proxy(...)` was pre-hoisted as the target's
+          // struct ref (the checker types Proxy as its target T). The hoist pass
+          // emits no initialization for ref-typed locals, so narrowing ref →
+          // externref here is safe — and required, otherwise the Proxy externref
+          // is `ref.test`-coerced into the struct slot (fails → null → trap on
+          // every read). Same rationale as the accessor-literal branch above.
           localSlot.type = wasmType;
         } else if (standaloneRegExpMatchArrayType !== null && existingIsExternref && newIsRef) {
           localSlot.type = wasmType;

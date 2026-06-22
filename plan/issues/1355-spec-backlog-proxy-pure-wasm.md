@@ -19,6 +19,94 @@ note: "2026-06-15: elevated to TOP priority by stakeholder (Proxy/Promise/async-
 ---
 # #1355 — Proxy: pure-Wasm implementation
 
+## RE-MEASURE + VERDICT (architect, 2026-06-22, against main d970e19a)
+
+Re-grounded the whole Proxy lane in BOTH modes. The original "235 standalone
+fails / 21.5 %" framing is stale. Current authoritative gc baseline + a probed
+standalone run:
+
+| Category | host (gc) | standalone |
+|----------|-----------|------------|
+| `built-ins/Proxy`   | **115/311 = 37.0 %** | ~35/311 ≈ 11 % (revocable + standalone Reflect.* CEs dominate) |
+| `built-ins/Reflect` | **122/153 = 79.7 %** | ~39/153 ≈ 25 % |
+
+(Proxy/Reflect gc numbers verified against the committed
+`loopdive/js2wasm-baselines` JSONL; my in-process harness matched exactly:
+115/122.)
+
+**Verdict: the tractable lane this sprint is HOST mode, not standalone.** Host
+Proxy sits at 37 % and the failures cluster into a handful of *bounded,
+root-caused* bugs — NOT 235 scattered fails. The biggest is a single codegen
+bug (`new Proxy` result statically typed as its target's struct → every READ
+through the proxy traps), which is the concrete form of the
+`project_proxy_no_ts_type_brand` memory. Standalone pure-Wasm invariant
+enforcement remains a genuine multi-slice epic and stays deferred (see below).
+
+### Host-mode failure buckets (after subtracting deferred)
+
+Deferred / not Proxy bugs: **~48** — `*-realm.js` (need `$262.createRealm`,
+~38) + `*-using-with.js` / `call-with.js` (`with` is on the skip list, ~10).
+Subtracting those, the real, tractable host bugs are:
+
+| Bucket | ~count | Slice |
+|--------|--------|-------|
+| READ through a host proxy traps (`new Proxy` result typed as target struct → `struct.get` on a failed `ref.test` → null trap) | 32+ (folds in much of "OTHER") | **#2615** |
+| Present-but-non-callable trap silently dropped instead of TypeError | 19 | **#2616** |
+| Trap-thrown exceptions + §10.5 invariant TypeErrors swallowed by the boundary `try/catch` | ~40 | **#2617** |
+| apply/construct call path on a host Proxy (illegal cast; construct result ignored) | ~15 | **#2618** |
+
+These overlap (a `get/return-is-abrupt` test needs both #2615 and #2617), so the
+net pass-rate gain is less than the sum, but #2615 alone should move host Proxy
+well off 37 % and unblock acceptance criterion #1
+(`get/return-trap-result.js`). Realistic target after #2615–#2618: host
+`built-ins/Proxy` ≈ 60–70 % (the ≥75 % criterion is plausibly reachable but the
+`-realm` deferrals cap the ceiling at ~85 % until `$262.createRealm` exists).
+
+### Standalone — DEFERRED EPIC (with the staged plan below)
+
+Standalone Proxy at ~11 % is dominated by two infrastructure gaps, NOT trap
+logic:
+1. **`Proxy.revocable` / revoke synthesis is unimplemented standalone** —
+   `Proxy not supported in standalone` / `Proxy.revocable built-in` CEs across
+   the entire `revocable/**` directory (~14 CEs). This was explicitly deferred
+   in #1100 Phase 1.
+2. **Several standalone `Reflect.*` methods aren't wired** — `Reflect.setPrototypeOf`
+   (10 CE), `Reflect.defineProperty` (8), `Reflect.construct` (6),
+   `Reflect.getPrototypeOf` (6), `Reflect.apply`/`isExtensible`/`preventExtensions`
+   each ~5 — these CE before any Proxy trap can run. The standalone `Reflect.*`
+   path bypasses the Proxy dispatch (architect note below already flagged this).
+3. Pure-Wasm §10.5 invariant enforcement (the "Implementation Plan" sections
+   below) needs a standalone descriptor-attribute model (#797/#1460/#1462) and
+   touches ~13 internal-method dispatchers — genuinely multi-slice.
+
+**Staged standalone approach (predecessor-ordered):**
+- **Stage S0 (predecessor, separate issue when scheduled):** standalone
+  `Proxy.revocable` + revoke-closure synthesis (finish #1100's deferred piece).
+  Until this lands every `revocable/**` standalone test CEs.
+- **Stage S1:** wire the missing standalone `Reflect.*` methods
+  (setPrototypeOf/defineProperty/construct/getPrototypeOf/apply/isExtensible/
+  preventExtensions) so they route through the existing `$Proxy` dispatch
+  front-guards instead of CE-ing. This is the biggest standalone CE bucket and
+  is mechanical once the dispatch helpers (already present, Slices A–D) are
+  reused.
+- **Stage S2:** §10.5 invariant enforcement on the standalone dispatchers
+  (needs the descriptor-attribute bits — coordinate #797/#1460/#1462).
+- **Stage S3:** standalone `construct`/`apply` trap dispatch (the last two
+  traps; needs the standalone dynamic-new path).
+
+No standalone slices are manufactured for this sprint — S0/S1 are the next
+worthwhile ones and should be filed once a senior-dev/value-rep slot opens. The
+detailed pre-existing "Implementation Plan" + per-slice (A–D) sections below
+remain the authoritative standalone design for S1–S3.
+
+### Sub-issues filed (sprint 65, host-mode, parent #1355)
+- **#2615** — `new Proxy` result must be storage-typed externref, not the
+  target struct (read-through-proxy trap). *Highest value; land first.*
+- **#2616** — present non-callable trap → TypeError (host bridge).
+- **#2617** — propagate trap-thrown exceptions + §10.5 invariant TypeErrors
+  through the boundary helpers.
+- **#2618** — apply/construct call path on a host Proxy (depends on #2615).
+
 ## Problem
 
 `built-ins/Proxy`: **67 / 311 pass (21.5%) — 235 fails (146 assertion_fail, 53 type_error,

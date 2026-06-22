@@ -9,9 +9,20 @@
 # worktree bases, dashboards) — stays current.
 #
 # SAFE BY DESIGN: only fast-forwards a CLEAN checkout. If /workspace has
-# uncommitted tracked changes or has diverged, it WARNS and exits 0 without
-# touching anything — it never discards local work. (Agents shouldn't be
-# editing /workspace directly anyway; that's what worktrees are for.)
+# uncommitted tracked changes it WARNS and exits 0 without touching anything.
+# (Agents shouldn't be editing /workspace directly anyway; that's what worktrees
+# are for.)
+#
+# DISPOSABLE-DIVERGENCE AUTO-RESET (task #75): when the ff-only fails because
+# local main DIVERGED (has commits origin/main lacks), the script resets to
+# origin/main ONLY when every divergent commit is provably disposable — either
+# already-landed upstream by content (`git cherry` patch-id match) or touching
+# ONLY baseline/benchmark-result JSON, run logs, or live team-memory. If ANY
+# divergent commit carries real work (src/tests/plan/scripts/…), it refuses and
+# surfaces for manual resolution — it never discards real local work. This fixes
+# the recurring stale-/workspace problem where a superseded merge-queue baseline
+# commit or a worktree branch-rename left main diverged and the sync silently
+# gave up (the lead had to `git reset --hard origin/main` ~4×/session).
 #
 # EXCEPTION: changes under .claude/memory/ are ignored by the dirty check.
 # That dir is live team-memory the agents write continuously, so it is almost
@@ -27,6 +38,28 @@ WS="${1:-/workspace}"
 say() { echo "[sync-workspace-main] $*"; }
 
 [ -d "$WS/.git" ] || { say "no git repo at $WS — skipping"; exit 0; }
+
+# Keep the FORK's main synced with upstream (clean fast-forward ONLY). Agents
+# branch from origin/main and the statusline reads /workspace, so when the fork
+# (origin = ttraenkler/js2) lags upstream (loopdive/js2 — where PRs actually
+# merge) everything downstream silently rots: stale-base PRs go DIRTY, the
+# id-allocator collides, the statusline shows an old sprint. This advances
+# origin/main to upstream/main ONLY when origin is a strict ANCESTOR of upstream
+# (a real fast-forward) — never a force/rewrite (public main is append-only),
+# and a no-op when already current or when origin has its own commits.
+if git -C "$WS" remote get-url upstream >/dev/null 2>&1 \
+   && git -C "$WS" fetch upstream main --quiet 2>/dev/null; then
+  o=$(git -C "$WS" rev-parse origin/main 2>/dev/null)
+  u=$(git -C "$WS" rev-parse upstream/main 2>/dev/null)
+  if [ -n "$o" ] && [ -n "$u" ] && [ "$o" != "$u" ] \
+     && git -C "$WS" merge-base --is-ancestor "$o" "$u" 2>/dev/null; then
+    if git -C "$WS" push origin "$u:refs/heads/main" --quiet 2>/dev/null; then
+      say "synced fork origin/main -> upstream/main ($(echo "$u" | cut -c1-9))"
+    else
+      say "WARNING: upstream->origin/main fast-forward push failed (perms/protection?)"
+    fi
+  fi
+fi
 
 git -C "$WS" fetch origin main --quiet 2>/dev/null || { say "fetch failed — skipping"; exit 0; }
 
@@ -50,7 +83,69 @@ fi
 
 if git -C "$WS" merge --ff-only origin/main >/dev/null 2>&1; then
   say "fast-forwarded $local_sha -> $main_sha"
+  exit 0
+fi
+
+# ── Disposable-divergence auto-reset (task #75) ─────────────────────────────
+# The ff-only above failed: local main has commit(s) that are NOT ancestors of
+# origin/main (it DIVERGED, not merely lagged). This recurs because /workspace
+# main occasionally lands on a commit that origin/main later supersedes — most
+# often a github-actions[bot] baseline-refresh (`benchmarks/results/*`) the merge
+# queue produced, or a worktree branch-rename that left main on a feature-branch
+# tip. Those divergent commits carry NO real un-pushed work, so the safe recovery
+# is `reset --hard origin/main` — but ONLY when EVERY divergent commit is provably
+# disposable. If even one carries real work, refuse and surface (never discard).
+#
+# A divergent commit is DISPOSABLE iff either:
+#   (a) its content already landed on origin/main under a different SHA — i.e.
+#       `git cherry` marks it `-` (squash/rebase-merged; patch-id equivalent); or
+#   (b) it touches ONLY throwaway/auto-generated paths (baseline + benchmark
+#       result JSON, run logs, live team-memory) — never src/tests/plan/etc.
+divergent=$(git -C "$WS" rev-list origin/main..HEAD 2>/dev/null)
+if [ -z "$divergent" ]; then
+  # No divergent commits yet ff-only still failed (e.g. a stray detached/odd
+  # state) — surface rather than guess.
+  say "WARNING: cannot fast-forward but no divergent commits found — left at $local_sha. Resolve manually."
+  exit 0
+fi
+
+# `git cherry` prefixes `-` for commits whose patch-id is already upstream, `+`
+# for genuinely-new ones. Collect the SHAs still marked `+` (not yet landed).
+unlanded=$(git -C "$WS" cherry origin/main HEAD 2>/dev/null | sed -n 's/^+ //p')
+
+# Disposable-path allowlist (anchored): a `+` commit is still disposable if every
+# file it touches matches one of these prefixes. Anything else (src/, tests/,
+# plan/, scripts/, .github/, docs/, …) is real work → refuse.
+is_disposable_paths() {
+  # $1 = commit sha; returns 0 (true) iff ALL changed paths are disposable.
+  files=$(git -C "$WS" diff-tree --no-commit-id --name-only -r "$1" 2>/dev/null)
+  [ -n "$files" ] || return 1 # empty/merge commit — treat as non-disposable (surface)
+  printf '%s\n' "$files" | while IFS= read -r f; do
+    case "$f" in
+      benchmarks/results/* | public/benchmarks/* | website/public/benchmarks/* \
+        | website/benchmarks/* | runs/* | .claude/memory/*) : ;;
+      *) echo "REAL"; break ;;
+    esac
+  done | grep -q REAL && return 1
+  return 0
+}
+
+all_disposable=1
+for sha in $unlanded; do
+  if ! is_disposable_paths "$sha"; then
+    all_disposable=0
+    break
+  fi
+done
+
+if [ "$all_disposable" -eq 1 ]; then
+  ndiv=$(printf '%s\n' "$divergent" | grep -c .)
+  if git -C "$WS" reset --hard origin/main >/dev/null 2>&1; then
+    say "diverged on $ndiv disposable commit(s) (already-landed and/or baseline/benchmark/memory-only) — reset $local_sha -> $main_sha"
+  else
+    say "WARNING: disposable-divergence reset to origin/main FAILED — left at $local_sha. Resolve manually."
+  fi
 else
-  say "WARNING: cannot fast-forward (diverged?) — left at $local_sha. Resolve manually."
+  say "WARNING: cannot fast-forward — local main has divergent commit(s) with REAL work (not baseline/benchmark/memory). Left at $local_sha. Resolve manually."
 fi
 exit 0

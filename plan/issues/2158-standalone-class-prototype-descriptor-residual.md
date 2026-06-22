@@ -5,7 +5,8 @@ status: in-progress
 assignee: ttraenkler/cs-2158
 sprint: 65
 created: 2026-06-15
-updated: 2026-06-18
+updated: 2026-06-22
+children: [2610, 2611]
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -18,6 +19,82 @@ depends_on: [2101, 1965]
 ---
 
 # Standalone class/prototype/descriptor conformance residual
+
+## RE-MEASUREMENT (architect, 2026-06-22) — the ~1,388 estimate is stale; the umbrella is largely closed
+
+Per the sprint-65 directive, I re-ran the host-vs-standalone **compile** gap on
+**current `origin/main`** over the umbrella's scope — `test/language/{statements,
+expressions}/class` (incl. `/dstr`, `/elements`) and `test/built-ins/Object/
+{defineProperty,getOwnPropertyDescriptor,defineProperties,getOwnPropertyDescriptors,
+create,freeze,keys,getOwnPropertyNames}` — compiling each wrapped file twice
+(host `gc` vs `target:"standalone"`) and bucketing standalone failures where host
+compiles. (Harness: `.tmp/measure-2158-gap.mts`, using `tests/test262-runner`
+`parseMeta`/`wrapTest`/`shouldSkip`; stratified samples of 350–500 files since the
+full ~11 k×2 scan exceeds the 10-min probe budget.)
+
+**The class-element object model is essentially DONE in standalone.** Directly
+verified (compile host == standalone, both OK) on current main:
+
+- **Private names** — `#field`, `#method()`, `static #s`, `#x in o`, private
+  getter/setter, and the wrong-receiver `o.#x` **brand-check TypeError** path.
+  (#1364/#1680 landed; _no_ independent standalone gap.)
+- **Class elements** — field-init evaluation order (`b = this.a + 1`), computed
+  property names (string and `[Symbol.iterator]` method names), static blocks,
+  `super.m()` static, accessor descriptors via
+  `Object.getOwnPropertyDescriptor(C.prototype, "x")`.
+- **Descriptors on typed receivers** — `Object.defineProperty` /
+  `defineProperties` / `getOwnPropertyDescriptor` / `create` / `freeze` / `keys`
+  directories show **GAP ≈ 0** (the `__defineProperty_value`/`_accessor` native
+  store #1629b and the `__getOwnPropertyDescriptor` native read-back #1888-S5 are
+  in place).
+
+**Measured gap rates** (host-OK files that fail standalone):
+
+| Scope                                               |  sample host-OK | standalone GAP |   rate |
+| --------------------------------------------------- | --------------: | -------------: | -----: |
+| `class` (all, 500-strat)                            |             441 |             19 | ~4.3 % |
+| `class/dstr` (400-strat)                            | 222 (dstr only) |             21 | ~9.5 % |
+| `Object/{defineProperty,defineProperties,create,…}` |            ~180 |             ~1 | ~0.5 % |
+
+The residual is NOT broad class semantics — it concentrates in **three** clean
+buckets, two of which are substrate-independent and sliced below, one of which
+defers:
+
+| Bucket                                                                                                                              |                             share of class gap | disposition                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------: | -------------------------------------------------------------------- |
+| **A. `Symbol.<wellKnown>` value-read refusal**                                                                                      |                          ~76 % of `class/dstr` | **→ #2610** (constant-fold; NOT #2175/#2580-gated)                   |
+| **B. `__extern_length` #2043 late-import index-shift** (async-gen-meth dstr defaults)                                               |                          ~24 % of `class/dstr` | **→ #2611** (shift-orphan; substrate-independent)                    |
+| **C. `__get_builtin` on a builtin object** (`Object.getOwnPropertyDescriptor(Date,"UTC")`, `getOwnPropertyDescriptors(globalThis)`) | the `Object/getOwnPropertyDescriptor` residual | **→ #2175** (builtin-object representation — DEFERRED, do not slice) |
+
+### Deferred (do NOT slice under #2158)
+
+- **→ #2175** (standalone builtin-prototype object representation, in-progress):
+  every `__get_builtin` / `<Builtin>.prototype`-as-object / descriptor-on-a-
+  builtin-ctor case. `Object.getOwnPropertyDescriptor(Date, "UTC")` and
+  `getOwnPropertyDescriptors` over the global/builtin objects need the builtin
+  object model; they are gated on #2175 and must not be sliced here.
+- **→ #2580 / #2580-M2** (value-rep substrate — `.length`/descriptor reflection
+  on `any`/dynamically-mutated receivers): any descriptor/own-key read whose
+  receiver arrives as an opaque `externref` with no static brand. Already owned
+  by the value-rep substrate track; out of scope for #2158.
+
+### Sliced (substrate-independent, dev-tractable)
+
+- **#2610** — `Symbol.<wellKnown>` value-read folds to its i32 sentinel instead
+  of refusing. ~3-line fix in `hasNativeBuiltinConstantHandler`
+  (`property-access.ts`). **Est. ~150–250 standalone rows.** feasibility: easy.
+- **#2611** — `__extern_length` #2043 late-import index-shift orphan in
+  async-generator/generator class-method destructuring-param defaults. Native-
+  runtime-body shift bookkeeping in `object-runtime.ts`. **Est. ~60–90 rows.**
+  feasibility: medium. (Overlaps #2610 on iterator-error-path tests — both
+  needed for those to pass at runtime.)
+
+**Conclusion:** #2158 should be re-scoped from a "~1,388-test epic" to "two clean
+residual bugs (#2610, #2611) plus a pointer to #2175/#2580 for the rest." After
+#2610 + #2611 land, re-measure; the expected remaining class/Object standalone
+gap is small and #2175/#2580-bound. The historical 7163-bucket framing below is
+superseded — that count was a broad classifier catch-all dominated by the
+builtin-prototype-value-read gap (#2175), not class-element semantics.
 
 ## Problem
 
@@ -118,27 +195,27 @@ classifier (`scripts/build-test262-report.mjs` matcher order) over
 **exactly (7163)**. The bucket matcher is broad — it scoops any record whose
 path contains `…/class/`, `private`, `computed-property-names`, or whose
 **error text contains `prototype`** — so it is dominated by failures that are
-*not* class-element semantics at all. Verified breakdown of the 7163:
+_not_ class-element semantics at all. Verified breakdown of the 7163:
 
-| Family | Count | Status |
-|--------|------:|--------|
-| **A. `<Builtin>.prototype.<member>` value read CE** (S6-b refusal) | **2846** | compile_error |
-| **B. `Symbol.<wellKnown>` value read CE** (species/hasInstance/…) | **273** | compile_error |
-| C. `<Ctor>.<staticProp>` value read CE (Object.getPrototypeOf, Promise.resolve…) | 14 | compile_error |
-| D. other `not (yet) supported in --target standalone` CE | 573 | compile_error |
-| E. `Object.prototype.toString.call(...)` CE | 70 | compile_error |
-| F. invalid-Wasm-binary CE (validator type-mismatch) | 384 | compile_error |
-| G. CE residual (uncategorized) | 80 | compile_error |
-| H. genuinely-class FAILs (private 232, computed-name 96, class-lang 287) | ~615 | fail |
-| I. ToPrimitive ("Cannot convert object to primitive") | 326 | fail+CE |
-| J. `__str_flatten` null-deref | 105 | fail |
-| K. illegal-cast at runtime | 84 | fail |
-| L. misc fail residual | ~1700 | fail |
+| Family                                                                           |    Count | Status        |
+| -------------------------------------------------------------------------------- | -------: | ------------- |
+| **A. `<Builtin>.prototype.<member>` value read CE** (S6-b refusal)               | **2846** | compile_error |
+| **B. `Symbol.<wellKnown>` value read CE** (species/hasInstance/…)                |  **273** | compile_error |
+| C. `<Ctor>.<staticProp>` value read CE (Object.getPrototypeOf, Promise.resolve…) |       14 | compile_error |
+| D. other `not (yet) supported in --target standalone` CE                         |      573 | compile_error |
+| E. `Object.prototype.toString.call(...)` CE                                      |       70 | compile_error |
+| F. invalid-Wasm-binary CE (validator type-mismatch)                              |      384 | compile_error |
+| G. CE residual (uncategorized)                                                   |       80 | compile_error |
+| H. genuinely-class FAILs (private 232, computed-name 96, class-lang 287)         |     ~615 | fail          |
+| I. ToPrimitive ("Cannot convert object to primitive")                            |      326 | fail+CE       |
+| J. `__str_flatten` null-deref                                                    |      105 | fail          |
+| K. illegal-cast at runtime                                                       |       84 | fail          |
+| L. misc fail residual                                                            |    ~1700 | fail          |
 
 **The single dominating root cause (A, 2846) is the builtin-prototype-method-
 as-value gap, not class semantics.** Reading `Array.prototype.push`,
 `String.prototype.charAt`, `Object.prototype.toString`, `Date.prototype.getTime`,
-etc. as a *value* in `--target standalone` hits the refusal at
+etc. as a _value_ in `--target standalone` hits the refusal at
 `property-access.ts:2234` (`reportUnsupportedStandaloneBuiltinValueRead`).
 
 ### Root cause (Family A/B/C)
@@ -153,6 +230,7 @@ comment: `// S3 (reserved, not yet wired): "%TypedArray%", Int8Array, …`.
 The extension point is a **pure registration**: a builtin that calls
 `registerNativeProtoBuiltin(ctx, glue)` with a `NativeProtoBuiltinGlue`
 (`native-proto.ts:142`) automatically gets, host-free:
+
 - `<Builtin>.prototype` as a value → `emitLazyNativeProtoGet`
   (`property-access.ts:2222`),
 - `<Builtin>.prototype.<member>` value read → `tryCompileStandaloneBuiltinProtoMemberRead`
@@ -193,7 +271,7 @@ Reference: `ensureRegExpNativeProtoGlue` + `emitRegExpProtoMemberBody`
    arm). This is the ONE edit that activates routing for the builtin.
 
 **Reuse existing native bodies.** Each builtin family already has native
-method lowerings used by the *direct-call* path (e.g. `array-methods.ts`,
+method lowerings used by the _direct-call_ path (e.g. `array-methods.ts`,
 `src/codegen/*`). `emitMemberBody` should delegate to those existing emitters
 operating on the recovered struct/value, NOT re-implement them. The new code is
 the brand-recovery wrapper + result boxing, not new method semantics.
@@ -207,6 +285,7 @@ Brands + glue for `Array`, the 11 concrete TypedArray views + `%TypedArray%`,
 existing array/typedarray method emitters in `array-methods.ts` on the recovered
 vec/byte-carrier value. The TypedArray views share one glue parameterized by
 element type. This is the single biggest CE win.
+
 - Files: `native-proto.ts` (brand table), new
   `src/codegen/array-native-proto.ts` (glue + `emitMemberBody`),
   `property-access.ts:449` (`tryEnsureNativeProtoBrand` arms), `array-methods.ts`
@@ -215,7 +294,7 @@ element type. This is the single biggest CE win.
   emitter; box ref results with `extern.convert_any`.
 - CE reduction: **≈1253**.
 - Acceptance: `Int8Array.prototype` / `Array.prototype` `built-in static
-  property value read` CEs clear; `built-ins/Array/prototype` (2047 in bucket)
+property value read` CEs clear; `built-ins/Array/prototype` (2047 in bucket)
   and `built-ins/TypedArray/prototype` (523) compile. Sample sigs
   `…Array.prototype built-in static property value read…` and
   `…Int8Array.prototype…` gone.
@@ -229,11 +308,12 @@ extend the standalone slice), `hasOwnProperty`, `isPrototypeOf`,
 `call`, `apply`, `bind`, `toString`. The `Object.prototype.toString.call(x)`
 form (70 CEs) is the same glue once `Object.prototype.toString` is a real
 closure value.
+
 - Files: `native-proto.ts`, new `src/codegen/object-native-proto.ts`,
   `property-access.ts:449`, reuse `object-ops.ts` / existing toString-tag logic.
 - CE reduction: **≈495**.
 - Acceptance: `Object.prototype` / `Function.prototype` `…static property value
-  read…` CEs clear; `Object.prototype.toString.call(...) is not yet supported`
+read…` CEs clear; `Object.prototype.toString.call(...) is not yet supported`
   CE gone; `built-ins/Object/prototype` (147) + `built-ins/Function/prototype`
   (201) compile.
 
@@ -254,6 +334,7 @@ fires where the i32 result is consumed by a symbol-keyed computed access
 raw `!== undefined` comparison until a symbol-as-externref boxing exists (or box
 the well-known symbol to a stable externref sentinel so both compose — preferred
 if cheap). Decide via the failing sample signatures.
+
 - Files: `property-access.ts` (`hasNativeBuiltinConstantHandler` + the deferral
   gate at `:2214`/`:2238`).
 - CE reduction: **≈273** (minus the `!== undefined` subset, ~30).
@@ -270,12 +351,13 @@ The long tail of Family A: `String.prototype.*` (317), `Date.prototype.*` (283),
 family. Lower priority than 1–2 only because it spans more builtins (more glue
 files) for a comparable total; split into 4a (String/Number/Boolean/BigInt) and
 4b (Date/Error/collections) if a single PR is too large.
+
 - Files: `native-proto.ts`, per-family `*-native-proto.ts` glue,
   `property-access.ts:449`, reuse existing string/number/date/collection
   emitters.
 - CE reduction: **≈960**.
 - Acceptance: the remaining `<Builtin>.prototype built-in static property value
-  read` CEs across String/Number/Boolean/BigInt/Date/Error/Set/Map/Weak*/Promise
+read` CEs across String/Number/Boolean/BigInt/Date/Error/Set/Map/Weak\*/Promise
   clear. After slices 1–4 the entire Family-A+B+E (~3700) CE class is gone.
 
 **Slice 5 — invalid-Wasm-binary + ToPrimitive residual (Family F+I, ≈710).**
@@ -290,6 +372,7 @@ the standalone ToPrimitive/`@@toPrimitive` dispatch over class structs
 (`index.ts:1586`/`:5288` already has the class-`[Symbol.toPrimitive]` dispatch
 scaffold). Re-validate against repros before sizing — some F entries may be
 collateral that slices 1–4 already fix.
+
 - Files: `type-coercion.ts`, `property-access.ts`, `index.ts` (ToPrimitive
   dispatch), per WAT diagnosis.
 - Reduction: **≈710** (re-measure after slices 1–4 land).
@@ -297,7 +380,7 @@ collateral that slices 1–4 already fix.
 
 **Slice 6 — genuinely-class FAILs: private fields/methods + computed property
 names (Family H, ≈615).**
-The *actual* class-element semantics residual: private fields/methods/brand
+The _actual_ class-element semantics residual: private fields/methods/brand
 checks (232 — `built-ins`/`language/.../private`), computed-property-name class
 fields/accessors from `await`/function expressions (96 — the `cpn-class-*`
 sample files), and general class-lang fails (287). These are the only slices
@@ -306,11 +389,12 @@ that touch class codegen proper (`class-bodies.ts`, `index.ts`
 fetched ES spec section (§15.7 class definitions, §15.7.10 private names) before
 implementing — these are not a single mechanism. Lowest impact-per-effort of the
 six; schedule after the CE families are cleared so the FAIL signal is clean.
+
 - Files: `src/codegen/class-bodies.ts`, `src/codegen/index.ts`,
   `src/codegen/literals.ts` (computed key resolution).
 - Reduction: **≈615** (subdivide per cluster; re-measure after slice 5).
 - Acceptance: `cpn-class-expr-*-computed-property-name-from-await/function-
-  expression` sample files pass; private-field/brand-check class tests pass.
+expression` sample files pass; private-field/brand-check class tests pass.
 
 ### Sequencing & risk
 
@@ -335,6 +419,7 @@ six; schedule after the CE families are cleared so the FAIL signal is clean.
   1–4 merge; their counts are downstream of the CE fixes and will shift.
 
 ### Test files to verify (per slice)
+
 - S1: `test/built-ins/Array/prototype/*`, `test/built-ins/TypedArray/prototype/*`,
   `test/built-ins/DataView/prototype/*`, `test/built-ins/ArrayBuffer/prototype/*`
 - S2: `test/built-ins/Object/prototype/*`, `test/built-ins/Function/prototype/*`,
@@ -343,7 +428,7 @@ six; schedule after the CE families are cleared so the FAIL signal is clean.
   `c[Symbol.x]`
 - S4: `test/built-ins/{String,Number,Date,Set,Map,Promise,Error}/prototype/*`
 - S6: `test/language/expressions/class/cpn-class-expr-*-computed-property-name-
-  from-{await,function}-expression.js`, `test/language/.../class/.../private*`
+from-{await,function}-expression.js`, `test/language/.../class/.../private*`
 
 Add standalone equivalence regressions under
 `tests/issue-2158-*-standalone.test.ts` per slice (mirror
@@ -354,6 +439,7 @@ Add standalone equivalence regressions under
 ## Implementation notes — Slice F-1 (2026-06-18, cs-2158): dstr-param default funcIdx-shift invalid-Wasm
 
 ### What
+
 Fixes a concrete Family-F (invalid-Wasm-binary) defect that hit a large slice
 of the class `dstr/` failures (e.g.
 `class/dstr/meth-dflt-obj-ptrn-prop-ary`, `private-meth-dflt-obj-ptrn-prop-ary`,
@@ -369,6 +455,7 @@ pointing at `$__object_seal` (an externref producer) instead of
 `$__extern_is_undefined` (an i32 producer).
 
 ### Root cause — a funcIdx index-shift orphan (addUnionImports/#1109 family)
+
 `destructureParamObject`'s externref **struct-fast-path**
 (`destructuring-params.ts`, the `ref.test structTypeIdx ? then : else` arm)
 detaches the OUTER function body to a then/else branch buffer with a **plain
@@ -392,6 +479,7 @@ moved `__extern_is_undefined` to 116 but the emitted call stayed at 114 (= now
 unreachable from the fctx body chain.
 
 ### Fix
+
 `src/codegen/destructuring-params.ts` — in the struct-fast-path branch, track the
 orphaned outer `savedBody` in `ctx.liveBodies` for the recursion window
 (add before the then/else compile, delete after the `if` is assembled),
@@ -401,6 +489,7 @@ double-delete (keeps the #2182 liveBodies-balance invariant intact). +16 lines,
 no behavior change to the non-orphan paths.
 
 ### Verification
+
 - `tests/issue-2158-dstr-param-default-nested-pattern.test.ts` (8 cases):
   standalone now VALIDATES (`WebAssembly.compile` succeeds — the direct
   regression guard for the orphan) for object-prop→array, class-method,
@@ -415,7 +504,8 @@ no behavior change to the non-orphan paths.
   (they import a non-existent `./helpers.js`) — pre-existing, unrelated.
 
 ### Remaining (still open under this umbrella)
-- **Host-import leak in standalone**: these shapes now compile to *valid* Wasm
+
+- **Host-import leak in standalone**: these shapes now compile to _valid_ Wasm
   but still emit `env::__array_from_iter_n` (+ `env::__get_undefined` via
   `emitBoundsCheckedArrayGetUndef` bypassing `ensureGetUndefined`), which
   standalone cannot satisfy at instantiation. Needs a Wasm-native array-from-iter

@@ -398,7 +398,8 @@ function verifyBlock(
           const operandT = operandValType(func, block, instr.value, localDefs);
           if (operandT && !unionContains(instr.toType.members, operandT)) {
             errors.push({
-              message: `box operand type ${operandT.kind} is not a member of union<${instr.toType.members.map((m) => m.kind).join(",")}>`,
+              // #1926 — members are IrTypes; describe each member's ValType kind.
+              message: `box operand type ${operandT.kind} is not a member of union<${instr.toType.members.map((m) => asVal(m)?.kind ?? m.kind).join(",")}>`,
               func: func.name,
               block: block.id as number,
             });
@@ -416,7 +417,8 @@ function verifyBlock(
           });
         } else if (operandIr && !unionContains(operandIr.members, instr.tag)) {
           errors.push({
-            message: `${instr.kind} tag ${instr.tag.kind} is not a member of union<${operandIr.members.map((m) => m.kind).join(",")}>`,
+            // #1926 — members are IrTypes; describe each member's ValType kind.
+            message: `${instr.kind} tag ${instr.tag.kind} is not a member of union<${operandIr.members.map((m) => asVal(m)?.kind ?? m.kind).join(",")}>`,
             func: func.name,
             block: block.id as number,
           });
@@ -670,8 +672,13 @@ function operandValType(
   return null;
 }
 
-function unionContains(members: readonly ValType[], target: ValType): boolean {
-  for (const m of members) {
+// #1926 — `members` are IrTypes now; unwrap each `val`-kind member to its
+// ValType and compare against the (scalar) `target` ValType. A non-`val`
+// member can never match a scalar target, so it's skipped.
+function unionContains(members: readonly IrType[], target: ValType): boolean {
+  for (const irMember of members) {
+    const m = asVal(irMember);
+    if (!m) continue;
     if (m.kind !== target.kind) continue;
     if (m.kind === "ref" || m.kind === "ref_null") {
       if ((m as { typeIdx: number }).typeIdx !== (target as { typeIdx: number }).typeIdx) continue;

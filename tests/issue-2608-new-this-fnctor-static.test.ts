@@ -1,6 +1,8 @@
-// #2586 — `new this(...)` inside an fnctor (function-style constructor) STATIC
+// #2608 — `new this(...)` inside an fnctor (function-style constructor) STATIC
 // method does not resolve `this` to the constructor and/or mis-forwards its
 // args. This is compiled acorn's 4th dogfood blocker: acorn's
+// (re-allocated from a hand-picked #2586 that collided with
+//  2586-standalone-arrayfrom-map.md on main — #2531 hand-pick race)
 // `Parser.parse = function(input, options){ return new this(options, input).parse() }`
 // produces a Parser with an EMPTY `this.input`, so the tokenizer scans no
 // characters and `parseTopLevel` loops forever.
@@ -12,7 +14,7 @@
 // `new this` arm (new-super.ts) is skipped and the callee drops to the generic
 // dynamic-`new` path on a non-constructible wrapped-closure externref.
 //
-// SKIPPED until the fix lands (see plan/issues/2586-...md for the fix
+// SKIPPED until the fix lands (see plan/issues/2608-...md for the fix
 // direction: resolve the rewritten-`this` callee to the enclosing fnctor ctor
 // + forward args in order to `<Class>_new`).
 import { describe, expect, it } from "vitest";

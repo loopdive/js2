@@ -1035,10 +1035,12 @@ export function lowerIrFunctionBody<S>(
         if (!valueType) {
           throw new Error(`ir/lower: box value must be a val-kind IrType (${func.name})`);
         }
-        const union = resolver.resolveUnion?.(instr.toType.members);
+        // #1926 — unwrap each member IrType to its backend ValType.
+        const members = instr.toType.members.map((m) => memberValType(m, func.name));
+        const union = resolver.resolveUnion?.(members);
         if (!union) {
           throw new Error(
-            `ir/lower: resolver cannot lower union<${instr.toType.members.map((m) => m.kind).join(",")}> (${func.name})`,
+            `ir/lower: resolver cannot lower union<${members.map((m) => m.kind).join(",")}> (${func.name})`,
           );
         }
         const tag = union.tagFor(valueType);
@@ -1058,10 +1060,12 @@ export function lowerIrFunctionBody<S>(
         if (valueIrType.kind !== "union") {
           throw new Error(`ir/lower: unbox value must be a union IrType, got ${valueIrType.kind} (${func.name})`);
         }
-        const union = resolver.resolveUnion?.(valueIrType.members);
+        // #1926 — unwrap each member IrType to its backend ValType.
+        const unboxMembers = valueIrType.members.map((m) => memberValType(m, func.name));
+        const union = resolver.resolveUnion?.(unboxMembers);
         if (!union) {
           throw new Error(
-            `ir/lower: resolver cannot lower union<${valueIrType.members.map((m) => m.kind).join(",")}> (${func.name})`,
+            `ir/lower: resolver cannot lower union<${unboxMembers.map((m) => m.kind).join(",")}> (${func.name})`,
           );
         }
         emitValue(instr.value, out);
@@ -1078,10 +1082,12 @@ export function lowerIrFunctionBody<S>(
         if (valueIrType.kind !== "union") {
           throw new Error(`ir/lower: tag.test value must be a union IrType, got ${valueIrType.kind} (${func.name})`);
         }
-        const union = resolver.resolveUnion?.(valueIrType.members);
+        // #1926 — unwrap each member IrType to its backend ValType.
+        const tagTestMembers = valueIrType.members.map((m) => memberValType(m, func.name));
+        const union = resolver.resolveUnion?.(tagTestMembers);
         if (!union) {
           throw new Error(
-            `ir/lower: resolver cannot lower union<${valueIrType.members.map((m) => m.kind).join(",")}> (${func.name})`,
+            `ir/lower: resolver cannot lower union<${tagTestMembers.map((m) => m.kind).join(",")}> (${func.name})`,
           );
         }
         const tag = union.tagFor(instr.tag);
@@ -1265,9 +1271,11 @@ export function lowerIrFunctionBody<S>(
         if (cellT.kind !== "boxed") {
           throw new Error(`ir/lower: refcell.get cell must be boxed, got ${cellT.kind} (${func.name})`);
         }
-        const cell = resolver.resolveRefCell?.(cellT.inner);
+        // #1926 — unwrap the inner IrType to its backend ValType.
+        const getInner = memberValType(cellT.inner, func.name);
+        const cell = resolver.resolveRefCell?.(getInner);
         if (!cell) {
-          throw new Error(`ir/lower: resolver cannot lower refcell<${cellT.inner.kind}> (${func.name})`);
+          throw new Error(`ir/lower: resolver cannot lower refcell<${getInner.kind}> (${func.name})`);
         }
         emitValue(instr.cell, out);
         emitter.pushRaw(out, {
@@ -1282,9 +1290,11 @@ export function lowerIrFunctionBody<S>(
         if (cellT.kind !== "boxed") {
           throw new Error(`ir/lower: refcell.set cell must be boxed, got ${cellT.kind} (${func.name})`);
         }
-        const cell = resolver.resolveRefCell?.(cellT.inner);
+        // #1926 — unwrap the inner IrType to its backend ValType.
+        const setInner = memberValType(cellT.inner, func.name);
+        const cell = resolver.resolveRefCell?.(setInner);
         if (!cell) {
-          throw new Error(`ir/lower: resolver cannot lower refcell<${cellT.inner.kind}> (${func.name})`);
+          throw new Error(`ir/lower: resolver cannot lower refcell<${setInner.kind}> (${func.name})`);
         }
         emitValue(instr.cell, out);
         emitValue(instr.value, out);
@@ -2805,6 +2815,25 @@ function collectTerminatorUses(block: IrBlock): readonly IrValueId[] {
  * to that struct. Throws if the resolver cannot lower the type — callers must
  * reject such IR before reaching this function.
  */
+/**
+ * #1926 — unwrap a `union` member / `boxed`-`refcell` inner IrType to the
+ * concrete backend ValType the legacy union / ref-cell registries key on.
+ *
+ * V1 unions admit only scalar (`f64`/`i32`) members and ref cells only box
+ * primitives, so every member / inner here is a `val`-kind IrType. We assert
+ * that explicitly: a non-`val` member means an upstream pass admitted a
+ * symbolic kind into a union/box the backend registries can't key on, which
+ * is a selector bug — failing loud here is correct (and matches the existing
+ * "resolver cannot lower …" throws).
+ */
+function memberValType(t: IrType, funcName: string): ValType {
+  const v = asVal(t);
+  if (!v) {
+    throw new Error(`ir/lower: union/boxed member must be a val-kind IrType, got ${t.kind} (${funcName})`);
+  }
+  return v;
+}
+
 export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcName: string): ValType {
   if (t.kind === "val") return t.val;
   if (t.kind === "string") {
@@ -2857,24 +2886,29 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     return { kind: "externref" };
   }
   if (t.kind === "union") {
-    const union = resolver.resolveUnion?.(t.members);
+    // #1926 — unwrap each member IrType to its backend ValType for the
+    // legacy union registry.
+    const members = t.members.map((m) => memberValType(m, funcName));
+    const union = resolver.resolveUnion?.(members);
     if (!union) {
-      throw new Error(`ir/lower: resolver cannot lower union<${t.members.map((m) => m.kind).join(",")}> (${funcName})`);
+      throw new Error(`ir/lower: resolver cannot lower union<${members.map((m) => m.kind).join(",")}> (${funcName})`);
     }
     return { kind: "ref", typeIdx: union.typeIdx };
   }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell
   // registry so legacy and IR ref cells share one WasmGC struct.
+  // #1926 — unwrap the inner IrType to its backend ValType.
+  const innerVal = memberValType(t.inner, funcName);
   if (resolver.resolveRefCell) {
-    const cell = resolver.resolveRefCell(t.inner);
+    const cell = resolver.resolveRefCell(innerVal);
     if (cell) {
       return { kind: "ref", typeIdx: cell.typeIdx };
     }
   }
-  const box = resolver.resolveBoxed?.(t.inner);
+  const box = resolver.resolveBoxed?.(innerVal);
   if (!box) {
-    throw new Error(`ir/lower: resolver cannot lower boxed<${t.inner.kind}> (${funcName})`);
+    throw new Error(`ir/lower: resolver cannot lower boxed<${innerVal.kind}> (${funcName})`);
   }
   return { kind: "ref", typeIdx: box.typeIdx };
 }
@@ -2899,8 +2933,9 @@ function describeIrTypeShallow(t: IrType): string {
   }
   if (t.kind === "class") return `class<${t.shape.className}>`;
   if (t.kind === "extern") return `extern<${t.className}>`;
-  if (t.kind === "union") return `union<${t.members.map((m) => m.kind).join(",")}>`;
-  return `boxed<${t.inner.kind}>`;
+  // #1926 — union members / boxed inner are IrTypes; recurse.
+  if (t.kind === "union") return `union<${t.members.map(describeIrTypeShallow).join(",")}>`;
+  return `boxed<${describeIrTypeShallow(t.inner)}>`;
 }
 
 /**

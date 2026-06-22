@@ -539,7 +539,31 @@ export function compileBinaryExpression(
     }
 
     const rightType = ctx.checker.getTypeAtLocation(expr.right);
-    const rightWasm = resolveWasmType(ctx, rightType);
+    let rightWasm = resolveWasmType(ctx, rightType);
+
+    // (#2617) The TS type of a `new Proxy(...)`-bound identifier is its TARGET
+    // type (ProxyConstructor returns T), so `resolveWasmType` yields the target
+    // struct and the static `in` fold below would constant-fold `'k' in p` to
+    // the target's field membership — never calling `__extern_has`, so a `has`
+    // trap (incl. one that throws, #2617) never runs. But #2615 slots that
+    // variable as `externref`. Trust the ACTUAL slot type: if the receiver is an
+    // identifier whose local slot is externref/anyref, treat the RHS as externref
+    // so the `in` routes through `__extern_has` (the host Proxy MOP).
+    if (
+      (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") &&
+      ts.isIdentifier(expr.right) &&
+      fctx.localMap.has(expr.right.text)
+    ) {
+      const idx = fctx.localMap.get(expr.right.text)!;
+      const entry = idx < fctx.params.length ? fctx.params[idx] : fctx.locals[idx - fctx.params.length];
+      const slotType =
+        entry && typeof entry === "object" && "type" in entry
+          ? (entry as { type: ValType }).type
+          : (entry as ValType | undefined);
+      if (slotType?.kind === "externref" || slotType?.kind === "anyref") {
+        rightWasm = slotType;
+      }
+    }
 
     // Get struct field names if available; detect vec (array) types
     let structFieldNames: string[] | null = null;
@@ -2139,16 +2163,36 @@ export function compileBinaryExpression(
       const unboxBool = ctx.funcMap.get("__unbox_boolean")!;
       const toBigint = ctx.funcMap.get("__to_bigint")!;
 
+      // (#2605) Box an operand to externref for the tag-dispatch below. A
+      // **boolean** i32 MUST be boxed via `__box_boolean` so its runtime tag is
+      // `boolean`, not `number`: the default `coerceType` i32→externref path uses
+      // `f64.convert_i32_s` + `__box_number`, which turns `true` into the number
+      // `1`. The other operand (e.g. an `any`-typed boxed boolean `true`, tag
+      // `boolean`) would then mismatch on tag and fall through to reference
+      // identity → wrong `false`. This is the dominant cause of standalone
+      // `assert.sameValue(x instanceof Set, true)`-style rows failing: the harness
+      // passes a boolean into an `any` param and compares it with `===`/`!==`
+      // against a `boolean` literal (#2605). Boxing booleans as booleans makes the
+      // "both typeof boolean → unbox i32, compare" arm fire correctly.
+      const boxOperandToExternref = (operandType: ValType, isBoolOperand: boolean): void => {
+        if (operandType.kind === "externref") return;
+        if (operandType.kind === "i32" && isBoolOperand) {
+          // addUnionImports (already called above) installs __box_boolean.
+          const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+          if (boxBoolIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx: boxBoolIdx });
+            return;
+          }
+        }
+        coerceType(ctx, fctx, operandType, { kind: "externref" });
+      };
+
       // Coerce both operands to externref temps (right is on top of stack).
       const rTmp = allocTempLocal(fctx, { kind: "externref" });
-      if (rightType.kind !== "externref") {
-        coerceType(ctx, fctx, rightType, { kind: "externref" });
-      }
+      boxOperandToExternref(rightType, rightIsBool);
       fctx.body.push({ op: "local.set", index: rTmp });
       const lTmp = allocTempLocal(fctx, { kind: "externref" });
-      if (leftType.kind !== "externref") {
-        coerceType(ctx, fctx, leftType, { kind: "externref" });
-      }
+      boxOperandToExternref(leftType, leftIsBool);
       fctx.body.push({ op: "local.set", index: lTmp });
 
       // (#1910 R1) §7.2.13 steps 11-12 — reduce an Object operand to a primitive
@@ -3802,6 +3846,109 @@ export function emitToInt32(fctx: FunctionContext): void {
   fctx.body.push({ op: "f64.sub" });
   fctx.body.push({ op: "i32.trunc_sat_f64_u" });
   releaseTempLocal(fctx, tmp);
+}
+
+/**
+ * (#2593) ToUint8Clamp (§7.1.x, the `Uint8ClampedArray` element conversion). Input
+ * f64 on the stack → clamped i32 in [0, 255]. NOT modulo: NaN→0, ≤0→0, ≥255→255,
+ * else round-HALF-TO-EVEN (1.5→2, 2.5→2, 0.5→0). Differs from every other integer
+ * view (which truncate modulo via the packed `array.set`), so `Uint8ClampedArray`
+ * writes route through this helper before the store.
+ */
+export function emitToUint8Clamp(fctx: FunctionContext): void {
+  // x on stack (f64) → clamped i32 in [0,255]. Use DEDICATED locals (no reuse) to
+  // keep the stack types unambiguous. Result is built as an i32 in `out`.
+  const x = allocTempLocal(fctx, { kind: "f64" });
+  const f = allocTempLocal(fctx, { kind: "f64" }); // floor(x)
+  const d = allocTempLocal(fctx, { kind: "f64" }); // x - floor(x)
+  const out = allocTempLocal(fctx, { kind: "i32" });
+  fctx.body.push({ op: "local.set", index: x } as Instr);
+
+  // roundHalfEven(x) → i32 (only evaluated when 0 < x < 255, so trunc is exact):
+  //   f = floor(x); d = x - f;
+  //   d<0.5 → f ; d>0.5 → f+1 ; d==0.5 → (f even ? f : f+1)
+  const roundHalfEven: Instr[] = [
+    { op: "local.get", index: x } as Instr,
+    { op: "f64.floor" } as Instr,
+    { op: "local.set", index: f } as Instr,
+    { op: "local.get", index: x } as Instr,
+    { op: "local.get", index: f } as Instr,
+    { op: "f64.sub" } as Instr,
+    { op: "local.set", index: d } as Instr,
+    // d < 0.5 ?
+    { op: "local.get", index: d } as Instr,
+    { op: "f64.const", value: 0.5 } as Instr,
+    { op: "f64.lt" } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } as ValType },
+      then: [{ op: "local.get", index: f } as Instr],
+      else: [
+        // d > 0.5 ?
+        { op: "local.get", index: d } as Instr,
+        { op: "f64.const", value: 0.5 } as Instr,
+        { op: "f64.gt" } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "f64" } as ValType },
+          then: [
+            { op: "local.get", index: f } as Instr,
+            { op: "f64.const", value: 1 } as Instr,
+            { op: "f64.add" } as Instr,
+          ],
+          else: [
+            // tie (d == 0.5): round to even. f even ⇔ floor(f/2) == f/2.
+            { op: "local.get", index: f } as Instr,
+            { op: "f64.const", value: 0.5 } as Instr,
+            { op: "f64.mul" } as Instr,
+            { op: "local.set", index: d } as Instr, // d := f/2 (reuse d, no longer needed)
+            { op: "local.get", index: d } as Instr,
+            { op: "f64.floor" } as Instr,
+            { op: "local.get", index: d } as Instr,
+            { op: "f64.eq" } as Instr,
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "f64" } as ValType },
+              then: [{ op: "local.get", index: f } as Instr],
+              else: [
+                { op: "local.get", index: f } as Instr,
+                { op: "f64.const", value: 1 } as Instr,
+                { op: "f64.add" } as Instr,
+              ],
+            } as Instr,
+          ],
+        } as Instr,
+      ],
+    } as Instr,
+    { op: "i32.trunc_sat_f64_u" } as Instr,
+    { op: "local.set", index: out } as Instr,
+  ];
+
+  // Clamp: x>=255 → 255 ; x>0 (NaN-false) → round ; else → 0.
+  fctx.body.push({ op: "local.get", index: x } as Instr);
+  fctx.body.push({ op: "f64.const", value: 255 } as Instr);
+  fctx.body.push({ op: "f64.ge" } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [{ op: "i32.const", value: 255 } as Instr, { op: "local.set", index: out } as Instr],
+    else: [
+      { op: "local.get", index: x } as Instr,
+      { op: "f64.const", value: 0 } as Instr,
+      { op: "f64.gt" } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: roundHalfEven,
+        else: [{ op: "i32.const", value: 0 } as Instr, { op: "local.set", index: out } as Instr],
+      } as Instr,
+    ],
+  } as Instr);
+  fctx.body.push({ op: "local.get", index: out } as Instr);
+  releaseTempLocal(fctx, x);
+  releaseTempLocal(fctx, f);
+  releaseTempLocal(fctx, d);
+  releaseTempLocal(fctx, out);
 }
 
 /** Truncate two f64 operands to i32 via ToInt32, apply an i32 bitwise op, convert back to f64 */

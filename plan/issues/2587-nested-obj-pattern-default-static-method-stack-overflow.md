@@ -1,9 +1,11 @@
 ---
 id: 2587
 title: "compiler stack-overflow on nested object-pattern-with-default destructuring param in a (static) class method"
-status: ready
-sprint: Backlog
+status: done
+sprint: 65
 created: 2026-06-21
+completed: 2026-06-22
+assignee: ttraenkler/dev-acorn
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -48,9 +50,10 @@ The nested-pattern-with-initializer arm of the parameter-destructuring lowering:
 `src/codegen/destructuring-params.ts:~523-534` — the `__ext_dparam_nested_*`
 recursion (`destructureParamObjectExternref` / `destructureParamArray` recursing
 into the nested pattern) combined with the `element.initializer` default-eval
-+ `ctx.liveBodies` body-swap window. The recursion does not bottom out for a
-nested object pattern that itself carries a default object literal whose fields
-are again bindings — the default-eval re-enters the same nested-pattern compile.
+
+- `ctx.liveBodies` body-swap window. The recursion does not bottom out for a
+  nested object pattern that itself carries a default object literal whose fields
+  are again bindings — the default-eval re-enters the same nested-pattern compile.
 
 ## Suggested approach
 
@@ -70,3 +73,47 @@ are again bindings — the default-eval re-enters the same nested-pattern compil
 - The `class/dstr/*obj-ptrn*-{prop,elem}-*-init*` cluster no longer
   `compile_error`s.
 - No regression in the existing destructuring suites.
+
+## Resolution (2026-06-22, dev-acorn)
+
+**Already fixed on `origin/main`** (HEAD `45ae22b3301`). The stack overflow no
+longer reproduces — neither the minimal `static method({ w: { x, y, z } = {...} })`
+case nor the full double-default test262 shape
+(`{ w: { x, y, z } = { x:4, y:5, z:6 } } = { w: { x:10, z:7 } }`) throws.
+
+The issue was filed 2026-06-21 on then-clean main; the nested
+destructuring-param-default work that landed during sprint 65 resolved it,
+specifically:
+
+- **#2158** (`da9a26cdd05`) — "dstr-param default with nested sub-pattern emits
+  valid Wasm"
+- **#2568** (`2f24ab71b2e`) — "two-level nested destructuring-param default
+  reads 0 — struct-shape match"
+- **#2545** — nested destructuring-param default outer-pattern eval
+
+The nested-pattern descent in `destructureParamObjectExternref`
+(`src/codegen/destructuring-params.ts`) now bottoms out correctly through the
+default-initializer compile + body-swap window.
+
+### Test Results
+
+All six representative test262 files — including
+`meth-static-dflt-obj-ptrn-prop-obj.js` whose body the issue quotes, plus the
+`gen-meth-static-*` and `async-gen-meth-static-*` variants — **compile cleanly**
+(no `compile_error`):
+
+| file                                           | result   |
+| ---------------------------------------------- | -------- |
+| `meth-static-dflt-obj-ptrn-prop-obj`           | COMPILED |
+| `meth-static-obj-ptrn-prop-obj`                | COMPILED |
+| `gen-meth-static-dflt-obj-ptrn-prop-obj`       | COMPILED |
+| `gen-meth-static-obj-ptrn-prop-obj`            | COMPILED |
+| `async-gen-meth-static-dflt-obj-ptrn-prop-obj` | COMPILED |
+| `meth-static-dflt-obj-ptrn-prop-obj-init`      | COMPILED |
+
+Runtime semantics verified (host): outer default applied → `997`; inner default
+on `{ w: undefined }` → `456`; explicit values → `123`. Standalone
+(`nativeStrings`) compiles clean.
+
+Regression-locked by `tests/issue-2587-nested-objpat-default-static-method.test.ts`
+(3 cases: host-compile, standalone-compile, runtime semantics).

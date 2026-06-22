@@ -364,7 +364,8 @@ describe("#1167c — taggedUnions (unit)", () => {
     // We run taggedUnions (no-op in V1), then lower with a registry-backed
     // resolver, then inspect the emitted Wasm ops for `struct.get`/`i32.eq`
     // and the absence of any `call` to an externref boxing helper.
-    const unionType = { kind: "union" as const, members: [{ kind: "f64" }, { kind: "i32" }] as const };
+    // #1926 — union members are IrTypes (wrapped via irVal).
+    const unionType = { kind: "union" as const, members: [irVal({ kind: "f64" }), irVal({ kind: "i32" })] };
     const paramId = asValueId(0);
     const testResult = asValueId(1);
     const fn: IrFunction = {
@@ -430,9 +431,11 @@ describe("#1167c — taggedUnions (unit)", () => {
   it("flags an unsupported union (externref member) as a pass error", () => {
     // union<f64, externref> is out of V1 scope — taggedUnions should report
     // it via runTaggedUnions.errors (non-fatal; pass still returns the module).
+    // #1926 — union members are IrTypes (wrapped via irVal). externref is
+    // not a V1-supported scalar member, so this union is still flagged.
     const unionType = {
       kind: "union" as const,
-      members: [{ kind: "f64" }, { kind: "externref" }] as const,
+      members: [irVal({ kind: "f64" }), irVal({ kind: "externref" })],
     };
     const paramId = asValueId(0);
     const testResult = asValueId(1);

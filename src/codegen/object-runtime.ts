@@ -3817,8 +3817,19 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // patterns (`i64.reinterpret_f64` + `i64.eq`) gives exactly that — equal NaN
   // bit patterns compare equal, and +0 (0x0…) vs -0 (0x8000…) compare unequal.
   // boolean → unbox i32; bigint → i64; both-null → equal; else ref identity.
-  // standalone-only (host mode owns `__object_is` via its JS import).
-  if (ctx.standalone) {
+  //
+  // HOST-FREE (`ctx.standalone || ctx.wasi`), NOT standalone-only (#2609). The
+  // native `__defineProperty_value` block below is registered UNCONDITIONALLY by
+  // this runtime and its #2042-S4 ValidateAndApplyPropertyDescriptor preflight
+  // bakes a direct `call __object_is` for the SameValue value-change check. WASI
+  // is host-free too (no JS `__object_is` import — `--target wasi` sets
+  // `ctx.wasi` but leaves `ctx.standalone` false), so gating this registration on
+  // `ctx.standalone` alone left `funcMap.get("__object_is")` undefined in WASI,
+  // and the define helper baked an undefined funcIdx → "function index out of
+  // range — undefined at __defineProperty_value" hard emit error (loopdive/js2#389).
+  // The host-only path (`!ctx.standalone && !ctx.wasi`) still owns `__object_is`
+  // via its JS import, so its output stays byte-identical.
+  if (ctx.standalone || ctx.wasi) {
     addUnionImportsViaRegistry(ctx);
     const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
     const typeofBoolIdx = ctx.funcMap.get("__typeof_boolean")!;

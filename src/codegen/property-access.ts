@@ -22,6 +22,8 @@ import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collisio
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
+import { emitDynGet } from "./dyn-read.js"; // (#2580 M2 slice 1)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
@@ -34,7 +36,13 @@ import {
 } from "./expressions/helpers.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { emitSymbolDescLoad } from "./symbol-native.js";
-import { addUnionImports, resolveWasmType, TYPED_ARRAY_NAMES } from "./index.js";
+import {
+  addUnionImports,
+  resolveWasmType,
+  TYPED_ARRAY_NAMES,
+  typedArrayPackedSignedness,
+  typedArrayVecStorage,
+} from "./index.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
 import { tryCompileNativeSetSizeGet } from "./set-runtime.js";
@@ -322,6 +330,48 @@ const NUMBER_CONSTANT_PROPS = new Set([
 ]);
 
 /**
+ * (#2595) Per-constructor element byte width for `TypedArray.BYTES_PER_ELEMENT`
+ * (static, §23.2.6.x) and `view.BYTES_PER_ELEMENT` (instance, §23.2.3.1). Both
+ * reads are statically known per constructor name — pure constant folds, no
+ * runtime support. Includes the two BigInt views (8 bytes each) which are not in
+ * `TYPED_ARRAY_NAMES`. Single source of truth for both the static-read constant
+ * emitter and the instance-read arm in the typed-array property block.
+ */
+const TYPED_ARRAY_BYTES_PER_ELEMENT: Record<string, number> = {
+  Int8Array: 1,
+  Uint8Array: 1,
+  Uint8ClampedArray: 1,
+  Int16Array: 2,
+  Uint16Array: 2,
+  Int32Array: 4,
+  Uint32Array: 4,
+  Float32Array: 4,
+  Float64Array: 8,
+  BigInt64Array: 8,
+  BigUint64Array: 8,
+};
+
+/**
+ * (#2593) Recover the packed-element signedness ("s"/"u") of a typed-array
+ * element-access receiver from its TS type. Returns undefined when the receiver
+ * is not a recognised integer typed-array view (callers then fall back to the
+ * legacy storage-kind heuristic). The signedness must come from the VIEW NAME,
+ * not the i8/i16 storage kind, because signed and unsigned views of the same
+ * width share storage but read with opposite sign-extension.
+ */
+function typedArrayViewSignedness(ctx: CodegenContext, receiver: ts.Expression): "s" | "u" | undefined {
+  const t = ctx.checker.getTypeAtLocation(receiver);
+  let name = t.getSymbol()?.name ?? t.aliasSymbol?.name;
+  // `new Int8Array(...)` receiver: recover the constructor name when the type
+  // symbol is missing (e.g. a fresh NewExpression whose type didn't resolve).
+  if ((!name || !TYPED_ARRAY_NAMES.has(name)) && ts.isNewExpression(receiver) && ts.isIdentifier(receiver.expression)) {
+    name = receiver.expression.text;
+  }
+  if (!name || !TYPED_ARRAY_NAMES.has(name)) return undefined;
+  return typedArrayPackedSignedness(name);
+}
+
+/**
  * True when `<builtinName>.<propName>` has a Wasm-native **f64 constant**
  * emitter downstream in `compileMemberRead` that the `__get_builtin` shortcut
  * must not pre-empt. Keeps the standalone path host-import-free for the
@@ -340,6 +390,17 @@ const NUMBER_CONSTANT_PROPS = new Set([
 function hasNativeBuiltinConstantHandler(builtinName: string, propName: string): boolean {
   if (builtinName === "Math") return MATH_CONSTANT_PROPS.has(propName);
   if (builtinName === "Number") return NUMBER_CONSTANT_PROPS.has(propName);
+  // (#2610) `Symbol.<wellKnown>` as a VALUE folds to its small i32 sentinel id
+  // at the downstream constant emitter (`getWellKnownSymbolId`, ~line 4072) —
+  // host-free, no builtin-prototype object needed (NOT #2175-gated). Defer the
+  // standalone builtin-static-value-read refusal to it, mirroring the
+  // Math/Number constant defers above. Gate is exact: only the well-known
+  // names the emitter actually folds (a non-well-known `Symbol.foo` returns
+  // undefined here, so it still refuses-loud — correct, no constant exists).
+  if (builtinName === "Symbol") return getWellKnownSymbolId(propName) !== undefined;
+  // (#2595) `<TypedArrayName>.BYTES_PER_ELEMENT` static read has a downstream
+  // constant emitter; defer the standalone `__get_builtin` refusal to it.
+  if (propName === "BYTES_PER_ELEMENT") return builtinName in TYPED_ARRAY_BYTES_PER_ELEMENT;
   return false;
 }
 
@@ -2141,8 +2202,9 @@ function tryEmitConstructorViaTag(
       fctx.body.push({ op: "local.set", index: resLocal } as Instr);
     } else {
       // No singleton emitted (shouldn't happen — classObjectGlobals has it):
-      // leave resLocal null.
-      fctx.body.length = 0;
+      // leave resLocal null. This clears the DETACHED `arm` buffer (fctx.body is
+      // `arm` here via the manual swap above), not a speculative-compile probe.
+      fctx.body.length = 0; // not-a-probe-rollback (#1919): detached arm buffer
     }
     fctx.body = savedBody;
     if (arm.length === 0) continue;
@@ -2255,7 +2317,7 @@ export function compilePropertyAccess(
   // case so it doesn't leak `__extern_get`.
   if (
     (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) &&
-    (propName === "byteLength" || propName === "byteOffset")
+    (propName === "byteLength" || propName === "byteOffset" || propName === "BYTES_PER_ELEMENT")
   ) {
     const recvName =
       objType.getSymbol()?.name ??
@@ -2270,7 +2332,7 @@ export function compilePropertyAccess(
     // a bare `$__vec_i32_byte` (offset-0 default-length view). For the wrapper,
     // read its byteOffset / byteLength fields; for the bare vec, byteOffset = 0
     // and byteLength = vec.length (one i32 per byte ⇒ length IS the byte count).
-    if (isDataView && noJsHost(ctx)) {
+    if (isDataView && noJsHost(ctx) && propName !== "BYTES_PER_ELEMENT") {
       const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i32" });
       const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
       const fieldIdx = propName === "byteOffset" ? 1 : 2;
@@ -2312,44 +2374,163 @@ export function compilePropertyAccess(
         fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: 0 } as Instr);
         return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
-      // byteLength = field0 * BYTES_PER_ELEMENT. ArrayBuffer's field0 is already
-      // a byte count, so its element size is 1.
-      const TYPED_ARRAY_BYTES_PER_ELEMENT: Record<string, number> = {
-        Int8Array: 1,
-        Uint8Array: 1,
-        Uint8ClampedArray: 1,
-        Int16Array: 2,
-        Uint16Array: 2,
-        Int32Array: 4,
-        Uint32Array: 4,
-        Float32Array: 4,
-        Float64Array: 8,
-      };
-      const bytesPerElem = isBuffer ? 1 : (TYPED_ARRAY_BYTES_PER_ELEMENT[recvName!] ?? 1);
-      const elemKey = isBuffer ? "i32_byte" : noJsHost(ctx) && recvName === "Uint8Array" ? "i8_byte" : "f64";
-      const elemType: ValType =
-        elemKey === "i8_byte" ? { kind: "i8" } : elemKey === "i32_byte" ? { kind: "i32" } : { kind: "f64" };
-      const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
-      // Compile the receiver and recover the vec struct ref.
-      const recvType = compileExpression(ctx, fctx, expr.expression);
-      if (recvType?.kind === "externref") {
-        fctx.body.push({ op: "any.convert_extern" } as Instr);
-        fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx } as Instr);
-      } else if (
-        (recvType?.kind === "ref" || recvType?.kind === "ref_null") &&
-        "typeIdx" in recvType &&
-        recvType.typeIdx !== vecTypeIdx
-      ) {
-        fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx } as Instr);
+      // (#2595) `view.BYTES_PER_ELEMENT` — instance element byte width
+      // (§23.2.3.1). A constant per constructor name; drop the (possibly
+      // side-effecting) receiver and emit it. Only TypedArrays expose it —
+      // ArrayBuffer/SharedArrayBuffer/DataView do not, so when the receiver is a
+      // buffer, fall through (the read resolves to `undefined` downstream).
+      if (propName === "BYTES_PER_ELEMENT") {
+        if (isTypedArr) {
+          const recvType = compileExpression(ctx, fctx, expr.expression);
+          if (recvType !== null) fctx.body.push({ op: "drop" } as Instr);
+          const bytes = TYPED_ARRAY_BYTES_PER_ELEMENT[recvName!] ?? 1;
+          fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: bytes } as Instr);
+          return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+        }
+      } else {
+        // byteLength = field0 * BYTES_PER_ELEMENT. ArrayBuffer's field0 is already
+        // a byte count, so its element size is 1.
+        const bytesPerElem = isBuffer ? 1 : (TYPED_ARRAY_BYTES_PER_ELEMENT[recvName!] ?? 1);
+        // (#2593) The vec storage MUST match the receiver's actual backing element
+        // type — `typedArrayVecStorage` now packs all integer views standalone
+        // (i8/i16/i32_byte), not just Uint8Array. Casting an Int32Array (i32_byte)
+        // receiver to an f64 vec read the wrong field-0 → wrong byteLength.
+        const storage = isBuffer
+          ? { key: "i32_byte", type: { kind: "i32" } as ValType }
+          : typedArrayVecStorage(ctx, recvName!);
+        const elemKey = storage.key;
+        const elemType: ValType = storage.type;
+        const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+        // (#2593) An EMPTY `new TA(0)` literal can compile to a different backing
+        // vec type (e.g. an f64/empty vec) than the packed `vecTypeIdx` for the
+        // declared view — an unconditional `ref.cast` then traps (`illegal cast`).
+        // Read field-0 (length) through a runtime `ref.test`: on a packed-vec hit
+        // read its length; on a miss (empty/mismatched backing) the length is 0
+        // (`byteLength` of an empty view is 0 regardless of element width).
+        const recvType = compileExpression(ctx, fctx, expr.expression);
+        if (recvType?.kind === "externref") {
+          fctx.body.push({ op: "any.convert_extern" } as Instr);
+        }
+        const lenTmpBL = allocLocal(fctx, `__bl_len_${fctx.locals.length}`, { kind: "anyref" });
+        fctx.body.push({ op: "local.set", index: lenTmpBL } as Instr);
+        fctx.body.push({ op: "local.get", index: lenTmpBL } as Instr);
+        fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx } as Instr);
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } as ValType },
+          then: [
+            { op: "local.get", index: lenTmpBL } as Instr,
+            { op: "ref.cast", typeIdx: vecTypeIdx } as Instr,
+            { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr,
+          ],
+          else: [{ op: "i32.const", value: 0 } as Instr],
+        } as Instr);
+        if (bytesPerElem !== 1) {
+          fctx.body.push({ op: "i32.const", value: bytesPerElem } as Instr);
+          fctx.body.push({ op: "i32.mul" } as Instr);
+        }
+        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+        return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
-      // field 0 → i32 (element count or byte count).
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr);
-      if (bytesPerElem !== 1) {
-        fctx.body.push({ op: "i32.const", value: bytesPerElem } as Instr);
-        fctx.body.push({ op: "i32.mul" } as Instr);
+    }
+  }
+
+  // (#2596) `view.buffer` for a TypedArray / DataView under no-host. Without a
+  // dedicated arm this fell to the generic `__extern_get(view, "buffer")` read
+  // whose externref result was `ref.cast` to the `i32_byte` ArrayBuffer vec —
+  // and since a `new TA(n)` view's backing is an `f64`/`i8` vec (not an
+  // `i32_byte` buffer) and standalone has no real buffer object, the cast
+  // trapped `illegal cast` at runtime, breaking EVERY `.buffer`-touching test.
+  //
+  // §22.2 / §25.x — `.buffer` is the view's [[ViewedArrayBuffer]]. We synthesize
+  // a fresh `i32_byte` ArrayBuffer vec whose byte length == the view's byte
+  // length (field-0 element count × BYTES_PER_ELEMENT for a TypedArray; the
+  // backing byte count for a DataView), zero-filled. This makes
+  // `view.buffer.byteLength` correct and non-trapping (the dominant test262 use).
+  // TRUE write-through aliasing (mutating `.buffer` mutates the view, and
+  // `a.buffer === b.buffer` identity) is OUT OF SCOPE — it needs the unified
+  // byte-storage representation (pairs with #2593's packed migration); this slice
+  // is the non-trapping floor. Host/gc mode keeps its host-import `.buffer`.
+  if (propName === "buffer" && noJsHost(ctx)) {
+    const bufRecvName =
+      objType.getSymbol()?.name ??
+      (ts.isNewExpression(expr.expression) && ts.isIdentifier(expr.expression.expression)
+        ? expr.expression.expression.text
+        : undefined);
+    const bufIsTypedArr = bufRecvName !== undefined && TYPED_ARRAY_BYTES_PER_ELEMENT[bufRecvName] !== undefined;
+    const bufIsDataView = bufRecvName === "DataView";
+    if (bufIsTypedArr || bufIsDataView) {
+      const byteVecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i32" });
+      const byteArrTypeIdx = getArrTypeIdxFromVec(ctx, byteVecTypeIdx);
+      if (byteArrTypeIdx >= 0) {
+        const byteLenLocal = allocLocal(fctx, `__tabuf_len_${fctx.locals.length}`, { kind: "i32" });
+        if (bufIsDataView) {
+          // A DataView receiver is either a `$__dv_window` wrapper (windowed view
+          // → byte length is its field-2 `byteLength`) or a bare `$__vec_i32_byte`
+          // (offset-0 view → field-0 IS the byte count). Mirror the byteLength arm's
+          // runtime `ref.test $__dv_window` branch so both shapes work — a static
+          // cast to one shape would `illegal cast` the other.
+          const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
+          const recvType = compileExpression(ctx, fctx, expr.expression);
+          const anyLocal = allocLocal(fctx, `__tabuf_any_${fctx.locals.length}`, { kind: "anyref" });
+          if (recvType?.kind === "externref") {
+            fctx.body.push({ op: "any.convert_extern" } as Instr);
+          }
+          fctx.body.push({ op: "local.set", index: anyLocal } as Instr);
+          const winBranch: Instr[] = [
+            { op: "local.get", index: anyLocal } as Instr,
+            { op: "ref.cast", typeIdx: dvWinTypeIdx } as Instr,
+            { op: "struct.get", typeIdx: dvWinTypeIdx, fieldIdx: 2 } as Instr,
+          ];
+          const vecBranch: Instr[] = [
+            { op: "local.get", index: anyLocal } as Instr,
+            { op: "ref.cast", typeIdx: byteVecTypeIdx } as Instr,
+            { op: "struct.get", typeIdx: byteVecTypeIdx, fieldIdx: 0 } as Instr,
+          ];
+          fctx.body.push({ op: "local.get", index: anyLocal } as Instr);
+          fctx.body.push({ op: "ref.test", typeIdx: dvWinTypeIdx } as Instr);
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: winBranch,
+            else: vecBranch,
+          } as Instr);
+          fctx.body.push({ op: "local.set", index: byteLenLocal } as Instr);
+        } else {
+          // TypedArray: backing is an f64 vec (or i8 for standalone Uint8Array);
+          // byteLen = element-count (field 0) × BYTES_PER_ELEMENT.
+          const elemKey = noJsHost(ctx) && bufRecvName === "Uint8Array" ? "i8_byte" : "f64";
+          const elemType: ValType = elemKey === "i8_byte" ? { kind: "i8" } : { kind: "f64" };
+          const viewVecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+          const recvType = compileExpression(ctx, fctx, expr.expression);
+          if (recvType?.kind === "externref") {
+            fctx.body.push({ op: "any.convert_extern" } as Instr);
+            fctx.body.push({ op: "ref.cast", typeIdx: viewVecTypeIdx } as Instr);
+          } else if (
+            (recvType?.kind === "ref" || recvType?.kind === "ref_null") &&
+            "typeIdx" in recvType &&
+            recvType.typeIdx !== viewVecTypeIdx
+          ) {
+            fctx.body.push({ op: "ref.cast", typeIdx: viewVecTypeIdx } as Instr);
+          }
+          fctx.body.push({ op: "struct.get", typeIdx: viewVecTypeIdx, fieldIdx: 0 } as Instr);
+          const bytesPerElem = TYPED_ARRAY_BYTES_PER_ELEMENT[bufRecvName!] ?? 1;
+          if (bytesPerElem !== 1) {
+            fctx.body.push({ op: "i32.const", value: bytesPerElem } as Instr);
+            fctx.body.push({ op: "i32.mul" } as Instr);
+          }
+          fctx.body.push({ op: "local.set", index: byteLenLocal } as Instr);
+        }
+        // Build the i32_byte ArrayBuffer vec: struct.new (byteLen, zero-filled
+        // array of byteLen bytes). One i32 per byte (0..255), matching the
+        // ArrayBuffer / DataView backing representation (dataview-native.ts).
+        fctx.body.push({ op: "local.get", index: byteLenLocal } as Instr);
+        fctx.body.push({ op: "i32.const", value: 0 } as Instr); // default byte value
+        fctx.body.push({ op: "local.get", index: byteLenLocal } as Instr);
+        fctx.body.push({ op: "array.new", typeIdx: byteArrTypeIdx } as Instr);
+        fctx.body.push({ op: "struct.new", typeIdx: byteVecTypeIdx } as Instr);
+        return { kind: "ref", typeIdx: byteVecTypeIdx };
       }
-      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
-      return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
 
@@ -3640,7 +3821,10 @@ export function compilePropertyAccess(
     // Fallback: compile the expression and check the actual wasm return type
     // This handles cases like strings.raw.length where TS doesn't know the type
     {
-      const savedLen = fctx.body.length;
+      // #1919 — transactional try-lower: keep the compiled receiver + struct.get
+      // when it lowers to a length-prefixed vec; otherwise roll back the body AND
+      // any locals / late imports / errors the compile leaked.
+      const snap = snapshotSpeculative(ctx, fctx);
       const exprType = compileExpression(ctx, fctx, expr.expression);
       if (
         exprType &&
@@ -3655,8 +3839,62 @@ export function compilePropertyAccess(
           return ctx.fast ? { kind: "i32" } : { kind: "f64" };
         }
       }
-      // Undo the compiled expression if it didn't match
-      fctx.body.length = savedLen;
+      // (#2580 M2 slice 1) `.length` on a statically-`any`/`unknown` receiver in
+      // HOST mode, where the compiled receiver is NOT a length-bearing vec struct
+      // above. The origin path coerces the read to NUMERIC, turning a plain
+      // object's ABSENT `length` (spec `undefined`, §OrdinaryGet) into `0` / a
+      // bogus `typeof "boolean"` (`var obj={}; obj.length===undefined` → false —
+      // the #2580 headline bug). Route through the M2 tag/null-aware reader
+      // (`emitDynGet`), which returns a UNIFORM externref: a boxed number for a vec
+      // length / closure arity / null-undefined receiver (matching origin's prior
+      // numeric value — the #1894-eject Cluster A/B classes), JS `undefined` for a
+      // genuine non-null host object's absent property (the canary). The reader's
+      // receiver-kind dispatch (`__extern_is_undefined` → 0, `ref.test $vec` →
+      // field-0, `ref.test $closure` → 0, else `__extern_get`) is what a bare
+      // `__extern_get` could not do — the M1 over-broad arm's failure. Gated
+      // strictly on a static `any`/`unknown` receiver, host mode; the typed
+      // `.length` hot-path is byte-identical (handled + returned above).
+      // (#2580 M2 s1) DECLINE inside an async function/generator body. The
+      // async state machine (#1042 CPS lowering) can leave a destructuring rest /
+      // setter-captured local in a state where a speculative `compileExpression`
+      // recompile resolves a STALE value (the #2602-class desync; surfaces for the
+      // for-await array-rest `.length` reads incl. the setter-property variant).
+      // Origin reads those correctly via its own non-speculative path, so DECLINE
+      // here → fall through to origin (all 8 for-await rest `.length` tests stay
+      // green). The #2580 canary + Cluster A reads are NOT inside async functions,
+      // so they still take the reader. Walk to the nearest function-like ancestor
+      // and check the `async` modifier.
+      let inAsyncFn = false;
+      for (let p: ts.Node | undefined = expr.parent; p; p = p.parent) {
+        if (
+          ts.isFunctionDeclaration(p) ||
+          ts.isFunctionExpression(p) ||
+          ts.isArrowFunction(p) ||
+          ts.isMethodDeclaration(p)
+        ) {
+          inAsyncFn = ts.getModifiers(p)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+          break;
+        }
+      }
+      if (
+        !ctx.standalone &&
+        !inAsyncFn &&
+        (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
+        exprType
+      ) {
+        if (exprType.kind !== "externref") {
+          coerceType(ctx, fctx, exprType, { kind: "externref" });
+        }
+        if (emitDynGet(ctx, fctx, "length")) {
+          return { kind: "externref" };
+        }
+        // emitDynGet bailed (no runtime) — roll back; the legacy paths recompile.
+        rollbackSpeculative(ctx, fctx, snap);
+      } else {
+        // (#1919) Undo the compiled expression if it didn't match — transactional
+        // rollback (body + locals + late imports + errors), not a bare truncate.
+        rollbackSpeculative(ctx, fctx, snap);
+      }
     }
     // #1472 Phase B Blocker B Slice 2 — standalone `.length` on an `any`/unknown
     // receiver. None of the vec fast-paths matched, so the receiver is an opaque
@@ -3816,6 +4054,26 @@ export function compilePropertyAccess(
     if (propName in numberConstants) {
       fctx.body.push({ op: "f64.const", value: numberConstants[propName]! });
       return { kind: "f64" };
+    }
+  }
+
+  // (#2595) `<TypedArrayName>.BYTES_PER_ELEMENT` — static element byte width
+  // (§23.2.6.x). Statically known per constructor name, so emit it as a
+  // constant. Standalone otherwise reaches `reportUnsupportedStandaloneBuiltinValueRead`
+  // (the generic builtin-static-value-read refusal); host mode reads the same
+  // constant via the host import, so folding it here is observationally
+  // identical and works in both modes. Skip when the name is shadowed by a local.
+  if (
+    propName === "BYTES_PER_ELEMENT" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text in TYPED_ARRAY_BYTES_PER_ELEMENT
+  ) {
+    const builtinName = expr.expression.text;
+    const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+    if (!isShadowed) {
+      const bytes = TYPED_ARRAY_BYTES_PER_ELEMENT[builtinName]!;
+      fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: bytes });
+      return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
 
@@ -5447,10 +5705,12 @@ export function compileElementAccessBody(
       typeDef.fields[1]?.name === "data" &&
       (typeDef.fields.length === 2 ||
         (typeDef.fields.length === 3 && typeDef.fields[2]?.name === "raw") ||
-        // #1914 — $__regexp_match_vec: the vec subtype carrying the spec
-        // exec/match result fields. Indexed reads use the same {length, data}
-        // prefix; index/input are property reads, not elements.
-        (typeDef.fields.length === 4 && typeDef.fields[2]?.name === "index" && typeDef.fields[3]?.name === "input"));
+        // #1914/#2588/#2589 — $__regexp_match_vec: the vec subtype carrying the
+        // spec exec/match result fields. Indexed reads use the same
+        // {length, data} prefix; index/input/groups/indices are property reads,
+        // not elements. Accept the 4-field (#1914) and 6-field (#2588 groups +
+        // #2589 indices) shapes.
+        (typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index" && typeDef.fields[3]?.name === "input"));
 
     if (!isVecStructAccess) {
       // Check if this is a tuple struct (registered in tupleTypeMap)
@@ -5645,6 +5905,11 @@ export function compileElementAccessBody(
       reportErrorNoNode(ctx, "Element access: vec data is not array");
       return null;
     }
+    // (#2593) Signedness of a packed i8/i16 typed-array element is driven by the
+    // VIEW NAME (Int8/Int16 → sign-extend; Uint8/Uint8Clamped/Uint16 →
+    // zero-extend), NOT the storage kind — a signed Int8Array and an unsigned
+    // Uint8Array share `i8` storage but read with opposite extension.
+    const taSignedness = typedArrayViewSignedness(ctx, expr.expression);
     // Unwrap: struct.get data field, then index into backing array
     fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // get data from vec
     // #1179: hint i32 directly for the index. compileExpression will produce
@@ -5657,15 +5922,35 @@ export function compileElementAccessBody(
     if (isSafeBoundsEliminated(fctx, expr)) {
       // Bounds check elided: loop guard guarantees index < array.length
       const getOp =
-        arrDef.element.kind === "i8" ? "array.get_u" : arrDef.element.kind === "i16" ? "array.get_s" : "array.get";
+        arrDef.element.kind === "i8" || arrDef.element.kind === "i16"
+          ? taSignedness === "s"
+            ? "array.get_s"
+            : taSignedness === "u"
+              ? "array.get_u"
+              : arrDef.element.kind === "i8"
+                ? "array.get_u"
+                : "array.get_s"
+          : "array.get";
       fctx.body.push({ op: getOp, typeIdx: arrTypeIdx } as Instr);
       // (#2001 S1) Even bounds-eliminated externref reads must map a `$Hole`
       // slot back to `undefined` — the loop guard proves in-bounds, not present.
       if (ctx.usesArrayHoles && arrDef.element.kind === "externref") emitHoleToUndefined(ctx, fctx);
     } else {
       // (#2001 S1) Pass `ctx` so the in-bounds `$Hole → undefined` read-boundary
-      // mapping fires for an externref-element (`any[]`) vec.
-      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, arrDef.element, ctx);
+      // mapping fires for an externref-element (`any[]`) vec. (#2593) Thread the
+      // view-name signedness for packed i8/i16 reads.
+      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, arrDef.element, ctx, false, taSignedness);
+    }
+    // (#2593) `Uint32Array` element read: the i32_byte storage holds the full 32
+    // bits; the value as a JS number is the UNSIGNED interpretation (0..2^32-1).
+    // `array.get` on an i32 array yields a raw i32 whose default i32→f64 coercion
+    // is SIGNED (−1 instead of 4294967295). For an unsigned i32 view convert the
+    // i32 to f64 UNSIGNED here and return f64 so no signed re-coerce follows.
+    // (Int32Array is signed → the default signed coercion is already correct;
+    // i8/i16 already sign/zero-extended into the i32 via array.get_s/_u above.)
+    if (arrDef.element.kind === "i32" && taSignedness === "u") {
+      fctx.body.push({ op: "f64.convert_i32_u" } as Instr);
+      return { kind: "f64" };
     }
     return valueType;
   }
@@ -5675,6 +5960,8 @@ export function compileElementAccessBody(
     return null;
   }
 
+  // (#2593) View-name-driven signedness for a packed i8/i16 typed-array element.
+  const taSignednessArr = typedArrayViewSignedness(ctx, expr.expression);
   // Compile index and convert to i32 (#1179: hint i32 directly to skip the
   // f64.convert_i32_s + i32.trunc_sat_f64_s round-trip when the index is
   // already an i32 local or integer literal).
@@ -5685,14 +5972,23 @@ export function compileElementAccessBody(
   if (isSafeBoundsEliminated(fctx, expr)) {
     // Bounds check elided: loop guard guarantees index < array.length
     const getOp =
-      typeDef.element.kind === "i8" ? "array.get_u" : typeDef.element.kind === "i16" ? "array.get_s" : "array.get";
+      typeDef.element.kind === "i8" || typeDef.element.kind === "i16"
+        ? taSignednessArr === "s"
+          ? "array.get_s"
+          : taSignednessArr === "u"
+            ? "array.get_u"
+            : typeDef.element.kind === "i8"
+              ? "array.get_u"
+              : "array.get_s"
+        : "array.get";
     fctx.body.push({ op: getOp, typeIdx } as Instr);
     // (#2001 S1) Map a `$Hole` slot back to `undefined` on bounds-eliminated
     // externref reads too (in-bounds ≠ present).
     if (ctx.usesArrayHoles && typeDef.element.kind === "externref") emitHoleToUndefined(ctx, fctx);
   } else {
     // (#2001 S1) Pass `ctx` for the in-bounds `$Hole → undefined` mapping.
-    emitBoundsCheckedArrayGet(fctx, typeIdx, typeDef.element, ctx);
+    // (#2593) Thread the view-name signedness for packed i8/i16 reads.
+    emitBoundsCheckedArrayGet(fctx, typeIdx, typeDef.element, ctx, false, taSignednessArr);
   }
   return valueType;
 }

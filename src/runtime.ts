@@ -1675,6 +1675,32 @@ function _toPropertyDescriptorValidate(
 // user proxies keeps them on the host MOP path.
 const _userProxies = new WeakSet<object>();
 
+/**
+ * (#2617) Is `obj` a tracked user Proxy (built from `new Proxy(...)` /
+ * `Proxy.revocable(...)` and registered in `_userProxies`)?
+ */
+function _isUserProxy(obj: any): boolean {
+  return obj != null && typeof obj === "object" && _userProxies.has(obj);
+}
+
+/**
+ * (#2617) Shared re-throw gate for the boundary helpers' `catch (e)`.
+ *
+ * Each boundary helper (`__extern_get` / `__extern_has` / `__delete_property` /
+ * `__getPrototypeOf` / …) wraps its host MOP read in a try/catch that, on
+ * failure, falls through to a generic struct/undefined path. That fallthrough
+ * is correct for a genuine WasmGC struct, but WRONG for a **user Proxy**: an
+ * exception from the host MOP on a user Proxy is exactly what the program must
+ * observe — either the user trap's own abrupt completion, or the host engine's
+ * §10.5 invariant TypeError. Swallowing it returns a wrong value instead of the
+ * throw. So re-throw when the receiver is a user Proxy (or the pre-existing
+ * revoked-proxy case). Return normally (caller falls through) otherwise, so the
+ * non-proxy struct fast path is byte-for-byte unchanged.
+ */
+function _rethrowIfProxyOrRevoked(e: any, obj: any): void {
+  if (_isRevokedProxyError(e) || _isUserProxy(obj)) throw e;
+}
+
 function _isWasmStruct(obj: any): boolean {
   if (obj == null || typeof obj !== "object") return false;
   if (_userProxies.has(obj)) return false;
@@ -4007,9 +4033,13 @@ function _safeSet(
   try {
     obj[key] = val;
   } catch (e) {
-    // #2180 — writing to a revoked proxy throws TypeError; propagate it
-    // instead of silently diverting to the sidecar.
-    if (_isRevokedProxyError(e)) throw e;
+    // #2180/#2617 — writing to a revoked proxy throws TypeError; a tracked user
+    // Proxy's `set` trap may also throw (abrupt completion) or the host engine
+    // may raise the §10.5.9 strict-write invariant TypeError. Propagate both
+    // instead of silently diverting to the sidecar. The gate is strictly
+    // `_isUserProxy(obj)`, so the sloppy-mode struct / frozen-builtin cases
+    // below (Math.E=1, Number.NaN=1) are byte-for-byte unchanged (#2017).
+    _rethrowIfProxyOrRevoked(e, obj);
     // (#2017 regression fix) Do NOT blanket re-throw the engine's TypeError just
     // because this came through `__extern_set_strict`. The bundled runtime is an
     // ES module (executes in strict mode), so `obj[key] = val` throws natively
@@ -4982,6 +5012,23 @@ function _isRevokedProxyError(e: any): boolean {
 }
 
 /**
+ * (#2617) The strict-mode `delete obj[k]` result-coercion TypeError that the
+ * (always-strict) bundled runtime raises when a Proxy `deleteProperty` trap
+ * merely RETURNS FALSE (V8: "'deleteProperty' on proxy: trap returned falsish
+ * for property ..."). This is NOT the trap throwing — in the user program's
+ * non-strict context `delete` must yield `false`, not throw. Detected by message
+ * so it can be mapped to a `return 0` instead of propagated. A trap that *itself*
+ * throws produces a different error (its own value) and is propagated.
+ */
+function _isStrictDeleteFalsishError(e: any): boolean {
+  return (
+    e instanceof TypeError &&
+    typeof e.message === "string" &&
+    (e.message.includes("trap returned falsish") || e.message.includes("Cannot delete property"))
+  );
+}
+
+/**
  * #2180 — build a real host Proxy from a user `new Proxy(target, handler)`.
  * `ctor` is "Proxy" or "Proxy.revocable" for the spec-mandated TypeError text.
  * Returns the constructed Proxy (revocable=false) — callers that need the
@@ -5073,9 +5120,23 @@ function _buildProxyBridgeHandler(
   const bridge: Record<string, any> = {};
   for (const name of _PROXY_TRAP_NAMES) {
     const rawTrap = _structFieldRaw(handler, name, exports);
-    if (rawTrap == null) continue;
+    if (rawTrap == null) continue; // undefined/null → genuine absence, host forwards to target (§7.3.10)
     const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
-    if (typeof callable !== "function") continue;
+    if (typeof callable !== "function") {
+      // (#2616) §7.3.10 GetMethod: a present-but-non-callable trap value (`{}`,
+      // `1`, `"x"`, …) is NOT absence — it must throw a TypeError when the owning
+      // internal method runs. Previously this was silently omitted, so the host
+      // engine used its default (ordinary) behavior and the spec-mandated
+      // TypeError never fired. Install a bridge trap that throws on invocation;
+      // the throw surfaces at operation time (`p.attr`, `p(...)`, `new p(...)`),
+      // which is exactly when test262 checks for it. The host TypeError
+      // propagates through the Proxy MOP and the lastCaughtException bridge so
+      // `e instanceof TypeError` holds in the compiled program.
+      bridge[name] = () => {
+        throw new TypeError(`'${name}' on proxy: trap is not a function`);
+      };
+      continue;
+    }
     // Forward to the user trap with `this` = the raw handler struct. The
     // closure bridge installs that struct as `__current_this`, so the trap
     // body's `this` is the same value the program sees as `handler` and
@@ -6886,9 +6947,10 @@ assert._isSameValue = isSameValue;
             try {
               if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) return obj[key];
             } catch (e) {
-              // #2180 — a revoked-proxy TypeError must propagate, not be
-              // swallowed by the struct-getter fallback below.
-              if (_isRevokedProxyError(e)) throw e;
+              // #2180/#2617 — a revoked-proxy TypeError, OR any exception from a
+              // tracked user Proxy's get trap (abrupt completion), must propagate
+              // — not be swallowed by the struct-getter fallback below.
+              _rethrowIfProxyOrRevoked(e, obj);
               /* otherwise fall through to the generic path */
             }
           }
@@ -7128,8 +7190,10 @@ assert._isSameValue = isSameValue;
           try {
             if (key in obj) return 1;
           } catch (e) {
-            // #2180 — `key in revokedProxy` throws TypeError; propagate it.
-            if (_isRevokedProxyError(e)) throw e;
+            // #2180/#2617 — `key in revokedProxy` throws TypeError; a user
+            // Proxy's `has` trap may also throw (abrupt completion). Propagate
+            // both instead of swallowing into the sidecar fallback.
+            _rethrowIfProxyOrRevoked(e, obj);
             /* opaque struct or non-object obj */
           }
           const sc = _wasmStructProps.get(obj);
@@ -7500,7 +7564,12 @@ assert._isSameValue = isSameValue;
           }
           try {
             return Object.preventExtensions(obj);
-          } catch {
+          } catch (e) {
+            // #2617 — a user Proxy's preventExtensions trap may throw, or the
+            // host engine's §10.5 invariant may throw; propagate for a tracked
+            // user Proxy. Non-proxy objects keep the swallow-and-return-self
+            // behavior (sloppy-mode-tolerant).
+            _rethrowIfProxyOrRevoked(e, obj);
             return obj;
           }
         };
@@ -8393,7 +8462,13 @@ assert._isSameValue = isSameValue;
           if (obj === undefined) throw new TypeError("Cannot convert undefined to object");
           try {
             return Object.getPrototypeOf(obj);
-          } catch {
+          } catch (e) {
+            // #2617 — for a user Proxy, the host engine's §10.5.1 invariant
+            // (getPrototypeOf trap result must be Object|null; trap may also
+            // throw) is exactly what the program must observe. Propagate it
+            // instead of coercing to null. Non-proxy opaque structs keep the
+            // null fallback (their getPrototypeOf is genuinely absent).
+            _rethrowIfProxyOrRevoked(e, obj);
             return null;
           }
         };
@@ -9299,6 +9374,53 @@ assert._isSameValue = isSameValue;
           const wrappedArgs = _isWasmStruct(argsArray) ? _wrapForHost(argsArray, exports) : argsArray;
           return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
         };
+      // (#1632b-2 / #1528a residual) Dynamically CONSTRUCT a runtime function
+      // VALUE — `var C = makeCtor(); new C(args)` where `C` is a factory-returned
+      // `function C(){}` lowered to a WasmGC closure struct. Unlike `__construct`
+      // above (which wraps with the NON-callable `_wrapForHost` and therefore
+      // throws "not a constructor" for any closure — correct for arrows/bound/
+      // methods, wrong for a genuine constructable function), this helper wraps a
+      // closure with `_wrapCallableForHost`, whose `construct` trap runs the
+      // closure body as ECMA-262 §10.2.2 OrdinaryCallEvaluateBody. Non-closure
+      // structs and non-functions still throw the spec TypeError (preserves the
+      // ctx-non-object / ctx-non-ctor cases). Also resolves the Promise-combinator
+      // capability path (#2614): V8's NewPromiseCapability(C) → Construct(C,
+      // «executor») routes a compiled executor through this same bridge.
+      if (name === "__construct_closure")
+        return (callee: any, argsArray: any): any => {
+          const exports = callbackState?.getExports();
+          // A WasmGC closure → the callable wrapper (constructible). A non-closure
+          // struct stays on the non-callable `_wrapForHost`, so the IsConstructor
+          // probe below throws the spec TypeError for a non-constructor value.
+          let wrappedCallee: any = callee;
+          if (_isWasmStruct(callee)) {
+            const isClosureFn = exports?.__is_closure as ((v: any) => number) | undefined;
+            let isClosure = false;
+            if (typeof isClosureFn === "function") {
+              try {
+                isClosure = isClosureFn(callee) === 1;
+              } catch {
+                isClosure = false;
+              }
+            }
+            wrappedCallee = isClosure ? _wrapCallableForHost(callee, callbackState) : _wrapForHost(callee, exports);
+          }
+          let isCtor = false;
+          if (typeof wrappedCallee === "function") {
+            try {
+              Reflect.construct(function () {}, [], wrappedCallee);
+              isCtor = true;
+            } catch {
+              isCtor = false;
+            }
+          }
+          if (!isCtor) {
+            const nm = wrappedCallee && wrappedCallee.name ? wrappedCallee.name : String(wrappedCallee);
+            throw new TypeError(nm + " is not a constructor");
+          }
+          const wrappedArgs = _isWasmStruct(argsArray) ? _wrapForHost(argsArray, exports) : argsArray;
+          return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
+        };
       // Symbol.for(key) — global symbol registry (#965)
       // Symbol.for(key) — §20.4.2.2: stringKey = ? ToString(key). Passing a
       // Symbol makes ToString throw TypeError (not stringify). `Symbol.for`
@@ -9683,9 +9805,18 @@ assert._isSameValue = isSameValue;
               const k = typeof key === "symbol" ? key : String(key);
               return delete obj[k] ? 1 : 0;
             } catch (e) {
-              // #2180 — deleting from a revoked proxy throws TypeError; propagate it.
+              // #2180 — deleting from a revoked proxy throws TypeError; propagate.
               if (_isRevokedProxyError(e)) throw e;
-              // Non-configurable in strict mode throws TypeError; report failure.
+              // #2617 — a user Proxy's deleteProperty trap that THROWS (abrupt
+              // completion) must propagate. BUT the bundled runtime is strict
+              // (ES module), so `delete obj[k]` ALSO throws a TypeError when the
+              // trap merely RETURNS FALSE ("trap returned falsish") — which in
+              // the user program's NON-strict context must be a plain `false`
+              // (return 0), not a throw (test262 deleteProperty/return-false-not-
+              // strict.js, flags:[noStrict]). Distinguish: re-throw a user-Proxy
+              // exception only when it is NOT the strict-delete result coercion.
+              if (_isUserProxy(obj) && !_isStrictDeleteFalsishError(e)) throw e;
+              // Trap returned false (or non-configurable refusal) → report failure.
               return 0;
             }
           }

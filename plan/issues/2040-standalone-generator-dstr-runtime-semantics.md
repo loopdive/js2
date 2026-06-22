@@ -1,10 +1,11 @@
 ---
 id: 2040
 title: "standalone: generator/destructuring runtime-semantics residual — rest-pattern iterator consumption, lazy defaults, private elements (~1,750 tests)"
-status: ready
+status: in-progress
 sprint: 64
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-22
+assignee: cascade-lead
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -432,3 +433,191 @@ residuals (cluster-B generator-object semantics, the rest-identity rows) are
 separate and unaffected by this verdict. A SEPARATE pre-existing compiler
 stack-overflow on nested-obj-pattern-default in (static) methods (the source of
 several of the 13 `wasm_compile` floor entries) is filed as **#2587**.
+
+## Implementation Notes (sdev-vecdispatch, 2026-06-21) — tag-5 3-way classifier
+
+Implements arch-tag5's "unified tag-5 field-4 equality fix" spec (PR #1886) — the
+equality half of #2040 + the #2585 proto-identity fix. Stacks on #1883/#2583
+(which added `tag5StringEqThen()` and is the content-eq base).
+
+**Why this is NOT the rejected "numeric-class-gate broadening" above.** The prior
+−788/−794 verdict ("leave equality helpers untouched; 14 regressions / 0
+improvements") was for admitting `tag==5 && ref.test field4 $box_number` into the
+`{2,3}` numeric arm of `__any_strict_eq` — which reclassifies tag-5-vs-tag-2 cross
+cases and mis-fires (14 regressions). arch-tag5's measurement REFRAMED it: the
+defect is *within* the both-tags-5 arm (overloaded field-4), and
+`nativeBoxNumberTypeIdx >= 0` is TRUE in standalone (sd-3's "−1" premise was
+false). So the fix is a 3-way classifier *inside* the tag-5 arm (only reached when
+both operands are tag 5) — it never touches the cross-tag path, so it cannot cause
+the 14-regression mis-classification.
+
+**What changed** (`src/codegen/any-helpers.ts`, consumer-side only — no boxing /
+`$AnyValue`-layout / −788/−794 change):
+- `tag5FieldEqDecision(a,b,anyA,anyB)` shared by the tag-5 arm of BOTH `__any_eq`
+  and `__any_strict_eq`: (1) EITHER field-4 is `$BoxedNumber` → `__any_to_f64` +
+  `f64.eq` (numeric branch, gated ONLY on `nativeBoxNumberTypeIdx >= 0`, never
+  `nativeStrings` — the gate that killed sd-3's attempt); (2) BOTH field-4 are
+  genuine strings → existing `tag5StringEqThen()`; (3) BOTH eqref objects →
+  `ref.eq` (#2585); else conservative `tag5StringEqThen()`.
+- `f64.eq` preserves `NaN===NaN` false (−788) while fixing `23===23.0` true.
+- Two `anyref` scratch locals (4/5) added to both helpers.
+- `__any_eq` cross-tag String⇄Number sub-read hardened: tag-5 ToNumber now routes
+  a `$BoxedNumber` field-4 through `__any_to_f64`, only genuine strings through
+  `__str_to_number` (`tag5ToNumber()`).
+
+This also FIXED a latent trap #1883 introduced: `tag5StringEqThen`'s
+`ref.cast $AnyString` traps ("illegal cast") on a tag-5 boxed-number/object — the
+classifier guards every cast with the runtime type test, so those cases never
+reach the string cast.
+
+**Verified** (`tests/issue-2040-tag5-field4-eq.test.ts`, 12/12): 23===23.0,
+a!==a-post-numeric-op, boxed===boxed, NaN===NaN false, +0===-0, proto-identity
+(#2585), object identity, loose 23==23.0. eq/array/identity regression suites
+green. Pre-existing-and-unrelated (verified by reverting any-helpers.ts —
+identical fail count on the #1883 base): `issue-1888-any-extern-roundtrip` (5,
+open-any dispatch bridge NaN), `issue-1888.test` 2-4-arg closure (1), `issue-2081`
+wasi loose-eq (#2043 late-import shift, 10), `logical-conditional-identity` void→NaN (3).
+
+**MUST be full-baseline (merge_group) gated** — the risk is in the −788/−794
+representation contracts; only the full standalone test262 lane confirms
+net-positive with zero regression bucket. Folds in #2585 (close it).
+
+## Cascade landing plan (cascade-lead, 2026-06-22) — re-grounded vs current origin/main
+
+Re-grounded all three tag-5 equality PRs against current `origin/main`
+(`d7f0524550`, 31769/43135) after a **215-commit** substrate shift since #1888's
+original merge-base (`0e482f2fc`). The shift landed #2611 (funcidx-desync fix),
+#2580 M1/M2 substrate, #1461/#54 native search arms, #2615 keystone, etc. — all of
+which directly touch the mechanisms the classifier interacts with, so the prior
+merge_group regressions (measured 2026-06-21 against the OLD main) are stale.
+
+### Supersession map (PROVEN by byte-diff, not narrative)
+
+- **#1888 is a complete superset of #1883 AND #1864.**
+  - `src/codegen/closed-method-dispatch.ts` (+177) and `src/codegen/string-ops.ts`
+    (+74) are **byte-identical** between #1888 and #1883 → #1888 contains all of
+    #1883's any-array indexOf/lastIndexOf/includes brand dispatch.
+  - #1888's `tag5StringEqThen()` already emits #1864's native
+    `__str_flatten`+`__str_equals` content-equality (attributed #2583/#2036, same
+    code, ref.test-guarded) → #1888 contains all of #1864's boxed tag-5 string
+    equality.
+  - #1888 adds the unique keystone: `tag5FieldEqDecision` 3-way classifier
+    (boxed-number→`f64.eq`, both-strings→content eq, both-eqref→`ref.eq`) that
+    #2040 numeric-eq + #2585 proto-identity need.
+
+### Disposition
+
+1. **LAND #1888 alone** (the keystone superset). Order: it is the only PR that
+   needs to merge.
+2. **CLOSE #1883 as superseded-by-#1888** (its code is byte-identical inside
+   #1888). Its issue #2583 is already `status: done`.
+3. **CLOSE #1864 as superseded-by-#1888** (its native string-eq is folded into
+   #1888's `tag5StringEqThen`). Issue #2579 → fold note.
+
+   Both closes REPORTED to team-lead with evidence — NOT closed unilaterally (they
+   are the user's PRs).
+
+### Re-grounded validation (NOT the stale −151 verdict)
+
+A/B faithful runner (`runTest262File(..., "standalone")`) over the classifier's
+direct blast-radius cluster (954 files: equals/does-not-equals/strict-equals/
+strict-does-not-equals + Object.getPrototypeOf/create/is + Array
+indexOf/lastIndexOf/includes), branch (1888 ⊕ current main) vs clean current main:
+
+- branch **400 pass / 327 fail / 18 ce**, main **390 pass / 337 fail / 18 ce**
+- per-file diff: **0 regressions, 10 improvements, 0 other flips.**
+  - +8 `S11.9.x` equality/strict-equality rows (`A2.1_T1`, `A7`)
+  - +2 `15.4.4.{14,15}` indexOf/lastIndexOf rows
+- The 3 `logical-conditional-identity` void→NaN **compile** failures are
+  PRE-EXISTING on clean current main (verified A/B, identical 3-fail count) — a
+  separate void-in-numeric-context defect, NOT a cascade regression.
+
+This cluster sweep is a **pre-flight de-risk only** — the authoritative gate for a
+broad-impact value-rep change remains the **merge_group standalone floor** (the
+−788/−794 contract can surface outside the sample). #1888 enqueued ONE-SHOT on
+CLEAN after the `hold` label is removed; net-positive in-cluster + 0 regressions
+means the prior stale park is very likely resolved by the rebase, but merge_group
+is the decider.
+
+## Merge_group EJECT + root-cause (cascade-lead, 2026-06-22) — #1888 is net-negative, MUST NOT land as-is
+
+#1888 (rebased onto current main d02038d8) was enqueued, built the merge_group,
+and **EJECTED on the standalone-highwater floor gate (#2097)**:
+`current pass=24771, mark=24933, floor=24883 → delta -162`. The mark is current
+(sha b90560f061, 2026-06-22 13:47; b90560..919cd76 are docs/baseline-only). So
+this is a **REAL −162 standalone regression**, NOT stale-baseline drift.
+
+The rolling regression-gate PASSED (net +0) — only the absolute highwater floor
+caught it. The floor runs ONLY in merge_group, which is why all PR-level checks +
+the scoped equality A/B (which was +10/0) were green: the −162 is in a DIFFERENT
+cluster than the A/B sample — **class / class-dstr / generator destructuring**.
+
+### Root cause (isolated by hunk-bisection on the live worktree)
+
+Canary: `language/statements/class/dstr/meth-dflt-ary-ptrn-empty` — spec
+`ArrayBindingPattern : [ ]` must NOT iterate; `method([] = iter)` with a generator
+default must leave `iterations === 0`. On clean main: PASS. On #1888: FAIL
+(`iterations` 0→2 — the empty pattern wrongly iterates the generator default).
+
+Bisection result (faithful runner, standalone target):
+- Revert WHOLE any-helpers.ts → main ⇒ PASS. (so it's in any-helpers; #1883's
+  closed-method-dispatch.ts + string-ops.ts are CLEAN — proven.)
+- Neutralize ALL THREE tag-5 consumers together (classifier call-sites →
+  `tag5StringEqThen`, `canNativeStrEq=false`, `tag5ToNumber`→inline) ⇒ PASS.
+- Re-enable ONLY the `tag5FieldEqDecision` classifier (others neutralized) ⇒ FAIL.
+- **⇒ the `tag5FieldEqDecision` classifier is the cause.** (Each of the three
+  consumers independently re-breaks it because they share the mechanism — all do
+  `any.convert_extern`+`ref.test`/`ref.cast`/`__any_to_f64` on the tag-5 field-4;
+  that is why reverting any ONE in isolation, with the others still active, did
+  not fix it.)
+
+### Why the classifier is semantically wrong here
+
+The default-parameter machinery compares the incoming arg against `undefined`
+(to decide whether to apply the default) via `__any_eq`/`__any_strict_eq`. When a
+tag-5-boxed **non-string GC object** (the generator/iterator default) reaches the
+both-tags-5 arm, the classifier's new objectEq (`ref.eq` after `ref.test (ref eq)`)
+or numeric (`f64.eq` via `__any_to_f64`) branch returns a DIFFERENT answer than
+main's `i32.const 0` stub — flipping the default-application decision so the empty
+pattern iterates. This is precisely the −788/−794 representation-contract risk the
+spec section + sd-3's earlier shelved attempt flagged: broadening the tag-5 arm to
+classify boxed objects/numbers changes equality semantics relied on elsewhere.
+
+### Disposition
+
+#1888 is **net-negative** (+10 equality rows vs −162 dstr) → MUST NOT land as-is.
+The classifier needs to be narrowed so it does not change equality results for
+tag-5 boxed GC objects consumed by the dstr/default-parameter path (e.g. gate the
+objectEq/numeric arms so they only fire for the cases #2040/#2585 actually need
+and fall back to the legacy behaviour for everything the default machinery sees).
+This is senior-dev design work, gated by merge_group re-validation. Cascade does
+NOT collapse to #1888 until then; #1883 (search arms, proven clean) is the lower-
+risk standalone-landable subset.
+
+## RESHAPE LANDED (cascade-lead, 2026-06-22) — guard + string arm; numeric/object classifier deferred
+
+Lead+user approved reshaping #1888 to land the net-positive safe subset and defer
+the substrate-blocked piece. After full bisection the −162 split into pieces with a
+sharper boundary than first thought:
+
+- **FIX 1 (LANDED): restore #1864's `ref.test $AnyString` guard** on
+  `tag5StringEqThen`'s native arm (the #1888 `recoverNative` refactor dropped it).
+  Banks #2579 boxed-string `===` + #2583 `Array.prototype.{indexOf,…}.call`; `0`
+  for non-string tag-5 pairs (main's legacy answer). Alone, this fixes the dstr
+  canary AND keeps the search/string-eq wins.
+- **DEFERRED (both arms of the `tag5FieldEqDecision` classifier):** not just the
+  #2585 object `ref.eq` arm — the **#2040 numeric `f64.eq` arm ALSO regresses the
+  class/dstr cluster** (bisection: re-enabling ONLY the classifier, even with
+  `i32.and` numeric gating and objectEq removed, re-breaks the dstr canary). Both
+  arms change tag-5 boxed-VALUE equality that the destructuring / generator-iterator
+  lowering implicitly relies on (it counted on the legacy always-false tag-5
+  non-string eq). The whole both-tags-5 classifier (numeric + object) moves to the
+  value-rep substrate (#2580 M2 / #35). The cross-tag String⇄Number `tag5ToNumber`
+  arm in `__any_add` is dstr-safe and STAYS.
+
+**Validation:** dstr canaries 4/4 PASS (the −162 fix); #2583 search 2/2; A/B over
+the equality+search cluster vs clean main = **+2 / 0 regressions** (indexOf +
+lastIndexOf). `tests/issue-2040-tag5-field4-eq.test.ts`: 4 classifier cases
+`it.skip`ped with the #2580 M2 reference; the rest pass. `tests/issue-2579.test.ts`
+folded in (8/8) so closing #1864 loses no coverage. Authoritative gate = the
+merge_group standalone floor.

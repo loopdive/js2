@@ -11,6 +11,7 @@ import { isBooleanType, isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
+import { probeCompiledType } from "./context/speculative.js";
 import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { addArrayIteratorImports, addStringImports, addUnionImports, resolveWasmType } from "./index.js";
@@ -341,6 +342,12 @@ export function emitBoundsCheckedArrayGet(
   elementType: ValType,
   ctx?: CodegenContext,
   useUndefinedSentinel = false,
+  // (#2593) Explicit signedness for a packed i8/i16 element, driven by the
+  // typed-array VIEW name (not the storage kind): `Int8Array`/`Int16Array` read
+  // sign-extending (`get_s`), `Uint8Array`/`Uint8ClampedArray`/`Uint16Array` read
+  // zero-extending (`get_u`). When undefined, fall back to the legacy
+  // storage-kind heuristic (i8→get_u, i16→get_s) for non-typed-array callers.
+  signedness?: "s" | "u",
 ): void {
   // Save index and array ref to locals so we can use them in both branches
   const idxLocal = allocLocal(fctx, `__bounds_idx_${fctx.locals.length}`, { kind: "i32" });
@@ -367,9 +374,21 @@ export function emitBoundsCheckedArrayGet(
   fctx.body.push({ op: "array.len" });
   fctx.body.push({ op: "i32.lt_u" } as Instr);
 
-  // Build the "then" branch: in-bounds -> array.get
+  // Build the "then" branch: in-bounds -> array.get. (#2593) For a packed i8/i16
+  // element, prefer the view-name-driven `signedness` (get_s for signed views,
+  // get_u for unsigned); fall back to the legacy storage-kind heuristic when the
+  // caller did not supply it (i32 packed elements use plain `array.get` — i32 has
+  // no sign-extension distinction; the value IS the full 32 bits).
   const packedLoad =
-    elementType.kind === "i8" ? "array.get_u" : elementType.kind === "i16" ? "array.get_s" : "array.get";
+    elementType.kind === "i8" || elementType.kind === "i16"
+      ? signedness === "s"
+        ? "array.get_s"
+        : signedness === "u"
+          ? "array.get_u"
+          : elementType.kind === "i8"
+            ? "array.get_u"
+            : "array.get_s"
+      : "array.get";
   const valueType: ValType = elementType.kind === "i8" || elementType.kind === "i16" ? { kind: "i32" } : elementType;
 
   const thenInstrs: Instr[] = [
@@ -518,9 +537,9 @@ function inferExpressionWasmType(
   }
 
   if (!allowProbe) return undefined;
-  const savedLen = fctx.body.length;
-  const probeResult = compileExpression(ctx, fctx, expr);
-  fctx.body.length = savedLen;
+  // #1919 — transactional probe: compile only to read the produced ValType, then
+  // roll back the body AND any locals / late imports / errors the compile leaked.
+  const probeResult = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, expr));
   return probeResult ?? undefined;
 }
 
@@ -589,7 +608,7 @@ const ARRAY_LIKE_SEARCH_METHODS = new Set(["indexOf", "lastIndexOf", "includes"]
  * Step 2 (the real generic arm + the binary-emitter local-type fix) is
  * senior/infra; this set is removed entry-by-entry as those native paths land.
  */
-const STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS = new Set([
+const STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS = new Set<string>([
   // (#2036 S6 step 2) `filter` now has a native standalone arm — it builds its
   // result via the native `$ObjVec` builder (`__objvec_new`/`__objvec_push`)
   // instead of the host `__js_array_*`, so it no longer leaks a host import.
@@ -601,15 +620,20 @@ const STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS = new Set([
   // (composed from `__any_from_extern` + `__any_strict_eq`) under standalone, so
   // they no longer leak `__host_eq` / `__same_value_zero`. Removed from the set.
   //
-  // `map` stays until its native indexed (sparse-hole) result arm lands.
+  // (#2580 M2.2b) `map` now has a native standalone arm: the `case "map"` builder
+  // routes its result through the native `$ObjVec` builder
+  // (`__objvec_new`/`__objvec_push`) for standalone/wasi (host-import-free), with a
+  // sequential push per index — exact for the dense `.call(arrayLike)` walk
+  // (indices 0..length-1). Removed from the refusal set. (Real sparse-array `map`
+  // with holes is a separate concern, handled by the direct-array path, not this
+  // array-like generic dispatch.)
   // `reduce`/`reduceRight` are special-cased in the dispatch
   // (`standaloneArrayLikeMethodRefused`): the **with-initial-value** form is
   // host-import-free (accumulator boxed through native `__box_number`) and
   // ALLOWED; the **no-initial-value** form's §23.1.3.21 forward hole-scan still
   // hits a module-finalization func-index shift (`__extern_has_idx` baked call
   // mis-resolves to `number_toString` → `if` over an externref → invalid Wasm),
-  // so it stays refused until that finalization-shift bug is fixed.
-  "map",
+  // so it stays refused until that finalization-shift bug is fixed (M2.2c).
 ]);
 
 /**
@@ -1176,16 +1200,43 @@ export function compileArrayLikePrototypeCall(
     }
 
     case "map": {
-      const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-      const arrSetIdx = ensureLateImport(
-        ctx,
-        "__extern_set",
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [],
-      );
-      // Used both for numeric callback results and for array index / length keys.
+      // (#2580 M2.2b) Result builder: in standalone/WASI build a native `$ObjVec`
+      // via `__objvec_new`/`__objvec_push` (host-import-free, `[i]`/`.length`-
+      // readable post #2190/#35) — same as the `filter` arm above — instead of the
+      // host `__js_array_new`/`__extern_set` JS-array builder. For the
+      // `.call(arrayLike)` generic-method case the loop iterates indices
+      // `0..length-1` DENSELY, so a sequential `__objvec_push` per iteration places
+      // each mapped element at its own index — exact and order-preserving (the
+      // sparse-hole concern that deferred a native `map` is for REAL sparse arrays,
+      // not this dense array-like walk). Host/gc mode keeps the JS-array builder
+      // (it surfaces a real JS Array on the boundary). This removed `map` from
+      // `STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS` (#2036 S6 step-2, last entry).
+      const nativeBuilder = ctx.standalone || ctx.wasi;
+      let arrNewIdx: number | undefined;
+      let arrPushIdx: number | undefined; // native $ObjVec push (standalone)
+      let arrSetIdx: number | undefined; // host index-keyed set (gc/host)
+      if (nativeBuilder) {
+        const builders = ensureObjVecBuilders(ctx);
+        arrNewIdx = builders.newIdx;
+        arrPushIdx = builders.pushIdx;
+      } else {
+        arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+        arrSetIdx = ensureLateImport(
+          ctx,
+          "__extern_set",
+          [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+          [],
+        );
+      }
+      // Used for numeric callback results and (host path) array index / length keys.
       const mapBoxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-      if (arrNewIdx === undefined || arrSetIdx === undefined || mapBoxIdx === undefined) return undefined;
+      if (
+        arrNewIdx === undefined ||
+        mapBoxIdx === undefined ||
+        (nativeBuilder ? arrPushIdx === undefined : arrSetIdx === undefined)
+      ) {
+        return undefined;
+      }
       flushLateImportShifts(ctx, fctx);
       const resultTmp = allocLocal(fctx, `__ali_mp_res_${fctx.locals.length}`, { kind: "externref" });
       const mappedTmp = allocLocal(fctx, `__ali_mp_mapped_${fctx.locals.length}`, { kind: "externref" });
@@ -1204,15 +1255,36 @@ export function compileArrayLikePrototypeCall(
                 : []; // externref: already right type
       fctx.body.push({ op: "call", funcIdx: arrNewIdx });
       fctx.body.push({ op: "local.set", index: resultTmp });
-      addStringConstantGlobal(ctx, "length");
-      fctx.body.push(
-        { op: "local.get", index: resultTmp },
-        ...stringConstantExternrefInstrs(ctx, "length"),
-        { op: "local.get", index: lenTmp },
-        { op: "f64.convert_i32_s" },
-        { op: "call", funcIdx: mapBoxIdx },
-        { op: "call", funcIdx: arrSetIdx },
-      );
+      // Host JS-array path needs an explicit `.length` set (the $ObjVec builder
+      // tracks length intrinsically via push, so the native path skips it).
+      if (!nativeBuilder) {
+        addStringConstantGlobal(ctx, "length");
+        fctx.body.push(
+          { op: "local.get", index: resultTmp },
+          ...stringConstantExternrefInstrs(ctx, "length"),
+          { op: "local.get", index: lenTmp },
+          { op: "f64.convert_i32_s" },
+          { op: "call", funcIdx: mapBoxIdx },
+          { op: "call", funcIdx: arrSetIdx! },
+        );
+      }
+      // Per-element store: native → `__objvec_push(result, mapped)` (sequential =
+      // index-correct for the dense walk); host → `__extern_set(result, box(i),
+      // mapped)` (index-keyed).
+      const storeMapped: Instr[] = nativeBuilder
+        ? [
+            { op: "local.get", index: resultTmp } as Instr,
+            { op: "local.get", index: mappedTmp } as Instr,
+            { op: "call", funcIdx: arrPushIdx! } as Instr,
+          ]
+        : [
+            { op: "local.get", index: resultTmp } as Instr,
+            { op: "local.get", index: iTmp } as Instr,
+            { op: "f64.convert_i32_s" } as Instr,
+            { op: "call", funcIdx: mapBoxIdx } as Instr,
+            { op: "local.get", index: mappedTmp } as Instr,
+            { op: "call", funcIdx: arrSetIdx! } as Instr,
+          ];
       fctx.body.push({
         op: "block",
         blockType: { kind: "empty" },
@@ -1227,12 +1299,7 @@ export function compileArrayLikePrototypeCall(
                 ...callClosure,
                 ...mapReturnToExternref,
                 { op: "local.set", index: mappedTmp } as Instr,
-                { op: "local.get", index: resultTmp } as Instr,
-                { op: "local.get", index: iTmp } as Instr,
-                { op: "f64.convert_i32_s" },
-                { op: "call", funcIdx: mapBoxIdx } as Instr,
-                { op: "local.get", index: mappedTmp } as Instr,
-                { op: "call", funcIdx: arrSetIdx } as Instr,
+                ...storeMapped,
               ]),
               ...incrI,
             ],
@@ -2787,10 +2854,10 @@ export function compileArrayMethodCall(
     // Slow path: probe-compile the receiver to determine its actual type.
     // Compiles the expression, captures the result type, then rolls back.
     if (!actualType || actualType.kind === "externref" || actualType.kind === "f64" || actualType.kind === "i32") {
-      const savedLen = fctx.body.length;
-      const probeResult = compileExpression(ctx, fctx, receiverExpr);
-      // Roll back — the method function will re-compile the receiver
-      fctx.body.length = savedLen;
+      // #1919 — transactional probe: the method function re-compiles the
+      // receiver below, so discard the body plus any locals / late imports /
+      // errors this probe leaks.
+      const probeResult = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, receiverExpr));
       if (
         probeResult &&
         (probeResult.kind === "ref" || probeResult.kind === "ref_null") &&

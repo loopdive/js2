@@ -26,4 +26,12 @@ The old "no idle messages ever" rule was designed to stop ping-loops while agent
 
 **How to apply:** One-liner progress updates at key moments (reproduced → fixed → PR open). No multi-paragraph status reports. No pings when literally nothing changed.
 
-**Tech lead behavior:** Acknowledge milestone pings with a brief reply so agents know they're heard. Ignore only empty-status pings with no new information.
+**Tech lead behavior (corrected 2026-06-21, s64):** Acknowledge milestone
+pings briefly. But an **idle ping is a STATE signal, not noise to ignore** —
+"silence breaks the loop" is false (pings are timer-driven by the agent's idle
+state, not replies; they keep coming regardless of whether you answer). Always
+**resolve the state**: stale/crossing-in-flight → ignore; idle + work →
+TaskList task with `owner` pinned (agents are TaskList-driven, not
+SendMessage-driven); idle + no work → `shutdown_request`. Going quiet at an
+idle agent just lets it loop and burn a slot. Full rule:
+[[feedback_idle_notification_silence]].

@@ -23,6 +23,7 @@ import {
   getOrRegisterRefCellType,
   getOrRegisterVecType,
   resolveWasmType,
+  typedArrayVecStorage,
 } from "../index.js";
 import { getOrRegisterDvWindowType } from "../dataview-native.js"; // (#2159/#38) DataView windowing wrapper
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
@@ -47,7 +48,7 @@ import {
   compileStatement,
   registerCompileSuperElementAccess,
   registerCompileSuperPropertyAccess,
-  registerResolveEnclosingClassName,
+  resolveEnclosingClassName,
 } from "../shared.js";
 import { maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import { compileStringLiteral } from "../string-ops.js";
@@ -69,12 +70,7 @@ import {
 import { localGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
-function resolveEnclosingClassName(fctx: FunctionContext): string | undefined {
-  if (fctx.enclosingClassName) return fctx.enclosingClassName;
-  const underscoreIdx = fctx.name.indexOf("_");
-  if (underscoreIdx > 0) return fctx.name.substring(0, underscoreIdx);
-  return undefined;
-}
+// #2146: resolveEnclosingClassName now lives in shared.ts (imported above).
 
 function valTypeMatches(a: ValType, b: ValType): boolean {
   if (a.kind !== b.kind) return false;
@@ -154,6 +150,14 @@ function resolvesToNonConstructableValue(ctx: CodegenContext, calleeExpr: ts.Exp
           ? e.expression
           : (e as ts.NonNullExpression).expression;
     }
+    // (#1528a) An arrow function is PROVABLY never a constructor — §15.3.4
+    // arrow functions have no [[Construct]] internal method, so `new (arrow)()`
+    // must throw TypeError (§7.3.15 Construct → §7.2.4 IsConstructor). Through a
+    // local of type `any` (`const f = () => 1; new f()`) no static guard sees
+    // the arrow, so control reaches the unknown-ctor path and wrongly does not
+    // throw; route it through the `__construct` brand check (which throws a real
+    // TypeError) just like the prototype-method / bound-function shapes below.
+    if (ts.isArrowFunction(e)) return true;
     // `<...>.prototype.<method>` — a method pulled off a prototype.
     if (ts.isPropertyAccessExpression(e)) {
       const obj = e.expression;
@@ -174,6 +178,63 @@ function resolvesToNonConstructableValue(ctx: CodegenContext, calleeExpr: ts.Exp
     }
   }
   return false;
+}
+
+/**
+ * (#1632b-2 / #1528a residual) Does `new <id>(...)` target a runtime FUNCTION
+ * VALUE held in a binding — `const C = makeCtor(); new C()` — that is provably
+ * CONSTRUCTABLE (an ordinary `function` value, not an arrow / bound / prototype
+ * method, which `resolvesToNonConstructableValue` already routes to the throwing
+ * `__construct` brand check)? Such a callee is mis-classified by the unknown-ctor
+ * path as an `extern_class` host import (fails at instantiation with
+ * "No dependency provided for extern class …"); it must instead route through the
+ * `__construct_closure` host bridge, whose `_wrapCallableForHost` construct trap
+ * runs the compiled closure body (ECMA-262 §10.2.2).
+ *
+ * Gate strictly on the value-binding shape so no declared class, ambient/host
+ * constructor (Test262Error is a top-level `FunctionDeclaration`, kept on the
+ * existing path), or intrinsic ctor is intercepted:
+ *  - callee is a bare identifier whose **value declaration is a
+ *    `VariableDeclaration`** (a function held in a binding, not a hoisted
+ *    function/class declaration);
+ *  - the binding's TS type has **call signatures** (it is callable) and **no
+ *    construct signatures** that would have made a static guard fire;
+ *  - it is NOT a known compiled class and NOT a registered extern class.
+ */
+function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
+  if (!ts.isIdentifier(calleeExpr)) return false;
+  if (ctx.classSet.has(calleeExpr.text) || ctx.externClasses.has(calleeExpr.text)) return false;
+  // An arrow / bound / prototype-method value is non-constructable — that is the
+  // throwing path, handled by resolvesToNonConstructableValue. Do not claim it.
+  if (resolvesToNonConstructableValue(ctx, calleeExpr)) return false;
+  const sym = ctx.checker.getSymbolAtLocation(calleeExpr);
+  const decl = sym?.valueDeclaration;
+  if (!decl || !ts.isVariableDeclaration(decl)) return false;
+  const t = ctx.checker.getTypeAtLocation(calleeExpr);
+  // Callable value (a function held in the binding). Construct-signature-bearing
+  // values (real class ctors typed through the binding) are left to the static
+  // class paths; here we target the ordinary-function-value cluster.
+  const callSigs = t.getCallSignatures();
+  if (callSigs.length === 0) return false;
+  // Only a PLAIN constructable function gets the closure-construct bridge.
+  // Generator (`function*` / `*m()`), async, and async-generator functions, plus
+  // method/accessor/arrow values, have NO [[Construct]] (§14.4.13 / §15.x): e.g.
+  // `var m = { *m(){} }.m; new m()` MUST throw TypeError, not construct. The
+  // bridge would wrongly construct them. The call signature's DECLARATION (kind +
+  // asterisk/async modifiers) is the authoritative discriminator — a binding's
+  // type otherwise loses the AST. (Regressed
+  // `language/.../method-definition/generator-invoke-ctor.js` before this guard.)
+  for (const sig of callSigs) {
+    const sigDecl = sig.getDeclaration() as ts.SignatureDeclaration | undefined;
+    if (!sigDecl) return false; // unknown shape — don't claim it
+    if ("asteriskToken" in sigDecl && (sigDecl as ts.FunctionLikeDeclaration).asteriskToken) return false; // generator
+    if (ts.canHaveModifiers(sigDecl) && ts.getModifiers(sigDecl)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword))
+      return false; // async / async-gen
+    // Only an ordinary function declaration / expression is constructable;
+    // method / accessor / arrow / constructor-type signatures are not.
+    if (!ts.isFunctionDeclaration(sigDecl) && !ts.isFunctionExpression(sigDecl)) return false;
+  }
+  return true;
 }
 
 /** Compile super.method(args) — resolve to ParentClass_method and call with this */
@@ -3227,9 +3288,17 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       "Float64Array",
     ]);
     if (TYPED_ARRAY_NAMES.has(expr.expression.text)) {
-      const isNativeUint8Array = noJsHost(ctx) && expr.expression.text === "Uint8Array";
-      const elemWasm: ValType = isNativeUint8Array ? { kind: "i8" } : { kind: "f64" };
-      const elemKey = isNativeUint8Array ? "i8_byte" : "f64";
+      // (#2593) Standalone/WASI packs integer views into i8/i16/i32 storage
+      // (Int8/Uint8/Uint8Clamped→i8_byte, Int16/Uint16→i16_byte,
+      // Int32/Uint32→i32_byte); host/gc and the float views keep f64.
+      // `typedArrayVecStorage` is the single source of truth so the
+      // count-constructor's backing vec matches the read / byteLength paths.
+      // Before #2593 only native Uint8Array packed (everything else f64), which
+      // left `new Int32Array(n)` on an f64 vec while the byteLength reader cast
+      // to i32_byte — a runtime type mismatch (read 0 / illegal cast).
+      const storage = typedArrayVecStorage(ctx, expr.expression.text);
+      const elemWasm: ValType = storage.type;
+      const elemKey = storage.key;
       const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       const args = expr.arguments ?? [];
@@ -3659,6 +3728,62 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       fctx.body.push({ op: "drop" });
     }
 
+    // (#1632b-2 / #1528a residual) `new C(args)` where `C` is a runtime FUNCTION
+    // VALUE bound in a local (`const C = makeCtor(); new C(42)`) — provably
+    // constructable (ordinary function, not arrow/bound/method). Route through
+    // the `__construct_closure` host bridge: materialize args into a JS array,
+    // then `__construct_closure(callee, argv)` wraps the compiled closure with
+    // `_wrapCallableForHost` (constructible) and `Reflect.construct`s it. Without
+    // this the value is mis-routed to the unknown-ctor extern-class import and
+    // fails at instantiation with "No dependency provided for extern class C".
+    // ONE terminal `flushLateImportShifts` (after the call) — never mid-emission
+    // (the PR #608/#794 index-corruption hazard). JS-host only; standalone keeps
+    // the existing path (a Wasm-native dynamic Construct is a separate effort).
+    if (ts.isIdentifier(s1Callee) && !noJsHost(ctx) && resolvesToConstructableFunctionValue(ctx, s1Callee)) {
+      // Evaluate the callee value to externref.
+      const calleeTy = compileExpression(ctx, fctx, s1Callee, { kind: "externref" });
+      if (calleeTy && calleeTy.kind !== "externref") {
+        coerceType(ctx, fctx, calleeTy, { kind: "externref" });
+      } else if (calleeTy === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      const calleeLocal = allocLocal(fctx, `__cc_callee_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: calleeLocal });
+      // Build a JS array of the args (boxed externref each), in source order.
+      const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+      const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+      const ccIdx = ensureLateImport(
+        ctx,
+        "__construct_closure",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
+      const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
+      const finalCc = ctx.funcMap.get("__construct_closure") ?? ccIdx;
+      if (finalArrNew !== undefined && finalArrPush !== undefined && finalCc !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalArrNew });
+        const argvLocal = allocLocal(fctx, `__cc_argv_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: argvLocal });
+        for (const arg of args) {
+          fctx.body.push({ op: "local.get", index: argvLocal });
+          const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+          if (aTy && aTy.kind !== "externref") {
+            coerceType(ctx, fctx, aTy, { kind: "externref" });
+          } else if (aTy === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+          }
+          fctx.body.push({ op: "call", funcIdx: finalArrPush });
+        }
+        fctx.body.push({ op: "local.get", index: calleeLocal });
+        fctx.body.push({ op: "local.get", index: argvLocal });
+        fctx.body.push({ op: "call", funcIdx: finalCc });
+        return { kind: "externref" };
+      }
+      // Imports unavailable (shouldn't happen in JS-host): fall through.
+    }
+
     // new ArrayBuffer(byteLength) — validate non-negative integer length
     if (ctorName === "ArrayBuffer" && args.length >= 1) {
       compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
@@ -4021,9 +4146,12 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       "Float64Array",
     ]);
     if (className && TYPED_ARRAY_CTORS.has(className)) {
-      const isNativeUint8Array = noJsHost(ctx) && className === "Uint8Array";
-      const elemType: ValType = isNativeUint8Array ? { kind: "i8" } : { kind: "f64" };
-      const elemKey = isNativeUint8Array ? "i8_byte" : "f64";
+      // (#2593) packed integer storage standalone/WASI — see the matching
+      // count-ctor handler above. `typedArrayVecStorage` keeps host/gc on f64
+      // and packs Int8/Uint8/Uint8Clamped→i8, Int16/Uint16→i16, Int32/Uint32→i32.
+      const storage = typedArrayVecStorage(ctx, className);
+      const elemType: ValType = storage.type;
+      const elemKey = storage.key;
       const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       const args = expr.arguments ?? [];
@@ -4652,16 +4780,9 @@ function emitTypedArrayFromByteBuffer(
   return true;
 }
 
-export {
-  compileClassExpression,
-  compileNewExpression,
-  compileSuperElementMethodCall,
-  compileSuperMethodCall,
-  resolveEnclosingClassName,
-};
+export { compileClassExpression, compileNewExpression, compileSuperElementMethodCall, compileSuperMethodCall };
 
-// Register the resolveEnclosingClassName delegate so closures.ts (and others)
-// can call it via shared.ts without creating an import cycle.
-registerResolveEnclosingClassName(resolveEnclosingClassName);
+// #2146: resolveEnclosingClassName is now defined in shared.ts directly (no DI
+// slot), so there is no longer a delegate to register here.
 registerCompileSuperPropertyAccess(compileSuperPropertyAccess);
 registerCompileSuperElementAccess(compileSuperElementAccess);

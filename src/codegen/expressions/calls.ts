@@ -21,6 +21,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from
+import { isSetReflectiveCallShape, tryCompileSetReflectiveCall } from "../set-runtime.js"; // (#2604) Set.prototype.METHOD.call brand-check
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#2169c) native Array.from drain
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
@@ -43,6 +44,7 @@ import {
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -60,6 +62,8 @@ import {
   nativeStringType,
   resolveWasmType,
   STRING_METHODS,
+  TYPED_ARRAY_NAMES,
+  typedArrayVecStorage,
 } from "../index.js";
 import {
   compileArrayConstructorCall,
@@ -94,7 +98,11 @@ import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import { ensureArrayNativeProtoGlue, ensureObjectNativeProtoGlue } from "../array-object-proto.js";
-import { ensureStandaloneNativeMethodClosure, getNativeProtoBuiltinGlue } from "../native-proto.js";
+import {
+  emitBrandCheckTypeError,
+  ensureStandaloneNativeMethodClosure,
+  getNativeProtoBuiltinGlue,
+} from "../native-proto.js";
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import {
   emitSetExtrasArgv,
@@ -146,6 +154,7 @@ import {
   tryCompileStandaloneRegExpToString,
 } from "../regexp-standalone.js";
 import {
+  emitThrowRangeError,
   emitThrowTypeError,
   getFuncParamTypes,
   getWasmFuncReturnType,
@@ -171,6 +180,7 @@ import {
 } from "../generators-native.js";
 import {
   ensureNativeStringExternBridge,
+  ensureNativeStringHelpers,
   ensureStrToCharVecHelper,
   ensureTextEncodingHelpers,
   nativeStringLiteralInstrs,
@@ -178,7 +188,12 @@ import {
 } from "../native-strings.js";
 import { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from "../builtin-scaffold.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
-import { emitArrayBufferSlice, emitDataViewAccessor, isDataViewAccessor } from "../dataview-native.js";
+import {
+  emitArrayBufferSlice,
+  emitDataViewAccessor,
+  getOrRegisterDvWindowType,
+  isDataViewAccessor,
+} from "../dataview-native.js";
 import {
   getLinearU8Buffer,
   getLinearU8ParamIndicesForCall,
@@ -387,11 +402,26 @@ function resolveObjectToStringTag(ctx: CodegenContext, argExpr: ts.Expression | 
   if ((t.flags & ts.TypeFlags.Null) !== 0) return "Null";
   if ((t.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0) return "Undefined";
 
+  const symName = nn.getSymbol()?.name;
+
+  // (#2597) §23.2.3.38 — `%TypedArray%.prototype[@@toStringTag]` is the typed
+  // array's constructor name (`"Int32Array"`, …). §25.x give DataView /
+  // ArrayBuffer / SharedArrayBuffer. These receivers are opaque Wasm structs, so
+  // the host's `Object.prototype.toString` ALSO mis-tags them — return the static
+  // tag unconditionally (correct in BOTH host and standalone), not via
+  // `deferOrStandalone`. MUST precede the `resolveArrayInfo` "Array" arm below:
+  // a typed array is array-like to that resolver, so without this it would mis-tag
+  // `[object Array]` instead of `[object Int32Array]`. `.prototype` of a typed
+  // array was filtered earlier (no [[TypedArrayName]] slot → `[object Object]`).
+  if (symName !== undefined && TYPED_ARRAY_NAMES.has(symName)) return symName;
+  if (symName === "BigInt64Array" || symName === "BigUint64Array") return symName;
+  if (symName === "DataView") return "DataView";
+  if (symName === "ArrayBuffer") return "ArrayBuffer";
+  if (symName === "SharedArrayBuffer") return "SharedArrayBuffer";
+
   // Array (real `__vec_`/`__arr_` arrays, via the established resolver) — the
   // host sees an opaque GC vec and mis-tags it [object Object].
   if (resolveArrayInfo(ctx, nn)) return "Array";
-
-  const symName = nn.getSymbol()?.name;
 
   // Primitive-wrapper *objects* (`new Number(5)` / `new Boolean(true)` /
   // `new String("")`) box to the corresponding tag, but the host already
@@ -1535,6 +1565,83 @@ function calleeIsPromiseExecutorParam(ctx: CodegenContext, expr: ts.Expression):
 }
 
 /**
+ * (#1528 / #56 follow-up — class-ctor arm) Is `expr` an identifier resolving to a
+ * parameter of a function that is used as a Promise-combinator CAPABILITY
+ * CONSTRUCTOR — i.e. the `executor` of a `function Constructor(executor){…}` that
+ * flows to `Promise.{all,allSettled,race,any}.call(Constructor, …)`?
+ *
+ * V8's `NewPromiseCapability(Constructor)` does `Construct(Constructor, «executor»)`
+ * (run via #1632b-2's closure-construct bridge). Inside the compiled body the call
+ * `executor(resolve, reject)` is a call of a function-typed PARAMETER whose value
+ * is a HOST function V8 supplied — NOT a wasm closure struct. The default
+ * closure-struct `ref.cast`/`call_ref` dispatch then `illegal cast`s; such a param
+ * must take the `__call_function` host-callable arm instead. This mirrors the
+ * Promise-executor-param case (#2028) but for the capability-constructor entry.
+ *
+ * Gate is SYNTACTIC and narrow (NOT whole-program escape analysis), to preserve
+ * the #1941 dual-mode guarantee: the param's declaring function must be a
+ * `function` declaration / named function-expression whose identifier appears as
+ * the FIRST argument of a `Promise.<combinator>.call(...)` somewhere in the
+ * source file. Only such functions are entered as capability constructors with
+ * host-supplied params; ordinary callable params never match.
+ */
+function calleeIsCapabilityCtorParam(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isIdentifier(expr)) return false;
+  const sym = ctx.checker.getSymbolAtLocation(expr);
+  const decl = sym?.valueDeclaration;
+  if (!decl || !ts.isParameter(decl)) return false;
+  // The declaring function: a FunctionDeclaration, or a function/arrow expression
+  // bound to a variable (so it has a stable referenceable name).
+  const fn = decl.parent;
+  let fnName: string | undefined;
+  if (ts.isFunctionDeclaration(fn) && fn.name) {
+    fnName = fn.name.text;
+  } else if (
+    (ts.isFunctionExpression(fn) || ts.isArrowFunction(fn)) &&
+    fn.parent &&
+    ts.isVariableDeclaration(fn.parent) &&
+    ts.isIdentifier(fn.parent.name)
+  ) {
+    fnName = fn.parent.name.text;
+  }
+  if (fnName === undefined) return false;
+  // Scan the source file for `Promise.<combinator>.call(<fnName>, …)`.
+  const COMBINATORS = new Set(["all", "allSettled", "race", "any"]);
+  const sf = decl.getSourceFile();
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    // `Promise.<combinator>.call(<id>, …)` — `(Promise.X).call`.
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "call" &&
+      ts.isPropertyAccessExpression(node.expression.expression) &&
+      ts.isIdentifier(node.expression.expression.expression) &&
+      node.expression.expression.expression.text === "Promise" &&
+      COMBINATORS.has(node.expression.expression.name.text)
+    ) {
+      // Unwrap `as`/paren/non-null on the capability arg so
+      // `Promise.X.call(Constructor as any, …)` matches the bare-identifier form.
+      let firstArg = node.arguments[0];
+      while (
+        firstArg &&
+        (ts.isAsExpression(firstArg) || ts.isParenthesizedExpression(firstArg) || ts.isNonNullExpression(firstArg))
+      ) {
+        firstArg = firstArg.expression;
+      }
+      if (firstArg && ts.isIdentifier(firstArg) && firstArg.text === fnName) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/**
  * (#1337) Emit a call to a host bound-function externref via the
  * `__call_function(fn, thisArg, argsArray)` host helper. The bound function
  * already carries [[BoundThis]] and [[BoundArguments]], so `thisArg` is passed
@@ -2273,6 +2380,28 @@ function tryEmitInlineDynamicCall(
   const undefinedIdx = needsUndefinedPad
     ? ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }])
     : undefined;
+  // (#2611) Flush the deferred late-import shift NOW — every other late-import
+  // call site in this file flushes after the add, but this one historically did
+  // not, leaving `ctx.pendingLateImportShift` dangling. `ensureLateImport`
+  // inserts the import at index `numImportFuncs` and defers the shift; until it
+  // is flushed, the funcMap entries + bodies of functions registered BEFORE the
+  // import stay stale-low while functions registered AFTER (e.g. `__module_init`,
+  // whose funcIdx is recomputed from the post-import `numImportFuncs`) are already
+  // correct. A flush left this late is then HALF-applied: shifting it at finalize
+  // re-bumps the already-correct post-import indices (`startFuncIdx` → invalid
+  // start function), while NOT flushing at all leaves the pre-import native
+  // runtime helpers (`__extern_length`/`__extern_get_idx`/…) stale, so a
+  // finalize reserve-then-fill resolves `funcMap.get(name) - numImportFuncs` to
+  // the WRONG `mod.functions[]` slot and corrupts that body ("local index out of
+  // range … #2043 class"). Flushing immediately — before any further function is
+  // registered — repairs only the genuinely-stale pre-import indices and keeps
+  // the index space self-consistent through the rest of compilation. Idempotent
+  // no-op when nothing is pending. This site (`tryEmitInlineDynamicCall` ->
+  // `__get_undefined` for the arity-pad path) is the one async-generator /
+  // destructuring-param trigger that reaches here, but the flush is correct for
+  // every path. (Mirrors `emitUndefined`, which already flushes after the same
+  // `ensureGetUndefined` add.)
+  if (undefinedIdx !== undefined) flushLateImportShifts(ctx, fctx);
   const pushUndefinedExternref = (body: Instr[]): void => {
     if (undefinedIdx !== undefined) {
       body.push({ op: "call", funcIdx: undefinedIdx } as Instr);
@@ -2783,9 +2912,9 @@ function compileFromCharCodeFamily(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
-  opts: { native: boolean; helperIdx: number },
+  opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },
 ): ValType | null {
-  const { native, helperIdx } = opts;
+  const { native, helperIdx, isFromCodePoint } = opts;
   const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);
   if (repr === undefined) return null;
 
@@ -2801,8 +2930,49 @@ function compileFromCharCodeFamily(
     fctx.body = buf;
     try {
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "f64" });
+      // #2601 — §22.1.2.2 step 2b/2c: each fromCodePoint code point, after
+      // ToNumber, must be an INTEGRAL Number in [0, 0x10FFFF] else RangeError.
+      // (fromCharCode does ToUint16 with NO such check — fromCodePoint-only.)
+      // Scoped to standalone/WASI (`noJsHost`): the throw uses the in-module
+      // `__new_RangeError` constructor with no host bridge. The JS-host lane
+      // keeps its existing host-delegated behaviour (the slice is standalone).
+      const emitRangeGuard = isFromCodePoint === true && noJsHost(ctx);
+      if (emitRangeGuard) {
+        // Normalise to f64, then test `trunc(cp) != cp` (catches fractional AND
+        // NaN) OR `cp < 0` OR `cp > 0x10FFFF` (±∞ caught by the range test).
+        if (argType && argType.kind === "i32") buf.push({ op: "f64.convert_i32_s" });
+        const cpTmp = allocLocal(fctx, `__fcp_cp_${fctx.locals.length}`, { kind: "f64" });
+        buf.push({ op: "local.tee", index: cpTmp });
+        // integral: trunc(cp) != cp  → also true for NaN
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.trunc" });
+        buf.push({ op: "f64.ne" });
+        // range: cp < 0
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.const", value: 0 });
+        buf.push({ op: "f64.lt" });
+        // range: cp > 0x10FFFF
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.const", value: 0x10ffff });
+        buf.push({ op: "f64.gt" });
+        buf.push({ op: "i32.or" });
+        buf.push({ op: "i32.or" });
+        const throwBuf: Instr[] = [];
+        const savedForThrow = fctx.body;
+        fctx.body = throwBuf;
+        emitThrowRangeError(ctx, fctx, "RangeError: Invalid code point");
+        fctx.body = savedForThrow;
+        buf.push({ op: "if", blockType: { kind: "empty" }, then: throwBuf } as Instr);
+        // Re-push the validated code point for the helper.
+        buf.push({ op: "local.get", index: cpTmp });
+      }
       if (native) {
-        if (argType && argType.kind !== "i32") buf.push({ op: "i32.trunc_sat_f64_s" });
+        if (emitRangeGuard) {
+          // Already f64 in the temp above — trunc to the i32 the native helper wants.
+          buf.push({ op: "i32.trunc_sat_f64_s" });
+        } else if (argType && argType.kind !== "i32") {
+          buf.push({ op: "i32.trunc_sat_f64_s" });
+        }
       } else {
         if (argType && argType.kind === "i32") buf.push({ op: "f64.convert_i32_s" });
       }
@@ -3338,6 +3508,20 @@ function compileCallExpression(
     if (propAccess.name.text === "call" || propAccess.name.text === "apply") {
       const isCall = propAccess.name.text === "call";
       const innerExpr = propAccess.expression;
+
+      // (#2604) Reflective `Set.prototype.METHOD.call(recv, …)` /
+      // `inst.METHOD.call(recv, …)` — brand-check the receiver ([[SetData]]) and
+      // dispatch to the native Set runtime. Runs BEFORE the generic #2193
+      // member-closure recovery (which has no native-Set knowledge), and only
+      // matches a Set data-method closure under nativeStrings, so it ADDS a
+      // Set-specific pre-check without rewriting the generic path. addUnionImports
+      // up-front (mirrors extern.ts's direct-path setup) so the arg-boxing
+      // `__box_number` the dispatch emits is registered without a mid-body shift.
+      if (isSetReflectiveCallShape(ctx, expr)) {
+        addUnionImports(ctx);
+        const setReflResult = tryCompileSetReflectiveCall(ctx, fctx, expr);
+        if (setReflResult !== undefined) return setReflResult;
+      }
 
       // (#2193 PR-B) Reflective `m.call/apply(thisArg, …)` on a value-erased
       // `$NativeProto` member closure (e.g. `const m = Array.prototype.slice`).
@@ -4283,6 +4467,43 @@ function compileCallExpression(
       // (e.g. Array.prototype.every.call(Math, ...) rewritten as Math.every(...))
     }
 
+    // #2590 — RegExp.escape(s) (ES2025, §22.2.5). A pure string transform that
+    // escapes regex-syntax-significant code points. Standalone-only: routing it
+    // through the native `__regex_escape` helper avoids leaking the dynamic
+    // `env::__get_builtin` host import (which would otherwise refuse / fail to
+    // instantiate). Placed before the generic builtin-member fallthrough.
+    if (
+      ctx.standalone &&
+      ts.isIdentifier(propAccess.expression) &&
+      isGlobalRegExpIdentifier(ctx, propAccess.expression) &&
+      propAccess.name.text === "escape" &&
+      ctx.nativeStrings
+    ) {
+      const arg = expr.arguments[0];
+      const argTsType = arg ? ctx.checker.getTypeAtLocation(arg) : undefined;
+      const argFlags = argTsType?.flags ?? 0;
+      const isStringArg = arg !== undefined && (isStringType(argTsType!) || (argFlags & ts.TypeFlags.StringLike) !== 0);
+      const isUnresolvedArg = (argFlags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+      if (isStringArg) {
+        ensureNativeStringHelpers(ctx);
+        const escapeIdx = ctx.nativeStrHelpers.get("__regex_escape");
+        if (escapeIdx !== undefined) {
+          compileExpression(ctx, fctx, arg!, nativeStringType(ctx));
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "call", funcIdx: ctx.nativeStrHelpers.get("__regex_escape")! } as Instr);
+          return nativeStringType(ctx);
+        }
+      } else if (arg !== undefined && !isUnresolvedArg) {
+        // §22.2.5 step 1: a statically non-String argument is a TypeError.
+        // (number / object / array / null / undefined literals — the
+        // non-string-inputs.js test exercises exactly these.)
+        emitBrandCheckTypeError(ctx, fctx.body, "RegExp.escape called on a non-string value");
+        fctx.body.push({ op: "unreachable" } as Instr);
+        return nativeStringType(ctx);
+      }
+      // `any`/`unknown` arg → narrow-refuse (fall through to the generic path).
+    }
+
     // Handle Number.isNaN(n) and Number.isInteger(n)
     if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Number") {
       const method = propAccess.name.text;
@@ -4489,7 +4710,7 @@ function compileCallExpression(
       if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
         const helperIdx = ctx.nativeStrHelpers.get("__str_fromCodePoint");
         if (helperIdx !== undefined) {
-          const r = compileFromCharCodeFamily(ctx, fctx, expr, { native: true, helperIdx });
+          const r = compileFromCharCodeFamily(ctx, fctx, expr, { native: true, helperIdx, isFromCodePoint: true });
           if (r !== null) return r;
         }
       }
@@ -4499,7 +4720,11 @@ function compileCallExpression(
         // #2122: variadic — each code point produces a string joined via the
         // js-string `concat` import; register it before the shared fold.
         if (expr.arguments.length > 1) addStringImports(ctx);
-        const r = compileFromCharCodeFamily(ctx, fctx, expr, { native: false, helperIdx: funcIdx });
+        const r = compileFromCharCodeFamily(ctx, fctx, expr, {
+          native: false,
+          helperIdx: funcIdx,
+          isFromCodePoint: true,
+        });
         if (r === null) return r;
         return { kind: "externref" };
       }
@@ -4554,6 +4779,169 @@ function compileCallExpression(
       return { kind: "externref" };
     }
 
+    // (#2592) Standalone-native TypedArray static factories — `TA.of(...)` and
+    // `TA.from(src)`. The receiver identifier is `Int32Array` / `Uint8Array` /
+    // … ∈ TYPED_ARRAY_NAMES, so it never reaches the `Array.of` / `Array.from`
+    // arms below (keyed on `"Array"`) and otherwise falls through to the
+    // dynamic-shape `__get_builtin` path — rejected standalone (#1472 Phase B).
+    // The element vec representation is fixed by the constructor NAME via
+    // `typedArrayVecStorage` (i8_byte for standalone Uint8Array, f64 otherwise),
+    // matching today's `new TA([...])` so the result is assignment-compatible.
+    // Integer element-width wrapping (Uint8Array.of(300) → 44) is deferred to
+    // #2593 — this slice matches `new TA([...])` element fidelity (length/order).
+    if (
+      noJsHost(ctx) &&
+      ts.isIdentifier(propAccess.expression) &&
+      TYPED_ARRAY_NAMES.has(propAccess.expression.text) &&
+      (propAccess.name.text === "of" || propAccess.name.text === "from")
+    ) {
+      const taName = propAccess.expression.text;
+      const factory = propAccess.name.text;
+      const storage = typedArrayVecStorage(ctx, taName);
+      const elemWasm = storage.type; // {kind:"f64"} or {kind:"i8"}
+      const taVecTypeIdx = getOrRegisterVecType(ctx, storage.key, elemWasm);
+      const taArrTypeIdx = getArrTypeIdxFromVec(ctx, taVecTypeIdx);
+      // The store ValType for an i8 packed array is i32 on the operand stack.
+      const storeWasm: ValType = elemWasm.kind === "i8" ? { kind: "i32" } : elemWasm;
+
+      if (taArrTypeIdx >= 0) {
+        // --- TA.of(a, b, c) — every arg is an element (§23.2.2.2). ---
+        if (factory === "of") {
+          const hasSpreadArg = expr.arguments.some((a) => ts.isSpreadElement(a));
+          if (!hasSpreadArg) {
+            if (expr.arguments.length === 0) {
+              fctx.body.push({ op: "i32.const", value: 0 });
+              fctx.body.push({ op: "i32.const", value: 0 });
+              fctx.body.push({ op: "array.new_default", typeIdx: taArrTypeIdx });
+              fctx.body.push({ op: "struct.new", typeIdx: taVecTypeIdx });
+              return { kind: "ref_null", typeIdx: taVecTypeIdx };
+            }
+            for (const arg of expr.arguments) {
+              const at = compileExpression(ctx, fctx, arg, storeWasm);
+              if (at && !valTypesMatch(at, storeWasm)) coerceType(ctx, fctx, at, storeWasm);
+            }
+            fctx.body.push({ op: "array.new_fixed", typeIdx: taArrTypeIdx, length: expr.arguments.length });
+            const ofData = allocLocal(fctx, `__taof_data_${fctx.locals.length}`, {
+              kind: "ref",
+              typeIdx: taArrTypeIdx,
+            });
+            fctx.body.push({ op: "local.set", index: ofData });
+            fctx.body.push({ op: "i32.const", value: expr.arguments.length });
+            fctx.body.push({ op: "local.get", index: ofData });
+            fctx.body.push({ op: "struct.new", typeIdx: taVecTypeIdx });
+            return { kind: "ref_null", typeIdx: taVecTypeIdx };
+          }
+          // Spread arg → known standalone gap (orthogonal); fall through.
+        }
+
+        // --- TA.from(src [, mapFn]) — array-like / vec source (§23.2.2.1). ---
+        // Phase 1: array-like sources (array literal / typed/number[] vec) with
+        // NO mapFn. The source vec's element type may differ from the dest
+        // (e.g. number[] f64 → Int32Array f64, or → Uint8Array i8), so copy
+        // element-by-element with re-coercion rather than a raw array.copy.
+        // mapFn and non-array iterables fall through to the existing path.
+        if (factory === "from" && expr.arguments.length === 1) {
+          const argTsType = ctx.checker.getTypeAtLocation(expr.arguments[0]!);
+          const argWasm = resolveWasmType(ctx, argTsType);
+          if (argWasm.kind === "ref" || argWasm.kind === "ref_null") {
+            const srcInfo = resolveArrayInfo(ctx, argTsType);
+            if (srcInfo) {
+              // #1919 — transactional try-lower; roll back if the source doesn't
+              // genuinely lower to its vec (keeps the fall-through paths clean).
+              const snap = snapshotSpeculative(ctx, fctx);
+              const { vecTypeIdx: srcVecIdx, arrTypeIdx: srcArrIdx, elemType: srcElem } = srcInfo;
+              const srcT = compileExpression(ctx, fctx, expr.arguments[0]!);
+              if (srcT && (srcT.kind === "ref" || srcT.kind === "ref_null")) {
+                const srcVec = allocLocal(fctx, `__tafrom_src_${fctx.locals.length}`, {
+                  kind: "ref_null",
+                  typeIdx: srcVecIdx,
+                });
+                const srcData = allocLocal(fctx, `__tafrom_sdata_${fctx.locals.length}`, {
+                  kind: "ref_null",
+                  typeIdx: srcArrIdx,
+                });
+                const lenTmp = allocLocal(fctx, `__tafrom_len_${fctx.locals.length}`, { kind: "i32" });
+                const dstData = allocLocal(fctx, `__tafrom_ddata_${fctx.locals.length}`, {
+                  kind: "ref",
+                  typeIdx: taArrTypeIdx,
+                });
+                const iTmp = allocLocal(fctx, `__tafrom_i_${fctx.locals.length}`, { kind: "i32" });
+
+                // src vec ref → field0 (len), field1 (data)
+                if (srcT.kind === "ref_null") fctx.body.push({ op: "ref.cast", typeIdx: srcVecIdx } as Instr);
+                fctx.body.push({ op: "local.set", index: srcVec });
+                fctx.body.push({ op: "local.get", index: srcVec });
+                fctx.body.push({ op: "struct.get", typeIdx: srcVecIdx, fieldIdx: 0 });
+                fctx.body.push({ op: "local.set", index: lenTmp });
+                fctx.body.push({ op: "local.get", index: srcVec });
+                fctx.body.push({ op: "struct.get", typeIdx: srcVecIdx, fieldIdx: 1 });
+                fctx.body.push({ op: "local.set", index: srcData });
+                // dst data array of len (default-filled)
+                for (const ins of defaultValueInstrs(elemWasm)) fctx.body.push(ins);
+                fctx.body.push({ op: "local.get", index: lenTmp });
+                fctx.body.push({ op: "array.new", typeIdx: taArrTypeIdx });
+                fctx.body.push({ op: "local.set", index: dstData });
+                // for (i=0; i<len; i++) dst[i] = coerce(src[i]) — canonical
+                // block{loop{ if i>=len br 1; body; i++; br 0 }} form. Build the
+                // loop body via pushBody/popBody so the `coerceType` element
+                // conversion (which emits into `fctx.body`) lands INSIDE the loop
+                // rather than leaking before the block.
+                fctx.body.push({ op: "i32.const", value: 0 });
+                fctx.body.push({ op: "local.set", index: iTmp });
+                const srcElemIsSigned = srcElem.kind === "i8" || srcElem.kind === "i16";
+                const srcElemIsPacked = srcElem.kind === "i8" || srcElem.kind === "i16";
+                const srcStore: ValType = srcElemIsPacked ? { kind: "i32" } : srcElem;
+                const savedLoopBody = pushBody(fctx);
+                // if (i >= len) break
+                fctx.body.push({ op: "local.get", index: iTmp } as Instr);
+                fctx.body.push({ op: "local.get", index: lenTmp } as Instr);
+                fctx.body.push({ op: "i32.ge_s" } as Instr);
+                fctx.body.push({ op: "br_if", depth: 1 } as Instr);
+                // dst[i] = coerce(src[i])
+                fctx.body.push({ op: "local.get", index: dstData } as Instr);
+                fctx.body.push({ op: "local.get", index: iTmp } as Instr);
+                fctx.body.push({ op: "local.get", index: srcData } as Instr);
+                fctx.body.push({ op: "local.get", index: iTmp } as Instr);
+                if (srcElemIsPacked) {
+                  fctx.body.push({
+                    op: srcElemIsSigned ? "array.get_s" : "array.get_u",
+                    typeIdx: srcArrIdx,
+                  } as Instr);
+                } else {
+                  fctx.body.push({ op: "array.get", typeIdx: srcArrIdx } as Instr);
+                }
+                if (!valTypesMatch(srcStore, storeWasm)) coerceType(ctx, fctx, srcStore, storeWasm);
+                fctx.body.push({ op: "array.set", typeIdx: taArrTypeIdx } as Instr);
+                // i++
+                fctx.body.push({ op: "local.get", index: iTmp } as Instr);
+                fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+                fctx.body.push({ op: "i32.add" } as Instr);
+                fctx.body.push({ op: "local.set", index: iTmp } as Instr);
+                // continue
+                fctx.body.push({ op: "br", depth: 0 } as Instr);
+                const loopInner = fctx.body;
+                popBody(fctx, savedLoopBody);
+                fctx.body.push({
+                  op: "block",
+                  blockType: { kind: "empty" },
+                  body: [{ op: "loop", blockType: { kind: "empty" }, body: loopInner } as Instr],
+                } as Instr);
+                // struct.new (len, dstData)
+                fctx.body.push({ op: "local.get", index: lenTmp });
+                fctx.body.push({ op: "local.get", index: dstData });
+                fctx.body.push({ op: "struct.new", typeIdx: taVecTypeIdx });
+                return { kind: "ref", typeIdx: taVecTypeIdx };
+              }
+              rollbackSpeculative(ctx, fctx, snap);
+            }
+          }
+          // Non-array-like / mapFn / iterable source → fall through.
+        }
+      }
+      // taArrTypeIdx unavailable or unhandled shape → fall through to the
+      // existing generic path (host mode handles via host import).
+    }
+
     // Handle Array.from(arr) — array copy
     if (
       ts.isIdentifier(propAccess.expression) &&
@@ -4578,7 +4966,10 @@ function compileCallExpression(
       // under --target standalone. Tentatively compile and only commit when
       // the argument genuinely lowers to a native string ref (#1610 pattern).
       if (!hasMapFn && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && isStringType(argTsType)) {
-        const bodyLenBefore = fctx.body.length;
+        // #1919 — transactional try-lower: keep the compiled arg when it lowers
+        // to a native string; otherwise roll back the body AND any locals / late
+        // imports / errors so the fallback paths below start clean.
+        const snap = snapshotSpeculative(ctx, fctx);
         const t = compileExpression(ctx, fctx, expr.arguments[0]!);
         if (
           t &&
@@ -4593,7 +4984,7 @@ function compileCallExpression(
           return { kind: "ref", typeIdx: nstrVecTypeIdx };
         }
         // Didn't lower as a native string — roll back and use the paths below.
-        fctx.body.length = bodyLenBefore;
+        rollbackSpeculative(ctx, fctx, snap);
       }
       // (#2169) Array.from(g()) over a Wasm-native generator without a mapFn.
       // The argument lowers to the generator state struct, NOT a __vec — the
@@ -4604,7 +4995,10 @@ function compileCallExpression(
       // lowers to a native-generator subject (mirrors the #1470 native-string
       // probe above).
       if (!hasMapFn) {
-        const bodyLenBefore = fctx.body.length;
+        // #1919 — transactional try-lower: keep the compiled arg when it lowers
+        // to a native-generator subject; otherwise roll back the body AND any
+        // locals / late imports / errors so the fallback paths below start clean.
+        const snap = snapshotSpeculative(ctx, fctx);
         const t = compileExpression(ctx, fctx, expr.arguments[0]!);
         const genInfo = t ? nativeGeneratorInfoForForOfSubject(ctx, t) : undefined;
         if (genInfo) {
@@ -4614,7 +5008,7 @@ function compileCallExpression(
           return { kind: "ref", typeIdx: genVecTypeIdx };
         }
         // Not a native generator — roll back and use the paths below.
-        fctx.body.length = bodyLenBefore;
+        rollbackSpeculative(ctx, fctx, snap);
       }
       // (#42 follow-up) Array.from(Set) — standalone native. A Set lowers to a
       // `ref $Map` whose field layout is NOT a `__vec` (field 0 is not a length,
@@ -6348,6 +6742,61 @@ function compileCallExpression(
       propAccess.name.text === "isView" &&
       expr.arguments.length >= 1
     ) {
+      // (#2594) Standalone/no-host: the host `__arraybuffer_isView` import does
+      // not exist — emitting it leaks `env.*` and breaks the WHOLE module at
+      // instantiate. §25.1.4.1 isView is `true` iff the arg has a
+      // [[ViewedArrayBuffer]] slot (any TypedArray or DataView). Decide it
+      // host-free.
+      if (noJsHost(ctx)) {
+        const arg0 = expr.arguments[0]!;
+        const argTs = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(arg0));
+        const argSym = argTs.getSymbol()?.name;
+        const rawTs = ctx.checker.getTypeAtLocation(arg0);
+        const isAnyOrUnknown = (rawTs.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        const isView = argSym !== undefined && (TYPED_ARRAY_NAMES.has(argSym) || argSym === "DataView");
+        // A non-view whose static type is resolvable: ArrayBuffer itself, a
+        // primitive, null/undefined, a plain array, a class/object — all `false`.
+        const isResolvableNonView =
+          !isAnyOrUnknown && !isView && argSym !== "BigInt64Array" && argSym !== "BigUint64Array" && !rawTs.isUnion();
+        if (isView || argSym === "BigInt64Array" || argSym === "BigUint64Array") {
+          // Static `true`. Still evaluate the (possibly side-effecting) arg, drop it.
+          const at = compileExpression(ctx, fctx, arg0);
+          if (at !== null) fctx.body.push({ op: "drop" } as Instr);
+          fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+          return { kind: "i32" };
+        }
+        if (isResolvableNonView) {
+          const at = compileExpression(ctx, fctx, arg0);
+          if (at !== null) fctx.body.push({ op: "drop" } as Instr);
+          fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+          return { kind: "i32" };
+        }
+        // Runtime fallback for `any`/union/unresolved receivers: ref.test the
+        // registered vec carriers (TypedArrays lower to a `$Vec`) and the
+        // DataView window struct. NOTE: standalone shares the `$Vec` carrier
+        // between `number[]` and TypedArrays, so a plain array is
+        // indistinguishable here and reads as a view — an accepted imprecision
+        // for the rare `any` arg; the win is NOT leaking the host import (which
+        // breaks the whole module). Most isView call sites are statically typed.
+        const at = compileExpression(ctx, fctx, arg0, { kind: "externref" });
+        if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+        const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
+        const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
+        const anyTmp = allocLocal(fctx, `__isview_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+        fctx.body.push({ op: "any.convert_extern" } as Instr);
+        fctx.body.push({ op: "local.set", index: anyTmp } as Instr);
+        let emitted = false;
+        for (const vi of vecTypeIdxs) {
+          fctx.body.push({ op: "local.get", index: anyTmp } as Instr);
+          fctx.body.push({ op: "ref.test", typeIdx: vi } as Instr);
+          if (emitted) fctx.body.push({ op: "i32.or" } as Instr);
+          emitted = true;
+        }
+        fctx.body.push({ op: "local.get", index: anyTmp } as Instr);
+        fctx.body.push({ op: "ref.test", typeIdx: dvWinTypeIdx } as Instr);
+        if (emitted) fctx.body.push({ op: "i32.or" } as Instr);
+        return { kind: "i32" };
+      }
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
       const funcIdx = ensureLateImport(ctx, "__arraybuffer_isView", [{ kind: "externref" }], [{ kind: "i32" }]);
@@ -10691,6 +11140,22 @@ function compileCallExpression(
         const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
         if (hostCall !== null) return hostCall;
       }
+      // (#1528 / #56 follow-up — class-ctor arm) `executor(...)` inside a function
+      // used as a Promise-combinator capability constructor
+      // (`Promise.X.call(Constructor, …)` → V8 `Construct(Constructor, «executor»)`
+      // via the #1632b-2 bridge). The `executor` PARAM is an UNTYPED (`any`) value
+      // — no call signatures — so it never reaches the callable-param closure
+      // dispatch below; the no-sig fallback would `ref.cast` it to a closure
+      // struct and trap (`illegal cast in Constructor()`), because V8 supplies a
+      // HOST function there, not a wasm closure. Route it through the same
+      // `__call_function` host helper the bound-function path uses (it packs args
+      // into a JS array and calls `Reflect.apply`). JS-host only; narrow syntactic
+      // gate (the fn flows to a combinator capability-ctor site), so the #1941
+      // dual-mode guarantee for ordinary callable params is preserved.
+      if (isKnownVariable && !ctx.standalone && !noJsHost(ctx) && calleeIsCapabilityCtorParam(ctx, expr.expression)) {
+        const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
+        if (hostCall !== null) return hostCall;
+      }
       if (callSigs && callSigs.length > 0) {
         const sig = callSigs[0]!;
         const sigParamCount = sig.parameters.length;
@@ -10942,6 +11407,11 @@ function compileCallExpression(
             // params so the #1941 dual-mode guarantee for ordinary callable
             // params is preserved.
             (calleeMayBeHostCallable(ctx, expr.expression) || calleeIsPromiseExecutorParam(ctx, expr.expression));
+          // NB: capability-ctor `executor` params (#1528/#56 class-ctor arm) are
+          // UNTYPED (`any`, no call signatures) so they never reach this
+          // callable-param dispatch — they are routed earlier through the
+          // `__call_function` host helper (see the calleeIsCapabilityCtorParam
+          // early-return alongside the bound-function path above).
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;

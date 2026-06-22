@@ -239,3 +239,34 @@ export const BUILTIN_PARENTS_HOST_CONSTRUCTIBLE: ReadonlySet<BuiltinTypeName> = 
 export function isHostConstructibleBuiltin(name: string): boolean {
   return isBuiltinTypeName(name) && BUILTIN_PARENTS_HOST_CONSTRUCTIBLE.has(name as BuiltinTypeName);
 }
+
+/**
+ * (#2620) The native-collection builtins. In `nativeStrings` mode
+ * (`--target standalone`/`wasi`) these are served by the WasmGC-native
+ * Map/Set runtime (map-runtime.ts / set-runtime.ts / weak-collections-runtime.ts,
+ * #1103a/#2162) and are deliberately NOT registered as externClasses — base
+ * `new Set([...])` is intercepted to the native `$Map`-backed instance instead
+ * of leaking a `__new_Set` host import.
+ *
+ * A *subclass* (`class X extends Set {}`), however, still routes through the
+ * generic host-constructible path (these names ARE in
+ * `BUILTIN_PARENTS_HOST_CONSTRUCTIBLE`): under standalone that both leaks the
+ * `__new_<Name>` host import AND desyncs the synthetic `<Class>_<method>`
+ * accessor across the late-import shift (the #2043 index-shift class → invalid
+ * Wasm). A native subclass (native construction + direct `[[SetData]]`
+ * set-algebra + native iteration + `instanceof` discrimination) is the
+ * value-rep/collection-runtime substrate (#2162-scale), tracked separately.
+ * Until then, a standalone subclass of one of these is refused at compile time
+ * (clean CE, never invalid Wasm / never a leaked host import). See the
+ * refusal in class-bodies.ts.
+ */
+export const NATIVE_COLLECTION_BUILTINS: ReadonlySet<string> = new Set<string>(["Set", "Map", "WeakMap", "WeakSet"]);
+
+/**
+ * (#2620) Returns true if `name` is a native-collection builtin
+ * (Set/Map/WeakMap/WeakSet) — used to refuse a standalone subclass of one of
+ * them (see {@link NATIVE_COLLECTION_BUILTINS}).
+ */
+export function isNativeCollectionBuiltin(name: string): boolean {
+  return NATIVE_COLLECTION_BUILTINS.has(name);
+}

@@ -7,7 +7,7 @@
 import { ts } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
-import { isHostConstructibleBuiltin } from "./builtin-tags.js";
+import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { popBody, pushBody } from "./context/bodies.js";
@@ -542,6 +542,38 @@ export function collectClassDeclaration(
           parentFields = ctx.structFields.get(parentClassName) ?? [];
           // Record parent-child relationship
           ctx.classParentMap.set(className, parentClassName);
+          // (#2620) A subclass of a native-collection builtin (Set/Map/WeakMap/
+          // WeakSet) under nativeStrings (`--target standalone`/`wasi`) cannot
+          // take the host-constructible path below: there is no JS host, so
+          // `super(...)`/`new Sub()` lowering to `__new_<Parent>` would leak an
+          // unsatisfiable `env::__new_Set` import (defect A), and the synthetic
+          // `<Class>_<method>` accessor desyncs across the late-import shift
+          // (defect B — the #2043 invalid-Wasm class, e.g. `MySet_has`/`_size`
+          // baking a `-1` global / a stale call funcIdx). The base collections
+          // ARE served by the WasmGC-native runtime (#1103a/#2162), but a true
+          // native *subclass* (native `$Map`-backed construction + direct
+          // `[[SetData]]` set-algebra + native iteration + `instanceof`
+          // discrimination — the Set/prototype/*/subclass-receiver-methods rows)
+          // is the collection-runtime substrate, tracked separately. Until then,
+          // refuse loudly (clean compile error, never invalid Wasm / never a
+          // leaked host import — the #1888 dual-mode invariant). gc/host mode is
+          // unaffected: the externClass host path handles the subclass there.
+          if (parentStructTypeIdx === undefined && ctx.nativeStrings && isNativeCollectionBuiltin(parentClassName)) {
+            reportError(
+              ctx,
+              decl,
+              `Codegen error: 'class ${className} extends ${parentClassName}' is not yet ` +
+                `supported in --target standalone (#2620). The base ${parentClassName} is served ` +
+                `by the WasmGC-native collection runtime, but a native SUBCLASS (with [[SetData]]/` +
+                `[[MapData]] direct access for the set-algebra methods) is not implemented yet — ` +
+                `routing it through the host path would leak an env::__new_${parentClassName} import ` +
+                `or emit invalid Wasm. Use ${parentClassName} directly, or recompile without ` +
+                `--target standalone.`,
+            );
+            // Skip the externref-backed marking so the host-leak/invalid-Wasm
+            // path is never entered; the queued error fails the compile.
+            break;
+          }
           // (#1366a) Detect built-in parent that is host-constructible (Error
           // family). Such subclasses get an externref-backed instance: the
           // constructor returns externref and `super(...)` lowers to

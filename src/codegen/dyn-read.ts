@@ -36,9 +36,14 @@
 // `__get_undefined`, else `ref.null.extern`). No new host import.
 
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureGetUndefined } from "./expressions/late-imports.js";
+import { ensureObjectRuntime } from "./object-runtime.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { allocLocal } from "./context/locals.js";
 
 // `$AnyValue` tag constants (mirror any-helpers.ts box helpers).
 const TAG_NULL = 0;
@@ -171,4 +176,219 @@ export function ensureDynReadHelpers(ctx: CodegenContext): void {
   // Reference the tag constant so a future refined tag-dispatch (M2/M3) keeps it;
   // the M0 form delegates to `__extern_get`, which tag-dispatches internally.
   void TAG_REF;
+}
+
+/**
+ * (#2580 M1) Call-site helper: emit a `__dyn_get(recv, "<keyName>")` at a property
+ * read site. The RECEIVER externref must already be on the stack; this pushes the
+ * key string (externref) and the `call __dyn_get`, leaving the value externref
+ * (the property, or `undefined` when absent) on the stack.
+ *
+ * Runs during BODY compilation (not finalize): it eagerly `ensureObjectRuntime`
+ * (so `__extern_get` exists — safe to register its struct types here, the normal
+ * path) and eagerly emits the dyn-read helpers (so `__dyn_get`'s funcIdx is known
+ * for the `call` below). Sets `ctx.usesDynRead` so the finalize pass is a no-op
+ * (the latch is already set). Returns true on success; false (no-op, receiver
+ * left on stack) if the runtime is unavailable — the caller then keeps its prior
+ * lowering.
+ */
+export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: string): boolean {
+  if (ctx.standalone) {
+    // STANDALONE: `__extern_get` is a DEFINED native helper inside the object
+    // runtime (anyStrTypeIdx valid). Route through the `__dyn_get` wrapper so the
+    // M0 helper's `$Vec`/`$Hole`/native-string arms apply (M2/M3 fill them in).
+    // `usesDynRead` makes the finalize pass emit the wrapper helpers.
+    ctx.usesDynRead = true;
+    ensureObjectRuntime(ctx);
+    ensureDynReadHelpers(ctx);
+    addStringConstantGlobal(ctx, keyName);
+    flushLateImportShifts(ctx, fctx);
+    const dynGetIdx = ctx.funcMap.get("__dyn_get");
+    if (dynGetIdx === undefined) return false;
+    for (const instr of stringConstantExternrefInstrs(ctx, keyName)) fctx.body.push(instr);
+    fctx.body.push({ op: "call", funcIdx: dynGetIdx } as Instr);
+    return true;
+  }
+  // HOST mode: INLINE `__extern_get(recv, key)` directly — do NOT call the
+  // defined `__dyn_get` wrapper. `__extern_get` is a JS host IMPORT (stable index
+  // at the import section, kept in lockstep by the late-import shift), so baking
+  // `call __extern_get` is shift-safe. The defined `__dyn_get`/`__dyn_has` helpers
+  // are DEFINED functions whose indices FLOAT as later imports are added; baking
+  // `call __dyn_get` mid-body and then having a value-consumer add an import
+  // (`=== undefined` → `__extern_is_undefined`, arithmetic → `__unbox_number`)
+  // shifts the defined-func index out from under the baked call, which then hits
+  // the adjacent `__dyn_has` (the funcidx-ordering #2043 bug). Inlining the host
+  // `__extern_get` sidesteps it entirely. In host mode `__extern_get(obj, key)`
+  // already returns JS `undefined` for an absent property (the host `obj[key]`),
+  // so no null→undefined remap is needed — the result is the spec `Get`.
+  //
+  // BUT: an `any`-typed receiver that holds a compiled ARRAY is an externref
+  // wrapping a WasmGC vec struct. The host `__extern_get(vec, "length")` returns
+  // `undefined` (V8 sees an opaque struct with no `.length` JS property), which
+  // would WRONGLY shadow the real array length. So for the `.length` key we FIRST
+  // dispatch on the runtime receiver kind via `ref.test` against the registered
+  // vec types — a HIT reads vec struct field 0 (the length, i32) and boxes it to
+  // an externref via `__box_number`; the MISS (genuine plain object / host value)
+  // falls to `__extern_get`. `ref.test typeIdx` uses *type* indices, which are
+  // append-only / dead-elim-stable (the rec-group), so unlike a `call __is_vec`
+  // this carries NO funcidx-ordering hazard. Non-`length` keys skip the vec arm
+  // (vec indexed reads are a later slice) and go straight to `__extern_get`.
+  // Register BOTH imports up-front (before resolving any baked index): the
+  // vec-aware `.length` arm boxes the i32 length to externref via `__box_number`,
+  // and a late `__box_number` import added *after* `__extern_get`'s index was
+  // baked would shift it. Ensure-then-flush-then-resolve keeps both stable.
+  const externGetIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  if (externGetIdx === undefined) {
+    flushLateImportShifts(ctx, fctx);
+    return false;
+  }
+  // Only the `.length` key uses the vec arm; ensure `__box_number` for it, plus
+  // `__extern_is_undefined` for the null/undefined-receiver guard (#2580 M2 s1).
+  if (keyName === "length") {
+    ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
+  addStringConstantGlobal(ctx, keyName);
+  flushLateImportShifts(ctx, fctx);
+  // Re-resolve by name AFTER all import shifts have settled.
+  const finalExternGetIdx = ctx.funcMap.get("__extern_get") ?? externGetIdx;
+  const boxNumIdx = keyName === "length" ? ctx.funcMap.get("__box_number") : undefined;
+  const isUndefIdx = keyName === "length" ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+  const vecEntries = Array.from(ctx.vecTypeMap.values());
+  if (keyName === "length" && boxNumIdx !== undefined && vecEntries.length > 0) {
+    // Stash the receiver externref (currently on the stack) so we can test it.
+    const recvTmp = allocLocal(fctx, `__dg_recv_${fctx.locals.length}`, { kind: "externref" });
+    const anyTmp = allocLocal(fctx, `__dg_any_${fctx.locals.length}`, { kind: "anyref" });
+    fctx.body.push({ op: "local.set", index: recvTmp } as Instr);
+    fctx.body.push({ op: "local.get", index: recvTmp } as Instr);
+    fctx.body.push({ op: "any.convert_extern" } as Instr);
+    fctx.body.push({ op: "local.set", index: anyTmp } as Instr);
+
+    // The MISS branch: __extern_get(recv, "length") → value-or-undefined externref.
+    let chain: Instr[] = [
+      { op: "local.get", index: recvTmp } as Instr,
+      ...stringConstantExternrefInstrs(ctx, keyName),
+      { op: "call", funcIdx: finalExternGetIdx } as Instr,
+    ];
+    // (#2580 M1a v2 — merge_group eject fix) CLOSURE arm, innermost so it is
+    // tested LAST inside the vec chain's else. A function/closure `.length` is its
+    // ARITY, not a vec length; routing a closure externref through `__extern_get`
+    // returned `undefined` → NaN (the v1 Cluster-A regression: zero-arity built-in
+    // method `.length` `verifyProperty({value:0})` tests flipped pass→fail because
+    // origin's prior numeric path returned 0). The compiler does not statically
+    // track an `any`-typed closure's arity here, and origin's prior path returned
+    // a flat `0`, so match it: `ref.test` the registered closure base wrapper
+    // types and, on a hit, return `box_number(0)`. Same `ref.test typeIdx`
+    // discipline as the vec arm (type indices are rec-group / dead-elim stable —
+    // no funcidx hazard). Closure base types are derived inline from
+    // `ctx.closureInfoByTypeIdx` (walking each to its root struct) to avoid a
+    // circular import on index.ts's private `collectClosureBaseWrapperTypeIdxs`.
+    for (const closureBaseTypeIdx of closureBaseWrapperTypeIdxs(ctx)) {
+      chain = [
+        { op: "local.get", index: anyTmp } as Instr,
+        { op: "ref.test", typeIdx: closureBaseTypeIdx } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: [
+            // arity fallback: box_number(0.0) — matches the prior numeric path.
+            { op: "f64.const", value: 0 } as Instr,
+            { op: "call", funcIdx: boxNumIdx } as Instr,
+          ],
+          else: chain,
+        } as Instr,
+      ];
+    }
+    // Wrap from the innermost (last) vec type outward: each layer is
+    // `if ref.test $vec { box_number(f64(struct.get field0)) } else { <chain> }`.
+    for (let i = vecEntries.length - 1; i >= 0; i--) {
+      const vecTypeIdx = vecEntries[i]!;
+      const def = ctx.mod.types[vecTypeIdx];
+      if (def?.kind !== "struct" || def.fields[0]?.name !== "length" || def.fields[1]?.name !== "data") {
+        continue; // not a length/data vec — skip
+      }
+      chain = [
+        { op: "local.get", index: anyTmp } as Instr,
+        { op: "ref.test", typeIdx: vecTypeIdx } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: [
+            { op: "local.get", index: anyTmp } as Instr,
+            { op: "ref.cast", typeIdx: vecTypeIdx } as Instr,
+            { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr,
+            { op: "f64.convert_i32_s" } as Instr,
+            { op: "call", funcIdx: boxNumIdx } as Instr,
+          ],
+          else: chain,
+        } as Instr,
+      ];
+    }
+    // (#2580 M2 slice 1) NULL/UNDEFINED-RECEIVER guard, OUTERMOST (tested FIRST).
+    // A receiver that is JS `null`/`undefined` at runtime — e.g. a Symbol-keyed
+    // prototype walk that did not resolve (`IteratorProto[Symbol.iterator]` →
+    // undefined; the Cluster-A class of the #1894 eject) — read its `.length` as
+    // the prior numeric path's null-guarded `0`, NOT `__extern_get(undefined,
+    // "length")` → undefined → NaN. `ref.is_null` does NOT catch this (a JS
+    // `undefined` is a NON-null externref wrapping the host undefined sentinel —
+    // why M1's `ref.is_null` guard left Cluster A at 0/13); the HOST
+    // `__extern_is_undefined` does (`v === undefined`). On a hit return
+    // `box_number(0)`, matching origin. The canary `{}` is a non-null object →
+    // miss → reaches `__extern_get` → undefined (preserved).
+    if (isUndefIdx !== undefined && boxNumIdx !== undefined) {
+      chain = [
+        { op: "local.get", index: recvTmp } as Instr,
+        { op: "call", funcIdx: isUndefIdx } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: [{ op: "f64.const", value: 0 } as Instr, { op: "call", funcIdx: boxNumIdx } as Instr],
+          else: chain,
+        } as Instr,
+      ];
+    }
+    for (const instr of chain) fctx.body.push(instr);
+    return true;
+  }
+
+  // receiver externref already on the stack → push key → call __extern_get.
+  for (const instr of stringConstantExternrefInstrs(ctx, keyName)) fctx.body.push(instr);
+  fctx.body.push({ op: "call", funcIdx: finalExternGetIdx } as Instr);
+  return true;
+}
+
+/**
+ * (#2580 M1a v2) The deduped root struct types of every registered closure
+ * wrapper, for `ref.test`-discriminating a closure receiver. Mirrors index.ts's
+ * private `collectClosureBaseWrapperTypeIdxs` (walking each closure struct up its
+ * `superTypeIdx` chain to the root) but lives here to avoid a circular import
+ * (`index.ts` already imports `ensureDynReadHelpers` from this module).
+ */
+function closureBaseWrapperTypeIdxs(ctx: CodegenContext): number[] {
+  const mod = ctx.mod;
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
+    if (!info) continue;
+    const typeDef = mod.types[typeIdx];
+    if (!typeDef || typeDef.kind !== "struct") continue;
+    let root = typeIdx;
+    let cur: typeof typeDef = typeDef;
+    while (cur && cur.kind === "struct" && cur.superTypeIdx !== undefined && cur.superTypeIdx >= 0) {
+      const parent = mod.types[cur.superTypeIdx];
+      if (!parent || parent.kind !== "struct") break;
+      root = cur.superTypeIdx;
+      cur = parent;
+    }
+    if (!seen.has(root)) {
+      seen.add(root);
+      out.push(root);
+    }
+  }
+  return out;
 }

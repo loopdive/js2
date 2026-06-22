@@ -1189,10 +1189,12 @@ export function lowerTypeToIrType(t: LatticeType): import("./nodes.js").IrType |
       return { kind: "object", shape: { fields } };
     }
     case "union": {
-      const members: import("./types.js").ValType[] = [];
+      // #1926 — union members are IrTypes now; wrap each scalar ValType in a
+      // `val`-kind IrType. V1 still admits only f64/i32 scalar members.
+      const members: import("./nodes.js").IrType[] = [];
       for (const m of t.members) {
-        if (m.kind === "f64") members.push({ kind: "f64" });
-        else if (m.kind === "bool") members.push({ kind: "i32" });
+        if (m.kind === "f64") members.push({ kind: "val", val: { kind: "f64" } });
+        else if (m.kind === "bool") members.push({ kind: "val", val: { kind: "i32" } });
         // string/object members not supported in V1 tagged unions.
         // #1126 Stage 1 — i32/u32 atoms also fall through to `return null`
         // here. They should never reach this case in practice: the lattice

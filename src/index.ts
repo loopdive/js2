@@ -287,6 +287,15 @@ export interface CompileOptions {
    */
   nodeIoShim?: boolean;
   /**
+   * Node API emulation (#2603). Opt-in via `--emulate node`. When set, the
+   * checker is given an ambient `process` declaration so Node globals js2wasm
+   * lowers (process.std{in,out,err}, argv, env, exit) type-check without
+   * @types/node — and the "Cannot find name 'process'" warning is suppressed.
+   * When NOT set, that warning instead suggests adding `--emulate node`.
+   * Type-level only; does not change emitted wasm.
+   */
+  emulateNode?: boolean;
+  /**
    * Enforce dual-mode discipline (#1524): when true, codegen rejects any
    * JS-host `env` import that is not on
    * `src/codegen/host-import-allowlist.ts`. Auto-enabled under

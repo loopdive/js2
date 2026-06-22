@@ -78,6 +78,15 @@ jobs:
       - name: AnyValue box-site gate (#2104)
         run: pnpm run check:any-box-sites
 
+      - name: Speculative-rollback gate (#1919)
+        # Fails when a raw `fctx.body.length = <savedLen>` rollback appears under
+        # src/codegen/ outside the transactional helper
+        # (src/codegen/context/speculative.ts). A bare body truncation restores
+        # only the body and leaks the locals / late imports / errors the probe
+        # allocated (the #1919 / #1916 phantom-import heisenbug). Route the probe
+        # through snapshotSpeculative/rollbackSpeculative instead.
+        run: pnpm run check:speculative-rollback
+
       - name: Coercion-site drift gate (#2108)
         # Fails when the JS-semantic coercion vocabulary (ToString/ToNumber/
         # ToPrimitive/equality/ToBoolean) is hand-rolled at a NEW site outside

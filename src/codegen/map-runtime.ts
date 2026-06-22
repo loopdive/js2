@@ -31,6 +31,7 @@ import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
 import { compileArrowAsClosure, compileExpression, VOID_RESULT } from "./shared.js";
+import { isNullOrUndefinedLiteral } from "./destructuring-params.js";
 import { coercionInstrs } from "./type-coercion.js";
 
 /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
@@ -240,6 +241,25 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
     const strEq = ctx.nativeStrHelpers.get("__str_equals");
     // a(0), b(1)
     const body: Instr[] = [];
+    // 0) (#2606 Bug A) Both null → SameValueZero true. `null`/`undefined` set
+    //    elements are stored as `ref.null NONE_HEAP` (the `none` bottom), which
+    //    is NOT a non-null eqref — so `ref.test (ref eq)` returns 0 for it and
+    //    the reference-identity arm below never fires for null-vs-null. Compare
+    //    `ref.is_null` on both operands directly: a stored null and a queried
+    //    null are SameValueZero-equal (and `null`/`undefined` collapse to the
+    //    same `none` representation, matching JS `set.add(undefined);
+    //    set.has(undefined)` and the absent/`undefined`→null sentinel).
+    body.push({ op: "local.get", index: 0 });
+    body.push({ op: "ref.is_null" } as Instr);
+    body.push({ op: "local.get", index: 1 });
+    body.push({ op: "ref.is_null" } as Instr);
+    body.push({ op: "i32.and" } as Instr);
+    body.push({
+      op: "if",
+      blockType: { kind: "val", type: i32 },
+      then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      else: [],
+    } as Instr);
     // 1) Reference identity (covers i31 small ints/bools, null, same object).
     body.push({ op: "local.get", index: 0 });
     body.push({ op: "ref.test", typeIdx: EQ_HEAP });
@@ -1202,6 +1222,41 @@ function coerceArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValTyp
 }
 
 /**
+ * (#2606 Bug A) Compile a `Set`/`Map` element/key/value argument to an anyref
+ * for the native collection helpers, handling `null`/`undefined` literals.
+ *
+ * Root cause: `compileExpression(<null/undefined literal>)` reports ValType
+ * `externref` but emits a **typed** `ref.null` instruction on the stack (a
+ * concrete bottom, not a real externref). `coerceArgToAnyref`'s `externref` arm
+ * then emits `any.convert_extern`, which fails validation — "any.convert_extern
+ * expected type externref, found ref.null of type (ref null N)" — so
+ * `s.add(null)` / `s.has(null)` / `s.has(undefined)` failed to compile
+ * standalone (#2606).
+ *
+ * Fix: for a null/undefined-literal argument, skip `compileExpression` and emit
+ * a canonical `ref.null NONE_HEAP` — the same `none`-bottom anyref-subtype the
+ * runtime already stores for absent/`undefined` entries (lines 657/912/919/1120)
+ * and for the absent-arg case above. A stored `none`-null is then `ref.eq`-equal
+ * to a queried `none`-null, so SameValueZero null/undefined equality works once
+ * the representation is uniform.
+ */
+export function compileCollectionElementArg(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  argExpr: ts.Expression | undefined,
+): void {
+  if (argExpr !== undefined && isNullOrUndefinedLiteral(argExpr)) {
+    // Canonical anyref-subtype null matching the runtime's ABSENT/`undefined`
+    // sentinel — bypasses the `compileExpression` typed-`ref.null` + externref
+    // mismatch.
+    fctx.body.push({ op: "ref.null", typeIdx: NONE_HEAP });
+    return;
+  }
+  const t = argExpr !== undefined ? compileExpression(ctx, fctx, argExpr) : null;
+  coerceArgToAnyref(ctx, fctx, t);
+}
+
+/**
  * (#1103a) Intercept a `Map.prototype.*` method call in standalone /
  * `nativeStrings` mode and route it to the WasmGC-native Map runtime
  * (`ensureMapHelpers`). Mirrors the RegExp pre-externClass interception in
@@ -1269,17 +1324,17 @@ export function tryCompileNativeMapMethodCall(
     case "get":
     case "has":
     case "delete": {
-      const kt = args.length > 0 ? compileExpression(ctx, fctx, args[0]!) : null;
-      coerceArgToAnyref(ctx, fctx, kt);
+      // (#2606 Bug A) Route the key through compileCollectionElementArg so a
+      // `null`/`undefined` literal key emits a canonical `ref.null NONE_HEAP`
+      // (not a typed ref-null that fails the externref any.convert_extern).
+      compileCollectionElementArg(ctx, fctx, args[0]);
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // get → anyref value; has/delete → i32 (boolean).
       return methodName === "get" ? ({ kind: "anyref" } as ValType) : ({ kind: "i32" } as ValType);
     }
     case "set": {
-      const kt = args.length > 0 ? compileExpression(ctx, fctx, args[0]!) : null;
-      coerceArgToAnyref(ctx, fctx, kt);
-      const vt = args.length > 1 ? compileExpression(ctx, fctx, args[1]!) : null;
-      coerceArgToAnyref(ctx, fctx, vt);
+      compileCollectionElementArg(ctx, fctx, args[0]);
+      compileCollectionElementArg(ctx, fctx, args[1]);
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // __map_set returns `ref $Map` (the map itself) — chainable.
       return { kind: "ref", typeIdx: ctx.mapTypeIdx } as ValType;

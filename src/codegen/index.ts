@@ -175,10 +175,55 @@ function typedArrayNameFromTypeNode(node: ts.TypeNode): string | null {
   return TYPED_ARRAY_NAMES.has(node.typeName.text) ? node.typeName.text : null;
 }
 
-function typedArrayVecStorage(ctx: CodegenContext, name: string): { key: string; type: ValType } {
-  return (ctx.wasi || ctx.standalone) && name === "Uint8Array"
-    ? { key: "i8_byte", type: { kind: "i8" } }
-    : { key: "f64", type: { kind: "f64" } };
+// (#2593) Per-view packed storage for the integer typed arrays under
+// standalone/WASI. A width-matched packed element type makes `array.set` truncate
+// to the view's width (ToInt8/ToUint16/… for free) and `array.get_s`/`get_u`
+// sign/zero-extend on read. Before #2593 only `Uint8Array` was packed (i8); every
+// other integer view fell through to f64, which stored the full double with no
+// width truncation. Float views stay f64. Host/gc mode stays f64 for all but
+// Uint8Array — the JS-host marshalling boundary already classifies non-Uint8
+// typed arrays as `number[]`-on-return; packing host-side risks that boundary and
+// is deferred (#2593 note). The packed map is gated on `ctx.wasi || ctx.standalone`.
+const TYPED_ARRAY_PACKED_STORAGE: Readonly<Record<string, { key: string; type: ValType }>> = {
+  Int8Array: { key: "i8_byte", type: { kind: "i8" } },
+  Uint8Array: { key: "i8_byte", type: { kind: "i8" } },
+  Uint8ClampedArray: { key: "i8_byte", type: { kind: "i8" } },
+  Int16Array: { key: "i16_byte", type: { kind: "i16" } },
+  Uint16Array: { key: "i16_byte", type: { kind: "i16" } },
+  Int32Array: { key: "i32_byte", type: { kind: "i32" } },
+  Uint32Array: { key: "i32_byte", type: { kind: "i32" } },
+};
+
+export function typedArrayVecStorage(ctx: CodegenContext, name: string): { key: string; type: ValType } {
+  if (ctx.wasi || ctx.standalone) {
+    const packed = TYPED_ARRAY_PACKED_STORAGE[name];
+    if (packed) return packed;
+  }
+  return { key: "f64", type: { kind: "f64" } };
+}
+
+/**
+ * (#2593) The signedness of a packed integer typed-array element, driving the
+ * read opcode: `array.get_s` for signed views (`Int8`/`Int16`/`Int32`),
+ * `array.get_u` for unsigned (`Uint8`/`Uint8Clamped`/`Uint16`/`Uint32`). MUST be
+ * keyed on the TS view NAME, not the storage kind — a signed `Int8Array` and an
+ * unsigned `Uint8Array` share `i8` storage but read with opposite extension.
+ * Returns undefined for non-integer views (Float*, or a non-typed-array name).
+ */
+export function typedArrayPackedSignedness(name: string): "s" | "u" | undefined {
+  switch (name) {
+    case "Int8Array":
+    case "Int16Array":
+    case "Int32Array":
+      return "s";
+    case "Uint8Array":
+    case "Uint8ClampedArray":
+    case "Uint16Array":
+    case "Uint32Array":
+      return "u";
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -4397,8 +4442,15 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         boxInstrs = [{ op: "call", funcIdx: boxNumIdx } as Instr];
       } else if (elemKey === "i32" && boxNumIdx !== undefined) {
         boxInstrs = [{ op: "f64.convert_i32_s" } as Instr, { op: "call", funcIdx: boxNumIdx } as Instr];
-      } else if ((elemKey === "i32_byte" || elemKey === "i8_byte") && boxNumIdx !== undefined) {
-        // ArrayBuffer/DataView byte elements (i32, unsigned 0-255) — convert unsigned then box
+      } else if (
+        (elemKey === "i32_byte" || elemKey === "i8_byte" || elemKey === "i16_byte") &&
+        boxNumIdx !== undefined
+      ) {
+        // ArrayBuffer/DataView/typed-array byte elements — convert unsigned then box.
+        // (#2593) i16_byte joins here: the GENERIC dynamic-read path (`__vec_get`,
+        // for an `any`-typed read of a typed-array vec) reads the packed element
+        // zero-extended; the per-VIEW signedness for the typed `a[i]` read site is
+        // handled separately in property-access.ts (typedArrayViewSignedness).
         boxInstrs = [{ op: "f64.convert_i32_u" } as Instr, { op: "call", funcIdx: boxNumIdx } as Instr];
       } else if (elemKey === "i64") {
         // i64 (BigInt) is a value type, not a ref type — extern.convert_any expects anyref.
@@ -4417,7 +4469,13 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         { op: "ref.cast", typeIdx: vecTypeIdx } as Instr,
         { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 } as Instr,
         { op: "local.get", index: 1 } as Instr, // index
-        { op: elemKey === "i8_byte" ? "array.get_u" : "array.get", typeIdx: arrTypeIdx } as Instr,
+        // (#2593) Packed i8/i16 elements REQUIRE array.get_u/_s (plain array.get
+        // is invalid Wasm on a packed array); read zero-extended in this generic
+        // path. i32_byte/f64 use plain array.get.
+        {
+          op: elemKey === "i8_byte" || elemKey === "i16_byte" ? "array.get_u" : "array.get",
+          typeIdx: arrTypeIdx,
+        } as Instr,
         ...boxInstrs,
         { op: "return" } as Instr,
       ];
@@ -4710,12 +4768,18 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         { name: `__vpop_vec_${vecTypeIdx}`, type: { kind: "ref_null", typeIdx: vecTypeIdx } },
         { name: `__vpop_len_${vecTypeIdx}`, type: { kind: "i32" } },
       );
+      // (#2593) Packed i8/i16 elements need array.get_u and unsigned→f64; plain
+      // `array.get` is invalid Wasm on a packed array. Generic dynamic path reads
+      // zero-extended (the per-view signedness is at the typed `a[i]` site).
+      const isPackedByte = elemKey === "i8_byte" || elemKey === "i16_byte";
       const boxInstrs: Instr[] =
         elemKey === "externref"
           ? []
           : elemKey === "f64"
             ? [{ op: "call", funcIdx: boxNumIdx2! } as Instr]
-            : [{ op: "f64.convert_i32_s" } as Instr, { op: "call", funcIdx: boxNumIdx2! } as Instr];
+            : isPackedByte
+              ? [{ op: "f64.convert_i32_u" } as Instr, { op: "call", funcIdx: boxNumIdx2! } as Instr]
+              : [{ op: "f64.convert_i32_s" } as Instr, { op: "call", funcIdx: boxNumIdx2! } as Instr];
       const thenBranch: Instr[] = [
         { op: "local.get", index: 1 } as Instr,
         { op: "ref.cast", typeIdx: vecTypeIdx } as Instr,
@@ -4737,7 +4801,7 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         { op: "local.get", index: lenL } as Instr,
         { op: "i32.const", value: 1 } as Instr,
         { op: "i32.sub" } as Instr,
-        { op: "array.get", typeIdx: arrTypeIdx } as Instr,
+        { op: isPackedByte ? "array.get_u" : "array.get", typeIdx: arrTypeIdx } as Instr,
         ...boxInstrs,
         // vec.length = len - 1 (value stays beneath on the stack)
         { op: "local.get", index: vecL } as Instr,
@@ -6317,13 +6381,17 @@ export function reserveLinearU8AllocType(ctx: CodegenContext): void {
  * (#2357/#47) Reserve the standalone `$__subview_<elem>` struct types up-front so
  * their indices are deterministic across codegen passes (see the call site in
  * `generateModule`). Covers the element kinds standalone TypedArrays use for their
- * backing arrays: `i8_byte` (Uint8Array) and `f64` (the other typed arrays).
+ * backing arrays: `i8_byte` (Int8/Uint8/Uint8Clamped), `i16_byte`
+ * (Int16/Uint16), `i32_byte` (Int32/Uint32), and `f64` (the float views). (#2593
+ * added the i16/i32 byte views — before that only integer Uint8Array was packed.)
  * `getOrRegisterSubviewType` only forces the backing ARRAY type (uniquely deduped
  * per element kind) — it does NOT register or reorder the vec struct, so plain
  * typed-array resolution is unaffected. Idempotent.
  */
 export function reserveTypedArraySubviewTypes(ctx: CodegenContext): void {
   getOrRegisterSubviewType(ctx, "i8_byte", { kind: "i8" });
+  getOrRegisterSubviewType(ctx, "i16_byte", { kind: "i16" }); // (#2593) Int16/Uint16
+  getOrRegisterSubviewType(ctx, "i32_byte", { kind: "i32" }); // (#2593) Int32/Uint32
   getOrRegisterSubviewType(ctx, "f64", { kind: "f64" });
 }
 

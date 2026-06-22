@@ -11,6 +11,7 @@ import { getNullablePrimitiveInfo } from "./checker/type-mapper.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
 import { generateModule, generateMultiModule } from "./codegen/index.js";
+import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
 import {
@@ -438,10 +439,49 @@ function isGuardedNullablePrimitiveDiagnostic(diag: ts.Diagnostic, checker: ts.T
   return assignable ? assignable.call(checker, nonNullType, targetType) : false;
 }
 
+/**
+ * (#2616) Detect a TS2322 raised on a trap value inside a `new Proxy(target,
+ * handler)` handler object literal — e.g. `new Proxy({}, { get: {} })`, where
+ * `{}` is rejected against `ProxyHandler<T>['get']`'s call signature.
+ *
+ * Per §10.5 / §7.3.10 (GetMethod), a present-but-non-callable trap is NOT a
+ * static error: the program must compile and throw a **TypeError at operation
+ * time** (when `p.attr` / `p(...)` runs). The runtime host bridge
+ * (`_buildProxyBridgeHandler`) installs a throwing trap for exactly this case.
+ * TypeScript's `ProxyHandler<T>` typing is stricter than the spec, so it
+ * hard-errors before codegen and the runtime path is never reached. Downgrade
+ * the 2322 so the program compiles and the runtime TypeError fires.
+ *
+ * Tightly scoped: only a 2322 whose node sits inside the SECOND argument
+ * (handler) of a `new Proxy(...)` NewExpression qualifies. (The downstream
+ * 2339/2349 "property/call on the target type" errors are already non-hard, so
+ * they don't need suppression — they stem from the Proxy-no-brand typing.)
+ */
+function isProxyHandlerTrapDiagnostic(diag: ts.Diagnostic): boolean {
+  if (diag.code !== 2322) return false;
+  const file = diag.file;
+  if (!file || diag.start === undefined) return false;
+  let n = findSmallestNodeAtPosition(file, diag.start);
+  // Walk up to the enclosing `new Proxy(...)` and confirm the node is within
+  // its handler (2nd) argument.
+  while (n) {
+    if (ts.isNewExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "Proxy") {
+      const handlerArg = n.arguments?.[1];
+      if (handlerArg && diag.start >= handlerArg.getStart(file) && diag.start < handlerArg.getEnd()) {
+        return true;
+      }
+      return false;
+    }
+    n = n.parent;
+  }
+  return false;
+}
+
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
   if (checker && isGuardedNullablePrimitiveDiagnostic(diag, checker)) return false;
+  if (isProxyHandlerTrapDiagnostic(diag)) return false;
   return true;
 }
 
@@ -523,6 +563,14 @@ export function compileSourceSync(
   // (e.g., test262 worker pool), causing false "depth exceeded" errors.
   resetCompileDepth();
 
+  // #2146 — fail fast (with the offending module named) if any codegen delegate
+  // was never wired, instead of throwing an obscure "X not yet registered" deep
+  // inside codegen only when the relevant feature is exercised. This entry pulls
+  // in every registrar module statically (via the codegen imports above), so the
+  // assertion always passes on the production path; it only fires if a future
+  // refactor breaks the registrar-import chain.
+  assertCodegenRegistrationsComplete();
+
   const errors: CompileError[] = [];
   const emitWatOutput = options.emitWat !== false;
 
@@ -579,6 +627,7 @@ export function compileSourceSync(
     ast = analyzeSource(processedSource, effectiveFileName, {
       allowJs: options.allowJs,
       skipSemanticDiagnostics: options.skipSemanticDiagnostics,
+      emulateNode: options.emulateNode,
     });
   }
 
@@ -594,7 +643,7 @@ export function compileSourceSync(
         languageService.updateSource(processedSource, jsFileName);
         ast = languageService.analyze({ allowJs: true });
       } else {
-        ast = analyzeSource(processedSource, jsFileName, { allowJs: true });
+        ast = analyzeSource(processedSource, jsFileName, { allowJs: true, emulateNode: options.emulateNode });
       }
     }
   }
@@ -623,10 +672,19 @@ export function compileSourceSync(
         DOWNGRADE_DIAG_CODES.has(diag.code) || isGuardedNullablePrimitiveDiagnostic(diag, ast.checker)
           ? "warning"
           : "error";
+      // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+      // elaboration) instead of only the head .messageText.
+      let message = ts.flattenDiagnosticMessageText(diag.messageText, "\n");
+      // #2603 — TS2580 ("Cannot find name 'X'. Do you need to install type
+      // definitions for node?") flags a Node global. When node-emulation is off,
+      // point the user at `--emulate node` (which turns it on and silences this)
+      // rather than at @types/node.
+      if (!options.emulateNode && diag.code === 2580) {
+        const name = message.match(/Cannot find name '([^']+)'/)?.[1] ?? "process";
+        message = `Cannot find name '${name}'. Add \`--emulate node\` to enable Node API emulation (or install @types/node).`;
+      }
       errors.push({
-        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
-        // elaboration) instead of only the head .messageText.
-        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
+        message,
         line: pos.line + 1,
         column: pos.character + 1,
         severity: severity as "error" | "warning",

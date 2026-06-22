@@ -113,6 +113,14 @@ export interface CompiledRegex {
   nScratch: number;
   /** Flags bitfield: g=1 i=2 m=4 s=8 u=16 y=32 d=64 v=128. */
   flags: number;
+  /**
+   * Named capture groups: `name → 1-based capture index` (#2588). Empty when
+   * the pattern has no `(?<name>…)` groups. The named-group set is statically
+   * known at compile time, so the standalone backend materialises the `groups`
+   * result object and resolves `$<name>` substitution from this map (no runtime
+   * name→index machinery needed).
+   */
+  groupNames: Map<string, number>;
 }
 
 /** Flags bitfield bit positions (mirrors the spec flag order). */

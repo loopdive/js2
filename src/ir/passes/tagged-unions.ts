@@ -57,8 +57,7 @@
 // with an unsupported union (e.g. `union<f64, externref>`) can surface the
 // error via this pass's `errors` output instead of crashing in lower.ts.
 
-import type { IrFunction, IrInstr, IrModule, IrType } from "../nodes.js";
-import type { ValType } from "../types.js";
+import { type IrFunction, type IrInstr, type IrModule, type IrType, asVal } from "../nodes.js";
 
 export interface TaggedUnionsError {
   readonly func: string;
@@ -162,12 +161,17 @@ function isRegistrySupported(t: Extract<IrType, { kind: "union" }>): boolean {
   return true;
 }
 
-function isScalarMember(m: ValType): boolean {
-  return m.kind === "f64" || m.kind === "i32";
+function isScalarMember(m: IrType): boolean {
+  // #1926 — union members are IrTypes; only a `val`-kind scalar is supported.
+  // Any non-`val` (symbolic string/object/etc.) member makes the union
+  // unsupported by the V1 tagged-union registry, exactly as before.
+  const v = asVal(m);
+  return v?.kind === "f64" || v?.kind === "i32";
 }
 
 function memberList(t: Extract<IrType, { kind: "union" }>): string {
-  return t.members.map((m) => m.kind).join(",");
+  // #1926 — describe each member IrType; a `val`-kind shows its ValType kind.
+  return t.members.map((m) => asVal(m)?.kind ?? m.kind).join(",");
 }
 
 // ---------------------------------------------------------------------------

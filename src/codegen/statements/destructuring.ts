@@ -7,6 +7,7 @@ import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative, type SpeculativeSnapshot } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import {
@@ -685,8 +686,10 @@ export function compileObjectDestructuring(
     ensureLetConstBindingPatternTdzFlags(ctx, fctx, pattern);
   }
 
-  // Save body length so we can rollback if struct lookup fails
-  const bodyLenBefore = fctx.body.length;
+  // #1919 — snapshot the speculative state so a failed struct lookup rolls back
+  // the compiled initializer value AND any locals / late imports / errors it
+  // leaked, not just the body length.
+  const snap = snapshotSpeculative(ctx, fctx);
 
   // Compile the initializer — result is a struct ref on the stack
   const resultType = compileExpression(ctx, fctx, decl.initializer);
@@ -755,7 +758,7 @@ export function compileObjectDestructuring(
         compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
         return;
       }
-      fctx.body.length = bodyLenBefore; // rollback — value would leak on stack
+      rollbackSpeculative(ctx, fctx, snap); // value would otherwise leak on stack
       ensureBindingLocals(ctx, fctx, pattern);
       reportError(ctx, decl, "Cannot destructure: unknown type");
       return;
@@ -770,7 +773,7 @@ export function compileObjectDestructuring(
         compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
         return;
       }
-      fctx.body.length = bodyLenBefore; // rollback — value would leak on stack
+      rollbackSpeculative(ctx, fctx, snap); // value would otherwise leak on stack
       ensureBindingLocals(ctx, fctx, pattern);
       reportError(ctx, decl, `Cannot destructure: not a known struct type: ${typeName}`);
       return;
@@ -796,7 +799,7 @@ export function compileObjectDestructuring(
       compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
       return;
     }
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     ensureBindingLocals(ctx, fctx, pattern);
     reportError(ctx, decl, "Cannot destructure: rest element on non-ref typed value");
     return;
@@ -986,7 +989,9 @@ export function compileArrayDestructuring(
     ensureLetConstBindingPatternTdzFlags(ctx, fctx, pattern);
   }
 
-  const bodyLenBefore = fctx.body.length;
+  // #1919 — snapshot so a non-array initializer rolls back its compiled value
+  // plus any locals / late imports / errors, not just the body length.
+  const snap = snapshotSpeculative(ctx, fctx);
 
   // When the pattern has rest elements, force vec mode for the initializer so
   // array literals produce a full vec (not a truncated tuple matching the binding pattern type)
@@ -1015,7 +1020,7 @@ export function compileArrayDestructuring(
         return;
       }
     }
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     ensureBindingLocals(ctx, fctx, pattern);
     reportError(ctx, decl, "Cannot destructure: not an array type");
     return;
@@ -1180,7 +1185,7 @@ export function compileArrayDestructuring(
 
   // String destructuring: use __str_charAt to extract individual characters
   if (isStringStruct) {
-    compileStringDestructuring(ctx, fctx, pattern, resultType, bodyLenBefore);
+    compileStringDestructuring(ctx, fctx, pattern, resultType, snap);
     return;
   }
 
@@ -1214,13 +1219,13 @@ function compileStringDestructuring(
   fctx: FunctionContext,
   pattern: ts.ArrayBindingPattern,
   resultType: ValType,
-  bodyLenBefore: number,
+  snap: SpeculativeSnapshot,
 ): void {
   // Ensure __str_charAt is available
   ensureNativeStringHelpers(ctx);
   const charAtIdx = ctx.nativeStrHelpers.get("__str_charAt");
   if (charAtIdx === undefined) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     ensureBindingLocals(ctx, fctx, pattern);
     reportError(ctx, pattern, "Cannot destructure string: __str_charAt helper not available");
     return;

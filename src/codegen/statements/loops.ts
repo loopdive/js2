@@ -8,7 +8,8 @@ import { forEachChild, ts } from "../../ts-api.js";
 import { collectReferencedIdentifiers } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError, reportErrorNoNode } from "../context/errors.js";
-import { allocLocal, getLocalType, restoreLocals, snapshotLocals } from "../context/locals.js";
+import { allocLocal, getLocalType } from "../context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
 import {
@@ -1793,6 +1794,16 @@ function compileForOfAssignDestructuring(
         const el = expr.elements[i]!;
         if (ts.isOmittedExpression(el)) continue;
 
+        if (ts.isSpreadElement(el)) {
+          // (#2602) Rest element against a tuple-struct source. Convert the
+          // WasmGC tuple to externref so __extern_slice can produce the rest
+          // slice (a JS array host / native array standalone), then PutValue it.
+          fctx.body.push({ op: "local.get", index: elemLocal });
+          fctx.body.push({ op: "extern.convert_any" } as Instr);
+          emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name));
+          continue;
+        }
+
         // OOB: tuple has fewer fields than destructuring targets
         if (i >= tupleFields.length) {
           // If element has a default initializer, apply it directly (value is undefined/OOB)
@@ -1902,6 +1913,29 @@ function compileForOfAssignDestructuring(
       for (let i = 0; i < expr.elements.length; i++) {
         const el = expr.elements[i]!;
         if (ts.isOmittedExpression(el)) continue;
+
+        if (ts.isSpreadElement(el)) {
+          // (#2602) Rest element against a WasmGC vec-struct source. Build the
+          // rest slice NATIVELY (mirror of the BINDING-form vec rest, loops.ts
+          // ~1488): array.new_default(restLen) + array.copy from index `i` +
+          // struct.new — no externref/__extern_slice roundtrip (the host
+          // __extern_slice can't slice a WasmGC struct externref). The fresh vec
+          // has the SAME struct type as the source, then PutValue to the target.
+          emitVecRestAssignment(
+            ctx,
+            fctx,
+            el,
+            elemLocal,
+            i,
+            innerVecTypeIdx,
+            innerArrTypeIdx,
+            innerElemType,
+            vecTypeIdx,
+            arrTypeIdx,
+            stmt,
+          );
+          continue;
+        }
 
         // Handle nested destructuring: for ([{ a, b }] of arr) or for ([[x, y]] of arr)
         if (ts.isObjectLiteralExpression(el) || ts.isArrayLiteralExpression(el)) {
@@ -2090,6 +2124,224 @@ function compileForOfAssignDestructuring(
 }
 
 /**
+ * (#2602) Emit the rest-element ASSIGNMENT write for a for-of / for-await
+ * assignment-destructuring head: `for ([x, ...y] of …)` (and `for await`).
+ *
+ * Spec §13.15.5.5 ArrayAssignmentPattern (the rest step) requires PutValue on
+ * the `...y` target with the remaining iterated elements — the slice from
+ * `restStartIndex` to the end. Before this, all for-of assignment-destructuring
+ * loops `continue`d on `ts.isSpreadElement`, so `y` was never written and kept a
+ * stale value (the source array). This mirrors the BINDING-form rest write
+ * (loops.ts ~1375) and the plain `[a, ...rest] = arr` assignment-form rest
+ * (assignment.ts ~1628), both of which use `__extern_slice`.
+ *
+ * The caller must already have pushed the source value onto the stack as an
+ * `externref` (an `extern.convert_any` of the loop element for a WasmGC vec/
+ * tuple element, or the element local directly for an externref element).
+ * `__extern_slice(elem, restStartIndex)` returns the rest as an externref
+ * (a JS array host-side / native array standalone); we then PutValue it to the
+ * rest target.
+ *
+ * Only IDENTIFIER rest targets are handled (local OR pre-declared module global
+ * — the shape every test262 array-rest case + #2602 uses). A rest target that is
+ * a property/element access (`[...obj.x]`) is rare and left as a no-op (matching
+ * the pre-#2602 drop — no regression). Returns `true` when the spread element was
+ * consumed (the caller should `continue`), `false` to fall through.
+ */
+function emitForOfRestAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  spread: ts.SpreadElement,
+  restStartIndex: number,
+  syncGlobalForName: (name: string) => number | undefined,
+): boolean {
+  const restTarget = spread.expression;
+  // Pop the source externref the caller pushed — we only need it when the target
+  // resolves; for an unhandled target shape, drop it to keep the stack balanced.
+  if (!ts.isIdentifier(restTarget)) {
+    // Unhandled rest target (property/element access). Drop the source externref
+    // the caller pushed so the value stack stays balanced, then bail.
+    fctx.body.push({ op: "drop" } as Instr);
+    return true;
+  }
+
+  // Ensure __extern_slice is available (env import in JS-host mode; the native
+  // object-runtime slice under --target standalone routes through the same name).
+  let sliceIdx = ctx.funcMap.get("__extern_slice");
+  if (sliceIdx === undefined) {
+    const importsBefore = ctx.numImportFuncs;
+    const sliceType = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+    addImport(ctx, "env", "__extern_slice", { kind: "func", typeIdx: sliceType });
+    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
+    sliceIdx = ctx.funcMap.get("__extern_slice");
+  }
+  if (sliceIdx === undefined) {
+    // Could not register the slice helper — drop the source to keep balance.
+    fctx.body.push({ op: "drop" } as Instr);
+    return true;
+  }
+
+  const restName = restTarget.text;
+  let targetLocal = fctx.localMap.get(restName);
+  let restSyncGlobalIdx: number | undefined;
+  if (targetLocal === undefined) {
+    const globalIdx = syncGlobalForName(restName);
+    if (globalIdx === undefined) {
+      // No local and no module global — nothing to write to. Drop and bail.
+      fctx.body.push({ op: "drop" } as Instr);
+      return true;
+    }
+    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    const globalType = globalDef?.type ?? { kind: "externref" as const };
+    targetLocal = allocLocal(fctx, restName, globalType);
+    restSyncGlobalIdx = globalIdx;
+  }
+
+  // Source externref is on the stack. Compute the rest slice:
+  //   __extern_slice(source, restStartIndex) -> externref
+  fctx.body.push({ op: "f64.const", value: restStartIndex });
+  fctx.body.push({ op: "call", funcIdx: sliceIdx });
+
+  // Coerce externref slice -> the rest target's declared type and store. For an
+  // untyped (`any` → externref) target this is a no-op; for `number[]` (a vec
+  // ref) coerceType reconstructs the vec from the JS-array externref (its
+  // guarded externref→ref arm handles the JS-array case — no trapping cast).
+  const targetType = getLocalType(fctx, targetLocal);
+  if (targetType && targetType.kind !== "externref") {
+    coerceType(ctx, fctx, { kind: "externref" }, targetType);
+  }
+  fctx.body.push({ op: "local.set", index: targetLocal });
+
+  if (restSyncGlobalIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: targetLocal });
+    fctx.body.push({ op: "global.set", index: restSyncGlobalIdx });
+  }
+  return true;
+}
+
+/**
+ * (#2602) Emit the rest-element ASSIGNMENT write when the for-of source element
+ * is a WasmGC vec struct (`{ length, data }`) — `for ([x, ...y] of [[1,2,3]])`.
+ *
+ * Builds the rest slice NATIVELY (no externref / __extern_slice roundtrip — the
+ * host __extern_slice cannot slice a WasmGC struct externref): compute
+ * `restLen = max(0, srcLen - restStartIndex)`, `array.new_default(restLen)`,
+ * `array.copy` the tail from `srcData[restStartIndex..]`, then `struct.new` a
+ * fresh vec of the SAME struct type as the source. This mirrors the binding-form
+ * vec rest (loops.ts ~1488) so behaviour is byte-identical between
+ * `const [a,...r]=…` and `[a,...r]=…`. The fresh vec is PutValue'd to the rest
+ * target (identifier local OR pre-declared module global). Only identifier
+ * targets are handled (the test262 array-rest shape + #2602); a property/element
+ * rest target is left unwritten (matching the pre-#2602 drop — no regression).
+ */
+function emitVecRestAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  spread: ts.SpreadElement,
+  elemLocal: number,
+  restStartIndex: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  innerElemType: ValType,
+  outerVecTypeIdx: number,
+  outerArrTypeIdx: number,
+  stmt: ts.ForOfStatement,
+): void {
+  const restTarget = spread.expression;
+  const restVecType: ValType = { kind: "ref", typeIdx: vecTypeIdx };
+
+  // A nested pattern rest target (`for ([...[x]] of …)`): build the rest vec
+  // into a temp, then recurse into the nested assignment pattern with the fresh
+  // rest vec as the element (mirror of the binding-form rest recursion,
+  // loops.ts ~1551). Identifier targets store directly; property/element rest
+  // targets are not handled (matching the pre-#2602 drop — no regression).
+  const isNestedPattern = ts.isArrayLiteralExpression(restTarget) || ts.isObjectLiteralExpression(restTarget);
+  let targetLocal: number | undefined;
+  let restSyncGlobalIdx: number | undefined;
+  if (isNestedPattern) {
+    targetLocal = allocLocal(fctx, `__forof_rest_${fctx.locals.length}`, restVecType);
+  } else {
+    if (!ts.isIdentifier(restTarget)) return; // property/element rest target — not handled (no regression)
+    targetLocal = fctx.localMap.get(restTarget.text);
+    if (targetLocal === undefined) {
+      const globalIdx = ctx.moduleGlobals.get(restTarget.text);
+      if (globalIdx === undefined) return; // unresolvable identifier — nothing to write
+      targetLocal = allocLocal(fctx, restTarget.text, restVecType);
+      restSyncGlobalIdx = globalIdx;
+    }
+  }
+
+  // restLen = max(0, srcLen - restStartIndex)
+  const restLenLocal = allocLocal(fctx, `__rest_len_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: elemLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // length
+  fctx.body.push({ op: "i32.const", value: restStartIndex });
+  fctx.body.push({ op: "i32.sub" } as Instr);
+  fctx.body.push({ op: "local.set", index: restLenLocal });
+  // clamp negative to 0: select(0, restLen, restLen < 0)
+  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+  fctx.body.push({ op: "local.get", index: restLenLocal });
+  fctx.body.push({ op: "local.get", index: restLenLocal });
+  fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+  fctx.body.push({ op: "i32.lt_s" } as Instr);
+  fctx.body.push({ op: "select" } as Instr);
+  fctx.body.push({ op: "local.set", index: restLenLocal });
+
+  // restArr = array.new_default(restLen)
+  const restArrLocal = allocLocal(fctx, `__rest_arr_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.get", index: restLenLocal });
+  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx } as Instr);
+  fctx.body.push({ op: "local.set", index: restArrLocal });
+
+  // array.copy(restArr, 0, srcData, restStartIndex, restLen)
+  fctx.body.push({ op: "local.get", index: restArrLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.get", index: elemLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }); // src data
+  fctx.body.push({ op: "i32.const", value: restStartIndex });
+  fctx.body.push({ op: "local.get", index: restLenLocal });
+  fctx.body.push({ op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx } as Instr);
+  // innerElemType is referenced for symmetry with the binding-form rest (the
+  // array element type is already arrTypeIdx's element); no per-element coercion
+  // is needed since we copy raw same-typed elements.
+  void innerElemType;
+
+  // restVec = struct.new(restLen, restArr)
+  fctx.body.push({ op: "local.get", index: restLenLocal });
+  fctx.body.push({ op: "local.get", index: restArrLocal });
+  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx } as Instr);
+
+  if (isNestedPattern) {
+    // Store the fresh rest vec into the temp local, then recurse into the
+    // nested assignment pattern (`for ([...[x]] of …)`) with it as the element.
+    fctx.body.push({ op: "local.set", index: targetLocal });
+    compileForOfAssignDestructuring(
+      ctx,
+      fctx,
+      restTarget as ts.ArrayLiteralExpression | ts.ObjectLiteralExpression,
+      targetLocal,
+      restVecType,
+      outerVecTypeIdx,
+      outerArrTypeIdx,
+      stmt,
+    );
+    return;
+  }
+
+  // PutValue to the identifier rest target.
+  const targetType = getLocalType(fctx, targetLocal);
+  if (targetType && !valTypesMatch(restVecType, targetType)) {
+    coerceType(ctx, fctx, restVecType, targetType);
+  }
+  fctx.body.push({ op: "local.set", index: targetLocal });
+
+  if (restSyncGlobalIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: targetLocal });
+    fctx.body.push({ op: "global.set", index: restSyncGlobalIdx });
+  }
+}
+
+/**
  * Handle assignment destructuring of externref arrays in for-of.
  * Uses __extern_get(elem, box(i)) for each element, with default value support.
  */
@@ -2139,7 +2391,13 @@ function compileForOfAssignDestructuringExternref(
   for (let i = 0; i < expr.elements.length; i++) {
     const el = expr.elements[i]!;
     if (ts.isOmittedExpression(el)) continue;
-    if (ts.isSpreadElement(el)) continue;
+    if (ts.isSpreadElement(el)) {
+      // (#2602) Rest element `...y`: PutValue the slice from index `i` onward.
+      // The element local is already an externref source — push it directly.
+      fctx.body.push({ op: "local.get", index: elemLocal });
+      emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name));
+      continue;
+    }
 
     // Handle assignment with default: [v = 10]
     let targetEl: ts.Expression = el;
@@ -2479,11 +2737,10 @@ function compileForOfNativeCollection(
   // Confirm the receiver genuinely lowers to the native `$Map` struct (a Map/Set
   // typed value can still be a host externref in JS-host mode) without leaving
   // code behind.
-  const bodyLenBefore = fctx.body.length;
-  const localsSnap = snapshotLocals(fctx);
+  // #1919 — transactional probe: discard body + locals + late imports + errors.
+  const snap = snapshotSpeculative(ctx, fctx);
   const recvType = compileExpression(ctx, fctx, receiver);
-  fctx.body.length = bodyLenBefore;
-  restoreLocals(fctx, localsSnap);
+  rollbackSpeculative(ctx, fctx, snap);
   if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) return false;
   if (recvType.typeIdx !== ctx.mapTypeIdx) return false;
 
@@ -2554,11 +2811,10 @@ function compileForOfNativeMapEntries(
 
   // Confirm the receiver genuinely lowers to the native `$Map` struct without
   // leaving code behind (same probe as compileForOfNativeCollection).
-  const probeBody = fctx.body.length;
-  const probeLocals = snapshotLocals(fctx);
+  // #1919 — transactional probe: discard body + locals + late imports + errors.
+  const probeSnap = snapshotSpeculative(ctx, fctx);
   const recvProbe = compileExpression(ctx, fctx, receiver);
-  fctx.body.length = probeBody;
-  restoreLocals(fctx, probeLocals);
+  rollbackSpeculative(ctx, fctx, probeSnap);
   if (!recvProbe || (recvProbe.kind !== "ref" && recvProbe.kind !== "ref_null")) return false;
   if (recvProbe.typeIdx !== ctx.mapTypeIdx) return false;
 
@@ -2719,11 +2975,10 @@ function arrayIteratorReceiverForForOf(
   if (method !== "values" && method !== "keys" && method !== "entries") return undefined;
 
   // Confirm the receiver lowers to a vec struct without leaving any code behind.
-  const bodyLenBefore = fctx.body.length;
-  const localsSnap = snapshotLocals(fctx); // #1847
+  // #1919 — transactional probe: discard body + locals + late imports + errors.
+  const snap = snapshotSpeculative(ctx, fctx);
   const recvType = compileExpression(ctx, fctx, callee.expression);
-  fctx.body.length = bodyLenBefore;
-  restoreLocals(fctx, localsSnap); // #1847 — also drops stale localMap entries
+  rollbackSpeculative(ctx, fctx, snap);
   if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) return undefined;
   if (getArrTypeIdxFromVec(ctx, recvType.typeIdx) < 0) return undefined;
   return { receiver: callee.expression, method };
@@ -2764,11 +3019,12 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
 
   const strType = nativeStringType(ctx);
 
-  // Compile the iterable expression (string ref)
-  const bodyLenBefore = fctx.body.length;
+  // Compile the iterable expression (string ref).
+  // #1919 — snapshot so a failed compile rolls back body + locals + imports.
+  const strSnap = snapshotSpeculative(ctx, fctx);
   const compiledType = compileExpression(ctx, fctx, stmt.expression);
   if (!compiledType) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, strSnap);
     reportError(ctx, stmt, "for-of: failed to compile string expression");
     return;
   }
@@ -3005,9 +3261,10 @@ function compileForOfArrayTentative(
   iterableOverride?: ts.Expression,
 ): boolean {
   const iterableExpr = iterableOverride ?? stmt.expression;
-  // Tentatively compile just the expression to discover its Wasm type
-  const bodyLenBefore = fctx.body.length;
-  const localsSnap = snapshotLocals(fctx); // #1847
+  // Tentatively compile just the expression to discover its Wasm type.
+  // #1919 — transactional probe: every exit re-compiles (vec path) or defers to
+  // the iterator path, so always discard body + locals + late imports + errors.
+  const snap = snapshotSpeculative(ctx, fctx);
   const exprType = compileExpression(ctx, fctx, iterableExpr);
 
   // Check if it compiled to a ref to a vec struct (not just any struct —
@@ -3018,16 +3275,14 @@ function compileForOfArrayTentative(
     if (typeDef && typeDef.kind === "struct" && getArrTypeIdxFromVec(ctx, exprType.typeIdx) >= 0) {
       // Confirmed vec struct — undo the tentative compilation and use the
       // full array path (which compiles the expression again with proper setup)
-      fctx.body.length = bodyLenBefore;
-      restoreLocals(fctx, localsSnap); // #1847
+      rollbackSpeculative(ctx, fctx, snap);
       compileForOfArray(ctx, fctx, stmt, iterableOverride);
       return true;
     }
   }
 
   // Not a vec struct — undo tentative compilation, let caller use iterator path
-  fctx.body.length = bodyLenBefore;
-  restoreLocals(fctx, localsSnap); // #1847
+  rollbackSpeculative(ctx, fctx, snap);
   return false;
 }
 
@@ -3059,10 +3314,12 @@ function compileForOfArray(
   // inner receiver of a `.values()` call (#681) when present. When `preVec` is
   // supplied the caller already materialized the vec into a local (#2162 native
   // Map/Set for-of), so skip the expression compile.
-  const bodyLenBefore = fctx.body.length;
+  // #1919 — snapshot so a non-array receiver rolls back body + locals + imports
+  // before reporting. With `preVec` no compile happens, so rollback is a no-op.
+  const snap = snapshotSpeculative(ctx, fctx);
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
   }
@@ -3071,7 +3328,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
@@ -3079,7 +3336,7 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
@@ -3405,11 +3662,10 @@ function compileForOfArrayEntries(
   }
 
   // Resolve the element (value) Wasm type from the receiver's vec/arr type.
-  const probeBody = fctx.body.length;
-  const probeLocals = snapshotLocals(fctx);
+  // #1919 — transactional probe: discard body + locals + late imports + errors.
+  const probeSnap = snapshotSpeculative(ctx, fctx);
   const recvType = compileExpression(ctx, fctx, receiver);
-  fctx.body.length = probeBody;
-  restoreLocals(fctx, probeLocals);
+  rollbackSpeculative(ctx, fctx, probeSnap);
   if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) {
     if (!compileForOfArrayTentative(ctx, fctx, stmt)) compileForOfIterator(ctx, fctx, stmt);
     return;
@@ -3490,10 +3746,11 @@ function emitArrayKeysEntriesLoop(
   receiver: ts.Expression,
   bindIteration: (lenLocal: number, iLocal: number, dataLocal: number, arrTypeIdx: number) => void,
 ): void {
-  const bodyLenBefore = fctx.body.length;
+  // #1919 — snapshot so a non-array receiver rolls back body + locals + imports.
+  const snap = snapshotSpeculative(ctx, fctx);
   const vecType = compileExpression(ctx, fctx, receiver);
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
   }
@@ -3501,7 +3758,7 @@ function emitArrayKeysEntriesLoop(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
@@ -3737,7 +3994,14 @@ function compileForOfIteratorAssignDestructuring(
     for (let i = 0; i < expr.elements.length; i++) {
       const el = expr.elements[i]!;
       if (ts.isOmittedExpression(el)) continue;
-      if (ts.isSpreadElement(el)) continue;
+      if (ts.isSpreadElement(el)) {
+        // (#2602) Rest element on the generic iterator path (any-typed iterable
+        // / generator source, incl. for-await). The element local is externref —
+        // push it directly and slice from index `i`.
+        fctx.body.push({ op: "local.get", index: elemLocal });
+        emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name));
+        continue;
+      }
 
       // Handle assignment with default: [v = 10]
       let targetElIter: ts.Expression = el;
@@ -4224,9 +4488,9 @@ function findStructFieldsByTypeIdx(
  *     br loop
  */
 function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForOfStatement): void {
-  // Compile the iterable expression
-  const bodyLenBefore = fctx.body.length;
-  const localsSnap = snapshotLocals(fctx); // #1847
+  // Compile the iterable expression. (#1919) Unlike the tentative probes above,
+  // every path here KEEPS the compiled iterable on the stack — it is consumed by
+  // the chosen iteration loop — so there is no rollback and no snapshot to take.
   const iterableType = compileExpression(ctx, fctx, stmt.expression);
   if (!iterableType) {
     reportError(ctx, stmt, "for-of: failed to compile iterable expression");

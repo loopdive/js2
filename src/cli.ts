@@ -76,6 +76,11 @@ Options:
                     stdin_read/stdout_write/stderr_write + its memory from
                     js2wasm:node-io (no wasi_snapshot_preview1 for stream IO) and
                     links node-shim.wasm. Off by default (inline fd_* fallback).
+  --emulate <env>   Emulate a host runtime's globals so they type-check without
+                    @types/node. 'node' = ambient process/etc.; 'none' = off.
+                    Auto-enabled (type-level only) when the source imports a
+                    'node:' builtin (use 'none' to disable that); otherwise off,
+                    and using process warns to add this flag (#2603).
   --no-host-imports Strict dual-mode: reject JS-host 'env' imports not on
                     the allowlist (#1524). Implied by --target wasi.
   --allow-host-imports
@@ -137,6 +142,11 @@ let utf8Storage = false;
 let strictNoHostImports: boolean | undefined;
 // #2524 Phase 1 — process IO via the linkable js2wasm:node-io shim (WASI only).
 let nodeIoShim = false;
+// #2603 — `--emulate node`: opt into Node API emulation (ambient `process` typing).
+// `emulateExplicit` records that the user passed `--emulate`/`--no-emulate`, so a
+// `node:` import won't auto-enable over an explicit choice.
+let emulateNode = false;
+let emulateExplicit = false;
 const defines: Record<string, string> = {};
 
 for (let i = 0; i < args.length; i++) {
@@ -195,6 +205,22 @@ for (let i = 0; i < args.length; i++) {
     // #2524 Phase 1 — route process.std* IO through the linkable js2wasm:node-io
     // shim (WASI only). Off by default; the inline fd_read/fd_write path stays.
     nodeIoShim = true;
+  } else if (arg === "--emulate" || arg.startsWith("--emulate=")) {
+    // #2603 — opt into (or out of) Node API emulation. `--emulate node` gives the
+    // checker an ambient `process` typing so Node globals type-check without
+    // @types/node; `--emulate none` opts out (and disables the `node:`-import
+    // auto-enable below). An explicit choice always wins over auto-detection.
+    const env = arg.startsWith("--emulate=") ? arg.slice("--emulate=".length) : args[++i];
+    if (env === "node") {
+      emulateNode = true;
+      emulateExplicit = true;
+    } else if (env === "none") {
+      emulateNode = false;
+      emulateExplicit = true;
+    } else {
+      console.error(`Unknown --emulate value: ${env ?? "(missing)"} (expected: node | none)`);
+      process.exit(1);
+    }
   } else if (arg === "--no-host-imports") {
     strictNoHostImports = true;
   } else if (arg === "--allow-host-imports") {
@@ -269,6 +295,16 @@ if (allocator !== undefined && target !== "linear") {
 
 const absInput = resolve(inputPath);
 const source = readFileSync(absInput, "utf-8");
+
+// #2603 — auto-enable Node API emulation when the source imports a `node:`
+// builtin (e.g. `import { readFile } from "node:fs"` / `require("node:path")`),
+// unless the user made an explicit `--emulate`/`--no-emulate` choice. Emulation
+// is type-level only (ambient Node globals); it never changes emitted wasm.
+if (!emulateExplicit && !emulateNode && /['"]node:[A-Za-z0-9_./-]+['"]/.test(source)) {
+  emulateNode = true;
+  console.error("note: auto-enabled Node API emulation (found a `node:` import). Pass --emulate none to disable.");
+}
+
 const name = basename(absInput, ".ts");
 const dir = outDir ? resolve(outDir) : dirname(absInput);
 
@@ -280,6 +316,7 @@ const result = await compile(source, {
   ...(allowFs ? { allowFs: true } : {}),
   ...(utf8Storage ? { utf8Storage: true } : {}),
   ...(nodeIoShim ? { nodeIoShim: true } : {}),
+  ...(emulateNode ? { emulateNode: true } : {}),
   fileName: absInput,
   ...(strictNoHostImports !== undefined ? { strictNoHostImports } : {}),
   ...(Object.keys(defines).length > 0 ? { define: defines } : {}),
@@ -308,13 +345,21 @@ if (!result.success) {
 // summary by default; --verbose restores the full per-import listing.
 const isAllowlistWarning = (msg: string): boolean => msg.includes("not on the dual-mode allowlist");
 let suppressedAllowlist = 0;
+// #2603 follow-up — collapse identical warning messages to a single line. A Node
+// global / builtin used N times (e.g. `process` without `--emulate node`)
+// otherwise prints N identical "Cannot find name 'X'" warnings. Dedupe by message
+// text (first-seen order preserved), appending a count when it repeated.
+const warnCounts = new Map<string, number>();
 for (const e of result.errors) {
   if (e.severity !== "warning") continue;
   if (!verbose && isAllowlistWarning(e.message)) {
     suppressedAllowlist++;
     continue;
   }
-  console.error(`warning: ${e.message}`);
+  warnCounts.set(e.message, (warnCounts.get(e.message) ?? 0) + 1);
+}
+for (const [msg, count] of warnCounts) {
+  console.error(count > 1 ? `warning: ${msg} (${count}×)` : `warning: ${msg}`);
 }
 if (suppressedAllowlist > 0) {
   console.error(

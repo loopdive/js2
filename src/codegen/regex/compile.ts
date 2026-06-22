@@ -553,6 +553,11 @@ export function compileParsed(parsed: ParsedRegex, flags: number): CompiledRegex
     nGroups,
     nScratch: em.scratchCount,
     flags,
+    // #2588 — preserve the parser's name→1-based-index map so the standalone
+    // backend can materialise the `groups` result object and resolve
+    // `$<name>` substitution. A fresh Map (not the parser's instance) keeps
+    // CompiledRegex self-contained.
+    groupNames: new Map(parsed.groupNames),
   };
 }
 

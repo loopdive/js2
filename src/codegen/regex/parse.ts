@@ -42,7 +42,7 @@
  *   - the `u`/`v` flags' code-point semantics      → 2d Slice B (parse stays UTF-16)
  */
 import { RE_FLAG_I, RE_FLAG_M, RE_FLAG_S, RE_FLAG_U, RE_FLAG_V, RegexUnsupportedError } from "./bytecode.js";
-import { codePointSource, cpRangesToNode, enumerateClassRanges } from "./unicode.js";
+import { codePointSource, cpRangesToNode, enumerateClassRanges, parseStringDisjunction } from "./unicode.js";
 
 export type ReNode =
   | { kind: "char"; code: number }
@@ -116,6 +116,17 @@ export function complementRanges(ranges: Array<[number, number]>): Array<[number
 const NOT_DIGIT = complementRanges(DIGIT);
 const NOT_WORD = complementRanges(WORD);
 const NOT_SPACE = complementRanges(SPACE);
+
+/**
+ * The fixed set of binary Unicode **properties of strings** (§22.2.1.9, Table
+ * 64) — `\p{…}` escapes whose members are multi-code-point STRINGS, not single
+ * code points. A v-mode class that unions one of these with a `\q{…}`
+ * disjunction can't be lowered by the single-code-point enumerator; #2591
+ * refuses that combination loudly. (A `\p{…}` over code points — `\p{ASCII}`,
+ * `\p{L}` — is unaffected and keeps working.)
+ */
+const PROPERTY_OF_STRINGS_RE =
+  /\\[pP]\{(?:Basic_Emoji|Emoji_Keycap_Sequence|RGI_Emoji(?:_Flag_Sequence|_Modifier_Sequence|_Tag_Sequence|_ZWJ_Sequence)?)\}/;
 
 /**
  * Pre-scan the pattern for the total capture-group count and the named-group
@@ -221,6 +232,160 @@ class Parser {
    *  it to the unit-level AST. */
   private uEnum(source: string): ReNode {
     return cpRangesToNode(enumerateClassRanges(source, this.enumFlags()));
+  }
+
+  /**
+   * Lower a v-mode `[…]` class that contains one or more `\q{…}` string
+   * disjunctions (§22.2.1 ClassStringDisjunction). `source` is the full class
+   * text including the surrounding brackets, already extracted by
+   * `extractClassSource`.
+   *
+   * A `\q{s1|s2|…}` operand matches the literal STRING `si` (a possibly
+   * multi-code-point sequence), so it cannot be a member of the single-code-point
+   * range set the host enumerator produces. We desugar the whole class to an
+   * **alternation**: each multi-code-point operand becomes a `concat` of
+   * single-code-point arms, unioned with the residual code-point class (the rest
+   * of the members, enumerated the usual way).
+   *
+   * Per spec the class set is matched longest-first, so the alternation arms are
+   * ordered by descending code-point length: multi-char operands precede the
+   * single-code-point class (length 1), which precedes the empty operand
+   * (length 0). Single-length operands and the class tie (they consume the same
+   * one code point), so their relative order is immaterial.
+   *
+   * Negated classes containing strings (`[^\q{…}]`) are a host SyntaxError and
+   * never reach here. `\q{…}` inside a top-level set operation (`&&`/`--`) is
+   * narrowly refused (loud `RegexUnsupportedError`) for this slice. #2591.
+   */
+  private uEnumClassWithStrings(source: string): ReNode {
+    // Strip the outer brackets. `extractClassSource` guarantees a leading `[`
+    // and trailing `]`.
+    const body = source.slice(1, -1);
+    if (body.startsWith("^")) {
+      // Should be unreachable — a negated class with strings is a host
+      // SyntaxError pre-validated at the literal site — but refuse loudly.
+      throw new RegexUnsupportedError("negated v-mode class with \\q{…} strings");
+    }
+
+    // Scan the body once: reject top-level set operations carrying strings, and
+    // collect the `\q{…}` operand spans (start..end of the `{…}` body).
+    const qSpans: Array<{ bodyStart: number; bodyEnd: number; full: [number, number] }> = [];
+    let depth = 0;
+    for (let i = 0; i < body.length; ) {
+      const c = body[i]!;
+      if (c === "\\") {
+        // `\q{…}` only matters at depth 0 (a nested `[…]` operand is its own
+        // class — strings there are part of a set operation we refuse below).
+        if (body[i + 1] === "q" && body[i + 2] === "{") {
+          const fullStart = i;
+          let j = i + 3;
+          while (j < body.length && body[j] !== "}") {
+            if (body[j] === "\\") {
+              // A `\u{H…}` escape carries its own braces — skip the whole block
+              // so its closing `}` is not mistaken for the `\q{` terminator.
+              if (body[j + 1] === "u" && body[j + 2] === "{") {
+                j += 3;
+                while (j < body.length && body[j] !== "}") j++;
+                j++; // consume the escape's closing `}`
+              } else {
+                j += 2;
+              }
+            } else {
+              j++;
+            }
+          }
+          if (body[j] !== "}") throw new RegexUnsupportedError("unterminated \\q{…}");
+          if (depth === 0) qSpans.push({ bodyStart: i + 3, bodyEnd: j, full: [fullStart, j + 1] });
+          i = j + 1;
+          continue;
+        }
+        i += 2;
+        continue;
+      }
+      if (c === "[") depth++;
+      else if (c === "]") depth--;
+      else if (depth === 0 && (body.startsWith("&&", i) || body.startsWith("--", i))) {
+        // A top-level set operation combined with a string disjunction needs
+        // string-aware set algebra (a string survives `&&` only if both
+        // operands contain it). Out of slice scope — refuse loudly so the
+        // result is an honest compile_error, never a wrong match. #2591.
+        throw new RegexUnsupportedError(
+          "\\q{…} string disjunction inside a v-mode set operation (&&/--) — #2591 residual",
+        );
+      }
+      i++;
+    }
+
+    if (qSpans.length === 0) {
+      // No top-level `\q{…}` after all (it was nested in a set operand we'd have
+      // refused, or escaped) — fall back to the plain enumerator/refusal.
+      return this.uEnum(source);
+    }
+
+    const flagStr = this.enumFlags();
+    const caseFold = this.iState;
+    const arms: Array<{ len: number; node: ReNode }> = [];
+
+    // Build one alternation arm per disjunction operand.
+    for (const span of qSpans) {
+      const operands = parseStringDisjunction(body.slice(span.bodyStart, span.bodyEnd));
+      for (const cps of operands) {
+        if (cps.length === 0) {
+          // Empty operand → matches the empty string (a zero-width arm).
+          arms.push({ len: 0, node: { kind: "concat", parts: [] } });
+          continue;
+        }
+        const parts: ReNode[] = [];
+        for (const cp of cps) {
+          // Under `i`, fold each literal code point through the host so the
+          // operand matches case-insensitively (reuses the Slice B oracle).
+          if (caseFold) {
+            parts.push(cpRangesToNode(enumerateClassRanges(codePointSource(cp), flagStr)));
+          } else {
+            parts.push(this.uChar(cp));
+          }
+        }
+        arms.push({ len: cps.length, node: parts.length === 1 ? parts[0]! : { kind: "concat", parts } });
+      }
+    }
+
+    // Residual code-point class = the class with every top-level `\q{…}` span
+    // removed. If anything is left (ranges/escapes/props), enumerate it as a
+    // single-code-point class and add it as a length-1 arm.
+    let residual = "";
+    let prev = 0;
+    for (const span of qSpans) {
+      residual += body.slice(prev, span.full[0]);
+      prev = span.full[1];
+    }
+    residual += body.slice(prev);
+    if (residual.length > 0) {
+      // Remaining members (ranges/escapes/props) survive as a single-code-point
+      // class. `enumerateClassRanges` returns an empty set for a vacuous residual
+      // (e.g. `\q{ab}` alone leaves ``), in which case no arm is added.
+      const residualRanges = enumerateClassRanges(`[${residual}]`, flagStr);
+      if (residualRanges.length > 0) {
+        arms.push({ len: 1, node: cpRangesToNode(residualRanges) });
+      } else if (PROPERTY_OF_STRINGS_RE.test(residual)) {
+        // A residual that enumerates to NO code points but names a
+        // **property of strings** (`\p{Basic_Emoji}`, `\p{RGI_Emoji}`, …; the
+        // fixed §22.2.1.9 list) contributes multi-code-point members the
+        // single-code-point enumerator cannot represent. Refuse loudly rather
+        // than silently drop those members (which would make
+        // `[\p{Emoji_Keycap_Sequence}\q{…}]` return a wrong answer for the
+        // property's strings). #2591 residual.
+        throw new RegexUnsupportedError(
+          "v-mode class mixes \\q{…} with a property-of-strings (\\p{…}) member — #2591 residual",
+        );
+      }
+    }
+
+    // Order longest-first (spec: try longer strings before shorter ones), with a
+    // stable order among equal lengths.
+    arms.sort((a, b) => b.len - a.len);
+    const options = arms.map((a) => a.node);
+    if (options.length === 0) return cpRangesToNode([]); // never matches
+    return options.length === 1 ? options[0]! : { kind: "alt", options };
   }
 
   /** Extract the raw `[...]` class source starting at the current `[`. In v
@@ -374,7 +539,17 @@ class Parser {
       // u/v mode: hand the raw class source to the host enumerator — it
       // resolves negation, properties, set operations, and case folding
       // exactly; the result desugars to unit-level nodes. #1911 Slice B.
-      if (this.unicode) return this.uEnum(this.extractClassSource());
+      if (this.unicode) {
+        const classSrc = this.extractClassSource();
+        // v-mode `\q{…}` string disjunctions match multi-code-point strings,
+        // which the single-code-point class enumerator cannot represent. Desugar
+        // them to an alternation of literal strings unioned with the residual
+        // code-point class (§22.2.1 ClassStringDisjunction). #2591.
+        if (this.vMode && classSrc.includes("\\q{")) {
+          return this.uEnumClassWithStrings(classSrc);
+        }
+        return this.uEnum(classSrc);
+      }
       return this.parseClass();
     }
     if (c === ".") {

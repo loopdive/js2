@@ -95,6 +95,7 @@
     "census:async": "node scripts/async-call-census.mjs",
     "check:codegen-fallbacks": "npx tsx scripts/check-codegen-fallbacks.ts",
     "check:any-box-sites": "node scripts/check-any-box-sites.mjs",
+    "check:speculative-rollback": "node scripts/check-speculative-rollback-sites.mjs",
     "check:coercion-sites": "node scripts/check-coercion-sites.mjs",
     "check:test262-hard-errors": "node scripts/check-test262-hard-errors.mjs",
     "check:issue-spec-coverage": "node scripts/check-issue-spec-coverage.mjs",

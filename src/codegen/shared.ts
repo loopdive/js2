@@ -105,6 +105,85 @@ export function getCol(node: ts.Node): number {
 // ── Late-bound delegates ──────────────────────────────────────────────
 // Each delegate starts as a throwing stub and is replaced by the real
 // implementation when the owning module is loaded.
+//
+// #2146 — these function-pointer slots are a deliberate cycle-breaker (this
+// module is the acyclic sink that every codegen module may import), but their
+// initialization order used to be a *runtime trap*: a stub threw a bare
+// "X not yet registered" only when first *called*, deep inside codegen, with no
+// hint of which registrar module failed to load. Two changes harden that:
+//   1. each stub's throw now names the module that owns its registration, and
+//   2. `assertCodegenRegistrationsComplete()` (called once at compile entry)
+//      fails fast and lists every still-unwired delegate, turning an obscure
+//      mid-codegen error into an actionable load-order diagnostic.
+// Full removal of the slots is tracked by #1916 (symbolic func refs +
+// module-graph restructuring); see that issue for the residual plan.
+
+/** Names of delegates that have been wired by their owning module. */
+const _registeredDelegates = new Set<string>();
+
+/**
+ * Required delegate → the codegen module whose module-scope `register*` call
+ * wires it. Kept in sync with the `register*` functions below; used to produce
+ * an actionable diagnostic when a delegate is invoked (or asserted) before its
+ * owning module has been imported. Only delegates with a *throwing* stub are
+ * listed — slots with a safe default (`materializeStructAsObject` → false,
+ * `addStringImports` → no-op) are intentionally optional and omitted.
+ */
+const REQUIRED_DELEGATE_OWNERS: Readonly<Record<string, string>> = {
+  compileExpression: "expressions.ts",
+  compileArrowAsClosure: "closures.ts",
+  emitBoundsCheckedArrayGet: "array-methods.ts",
+  coerceType: "type-coercion.ts",
+  ensureLateImport: "expressions/late-imports.ts (registered by expressions.ts)",
+  flushLateImportShifts: "expressions/late-imports.ts (registered by expressions.ts)",
+  ensureAnyHelpers: "any-helpers.ts",
+  addUnionImports: "index.ts",
+  resolveComputedKeyExpression: "literals.ts",
+  compileStatement: "statements.ts",
+  ensureBindingLocals: "statements/destructuring.ts",
+  hoistFunctionDeclarations: "statements/nested-declarations.ts",
+  emitNestedBindingDefault: "statements/destructuring.ts",
+  emitDefaultValueCheck: "statements/destructuring.ts",
+  emitArgumentsObject: "statements/nested-declarations.ts",
+  compileStringLiteral: "string-ops.ts",
+  compileSuperPropertyAccess: "expressions/new-super.ts",
+  compileSuperElementAccess: "expressions/new-super.ts",
+};
+
+function markRegistered(name: string): void {
+  _registeredDelegates.add(name);
+}
+
+/**
+ * Build the "X not yet registered" message for a delegate stub, naming the
+ * module that should have wired it (#2146).
+ */
+function unregisteredDelegateError(name: string): Error {
+  const owner = REQUIRED_DELEGATE_OWNERS[name];
+  const where = owner ? ` — its owning module (${owner}) was not imported before this call` : "";
+  return new Error(`codegen delegate "${name}" not yet registered${where}`);
+}
+
+/**
+ * Fail fast at compile entry if any required codegen delegate is still its
+ * throwing stub (#2146). Without this, a missing registration surfaces only
+ * deep inside codegen — as an obscure "X not yet registered" — when (and if)
+ * the relevant feature happens to be exercised by the input program.
+ *
+ * Call this once per top-level codegen entry (`generateModule` /
+ * `generateMultiModule`). It is O(slots) and has no effect in the normal path
+ * where `src/compiler.ts` eagerly imports the registrar modules.
+ */
+export function assertCodegenRegistrationsComplete(): void {
+  const missing = Object.keys(REQUIRED_DELEGATE_OWNERS).filter((name) => !_registeredDelegates.has(name));
+  if (missing.length === 0) return;
+  const detail = missing.map((name) => `  - ${name} (owner: ${REQUIRED_DELEGATE_OWNERS[name]})`).join("\n");
+  throw new Error(
+    `codegen registration incomplete: ${missing.length} delegate(s) were never wired.\n` +
+      `This means a registrar module was not imported before codegen ran ` +
+      `(see src/compiler.ts and src/codegen/shared.ts #2146).\n${detail}`,
+  );
+}
 
 type CompileExpressionFn = (
   ctx: CodegenContext,
@@ -114,11 +193,12 @@ type CompileExpressionFn = (
 ) => ValType | null;
 
 let _compileExpression: CompileExpressionFn = () => {
-  throw new Error("compileExpression not yet registered");
+  throw unregisteredDelegateError("compileExpression");
 };
 
 export function registerCompileExpression(fn: CompileExpressionFn): void {
   _compileExpression = fn;
+  markRegistered("compileExpression");
 }
 
 export function compileExpression(
@@ -139,11 +219,12 @@ type CompileArrowAsClosureFn = (
 ) => ValType | null;
 
 let _compileArrowAsClosure: CompileArrowAsClosureFn = () => {
-  throw new Error("compileArrowAsClosure not yet registered");
+  throw unregisteredDelegateError("compileArrowAsClosure");
 };
 
 export function registerCompileArrowAsClosure(fn: CompileArrowAsClosureFn): void {
   _compileArrowAsClosure = fn;
+  markRegistered("compileArrowAsClosure");
 }
 
 export function compileArrowAsClosure(
@@ -165,11 +246,12 @@ type EmitBoundsCheckedArrayGetFn = (
 ) => void;
 
 let _emitBoundsCheckedArrayGet: EmitBoundsCheckedArrayGetFn = () => {
-  throw new Error("emitBoundsCheckedArrayGet not yet registered");
+  throw unregisteredDelegateError("emitBoundsCheckedArrayGet");
 };
 
 export function registerEmitBoundsCheckedArrayGet(fn: EmitBoundsCheckedArrayGetFn): void {
   _emitBoundsCheckedArrayGet = fn;
+  markRegistered("emitBoundsCheckedArrayGet");
 }
 
 export function emitBoundsCheckedArrayGet(
@@ -183,17 +265,21 @@ export function emitBoundsCheckedArrayGet(
 }
 
 // ── resolveEnclosingClassName ─────────────────────────────────────────
+// #2146: this helper has NO module dependencies (it reads only `fctx`), so it
+// lives directly in `shared.ts` (the acyclic sink) instead of behind a DI
+// slot. Consumers already import it from here; the previous delegate +
+// `registerResolveEnclosingClassName` indirection has been retired.
 
-type ResolveEnclosingClassNameFn = (fctx: FunctionContext) => string | undefined;
-
-let _resolveEnclosingClassName: ResolveEnclosingClassNameFn = () => undefined;
-
-export function registerResolveEnclosingClassName(fn: ResolveEnclosingClassNameFn): void {
-  _resolveEnclosingClassName = fn;
-}
-
+/**
+ * Best-effort name of the class lexically enclosing `fctx`. Prefers the
+ * explicit `enclosingClassName` carried on the context; otherwise falls back to
+ * the `${Class}_${method}` naming convention baked into compiled method names.
+ */
 export function resolveEnclosingClassName(fctx: FunctionContext): string | undefined {
-  return _resolveEnclosingClassName(fctx);
+  if (fctx.enclosingClassName) return fctx.enclosingClassName;
+  const underscoreIdx = fctx.name.indexOf("_");
+  if (underscoreIdx > 0) return fctx.name.substring(0, underscoreIdx);
+  return undefined;
 }
 
 // ── coerceType ────────────────────────────────────────────────────────
@@ -207,11 +293,12 @@ type CoerceTypeFn = (
 ) => void;
 
 let _coerceType: CoerceTypeFn = () => {
-  throw new Error("coerceType not yet registered");
+  throw unregisteredDelegateError("coerceType");
 };
 
 export function registerCoerceType(fn: CoerceTypeFn): void {
   _coerceType = fn;
+  markRegistered("coerceType");
 }
 
 export function coerceType(
@@ -241,6 +328,7 @@ let _materializeStructAsObject: MaterializeStructAsObjectFn = () => false;
 
 export function registerMaterializeStructAsObject(fn: MaterializeStructAsObjectFn): void {
   _materializeStructAsObject = fn;
+  markRegistered("materializeStructAsObject");
 }
 
 export function materializeStructAsObject(ctx: CodegenContext, fctx: FunctionContext, structTypeIdx: number): boolean {
@@ -259,19 +347,21 @@ type EnsureLateImportFn = (
 type FlushLateImportShiftsFn = (ctx: CodegenContext, fctx: FunctionContext | null) => void;
 
 let _ensureLateImport: EnsureLateImportFn = () => {
-  throw new Error("ensureLateImport not yet registered");
+  throw unregisteredDelegateError("ensureLateImport");
 };
 
 let _flushLateImportShifts: FlushLateImportShiftsFn = () => {
-  throw new Error("flushLateImportShifts not yet registered");
+  throw unregisteredDelegateError("flushLateImportShifts");
 };
 
 export function registerEnsureLateImport(fn: EnsureLateImportFn): void {
   _ensureLateImport = fn;
+  markRegistered("ensureLateImport");
 }
 
 export function registerFlushLateImportShifts(fn: FlushLateImportShiftsFn): void {
   _flushLateImportShifts = fn;
+  markRegistered("flushLateImportShifts");
 }
 
 export function ensureLateImport(
@@ -307,11 +397,12 @@ export function isAnyValue(type: ValType, ctx: CodegenContext): boolean {
 type EnsureAnyHelpersFn = (ctx: CodegenContext) => void;
 
 let _ensureAnyHelpers: EnsureAnyHelpersFn = () => {
-  throw new Error("ensureAnyHelpers not yet registered");
+  throw unregisteredDelegateError("ensureAnyHelpers");
 };
 
 export function registerEnsureAnyHelpers(fn: EnsureAnyHelpersFn): void {
   _ensureAnyHelpers = fn;
+  markRegistered("ensureAnyHelpers");
 }
 
 // ── addUnionImports (lazy binding to avoid index.ts ↔ late-imports.ts cycle) ──
@@ -323,11 +414,12 @@ export function registerEnsureAnyHelpers(fn: EnsureAnyHelpersFn): void {
 type AddUnionImportsFn = (ctx: CodegenContext) => void;
 
 let _addUnionImports: AddUnionImportsFn = () => {
-  throw new Error("addUnionImports not yet registered");
+  throw unregisteredDelegateError("addUnionImports");
 };
 
 export function registerAddUnionImports(fn: AddUnionImportsFn): void {
   _addUnionImports = fn;
+  markRegistered("addUnionImports");
 }
 
 export function addUnionImportsViaRegistry(ctx: CodegenContext): void {
@@ -343,11 +435,12 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
 type ResolveComputedKeyExpressionFn = (ctx: CodegenContext, expr: ts.Expression) => string | undefined;
 
 let _resolveComputedKeyExpression: ResolveComputedKeyExpressionFn = () => {
-  throw new Error("resolveComputedKeyExpression not yet registered");
+  throw unregisteredDelegateError("resolveComputedKeyExpression");
 };
 
 export function registerResolveComputedKeyExpression(fn: ResolveComputedKeyExpressionFn): void {
   _resolveComputedKeyExpression = fn;
+  markRegistered("resolveComputedKeyExpression");
 }
 
 export function resolveComputedKeyExpression(ctx: CodegenContext, expr: ts.Expression): string | undefined {
@@ -359,11 +452,12 @@ export function resolveComputedKeyExpression(ctx: CodegenContext, expr: ts.Expre
 type CompileStatementFn = (ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement) => void;
 
 let _compileStatement: CompileStatementFn = () => {
-  throw new Error("compileStatement not yet registered");
+  throw unregisteredDelegateError("compileStatement");
 };
 
 export function registerCompileStatement(fn: CompileStatementFn): void {
   _compileStatement = fn;
+  markRegistered("compileStatement");
 }
 
 export function compileStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement): void {
@@ -375,11 +469,12 @@ export function compileStatement(ctx: CodegenContext, fctx: FunctionContext, stm
 type EnsureBindingLocalsFn = (ctx: CodegenContext, fctx: FunctionContext, pattern: ts.BindingPattern) => void;
 
 let _ensureBindingLocals: EnsureBindingLocalsFn = () => {
-  throw new Error("ensureBindingLocals not yet registered");
+  throw unregisteredDelegateError("ensureBindingLocals");
 };
 
 export function registerEnsureBindingLocals(fn: EnsureBindingLocalsFn): void {
   _ensureBindingLocals = fn;
+  markRegistered("ensureBindingLocals");
 }
 
 export function ensureBindingLocals(ctx: CodegenContext, fctx: FunctionContext, pattern: ts.BindingPattern): void {
@@ -395,11 +490,12 @@ type HoistFunctionDeclarationsFn = (
 ) => void;
 
 let _hoistFunctionDeclarations: HoistFunctionDeclarationsFn = () => {
-  throw new Error("hoistFunctionDeclarations not yet registered");
+  throw unregisteredDelegateError("hoistFunctionDeclarations");
 };
 
 export function registerHoistFunctionDeclarations(fn: HoistFunctionDeclarationsFn): void {
   _hoistFunctionDeclarations = fn;
+  markRegistered("hoistFunctionDeclarations");
 }
 
 export function hoistFunctionDeclarations(
@@ -421,11 +517,12 @@ type EmitNestedBindingDefaultFn = (
 ) => void;
 
 let _emitNestedBindingDefault: EmitNestedBindingDefaultFn = () => {
-  throw new Error("emitNestedBindingDefault not yet registered");
+  throw unregisteredDelegateError("emitNestedBindingDefault");
 };
 
 export function registerEmitNestedBindingDefault(fn: EmitNestedBindingDefaultFn): void {
   _emitNestedBindingDefault = fn;
+  markRegistered("emitNestedBindingDefault");
 }
 
 export function emitNestedBindingDefault(
@@ -451,11 +548,12 @@ type EmitDefaultValueCheckFn = (
 ) => void;
 
 let _emitDefaultValueCheck: EmitDefaultValueCheckFn = () => {
-  throw new Error("emitDefaultValueCheck not yet registered");
+  throw unregisteredDelegateError("emitDefaultValueCheck");
 };
 
 export function registerEmitDefaultValueCheck(fn: EmitDefaultValueCheckFn): void {
   _emitDefaultValueCheck = fn;
+  markRegistered("emitDefaultValueCheck");
 }
 
 export function emitDefaultValueCheck(
@@ -481,11 +579,12 @@ type EmitArgumentsObjectFn = (
 ) => void;
 
 let _emitArgumentsObject: EmitArgumentsObjectFn = () => {
-  throw new Error("emitArgumentsObject not yet registered");
+  throw unregisteredDelegateError("emitArgumentsObject");
 };
 
 export function registerEmitArgumentsObject(fn: EmitArgumentsObjectFn): void {
   _emitArgumentsObject = fn;
+  markRegistered("emitArgumentsObject");
 }
 
 /**
@@ -513,11 +612,12 @@ type CompileStringLiteralFn = (
 ) => ValType | null;
 
 let _compileStringLiteral: CompileStringLiteralFn = () => {
-  throw new Error("compileStringLiteral not yet registered");
+  throw unregisteredDelegateError("compileStringLiteral");
 };
 
 export function registerCompileStringLiteral(fn: CompileStringLiteralFn): void {
   _compileStringLiteral = fn;
+  markRegistered("compileStringLiteral");
 }
 
 export function compileStringLiteral(
@@ -539,11 +639,12 @@ type CompileSuperPropertyAccessFn = (
 ) => ValType | null;
 
 let _compileSuperPropertyAccess: CompileSuperPropertyAccessFn = () => {
-  throw new Error("compileSuperPropertyAccess not yet registered");
+  throw unregisteredDelegateError("compileSuperPropertyAccess");
 };
 
 export function registerCompileSuperPropertyAccess(fn: CompileSuperPropertyAccessFn): void {
   _compileSuperPropertyAccess = fn;
+  markRegistered("compileSuperPropertyAccess");
 }
 
 export function compileSuperPropertyAccess(
@@ -564,11 +665,12 @@ type CompileSuperElementAccessFn = (
 ) => ValType | null;
 
 let _compileSuperElementAccess: CompileSuperElementAccessFn = () => {
-  throw new Error("compileSuperElementAccess not yet registered");
+  throw unregisteredDelegateError("compileSuperElementAccess");
 };
 
 export function registerCompileSuperElementAccess(fn: CompileSuperElementAccessFn): void {
   _compileSuperElementAccess = fn;
+  markRegistered("compileSuperElementAccess");
 }
 
 export function compileSuperElementAccess(
@@ -597,6 +699,7 @@ let _addStringImports: AddStringImportsFn = () => {
 
 export function registerAddStringImports(fn: AddStringImportsFn): void {
   _addStringImports = fn;
+  markRegistered("addStringImports");
 }
 
 export function addStringImportsDelegate(ctx: CodegenContext): void {

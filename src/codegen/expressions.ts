@@ -25,6 +25,7 @@ import {
 } from "./async-scheduler.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
 import {
@@ -92,7 +93,7 @@ export {
   emitNullCheckThrow,
   isProvablyNonNull,
 } from "./property-access.js";
-export { getCol, getLine, valTypesMatch, VOID_RESULT } from "./shared.js";
+export { getCol, getLine, resolveEnclosingClassName, valTypesMatch, VOID_RESULT } from "./shared.js";
 export {
   compileNativeStringLiteral,
   compileNativeStringMethodCall,
@@ -143,7 +144,6 @@ export {
   compileNewExpression,
   compileSuperElementAccess,
   compileSuperPropertyAccess,
-  resolveEnclosingClassName,
 } from "./expressions/new-super.js";
 export { compileMemberIncDec, compilePostfixUnary, compilePrefixUnary } from "./expressions/unary.js";
 
@@ -219,6 +219,79 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
     if (isPromiseType(callSig.getReturnType())) return true;
   }
 
+  // (#2612) Apparent-type call signatures unwrap the variable to its function
+  // type more reliably than `getTypeAtLocation` for some binding indirections.
+  const apparent = ctx.checker.getApparentType(calleeType);
+  for (const callSig of apparent.getCallSignatures()) {
+    if (isPromiseType(callSig.getReturnType())) return true;
+  }
+
+  // (#2612) An async function EXPRESSION bound to a `var`/`let` and consumed as
+  // a thenable (`ref(3).then(...)`) is never registered in `ctx.asyncFunctions`
+  // (that set only holds async declarations / class methods / object-literal
+  // methods). When the variable has no initializer type that surfaces
+  // `Promise<T>` (the `var ref; ref = async function …` two-step pattern), the
+  // signature/apparent-type fallbacks above all miss it. Resolve the callee's
+  // SYMBOL and inspect its bindings: if the variable's initializer — or the RHS
+  // of a later `ref = …` assignment to that same symbol — is an `async` function
+  // expression / async arrow, the call returns a Promise and must be wrapped.
+  if (ts.isIdentifier(expr.expression)) {
+    const sym = ctx.checker.getSymbolAtLocation(expr.expression);
+    if (sym && symbolBindsAsyncFunction(ctx, sym)) return true;
+  }
+
+  return false;
+}
+
+/** True when `node` is an `async function`/`async () =>` (not a generator). */
+function isAsyncFunctionExpr(node: ts.Node | undefined): node is ts.FunctionExpression | ts.ArrowFunction {
+  if (!node || !(ts.isFunctionExpression(node) || ts.isArrowFunction(node))) return false;
+  // Exclude async generators — they return AsyncGenerator, not a Promise.
+  if ((node as ts.FunctionExpression).asteriskToken) return false;
+  const mods = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
+  return mods?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+}
+
+/**
+ * (#2612) Determine whether a callee symbol is bound to an async function
+ * expression — either as a variable initializer or via a later
+ * `name = async function …` assignment. Catches the two-step
+ * declare-then-assign pattern that `ctx.asyncFunctions` and the TS signature
+ * fallbacks all miss.
+ */
+function symbolBindsAsyncFunction(ctx: CodegenContext, sym: ts.Symbol): boolean {
+  const decls = sym.declarations ?? [];
+  for (const decl of decls) {
+    // `const ref = async function …` / `let ref = async () => …`
+    if (ts.isVariableDeclaration(decl) && isAsyncFunctionExpr(decl.initializer)) return true;
+    // `function ref()` async declaration would already be caught by the
+    // `ctx.asyncFunctions` / modifier check; binding-element / param defaults
+    // with an async initializer:
+    if (ts.isBindingElement(decl) && isAsyncFunctionExpr(decl.initializer)) return true;
+  }
+  // Scan for a later `name = async function …` assignment to this symbol's
+  // identifier in the same source file (the `var ref; ref = async function …`
+  // pattern, where the declaration carries no initializer).
+  for (const decl of decls) {
+    const sf = decl.getSourceFile();
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left) &&
+        isAsyncFunctionExpr(node.right) &&
+        ctx.checker.getSymbolAtLocation(node.left) === sym
+      ) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    if (found) return true;
+  }
   return false;
 }
 
@@ -600,12 +673,18 @@ function compileExpressionBody(
     }
   }
 
-  const bodyLenBefore = fctx.body.length;
+  // #1919 — transactional wrapper around the inner compile. The snapshot is O(1)
+  // and the two rollback exits below (a thrown inner compile; an inner that
+  // produced no usable value) discard the partial body AND any locals / late
+  // imports / errors it leaked, then emit a clean fallback value. The successful
+  // path simply drops the snapshot, so legitimately-registered imports persist.
+  const snap = snapshotSpeculative(ctx, fctx);
+  const bodyLenBefore = snap.bodyLen;
   let result: InnerResult;
   try {
     result = compileExpressionInner(ctx, fctx, expr, expectedType);
   } catch (e) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     const msg = e instanceof Error ? e.message : String(e);
     reportErrorNoNode(ctx, `Internal error compiling expression: ${msg}`);
     const fallbackType = expectedType ?? { kind: "f64" as const };
@@ -700,7 +779,9 @@ function compileExpressionBody(
     return result;
   }
 
-  fctx.body.length = bodyLenBefore;
+  // Inner compile produced no usable value — roll back its partial emission
+  // (#1919: body + locals + late imports + errors) and emit a default instead.
+  rollbackSpeculative(ctx, fctx, snap);
   let wasmType: ValType;
   if (expectedType) {
     wasmType = expectedType;
@@ -1214,6 +1295,20 @@ function compileExpressionInner(
       );
       return { kind: "externref" };
     }
+    // (#2613) `await <thenable>` / `await <non-Promise>` assimilation is now
+    // owned by the async-CPS state machine (`async-cps.ts`, gate
+    // `ASYNC_CPS_ENABLED = true`): a body whose await operand is not statically
+    // resolved (a user thenable / `any`) is a *real suspension* and is driven
+    // by `emitAsyncStateMachine` (`Promise_resolve` → `Promise_then2` →
+    // continuation), so it never reaches this legacy passthrough arm. The
+    // residual thenable-await test262 failures are therefore a CPS
+    // *synchronous-settlement* gap — the test262 harness calls `test()`
+    // synchronously and reads the result with no microtask drain, while the CPS
+    // continuation settles on a later microtask — which is #1373b's domain, not
+    // a JS-host point-fix. Keep the legacy identity passthrough here for the
+    // await shapes CPS does not claim (statically-resolved operands, bodies
+    // `splitBodyAtAwait` rejects); these are already the resolved value on the
+    // stack.
     return compileExpressionInner(ctx, fctx, expr.expression, expectedType);
   }
 

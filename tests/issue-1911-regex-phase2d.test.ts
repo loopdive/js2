@@ -99,12 +99,17 @@ describe("#1911 standalone RegExp Phase 2d Slice A — dual-run vs native", () =
     expect((instance.exports as { run(): number }).run()).toBe(1);
   });
 
-  it("\\q{…} string disjunctions stay a narrowed refusal (match strings)", async () => {
-    const r = await compile(`export function f(s: string): boolean { return /[\\q{abc}]/v.test(s); }`, {
+  it("\\q{…} string disjunctions now compile (string disjunction — #2591)", async () => {
+    // Superseded by #2591: a top-level/union `\q{…}` is desugared to an
+    // alternation of literal strings rather than refused. Full coverage lives in
+    // tests/issue-2591-vflag-q-string-disjunction.test.ts; this just guards that
+    // the former narrowed-refusal no longer fires for the common case.
+    const r = await compile(`export function f(): boolean { return /[\\q{abc}]/v.test("abc"); }`, {
       target: "standalone",
     });
-    expect(r.success).toBe(false);
-    expect(r.errors.some((e) => /#1539|#1474|\\q/.test(e.message))).toBe(true);
+    expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as { f(): number }).f()).toBe(1);
   });
 });
 

@@ -30,7 +30,7 @@ import { addFuncType } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
 import { ensureMapHelpers } from "./map-runtime.js";
-import { ensureSetHelpers } from "./set-runtime.js";
+import { emitSetBrandCheck, ensureSetHelpers } from "./set-runtime.js";
 
 const TOMBSTONE_BIT = 0x40000000; // mirrors map-runtime.ts
 const M_ENTRIES = 1;
@@ -367,9 +367,18 @@ export function tryCompileNativeSetAlgebraCall(
   // receiver → ref $Map
   const recvType = compileExpression(ctx, fctx, propAccess.expression);
   if (!castToMap(ctx, fctx, recvType)) return undefined;
-  // arg → ref $Map
+  // (#2607) GetSetRecord(arg) argument validation — spec 24.2.1.2 step 1 ("If
+  // obj is not an Object, throw a TypeError") + steps 7-10 (has/keys must be
+  // callable). A non-Set argument (primitive `1`/`""`/`true`/`Symbol()`, or a
+  // plain object / array that is not the `$Map` backing struct) throws a
+  // *catchable* TypeError — NOT a `ref.cast` trap (illegal cast) and NOT a host
+  // fall-through (which silently completes / leaks `env`). Reuses #2604's
+  // `emitSetBrandCheck` (`ref.test $Map` → throw-or-cast), which leaves the
+  // validated `(ref $Map)` on the stack. A genuine set-LIKE object (size/has/
+  // keys on an `any`) is conservatively rejected here — that data path is
+  // #2580 M2 (dynamic property read), currently failing anyway (no regression).
   const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!);
-  if (!castToMap(ctx, fctx, argType)) return undefined;
+  emitSetBrandCheck(ctx, fctx, argType);
 
   fctx.body.push({ op: "call", funcIdx: helperIdx });
   return isSetOp ? ({ kind: "ref", typeIdx: ctx.mapTypeIdx } as ValType) : ({ kind: "i32" } as ValType);

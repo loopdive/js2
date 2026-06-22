@@ -100,9 +100,21 @@ function interpolateColor(pct) {
   return [Math.round(r * 220), Math.round(g * 200), Math.round(b * 20)];
 }
 
-const jsonData = fromJson();
-const sprint = jsonData ? jsonData.sprint : currentSprint();
-const { done, total } = jsonData ?? sprintProgress(sprint);
+// LIVE-FIRST: read the current working-tree frontmatter (flatTree) so the
+// statusline always reflects reality. The sprints.json cache only rebuilds on
+// push-to-main, so preferring it made the statusline go silently stale (it
+// reported a closed sprint for days). Fall back to the cache only when the flat
+// scan finds no numbered sprint at all (e.g. a partial checkout).
+const flatSprint = currentSprint();
+let sprint, done, total;
+if (flatSprint) {
+  sprint = flatSprint;
+  ({ done, total } = sprintProgress(sprint));
+} else {
+  const jsonData = fromJson();
+  sprint = jsonData ? jsonData.sprint : 0;
+  ({ done, total } = jsonData ?? { done: 0, total: 0 });
+}
 const pct = total === 0 ? 0 : done / total;
 const pctInt = Math.round(pct * 100);
 

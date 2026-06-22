@@ -292,7 +292,14 @@ describe("#1238 — resolveMethodDispatchTarget", () => {
   });
 
   it("returns null for IrType.union", () => {
-    const t: IrType = { kind: "union", members: [{ kind: "f64" }, { kind: "i32" }] };
+    // #1926 — union members are IrTypes (val-kind wrappers).
+    const t: IrType = {
+      kind: "union",
+      members: [
+        { kind: "val", val: { kind: "f64" } },
+        { kind: "val", val: { kind: "i32" } },
+      ],
+    };
     expect(resolveMethodDispatchTarget(t)).toBeNull();
   });
 });

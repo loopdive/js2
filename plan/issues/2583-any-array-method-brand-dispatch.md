@@ -1,10 +1,12 @@
 ---
 id: 2583
 title: "standalone: any-typed array method dispatch (indexOf/etc.) returns undefined — $__vec_base brand arm in __extern_method_call"
-status: ready
+status: done
 sprint: 65
 created: 2026-06-21
 updated: 2026-06-21
+completed: 2026-06-21
+assignee: sdev-vecdispatch
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -230,3 +232,72 @@ mirror `tests/issue-2358-array-toprimitive.test.ts`'s `runStandalone`):
 
 Scoped local check before PR; CI validates conformance. Expect a positive
 test262 delta in `built-ins/Array/prototype/{indexOf,lastIndexOf,includes}/`.
+
+## Implementation Notes (sdev-vecdispatch, 2026-06-21)
+
+The spec's `$__vec_base` brand-arm design was implemented as written, but
+WAT-probing the actual lowering on `04ef72a7c` revealed the spec's *routing*
+assumption was incomplete, and a *second, deeper* substrate bug. Both had to be
+fixed for the repro to pass.
+
+### Finding 1 — the dispatcher is never reached (routing intercept)
+
+The spec assumed `a.indexOf("y")` reaches `__call_m_indexOf_1`'s bottom arm
+(forwarding to `__extern_method_call`). It does NOT. For an `any` receiver and a
+STRING_METHODS name, `compileMethodCall` (calls.ts ~L8926) fires FIRST through
+`compileGuardedNativeStringMethodCall` (string-ops.ts): a runtime
+`ref.test $AnyString` guard whose **then**-arm runs the native string method and
+whose **else**-arm (non-string receiver) returned a *benign default* (`0`/`NaN`).
+The array case lands in that else-arm and silently got `0` — the dispatcher was
+emitted but dead for this path.
+
+**Fix:** route the guarded else-arm through the closed-method dispatcher for
+`indexOf`/`lastIndexOf`/`includes` (arity ≥ 1, standalone/wasi): build
+`__call_m_<m>_<arity>(recvExt, …boxedArgs)` and **unbox** its boxed-externref
+result back to the string-arm's result ValType (`__unbox_number` → f64 →
+`i32.trunc_sat_f64_s` for index methods; `__unbox_boolean` for `includes`). For
+any non-string, non-array receiver the dispatcher's terminal `ref.null.extern`
+unboxes to the SAME benign sentinel as before → no regression
+(`closed-method-dispatch.ts` brand arm + `string-ops.ts` else-arm).
+
+### Finding 2 — `__any_strict_eq`/`__any_eq` tag-5 string compare was host-only
+
+With the dispatcher reached, NUMBER-element arrays worked but STRING-element
+arrays still missed every element. Root cause: the dispatcher compares via
+`__extern_strict_eq` → `__any_strict_eq`, whose **tag-5 (string)** arm compared
+content via the **`wasm:js-string equals` host import** (`strEqualsIdx`). In
+standalone/wasi that import is ABSENT (`strEqualsIdx === -1`), so the arm
+collapsed to `i32.const 0` — two equal boxed strings always compared *unequal*.
+This was a latent standalone substrate bug in `__any_strict_eq` **and**
+`__any_eq` (identical arms), not specific to arrays; any boxed-string `===`
+routed through `__any_strict_eq` was broken standalone. (`a === b` on bare
+identifiers worked because it uses the *static* `===` lowering with native
+`__str_equals`, a different path.)
+
+**Fix:** `tag5StringEqThen()` in `any-helpers.ts` prefers the host import when
+present (gc/host mode, unchanged) and otherwise falls back to a **native** path:
+recover each operand's tag-5 `externval` (`extern.convert_any` + `ref.cast
+$AnyString`), `__str_flatten` to `$NativeString`, then native `__str_equals`.
+Shared by both `__any_eq` and `__any_strict_eq`. This also covers the tag-5 arm
+that #2585 touches — kept minimal and content-only here, no `ref.eq`
+short-circuit added (that is #2585's scope).
+
+### Verified
+
+All slice-1 cases + NaN (StrictEq vs SameValueZero), empty, mixed-type, and the
+typed-array / string-receiver / open-`$Object` regressions pass standalone
+(`tests/issue-2583-any-array-method-brand.test.ts`, 17/17). The array-method
+equivalence suite (`array-externref-indexof`, `array-prototype-methods`, …) and
+the string/eq regression files (`issue-2503b`, `issue-1461-*-search`,
+`issue-2186`, `issue-2190`, `issue-2063`, `issue-1910d`) stay green.
+
+`tests/issue-2081.test.ts` fails identically WITH and WITHOUT this change
+(verified by reverting all three source files) — a pre-existing
+`__defineProperty_value` late-import index-shift (#2043 class) on wasi loose-eq,
+out of scope here.
+
+### Deferred (follow-up slice)
+
+- 2-arg forms `indexOf(x, fromIndex)` (land on `__call_m_<m>_2`, not yet a brand
+  arm — kept on the existing fallback; not silently mis-evaluated).
+- callback/allocation methods `join`/`slice`/`concat`/`map`/`filter`/`reduce`.
