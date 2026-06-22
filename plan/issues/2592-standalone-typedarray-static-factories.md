@@ -1,7 +1,9 @@
 ---
 id: 2592
 title: "Standalone TypedArray.of / TypedArray.from static factories — CE __get_builtin"
-status: ready
+status: done
+completed: 2026-06-22
+assignee: ttraenkler/agent-typedarray-2595-2597
 sprint: 65
 created: 2026-06-22
 priority: high
@@ -141,3 +143,30 @@ Substrate-independent (does NOT touch the value-rep substrate #2580). The
 element-width wrapping for `Uint8Array.of(300)` → `44` etc. is **deferred to
 #2593** — this slice only needs the factories to compile + produce the right
 length/order, matching today's `new TA([...])` fidelity.
+
+## Resolution (2026-06-22)
+
+Implemented the TypedArray static-factory arm in
+`src/codegen/expressions/calls.ts`, placed BEFORE the `Array.from`/`Array.of`
+arms, gated on `noJsHost(ctx) && TYPED_ARRAY_NAMES.has(receiver)`. Exported
+`typedArrayVecStorage` from `index.ts` so the element vec representation
+(`i8_byte` for standalone `Uint8Array`, `f64` otherwise) matches `new TA([...])`.
+
+- **`TA.of(...)`** — mirrors the `Array.of` native arm: per-arg coerce to the
+  element store type (`i32` for `i8` packed, else `f64`), `array.new_fixed` +
+  `struct.new`. Empty → `array.new_default` len 0. Spread args fall through.
+- **`TA.from(arrayLike)`** (no mapFn) — element-by-element copy with re-coercion
+  (the source vec's element type may differ from the dest), via a
+  `block{loop{ if i>=len br 1; dst[i]=coerce(src[i]); i++; br 0 }}` built with
+  `pushBody`/`popBody` so the `coerceType` conversion lands inside the loop.
+  Handles f64→i8, i8→i8 (`array.get_u`), empty source.
+
+**Deferred to follow-up (still fall through to existing path):**
+- `TA.from(src, mapFn)` — needs in-loop closure dispatch; standalone still CEs
+  (unchanged from before), gc/host works via the host import.
+- `TA.from(string | Set | arbitrary iterable)` and spread in `.of(...xs)`.
+- Integer element-width wrapping (`Uint8Array.of(300)` → 44) → **#2593**.
+
+Validated: `tests/issue-2592.test.ts` (22 tests, standalone + gc/host);
+`Array.of`/`Array.from` non-regression confirmed. tsc + prettier +
+coercion-sites gates clean.

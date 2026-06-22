@@ -149,6 +149,14 @@ function resolvesToNonConstructableValue(ctx: CodegenContext, calleeExpr: ts.Exp
           ? e.expression
           : (e as ts.NonNullExpression).expression;
     }
+    // (#1528a) An arrow function is PROVABLY never a constructor — §15.3.4
+    // arrow functions have no [[Construct]] internal method, so `new (arrow)()`
+    // must throw TypeError (§7.3.15 Construct → §7.2.4 IsConstructor). Through a
+    // local of type `any` (`const f = () => 1; new f()`) no static guard sees
+    // the arrow, so control reaches the unknown-ctor path and wrongly does not
+    // throw; route it through the `__construct` brand check (which throws a real
+    // TypeError) just like the prototype-method / bound-function shapes below.
+    if (ts.isArrowFunction(e)) return true;
     // `<...>.prototype.<method>` — a method pulled off a prototype.
     if (ts.isPropertyAccessExpression(e)) {
       const obj = e.expression;

@@ -543,3 +543,37 @@ that falls past the static guards.
 ## Frontmatter reconcile (2026-06-12)
 
 Was `in-progress` with no open PR, no active agent, and no Suspended Work section (session died sprints 42-52). Reset to `ready` during the sprint-62 issue review; re-validate against current main before claiming (#2148).
+
+## #1528a-arrow subset landed (2026-06-22)
+
+Landed the **arrow-function-value** subset of the #1528a non-constructor cluster
+— a small, substrate-independent slice that reuses the **existing, tested**
+`__construct` brand-check path (#1732 S1), avoiding the
+`flushLateImportShifts`-mid-function index corruption that forced the PR #608
+revert of the broad `compileDynamicConstruct`.
+
+**Change** — `src/codegen/expressions/new-super.ts`,
+`resolvesToNonConstructableValue` (the #1732 S1 helper): an **arrow-function
+initializer** (`const f = () => 1; new f()`) is now recognised as a provably-
+non-constructable value (§15.3.4 — arrows have no [[Construct]]), so `new f()`
+routes through the `__construct` brand check and throws a real
+`TypeError("… is not a constructor")` instead of slipping into the unknown-ctor
+path and silently not throwing. 8 lines, additive, alongside the existing
+prototype-method / `.bind`/`.call`/`.apply` shapes. No runtime.ts change; no new
+coercion site.
+
+**Tests** — `tests/issue-1528.test.ts` gains a `#1528a — arrow-function value`
+describe (5 cases: arrow value, cast-wrapped arrow, arrow-with-params throw;
+class + function-declaration construct regression guards). 11/11 pass. Full
+constructor/new suite (issue-1732-s1/s2, issue-1519, fn-constructor,
+issue-2026-constructor-identity-any) green — zero regressions.
+
+**Still open (substrate-blocked, #1632b-2):** dynamically **CONSTRUCTING** a
+runtime function VALUE (factory-returned `function C(){}` → `new C()`) — verified
+this needs the closure-construct host bridge (`_wrapCallableForHost`'s construct
+trap) PLUS the `__call_fn_*` arity dispatcher to be reachable for the value, and
+behaves inconsistently depending on `setExports` timing. That is the deeper
+closure-as-dynamic-constructor work, NOT a clean dev slice. The non-constructor
+**throw** cases (arrows, bound functions, prototype methods, call-only callables)
+are the substrate-independent, test262-cluster-dominant part and are now covered.
+Issue stays `ready` for the remaining construct-a-fn-value cluster.

@@ -247,15 +247,18 @@ export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: 
     flushLateImportShifts(ctx, fctx);
     return false;
   }
-  // Only the `.length` key uses the vec arm; ensure `__box_number` for it.
+  // Only the `.length` key uses the vec arm; ensure `__box_number` for it, plus
+  // `__extern_is_undefined` for the null/undefined-receiver guard (#2580 M2 s1).
   if (keyName === "length") {
     ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   }
   addStringConstantGlobal(ctx, keyName);
   flushLateImportShifts(ctx, fctx);
   // Re-resolve by name AFTER all import shifts have settled.
   const finalExternGetIdx = ctx.funcMap.get("__extern_get") ?? externGetIdx;
   const boxNumIdx = keyName === "length" ? ctx.funcMap.get("__box_number") : undefined;
+  const isUndefIdx = keyName === "length" ? ctx.funcMap.get("__extern_is_undefined") : undefined;
   const vecEntries = Array.from(ctx.vecTypeMap.values());
   if (keyName === "length" && boxNumIdx !== undefined && vecEntries.length > 0) {
     // Stash the receiver externref (currently on the stack) so we can test it.
@@ -322,6 +325,29 @@ export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: 
             { op: "f64.convert_i32_s" } as Instr,
             { op: "call", funcIdx: boxNumIdx } as Instr,
           ],
+          else: chain,
+        } as Instr,
+      ];
+    }
+    // (#2580 M2 slice 1) NULL/UNDEFINED-RECEIVER guard, OUTERMOST (tested FIRST).
+    // A receiver that is JS `null`/`undefined` at runtime — e.g. a Symbol-keyed
+    // prototype walk that did not resolve (`IteratorProto[Symbol.iterator]` →
+    // undefined; the Cluster-A class of the #1894 eject) — read its `.length` as
+    // the prior numeric path's null-guarded `0`, NOT `__extern_get(undefined,
+    // "length")` → undefined → NaN. `ref.is_null` does NOT catch this (a JS
+    // `undefined` is a NON-null externref wrapping the host undefined sentinel —
+    // why M1's `ref.is_null` guard left Cluster A at 0/13); the HOST
+    // `__extern_is_undefined` does (`v === undefined`). On a hit return
+    // `box_number(0)`, matching origin. The canary `{}` is a non-null object →
+    // miss → reaches `__extern_get` → undefined (preserved).
+    if (isUndefIdx !== undefined && boxNumIdx !== undefined) {
+      chain = [
+        { op: "local.get", index: recvTmp } as Instr,
+        { op: "call", funcIdx: isUndefIdx } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: [{ op: "f64.const", value: 0 } as Instr, { op: "call", funcIdx: boxNumIdx } as Instr],
           else: chain,
         } as Instr,
       ];

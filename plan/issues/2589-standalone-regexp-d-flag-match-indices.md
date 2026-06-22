@@ -1,7 +1,8 @@
 ---
 id: 2589
 title: "Standalone RegExp `d` flag — match `.indices` array (RegExpBuiltinExec step 28-29)"
-status: ready
+status: done
+completed: 2026-06-22
 sprint: 65
 priority: medium
 feasibility: medium

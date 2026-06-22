@@ -1,7 +1,9 @@
 ---
 id: 2596
 title: "Standalone TypedArray/DataView .buffer accessor — illegal cast at runtime"
-status: ready
+status: done
+completed: 2026-06-22
+assignee: ttraenkler/agent-typedarray-2595-2597
 sprint: 65
 created: 2026-06-22
 priority: medium
@@ -136,3 +138,40 @@ view and its byte buffer is explicitly deferred (would require the unified
 byte-storage rep — pairs with #2593's packed migration). **Dispatch note**:
 shares the property-access.ts typed-array block with #2595 (disjoint `propName`
 arms).
+
+## Resolution (2026-06-22) — Option A (non-trapping floor)
+
+Implemented a `.buffer` arm in `compilePropertyAccess`
+(`src/codegen/property-access.ts`, just after the byteLength/byteOffset block),
+gated on `propName === "buffer" && noJsHost(ctx)` and a TypedArray/DataView
+receiver. It **synthesizes** a fresh `i32_byte` ArrayBuffer vec whose field-0
+byte length == the view's byte length, with a zero-filled data array — never
+`ref.cast`s the f64/i8 view vec to the i32_byte buffer type (that cast was the
+`illegal cast` bug). Byte length:
+- **TypedArray**: element-count (vec field 0) × `BYTES_PER_ELEMENT` (reuses the
+  hoisted `TYPED_ARRAY_BYTES_PER_ELEMENT` map from #2595).
+- **DataView**: runtime `ref.test $__dv_window` branch — a windowed view reads
+  its field-2 `byteLength`; a bare i32_byte vec reads field 0 (mirrors the
+  existing DataView byteLength arm so both shapes work; a static cast to one
+  shape would `illegal cast` the other).
+
+`view.buffer.byteLength` is now correct and non-trapping for `new TA(n)`, bare
+`new DataView(buf)`, windowed `new DataView(buf, off, len)`, and empty views
+(no trap). Bounded — stayed entirely within the property-access.ts TA block; no
+new-super.ts buffer-source tracking needed for the byteLength/non-trapping goal.
+
+Also removed a leftover `JS2WASM_DBG_2595` debug `console.error` that shipped in
+#1912's byteLength block (harmless env-gated no-op, but production cruft).
+
+**Deferred (documented, out of scope):** true write-through byte-aliasing
+(mutating `.buffer` mutates the view) and buffer **identity**
+(`new TA(buf).buffer === buf`, `a.buffer === b.buffer` for subviews) — both need
+the unified byte-storage representation (pairs with #2593's packed migration)
+and/or source-buffer tracking in new-super.ts (#2357 subview rep). The
+synthesized buffer is a fresh object, so identity-dependent test262 cases remain
+residual; the dominant `.buffer.byteLength` reads now pass.
+
+Validated: `tests/issue-2596.test.ts` (9 tests) — Int32/Float64/Uint8/Int16/Int8
+`.buffer.byteLength`, empty view (no trap), `.buffer` to local, bare + windowed
+DataView. tsc + prettier + coercion-sites clean; packed-typedarray,
+dataview-window, dataview-bounds, and #2595/#2597 suites still green (64 tests).

@@ -175,7 +175,7 @@ function typedArrayNameFromTypeNode(node: ts.TypeNode): string | null {
   return TYPED_ARRAY_NAMES.has(node.typeName.text) ? node.typeName.text : null;
 }
 
-function typedArrayVecStorage(ctx: CodegenContext, name: string): { key: string; type: ValType } {
+export function typedArrayVecStorage(ctx: CodegenContext, name: string): { key: string; type: ValType } {
   return (ctx.wasi || ctx.standalone) && name === "Uint8Array"
     ? { key: "i8_byte", type: { kind: "i8" } }
     : { key: "f64", type: { kind: "f64" } };

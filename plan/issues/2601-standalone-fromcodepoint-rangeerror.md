@@ -1,7 +1,9 @@
 ---
 id: 2601
 title: "Standalone: String.fromCodePoint RangeError on non-integral / out-of-range code points"
-status: ready
+status: done
+completed: 2026-06-22
+assignee: ttraenkler/agent-af6ff9d85ab8e6fc4
 sprint: 65
 priority: medium
 feasibility: easy
@@ -11,7 +13,7 @@ area: string-number
 language_feature: string-methods
 goal: standalone-mode
 parent: 2160
-related: [2088, 2122]
+related: [2088, 2122, 2600]
 ---
 
 # #2601 — Standalone String.fromCodePoint RangeError guard
@@ -118,3 +120,34 @@ See the integral + range block above. Code-point value `1114111` = `0x10FFFF`.
   correct strings; × `{standalone, gc}`. Assert `fromCharCode` still does NOT throw
   on `3.14` (ToUint16, no RangeError) — guard must be fromCodePoint-only.
 - gc-mode no-regression guard.
+
+## Resolution (2026-06-22)
+
+Fixed together with #2600 in one branch (`issue-2600-2601-string-index-fromcodepoint`).
+
+**Change** — `src/codegen/expressions/calls.ts`, `compileFromCharCodeFamily`:
+- Added an `isFromCodePoint` flag; the per-argument fold now emits the §22.1.2.2
+  step 2b/2c RangeError guard **only** for fromCodePoint (NOT fromCharCode, which
+  does ToUint16 with no check). Per arg: coerce ToNumber→f64, then
+  `if (trunc(cp) != cp  ||  cp < 0  ||  cp > 0x10FFFF) throw RangeError`
+  (`trunc != self` catches fractional AND NaN; the range test catches ±∞), then
+  trunc to the i32 the native helper wants.
+- Gated on `noJsHost(ctx)` (standalone/WASI): the throw uses the in-module
+  `__new_RangeError` constructor (no host bridge). The JS-host lane keeps its
+  existing host-delegated behaviour — gating it standalone-only also avoids a
+  mid-part-loop late-import index shift that briefly broke the fast-mode
+  multi-arg path (#2122 regression, caught + fixed before commit).
+- No new #2108 coercion site (`coerceType` f64 reuse).
+
+## Test Results
+
+- `tests/issue-2601-fromcodepoint-rangeerror.test.ts` — 17/17 pass.
+- Standalone: `fromCodePoint(3.14|-1|0x10FFFF+1|NaN|Infinity|"x")` and multi-arg
+  `(65, 3.14)` all throw RangeError; `fromCodePoint(0|65|65.0|0x10FFFF|"65")` and
+  `(65,66,67)` return correct strings; `fromCharCode(3.14)` does NOT throw
+  (guard is fromCodePoint-only).
+- Regression: #2122 (incl. native fromCodePoint multi-arg surrogate pairs) and
+  #2088 green; gc-mode fromCodePoint/fromCharCode unchanged.
+- tsc + prettier clean; `check:coercion-sites` OK (no change).
+- Note: `String.fromCodePoint()` (0-arg) is out of this slice — the native block
+  gates on `arguments.length >= 1`, so the 0-arg case is unchanged (pre-existing).

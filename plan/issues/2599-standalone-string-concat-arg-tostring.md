@@ -1,7 +1,9 @@
 ---
 id: 2599
 title: "Standalone: String.prototype.concat variadic + non-string-argument ToString (typed receiver)"
-status: ready
+status: done
+completed: 2026-06-22
+assignee: ttraenkler/agent-af6ff9d85ab8e6fc4
 sprint: 65
 priority: high
 feasibility: easy
@@ -11,7 +13,7 @@ area: string-number
 language_feature: string-methods
 goal: standalone-mode
 parent: 2160
-related: [1917, 2108]
+related: [1917, 2108, 2598]
 ---
 
 # #2599 — Standalone String.prototype.concat ToString(args)
@@ -108,3 +110,21 @@ non-string argument null-derefs and a multi-arg fold poisons the accumulator.
   number/boolean/null/undefined args, fold order, × `{standalone, gc}`; assert
   no `__str_concat` null-deref and no host-import leak under `target: standalone`.
 - `pnpm run check:coercion-sites` unchanged.
+
+## Resolution (2026-06-22)
+
+Fixed together with #2598 in one branch (`issue-2598-2599-string-arg-tostring`).
+The `method === "concat"` arm now ToString-coerces each argument via the shared
+`emitArgAsNativeString` helper (see #2598 resolution — reuses
+`compileNativeConcatOperand`, the existing native-string engine) before each
+`__str_concat` call. Left-to-right fold order preserved; a non-string arg no
+longer null-derefs. No new #2108 coercion site.
+
+## Test Results
+
+- `tests/issue-2598-2599-string-arg-tostring.test.ts` — 25/25 pass.
+- Standalone micro-repros: `"a".concat("b","c","d")` → "abcd"; `"a".concat(1)` →
+  "a1"; `"a".concat(true)` → "atrue"; `"a".concat(null)` → "anull";
+  `"a".concat(undefined)` → "aundefined"; mixed variadic fold-order; `"abc".concat()`
+  → receiver — all correct, no `__str_concat` null-deref.
+- gc-mode concat unchanged; tsc + prettier clean.

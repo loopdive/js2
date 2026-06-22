@@ -62,6 +62,7 @@ import {
   resolveWasmType,
   STRING_METHODS,
   TYPED_ARRAY_NAMES,
+  typedArrayVecStorage,
 } from "../index.js";
 import {
   compileArrayConstructorCall,
@@ -152,6 +153,7 @@ import {
   tryCompileStandaloneRegExpToString,
 } from "../regexp-standalone.js";
 import {
+  emitThrowRangeError,
   emitThrowTypeError,
   getFuncParamTypes,
   getWasmFuncReturnType,
@@ -185,7 +187,12 @@ import {
 } from "../native-strings.js";
 import { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from "../builtin-scaffold.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
-import { emitArrayBufferSlice, emitDataViewAccessor, isDataViewAccessor } from "../dataview-native.js";
+import {
+  emitArrayBufferSlice,
+  emitDataViewAccessor,
+  getOrRegisterDvWindowType,
+  isDataViewAccessor,
+} from "../dataview-native.js";
 import {
   getLinearU8Buffer,
   getLinearU8ParamIndicesForCall,
@@ -2805,9 +2812,9 @@ function compileFromCharCodeFamily(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
-  opts: { native: boolean; helperIdx: number },
+  opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },
 ): ValType | null {
-  const { native, helperIdx } = opts;
+  const { native, helperIdx, isFromCodePoint } = opts;
   const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);
   if (repr === undefined) return null;
 
@@ -2823,8 +2830,49 @@ function compileFromCharCodeFamily(
     fctx.body = buf;
     try {
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "f64" });
+      // #2601 — §22.1.2.2 step 2b/2c: each fromCodePoint code point, after
+      // ToNumber, must be an INTEGRAL Number in [0, 0x10FFFF] else RangeError.
+      // (fromCharCode does ToUint16 with NO such check — fromCodePoint-only.)
+      // Scoped to standalone/WASI (`noJsHost`): the throw uses the in-module
+      // `__new_RangeError` constructor with no host bridge. The JS-host lane
+      // keeps its existing host-delegated behaviour (the slice is standalone).
+      const emitRangeGuard = isFromCodePoint === true && noJsHost(ctx);
+      if (emitRangeGuard) {
+        // Normalise to f64, then test `trunc(cp) != cp` (catches fractional AND
+        // NaN) OR `cp < 0` OR `cp > 0x10FFFF` (±∞ caught by the range test).
+        if (argType && argType.kind === "i32") buf.push({ op: "f64.convert_i32_s" });
+        const cpTmp = allocLocal(fctx, `__fcp_cp_${fctx.locals.length}`, { kind: "f64" });
+        buf.push({ op: "local.tee", index: cpTmp });
+        // integral: trunc(cp) != cp  → also true for NaN
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.trunc" });
+        buf.push({ op: "f64.ne" });
+        // range: cp < 0
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.const", value: 0 });
+        buf.push({ op: "f64.lt" });
+        // range: cp > 0x10FFFF
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.const", value: 0x10ffff });
+        buf.push({ op: "f64.gt" });
+        buf.push({ op: "i32.or" });
+        buf.push({ op: "i32.or" });
+        const throwBuf: Instr[] = [];
+        const savedForThrow = fctx.body;
+        fctx.body = throwBuf;
+        emitThrowRangeError(ctx, fctx, "RangeError: Invalid code point");
+        fctx.body = savedForThrow;
+        buf.push({ op: "if", blockType: { kind: "empty" }, then: throwBuf } as Instr);
+        // Re-push the validated code point for the helper.
+        buf.push({ op: "local.get", index: cpTmp });
+      }
       if (native) {
-        if (argType && argType.kind !== "i32") buf.push({ op: "i32.trunc_sat_f64_s" });
+        if (emitRangeGuard) {
+          // Already f64 in the temp above — trunc to the i32 the native helper wants.
+          buf.push({ op: "i32.trunc_sat_f64_s" });
+        } else if (argType && argType.kind !== "i32") {
+          buf.push({ op: "i32.trunc_sat_f64_s" });
+        }
       } else {
         if (argType && argType.kind === "i32") buf.push({ op: "f64.convert_i32_s" });
       }
@@ -4548,7 +4596,7 @@ function compileCallExpression(
       if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
         const helperIdx = ctx.nativeStrHelpers.get("__str_fromCodePoint");
         if (helperIdx !== undefined) {
-          const r = compileFromCharCodeFamily(ctx, fctx, expr, { native: true, helperIdx });
+          const r = compileFromCharCodeFamily(ctx, fctx, expr, { native: true, helperIdx, isFromCodePoint: true });
           if (r !== null) return r;
         }
       }
@@ -4558,7 +4606,11 @@ function compileCallExpression(
         // #2122: variadic — each code point produces a string joined via the
         // js-string `concat` import; register it before the shared fold.
         if (expr.arguments.length > 1) addStringImports(ctx);
-        const r = compileFromCharCodeFamily(ctx, fctx, expr, { native: false, helperIdx: funcIdx });
+        const r = compileFromCharCodeFamily(ctx, fctx, expr, {
+          native: false,
+          helperIdx: funcIdx,
+          isFromCodePoint: true,
+        });
         if (r === null) return r;
         return { kind: "externref" };
       }
@@ -4611,6 +4663,169 @@ function compileCallExpression(
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "ref.null.extern" });
       return { kind: "externref" };
+    }
+
+    // (#2592) Standalone-native TypedArray static factories — `TA.of(...)` and
+    // `TA.from(src)`. The receiver identifier is `Int32Array` / `Uint8Array` /
+    // … ∈ TYPED_ARRAY_NAMES, so it never reaches the `Array.of` / `Array.from`
+    // arms below (keyed on `"Array"`) and otherwise falls through to the
+    // dynamic-shape `__get_builtin` path — rejected standalone (#1472 Phase B).
+    // The element vec representation is fixed by the constructor NAME via
+    // `typedArrayVecStorage` (i8_byte for standalone Uint8Array, f64 otherwise),
+    // matching today's `new TA([...])` so the result is assignment-compatible.
+    // Integer element-width wrapping (Uint8Array.of(300) → 44) is deferred to
+    // #2593 — this slice matches `new TA([...])` element fidelity (length/order).
+    if (
+      noJsHost(ctx) &&
+      ts.isIdentifier(propAccess.expression) &&
+      TYPED_ARRAY_NAMES.has(propAccess.expression.text) &&
+      (propAccess.name.text === "of" || propAccess.name.text === "from")
+    ) {
+      const taName = propAccess.expression.text;
+      const factory = propAccess.name.text;
+      const storage = typedArrayVecStorage(ctx, taName);
+      const elemWasm = storage.type; // {kind:"f64"} or {kind:"i8"}
+      const taVecTypeIdx = getOrRegisterVecType(ctx, storage.key, elemWasm);
+      const taArrTypeIdx = getArrTypeIdxFromVec(ctx, taVecTypeIdx);
+      // The store ValType for an i8 packed array is i32 on the operand stack.
+      const storeWasm: ValType = elemWasm.kind === "i8" ? { kind: "i32" } : elemWasm;
+
+      if (taArrTypeIdx >= 0) {
+        // --- TA.of(a, b, c) — every arg is an element (§23.2.2.2). ---
+        if (factory === "of") {
+          const hasSpreadArg = expr.arguments.some((a) => ts.isSpreadElement(a));
+          if (!hasSpreadArg) {
+            if (expr.arguments.length === 0) {
+              fctx.body.push({ op: "i32.const", value: 0 });
+              fctx.body.push({ op: "i32.const", value: 0 });
+              fctx.body.push({ op: "array.new_default", typeIdx: taArrTypeIdx });
+              fctx.body.push({ op: "struct.new", typeIdx: taVecTypeIdx });
+              return { kind: "ref_null", typeIdx: taVecTypeIdx };
+            }
+            for (const arg of expr.arguments) {
+              const at = compileExpression(ctx, fctx, arg, storeWasm);
+              if (at && !valTypesMatch(at, storeWasm)) coerceType(ctx, fctx, at, storeWasm);
+            }
+            fctx.body.push({ op: "array.new_fixed", typeIdx: taArrTypeIdx, length: expr.arguments.length });
+            const ofData = allocLocal(fctx, `__taof_data_${fctx.locals.length}`, {
+              kind: "ref",
+              typeIdx: taArrTypeIdx,
+            });
+            fctx.body.push({ op: "local.set", index: ofData });
+            fctx.body.push({ op: "i32.const", value: expr.arguments.length });
+            fctx.body.push({ op: "local.get", index: ofData });
+            fctx.body.push({ op: "struct.new", typeIdx: taVecTypeIdx });
+            return { kind: "ref_null", typeIdx: taVecTypeIdx };
+          }
+          // Spread arg → known standalone gap (orthogonal); fall through.
+        }
+
+        // --- TA.from(src [, mapFn]) — array-like / vec source (§23.2.2.1). ---
+        // Phase 1: array-like sources (array literal / typed/number[] vec) with
+        // NO mapFn. The source vec's element type may differ from the dest
+        // (e.g. number[] f64 → Int32Array f64, or → Uint8Array i8), so copy
+        // element-by-element with re-coercion rather than a raw array.copy.
+        // mapFn and non-array iterables fall through to the existing path.
+        if (factory === "from" && expr.arguments.length === 1) {
+          const argTsType = ctx.checker.getTypeAtLocation(expr.arguments[0]!);
+          const argWasm = resolveWasmType(ctx, argTsType);
+          if (argWasm.kind === "ref" || argWasm.kind === "ref_null") {
+            const srcInfo = resolveArrayInfo(ctx, argTsType);
+            if (srcInfo) {
+              // #1919 — transactional try-lower; roll back if the source doesn't
+              // genuinely lower to its vec (keeps the fall-through paths clean).
+              const snap = snapshotSpeculative(ctx, fctx);
+              const { vecTypeIdx: srcVecIdx, arrTypeIdx: srcArrIdx, elemType: srcElem } = srcInfo;
+              const srcT = compileExpression(ctx, fctx, expr.arguments[0]!);
+              if (srcT && (srcT.kind === "ref" || srcT.kind === "ref_null")) {
+                const srcVec = allocLocal(fctx, `__tafrom_src_${fctx.locals.length}`, {
+                  kind: "ref_null",
+                  typeIdx: srcVecIdx,
+                });
+                const srcData = allocLocal(fctx, `__tafrom_sdata_${fctx.locals.length}`, {
+                  kind: "ref_null",
+                  typeIdx: srcArrIdx,
+                });
+                const lenTmp = allocLocal(fctx, `__tafrom_len_${fctx.locals.length}`, { kind: "i32" });
+                const dstData = allocLocal(fctx, `__tafrom_ddata_${fctx.locals.length}`, {
+                  kind: "ref",
+                  typeIdx: taArrTypeIdx,
+                });
+                const iTmp = allocLocal(fctx, `__tafrom_i_${fctx.locals.length}`, { kind: "i32" });
+
+                // src vec ref → field0 (len), field1 (data)
+                if (srcT.kind === "ref_null") fctx.body.push({ op: "ref.cast", typeIdx: srcVecIdx } as Instr);
+                fctx.body.push({ op: "local.set", index: srcVec });
+                fctx.body.push({ op: "local.get", index: srcVec });
+                fctx.body.push({ op: "struct.get", typeIdx: srcVecIdx, fieldIdx: 0 });
+                fctx.body.push({ op: "local.set", index: lenTmp });
+                fctx.body.push({ op: "local.get", index: srcVec });
+                fctx.body.push({ op: "struct.get", typeIdx: srcVecIdx, fieldIdx: 1 });
+                fctx.body.push({ op: "local.set", index: srcData });
+                // dst data array of len (default-filled)
+                for (const ins of defaultValueInstrs(elemWasm)) fctx.body.push(ins);
+                fctx.body.push({ op: "local.get", index: lenTmp });
+                fctx.body.push({ op: "array.new", typeIdx: taArrTypeIdx });
+                fctx.body.push({ op: "local.set", index: dstData });
+                // for (i=0; i<len; i++) dst[i] = coerce(src[i]) — canonical
+                // block{loop{ if i>=len br 1; body; i++; br 0 }} form. Build the
+                // loop body via pushBody/popBody so the `coerceType` element
+                // conversion (which emits into `fctx.body`) lands INSIDE the loop
+                // rather than leaking before the block.
+                fctx.body.push({ op: "i32.const", value: 0 });
+                fctx.body.push({ op: "local.set", index: iTmp });
+                const srcElemIsSigned = srcElem.kind === "i8" || srcElem.kind === "i16";
+                const srcElemIsPacked = srcElem.kind === "i8" || srcElem.kind === "i16";
+                const srcStore: ValType = srcElemIsPacked ? { kind: "i32" } : srcElem;
+                const savedLoopBody = pushBody(fctx);
+                // if (i >= len) break
+                fctx.body.push({ op: "local.get", index: iTmp } as Instr);
+                fctx.body.push({ op: "local.get", index: lenTmp } as Instr);
+                fctx.body.push({ op: "i32.ge_s" } as Instr);
+                fctx.body.push({ op: "br_if", depth: 1 } as Instr);
+                // dst[i] = coerce(src[i])
+                fctx.body.push({ op: "local.get", index: dstData } as Instr);
+                fctx.body.push({ op: "local.get", index: iTmp } as Instr);
+                fctx.body.push({ op: "local.get", index: srcData } as Instr);
+                fctx.body.push({ op: "local.get", index: iTmp } as Instr);
+                if (srcElemIsPacked) {
+                  fctx.body.push({
+                    op: srcElemIsSigned ? "array.get_s" : "array.get_u",
+                    typeIdx: srcArrIdx,
+                  } as Instr);
+                } else {
+                  fctx.body.push({ op: "array.get", typeIdx: srcArrIdx } as Instr);
+                }
+                if (!valTypesMatch(srcStore, storeWasm)) coerceType(ctx, fctx, srcStore, storeWasm);
+                fctx.body.push({ op: "array.set", typeIdx: taArrTypeIdx } as Instr);
+                // i++
+                fctx.body.push({ op: "local.get", index: iTmp } as Instr);
+                fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+                fctx.body.push({ op: "i32.add" } as Instr);
+                fctx.body.push({ op: "local.set", index: iTmp } as Instr);
+                // continue
+                fctx.body.push({ op: "br", depth: 0 } as Instr);
+                const loopInner = fctx.body;
+                popBody(fctx, savedLoopBody);
+                fctx.body.push({
+                  op: "block",
+                  blockType: { kind: "empty" },
+                  body: [{ op: "loop", blockType: { kind: "empty" }, body: loopInner } as Instr],
+                } as Instr);
+                // struct.new (len, dstData)
+                fctx.body.push({ op: "local.get", index: lenTmp });
+                fctx.body.push({ op: "local.get", index: dstData });
+                fctx.body.push({ op: "struct.new", typeIdx: taVecTypeIdx });
+                return { kind: "ref", typeIdx: taVecTypeIdx };
+              }
+              rollbackSpeculative(ctx, fctx, snap);
+            }
+          }
+          // Non-array-like / mapFn / iterable source → fall through.
+        }
+      }
+      // taArrTypeIdx unavailable or unhandled shape → fall through to the
+      // existing generic path (host mode handles via host import).
     }
 
     // Handle Array.from(arr) — array copy
@@ -6413,6 +6628,61 @@ function compileCallExpression(
       propAccess.name.text === "isView" &&
       expr.arguments.length >= 1
     ) {
+      // (#2594) Standalone/no-host: the host `__arraybuffer_isView` import does
+      // not exist — emitting it leaks `env.*` and breaks the WHOLE module at
+      // instantiate. §25.1.4.1 isView is `true` iff the arg has a
+      // [[ViewedArrayBuffer]] slot (any TypedArray or DataView). Decide it
+      // host-free.
+      if (noJsHost(ctx)) {
+        const arg0 = expr.arguments[0]!;
+        const argTs = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(arg0));
+        const argSym = argTs.getSymbol()?.name;
+        const rawTs = ctx.checker.getTypeAtLocation(arg0);
+        const isAnyOrUnknown = (rawTs.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        const isView = argSym !== undefined && (TYPED_ARRAY_NAMES.has(argSym) || argSym === "DataView");
+        // A non-view whose static type is resolvable: ArrayBuffer itself, a
+        // primitive, null/undefined, a plain array, a class/object — all `false`.
+        const isResolvableNonView =
+          !isAnyOrUnknown && !isView && argSym !== "BigInt64Array" && argSym !== "BigUint64Array" && !rawTs.isUnion();
+        if (isView || argSym === "BigInt64Array" || argSym === "BigUint64Array") {
+          // Static `true`. Still evaluate the (possibly side-effecting) arg, drop it.
+          const at = compileExpression(ctx, fctx, arg0);
+          if (at !== null) fctx.body.push({ op: "drop" } as Instr);
+          fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+          return { kind: "i32" };
+        }
+        if (isResolvableNonView) {
+          const at = compileExpression(ctx, fctx, arg0);
+          if (at !== null) fctx.body.push({ op: "drop" } as Instr);
+          fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+          return { kind: "i32" };
+        }
+        // Runtime fallback for `any`/union/unresolved receivers: ref.test the
+        // registered vec carriers (TypedArrays lower to a `$Vec`) and the
+        // DataView window struct. NOTE: standalone shares the `$Vec` carrier
+        // between `number[]` and TypedArrays, so a plain array is
+        // indistinguishable here and reads as a view — an accepted imprecision
+        // for the rare `any` arg; the win is NOT leaking the host import (which
+        // breaks the whole module). Most isView call sites are statically typed.
+        const at = compileExpression(ctx, fctx, arg0, { kind: "externref" });
+        if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+        const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
+        const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
+        const anyTmp = allocLocal(fctx, `__isview_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+        fctx.body.push({ op: "any.convert_extern" } as Instr);
+        fctx.body.push({ op: "local.set", index: anyTmp } as Instr);
+        let emitted = false;
+        for (const vi of vecTypeIdxs) {
+          fctx.body.push({ op: "local.get", index: anyTmp } as Instr);
+          fctx.body.push({ op: "ref.test", typeIdx: vi } as Instr);
+          if (emitted) fctx.body.push({ op: "i32.or" } as Instr);
+          emitted = true;
+        }
+        fctx.body.push({ op: "local.get", index: anyTmp } as Instr);
+        fctx.body.push({ op: "ref.test", typeIdx: dvWinTypeIdx } as Instr);
+        if (emitted) fctx.body.push({ op: "i32.or" } as Instr);
+        return { kind: "i32" };
+      }
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
       const funcIdx = ensureLateImport(ctx, "__arraybuffer_isView", [{ kind: "externref" }], [{ kind: "i32" }]);

@@ -133,3 +133,90 @@ export function test(): number {
     expect(exports.test!()).toBe(1);
   });
 });
+
+// #1528a — `new <arrow-function value>()` must throw a real TypeError.
+// An arrow function has no [[Construct]] (§15.3.4), so `new (arrow)()` is a
+// non-constructor TypeError (§7.3.15 Construct → §7.2.4 IsConstructor). Through
+// a local of type `any` no static guard saw the arrow, so control reached the
+// unknown-constructor path and wrongly did not throw. The fix marks an arrow
+// initializer as a provably-non-constructable value in
+// `resolvesToNonConstructableValue`, routing it through the existing `__construct`
+// brand check (which throws a real TypeError instance), alongside the
+// prototype-method / bound-function shapes (#1732 S1). This is the
+// substrate-independent subset of the #1528a non-constructor cluster; dynamically
+// CONSTRUCTING a runtime function value (vs. throwing) remains a closure-construct
+// substrate follow-up (#1632b-2).
+describe("issue #1528a — new on an arrow-function value throws real TypeError", () => {
+  it("`const f = () => 1; new f()` throws an instance of TypeError", async () => {
+    const source = `
+export function test(): number {
+  const f: any = () => 1;
+  try {
+    new f();
+    return -1;
+  } catch (e: any) {
+    return e instanceof TypeError ? 1 : -2;
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(1);
+  });
+
+  it("`const f = (() => 1) as any; new f()` (cast-wrapped) throws TypeError", async () => {
+    const source = `
+export function test(): number {
+  const f = (() => 1) as any;
+  try {
+    new f();
+    return -1;
+  } catch (e: any) {
+    return e instanceof TypeError ? 1 : -2;
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(1);
+  });
+
+  it("arrow with params is still a non-constructor", async () => {
+    const source = `
+export function test(): number {
+  const f: any = (a: number, b: number) => a + b;
+  try {
+    new f(1, 2);
+    return -1;
+  } catch (e: any) {
+    return e instanceof TypeError ? 1 : -2;
+  }
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(1);
+  });
+
+  // Regression guards — real constructors must STILL construct (not throw).
+  it("a user class still constructs (no false TypeError)", async () => {
+    const source = `
+class Box { v = 7; }
+export function test(): number {
+  const o = new Box();
+  return o.v;
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(7);
+  });
+
+  it("a function declaration still constructs (no false TypeError)", async () => {
+    const source = `
+function C(this: any) { (this as any).x = 3; }
+export function test(): number {
+  const o: any = new C();
+  return o.x;
+}
+`;
+    const exports = await compileToWasm(source);
+    expect(exports.test!()).toBe(3);
+  });
+});

@@ -22,6 +22,9 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureNativeStringHelpers, nativeStringType, stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { coerceType } from "./type-coercion.js";
+import { ensureObjVecBuilders } from "./object-runtime.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import {
@@ -36,7 +39,9 @@ import {
   ensureRegexSplit,
   i32ArrayLiteralInstrs,
   MATCH_VEC_FIELD_INDEX,
+  MATCH_VEC_FIELD_INDICES,
   MATCH_VEC_FIELD_INPUT,
+  MATCH_VEC_FIELD_GROUPS,
   REGEXP_MATCH_VEC_STRUCT,
   regexI32ArrayType,
 } from "./native-regex.js";
@@ -422,6 +427,32 @@ function compileStaticStandaloneRegExp(
       return null;
     }
     throw e;
+  }
+}
+
+/**
+ * NON-REPORTING metadata-only static-regex resolution (#2588/#2589). Returns
+ * `{ groupNames, flags, nGroups }` for a static RegExp expression, or `null`
+ * when the static form can't be recovered/compiled. Unlike
+ * `compileStaticStandaloneRegExp`, this swallows every error (a genuinely
+ * invalid pattern is reported by the PRIMARY lowering path — e.g. exec's
+ * `emitRegexSearchCall`; re-reporting here would turn a deferred runtime
+ * SyntaxError into a spurious compile error, see #1912 `[b-ac-e]`). Used only
+ * to thread the named-group map + `d` flag into the result-shape builders.
+ */
+function staticRegExpGroupMeta(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+): { groupNames: ReadonlyMap<string, number>; flags: number; nGroups: number } | null {
+  const meta = staticRegExpPatternFlags(ctx, expr);
+  if (meta === null) return null;
+  try {
+    const flagBits = parseFlags(meta.flags);
+    if ((flagBits & ~SUPPORTED_STANDALONE_FLAGS) !== 0) return null;
+    const compiled = compilePattern(meta.pattern, flagBits);
+    return { groupNames: compiled.groupNames, flags: compiled.flags, nGroups: compiled.nGroups };
+  } catch {
+    return null;
   }
 }
 
@@ -974,6 +1005,193 @@ function flagsHaveGlobalOrSticky(flags: string): boolean {
 }
 
 /**
+ * Push one capture-slot's value (`caps[2*idx]` / `caps[2*idx+1]`) onto the
+ * stack as an **externref** (#2588): the substring of the subject, or a null
+ * externref (≙ `undefined`) when the slot is unmatched (`caps[2*idx] < 0`).
+ * `subjectLocal` is the flattened `$NativeString`, `capsLocal` the i32 caps.
+ */
+function pushCaptureValueExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  idx: number,
+  subjectLocal: number,
+  capsLocal: number,
+  strTypeIdx: number,
+  i32Arr: number,
+): void {
+  const substringIdx = ctx.nativeStrHelpers.get("__str_substring")!;
+  const nstr = nativeStringType(ctx);
+  // caps[2*idx] < 0 ? undefined : substring(subject, caps[2*idx], caps[2*idx+1])
+  fctx.body.push({ op: "local.get", index: capsLocal });
+  fctx.body.push({ op: "i32.const", value: 2 * idx });
+  fctx.body.push({ op: "array.get", typeIdx: i32Arr });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [{ op: "ref.null.extern" } as Instr],
+    else: [
+      { op: "local.get", index: subjectLocal } as Instr,
+      { op: "local.get", index: capsLocal } as Instr,
+      { op: "i32.const", value: 2 * idx } as Instr,
+      { op: "array.get", typeIdx: i32Arr } as Instr,
+      { op: "local.get", index: capsLocal } as Instr,
+      { op: "i32.const", value: 2 * idx + 1 } as Instr,
+      { op: "array.get", typeIdx: i32Arr } as Instr,
+      { op: "call", funcIdx: substringIdx } as Instr,
+      // native string ref → externref
+      ...coercedNstrToExternref(ctx, fctx, nstr),
+    ],
+  } as Instr);
+}
+
+/** Produce the instrs that coerce a native-string ref already on the stack to
+ *  externref. Uses `coerceType` against a scratch (it appends to fctx.body), so
+ *  we splice via a temporary body swap to keep the if-arm self-contained. */
+function coercedNstrToExternref(ctx: CodegenContext, fctx: FunctionContext, nstr: ValType): Instr[] {
+  const saved = fctx.body;
+  const buf: Instr[] = [];
+  fctx.body = buf;
+  coerceType(ctx, fctx, nstr, { kind: "externref" });
+  fctx.body = saved;
+  return buf;
+}
+
+/**
+ * #2588 — build the named-groups result object (`m.groups`) and leave it on the
+ * stack as an **externref** (`$Object`), or a null externref when `groupNames`
+ * is empty. The object is built INLINE via `__new_plain_object` +
+ * `__extern_set` (the same path object literals use), so `m.groups.<name>`
+ * reads flow through the existing standalone `$Object` property read (no new
+ * dispatch).
+ */
+function emitRegexGroupsObjectExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  groupNames: ReadonlyMap<string, number>,
+  subjectLocal: number,
+  capsLocal: number,
+  strTypeIdx: number,
+  i32Arr: number,
+): void {
+  if (groupNames.size === 0) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+    return;
+  }
+  const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (newObjIdx === undefined || setIdx === undefined) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+    return;
+  }
+  const objLocal = allocLocal(fctx, `__re_groups_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: newObjIdx });
+  fctx.body.push({ op: "local.set", index: objLocal });
+  // Insert in source (capture-index) order so OrdinaryOwnPropertyKeys mirrors
+  // the spec's named-group declaration order.
+  const ordered = [...groupNames.entries()].sort((a, b) => a[1] - b[1]);
+  for (const [name, idx] of ordered) {
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, name);
+    for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
+    pushCaptureValueExternref(ctx, fctx, idx, subjectLocal, capsLocal, strTypeIdx, i32Arr);
+    fctx.body.push({ op: "call", funcIdx: setIdx });
+  }
+  fctx.body.push({ op: "local.get", index: objLocal });
+}
+
+/**
+ * #2589 — build the `d`-flag match-indices array (`m.indices`) and leave it on
+ * the stack as an **externref** (`$ObjVec`), or a null externref when `hasD` is
+ * false. Each element is `[start, end]` (a 2-element number array) for a matched
+ * group or `undefined` (null) for an unmatched one. Built INLINE with
+ * `__objvec_new` / `__objvec_push` so `m.indices[i]` and `m.indices[i][j]` are
+ * native `$ObjVec` index reads (no `env::__extern_get`).
+ */
+function emitRegexIndicesArrayExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hasD: boolean,
+  nGroups: number,
+  capsLocal: number,
+  i32Arr: number,
+): void {
+  if (!hasD) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+    return;
+  }
+  const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+  const outerLocal = allocLocal(fctx, `__re_indices_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: newIdx });
+  fctx.body.push({ op: "local.set", index: outerLocal });
+  for (let g = 0; g < nGroups; g++) {
+    // __objvec_push(outer, caps[2*g] < 0 ? undefined : [caps[2*g], caps[2*g+1]])
+    fctx.body.push({ op: "local.get", index: outerLocal });
+    fctx.body.push({ op: "local.get", index: capsLocal });
+    fctx.body.push({ op: "i32.const", value: 2 * g });
+    fctx.body.push({ op: "array.get", typeIdx: i32Arr });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.lt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "ref.null.extern" } as Instr],
+      else: [...buildIndexPairExternref(ctx, fctx, g, capsLocal, i32Arr, newIdx, pushIdx)],
+    } as Instr);
+    fctx.body.push({ op: "call", funcIdx: pushIdx });
+  }
+  fctx.body.push({ op: "local.get", index: outerLocal });
+}
+
+/** Build the `[start, end]` 2-element number array (externref) for group `g`. */
+function buildIndexPairExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  g: number,
+  capsLocal: number,
+  i32Arr: number,
+  newIdx: number,
+  pushIdx: number,
+): Instr[] {
+  const f64 = { kind: "f64" } as ValType;
+  const boxF64 = (slot: number): Instr[] => {
+    const buf: Instr[] = [
+      { op: "local.get", index: capsLocal },
+      { op: "i32.const", value: slot },
+      { op: "array.get", typeIdx: i32Arr },
+      { op: "f64.convert_i32_s" },
+    ];
+    const saved = fctx.body;
+    const tail: Instr[] = [];
+    fctx.body = tail;
+    coerceType(ctx, fctx, f64, { kind: "externref" }); // f64 → __box_number
+    fctx.body = saved;
+    return [...buf, ...tail];
+  };
+  const pairLocal = allocLocal(fctx, `__re_pair_${fctx.locals.length}`, { kind: "externref" });
+  return [
+    { op: "call", funcIdx: newIdx },
+    { op: "local.set", index: pairLocal },
+    // push start
+    { op: "local.get", index: pairLocal },
+    ...boxF64(2 * g),
+    { op: "call", funcIdx: pushIdx },
+    // push end
+    { op: "local.get", index: pairLocal },
+    ...boxF64(2 * g + 1),
+    { op: "call", funcIdx: pushIdx },
+    { op: "local.get", index: pairLocal },
+  ];
+}
+
+/**
  * Emit a call to `__regex_exec_array`, returning a nullable native string vec:
  * `null` on no match, otherwise `[fullMatch, cap1, cap2, ...]` with unmatched
  * captures represented as null native strings (the compiler's `undefined` for
@@ -995,16 +1213,59 @@ function emitRegexExecArrayCall(
   // for the spec result shape.
   const nstrVecTypeIdx = ensureRegexMatchVecType(ctx);
 
+  // #2588/#2589 — resolve the STATIC pattern to recover the named-group map and
+  // the `d` flag. Both are compile-time-known for a backend-created RegExp, so
+  // the `groups` object and `d`-flag `indices` array can be materialised from
+  // the same `caps` slots `__regex_capture_array` consumes. When the static
+  // pattern can't be recovered (rare non-literal provenance) both stay null.
+  const i32Arr = regexI32ArrayType(ctx);
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+  let groupNames: ReadonlyMap<string, number> = new Map();
+  let hasD = false;
+  let nGroups = 0;
+  const meta = staticRegExpGroupMeta(ctx, regexpExpr);
+  if (meta !== null) {
+    groupNames = meta.groupNames;
+    hasD = (meta.flags & RE_FLAG_D) !== 0;
+    nGroups = meta.nGroups;
+  }
+  const needsExtras = groupNames.size > 0 || hasD;
+
+  // Build the matched-branch body into a temporary buffer so the groups/indices
+  // builders (which allocate locals + emit `if`s) stay scoped to the then-arm.
+  const savedBody = fctx.body;
+  const thenBody: Instr[] = [];
+  fctx.body = thenBody;
+
+  let groupsLocal = -1;
+  let indicesLocal = -1;
+  if (needsExtras) {
+    groupsLocal = allocLocal(fctx, `__re_groups_x_${fctx.locals.length}`, { kind: "externref" });
+    indicesLocal = allocLocal(fctx, `__re_indices_x_${fctx.locals.length}`, { kind: "externref" });
+    emitRegexGroupsObjectExternref(ctx, fctx, groupNames, emitted.inputLocal, emitted.capsLocal, strTypeIdx, i32Arr);
+    fctx.body.push({ op: "local.set", index: groupsLocal });
+    emitRegexIndicesArrayExternref(ctx, fctx, hasD, nGroups, emitted.capsLocal, i32Arr);
+    fctx.body.push({ op: "local.set", index: indicesLocal });
+  }
+
+  fctx.body.push({ op: "local.get", index: emitted.regexpLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: emitted.structTypeIdx, fieldIdx: RE_FIELD_NGROUPS });
+  fctx.body.push({ op: "local.get", index: emitted.inputLocal });
+  fctx.body.push({ op: "local.get", index: emitted.capsLocal });
+  if (needsExtras) {
+    fctx.body.push({ op: "local.get", index: groupsLocal });
+    fctx.body.push({ op: "local.get", index: indicesLocal });
+  } else {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+  }
+  fctx.body.push({ op: "call", funcIdx: captureArrayIdx });
+
+  fctx.body = savedBody;
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "ref_null", typeIdx: nstrVecTypeIdx } },
-    then: [
-      { op: "local.get", index: emitted.regexpLocal } as Instr,
-      { op: "struct.get", typeIdx: emitted.structTypeIdx, fieldIdx: RE_FIELD_NGROUPS } as Instr,
-      { op: "local.get", index: emitted.inputLocal } as Instr,
-      { op: "local.get", index: emitted.capsLocal } as Instr,
-      { op: "call", funcIdx: captureArrayIdx } as Instr,
-    ],
+    then: thenBody,
     else: [{ op: "ref.null", typeIdx: nstrVecTypeIdx } as Instr],
   } as Instr);
   return { kind: "ref_null", typeIdx: nstrVecTypeIdx };
@@ -1504,11 +1765,32 @@ function emitStandaloneRegExpReplaceCore(
   fctx.body.push({ op: "local.get", index: subjLocal });
   fctx.body.push({ op: "local.get", index: replLocal });
   fctx.body.push({ op: "i32.const", value: globalReplace ? 1 : 0 });
-  // nScratch (#1959) — PROGRESS empty-loop guard slots, last arg.
+  // nScratch (#1959) — PROGRESS empty-loop guard slots.
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSCRATCH });
+  // #2588 — names table for `$<name>` substitution: [count, (idx,len,ch...)*].
+  // Empty (count=0) when the pattern has no named groups → `$<…>` stays literal.
+  for (const instr of buildRegexNamesTableInstrs(ctx, reExpr)) fctx.body.push(instr);
   fctx.body.push({ op: "call", funcIdx: replaceIdx });
   return nativeStringType(ctx);
+}
+
+/**
+ * Build the `$<name>` names-table i32 array (#2588) for a static RegExp:
+ * `[count, (capIdx, nameLen, ch0, ch1, …)*]`. Empty (`[0]` → count 0) when the
+ * pattern has no named groups or its static form can't be recovered.
+ */
+function buildRegexNamesTableInstrs(ctx: CodegenContext, reExpr: ts.Expression): Instr[] {
+  const values: number[] = [];
+  const meta = staticRegExpGroupMeta(ctx, reExpr);
+  const entries: Array<[string, number]> = meta !== null ? [...meta.groupNames.entries()] : [];
+  values.push(entries.length); // count
+  for (const [name, idx] of entries) {
+    values.push(idx); // 1-based capture index
+    values.push(name.length); // name length (UTF-16 code units)
+    for (let k = 0; k < name.length; k++) values.push(name.charCodeAt(k));
+  }
+  return i32ArrayLiteralInstrs(ctx, values);
 }
 
 /**
@@ -2201,7 +2483,9 @@ export function tryCompileStandaloneRegExpMatchResultRead(
 ): ValType | null | undefined {
   if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
   const propName = expr.name.text;
-  if (propName !== "index" && propName !== "input") return undefined;
+  if (propName !== "index" && propName !== "input" && propName !== "groups" && propName !== "indices") {
+    return undefined;
+  }
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const nonNull = objType.getNonNullableType?.() ?? objType;
   const symName = nonNull.getSymbol()?.name;
@@ -2242,6 +2526,20 @@ export function tryCompileStandaloneRegExpMatchResultRead(
     fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_INDEX });
     fctx.body.push({ op: "f64.convert_i32_s" });
     return { kind: "f64" };
+  }
+  if (propName === "groups") {
+    // #2588 — the named-groups result object (externref $Object). Null (≙
+    // `undefined`) for a pattern with no named captures; otherwise `<name>`
+    // reads flow through the standalone open-object property path.
+    fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_GROUPS });
+    return { kind: "externref" };
+  }
+  if (propName === "indices") {
+    // #2589 — the `d`-flag match-indices array (externref $ObjVec). Null (≙
+    // `undefined`) when the pattern lacks the `d` flag; otherwise `[i]`/`[i][j]`
+    // reads are native (no `env::__extern_get`).
+    fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_INDICES });
+    return { kind: "externref" };
   }
   fctx.body.push({ op: "struct.get", typeIdx: matchVecIdx, fieldIdx: MATCH_VEC_FIELD_INPUT });
   return nativeStringType(ctx);

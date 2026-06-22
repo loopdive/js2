@@ -1,7 +1,9 @@
 ---
 id: 2600
 title: "Standalone: ToIntegerOrInfinity for String index/position args (at/charAt/charCodeAt/codePointAt/indexOf)"
-status: ready
+status: done
+completed: 2026-06-22
+assignee: ttraenkler/agent-af6ff9d85ab8e6fc4
 sprint: 65
 priority: medium
 feasibility: medium
@@ -11,7 +13,7 @@ area: string-number
 language_feature: string-methods
 goal: standalone-mode
 parent: 2160
-related: [2124]
+related: [2124, 2601]
 ---
 
 # #2600 — Standalone String index/position argument ToIntegerOrInfinity
@@ -127,3 +129,38 @@ end
   codePointAt/indexOf × `{standalone, gc}`.
 - gc-mode no-regression guard.
 - `pnpm run check:coercion-sites` unchanged (reuse the f64 engine).
+
+## Resolution (2026-06-22)
+
+Fixed together with #2601 in one branch (`issue-2600-2601-string-index-fromcodepoint`).
+
+**Change** — `src/codegen/string-ops.ts`, `compileStringIntegerArg`:
+- Under `noJsHost(ctx)` (standalone/WASI), the index/position arg is now run
+  through ToIntegerOrInfinity (§7.1.5) instead of a direct i32 coercion:
+  - `i32`-typed arg → unchanged (already integral, in range for the helper).
+  - `i64` (bigint) → existing TypeError throw, unchanged.
+  - else → `coerceType(argType, {kind:"f64"}, "number")` (the existing numeric
+    engine: string → `__str_to_number`, object → ToPrimitive("number")), then
+    ToIntegerOrInfinity: NaN→0 (`f64.ne self` test), else `i32.trunc_sat_f64_s`
+    (truncates toward zero; ±∞ saturates and the method's <0/>=len range checks
+    clamp it).
+- The legacy direct-i32 path is kept for the JS-host `nativeStrings` mode (this
+  slice is standalone). No new #2108 coercion site — `coerceType` reuse only;
+  `check:coercion-sites` baseline unchanged.
+
+Covers at/charAt/charCodeAt/codePointAt/indexOf/lastIndexOf (all route their
+position through `compileStringIntegerArg`).
+
+## Test Results
+
+- `tests/issue-2600-string-index-tointeger.test.ts` — 17/17 pass (standalone +
+  gc-mode regression guards).
+- Standalone micro-repros: `indexOf("aa","1.9")`→1, `charAt("1.5")`→'b',
+  `charCodeAt("2.9")`→'c', `codePointAt("1.5")`→'b', `charCodeAt("abc")`→0
+  (NaN), `charCodeAt(true)`→1, `charAt({valueOf:1})`→'b', `at("1.9")`→'b',
+  `at("-1.5")`→'b' — all correct.
+- Integer-position regression guards green; #2124 explicit-undefined defaults
+  untouched (the absent path lives in `compileIntegerValueToLocal`, unchanged).
+- Related suites green: issue-2122, issue-2088, issue-2124, issue-1105-charcodeat,
+  issue-substring-noarg, issue-2160-substr, issue-1910-string-wrapper-index.
+- tsc + prettier clean; `check:coercion-sites` OK (no change).

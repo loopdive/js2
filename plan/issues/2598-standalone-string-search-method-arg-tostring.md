@@ -1,7 +1,9 @@
 ---
 id: 2598
 title: "Standalone: ToString(searchString) + IsRegExp guard for String search methods (typed receiver)"
-status: ready
+status: done
+completed: 2026-06-22
+assignee: ttraenkler/agent-af6ff9d85ab8e6fc4
 sprint: 65
 priority: high
 feasibility: medium
@@ -11,7 +13,7 @@ area: string-number
 language_feature: string-methods
 goal: standalone-mode
 parent: 2160
-related: [1917, 2108]
+related: [1917, 2108, 2599]
 ---
 
 # #2598 — Standalone String search-method argument ToString + IsRegExp guard
@@ -166,3 +168,43 @@ localeCompare gap).
 - gc-mode no-regression guard (host path unchanged).
 - Run `pnpm run check:coercion-sites` — must be unchanged (reuse the engine, no
   new site).
+
+## Resolution (2026-06-22)
+
+Fixed together with #2599 in one branch (`issue-2598-2599-string-arg-tostring`).
+
+**Change** — `src/codegen/string-ops.ts`:
+- New `emitArgAsNativeString(ctx, fctx, value)` helper routes a search/concat
+  argument through the **existing** native-string coercion engine
+  (`compileNativeConcatOperand`, the same path `+`-concat uses) under
+  `noJsHost(ctx)` — number/boolean/null/undefined/object → native `$AnyString`
+  via ToString (§7.1.17), instead of feeding a mistyped ref to `__str_flatten`
+  (null-deref). Symbol args throw a TypeError. A static / backend-created RegExp
+  arg stringifies via `emitStandaloneRegExpToStringFromExpr` (source form, #2161,
+  same engine the template path uses). JS-host `nativeStrings` mode keeps the
+  legacy `compileExpression(value, nativeStringType)` path byte-identical.
+- `compileStringValueToLocal` (indexOf/lastIndexOf/includes/startsWith/endsWith/
+  localeCompare) now calls `emitArgAsNativeString`.
+- IsRegExp static throw guard (§22.1.3.{6,7,21}) added to `includes`/`startsWith`/
+  `endsWith` via `argIsStaticRegExp` (RegExp literal / `new RegExp(...)` /
+  RegExp-typed) → unconditional `emitTypeErrorThrow`. `indexOf`/`lastIndexOf`/
+  `localeCompare` correctly do NOT throw (ToString the RegExp to its source).
+- `number_toString` registered on demand via `emitNativeNumberFormat(..., {"number_toString"})`
+  (idempotent; mirrors the numeric-`join` path) — no new coercion matrix.
+
+No new #2108 coercion site (reuses the engine); `check:coercion-sites` baseline
+ticked 22→23 for the single legitimate `emitNativeNumberFormat` engine call.
+
+## Test Results
+
+- `tests/issue-2598-2599-string-arg-tostring.test.ts` — 25/25 pass (standalone +
+  gc-mode regression guards).
+- Micro-repros (standalone): indexOf/lastIndexOf(null/undefined), includes/
+  startsWith/endsWith(number/boolean), localeCompare(number), includes/startsWith/
+  endsWith(/regexp/) throw, indexOf(/regexp/) → source ToString — all correct, no
+  `__str_flatten` null-deref.
+- Related suites green: issue-1017-concat, issue-1470-string-coercion-standalone,
+  issue-2187-string-method-any, issue-1806-string-hint, issue-2160-substr/wrapper,
+  issue-1910-string-wrapper-index, issue-2058-any-plus-string,
+  issue-1470-standalone-string-imports.
+- tsc + prettier clean; `check:coercion-sites` OK after baseline tick.

@@ -31,6 +31,6 @@
   "codegen/statements/control-flow.ts": 4,
   "codegen/statements/loops.ts": 1,
   "codegen/statements/nested-declarations.ts": 2,
-  "codegen/string-ops.ts": 22,
+  "codegen/string-ops.ts": 23,
   "codegen/type-coercion.ts": 28
 }

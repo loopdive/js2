@@ -1,7 +1,8 @@
 ---
 id: 2588
 title: "Standalone RegExp named-groups result object (`m.groups`) + `$<name>` substitution"
-status: ready
+status: done
+completed: 2026-06-22
 sprint: 65
 priority: high
 feasibility: medium
@@ -138,3 +139,45 @@ follow-up refusal carve-out.
 - `"2026-06".replace(/(?<y>\d{4})-(?<m>\d{2})/, "$<m>/$<y>") === "06/2026"`
 - pattern with no named groups: `m.groups === undefined`
 - unmatched named group via alternation → field `undefined`
+
+## Implementation Notes (completed 2026-06-22)
+
+Landed in one branch with #2589 (shared files: `native-regex.ts` +
+`regexp-standalone.ts`).
+
+**What landed:**
+- `$__regexp_match_vec` extended with `groups` (externref `$Object`) and
+  `indices` (externref `$ObjVec`) fields (#2588 + #2589). Field order:
+  `length, data, index, input, groups, indices`. Both `null` (≙ `undefined`)
+  when absent.
+- `CompiledRegex.groupNames` (name→1-based-index) now threaded from
+  `compileParsed` (was discarded). Both the result-shape builder and the
+  `$<name>` substitution read it.
+- `m.groups` object is materialised INLINE per-exec via `__new_plain_object` +
+  `__extern_set` (the object-literal path) — native in standalone, no host
+  import. Reader added in `tryCompileStandaloneRegExpMatchResultRead`.
+- **`$<name>` replacement substitution — FULLY WORKING.** A names table
+  `[count, (idx,len,ch...)*]` is threaded into `__regex_replace` →
+  `__regex_get_substitution`, which resolves `$<name>` against it. Verified:
+  `"2026-06".replace(/(?<y>\d{4})-(?<m>\d{2})/, "$<m>/$<y>") === "06/2026"`,
+  unknown `$<bad>` → empty, `$<` literal when no named groups (Annex B),
+  no-closing-`>` literal, no regression to `$&`/`$1`.
+
+**Substrate-blocked (follow-up, NOT a regex bug):** `m.groups.<name>` returns
+`undefined` because the generic standalone any-typed open-object reader drops
+native-string VALUES (numeric values read back fine; key presence + `m.groups`
+object identity are correct). This is the in-flight value-rep substrate
+(#2580 / `project_standalone_any_string_value_read_substrate`). The groups
+object built here is forward-compatible: `m.groups.yr` starts returning the
+string the moment #2580 M2 lands — no further regex change needed.
+
+**Critical cross-cutting fix:** `isVecStructAccess` in `property-access.ts`
+required the match-vec to have EXACTLY 4 fields; the new 6-field shape broke
+`m[0]` element reads (routed to `env::__extern_get`). Relaxed to `>= 4` with the
+`index`/`input` name guard. Per-matchAll-element `.groups`/`.indices` pass null
+(follow-up — the eager `__regex_match_all` walk doesn't thread the parser map
+yet).
+
+Tests: `tests/issue-2588-2589-regex-groups-indices.test.ts` (13 passing).
+Regex suite at exact baseline parity (8 pre-existing refusal-drift failures,
+0 new regressions).

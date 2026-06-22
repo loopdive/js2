@@ -1,7 +1,9 @@
 ---
 id: 2594
 title: "Standalone TypedArray/ArrayBuffer host-import leaks — isView, BigInt64Array ctor, DataView BigInt accessors"
-status: ready
+status: done
+completed: 2026-06-22
+assignee: ttraenkler/agent-typedarray-2595-2597
 sprint: 65
 created: 2026-06-22
 priority: high
@@ -119,3 +121,37 @@ Substrate-independent for part A (isView). Part B (BigInt64Array) touches the
 bigint i64 brand (`project_bigint_i64_brand_gate`) — split out if the brand
 decision blocks it. The `emitIsArrayTerminal` ref.test fan-out
 (property-access.ts ~470) is the proven template for the native isView check.
+
+## Resolution (2026-06-22) — Part A only; Part B split out
+
+Per the spec's scoping clause, **Part A (`ArrayBuffer.isView`)** is implemented
+here; **Part B (BigInt64Array / BigUint64Array native ctor)** is split to a
+follow-up because it touches the unresolved i64-bigint-brand ValType decision
+(#1349/#1644, `project_bigint_i64_brand_gate`) — landing it now would couple
+this conformance slice to an architect-gated representation choice.
+
+**Part A — `ArrayBuffer.isView` host-free** (`src/codegen/expressions/calls.ts`):
+gated on `noJsHost(ctx)`, the arm no longer emits the leaking
+`__arraybuffer_isView` env import (which broke the WHOLE module at instantiate).
+§25.1.4.1 — isView is true iff the arg has a [[ViewedArrayBuffer]] slot:
+- **Static-decide** on the resolvable arg type: TypedArray name / `DataView`
+  (and `BigInt64Array`/`BigUint64Array`) → `i32.const 1` (drop side-effecting
+  arg); a resolvable non-view (ArrayBuffer, primitive, null/undefined, plain
+  array, class/object) → `i32.const 0`.
+- **Runtime fallback** for `any`/union args: `any.convert_extern` + `ref.test`
+  over the registered `$Vec` carriers OR the `$__dv_window` struct. Documented
+  imprecision: standalone shares the `$Vec` carrier between `number[]` and
+  TypedArrays, so a plain array read through an `any` arg reads as a view — an
+  accepted edge for the rare untyped call; the win is not leaking the host
+  import. Host/gc mode is unchanged (still routes the host import).
+
+Validated: `tests/issue-2594.test.ts` (7 tests) — Int32Array/DataView → true,
+ArrayBuffer/primitive/null → false, `any` fallback, and a whole-module
+instantiate-and-compute proof (the env leak previously broke the entire
+module). tsc + prettier + coercion-sites clean; packed-typedarray and
+dataview-window suites still green.
+
+**Follow-up (Part B):** BigInt64Array / BigUint64Array native ctor (i64-element
+vec) + the DataView `getBigInt64`/`setBigInt64` bare-vec env-leak check —
+blocked on the i64-bigint-brand decision; should be a fresh issue once that
+lands.
