@@ -1,8 +1,8 @@
 {
   "id": "2607",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T09:09:11Z",
-  "updated_at": "2026-06-22T09:09:11Z"
+  "assignee": "ttraenkler/agent-af6ff9d85ab8e6fc4",
+  "status": "in-progress",
+  "branch": "issue-2604-2607-set-brand-check",
+  "claimed_at": "2026-06-22T10:05:55Z",
+  "updated_at": "2026-06-22T10:05:55Z"
 }
