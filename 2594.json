@@ -1,8 +1,9 @@
 {
   "id": "2594",
   "assignee": "ttraenkler/agent-typedarray-2595-2597",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2594-typedarray-buffer-host-leaks",
   "claimed_at": "2026-06-22T08:31:57Z",
-  "updated_at": "2026-06-22T08:31:57Z"
+  "updated_at": "2026-06-22T09:34:07Z",
+  "released_at": "2026-06-22T09:34:07Z"
 }
