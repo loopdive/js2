@@ -1,10 +1,10 @@
 ---
 id: 2586
 title: "compiled-acorn parse() infinite-loops in parseTopLevel after instantiation (4th dogfood blocker)"
-status: in-progress
+status: blocked
 assignee: sd-acorn
 created: 2026-06-21
-updated: 2026-06-21
+updated: 2026-06-22
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -14,6 +14,8 @@ language_feature: multi
 goal: self-hosting-dogfood
 sprint: Backlog
 model: opus
+depends_on: [1712, 2582, 1528, 56, 86]
+blocked_on: "dynamic-construct bridge (#1528/#56/#86) — `new this(...)` in a lifted fnctor-static-method body needs compiled-fnctor-as-dynamic-constructor; see Resolution section"
 depends_on: [1712, 2582]
 related: [1712, 2582]
 ---
@@ -113,6 +115,73 @@ taken, `className` is unresolved, the fnctor-name fallback misses, and the call
 drops to the generic dynamic-`new` path which throws `"is not a constructor"`
 (`emitThrowTypeError(…, "is not a constructor")`) because the runtime receiver is
 a wrapped closure externref with no `[[Construct]]`.
+
+### Deeper trace (2026-06-22) — it's the LIFTED-closure body, not the new-site
+
+WAT confirms the precise mechanism. The static method `Parser.makeNew =
+function(x,y){ return new this(x,y) }` is LIFTED into a closure (`__closure_2`),
+and that closure's ENTIRE body is just:
+
+```wat
+(func $__closure_2          ;; makeNew lifted body
+  global.get <"is not a constructor">
+  call $__new_TypeError
+  throw 0)
+```
+
+while the sibling `Parser.makeIdent = function(x,y){ return new Parser(x,y) }`
+lifts to:
+
+```wat
+(func $__closure_3          ;; makeIdent lifted body
+  local.get 1; local.get 2; call $__fnctor_Parser_new; extern.convert_any; return)
+```
+
+So `__fnctor_Parser_new` IS built and IS called by `new Parser` — but `new this`
+in the lifted body compiles to a hard `throw "is not a constructor"`. Inside the
+LIFTED closure, `this` is the `__current_this`/receiver externref (a dynamic
+value), NOT a statically-known fnctor identifier — so `compileNew`'s static
+identifier/`#1679`-ThisKeyword arms don't fire, `className` is undefined, and it
+falls to the `if (!className)` dynamic arm which, for a bare `this`-receiver,
+emits the not-a-constructor throw rather than a runtime construct.
+
+(The earlier `[new2] text=Parser` log was the NEW-SITE compile of the same
+expression in a different pass — the rewrite resolves `this`→`Parser` there —
+but the LIFTED-body compile is the one whose `throw` lands in `__closure_2`. The
+two compiles disagree: the new-site sees `Parser`, the lifted body sees the
+dynamic `__current_this`.)
+
+### Fix direction + the blocking dependency (VERIFIED)
+
+There is a runtime `__construct(callee, argsArray)` host helper
+(`runtime.ts:9275`) that performs `[[Construct]]` on a dynamic externref callee.
+Routing `new this(...)` in a lifted body through it is the natural shape —
+BUT `__construct` currently requires `typeof wrappedCallee === "function"`, and a
+fnctor-closure struct wraps via `_wrapForHost` to a PROXY (typeof "object"), so
+`isCtor=false` and it STILL throws "is not a constructor". There is no host-side
+mapping from a runtime closure-struct externref back to its compiled
+`__fnctor_<name>_new`.
+
+**This is the SAME capability gap as #1528 / #56 / #86 — "compiled
+fnctor/class as a dynamic constructor invokable from the host."** Those tasks
+build exactly the missing bridge (a host-exported dynamic-construct entry that
+maps a runtime closure/class value → its compiled ctor). #2586's `new this(...)`
+in a lifted fnctor-static-method body is a consumer of that bridge: once a
+runtime fnctor-closure externref can be constructed via the host (or the
+lifted-body `new this` is lowered to a Wasm-side dynamic dispatch over known
+fnctor `<name>_new` ctors keyed by the receiver), acorn's
+`Parser.parse → new this(options, input)` works and the args forward in order.
+
+**Recommendation:** #2586 is BLOCKED on the #1528/#56/#86 dynamic-construct
+bridge (the Promise/Proxy lane is already building it). Sequence #2586 AFTER #86
+lands — then either (a) extend the bridge to cover the lifted-`new this`
+receiver, or (b) add a Wasm-side `__construct_fnctor` dispatcher that ref.tests
+the receiver against each registered fnctor struct and calls the matching
+`__fnctor_<name>_new` (the dual of the `__call_fn_method_N` dispatcher #1712
+added — exports-independent, works at module-init too). Option (b) is
+self-contained to codegen and avoids the host round-trip; preferred if the
+bridge's host path can't be reused. NOT a quick point-fix either way — it is the
+dynamic-construct capability, not a resolution tweak.
 
 The rewrite happens in the static-method / closure-this lowering
 (`src/codegen/closures.ts` — the `__current_this` / `__this`-param machinery,
