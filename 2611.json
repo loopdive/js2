@@ -1,8 +1,8 @@
 {
   "id": "2611",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T10:53:25Z",
-  "updated_at": "2026-06-22T10:53:25Z"
+  "assignee": "ttraenkler/sendev-flatten",
+  "status": "in-progress",
+  "branch": "issue-2611-extern-length-shift",
+  "claimed_at": "2026-06-22T12:36:23Z",
+  "updated_at": "2026-06-22T12:36:23Z"
 }
