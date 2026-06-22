@@ -684,3 +684,93 @@ regresses the dstr cluster. The string arm (guarded #2579/#2583) landed; the
 numeric+object arms are tracked by **#2626** for the M3/M4 substrate, where the
 dstr-iterator-protocol dependency is owned. See
 `plan/issues/2626-tag5-boxed-value-equality-classifier-substrate.md`.
+
+---
+
+# M3 — RE-GROUNDING (2026-06-22, sd-value-rep-m3): root cause is a DYNAMIC `[[Prototype]]`-link gap, NOT a runtime-read-protocol slice. ARCHITECT-SPEC-FIRST.
+
+Re-grounded the M3 target (the `-c-i-`/`-b-i-` "inherited/accessor/sparse
+element-retrieval" cluster) against CURRENT main with the REAL `runTest262File`
+runner, then bisected the failing read down to its smallest in-Wasm form. The
+scoping doc framed M3 as "prototype-chain HasProperty over indexed reads, driven
+by `__dyn_has`" (~350 rows, an incremental slice on the M0 primitives). **The
+actual root cause is broader and deeper: the compiled dynamic-object
+representation carries NO runtime `[[Prototype]]` link for dynamically-built
+objects, so NO inherited read (named OR indexed) resolves, in EITHER mode.**
+
+## What the cluster actually is (verified row counts)
+
+The cached host baseline has **170** `built-ins/Array/prototype/*-[cb]-i-` rows
+(`-c-i-` 132 + `-b-i-` 38; the scoping doc's "350" over-counted). Running ALL 170
+through `runTest262File` **one-test-per-fresh-process**: **168 genuine `fail`**,
+1 real invalid-Wasm, 1 parse glitch — i.e. essentially the whole cluster is a
+runtime value gap, as the scoping doc predicted at the headline level.
+
+> ⚠️ RUNNER ARTIFACT (warn the next agent): running these 170 IN ONE in-process
+> `runTest262File` loop reports ~42/43 as `compile_error: Cannot read properties
+> of undefined (reading 'kind')` — a TS-parser (`createSourceFile` →
+> `canHaveModifiers`) crash from cross-compile state bleed in the in-process
+> runner. It is FALSE: each test in a FRESH process is a clean `fail`. The
+> sharded `compiler-fork-worker.mjs` (one fork per test, the path that records
+> the committed JSONL) is unaffected. Always isolate per-process when bucketing
+> this cluster.
+
+## The bisected root cause (smallest in-Wasm repros, host + standalone IDENTICAL)
+
+The test shape is `Con.prototype = proto; child = new Con()` (or `.call(child,cb)`)
+where the visited element lives on `proto` (the chain), not on `child`. Reduced:
+
+```
+proto = { 5: 99, length: 10 }; Con.prototype = proto; child = new Con();
+child[5]            // → NaN   (spec 99)   ← indexed inherited read broken
+(5 in child)        // → 0     (spec 1)    ← HasProperty broken
+forEach.call(child) // count 0 (spec 1)    ← so the generic method visits nothing
+```
+
+And it is NOT limited to `new F()` or to indexed keys — EVERY dynamic-prototype
+mechanism + a plain NAMED inherited read fails identically:
+
+```
+function Con(){}; Con.prototype = {foo:7}; new Con().foo   // → NaN (spec 7)
+Object.create({5:99})[5]                                   // → NaN (spec 99)
+o={}; Object.setPrototypeOf(o,{5:99}); o[5]                // → NaN (spec 99)
+```
+
+Own properties work fine (`forEach.call` over OWN indices → correct count;
+`child.length` own read → 2). The gap is purely the **inherited** tier: a
+dynamically-constructed object's `[[Prototype]]` link to another runtime object is
+never established/walked. Host mode's `__proto_method_call` (V8 native via the
+`_wrapForHost` live-mirror Proxy) AND standalone's native `$Object`/`__extern_get`
+walk BOTH fail — so this is a representation gap, not a host-glue or a
+standalone-only gap. (#1712's vivified-prototype hook resolves CLASS-instance and
+fnctor-ctor chains; it does NOT cover `F.prototype = plainObj` reassignment /
+`Object.create` / `setPrototypeOf` — those produce a runtime `[[Prototype]]` that
+the dense rep drops.)
+
+## Why this is NOT the planned incremental M3 slice
+
+The scoping doc's M3 assumed the prototype-chain piece was "wire `__dyn_has` to
+walk the proto link that already exists." It doesn't exist. Making inherited
+reads correct requires the dynamic `$Object` rep to **carry a `[[Prototype]]`
+field** and EVERY dynamic read/HasProperty/`in`/`for-in`/host-mirror path to walk
+it, plus the allocation + prototype-assignment sites (`{}`, `Object.create`,
+`new F()`, `F.prototype = x`, `setPrototypeOf`) to populate it. That is the
+substrate's core object-model change — broad blast radius (touches object
+identity, `in`, `for-in` (#2572/#2575 lane), the host-mirror Proxy, dynamic
+get/set), and exactly the `~3–5 day, high-risk` M3 the scoping doc estimated, but
+with the realization that there is no smaller pre-existing-link slice underneath
+it. **No surgical sub-slice lands rows without the `[[Prototype]]` field.**
+
+## VERDICT: STOP — architect-spec-first (flagged to lead 2026-06-22)
+
+Per the M3 dispatch guardrail ("if M3 needs an architect spec, STOP and flag
+rather than rabbit-hole"), M3 is genuinely architecture-scale: a dynamic
+`[[Prototype]]`-link object-model change, not an incremental `__dyn_has` wiring.
+Recommend an architect spec that decides (1) where the `[[Prototype]]` link lives
+on the `$Object` rep (field vs sidecar), (2) the walk protocol shared by
+indexed/named/`in`/`for-in`/host-mirror reads, (3) the populate sites + their
+interaction with #1712's existing class/fnctor vivified-prototype hook (avoid
+double-walking), (4) staging that banks rows full-gate-validated (the named-read
+canary `new Con().foo` first, then indexed, then the generic-method cluster).
+No code landed this session — read-only re-grounding only; branch carries this
+finding doc.
