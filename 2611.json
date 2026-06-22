@@ -1,8 +1,9 @@
 {
   "id": "2611",
   "assignee": "ttraenkler/sendev-flatten",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2611-extern-length-shift",
   "claimed_at": "2026-06-22T12:36:23Z",
-  "updated_at": "2026-06-22T12:36:23Z"
+  "updated_at": "2026-06-22T13:21:50Z",
+  "released_at": "2026-06-22T13:21:50Z"
 }
