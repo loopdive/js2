@@ -1,8 +1,8 @@
 {
   "id": "2597",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T06:21:59Z",
-  "updated_at": "2026-06-22T06:21:59Z"
+  "assignee": "ttraenkler/agent-typedarray-2595-2597",
+  "status": "in-progress",
+  "branch": "issue-2595-2597-typedarray-bytes-tostringtag",
+  "claimed_at": "2026-06-22T07:23:58Z",
+  "updated_at": "2026-06-22T07:23:58Z"
 }
