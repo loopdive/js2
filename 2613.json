@@ -1,8 +1,8 @@
 {
   "id": "2613",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T11:12:59Z",
-  "updated_at": "2026-06-22T11:12:59Z"
+  "assignee": "ttraenkler/async-2612-2613",
+  "status": "in-progress",
+  "branch": "issue-2612-2613-async-thenable",
+  "claimed_at": "2026-06-22T11:48:39Z",
+  "updated_at": "2026-06-22T11:48:39Z"
 }
