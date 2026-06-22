@@ -744,3 +744,61 @@ a value-rep CORE touch — every PR full-gated, stop-the-line on the first eject
 primitive landed and proven before widening consumers. The ROI question (M1's cost
 vs M2's ~139-row addressable target, of which the clean-dispatch buckets are ~81)
 is the lead/user's call before deep work begins.
+
+## M2.2 — CONSUMER SLICE SCOPE (read-only; HOLD impl until slice 1 lands + lead confirms)
+
+The consumer of the slice-1 reader: route the
+`Array.prototype.X.call(arrayLike, …)` generic-method element/length reads
+through the tag-aware reader (`__extern_length` + indexed `__dyn_get`), retiring
+the ~81 clean-dispatch buckets (wasm_compile 30 / illegal_cast 26 / oob 25).
+
+**The exact code site:** `compileArrayLikePrototypeCall` (src/codegen/
+array-methods.ts:639) is the existing generic-method-on-array-like path. It
+already has a working native `$Object` arm for the callback-iteration methods
+(`forEach`/`some`/`every`/`find`/`findIndex`) via `__extern_length` /
+`__extern_get_idx` (#2036 PR-1). The GAP is the explicit standalone REFUSAL at
+~lines 710–719:
+```
+if ((ctx.standalone || ctx.wasi) && standaloneArrayLikeMethodRefused(methodName, callExpr)) {
+  reportError(…, `Codegen error: Array.prototype.${methodName}.call(...) over an
+    array-like (non-array) receiver is not yet supported in --target standalone
+    (#2036 S6) — the generic $Object arm … is not native yet (it would leak a host
+    import / emit invalid Wasm).`);
+  return null;
+}
+```
+`standaloneArrayLikeMethodRefused` refuses: the methods in
+`STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS` (the search arms
+`indexOf`/`lastIndexOf`/`includes` → leak `__host_eq`/`__same_value_zero`; the
+result-builders `filter`/`map`/`reduce`/`reduceRight` → leak
+`__js_array_new`/`__js_array_push`) **plus** `reduce`/`reduceRight` with NO
+initial value. These leak host imports + trip the binary-emitter local-type bug
+under `--target standalone`/`wasi`, so #2036 S6 refused them loudly rather than
+emit invalid Wasm.
+
+**The M2.2 fix:** give these refused methods a NATIVE `$Object` arm built on the
+slice-1 reader — `__extern_length(recv)` for the bound + indexed `__dyn_get(recv,
+i)` for each element (tag-dispatched: `$Vec` field, `$Object` prop, native-string
+index), and a native result-builder ($Vec push) for the map/filter/reduce arms —
+so no host import leaks and no invalid Wasm. As each method goes native, REMOVE it
+from `STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS` (the #2036 S6 step-2 the comment
+names). This is also the principled replacement for #983d/PR#1844's over-broad
+`__extern_method_call` fallback — **supersede it, do NOT stack on it** (task #20
+folds in here).
+
+**Staging (each its own full-gated PR; the clean-dispatch buckets first):**
+- **M2.2a** — the search arms (`indexOf`/`lastIndexOf`/`includes`): native
+  `$Object` element read + SameValueZero compare (the host `__host_eq` leak →
+  native). Targets the `oob` (25) + part of `wasm_compile`.
+- **M2.2b** — the result-builders (`map`/`filter`): native `$Vec` result + indexed
+  `__dyn_get` element read (the `__js_array_*` leak → native `$Vec` push).
+- **M2.2c** — `reduce`/`reduceRight` (incl. no-initial-value: the §22.1.3.x
+  empty-array TypeError via `__dyn_has` presence) — overlaps the M2.3
+  `type_error` bucket.
+
+Each: faithful `runTest262File` on the method's `Array/prototype/<m>/*` cluster,
+full-gate via merge_group, stop-the-line on eject. Host/gc mode is already
+working for most of these (the refusal is standalone/wasi-gated), so M2.2 is
+primarily a STANDALONE-pass-rate win — confirm the host-mode rows too. HOLD all
+M2.2 implementation until slice 1's reader lands and the lead confirms the M2.2
+plan.
