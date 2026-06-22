@@ -1,8 +1,8 @@
 {
   "id": "1528",
-  "assignee": "ttraenkler/senior-developer",
+  "assignee": "ttraenkler/sd-1838",
   "status": "in-progress",
-  "branch": "issue-1528-closure-construct-bridge",
-  "claimed_at": "2026-06-22T15:39:57Z",
-  "updated_at": "2026-06-22T15:39:57Z"
+  "branch": "issue-1528-classctor-arm",
+  "claimed_at": "2026-06-22T16:21:03Z",
+  "updated_at": "2026-06-22T16:21:03Z"
 }
