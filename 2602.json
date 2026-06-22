@@ -1,8 +1,8 @@
 {
   "id": "2602",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T06:45:35Z",
-  "updated_at": "2026-06-22T06:45:35Z"
+  "assignee": "ttraenkler/sd-value-rep",
+  "status": "in-progress",
+  "branch": "issue-2602-forawait-rest",
+  "claimed_at": "2026-06-22T07:21:35Z",
+  "updated_at": "2026-06-22T07:21:35Z"
 }
