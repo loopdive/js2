@@ -1,8 +1,9 @@
 {
   "id": "2602",
   "assignee": "ttraenkler/senior-developer",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2602-forof-assign-rest",
   "claimed_at": "2026-06-22T07:40:27Z",
-  "updated_at": "2026-06-22T07:40:27Z"
+  "updated_at": "2026-06-22T08:27:09Z",
+  "released_at": "2026-06-22T08:27:09Z"
 }
