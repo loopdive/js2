@@ -802,3 +802,43 @@ working for most of these (the refusal is standalone/wasi-gated), so M2.2 is
 primarily a STANDALONE-pass-rate win — confirm the host-mode rows too. HOLD all
 M2.2 implementation until slice 1's reader lands and the lead confirms the M2.2
 plan.
+
+## M2.2 — IMPLEMENTATION STATUS + the corrected M2.2c root cause (2026-06-22)
+
+Re-grounding against current `main` shrank the M2.2 scope sharply:
+
+- **M2.2a (search arms `indexOf`/`lastIndexOf`/`includes`) — ALREADY DONE on
+  main** (native arm `compileArrayLikePrototypeSearch`, #1461/#54, pure-Wasm
+  `__extern_strict_eq`/`__extern_same_value_zero`). Already removed from the
+  refused set. No work.
+- **`filter` — ALREADY DONE** (native `$ObjVec` builder, #2036 S6 step-2).
+- **M2.2b (`map.call(arrayLike)`) — DONE this slice (PR #1922, enqueued
+  2026-06-22):** native `$ObjVec` result-builder mirroring `filter`; sequential
+  `__objvec_push` is index-correct for the dense `.call(arrayLike)` walk. Removed
+  `"map"` (the LAST static entry) from `STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS`
+  — the set is now empty.
+- **M2.2c (`reduce`/`reduceRight` NO-initial-value) — BLOCKED, architect-scale,
+  NOT a bounded array-methods.ts fix.** CORRECTED root cause (per memory
+  `reference_1461_reduce_noinit_funcidx_desync`, established via instrumented build
+  + wasm-dis — supersedes the "late throwString shift" guess): the funcidx are
+  **STABLE at emit time** (`__extern_has_idx`=155, `__extern_get_idx`=152 at BOTH
+  capture and scan-emit). The break is at **MODULE FINALIZATION** — the
+  `addUnionImports` / late-import reorder in `index.ts` shifts the FINAL binary
+  layout so the no-init forward-hole-scan's baked `call 155` (`__extern_has_idx`)
+  resolves to `number_toString` in the emitted module (the adjacent `call 152`
+  `__extern_get_idx` survives), giving `if` over an externref → invalid Wasm. This
+  is the index.ts finalization-reorder class (#2043 family), **not localizable in
+  array-methods.ts** — pre-registering helpers up-front + re-resolve-by-name (the
+  #16 discipline already applied there) does NOT fix it because the shift happens
+  AFTER this function returns, during whole-module finalization. PR-A (#1763)
+  already landed the graceful refusal of no-init (the with-init form is valid +
+  host-free + allowed). **M2.2c needs the finalization-reorder fixed at its source
+  (an index.ts `addUnionImports` ordering fix that keeps the
+  `__extern_has_idx`/`__extern_get_idx` defined-func indices stable through
+  finalization, OR a finalization-time funcidx-fixup that patches baked calls in
+  array-method loop bodies the way `fixupModuleGlobalIndices` patches globals).**
+  Recommend: flag for an architect / route to whoever owns the index.ts
+  late-import-shift machinery (the #2043 / `fixupModuleGlobalIndices` author) —
+  it's the same class as the holeGlobalIdx / nativeStr-finalize shift fixes. NOT
+  a value-rep-substrate slice. ~remaining reduce/reduceRight no-init rows are the
+  payoff once the finalization shift is fixed.
