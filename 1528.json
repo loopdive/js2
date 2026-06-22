@@ -1,9 +1,8 @@
 {
   "id": "1528",
-  "assignee": "ttraenkler/agent-af6ff9d85ab8e6fc4",
-  "status": "released",
-  "branch": "issue-1528a-dynamic-construct",
-  "claimed_at": "2026-06-22T08:59:18Z",
-  "updated_at": "2026-06-22T09:37:59Z",
-  "released_at": "2026-06-22T09:37:59Z"
+  "assignee": "ttraenkler/senior-developer",
+  "status": "in-progress",
+  "branch": "issue-1528-closure-construct-bridge",
+  "claimed_at": "2026-06-22T15:39:57Z",
+  "updated_at": "2026-06-22T15:39:57Z"
 }
