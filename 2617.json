@@ -1,8 +1,8 @@
 {
   "id": "2617",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T11:35:55Z",
-  "updated_at": "2026-06-22T11:35:55Z"
+  "assignee": "ttraenkler/agent-acc861f0e7aea64c8",
+  "status": "in-progress",
+  "branch": "issue-2617-proxy-trap-throw-propagation",
+  "claimed_at": "2026-06-22T15:51:14Z",
+  "updated_at": "2026-06-22T15:51:14Z"
 }
