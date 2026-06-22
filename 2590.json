@@ -1,8 +1,8 @@
 {
   "id": "2590",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T05:57:36Z",
-  "updated_at": "2026-06-22T05:57:36Z"
+  "assignee": "ttraenkler/agent-regexp-escape",
+  "status": "in-progress",
+  "branch": "issue-2590-regexp-escape",
+  "claimed_at": "2026-06-22T06:39:58Z",
+  "updated_at": "2026-06-22T06:39:58Z"
 }
