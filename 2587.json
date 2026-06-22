@@ -1,8 +1,9 @@
 {
   "id": "2587",
   "assignee": "ttraenkler/dev-acorn",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2587-nested-objpat-default-static-overflow",
   "claimed_at": "2026-06-22T18:42:26Z",
-  "updated_at": "2026-06-22T18:42:26Z"
+  "updated_at": "2026-06-22T19:07:50Z",
+  "released_at": "2026-06-22T19:07:50Z"
 }
