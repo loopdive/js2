@@ -1,11 +1,12 @@
 ---
 id: 1917
 title: "One coercion engine — four divergent coercion matrices disagree about lossiness"
-status: in-progress
-sprint: 65
+status: backlog
+sprint: Backlog
 model: opus
 created: 2026-06-10
-updated: 2026-06-17
+updated: 2026-06-22
+rescope_note: "Substantially achieved — Step 0 (coercionPlan) + #2108 drift gate landed and prevent NEW drift; all Step 1-4 bugs fixed per-site (verified 2026-06-22). Remaining = pure behavior-neutral consolidation of existing matrices, zero conformance payload; revisit only if a NEW drift bug appears or as opportunistic cleanup."
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -15,6 +16,35 @@ language_feature: compiler-internals
 goal: correctness
 ---
 # #1917 — One coercion engine
+
+## Re-scope — PARKED to backlog (sendev-coercion, 2026-06-22)
+
+Probe-first against current main (`50a9ce400`) before writing any code found the
+spec below is **stale**: every named bug across Steps 1-4 of the Implementation
+Plan is already `status: done` on main:
+
+- Step 1: #2005, #2006, #1998, #2074, #1997, #2007, #2008 — all done
+- Step 2: #1989, #2022, #1990, #1988, #2058 — all done
+- Step 3: #1986, #1987, #2081, #2073 — all done
+
+(Verified empirically, e.g. `compileTemplateExpression` in `string-ops.ts` now
+carries the bool→"true"/"false" and null→"null" arms the plan says are missing.)
+The June bug corpus was fixed via individual per-site patches in the sprints
+since the spec was written (2026-06-11).
+
+**Consequence:** the bug payload is gone. Step 0 (the ValType `coercionPlan`
+table) already landed and the #2108 drift gate is built + wired in the `quality`
+CI job — together they **prevent any NEW divergent copy from landing**, which is
+the core value of this issue. The remaining work (folding the now-individually-
+correct hand-rolled matrices into one engine) is a **pure behavior-neutral
+refactor of the hottest coercion paths (ToString/ToNumber/equality/ToBoolean)
+with zero conformance payload**, against the frozen #1888 −794 tag-5 contract —
+high regression risk, no test262 gain. Not worth executing in a stability sprint.
+
+Decision (tech lead, 2026-06-22): **park to backlog.** Revisit only if a NEW
+drift bug appears, or as opportunistic cleanup (Step 1 `emitToString` is the
+lowest-risk first step if it is ever picked up). The original spec is preserved
+below unchanged for that future pickup.
 
 ## Problem
 
