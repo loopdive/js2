@@ -1,8 +1,9 @@
 {
   "id": "2580",
   "assignee": "ttraenkler/sd-value-rep",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2580-m22a-search",
   "claimed_at": "2026-06-22T09:26:04Z",
-  "updated_at": "2026-06-22T09:26:04Z"
+  "updated_at": "2026-06-22T09:30:24Z",
+  "released_at": "2026-06-22T09:30:24Z"
 }
