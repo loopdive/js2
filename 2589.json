@@ -1,8 +1,8 @@
 {
   "id": "2589",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T05:57:26Z",
-  "updated_at": "2026-06-22T05:57:26Z"
+  "assignee": "ttraenkler/dev-regex-2588",
+  "status": "in-progress",
+  "branch": "issue-2588-89-regexp-groups-indices",
+  "claimed_at": "2026-06-22T07:24:38Z",
+  "updated_at": "2026-06-22T07:24:38Z"
 }
