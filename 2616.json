@@ -1,8 +1,8 @@
 {
   "id": "2616",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T11:35:45Z",
-  "updated_at": "2026-06-22T11:35:45Z"
+  "assignee": "ttraenkler/agent-acc861f0e7aea64c8",
+  "status": "in-progress",
+  "branch": "issue-2616-proxy-noncallable-trap",
+  "claimed_at": "2026-06-22T12:15:50Z",
+  "updated_at": "2026-06-22T12:15:50Z"
 }
