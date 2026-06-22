@@ -1,8 +1,9 @@
 {
   "id": "2620",
   "assignee": "ttraenkler/sendev-flatten",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2620-extends-set-late-import",
   "claimed_at": "2026-06-22T16:15:02Z",
-  "updated_at": "2026-06-22T16:15:02Z"
+  "updated_at": "2026-06-22T16:35:15Z",
+  "released_at": "2026-06-22T16:35:15Z"
 }
