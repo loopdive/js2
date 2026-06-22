@@ -1,8 +1,9 @@
 {
   "id": "2626",
   "assignee": "ttraenkler/cascade-lead",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2626-tag5-classifier-substrate",
   "claimed_at": "2026-06-22T19:14:09Z",
-  "updated_at": "2026-06-22T19:14:09Z"
+  "updated_at": "2026-06-22T19:27:39Z",
+  "released_at": "2026-06-22T19:27:39Z"
 }
