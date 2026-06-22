@@ -1,9 +1,8 @@
 {
   "id": "2580",
   "assignee": "ttraenkler/sd-value-rep",
-  "status": "released",
-  "branch": "issue-2580-m1a-length-arm",
-  "claimed_at": "2026-06-21T20:26:08Z",
-  "updated_at": "2026-06-21T22:03:27Z",
-  "released_at": "2026-06-21T22:03:27Z"
+  "status": "in-progress",
+  "branch": "issue-2580-m2s1-reader",
+  "claimed_at": "2026-06-22T05:50:40Z",
+  "updated_at": "2026-06-22T05:50:40Z"
 }
