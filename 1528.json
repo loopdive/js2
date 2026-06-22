@@ -1,9 +1,8 @@
 {
   "id": "1528",
-  "assignee": "ttraenkler/sd-4",
-  "status": "released",
+  "assignee": "ttraenkler/agent-af6ff9d85ab8e6fc4",
+  "status": "in-progress",
   "branch": "issue-1528a-dynamic-construct",
-  "claimed_at": "2026-06-21T11:12:43Z",
-  "updated_at": "2026-06-21T11:22:30Z",
-  "released_at": "2026-06-21T11:22:30Z"
+  "claimed_at": "2026-06-22T08:59:18Z",
+  "updated_at": "2026-06-22T08:59:18Z"
 }
