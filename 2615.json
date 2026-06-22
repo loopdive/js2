@@ -1,8 +1,8 @@
 {
   "id": "2615",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T11:35:34Z",
-  "updated_at": "2026-06-22T11:35:34Z"
+  "assignee": "ttraenkler/agent-acc861f0e7aea64c8",
+  "status": "in-progress",
+  "branch": "issue-2615-proxy-result-externref",
+  "claimed_at": "2026-06-22T11:48:47Z",
+  "updated_at": "2026-06-22T11:48:47Z"
 }
