@@ -1,8 +1,8 @@
 {
   "id": "2591",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T05:57:46Z",
-  "updated_at": "2026-06-22T05:57:46Z"
+  "assignee": "ttraenkler/dev-regex-2591",
+  "status": "in-progress",
+  "branch": "issue-2591-vflag-q-string-disjunction",
+  "claimed_at": "2026-06-22T06:40:16Z",
+  "updated_at": "2026-06-22T06:40:16Z"
 }
