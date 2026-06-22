@@ -1,8 +1,9 @@
 {
   "id": "2593",
   "assignee": "ttraenkler/sd-value-rep",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2593-typedarray-intwidth",
   "claimed_at": "2026-06-22T09:20:21Z",
-  "updated_at": "2026-06-22T09:20:21Z"
+  "updated_at": "2026-06-22T09:23:31Z",
+  "released_at": "2026-06-22T09:23:31Z"
 }
