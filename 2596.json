@@ -1,8 +1,8 @@
 {
   "id": "2596",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T06:21:48Z",
-  "updated_at": "2026-06-22T06:21:48Z"
+  "assignee": "ttraenkler/agent-typedarray-2595-2597",
+  "status": "in-progress",
+  "branch": "issue-2596-typedarray-buffer-accessor",
+  "claimed_at": "2026-06-22T09:20:55Z",
+  "updated_at": "2026-06-22T09:20:55Z"
 }
