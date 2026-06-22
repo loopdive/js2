@@ -1,8 +1,8 @@
 {
   "id": "2620",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T13:14:13Z",
-  "updated_at": "2026-06-22T13:14:13Z"
+  "assignee": "ttraenkler/sendev-flatten",
+  "status": "in-progress",
+  "branch": "issue-2620-extends-set-late-import",
+  "claimed_at": "2026-06-22T16:15:02Z",
+  "updated_at": "2026-06-22T16:15:02Z"
 }
