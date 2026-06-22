@@ -1,9 +1,8 @@
 {
   "id": "2040",
-  "assignee": "ttraenkler/sd-3",
-  "status": "done",
-  "branch": "issue-2040-isamevalue-fix",
-  "claimed_at": "2026-06-21T12:15:00Z",
-  "updated_at": "2026-06-21T13:53:36Z",
-  "released_at": "2026-06-21T13:53:36Z"
+  "assignee": "ttraenkler/cascade-lead",
+  "status": "in-progress",
+  "branch": "issue-2040-tag5-classifier",
+  "claimed_at": "2026-06-22T17:54:33Z",
+  "updated_at": "2026-06-22T17:54:33Z"
 }
