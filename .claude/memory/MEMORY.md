@@ -28,6 +28,7 @@
 - [project_bigint_i64_brand_gate.md](project_bigint_i64_brand_gate.md) — #1349/#1644 BigInt fixes gated on architect i64-bigint-brand ValType decision; not a dev codegen guard
 - [project_linear_backend_no_console_log.md](project_linear_backend_no_console_log.md) — Linear backend (target:"linear", non-WASI) drops console.log; it's return-value-oriented — cross-backend/diff tests must assert return values, not stdout (#1854)
 - [project_proxy_no_ts_type_brand.md](project_proxy_no_ts_type_brand.md) — A JS Proxy carries no TS-type brand (types as its target); never static-classify a possibly-proxy receiver — detect syntactically + defer to host (#2501 proxy-revoked regression)
+- [project_2602_forawait_rest_aliases_source_recompile.md](project_2602_forawait_rest_aliases_source_recompile.md) — #2602: for-await array-rest `y` aliases the SOURCE array under a fresh compileExpression (recompile→source len 3, not rest slice 2); blocks #2580 M2 slice 1; async-lane local-versioning, not substrate — recompiling an identifier ≠ its live local in the async state machine
 
 ### Team & agents (rules not in plan/method/team-setup.md)
 - [feedback_architect_worktree_isolation.md](feedback_architect_worktree_isolation.md) — Always spawn architects with isolation:worktree — they stall and request respawn without it

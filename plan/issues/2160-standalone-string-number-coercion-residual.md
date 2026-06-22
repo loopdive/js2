@@ -311,3 +311,60 @@ clean.
 **Still open (NOT regressed):** `new Number(x)` wrapper CONSTRUCTION under
 `--target wasi` (requests `__new_Number`; standalone-only native object-runtime)
 — a separate substrate residual reproducing on pristine `origin/main`.
+
+---
+
+## Re-measure + residual slicing (2026-06-22, architect) — sprint 65
+
+Re-probed the **host-pass / standalone-fail** gap for `built-ins/String` +
+`built-ins/Number` against current main `0451ee920` (every file run twice:
+host-mode `runTest262File` vs `target: "standalone"`; the host-pass /
+standalone-fail set is the umbrella's definition). Result: **148 gap rows, all in
+`built-ins/String`** — `built-ins/Number` has **no** remaining host/standalone gap
+(the wrapper + native-format slices above closed it). The original "635 / 643 / 159"
+numbers were the 2026-06-15 baseline; the value-rep keystones (#2187/#2576/#2579)
++ the wrapper slices have since closed the bulk.
+
+### Verified root-cause buckets of the 148
+
+| bucket | rows | disposition |
+|---|---:|---|
+| **search-method arg ToString + IsRegExp** (`indexOf/lastIndexOf/includes/startsWith/endsWith/localeCompare`, TYPED receiver, non-string arg → `__str_flatten` null-deref) | ~20–28 | **#2598** (dev) |
+| **concat arg ToString** (variadic + non-string-primitive, TYPED receiver → `__str_concat` null-deref / `undefined`) | ~6–10 | **#2599** (dev) |
+| **index/position ToIntegerOrInfinity** (`at/charAt/charCodeAt/codePointAt/indexOf` position, fractional-string/object arg → wrong index) | ~6–12 | **#2600** (dev) |
+| **fromCodePoint RangeError** (non-integral / out-of-[0,0x10FFFF] → must throw) | ~2–3 | **#2601** (dev) |
+| `match`/`matchAll`/`search` (RegExp-routed) | 15 | → **#2161** standalone RegExp engine |
+| **RequireObjectCoercible `this`** via `.call(null/undef/symbol)` + **boxed/dynamic `this`** (`new Boolean; o.indexOf=…`, `_A1_T2`/`_A4_T*`) | ~25 | → **#2580 M2** (any-typed receiver) |
+| builtin-method-**as-value** (`String.prototype.X.length`, `new X`, `.name`, callback) — `built-in static property value read … not supported` / `__get_builtin` CE | ~8 | → builtin-closure substrate (not method correctness) |
+| object→primitive (`Cannot convert object to primitive value`) for `String()`/concat with a dynamic-object arg/receiver | ~18 | → **#1917** coercion engine (already the engine path) |
+
+### The M2-deferred note (per #2580)
+
+Everything where the **receiver is `any`/dynamic/boxed** is **#2580 M2 territory**
+(any-typed string/number method dispatch + coercion-on-any), NOT a #2160 slice.
+That is: `String.prototype.X.call(null/undefined, …)` (RequireObjectCoercible on a
+dynamic receiver), `new Boolean/Number/String; o.method = String.prototype.X; o.X(…)`
+(boxed-primitive receiver), and any `obj.method()` where `obj: any`. #2580's M1
+canary already proved a bare-externref runtime test cannot disambiguate these
+receivers — they need M2's tag-aware dynamic reader. The four #2598–#2601 slices are
+deliberately gated on a **statically-typed string receiver**, so they are
+substrate-INDEPENDENT and land independently of #2580.
+
+### Slices created (sprint 65)
+
+- **#2598** — search-method arg ToString + IsRegExp guard (largest bucket)
+- **#2599** — concat arg ToString (variadic + non-string)
+- **#2600** — index/position ToIntegerOrInfinity
+- **#2601** — fromCodePoint RangeError
+
+Each: ONE verified root cause, typed receiver (substrate-independent), reuses the
+existing `coerceType` / `__str_to_number` engine (no new #2108 coercion site),
+~1 day, full `## Implementation Plan` in its own file. #2598 + #2599 share the
+"ToString an arbitrary arg before a native string helper" shape — whichever lands
+first factors a small `emitArgAsNativeString` helper the other reuses (independently
+landable either order).
+
+**This umbrella stays `ready`** as the tracker; the actionable substrate-independent
+String work is now the four child slices. The remaining residual is #2161 (RegExp),
+#2580 M2 (dynamic receiver), #1917 (object→primitive), and the builtin-method-as-value
+closure substrate — all tracked elsewhere.

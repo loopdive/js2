@@ -409,13 +409,19 @@ elif [ -f "$report" ]; then
     # excluded, matching the host bar's denominator.
     sa_bar=""
     sa_pass=""; sa_total=""
-    if [ -f "$standalone_report" ]; then
-      sa_pass=$(jq -r '.summary.pass // 0' "$standalone_report" 2>/dev/null)
-      sa_total=$(jq -r '.summary.total // 1' "$standalone_report" 2>/dev/null)
-    elif [ -f "$standalone_highwater" ]; then
-      # high-water official_* fields = standalone pass/total WITHOUT proposals
+    # Prefer the committed high-water mark (official_* = standalone pass/total
+    # WITHOUT proposals): the promote-baseline CI job refreshes it on every push
+    # to main, so it tracks the latest js2wasm-baselines numbers. The local
+    # test262-standalone-report.json is an UNtracked dev-run artifact that goes
+    # stale (a 5-day-old 47% shadowed the fresh 52.6% high-water), so use it only
+    # when it is genuinely newer than the high-water file.
+    if [ -f "$standalone_highwater" ]; then
       sa_pass=$(jq -r '.official_pass // empty' "$standalone_highwater" 2>/dev/null)
       sa_total=$(jq -r '.official_total // empty' "$standalone_highwater" 2>/dev/null)
+    fi
+    if [ -f "$standalone_report" ] && [ "$standalone_report" -nt "$standalone_highwater" ]; then
+      sa_pass=$(jq -r '.summary.pass // 0' "$standalone_report" 2>/dev/null)
+      sa_total=$(jq -r '.summary.total // 1' "$standalone_report" 2>/dev/null)
     fi
     if [ -n "$sa_total" ] && [ "$sa_total" -gt 0 ] 2>/dev/null; then
       sa_pct=$(awk "BEGIN {printf \"%.1f\", $sa_pass * 100 / $sa_total}")

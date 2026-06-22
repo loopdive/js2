@@ -25,6 +25,7 @@ import {
 } from "./async-scheduler.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
 import {
@@ -599,12 +600,18 @@ function compileExpressionBody(
     }
   }
 
-  const bodyLenBefore = fctx.body.length;
+  // #1919 — transactional wrapper around the inner compile. The snapshot is O(1)
+  // and the two rollback exits below (a thrown inner compile; an inner that
+  // produced no usable value) discard the partial body AND any locals / late
+  // imports / errors it leaked, then emit a clean fallback value. The successful
+  // path simply drops the snapshot, so legitimately-registered imports persist.
+  const snap = snapshotSpeculative(ctx, fctx);
+  const bodyLenBefore = snap.bodyLen;
   let result: InnerResult;
   try {
     result = compileExpressionInner(ctx, fctx, expr, expectedType);
   } catch (e) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     const msg = e instanceof Error ? e.message : String(e);
     reportErrorNoNode(ctx, `Internal error compiling expression: ${msg}`);
     const fallbackType = expectedType ?? { kind: "f64" as const };
@@ -699,7 +706,9 @@ function compileExpressionBody(
     return result;
   }
 
-  fctx.body.length = bodyLenBefore;
+  // Inner compile produced no usable value — roll back its partial emission
+  // (#1919: body + locals + late imports + errors) and emit a default instead.
+  rollbackSpeculative(ctx, fctx, snap);
   let wasmType: ValType;
   if (expectedType) {
     wasmType = expectedType;

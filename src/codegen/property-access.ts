@@ -22,6 +22,7 @@ import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collisio
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
@@ -322,6 +323,28 @@ const NUMBER_CONSTANT_PROPS = new Set([
 ]);
 
 /**
+ * (#2595) Per-constructor element byte width for `TypedArray.BYTES_PER_ELEMENT`
+ * (static, §23.2.6.x) and `view.BYTES_PER_ELEMENT` (instance, §23.2.3.1). Both
+ * reads are statically known per constructor name — pure constant folds, no
+ * runtime support. Includes the two BigInt views (8 bytes each) which are not in
+ * `TYPED_ARRAY_NAMES`. Single source of truth for both the static-read constant
+ * emitter and the instance-read arm in the typed-array property block.
+ */
+const TYPED_ARRAY_BYTES_PER_ELEMENT: Record<string, number> = {
+  Int8Array: 1,
+  Uint8Array: 1,
+  Uint8ClampedArray: 1,
+  Int16Array: 2,
+  Uint16Array: 2,
+  Int32Array: 4,
+  Uint32Array: 4,
+  Float32Array: 4,
+  Float64Array: 8,
+  BigInt64Array: 8,
+  BigUint64Array: 8,
+};
+
+/**
  * True when `<builtinName>.<propName>` has a Wasm-native **f64 constant**
  * emitter downstream in `compileMemberRead` that the `__get_builtin` shortcut
  * must not pre-empt. Keeps the standalone path host-import-free for the
@@ -340,6 +363,9 @@ const NUMBER_CONSTANT_PROPS = new Set([
 function hasNativeBuiltinConstantHandler(builtinName: string, propName: string): boolean {
   if (builtinName === "Math") return MATH_CONSTANT_PROPS.has(propName);
   if (builtinName === "Number") return NUMBER_CONSTANT_PROPS.has(propName);
+  // (#2595) `<TypedArrayName>.BYTES_PER_ELEMENT` static read has a downstream
+  // constant emitter; defer the standalone `__get_builtin` refusal to it.
+  if (propName === "BYTES_PER_ELEMENT") return builtinName in TYPED_ARRAY_BYTES_PER_ELEMENT;
   return false;
 }
 
@@ -2141,8 +2167,9 @@ function tryEmitConstructorViaTag(
       fctx.body.push({ op: "local.set", index: resLocal } as Instr);
     } else {
       // No singleton emitted (shouldn't happen — classObjectGlobals has it):
-      // leave resLocal null.
-      fctx.body.length = 0;
+      // leave resLocal null. This clears the DETACHED `arm` buffer (fctx.body is
+      // `arm` here via the manual swap above), not a speculative-compile probe.
+      fctx.body.length = 0; // not-a-probe-rollback (#1919): detached arm buffer
     }
     fctx.body = savedBody;
     if (arm.length === 0) continue;
@@ -2255,7 +2282,7 @@ export function compilePropertyAccess(
   // case so it doesn't leak `__extern_get`.
   if (
     (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) &&
-    (propName === "byteLength" || propName === "byteOffset")
+    (propName === "byteLength" || propName === "byteOffset" || propName === "BYTES_PER_ELEMENT")
   ) {
     const recvName =
       objType.getSymbol()?.name ??
@@ -2265,12 +2292,14 @@ export function compilePropertyAccess(
     const isBuffer = recvName === "ArrayBuffer" || recvName === "SharedArrayBuffer";
     const isTypedArr = recvName !== undefined && TYPED_ARRAY_NAMES.has(recvName);
     const isDataView = recvName === "DataView";
+    if (process.env.JS2WASM_DBG_2595)
+      console.error(`[2595] prop=${propName} recvName=${recvName} isTypedArr=${isTypedArr}`);
     // (#2159/#38) DataView `byteOffset` / `byteLength` honour the constructor's
     // window. The receiver is either a `$__dv_window` wrapper (windowed view) or
     // a bare `$__vec_i32_byte` (offset-0 default-length view). For the wrapper,
     // read its byteOffset / byteLength fields; for the bare vec, byteOffset = 0
     // and byteLength = vec.length (one i32 per byte ⇒ length IS the byte count).
-    if (isDataView && noJsHost(ctx)) {
+    if (isDataView && noJsHost(ctx) && propName !== "BYTES_PER_ELEMENT") {
       const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i32" });
       const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
       const fieldIdx = propName === "byteOffset" ? 1 : 2;
@@ -2312,44 +2341,48 @@ export function compilePropertyAccess(
         fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: 0 } as Instr);
         return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
-      // byteLength = field0 * BYTES_PER_ELEMENT. ArrayBuffer's field0 is already
-      // a byte count, so its element size is 1.
-      const TYPED_ARRAY_BYTES_PER_ELEMENT: Record<string, number> = {
-        Int8Array: 1,
-        Uint8Array: 1,
-        Uint8ClampedArray: 1,
-        Int16Array: 2,
-        Uint16Array: 2,
-        Int32Array: 4,
-        Uint32Array: 4,
-        Float32Array: 4,
-        Float64Array: 8,
-      };
-      const bytesPerElem = isBuffer ? 1 : (TYPED_ARRAY_BYTES_PER_ELEMENT[recvName!] ?? 1);
-      const elemKey = isBuffer ? "i32_byte" : noJsHost(ctx) && recvName === "Uint8Array" ? "i8_byte" : "f64";
-      const elemType: ValType =
-        elemKey === "i8_byte" ? { kind: "i8" } : elemKey === "i32_byte" ? { kind: "i32" } : { kind: "f64" };
-      const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
-      // Compile the receiver and recover the vec struct ref.
-      const recvType = compileExpression(ctx, fctx, expr.expression);
-      if (recvType?.kind === "externref") {
-        fctx.body.push({ op: "any.convert_extern" } as Instr);
-        fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx } as Instr);
-      } else if (
-        (recvType?.kind === "ref" || recvType?.kind === "ref_null") &&
-        "typeIdx" in recvType &&
-        recvType.typeIdx !== vecTypeIdx
-      ) {
-        fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx } as Instr);
+      // (#2595) `view.BYTES_PER_ELEMENT` — instance element byte width
+      // (§23.2.3.1). A constant per constructor name; drop the (possibly
+      // side-effecting) receiver and emit it. Only TypedArrays expose it —
+      // ArrayBuffer/SharedArrayBuffer/DataView do not, so when the receiver is a
+      // buffer, fall through (the read resolves to `undefined` downstream).
+      if (propName === "BYTES_PER_ELEMENT") {
+        if (isTypedArr) {
+          const recvType = compileExpression(ctx, fctx, expr.expression);
+          if (recvType !== null) fctx.body.push({ op: "drop" } as Instr);
+          const bytes = TYPED_ARRAY_BYTES_PER_ELEMENT[recvName!] ?? 1;
+          fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: bytes } as Instr);
+          return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+        }
+      } else {
+        // byteLength = field0 * BYTES_PER_ELEMENT. ArrayBuffer's field0 is already
+        // a byte count, so its element size is 1.
+        const bytesPerElem = isBuffer ? 1 : (TYPED_ARRAY_BYTES_PER_ELEMENT[recvName!] ?? 1);
+        const elemKey = isBuffer ? "i32_byte" : noJsHost(ctx) && recvName === "Uint8Array" ? "i8_byte" : "f64";
+        const elemType: ValType =
+          elemKey === "i8_byte" ? { kind: "i8" } : elemKey === "i32_byte" ? { kind: "i32" } : { kind: "f64" };
+        const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+        // Compile the receiver and recover the vec struct ref.
+        const recvType = compileExpression(ctx, fctx, expr.expression);
+        if (recvType?.kind === "externref") {
+          fctx.body.push({ op: "any.convert_extern" } as Instr);
+          fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx } as Instr);
+        } else if (
+          (recvType?.kind === "ref" || recvType?.kind === "ref_null") &&
+          "typeIdx" in recvType &&
+          recvType.typeIdx !== vecTypeIdx
+        ) {
+          fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx } as Instr);
+        }
+        // field 0 → i32 (element count or byte count).
+        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr);
+        if (bytesPerElem !== 1) {
+          fctx.body.push({ op: "i32.const", value: bytesPerElem } as Instr);
+          fctx.body.push({ op: "i32.mul" } as Instr);
+        }
+        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+        return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
-      // field 0 → i32 (element count or byte count).
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 } as Instr);
-      if (bytesPerElem !== 1) {
-        fctx.body.push({ op: "i32.const", value: bytesPerElem } as Instr);
-        fctx.body.push({ op: "i32.mul" } as Instr);
-      }
-      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
-      return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
 
@@ -3640,7 +3673,10 @@ export function compilePropertyAccess(
     // Fallback: compile the expression and check the actual wasm return type
     // This handles cases like strings.raw.length where TS doesn't know the type
     {
-      const savedLen = fctx.body.length;
+      // #1919 — transactional try-lower: keep the compiled receiver + struct.get
+      // when it lowers to a length-prefixed vec; otherwise roll back the body AND
+      // any locals / late imports / errors the compile leaked.
+      const snap = snapshotSpeculative(ctx, fctx);
       const exprType = compileExpression(ctx, fctx, expr.expression);
       if (
         exprType &&
@@ -3672,7 +3708,10 @@ export function compilePropertyAccess(
       // through to the origin path unchanged (zero regression; the #2580 fix lands
       // in M2). `emitDynGet`/`ensureDynReadHelpers` (the M0 scaffold) stay registered
       // for M2 to call. Standalone keeps its native `__extern_length` arm below.
-      fctx.body.length = savedLen;
+      //
+      // (#1919) Undo the compiled expression if it didn't match — transactional
+      // rollback (body + locals + late imports + errors), not a bare body truncate.
+      rollbackSpeculative(ctx, fctx, snap);
     }
     // #1472 Phase B Blocker B Slice 2 — standalone `.length` on an `any`/unknown
     // receiver. None of the vec fast-paths matched, so the receiver is an opaque
@@ -3832,6 +3871,26 @@ export function compilePropertyAccess(
     if (propName in numberConstants) {
       fctx.body.push({ op: "f64.const", value: numberConstants[propName]! });
       return { kind: "f64" };
+    }
+  }
+
+  // (#2595) `<TypedArrayName>.BYTES_PER_ELEMENT` — static element byte width
+  // (§23.2.6.x). Statically known per constructor name, so emit it as a
+  // constant. Standalone otherwise reaches `reportUnsupportedStandaloneBuiltinValueRead`
+  // (the generic builtin-static-value-read refusal); host mode reads the same
+  // constant via the host import, so folding it here is observationally
+  // identical and works in both modes. Skip when the name is shadowed by a local.
+  if (
+    propName === "BYTES_PER_ELEMENT" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text in TYPED_ARRAY_BYTES_PER_ELEMENT
+  ) {
+    const builtinName = expr.expression.text;
+    const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+    if (!isShadowed) {
+      const bytes = TYPED_ARRAY_BYTES_PER_ELEMENT[builtinName]!;
+      fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: bytes });
+      return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
 

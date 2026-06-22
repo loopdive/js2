@@ -400,3 +400,46 @@ sticky (`/y/` + `lastIndex`) **all PASS host-import-free**. So the high-frequenc
 RegExp surface is already correct standalone — **no quick dev win remains here**;
 the open residual is the documented feature/representation tail above (v-flag
 `\q{}`, dynamic ctor patterns, `any`-typed receivers). Not claimed.
+
+## Umbrella sub-issue slicing (2026-06-22, architect)
+
+Re-bucketed the **full standalone-vs-host gap** (host baseline `2026-06-20`,
+standalone baseline `2026-06-19`, both from `loopdive/js2wasm-baselines`):
+**747 RegExp tests pass host / fail standalone** (478 `compile_error` + 269
+`fail`). Re-probed every distinctive feature against **current upstream/main**
+(`--target standalone`, empty importObject) to find the **concrete, bounded,
+substrate-independent** wins. Sliced into 4 dispatch-ready dev issues:
+
+| # | slice | root cause (verified on main) | est. rows | feasibility |
+|---|---|---|---:|---|
+| **#2588** | named-groups result object `m.groups` + `$<name>` substitution | match-vec struct has no `groups` field; reader maps any non-`index` prop to `input`; `$<` is a literal stub. Numbered captures + `\k<name>` already work; only the result-object exposure + `$<name>` are missing. | ~40-50 | medium |
+| **#2589** | `d`-flag match `.indices` array | match-vec struct has no `indices` field; `m.indices` read leaks `env::__extern_get`. The `caps` i32 array already holds every start/end pair — just unmaterialised. | ~15-22 | medium |
+| **#2590** | `RegExp.escape(str)` static method (ES2025) | entirely unimplemented; leaks `env::__get_builtin` and fails to instantiate. Pure native string transform, no engine. | ~20-29 | medium |
+| **#2591** | `v`-flag `\q{…}` string disjunction | set ops `&&`/`--` already work; `\q{}` **traps at runtime** ("illegal cast") — the unicode.ts refusal guard is bypassed for some forms, lowering a malformed multi-char-in-class node. Implement (desugar to alternation) or complete the refusal. | ~25-39 | medium |
+
+**Sub-total ≈ 100-140 standalone rows** across the 4 slices. Each has ONE
+concrete root cause, is independently implementable (~1-2 days), and is pure
+regex-engine / result-shape work — **no value-rep / substrate dependency**.
+
+### Residual NOT covered by the 4 slices (left under #2161)
+
+- **`RegExp.prototype` reflection (~126)** — gated on **#2158**'s standalone
+  builtin-prototype-object representation (every `RegExp.prototype.test`/`.flags`/
+  descriptor form chains off the `RegExp.prototype` OBJECT read that has no native
+  handler). NOT a bounded point-fix; do not slice here. Documented above
+  (2026-06-16 sdev5 + refinement).
+- **Dynamic / `any`-typed receivers (bucket c, ~50+)** — `function f(re: RegExp)`
+  / `re.test` on an externref receiver returns wrong results because the native
+  engine takes a statically-typed `$NativeRegExp`. Needs the runtime-externref
+  regex-receiver generalisation (`emitRegexExecArrayCall`). A larger architectural
+  slice; not in this batch.
+- **Dynamic constructor patterns/flags** (`new RegExp("a"+"b","g")` runtime-traps
+  "illegal cast"; ~64) — engine feature + dynamic-pattern lowering.
+- **`String.prototype.split`/`replace`/`search` `.call()` + ToString-coercion +
+  symbol-protocol dynamic forms** — overlaps the bucket-c dynamic-receiver work.
+- The static `@@match/@@matchAll/@@search/@@replace/@@split` protocol forms and
+  `matchAll`, `toString`, `String(re)`/`` `${re}` `` coercion are **already
+  landed** (slices above); not re-sliced.
+
+**#2161 stays open** as the umbrella tracker for the reflection (#2158-gated) and
+dynamic-receiver residuals once #2588-#2591 land.

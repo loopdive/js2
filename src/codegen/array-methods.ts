@@ -11,6 +11,7 @@ import { isBooleanType, isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
+import { probeCompiledType } from "./context/speculative.js";
 import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { addArrayIteratorImports, addStringImports, addUnionImports, resolveWasmType } from "./index.js";
@@ -518,9 +519,9 @@ function inferExpressionWasmType(
   }
 
   if (!allowProbe) return undefined;
-  const savedLen = fctx.body.length;
-  const probeResult = compileExpression(ctx, fctx, expr);
-  fctx.body.length = savedLen;
+  // #1919 — transactional probe: compile only to read the produced ValType, then
+  // roll back the body AND any locals / late imports / errors the compile leaked.
+  const probeResult = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, expr));
   return probeResult ?? undefined;
 }
 
@@ -2787,10 +2788,10 @@ export function compileArrayMethodCall(
     // Slow path: probe-compile the receiver to determine its actual type.
     // Compiles the expression, captures the result type, then rolls back.
     if (!actualType || actualType.kind === "externref" || actualType.kind === "f64" || actualType.kind === "i32") {
-      const savedLen = fctx.body.length;
-      const probeResult = compileExpression(ctx, fctx, receiverExpr);
-      // Roll back — the method function will re-compile the receiver
-      fctx.body.length = savedLen;
+      // #1919 — transactional probe: the method function re-compiles the
+      // receiver below, so discard the body plus any locals / late imports /
+      // errors this probe leaks.
+      const probeResult = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, receiverExpr));
       if (
         probeResult &&
         (probeResult.kind === "ref" || probeResult.kind === "ref_null") &&

@@ -282,6 +282,7 @@ End of sprint:
 - Batch doc/plan commits on main AFTER all pending agent merges, not between them (doc commits force agents to re-merge main)
 - Complete post-merge issue cleanup (set `status: done` in sprint dir issue file, update dep graph) after each merge
 - **Tag sprints**: `git tag sprint-N/begin` when starting a sprint, `git tag sprint/N` when it finishes. Sprint stats (duration, commits, issues) are auto-generated from tags during `build:pages`.
+- **ALWAYS shepherd the open PRs to the merge queue every loop — the `auto-enqueue` cron is a BACKSTOP, not the primary.** Sweep `gh pr list -R loopdive/js2wasm --state open` and **one-shot enqueue every CLEAN, non-`hold`, non-draft PR not already in the queue** (GraphQL `enqueuePullRequest`, **user PAT**, NEVER re-enqueue — loop hazard, see `project_merge_queue_requeue_cancels_run`). A green PR must never sit idle waiting for the sparse ~30-min backstop cron — the lead drives it to merged. **Held (`hold` label) or CI-failing / `BEHIND` / `DIRTY` PRs → add a high-priority `[CI-FIX]` task at the TOP of the TaskList** for the next dev to rebase/fix the gate failure (with full PR context) and re-enqueue. Both the lead AND the authoring agent actively enqueue; the backstop only catches strays.
 
 ### Sprint planning (PO + Architect + Tech Lead)
 
@@ -357,7 +358,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 3. Update `plan/issues/backlog/backlog.md` if the issue was listed there
 
 <!-- AUTO:conformance-start -->
-**test262 conformance**: 31,678 / 43,135 (73.4 %)
+**test262 conformance**: 31,697 / 43,135 (73.5 %)
 <!-- AUTO:conformance-end -->
 
 ### Sprint History

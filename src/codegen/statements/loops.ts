@@ -8,7 +8,8 @@ import { forEachChild, ts } from "../../ts-api.js";
 import { collectReferencedIdentifiers } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError, reportErrorNoNode } from "../context/errors.js";
-import { allocLocal, getLocalType, restoreLocals, snapshotLocals } from "../context/locals.js";
+import { allocLocal, getLocalType } from "../context/locals.js";
+import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
 import {
@@ -2479,11 +2480,10 @@ function compileForOfNativeCollection(
   // Confirm the receiver genuinely lowers to the native `$Map` struct (a Map/Set
   // typed value can still be a host externref in JS-host mode) without leaving
   // code behind.
-  const bodyLenBefore = fctx.body.length;
-  const localsSnap = snapshotLocals(fctx);
+  // #1919 — transactional probe: discard body + locals + late imports + errors.
+  const snap = snapshotSpeculative(ctx, fctx);
   const recvType = compileExpression(ctx, fctx, receiver);
-  fctx.body.length = bodyLenBefore;
-  restoreLocals(fctx, localsSnap);
+  rollbackSpeculative(ctx, fctx, snap);
   if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) return false;
   if (recvType.typeIdx !== ctx.mapTypeIdx) return false;
 
@@ -2554,11 +2554,10 @@ function compileForOfNativeMapEntries(
 
   // Confirm the receiver genuinely lowers to the native `$Map` struct without
   // leaving code behind (same probe as compileForOfNativeCollection).
-  const probeBody = fctx.body.length;
-  const probeLocals = snapshotLocals(fctx);
+  // #1919 — transactional probe: discard body + locals + late imports + errors.
+  const probeSnap = snapshotSpeculative(ctx, fctx);
   const recvProbe = compileExpression(ctx, fctx, receiver);
-  fctx.body.length = probeBody;
-  restoreLocals(fctx, probeLocals);
+  rollbackSpeculative(ctx, fctx, probeSnap);
   if (!recvProbe || (recvProbe.kind !== "ref" && recvProbe.kind !== "ref_null")) return false;
   if (recvProbe.typeIdx !== ctx.mapTypeIdx) return false;
 
@@ -2719,11 +2718,10 @@ function arrayIteratorReceiverForForOf(
   if (method !== "values" && method !== "keys" && method !== "entries") return undefined;
 
   // Confirm the receiver lowers to a vec struct without leaving any code behind.
-  const bodyLenBefore = fctx.body.length;
-  const localsSnap = snapshotLocals(fctx); // #1847
+  // #1919 — transactional probe: discard body + locals + late imports + errors.
+  const snap = snapshotSpeculative(ctx, fctx);
   const recvType = compileExpression(ctx, fctx, callee.expression);
-  fctx.body.length = bodyLenBefore;
-  restoreLocals(fctx, localsSnap); // #1847 — also drops stale localMap entries
+  rollbackSpeculative(ctx, fctx, snap);
   if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) return undefined;
   if (getArrTypeIdxFromVec(ctx, recvType.typeIdx) < 0) return undefined;
   return { receiver: callee.expression, method };
@@ -2764,11 +2762,12 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
 
   const strType = nativeStringType(ctx);
 
-  // Compile the iterable expression (string ref)
-  const bodyLenBefore = fctx.body.length;
+  // Compile the iterable expression (string ref).
+  // #1919 — snapshot so a failed compile rolls back body + locals + imports.
+  const strSnap = snapshotSpeculative(ctx, fctx);
   const compiledType = compileExpression(ctx, fctx, stmt.expression);
   if (!compiledType) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, strSnap);
     reportError(ctx, stmt, "for-of: failed to compile string expression");
     return;
   }
@@ -3005,9 +3004,10 @@ function compileForOfArrayTentative(
   iterableOverride?: ts.Expression,
 ): boolean {
   const iterableExpr = iterableOverride ?? stmt.expression;
-  // Tentatively compile just the expression to discover its Wasm type
-  const bodyLenBefore = fctx.body.length;
-  const localsSnap = snapshotLocals(fctx); // #1847
+  // Tentatively compile just the expression to discover its Wasm type.
+  // #1919 — transactional probe: every exit re-compiles (vec path) or defers to
+  // the iterator path, so always discard body + locals + late imports + errors.
+  const snap = snapshotSpeculative(ctx, fctx);
   const exprType = compileExpression(ctx, fctx, iterableExpr);
 
   // Check if it compiled to a ref to a vec struct (not just any struct —
@@ -3018,16 +3018,14 @@ function compileForOfArrayTentative(
     if (typeDef && typeDef.kind === "struct" && getArrTypeIdxFromVec(ctx, exprType.typeIdx) >= 0) {
       // Confirmed vec struct — undo the tentative compilation and use the
       // full array path (which compiles the expression again with proper setup)
-      fctx.body.length = bodyLenBefore;
-      restoreLocals(fctx, localsSnap); // #1847
+      rollbackSpeculative(ctx, fctx, snap);
       compileForOfArray(ctx, fctx, stmt, iterableOverride);
       return true;
     }
   }
 
   // Not a vec struct — undo tentative compilation, let caller use iterator path
-  fctx.body.length = bodyLenBefore;
-  restoreLocals(fctx, localsSnap); // #1847
+  rollbackSpeculative(ctx, fctx, snap);
   return false;
 }
 
@@ -3059,10 +3057,12 @@ function compileForOfArray(
   // inner receiver of a `.values()` call (#681) when present. When `preVec` is
   // supplied the caller already materialized the vec into a local (#2162 native
   // Map/Set for-of), so skip the expression compile.
-  const bodyLenBefore = fctx.body.length;
+  // #1919 — snapshot so a non-array receiver rolls back body + locals + imports
+  // before reporting. With `preVec` no compile happens, so rollback is a no-op.
+  const snap = snapshotSpeculative(ctx, fctx);
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
   }
@@ -3071,7 +3071,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
@@ -3079,7 +3079,7 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
@@ -3405,11 +3405,10 @@ function compileForOfArrayEntries(
   }
 
   // Resolve the element (value) Wasm type from the receiver's vec/arr type.
-  const probeBody = fctx.body.length;
-  const probeLocals = snapshotLocals(fctx);
+  // #1919 — transactional probe: discard body + locals + late imports + errors.
+  const probeSnap = snapshotSpeculative(ctx, fctx);
   const recvType = compileExpression(ctx, fctx, receiver);
-  fctx.body.length = probeBody;
-  restoreLocals(fctx, probeLocals);
+  rollbackSpeculative(ctx, fctx, probeSnap);
   if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) {
     if (!compileForOfArrayTentative(ctx, fctx, stmt)) compileForOfIterator(ctx, fctx, stmt);
     return;
@@ -3490,10 +3489,11 @@ function emitArrayKeysEntriesLoop(
   receiver: ts.Expression,
   bindIteration: (lenLocal: number, iLocal: number, dataLocal: number, arrTypeIdx: number) => void,
 ): void {
-  const bodyLenBefore = fctx.body.length;
+  // #1919 — snapshot so a non-array receiver rolls back body + locals + imports.
+  const snap = snapshotSpeculative(ctx, fctx);
   const vecType = compileExpression(ctx, fctx, receiver);
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
   }
@@ -3501,7 +3501,7 @@ function emitArrayKeysEntriesLoop(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
-    fctx.body.length = bodyLenBefore;
+    rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
@@ -4224,9 +4224,9 @@ function findStructFieldsByTypeIdx(
  *     br loop
  */
 function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForOfStatement): void {
-  // Compile the iterable expression
-  const bodyLenBefore = fctx.body.length;
-  const localsSnap = snapshotLocals(fctx); // #1847
+  // Compile the iterable expression. (#1919) Unlike the tentative probes above,
+  // every path here KEEPS the compiled iterable on the stack — it is consumed by
+  // the chosen iteration loop — so there is no rollback and no snapshot to take.
   const iterableType = compileExpression(ctx, fctx, stmt.expression);
   if (!iterableType) {
     reportError(ctx, stmt, "for-of: failed to compile iterable expression");
