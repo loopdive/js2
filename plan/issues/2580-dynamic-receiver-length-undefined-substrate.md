@@ -774,3 +774,38 @@ double-walking), (4) staging that banks rows full-gate-validated (the named-read
 canary `new Con().foo` first, then indexed, then the generic-method cluster).
 No code landed this session — read-only re-grounding only; branch carries this
 finding doc.
+
+---
+
+## Suspended Work (M3, sd-value-rep-m3, 2026-06-22 — drain/suspend)
+
+**State:** Read-only re-grounding COMPLETE; NO implementation started. M3 is
+parked pending an architect spec (verdict above). Nothing to land — this is a
+clean, scope-only stopping point, not a mid-implementation suspend.
+
+**Branch:** `issue-2580-m3-protochain-hasproperty` (pushed to origin; commit
+`02cd1e9ec11`, docs-only — the "M3 — RE-GROUNDING" section above). No source
+files touched. Claim released (issue unpinned).
+
+**The one durable deliverable:** the verified root cause + the runner trap, in
+the "M3 — RE-GROUNDING" section. The substrate is a missing dynamic
+`[[Prototype]]`-link on the compiled object rep — NOT the `__dyn_has`-wiring slice
+the scoping doc assumed.
+
+**Resume steps (for the architect, then a senior-dev):**
+1. Read the "M3 — RE-GROUNDING" section above (root cause, 170-row scope, the
+   per-process runner trap, why no surgical sub-slice exists).
+2. Architect-spec the dynamic `[[Prototype]]`-link object-model change per the
+   VERDICT's 4 decision points. This is NOT dev-claimable until spec'd.
+3. The minimal reproducers to drive TDD (all return wrong values on current main,
+   host AND standalone identical):
+   - `function Con(){}; Con.prototype={foo:7}; new Con().foo` → NaN (want 7)
+   - `Object.create({5:99})[5]` → NaN (want 99)
+   - `o={}; Object.setPrototypeOf(o,{5:99}); o[5]` → NaN (want 99)
+   - `proto={5:99,length:10}; Con.prototype=proto; child=new Con();`
+     `(5 in child)` → 0 (want 1); `forEach.call(child,cb)` visits 0 (want 1)
+4. Stage the named-read canary (`new Con().foo`) FIRST, full-gate each step
+   (merge_group / local-ci — broad-impact value-rep, never a scoped sweep).
+
+**No `status:` change needed:** issue stays `in-progress` (frontmatter) as a
+parked-next-sprint substrate; task #35 stays `[PARKED — NEXT-SPRINT SUBSTRATE]`.
