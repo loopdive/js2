@@ -1,9 +1,8 @@
 {
   "id": "2605",
-  "assignee": "ttraenkler/async-2612-2613",
-  "status": "released",
-  "branch": "issue-2605-collection-instanceof",
-  "claimed_at": "2026-06-22T12:19:49Z",
-  "updated_at": "2026-06-22T12:20:41Z",
-  "released_at": "2026-06-22T12:20:41Z"
+  "assignee": "ttraenkler/dev-collections",
+  "status": "in-progress",
+  "branch": "issue-2605-2606-standalone-collections",
+  "claimed_at": "2026-06-22T12:34:56Z",
+  "updated_at": "2026-06-22T12:34:56Z"
 }
