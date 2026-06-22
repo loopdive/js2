@@ -1,8 +1,9 @@
 {
   "id": "2580",
   "assignee": "ttraenkler/sd-value-rep-m3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2580-m3-protochain-hasproperty",
   "claimed_at": "2026-06-22T21:29:42Z",
-  "updated_at": "2026-06-22T21:29:42Z"
+  "updated_at": "2026-06-22T21:42:34Z",
+  "released_at": "2026-06-22T21:42:34Z"
 }
