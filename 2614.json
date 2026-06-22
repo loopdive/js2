@@ -1,8 +1,8 @@
 {
   "id": "2614",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T11:13:11Z",
-  "updated_at": "2026-06-22T11:13:11Z"
+  "assignee": "ttraenkler/senior-developer",
+  "status": "in-progress",
+  "branch": "issue-2614-promise-combinator-resolve",
+  "claimed_at": "2026-06-22T12:55:35Z",
+  "updated_at": "2026-06-22T12:55:35Z"
 }
