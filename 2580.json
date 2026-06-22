@@ -1,9 +1,8 @@
 {
   "id": "2580",
-  "assignee": "ttraenkler/sd-value-rep",
-  "status": "released",
-  "branch": "issue-2580-m22a-search",
-  "claimed_at": "2026-06-22T09:26:04Z",
-  "updated_at": "2026-06-22T09:30:24Z",
-  "released_at": "2026-06-22T09:30:24Z"
+  "assignee": "ttraenkler/sendev-flatten",
+  "status": "in-progress",
+  "branch": "issue-2580-m22c-reduce-noinit",
+  "claimed_at": "2026-06-22T15:45:03Z",
+  "updated_at": "2026-06-22T15:45:03Z"
 }
