@@ -29,6 +29,7 @@
 - [project_linear_backend_no_console_log.md](project_linear_backend_no_console_log.md) — Linear backend (target:"linear", non-WASI) drops console.log; it's return-value-oriented — cross-backend/diff tests must assert return values, not stdout (#1854)
 - [project_proxy_no_ts_type_brand.md](project_proxy_no_ts_type_brand.md) — A JS Proxy carries no TS-type brand (types as its target); never static-classify a possibly-proxy receiver — detect syntactically + defer to host (#2501 proxy-revoked regression)
 - [project_2602_forawait_rest_aliases_source_recompile.md](project_2602_forawait_rest_aliases_source_recompile.md) — #2602: for-await array-rest `y` aliases the SOURCE array under a fresh compileExpression (recompile→source len 3, not rest slice 2); blocks #2580 M2 slice 1; async-lane local-versioning, not substrate — recompiling an identifier ≠ its live local in the async state machine
+- [project_2602_forof_assign_rest_write_unimplemented.md](project_2602_forof_assign_rest_write_unimplemented.md) — #2602 CORRECTED root cause: the for-of/for-await ASSIGNMENT-destructuring rest write is unimplemented (loops.ts continues on isSpreadElement), NOT an async SSA alias; latent until the #2580 reader re-reads y; destructuring/async specialist
 
 ### Team & agents (rules not in plan/method/team-setup.md)
 - [feedback_architect_worktree_isolation.md](feedback_architect_worktree_isolation.md) — Always spawn architects with isolation:worktree — they stall and request respawn without it
@@ -64,6 +65,7 @@
 ### Dispatch
 - [feedback_dispatch_status.md](feedback_dispatch_status.md) — Update issue status to in-progress when dispatching an agent
 - [feedback_dedicated_pr_shepherd.md](feedback_dedicated_pr_shepherd.md) — Always staff a dedicated PR-queue shepherd as a standing team role; don't hand-shepherd the merge queue ad-hoc (it strands/wedges when the lead is busy)
+- [feedback_lead_shepherds_prs.md](feedback_lead_shepherds_prs.md) — Tech lead ALWAYS shepherds open PRs each loop: one-shot enqueue every CLEAN PR, held/failing → top of tasklist; each agent enqueues its own when green; auto-enqueue is backstop only
 - [feedback_auto_ff_workspace_main.md](feedback_auto_ff_workspace_main.md) — Auto-ff /workspace main to origin/main whenever origin is ahead (Stop+SessionStart hook in .claude/settings.json); stale /workspace gave a wrong 14/67 sprint count
 - [feedback_slice_claim_collision_check_assignments_log.md](feedback_slice_claim_collision_check_assignments_log.md) — Slice-granular (id:slice) claims can double-dispatch; check issue-assignments log for sole ownership + watch for foreign edits in your worktree before committing
 
@@ -87,6 +89,7 @@
 - [feedback_baseline_drift_cross_check.md](feedback_baseline_drift_cross_check.md) — Cross-check CI regressions against other open PRs; sample locally — identical clusters across unrelated PRs are drift
 - [project_standalone_floor_only_on_merge_group.md](project_standalone_floor_only_on_merge_group.md) — Standalone floor gate (#2097) runs only on merge_group, not PR; standalone regressions pass all PR checks then fail in the queue. Bisect via merged-report jsonl diff or local WebAssembly.validate
 - [project_broad_impact_validate_full_ci.md](project_broad_impact_validate_full_ci.md) — Broad-impact changes (value-rep/dispatch/call-path/shared helpers) MUST validate via full local-ci (~68min) or merge_group, NEVER a scoped sweep — scoped "+N/0 regr" hides regressions outside the sample (3 PRs ejected 2026-06-21: #1837/#1838/#1844)
+- [project_2040_tag5_classifier_dstr_default_regression.md](project_2040_tag5_classifier_dstr_default_regression.md) — #1888 tag-5 field-4 eq arm ejected −162 on the floor (class-dstr cluster); restore the ref.test $AnyString guard (banks #2579/#2583), DEFER the whole classifier — both #2040 numeric f64.eq AND #2585 object ref.eq regress dstr → #2580 M2
 - [project_standalone_hostimport_gate_index_shift.md](project_standalone_hostimport_gate_index_shift.md) — Gating lib-global host-import registration under standalone (collectReferencedGlobalNames, #2520/PR#1787) reorders import/type table → wrong type idx → "throw expected externref, found call of type i64"
 - [feedback_cla_check_rerun_after_merge_commit.md](feedback_cla_check_rerun_after_merge_commit.md) — Fork PR enqueue fails "cla-check expected" after a merge-main commit; gh run rerun the cla-check workflow to repost on the new head
 - [reference_error_analysis.md](reference_error_analysis.md) — Test262 error analysis procedure
@@ -121,6 +124,7 @@
 - [feedback_no_stash_before_merge.md](feedback_no_stash_before_merge.md) — Never stash before merge, commit first
 - [feedback_no_git_stash_in_worktree.md](feedback_no_git_stash_in_worktree.md) — NEVER `git stash` in a worktree; stash stack is shared across worktrees, concurrent agents clobber each other
 - [feedback_explicit_main_push.md](feedback_explicit_main_push.md) — Only push to main when the user explicitly asks for that exact push each time
+- [reference_git_corrupt_loose_object_refetch.md](reference_git_corrupt_loose_object_refetch.md) — Recover a corrupt loose object in /workspace/.git ("loose object … is corrupt" on merge) via git fetch --refetch (bypasses have/want negotiation); non-destructive to refs/history
 - [feedback_regression_analysis.md](feedback_regression_analysis.md) — Regressions may be false-positive exposure, not real regressions; `pass → compile_timeout` is runner-load flake unless baseline compile >5s
 
 Most project context lives in `/workspace/CLAUDE.md`.

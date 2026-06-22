@@ -1,10 +1,11 @@
 ---
 id: 1528
 title: "spec gap: non-constructor TypeError — Promise.all / allSettled species and executor paths"
-status: in-progress
+status: blocked
 created: 2026-05-20
 updated: 2026-06-22
-assignee: ttraenkler/senior-developer
+assignee: ttraenkler/dev-promise
+blocked_on: capability-bridge (#2614) — multi-hop host→wasm callback cast + Reflect.construct-with-newTarget ctor identity
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -681,3 +682,51 @@ rows need #1 (multi-hop callback cast) + #2 (species identity) + #3
 not this arm. Ship the arm small OR fold it into that larger effort. #2614 stays
 blocked on #1/#2/#3; #2618 (Proxy apply/construct) shares the same
 `__fn_tramp_Constructor` dispatch and sequences after.
+
+## Re-grounded against current main — 2026-06-22 (dev-promise, task #40)
+
+Re-probed the canonical sample + the full `isConstructor.js`-harness cluster on
+`origin/main @ 50a9ce400` (after #756/#1921/#1940/#1945/#2608 all landed). **The
+non-constructor-TypeError surface this issue was opened for is already solved on
+main; what remains is exclusively the deep capability-bridge cluster, which is
+not a tractable single dev slice.** No code change made here — `status: blocked`.
+
+### Canonical sample (issue "Failing test examples")
+| test | status on main |
+|------|----------------|
+| `Promise/allSettled/species-get-error.js` | **pass** |
+| `language/function-code/10.4.3-1-26gs.js` | **pass** |
+| `Promise/executor-function-not-a-constructor.js` | fail (capability bridge) |
+| `Promise/all/resolve-throws-iterator-return-null-or-undefined.js` | fail (capability bridge) |
+| `Promise/allSettled/reject-element-function-length.js` | fail (capability bridge) |
+
+### Full `isConstructor.js`/`"is not a constructor"` cluster — 14/21 pass
+The 7 non-pass split into three NON-tractable groups (none is this issue's
+non-constructor-throw shape):
+
+1. **Capability bridge** (`executor-function-not-a-constructor`, `is-a-constructor`):
+   `Promise.resolve.call(NotPromise)` / `isConstructor(Promise)` →
+   `Reflect.construct(fn, [], Promise)` with the real Promise ctor as
+   **newTarget**. Needs the GetCapabilitiesExecutor host function captured with
+   correct `[[Construct]]`/`isConstructor` identity + ctor-identity through the
+   bridge. This is exactly the species/ctor-identity + multi-hop callback-cast
+   work the "Class-ctor arm verdict (2026-06-22)" section flags as #2614-blocked,
+   sprint-scale.
+2. **Combinator delegation through a user capability ctor**
+   (`all/resolve-throws-iterator-return`): `Promise.all.call(BadPromise, iter)` —
+   full PerformPromiseAll + IteratorClose run through a user subclass whose
+   `static resolve` throws; same capability-bridge dependency.
+3. **Unimplemented methods** (`allKeyed`, `allSettledKeyed`, `try`
+   not-a-constructor): `Promise.allKeyed`/`Promise.try` don't exist (compile
+   error on the property access), so these are *missing-feature* tests, NOT the
+   non-constructor cluster. Should be re-bucketed to a Promise-method-coverage
+   issue, not tracked here.
+   `prototype/finally/*` (2 rows) are `.finally` semantics, also off-topic.
+
+### Verdict
+Every productive non-constructor-TypeError slice (static `new Promise.all()`,
+arrow/bound/method values, ordinary closure-as-ctor, capability-ctor
+executor-param routing) is **merged**. The residual is the
+`__fn_tramp_Constructor` / capability-identity bridge (#2614) plus orthogonal
+missing-method work. Leaving `status: blocked` on #2614; recommend the
+unimplemented-method rows be re-bucketed by the PO.
