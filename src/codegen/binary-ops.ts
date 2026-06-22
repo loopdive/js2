@@ -2500,31 +2500,48 @@ export function compileBinaryExpression(
           ],
         } as Instr,
       ];
-      // For loose equality, wrap the core cascade in the nullish guard
-      // (§7.2.15 steps 2-3): both nullish ⇒ true; nullish-vs-non-nullish ⇒ false.
-      const eqInstrs: Instr[] = looseNullish
-        ? [
+      // (#2106) Nullish guard — shared by both equality modes, just with
+      // different "exactly one side nullish" answers:
+      //   - LOOSE (§7.2.15 steps 2-3): both nullish ⇒ true; one nullish ⇒ false
+      //     (`null == 0` is false, never coerces against a nullish).
+      //   - STRICT (§7.2.16 step 2 / §7.2.10 SameValue on the nullish types):
+      //     both nullish ⇒ true; one nullish ⇒ false. Two erased `any` operands
+      //     that are both `ref.null extern` (e.g. the test262 `isSameValue`
+      //     harness comparing `undefined`/`null` results read back out of an
+      //     `any` carrier) otherwise fell all the way through the numeric/
+      //     boolean/bigint cascade to the eqref-identity arm, where
+      //     `any.convert_extern(null)` fails `ref.test $eq` and returns 0 — so
+      //     `undefined === undefined` and `null === null` were both WRONG
+      //     (`false`). Both modes therefore short-circuit identically: the only
+      //     mode-specific behaviour is the (rare, fully type-erased)
+      //     `null === undefined` pair, which stays indistinguishable until the
+      //     tag-1 `$undefined` singleton (this issue's S1) gives undefined a
+      //     distinct representation — both operands are the same `ref.null extern`
+      //     bit pattern here, so no inline test can split them. Fixing the
+      //     dominant same-nullish cases is a strict net improvement over the
+      //     previous "all nullish strict-eq is false".
+      const bothNullishGuard = (inner: Instr[]): Instr[] => [
+        { op: "local.get", index: lTmp },
+        { op: "ref.is_null" } as Instr,
+        { op: "local.get", index: rTmp },
+        { op: "ref.is_null" } as Instr,
+        // (lNull || rNull): if EITHER is nullish, the result is whether BOTH
+        // are nullish (true) or not (false) — never coerce against a nullish.
+        { op: "i32.or" } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
             { op: "local.get", index: lTmp },
             { op: "ref.is_null" } as Instr,
             { op: "local.get", index: rTmp },
             { op: "ref.is_null" } as Instr,
-            // (lNull || rNull): if EITHER is nullish, the result is whether BOTH
-            // are nullish (true) or not (false) — never coerce against a nullish.
-            { op: "i32.or" } as Instr,
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "i32" } },
-              then: [
-                { op: "local.get", index: lTmp },
-                { op: "ref.is_null" } as Instr,
-                { op: "local.get", index: rTmp },
-                { op: "ref.is_null" } as Instr,
-                { op: "i32.and" } as Instr,
-              ],
-              else: coreEqInstrs,
-            } as Instr,
-          ]
-        : coreEqInstrs;
+            { op: "i32.and" } as Instr,
+          ],
+          else: inner,
+        } as Instr,
+      ];
+      const eqInstrs: Instr[] = bothNullishGuard(coreEqInstrs);
       for (const ins of eqInstrs) fctx.body.push(ins);
       if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
       releaseTempLocal(fctx, rTmp);

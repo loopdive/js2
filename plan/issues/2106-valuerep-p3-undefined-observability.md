@@ -2,10 +2,10 @@
 id: 2106
 title: "value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton"
 status: in-progress
-assignee: ttraenkler/sdev7
+assignee: ttraenkler/sdev-async
 sprint: 65
 created: 2026-06-11
-updated: 2026-06-18
+updated: 2026-06-23
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -332,3 +332,57 @@ measured test262 run, as the plan already says). Reverted the attempt cleanly
 (no code landed). Next agent: investigate why `__unbox_number(__box_number(x))`
 null-derefs in the find-HIT consuming context before re-widening — that
 box-protocol fix is the real prerequisite, not the find emit site itself.
+
+## Slice S1a — standalone strict `===`/`!==` over type-erased nullish (sdev-async, 2026-06-23)
+
+A **bounded, host-free** sub-slice harvested ahead of the full S1 `$undefined`
+singleton, fixing a concrete observability bug that the test262 `isSameValue`
+harness hits constantly.
+
+### Bug (WAT-confirmed, standalone)
+Two `any`-typed operands that both read back as `ref.null extern` compared with
+strict `===` returned **`false`** for `undefined === undefined` AND
+`null === null`:
+- `const a: any[] = [undefined, undefined]; a[0] === a[1]` → `false` (want `true`)
+- `const a: any[] = [null, null]; a[0] === a[1]` → `false` (want `true`)
+- (and the `!==` duals returned `true`)
+
+### Root cause
+`binary-ops.ts` `noJsHost` externref-equality cascade (the `#1776` isSameValue
+path): the **LOOSE** branch already had a both-nullish guard (`#2081`), but the
+**STRICT** branch went straight into the number→boolean→bigint→eqref-identity
+cascade. Two `ref.null extern` operands are none of number/boolean/bigint, so
+they reached the identity arm, where `any.convert_extern(null)` fails
+`ref.test $eq` and the arm returns `0`. There was **no "both nullish → equal"
+arm for strict**. (Note: the standalone `__any_strict_eq` helper DOES have a
+correct `tag < 2` nullish arm — but this inline externref cascade does not route
+through it; it's a separate, hand-rolled comparison.)
+
+### Fix (1 site, gated `noJsHost`, host mode byte-identical)
+Refactored the loose-only nullish guard into a shared `bothNullishGuard(inner)`
+helper applied to **both** modes: `(lNull || rNull) ? (lNull && rNull) : <core
+cascade>`. For strict this makes the same-nullish pairs equal while
+`nullish vs non-nullish` stays `false` (e.g. `undefined === 5` → false). The
+loose path is unchanged in behaviour (it always wrapped in the identical guard).
+
+### KNOWN BOUNDARY (deferred to the full S1 singleton)
+A **fully type-erased** `null === undefined` now returns `true` (want `false`):
+both operands are the identical `ref.null extern` bit pattern, so no inline test
+can split them. Splitting them requires the tag-1 `$undefined` singleton (S1)
+so undefined carries a distinct representation. The **type-aware** path (operands
+with a statically-known null/undefined type) is unaffected and still keeps
+`null === undefined` false — `tests/issue-1021-null-vs-undefined.test.ts` stays
+green. This is a strict net improvement over the prior state where *all*
+nullish strict-eq through erased `any` was `false`.
+
+### Validation
+- New: `tests/issue-2106-standalone-nullish-strict-eq.test.ts` (6 cases, all
+  host-free / zero `env` imports).
+- No regression locally: `tests/equivalence/{strict-equality-edge-cases,
+  loose-equality,equality-mixed-types,typeof-comparison,comparison-coercion,
+  null-narrowing,struct-null-comparison}.test.ts` (50), `issue-1776` (6),
+  `issue-1021-null-vs-undefined` (5), `issue-1127-samevalue`, `issue-2029` (3).
+- Full test262 blast radius (incl. the erased `null===undefined` edge) is
+  measured in `merge_group` per the value-rep broad-impact protocol.
+
+S1/S3/S4 remain open — this issue stays `in-progress`.
