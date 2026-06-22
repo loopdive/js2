@@ -1,8 +1,9 @@
 {
   "id": "1528",
   "assignee": "ttraenkler/sd-1838",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1528-classctor-arm",
   "claimed_at": "2026-06-22T16:21:03Z",
-  "updated_at": "2026-06-22T16:21:03Z"
+  "updated_at": "2026-06-22T17:34:35Z",
+  "released_at": "2026-06-22T17:34:35Z"
 }
