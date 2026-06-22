@@ -1,8 +1,8 @@
 {
   "id": "2592",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-22T06:21:04Z",
-  "updated_at": "2026-06-22T06:21:04Z"
+  "assignee": "ttraenkler/agent-typedarray-2595-2597",
+  "status": "in-progress",
+  "branch": "issue-2592-typedarray-static-factories",
+  "claimed_at": "2026-06-22T08:31:48Z",
+  "updated_at": "2026-06-22T08:31:48Z"
 }
