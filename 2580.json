@@ -1,8 +1,9 @@
 {
   "id": "2580",
   "assignee": "ttraenkler/sd-value-rep-m3-stageB",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2580-m3-stageB-fnctor",
   "claimed_at": "2026-06-23T21:53:22Z",
-  "updated_at": "2026-06-23T21:53:22Z"
+  "updated_at": "2026-06-23T22:18:43Z",
+  "released_at": "2026-06-23T22:18:43Z"
 }
