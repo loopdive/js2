@@ -1,9 +1,8 @@
 {
   "id": "2623",
   "assignee": "ttraenkler/sendev-capability",
-  "status": "released",
-  "branch": "issue-2623a-inbound-marshalling",
-  "claimed_at": "2026-06-23T19:34:15Z",
-  "updated_at": "2026-06-23T20:09:27Z",
-  "released_at": "2026-06-23T20:09:27Z"
+  "status": "in-progress",
+  "branch": "issue-2623b-construct-identity",
+  "claimed_at": "2026-06-23T20:11:34Z",
+  "updated_at": "2026-06-23T20:11:34Z"
 }
