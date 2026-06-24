@@ -960,6 +960,24 @@ export interface CodegenContext {
   }[];
   /** Counter for generated closure types/functions */
   closureCounter: number;
+  /**
+   * (#2640) When set, `compileArrowAsClosure` widens any callback parameter
+   * whose resolved type is a typed WasmGC vec/array (`__vec_*`/`__arr_*`/
+   * `$__vec_base`) to `externref`. Set transiently by
+   * `compileArrayLikePrototypeCall` around the callback compile: that path
+   * dispatches a generic `Array.prototype.X.call(arrayLike, cb)` over a
+   * DYNAMIC (non-vec) array-like receiver, and passes that receiver to the
+   * callback's array parameter as an `externref`. Without the widening,
+   * TypeScript infers the callback's array param as `T[]` → a typed vec ref,
+   * so the dispatch loop must pass `ref.null` (the receiver fails the vec
+   * `ref.test`) and the callback's `obj.length`/`obj[i]` lowers to a
+   * `struct.get` on null → "dereferencing a null pointer". Widening to
+   * externref routes those reads through the tag-aware dynamic reader.
+   * This path is ONLY entered for non-vec array-like receivers (real
+   * `__vec_`/`__arr_` receivers bail out of `compileArrayLikePrototypeCall`
+   * upstream), so the typed `arr.forEach(cb)` hot path is never touched.
+   */
+  forceExternrefCallbackParams?: boolean;
   /** Map from local variable name → closure metadata (for call_ref dispatch) */
   closureMap: Map<string, ClosureInfo>;
   /** Map from closure struct type index → closure metadata (for anonymous closures) */

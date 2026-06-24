@@ -845,11 +845,24 @@ export function compileArrayLikePrototypeCall(
   fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: lenTmp });
 
-  // Compile callback to closure
+  // Compile callback to closure.
+  // (#2640) This is the generic `Array.prototype.X.call(arrayLike, cb)` path
+  // over a DYNAMIC (non-vec) array-like receiver — the loop passes that
+  // receiver to the callback's array parameter (`cb`'s 3rd/4th arg) as an
+  // `externref`. TS infers that param as `T[]` → a typed vec ref, so without
+  // widening the dispatch below passes `ref.null` (the receiver fails the vec
+  // `ref.test`) and the callback's `obj.length`/`obj[i]` lowers to a
+  // `struct.get` on null → "dereferencing a null pointer". Force the
+  // callback's vec/array params to externref so those reads route through the
+  // tag-aware dynamic reader. Restore the prior flag afterward (nested
+  // closures outside this path must keep their typed params).
+  const savedForceExternrefCbParams = ctx.forceExternrefCallbackParams;
+  ctx.forceExternrefCallbackParams = true;
   const cbResult =
     ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
       ? compileArrowAsClosure(ctx, fctx, cbArg)
       : compileExpression(ctx, fctx, cbArg);
+  ctx.forceExternrefCallbackParams = savedForceExternrefCbParams;
   if (!cbResult || (cbResult.kind !== "ref" && cbResult.kind !== "ref_null")) return undefined;
   const closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
   const closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);

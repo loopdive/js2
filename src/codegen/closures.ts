@@ -1124,6 +1124,22 @@ function isArrayLikeReceiverType(recvType: ts.Type, ctx: CodegenContext): boolea
   return false;
 }
 
+/**
+ * (#2640) True when `wt` is a (nullable) ref to a typed WasmGC vec/array
+ * struct (`__vec_*`/`__arr_*`/`$__vec_base`). Used to widen array-like
+ * generic-method callback params to externref (see
+ * `ctx.forceExternrefCallbackParams`). Mirrors the `__vec_`/`__arr_`
+ * receiver-bail detection in `compileArrayLikePrototypeCall`.
+ */
+function isVecOrArrayRefType(ctx: CodegenContext, wt: ValType): boolean {
+  if (wt.kind !== "ref" && wt.kind !== "ref_null") return false;
+  const typeIdx = (wt as { typeIdx: number }).typeIdx;
+  const typeDef = ctx.mod.types[typeIdx];
+  const name = typeDef && "name" in typeDef ? (typeDef as { name?: string }).name : undefined;
+  if (!name) return false;
+  return name.startsWith("__vec_") || name.startsWith("__arr_") || name === "__vec_base";
+}
+
 /** Check if an arrow/function expression is used as a callback argument to a call
  *  that targets a HOST import (not a user-defined function). User-defined functions
  *  should receive closures via the GC struct path, not the __make_callback host path. */
@@ -1417,6 +1433,19 @@ export function compileArrowAsClosure(
     //     pattern parameter.
     const hasBindingPattern = ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name);
     if (hasBindingPattern && wasmType.kind !== "externref") {
+      wasmType = { kind: "externref" };
+    }
+    // (#2640) Array-like generic-method dispatch widens a callback parameter
+    // that TS inferred as a typed vec/array (`T[]` → `__vec_*`/`__arr_*`/
+    // `$__vec_base`) to `externref`. The receiver passed to such a callback by
+    // `compileArrayLikePrototypeCall` is a DYNAMIC (non-vec) array-like
+    // externref, not a typed vec; if the param stays a vec ref the dispatch
+    // loop must pass `ref.null` (the receiver fails the vec `ref.test`) and the
+    // callback's `obj.length`/`obj[i]` lowers to `struct.get` on null → a null
+    // deref. Widening to externref routes those reads through the tag-aware
+    // dynamic reader. Gated on the flag, set ONLY for the non-vec array-like
+    // path (typed `arr.forEach(cb)` never enters that path).
+    if (ctx.forceExternrefCallbackParams && isVecOrArrayRefType(ctx, wasmType)) {
       wasmType = { kind: "externref" };
     }
     arrowParams.push(wasmType);
