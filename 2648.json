@@ -1,8 +1,8 @@
 {
   "id": "2648",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-24T20:50:59Z",
-  "updated_at": "2026-06-24T20:50:59Z"
+  "assignee": "ttraenkler/agent-abc4cbcc1c297d4bd",
+  "status": "in-progress",
+  "branch": "issue-2648-typedarray-search-packed-elem",
+  "claimed_at": "2026-06-24T20:51:11Z",
+  "updated_at": "2026-06-24T20:51:11Z"
 }
