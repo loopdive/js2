@@ -207,6 +207,42 @@ helper must dead-elim to nothing when no host imports (no LinkError).
 capturing inner-resolve executor + a custom-thenable await. **merge_group floor
 mandatory** — this is the closure-call hot path.
 
+### Slice 2623-A facet 1 LANDED (sd-2623a, 2026-06-24) — guarded inbound arg cast
+
+The narrowest, monotonically-safe facet of 2623-A: the inbound dispatchers
+`__call_fn_N` / `__call_fn_method_N` (`emitClosureCallExportN`,
+`src/codegen/index.ts`) lowered each host-supplied callback arg via
+`buildArgConversion` → `externToClosureParamRef`, which for a **nullable
+concrete-struct param** (`ref_null` → `(ref null $T)`, e.g. a callback param the
+compiler typed `any[]` → a wasm vec struct) emitted an **unconditional
+`ref.cast_null $T`**. That TRAPS with `illegal cast` when the host passes a value
+that is not a `$T` — the dominant case being a real **host JS array** passed for
+an `any[]` param (a Proxy `apply`/`construct` trap's `args`; #2618).
+
+**Fix:** new `externToClosureParamRefGuarded` — `ref.test $T` first; on match
+`ref.cast_null $T` exactly as before (byte-identical for every matching
+callback — the hot path is unchanged), on mismatch a typed `ref.null $T` so
+`call_ref` typechecks and the closure receives null instead of crashing. Only
+for `ref_null` params (a non-null `ref` has no valid null fallback and its sole
+inbound use — native-strings `string` → `(ref $AnyString)` — is always
+host-satisfied, so it keeps the direct cast).
+
+**Monotonically safe for status:** a *passing* callback always supplied a value
+matching its declared param (no trap previously), so its behavior is unchanged;
+the guard can only turn a prior `fail (illegal-cast crash)` into `pass` or a
+different `fail` (wrong value) — never a `pass` into a `fail`.
+
+*Verified (per-process, gc):* `built-ins/Proxy/{apply,construct}` non-realm
+matrix **15 → 16 PASS, +1** (`apply/call-result` illegal-cast → PASS), zero
+regressions. The `*/resolve-from-same-thenable` + `allSettled/call-resolve-element`
+rows are UNCHANGED (they fail with "resolve or reject function is not callable" —
+the OUTBOUND capturing-closure-wrap facet, NOT this arg cast; still needs the
+runtime `_wrapWasmClosureUnknownArity` audit above). `tests/issue-2623a.test.ts`
+(4 cases: the Proxy apply arg + forEach/map/sort matching-path guards). Broad
+(hot inbound callback path) → merge_group floor validated. The prototyped #2618
+construct codegen routing + constructable-target wrapper compose ON TOP of this
+to flip the construct rows (follow-up PR).
+
 ---
 
 **Slice 2623-B — `__construct_closure` host-side instance identity + species.**

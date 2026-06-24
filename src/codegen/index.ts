@@ -3230,6 +3230,52 @@ function externToClosureParamRef(paramType: ValType): Instr[] {
 }
 
 /**
+ * (#2623-A) GUARDED inbound-arg lowering for a NULLABLE concrete-struct closure
+ * param (`ref_null` → `(ref null $T)`). The unconditional `ref.cast_null $T`
+ * (above) TRAPS with "illegal cast" when the host passes a value that is not a
+ * `$T` struct — the dominant case being a host-supplied **JS array** marshalled
+ * to externref for a trap param the compiler typed `any[]` → `(ref null $vec)`
+ * (e.g. a Proxy `apply`/`construct` trap's `args` argArray, #2618). That trap
+ * crashed the whole inbound dispatch.
+ *
+ * Fix: `ref.test $T` first; on a match `ref.cast_null $T` exactly as before
+ * (zero change for the matching hot-path — every ordinary `.map`/`.forEach`/
+ * Promise-executor callback passes a value that DOES match its declared param),
+ * on a mismatch yield a typed `ref.null $T` so `call_ref` still typechecks and
+ * the closure body receives null instead of trapping. `argLocalIdx` is the
+ * dispatcher's externref param local (always re-gettable), so the value is read
+ * twice without a temp local.
+ *
+ * Only for `ref_null` params — a non-null `ref` param has no valid null
+ * fallback, and its sole inbound use (a native-strings `string` →
+ * `(ref $AnyString)`) is always host-satisfied, so it keeps the direct cast.
+ */
+function externToClosureParamRefGuarded(paramType: ValType, argLocalIdx: number): Instr[] {
+  if (paramType.kind !== "ref_null") {
+    // Non-nullable concrete ref (or anyref/eqref handled by externToClosureParamRef):
+    // keep the existing behavior — the caller pushed `local.get argLocalIdx`.
+    return externToClosureParamRef(paramType);
+  }
+  // Caller did NOT pre-push the arg for this path; emit a self-contained guard
+  // that reads the arg local twice.
+  return [
+    { op: "local.get", index: argLocalIdx } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx: paramType.typeIdx } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "val", type: paramType },
+      then: [
+        { op: "local.get", index: argLocalIdx } as Instr,
+        { op: "any.convert_extern" } as Instr,
+        { op: "ref.cast_null", typeIdx: paramType.typeIdx } as Instr,
+      ],
+      else: [{ op: "ref.null", typeIdx: paramType.typeIdx } as Instr],
+    } as Instr,
+  ];
+}
+
+/**
  * Emit __call_fn_<arity> export (#1382): call an N-arg WasmGC closure from
  * JS. Takes (externref closure, externref arg0, ..., externref arg<arity-1>)
  * and returns externref. Used by `__array_from`, `__proto_method_call`, and
@@ -3364,6 +3410,12 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, paramType: ValType | undefined): Instr[] => {
+      // (#2623-A) A nullable concrete-struct param uses the GUARDED lowering,
+      // which reads the arg local itself (test-then-cast-or-null) — so do NOT
+      // pre-push the arg for that path. All other paths keep the prior shape.
+      if (paramType && paramType.kind === "ref_null" && needsExternToAnyForClosureParam(paramType)) {
+        return externToClosureParamRefGuarded(paramType, argLocalIdx);
+      }
       const ops: Instr[] = [{ op: "local.get", index: argLocalIdx } as Instr];
       if (paramType) {
         if (paramType.kind === "f64") {
@@ -3667,6 +3719,11 @@ function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number): void 
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, paramType: ValType | undefined): Instr[] => {
+      // (#2623-A) GUARDED lowering for a nullable concrete-struct param — see
+      // emitClosureCallExportN. Reads the arg local itself; do NOT pre-push.
+      if (paramType && paramType.kind === "ref_null" && needsExternToAnyForClosureParam(paramType)) {
+        return externToClosureParamRefGuarded(paramType, argLocalIdx);
+      }
       const ops: Instr[] = [{ op: "local.get", index: argLocalIdx } as Instr];
       if (paramType) {
         if (paramType.kind === "f64") {
