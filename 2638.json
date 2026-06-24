@@ -1,9 +1,9 @@
 {
   "id": "2638",
   "assignee": "ttraenkler/sendev-2623a",
-  "status": "in-progress",
+  "status": "released",
   "branch": "doc-2623-executor-body-handoff",
-  "reserved_at": "2026-06-24T06:18:43Z",
   "claimed_at": "2026-06-24T06:18:43Z",
-  "updated_at": "2026-06-24T06:18:43Z"
+  "updated_at": "2026-06-24T06:19:16Z",
+  "released_at": "2026-06-24T06:19:16Z"
 }
