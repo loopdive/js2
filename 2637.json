@@ -1,8 +1,8 @@
 {
   "id": "2637",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-24T06:16:17Z",
-  "updated_at": "2026-06-24T06:16:17Z"
+  "assignee": "ttraenkler/sendev-2623a",
+  "status": "in-progress",
+  "branch": "doc-2623-executor-body-handoff",
+  "claimed_at": "2026-06-24T06:19:24Z",
+  "updated_at": "2026-06-24T06:19:24Z"
 }
