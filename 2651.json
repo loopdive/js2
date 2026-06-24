@@ -1,8 +1,8 @@
 {
   "id": "2651",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-24T21:17:44Z",
-  "updated_at": "2026-06-24T21:17:44Z"
+  "assignee": "ttraenkler/sd-builtin-ctor-value",
+  "status": "in-progress",
+  "branch": "issue-2651-builtin-ctor-value-substrate",
+  "claimed_at": "2026-06-24T21:19:48Z",
+  "updated_at": "2026-06-24T21:19:48Z"
 }
