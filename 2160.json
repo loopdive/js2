@@ -1,9 +1,8 @@
 {
   "id": "2160",
-  "assignee": "ttraenkler/cs-2160",
-  "status": "done",
-  "branch": "issue-2160-string-number-finish",
-  "claimed_at": "2026-06-18T09:15:07Z",
-  "updated_at": "2026-06-18T10:01:04Z",
-  "released_at": "2026-06-18T10:01:04Z"
+  "assignee": "ttraenkler/agent-a8b4e72435ca30db7",
+  "status": "in-progress",
+  "branch": "issue-2160-string-residual-s65",
+  "claimed_at": "2026-06-24T06:28:58Z",
+  "updated_at": "2026-06-24T06:28:58Z"
 }
