@@ -1,8 +1,9 @@
 {
   "id": "2651",
   "assignee": "ttraenkler/sd-builtin-ctor-value",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2651-builtin-ctor-value-substrate",
   "claimed_at": "2026-06-24T21:19:48Z",
-  "updated_at": "2026-06-24T21:19:48Z"
+  "updated_at": "2026-06-24T21:30:46Z",
+  "released_at": "2026-06-24T21:30:46Z"
 }
