@@ -1,8 +1,8 @@
 {
   "id": "2580",
-  "assignee": "ttraenkler/sd-m3b-pre",
+  "assignee": "ttraenkler/sd-value-rep-m3-bacc",
   "status": "in-progress",
-  "branch": "issue-2580-b-pre-make-callback",
-  "claimed_at": "2026-06-23T22:58:49Z",
-  "updated_at": "2026-06-23T22:58:49Z"
+  "branch": "issue-2580-m3-bacc-defineproperty",
+  "claimed_at": "2026-06-24T05:43:06Z",
+  "updated_at": "2026-06-24T05:43:06Z"
 }
