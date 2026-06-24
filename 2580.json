@@ -1,9 +1,8 @@
 {
   "id": "2580",
-  "assignee": "ttraenkler/sd-value-rep-m3-bacc",
-  "status": "released",
-  "branch": "issue-2580-m3-bacc-defineproperty",
-  "claimed_at": "2026-06-24T05:43:06Z",
-  "updated_at": "2026-06-24T06:32:44Z",
-  "released_at": "2026-06-24T06:32:44Z"
+  "assignee": "ttraenkler/sd-value-rep-m3-bprotoext",
+  "status": "in-progress",
+  "branch": "issue-2580-m3-bprotoextend",
+  "claimed_at": "2026-06-24T07:19:07Z",
+  "updated_at": "2026-06-24T07:19:07Z"
 }
