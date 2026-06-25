@@ -1,8 +1,9 @@
 {
   "id": "2580",
   "assignee": "ttraenkler/sd-protoextend",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2580-bf0-scaffold",
   "claimed_at": "2026-06-25T21:42:16Z",
-  "updated_at": "2026-06-25T21:42:16Z"
+  "updated_at": "2026-06-25T21:50:55Z",
+  "released_at": "2026-06-25T21:50:55Z"
 }
