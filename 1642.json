@@ -1,8 +1,9 @@
 {
   "id": "1642",
   "assignee": "ttraenkler/dev-conformance",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1642-forof-iterator-close",
   "claimed_at": "2026-06-25T22:11:32Z",
-  "updated_at": "2026-06-25T22:11:32Z"
+  "updated_at": "2026-06-25T22:19:35Z",
+  "released_at": "2026-06-25T22:19:35Z"
 }
