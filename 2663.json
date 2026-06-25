@@ -1,8 +1,9 @@
 {
   "id": "2663",
   "assignee": "ttraenkler/dev-conformance",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2663-slice4-unscopables",
   "claimed_at": "2026-06-25T21:22:27Z",
-  "updated_at": "2026-06-25T21:22:27Z"
+  "updated_at": "2026-06-25T22:09:00Z",
+  "released_at": "2026-06-25T22:09:00Z"
 }
