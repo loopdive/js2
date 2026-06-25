@@ -1,8 +1,9 @@
 {
   "id": "1344",
   "assignee": "ttraenkler/sd-typedarray",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1344-probe",
   "claimed_at": "2026-06-25T22:10:09Z",
-  "updated_at": "2026-06-25T22:10:09Z"
+  "updated_at": "2026-06-25T22:10:45Z",
+  "released_at": "2026-06-25T22:10:45Z"
 }
