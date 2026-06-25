@@ -1,8 +1,8 @@
 {
   "id": "2654",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-25T00:21:43Z",
-  "updated_at": "2026-06-25T00:21:43Z"
+  "assignee": "ttraenkler/agent-a2bb2065788d7244b",
+  "status": "in-progress",
+  "branch": "issue-2653-standalone-parsefloat-fraction-precision",
+  "claimed_at": "2026-06-25T00:26:01Z",
+  "updated_at": "2026-06-25T00:26:01Z"
 }
