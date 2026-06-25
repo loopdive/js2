@@ -1,8 +1,9 @@
 {
   "id": "2672",
   "assignee": "ttraenkler/sendev-toprim",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2672-toprim-escape-gate-fix",
   "claimed_at": "2026-06-25T17:11:10Z",
-  "updated_at": "2026-06-25T17:11:10Z"
+  "updated_at": "2026-06-25T18:00:58Z",
+  "released_at": "2026-06-25T18:00:58Z"
 }
