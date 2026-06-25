@@ -1,8 +1,9 @@
 {
   "id": "2678",
   "assignee": "ttraenkler/dev-conformance",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2678-date-parse-host",
   "claimed_at": "2026-06-25T22:45:25Z",
-  "updated_at": "2026-06-25T22:45:25Z"
+  "updated_at": "2026-06-25T23:13:12Z",
+  "released_at": "2026-06-25T23:13:12Z"
 }
