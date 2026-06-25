@@ -1,8 +1,9 @@
 {
   "id": "2675",
   "assignee": "ttraenkler/dev-conformance",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2675-incdec-computed-key",
   "claimed_at": "2026-06-25T21:56:34Z",
-  "updated_at": "2026-06-25T21:56:34Z"
+  "updated_at": "2026-06-25T22:32:21Z",
+  "released_at": "2026-06-25T22:32:21Z"
 }
