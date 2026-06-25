@@ -1,8 +1,9 @@
 {
   "id": "1551",
   "assignee": "ttraenkler/dev-conformance",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1551-trace-findings",
   "claimed_at": "2026-06-25T23:05:35Z",
-  "updated_at": "2026-06-25T23:05:35Z"
+  "updated_at": "2026-06-25T23:13:23Z",
+  "released_at": "2026-06-25T23:13:23Z"
 }
