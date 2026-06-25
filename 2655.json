@@ -1,8 +1,8 @@
 {
   "id": "2655",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-25T04:48:23Z",
-  "updated_at": "2026-06-25T04:48:23Z"
+  "assignee": "ttraenkler/sendev",
+  "status": "in-progress",
+  "branch": "issue-2655-member-write-struct-slot",
+  "claimed_at": "2026-06-25T05:04:35Z",
+  "updated_at": "2026-06-25T05:04:35Z"
 }
