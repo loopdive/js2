@@ -1,8 +1,9 @@
 {
   "id": "2720",
   "assignee": "ttraenkler/dev1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2720-standalone-regex-casefold",
   "claimed_at": "2026-06-26T23:04:21Z",
-  "updated_at": "2026-06-26T23:04:21Z"
+  "updated_at": "2026-06-26T23:31:54Z",
+  "released_at": "2026-06-26T23:31:54Z"
 }
