@@ -1,8 +1,9 @@
 {
   "id": "1551",
   "assignee": "ttraenkler/sd-super1551",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1551-super-try-region",
   "claimed_at": "2026-06-26T09:44:35Z",
-  "updated_at": "2026-06-26T09:44:35Z"
+  "updated_at": "2026-06-26T10:30:27Z",
+  "released_at": "2026-06-26T10:30:27Z"
 }
