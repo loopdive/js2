@@ -1,8 +1,9 @@
 {
   "id": "2724",
   "assignee": "ttraenkler/sd-accessor",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2724-objlit-accessor",
   "claimed_at": "2026-06-26T14:40:01Z",
-  "updated_at": "2026-06-26T14:40:01Z"
+  "updated_at": "2026-06-26T17:13:58Z",
+  "released_at": "2026-06-26T17:13:58Z"
 }
