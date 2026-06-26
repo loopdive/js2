@@ -1,8 +1,8 @@
 {
   "id": "2707",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T10:05:46Z",
-  "updated_at": "2026-06-26T10:05:46Z"
+  "assignee": "ttraenkler/dev3",
+  "status": "in-progress",
+  "branch": "issue-2707-operators-nullish-strict-eq-tco",
+  "claimed_at": "2026-06-26T19:09:10Z",
+  "updated_at": "2026-06-26T19:09:10Z"
 }
