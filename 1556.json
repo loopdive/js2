@@ -1,8 +1,9 @@
 {
   "id": "1556",
   "assignee": "ttraenkler/dev-1556b",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1556-dstr-param-struct-field",
   "claimed_at": "2026-06-26T13:14:19Z",
-  "updated_at": "2026-06-26T13:14:19Z"
+  "updated_at": "2026-06-26T13:45:25Z",
+  "released_at": "2026-06-26T13:45:25Z"
 }
