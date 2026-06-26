@@ -1,8 +1,9 @@
 {
   "id": "2715",
   "assignee": "ttraenkler/dev1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2715-linear-trunc-sat",
   "claimed_at": "2026-06-26T21:02:28Z",
-  "updated_at": "2026-06-26T21:02:28Z"
+  "updated_at": "2026-06-26T21:28:10Z",
+  "released_at": "2026-06-26T21:28:10Z"
 }
