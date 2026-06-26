@@ -1,8 +1,9 @@
 {
   "id": "2566",
   "assignee": "ttraenkler/dev-1556b",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2566-eager-generator-dstr-overconsume",
   "claimed_at": "2026-06-26T13:32:22Z",
-  "updated_at": "2026-06-26T13:32:22Z"
+  "updated_at": "2026-06-26T13:45:07Z",
+  "released_at": "2026-06-26T13:45:07Z"
 }
