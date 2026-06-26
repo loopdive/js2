@@ -1,8 +1,9 @@
 {
   "id": "2705",
   "assignee": "ttraenkler/Esch",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2705-for-in-lexical-scope",
   "claimed_at": "2026-06-26T20:22:21Z",
-  "updated_at": "2026-06-26T20:22:21Z"
+  "updated_at": "2026-06-26T20:59:22Z",
+  "released_at": "2026-06-26T20:59:22Z"
 }
