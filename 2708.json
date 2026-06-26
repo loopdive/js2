@@ -1,8 +1,8 @@
 {
   "id": "2708",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T10:06:34Z",
-  "updated_at": "2026-06-26T10:06:34Z"
+  "assignee": "ttraenkler/dev1",
+  "status": "in-progress",
+  "branch": "issue-2708-primitive-literal-escapes",
+  "claimed_at": "2026-06-26T19:12:01Z",
+  "updated_at": "2026-06-26T19:12:01Z"
 }
