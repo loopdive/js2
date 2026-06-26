@@ -1,8 +1,8 @@
 {
   "id": "2722",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T13:29:48Z",
-  "updated_at": "2026-06-26T13:29:48Z"
+  "assignee": "ttraenkler/sd-accessor",
+  "status": "in-progress",
+  "branch": "issue-2722-nested-optional-default",
+  "claimed_at": "2026-06-26T14:53:38Z",
+  "updated_at": "2026-06-26T14:53:38Z"
 }
