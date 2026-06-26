@@ -1,8 +1,9 @@
 {
   "id": "2681",
   "assignee": "ttraenkler/dev2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2681-acorn-identifier-exprstmt",
   "claimed_at": "2026-06-26T23:04:43Z",
-  "updated_at": "2026-06-26T23:04:43Z"
+  "updated_at": "2026-06-26T23:08:00Z",
+  "released_at": "2026-06-26T23:08:00Z"
 }
