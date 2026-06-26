@@ -1,8 +1,9 @@
 {
   "id": "2703",
   "assignee": "ttraenkler/dev1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2703-delete-ref-semantics",
   "claimed_at": "2026-06-26T18:32:58Z",
-  "updated_at": "2026-06-26T18:32:58Z"
+  "updated_at": "2026-06-26T19:14:19Z",
+  "released_at": "2026-06-26T19:14:19Z"
 }
