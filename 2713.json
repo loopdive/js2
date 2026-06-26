@@ -1,8 +1,8 @@
 {
   "id": "2713",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T11:34:14Z",
-  "updated_at": "2026-06-26T11:34:14Z"
+  "assignee": "ttraenkler/dev-2713",
+  "status": "in-progress",
+  "branch": "issue-2713-ir-legacy-parity-twins",
+  "claimed_at": "2026-06-26T12:35:13Z",
+  "updated_at": "2026-06-26T12:35:13Z"
 }
