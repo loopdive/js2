@@ -1,8 +1,9 @@
 {
   "id": "2721",
   "assignee": "ttraenkler/dev2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2721-standalone-json",
   "claimed_at": "2026-06-26T21:33:34Z",
-  "updated_at": "2026-06-26T21:33:34Z"
+  "updated_at": "2026-06-26T21:51:37Z",
+  "released_at": "2026-06-26T21:51:37Z"
 }
