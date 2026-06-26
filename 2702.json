@@ -1,8 +1,9 @@
 {
   "id": "2702",
   "assignee": "ttraenkler/dev2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2702-instanceof-spec",
   "claimed_at": "2026-06-26T18:32:36Z",
-  "updated_at": "2026-06-26T18:32:36Z"
+  "updated_at": "2026-06-26T19:18:06Z",
+  "released_at": "2026-06-26T19:18:06Z"
 }
