@@ -1,8 +1,9 @@
 {
   "id": "2719",
   "assignee": "ttraenkler/dev2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2719-array-externref-search-standalone",
   "claimed_at": "2026-06-26T20:59:48Z",
-  "updated_at": "2026-06-26T20:59:48Z"
+  "updated_at": "2026-06-26T21:31:54Z",
+  "released_at": "2026-06-26T21:31:54Z"
 }
