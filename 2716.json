@@ -1,8 +1,9 @@
 {
   "id": "2716",
   "assignee": "ttraenkler/dev1",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2716-linear-finally-early-exit",
   "claimed_at": "2026-06-26T21:24:40Z",
-  "updated_at": "2026-06-26T21:24:40Z"
+  "updated_at": "2026-06-26T21:43:29Z",
+  "released_at": "2026-06-26T21:43:29Z"
 }
