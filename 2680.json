@@ -1,9 +1,8 @@
 {
   "id": "2680",
-  "assignee": "ttraenkler/dev1",
-  "status": "released",
-  "branch": "issue-2680-topropertydescriptor-inherited",
-  "claimed_at": "2026-06-26T20:58:33Z",
-  "updated_at": "2026-06-26T20:59:32Z",
-  "released_at": "2026-06-26T20:59:32Z"
+  "assignee": "ttraenkler/dev2",
+  "status": "in-progress",
+  "branch": "issue-2680-topropertydescriptor-proto-walk",
+  "claimed_at": "2026-06-26T23:38:31Z",
+  "updated_at": "2026-06-26T23:38:31Z"
 }
