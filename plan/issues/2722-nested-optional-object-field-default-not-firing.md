@@ -1,7 +1,9 @@
 ---
 id: 2722
 title: "Nested OPTIONAL object-field binding default not firing — externref field + f64 struct-getter can't signal field-absent"
-status: ready
+status: done
+completed: 2026-06-26
+assignee: ttraenkler/sd-accessor
 created: 2026-06-26
 updated: 2026-06-26
 priority: medium
@@ -16,6 +18,38 @@ parent: 1556
 related: [1542, 1543, 1544, 1550, 1556]
 owner_role: senior-developer
 ---
+
+## Test Results (2026-06-26, sd-accessor)
+
+Implemented the architect's Path A — two coordinated edits, no `function-body.ts`
+threading:
+- **Change 1** (`src/codegen/index.ts`, #1589A guard): gate the empty-object
+  widening on the *resolved struct* actually being empty (`ctx.structFields`),
+  not the union's common-property count. The union `{ b? } | undefined`'s
+  `getProperties()` is always `[]`, so the old guard clobbered a populated
+  `ref_null structB` back to externref.
+- **Change 2** (`src/codegen/literals.ts`, `compileObjectLiteral` contextual-type
+  resolution): strip a 2-member `T | undefined` union to `T` before
+  `resolveStructName`, so optional-typed inner literals build as the inner struct.
+
+Results (`tests/issue-2722.test.ts`, 9/9 green; args built in-Wasm + called via
+no-arg exported wrappers since a WasmGC struct param can't be passed from JS):
+- Four core repros: `f()`/`f({})`/`f({a:{}})`/`f({a:{c:1}})` → **3**;
+  `f({a:{b:5}})` → **5** (was 0/0/0/1/5).
+- Controls `g`/`h`/`m` stay 3. Edge cases all correct: 3-level deep (5/5/5/9),
+  mixed optional+required (7/15), optional-no-default (1/2), optional-primitive
+  (9/4), genuinely-empty optional (0/1).
+- Standalone: core repros + controls compile to valid Wasm and run (3/3/3/5,
+  controls 3) — no `$Object`-route regression.
+- Regression basket diffed against `origin/main` @ 4b4549d: identical results —
+  `tests/issue-1542-repro.test.ts` (2) + `tests/null-destructure-param-object.test.ts`
+  (3) carry pre-existing reds on BOTH main and this branch (0 new);
+  `tests/issue-1589a.test.ts` (the modified guard), `tests/issue-2158`,
+  `tests/issue-2545`, `tests/issue-2512`, `tests/issue-2568-standalone`,
+  `tests/issue-1372`, `tests/object-literals.test.ts` all green.
+- `tsc --noEmit` clean; `prettier --check` clean.
+- Broad-impact representation change → real floor validation is the #2097
+  merge_group standalone shard.
 # #2722 — Nested optional object-field destructuring default not firing
 
 **Carved from #1556** (verify-first by dev-1556b, 2026-06-26). #1556's core scope

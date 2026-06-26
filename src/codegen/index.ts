@@ -11608,7 +11608,22 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     ) {
       const refTypeIdx = (wasmType as { typeIdx: number }).typeIdx;
       const refStructName = ctx.typeIdxToStructName.get(refTypeIdx);
-      if (refStructName !== "__Date") {
+      // (#2722) `propType.getProperties().length === 0` is a FALSE POSITIVE for an
+      // optional object field `a?: { b? }`: its TS type is the union `{ b? } |
+      // undefined`, and `getProperties()` on a union returns only the *common*
+      // properties — intersected with `undefined`'s empty set that is ALWAYS `[]`.
+      // So the guard would clobber the correct `ref_null structB` (a real,
+      // populated inner struct) back to externref, which forces the value through
+      // the host `__extern_get`/`__sget_b` f64-`0` else-branch and stops the nested
+      // `b = D` default from ever firing. Gate the widening on the *resolved struct*
+      // actually being empty (0 fields), not the union's common-property count. The
+      // resolved struct is already registered by the time we reach here, so its
+      // field list is in `ctx.structFields`. A genuinely-empty `{}` field resolves
+      // to a 0-field struct → still widened (preserves #1589A's HasProperty intent);
+      // an optional `{ b? }` resolves to a 1-field struct → kept as `ref_null`.
+      const resolvedFields = refStructName ? ctx.structFields.get(refStructName) : undefined;
+      const resolvedIsEmpty = !resolvedFields || resolvedFields.length === 0;
+      if (refStructName !== "__Date" && resolvedIsEmpty) {
         wasmType = { kind: "externref" };
       }
     }

@@ -1098,14 +1098,32 @@ export function compileObjectLiteral(
     return null;
   }
 
-  let typeName = resolveStructName(ctx, contextType);
+  // (#2722) An optional object field's contextual type is the union
+  // `T | undefined` (e.g. `a?: { b? }`). `resolveStructName` can't map a union to
+  // a single struct name, so an inner literal `{}` / `{ c: 1 }` flowing into such
+  // a slot would fall through to the host-externref path and never build as the
+  // inner `structB` — the field then stores `ref.null` and the nested destructure
+  // throws "Cannot destructure 'null' or 'undefined'". Strip a 2-member
+  // `T | undefined` (also null/void) union to `T` before resolving the struct name
+  // (mirrors the resolver's union branch in index.ts). Purely additive to the
+  // struct branch: if the stripped `T` doesn't map to a registered struct (host
+  // class, `any`, empty `{}`), it still falls through to the unchanged
+  // externref/inferred-type path below.
+  let effectiveContextType = contextType;
+  if (contextType.isUnion()) {
+    const nn = contextType.types.filter(
+      (t) => !(t.flags & ts.TypeFlags.Null) && !(t.flags & ts.TypeFlags.Undefined) && !(t.flags & ts.TypeFlags.Void),
+    );
+    if (nn.length === 1 && contextType.types.length === 2) effectiveContextType = nn[0]!;
+  }
+  let typeName = resolveStructName(ctx, effectiveContextType);
   if (!typeName) {
     // Auto-register the struct type for the contextual type
-    ensureStructForType(ctx, contextType);
-    typeName = resolveStructName(ctx, contextType);
+    ensureStructForType(ctx, effectiveContextType);
+    typeName = resolveStructName(ctx, effectiveContextType);
   }
   if (typeName) {
-    ensureComputedPropertyFields(ctx, fctx, expr, contextType);
+    ensureComputedPropertyFields(ctx, fctx, expr, effectiveContextType);
     return compileObjectLiteralForStruct(ctx, fctx, expr, typeName);
   }
 
