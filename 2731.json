@@ -1,8 +1,8 @@
 {
   "id": "2731",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T21:36:26Z",
-  "updated_at": "2026-06-26T21:36:26Z"
+  "assignee": "ttraenkler/Esch",
+  "status": "in-progress",
+  "branch": "issue-2731-forin-delete-readd-symmetry",
+  "claimed_at": "2026-06-26T23:36:21Z",
+  "updated_at": "2026-06-26T23:36:21Z"
 }
