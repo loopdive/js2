@@ -1,9 +1,8 @@
 {
   "id": "2706",
-  "assignee": "ttraenkler/dev2",
-  "status": "released",
+  "assignee": "ttraenkler/Esch",
+  "status": "in-progress",
   "branch": "issue-2706-forin-enum-order",
-  "claimed_at": "2026-06-26T19:14:06Z",
-  "updated_at": "2026-06-26T19:18:15Z",
-  "released_at": "2026-06-26T19:18:15Z"
+  "claimed_at": "2026-06-26T20:55:43Z",
+  "updated_at": "2026-06-26T20:55:43Z"
 }
