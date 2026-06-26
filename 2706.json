@@ -1,8 +1,9 @@
 {
   "id": "2706",
   "assignee": "ttraenkler/dev3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2706-for-in-enumeration-order",
   "claimed_at": "2026-06-26T18:57:36Z",
-  "updated_at": "2026-06-26T18:57:36Z"
+  "updated_at": "2026-06-26T19:08:35Z",
+  "released_at": "2026-06-26T19:08:35Z"
 }
