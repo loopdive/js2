@@ -1,8 +1,8 @@
 {
   "id": "2709",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T10:17:32Z",
-  "updated_at": "2026-06-26T10:17:32Z"
+  "assignee": "ttraenkler/sd-super2709",
+  "status": "in-progress",
+  "branch": "issue-2709-super-subcases",
+  "claimed_at": "2026-06-26T11:32:19Z",
+  "updated_at": "2026-06-26T11:32:19Z"
 }
