@@ -1,8 +1,8 @@
 {
   "id": "2744",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-27T08:04:56Z",
-  "updated_at": "2026-06-27T08:04:56Z"
+  "assignee": "ttraenkler/esch",
+  "status": "in-progress",
+  "branch": "issue-2744-extensibility-routing",
+  "claimed_at": "2026-06-27T08:35:11Z",
+  "updated_at": "2026-06-27T08:35:11Z"
 }
