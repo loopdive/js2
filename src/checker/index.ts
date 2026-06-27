@@ -676,8 +676,22 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   const compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
-    strict: !isJs,
+    // #2750 S1 — single-file `.js` now gets the FULL sound `strict` umbrella,
+    // matching both multi-file blocks (`analyzeMultipleFiles`/`analyzeFiles`,
+    // which set `strict: true` unconditionally). Previously `strict: !isJs`
+    // gave a single-file `.js` ONLY the pinned `strictNullChecks` (#2748 C),
+    // leaving `strictFunctionTypes`/`strictPropertyInitialization`/
+    // `useUnknownInCatchVariables`/… OFF — a latent single-file vs multi-file
+    // inconsistency. Sound flags keep type-directed codegen accurate.
+    strict: true,
+    // `strictNullChecks` is already implied by `strict: true`; kept explicit as
+    // the soundness-critical guard the #2748 C fix established (a `T|null`
+    // collapse changes the Wasm value-representation and folds null/undefined
+    // guards — the #2748 infinite-loop miscompile).
     strictNullChecks: true,
+    // BOUNDARY (#2750 Prong 1): `noImplicitAny` stays OFF for `.js` — rejecting
+    // untyped JS is NOT the goal; the dynamic/`any`/externref path handles it.
+    // This override MUST come after `strict: true` (which would enable it).
     noImplicitAny: false,
     noEmit: true,
     // Enable JSX parsing for .tsx/.jsx files. ReactJSX desugars JSX to

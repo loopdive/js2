@@ -6300,7 +6300,13 @@ export function compileElementAccessBody(
       // (#2001 S1) Pass `ctx` so the in-bounds `$Hole → undefined` read-boundary
       // mapping fires for an externref-element (`any[]`) vec. (#2593) Thread the
       // view-name signedness for packed i8/i16 reads.
-      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, arrDef.element, ctx, false, taSignedness);
+      // (#2750 S2) `useUndefinedSentinel=true`: an out-of-bounds read of an
+      // externref-element array (`any[]`/`string[]`) returns JS `undefined`
+      // (`__get_undefined`) instead of `null` (`ref.null.extern`). No-op for
+      // packed `number[]`/`boolean[]` (the sentinel only applies to
+      // externref/ref_extern element kinds; f64/i32 keep their type-default
+      // sentinel — the deferred S5 `noUncheckedIndexedAccess` epic, not this slice).
+      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, arrDef.element, ctx, true, taSignedness);
     }
     // (#2593) `Uint32Array` element read: the i32_byte storage holds the full 32
     // bits; the value as a JS number is the UNSIGNED interpretation (0..2^32-1).
@@ -6349,7 +6355,10 @@ export function compileElementAccessBody(
   } else {
     // (#2001 S1) Pass `ctx` for the in-bounds `$Hole → undefined` mapping.
     // (#2593) Thread the view-name signedness for packed i8/i16 reads.
-    emitBoundsCheckedArrayGet(fctx, typeIdx, typeDef.element, ctx, false, taSignednessArr);
+    // (#2750 S2) `useUndefinedSentinel=true`: out-of-bounds read of an
+    // externref-element array (`any[]`/`string[]`) returns JS `undefined`, not
+    // `null`. No-op for packed `number[]`/`boolean[]` (see the matching site above).
+    emitBoundsCheckedArrayGet(fctx, typeIdx, typeDef.element, ctx, true, taSignednessArr);
   }
   return valueType;
 }
