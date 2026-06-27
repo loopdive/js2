@@ -1,8 +1,9 @@
 {
   "id": "2745",
   "assignee": "ttraenkler/dev2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2745-function-bind",
   "claimed_at": "2026-06-27T08:30:39Z",
-  "updated_at": "2026-06-27T08:30:39Z"
+  "updated_at": "2026-06-27T08:34:15Z",
+  "released_at": "2026-06-27T08:34:15Z"
 }
