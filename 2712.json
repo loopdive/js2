@@ -1,8 +1,9 @@
 {
   "id": "2712",
   "assignee": "ttraenkler/esch",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2712-bool-valtype-architect-note",
   "claimed_at": "2026-06-27T07:48:13Z",
-  "updated_at": "2026-06-27T07:48:13Z"
+  "updated_at": "2026-06-27T07:54:48Z",
+  "released_at": "2026-06-27T07:54:48Z"
 }
