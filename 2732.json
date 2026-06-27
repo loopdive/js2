@@ -1,8 +1,8 @@
 {
   "id": "2732",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T21:46:03Z",
-  "updated_at": "2026-06-26T21:46:03Z"
+  "assignee": "ttraenkler/esch",
+  "status": "in-progress",
+  "branch": "issue-2732-operator-traps",
+  "claimed_at": "2026-06-27T07:56:23Z",
+  "updated_at": "2026-06-27T07:56:23Z"
 }
