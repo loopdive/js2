@@ -1,8 +1,8 @@
 {
   "id": "2743",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-27T08:04:18Z",
-  "updated_at": "2026-06-27T08:04:18Z"
+  "assignee": "ttraenkler/sendev-args",
+  "status": "in-progress",
+  "branch": "issue-2743-arguments-unmapped-nonsimple",
+  "claimed_at": "2026-06-27T09:39:02Z",
+  "updated_at": "2026-06-27T09:39:02Z"
 }
