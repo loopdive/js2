@@ -1,8 +1,9 @@
 {
   "id": "2726",
   "assignee": "ttraenkler/dev2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2726-delete-residual",
   "claimed_at": "2026-06-27T07:41:20Z",
-  "updated_at": "2026-06-27T07:41:20Z"
+  "updated_at": "2026-06-27T08:17:14Z",
+  "released_at": "2026-06-27T08:17:14Z"
 }
