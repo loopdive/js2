@@ -1,8 +1,9 @@
 {
   "id": "2181",
   "assignee": "ttraenkler/agent-a20aa13da21b8d592",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2181-define-builtin-scaffold",
   "claimed_at": "2026-06-27T23:37:20Z",
-  "updated_at": "2026-06-27T23:37:20Z"
+  "updated_at": "2026-06-27T23:48:32Z",
+  "released_at": "2026-06-27T23:48:32Z"
 }
