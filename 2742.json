@@ -1,8 +1,8 @@
 {
   "id": "2742",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-27T08:03:40Z",
-  "updated_at": "2026-06-27T08:03:40Z"
+  "assignee": "ttraenkler/issue-2742-fn-length-dontenum",
+  "status": "in-progress",
+  "branch": "issue-2742-fn-length-dontenum",
+  "claimed_at": "2026-06-27T12:04:25Z",
+  "updated_at": "2026-06-27T12:04:25Z"
 }
