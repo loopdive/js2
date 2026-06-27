@@ -1,8 +1,8 @@
 {
   "id": "2750",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-27T11:09:47Z",
-  "updated_at": "2026-06-27T11:09:47Z"
+  "assignee": "ttraenkler/sendev-soundness",
+  "status": "in-progress",
+  "branch": "issue-2750-s1-js-strict",
+  "claimed_at": "2026-06-27T23:44:56Z",
+  "updated_at": "2026-06-27T23:44:56Z"
 }
