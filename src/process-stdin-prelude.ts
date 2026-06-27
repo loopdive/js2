@@ -236,11 +236,28 @@ class __Js2wasmReadable {
     __wasiStdinSetReader(() => { this.pump(); });
   }
 
-  on(event: string, cb: any): __Js2wasmReadable {
-    if (event === "data") { this.dataCbs.push(cb); this.flowing = true; this.arm(); }
-    else if (event === "end") { this.endCbs.push(cb); this.arm(); }
-    else if (event === "readable") { this.readableCbs.push(cb); this.arm(); }
-    else if (event === "close") { this.closeCbs.push(cb); }
+  // #2752 — the callback parameter is a UNION of the 'data' shape ((c: string)
+  // => void) and the param-less shape (() => void), NOT \`any\`. This is
+  // load-bearing for TYPE-STRIPPED consumers (\`bun build\`/esbuild/tsc → .js):
+  // a stripped \`.on("data", (chunk) => …)\` arrow has an UNTYPED param, and an
+  // \`any\` \`cb\` would give it no contextual type, so \`chunk\` lowers as
+  // externref. Its closure-struct shape ((externref) => void) then differs from
+  // the \`((c: string) => void)[]\` slot it is stored in, and the call site in
+  // \`emitChunk\` (a \`ref.cast\` to the (string)=>void closure struct) nulls the
+  // mismatched value and TRAPS with a null reference. Typing \`cb\` as the union
+  // makes TypeScript CONTEXTUALLY type the untyped \`chunk\` as \`string\` (the
+  // 'data' member of the union), so the arrow lowers as a (string)=>void
+  // closure that matches the slot — for BOTH the typed (direct .ts) and untyped
+  // (transpiled .js) consumer callback. The \`() => void\` end/readable/close
+  // callbacks remain assignable (the param-less union member). This only takes
+  // effect because the injected prelude is now parsed under the TS grammar even
+  // for a \`.js\` user file (the \`forceTsGrammar\` parse fix). The per-event
+  // \`as\` casts narrow the union to the concrete slot element type.
+  on(event: string, cb: ((c: string) => void) | (() => void)): __Js2wasmReadable {
+    if (event === "data") { this.dataCbs.push(cb as (c: string) => void); this.flowing = true; this.arm(); }
+    else if (event === "end") { this.endCbs.push(cb as () => void); this.arm(); }
+    else if (event === "readable") { this.readableCbs.push(cb as () => void); this.arm(); }
+    else if (event === "close") { this.closeCbs.push(cb as () => void); }
     return this;
   }
 

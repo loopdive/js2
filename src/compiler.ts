@@ -1087,10 +1087,17 @@ export function compileSourceSync(
   // `--emulate node` it already has via `--target`).
   const effectiveEmulateNode =
     options.emulateNode === true || options.platform === "node" || options.platform === "deno";
+  // #2752 — when the `process.stdin` Readable prelude (or any future TS source
+  // prelude) was injected ahead of a `.js`-named user file, parse the combined
+  // unit under the TS grammar so the prelude's TS syntax (type annotations,
+  // `private`, signature declarations) isn't hard-rejected with TS8009/8010/8017.
+  // ScriptKind-only override; the `.js`-derived semantics (lenient checking)
+  // stay intact. Byte-neutral when no prelude was injected.
+  const forceTsGrammar = stdinResult.injected;
   let ast: TypedAST;
   if (languageService) {
     // Incremental path: reuse cached lib files via the language service
-    languageService.updateSource(processedSource, effectiveFileName);
+    languageService.updateSource(processedSource, effectiveFileName, forceTsGrammar);
     ast = languageService.analyze({
       allowJs: options.allowJs,
       skipSemanticDiagnostics: options.skipSemanticDiagnostics,
@@ -1101,6 +1108,7 @@ export function compileSourceSync(
       allowJs: options.allowJs,
       skipSemanticDiagnostics: options.skipSemanticDiagnostics,
       emulateNode: options.emulateNode,
+      forceTsGrammar,
       ...(options.platform ? { platform: options.platform } : {}),
     });
   }

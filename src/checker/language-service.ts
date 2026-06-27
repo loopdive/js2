@@ -62,8 +62,16 @@ export class IncrementalLanguageService {
     };
   }
 
-  /** Update the source for the next compilation */
-  updateSource(source: string, fileName?: string): void {
+  /**
+   * Update the source for the next compilation.
+   *
+   * #2752 — `forceTsGrammar` forces `ScriptKind.TS` for the parsed SourceFile
+   * even when `fileName` ends in `.js` (otherwise `ts.createSourceFile` infers
+   * `ScriptKind.JS` from the extension and the loose-JS grammar checker rejects
+   * an injected TS prelude with TS8009/8010/8017). Mirrors the
+   * `forceTsGrammar` override in the non-incremental `analyzeSource`.
+   */
+  updateSource(source: string, fileName?: string, forceTsGrammar?: boolean): void {
     this.currentSource = source;
     if (fileName) this.fileName = fileName;
     this.currentSourceFile = ts.createSourceFile(
@@ -71,6 +79,7 @@ export class IncrementalLanguageService {
       this.currentSource,
       this.compilerOptions.target ?? ts.ScriptTarget.ES2022,
       true,
+      forceTsGrammar ? ts.ScriptKind.TS : undefined,
     );
   }
 

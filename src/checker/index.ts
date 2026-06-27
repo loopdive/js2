@@ -346,6 +346,23 @@ export interface AnalyzeOptions {
    * + the `emulateNode ||= platform ∈ {node,deno}` composition in #2645/#2736.
    */
   platform?: "web" | "node" | "deno";
+  /**
+   * Force TypeScript GRAMMAR for the parse even when the input file is named
+   * `.js`/`.mjs`/`.cjs` (#2752). When the compiler prepends an injected source
+   * prelude that is written in TypeScript — currently the `process.stdin`
+   * Readable prelude (`src/process-stdin-prelude.ts`), which carries the
+   * nullable/union types codegen relies on (`read(size?): string | null`) — the
+   * combined unit must be parsed under the TS grammar, or the loose-JS grammar
+   * checker hard-rejects the prelude's TS syntax with TS8009/8010/8017 ("X can
+   * only be used in TypeScript files") and compilation fails before codegen.
+   * This flag flips ONLY the `ScriptKind` (TS vs JS) for the parse; the
+   * `isJs`-derived semantics (`strict: false`, `allowJs`+`checkJs`) stay
+   * derived from the filename, so the user's `.js` code keeps its lenient
+   * checking while the prelude's TS syntax is accepted and its types stay
+   * load-bearing. Scoped to the prelude-injection path only — byte-neutral for
+   * every program that does not trigger a TS prelude injection.
+   */
+  forceTsGrammar?: boolean;
 }
 
 /**
@@ -669,8 +686,21 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   const ext = fileName.match(/\.(tsx|jsx|ts|js|mjs|cjs)$/)?.[1] ?? "ts";
   const isJsx = ext === "tsx" || ext === "jsx";
   const isJs = ext === "js" || ext === "jsx" || ext === "mjs" || ext === "cjs";
-  const scriptKind =
-    ext === "tsx" ? ts.ScriptKind.TSX : ext === "jsx" ? ts.ScriptKind.JSX : isJs ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+  // #2752 — when a TS source prelude was injected ahead of a `.js`-named user
+  // file, force the TS grammar for the parse so the prelude's TS syntax
+  // (type annotations, `private`, signature declarations) is not rejected with
+  // TS8009/8010/8017. This overrides ONLY the ScriptKind; `isJs` (and thus the
+  // `strict: false` + `allowJs`/`checkJs` semantics below) stay derived from
+  // the filename, so the user's `.js` code keeps its lenient checking.
+  const scriptKind = analyzeOptions?.forceTsGrammar
+    ? ts.ScriptKind.TS
+    : ext === "tsx"
+      ? ts.ScriptKind.TSX
+      : ext === "jsx"
+        ? ts.ScriptKind.JSX
+        : isJs
+          ? ts.ScriptKind.JS
+          : ts.ScriptKind.TS;
   const useAllowJs = isJs || analyzeOptions?.allowJs === true;
 
   const compilerOptions: ts.CompilerOptions = {
