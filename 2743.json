@@ -1,8 +1,9 @@
 {
   "id": "2743",
   "assignee": "ttraenkler/sendev-args",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2743-arguments-proto-iterator",
   "claimed_at": "2026-06-27T10:28:27Z",
-  "updated_at": "2026-06-27T10:28:27Z"
+  "updated_at": "2026-06-27T11:36:08Z",
+  "released_at": "2026-06-27T11:36:08Z"
 }
