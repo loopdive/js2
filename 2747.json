@@ -1,8 +1,9 @@
 {
   "id": "2747",
   "assignee": "ttraenkler/issue-2747-reflect-setprototypeof-mirror",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2747-reflect-setprototypeof-mirror",
   "claimed_at": "2026-06-27T12:41:19Z",
-  "updated_at": "2026-06-27T12:41:19Z"
+  "updated_at": "2026-06-27T13:25:24Z",
+  "released_at": "2026-06-27T13:25:25Z"
 }
