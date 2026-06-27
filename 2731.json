@@ -1,8 +1,9 @@
 {
   "id": "2731",
   "assignee": "ttraenkler/Esch",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2731-forin-delete-readd-symmetry",
   "claimed_at": "2026-06-26T23:36:21Z",
-  "updated_at": "2026-06-26T23:36:21Z"
+  "updated_at": "2026-06-27T00:37:06Z",
+  "released_at": "2026-06-27T00:37:06Z"
 }
