@@ -126,3 +126,56 @@ describe("#2669 — for-of nested destructuring default (Bug 2: nested default i
     expect(e.test!()).toBe(5);
   });
 });
+
+// ── Slice: typed in-bounds `undefined` / hole default-init (this slice) ──────────
+//
+// Bug 3 (typed in-bounds sentinel-propagation): an array whose element type is
+// EXACTLY the `undefined` (or `void`) primitive — `[[undefined]]` (TS infers
+// `undefined[][]`) or a hole-only literal `[[,]]` — resolved its element type to
+// i32 via `mapTsTypeToWasm`, storing `undefined` as i32 `0`. The for-of array
+// path then coerced that i32 `0` to f64 `0.0`, which never matched the f64 sNaN
+// sentinel the default-check looks for, so the default `[x = 23]` never fired
+// (`for (const [x = 23] of [[undefined]])` / `[[,]]` left x = 0). Distinct from
+// the externref/OOB Bug 1 above: here the element is IN BOUNDS and present as a
+// literal `undefined`/hole. Fix: widen an exactly-`undefined`/`void` vec element
+// type to externref in `resolveWasmType` (mirrors the #1468 struct-field widening)
+// so the `__get_undefined()` / `__extern_is_undefined` sentinel path preserves it.
+// Real test262: language/statements/for-of/dstr/{const,let,var}-ary-ptrn-elem-id-init-{undef,hole}.js
+describe("#2669 — typed in-bounds undefined/hole default-init (Bug 3)", () => {
+  it("for-of: default fires for an in-bounds explicit `undefined` element", async () => {
+    const e = await compileAndRun(`export function test(): number {
+      let out = 0;
+      for (let [x = 23] of [[undefined]]) { out = x; }
+      return out;
+    }`);
+    expect(e.test!()).toBe(23);
+  });
+
+  it("for-of: default fires for an in-bounds elision hole", async () => {
+    const e = await compileAndRun(`export function test(): number {
+      let out = 0;
+      for (let [x = 23] of [[,]]) { out = x; }
+      return out;
+    }`);
+    expect(e.test!()).toBe(23);
+  });
+
+  it("for-of: default SKIPPED when the element is present (regression guard)", async () => {
+    const e = await compileAndRun(`export function test(): number {
+      let out = 0;
+      for (let [x = 23] of [[7]]) { out = x; }
+      return out;
+    }`);
+    expect(e.test!()).toBe(7);
+  });
+
+  it("for-of: const/explicit-undefined matches the const-ary-ptrn-elem-id-init-undef shape", async () => {
+    const e = await compileAndRun(`export function test(): number {
+      let iterCount = 0;
+      let val = -1;
+      for (const [x = 23] of [[undefined]]) { val = x; iterCount += 1; }
+      return iterCount * 100 + val;   // expect 1*100 + 23 = 123
+    }`);
+    expect(e.test!()).toBe(123);
+  });
+});

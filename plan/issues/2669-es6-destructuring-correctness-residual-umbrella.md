@@ -268,6 +268,48 @@ PASS via fresh single-file runs; 12 sync improvements re-verified PASS.
 This slice keeps the umbrella OPEN (status stays `ready`) — it burns down the
 nested-array-default codegen corner, not the iterator-protocol tail.
 
+## Slice landed (issue-2669-typed-default-init, 2026-06-28) — typed in-bounds undefined/hole sentinel
+
+Resolves the **typed in-bounds `undefined`/hole default-init** carve named in the
+"Remaining umbrella tail" above (the `for (let [x=23] of [[undefined]])` / `[[,]]`
+case). Root-caused and fixed; guard tests `tests/issue-2669.test.ts` "Bug 3"
+(14/14 green).
+
+### Root cause
+An array whose element type is EXACTLY the `undefined` (or `void`) primitive —
+`[[undefined]]` (TS infers `undefined[][]`) or a hole-only literal `[[,]]` —
+resolved its element type to **i32** via `mapTsTypeToWasm` (which maps
+`undefined`/`void` → i32 for the "no result" case). The inner `[undefined]` vec,
+built as `vec_externref` holding the `undefined` externref, was then COERCED to
+`vec_i32` (`__unbox_number` → `i32.trunc_sat_f64_s` → `0`). The for-of array path
+read that i32 `0`, coerced it to f64 `0.0`, and the default-check
+(`i64.reinterpret_f64` == sNaN sentinel `0x7ff00000deadc0de`) never matched — so
+`[x = 23]` never fired and `x` stayed `0`. Distinct from the externref/OOB Bug 1
+(there the element is out-of-bounds; here it is in-bounds and present).
+
+### Fix (one site, `src/codegen/index.ts` `resolveWasmType` Array branch)
+Widen an exactly-`undefined`/`void` vec element type from i32 → externref, so the
+inner array is built as `vec_externref` (no lossy i32 coercion) and the existing
+`wantUndefinedSentinel` for-of path (`__extern_is_undefined`) fires the default.
+Mirrors the #1468 struct-FIELD widening for `{ k: undefined }`. Scoped to the
+EXACT `undefined`/`void` primitive — `T | undefined` unions are already widened by
+`mapTsTypeToWasm`, and Number/Boolean/symbol element types are excluded. NO touch
+to assignment-destructuring rest-target lowering (#2757/#2224).
+
+### Validation
+- 6 targeted test262 wins (all fail→pass): `language/statements/for-of/dstr/`
+  `{const,let,var}-ary-ptrn-elem-id-init-{undef,hole}.js`.
+- 8 collateral wins across for-of + assignment dstr (`array-elem-nested-{array,obj}-undefined-own`,
+  `array-rest-before-elision`, `array-rest-elision-invalid`, `obj-rest-not-last-element-invalid`).
+- 0 real regressions in scoped sweeps over for-of/dstr (569), let/dstr (94),
+  assignment/dstr (368). (THREW entries in the standalone sweep driver are a
+  state-accumulation harness artifact — all pass in a clean process; CI validates
+  full conformance.)
+- `tests/issue-2669.test.ts` 14/14; existing array suites green.
+
+Umbrella stays OPEN — remaining tail: nested **object**-default
+(`[{a}={a:1}]`, follow-up carve), iterator-protocol (#1642/#2566).
+
 ## Residual (as of #2199, PO reconcile 2026-06-28)
 
 NOT done — broad umbrella. The referencing PR landed the nested-array default-init codegen family (3 defects). The umbrella stays OPEN: iterator-close, defaults, holes, rest across for-of / assignment / binding / params (~696 fails) need further concrete slices carved.

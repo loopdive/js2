@@ -11283,9 +11283,35 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     if (sym?.name === "Array" || sym?.name === "ReadonlyArray") {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
       const elemTsType = typeArgs[0];
-      const elemWasm: ValType = elemTsType
+      let elemWasm: ValType = elemTsType
         ? resolveWasmType(ctx, elemTsType, _depth + 1, _visited)
         : { kind: "externref" };
+      // (#2669) An array whose element type is EXACTLY the `undefined` (or `void`)
+      // primitive — e.g. `[[undefined]]` (TS infers `undefined[][]`) or a
+      // hole-only literal `[[,]]` — resolves its element to i32 via
+      // `mapTsTypeToWasm` (which maps `undefined`/`void` → i32 for the "no result"
+      // case). That stores `undefined` as i32 `0` and LOSES its identity, so a
+      // destructuring default over the value (`for (const [x = 23] of [[undefined]])`)
+      // never fires — the value isn't observably `undefined` (the i32 `0` coerces
+      // to f64 `0.0`, never the sNaN sentinel the default-check looks for). Widen
+      // to externref so the `__get_undefined()` / `__extern_is_undefined` sentinel
+      // path preserves it and the for-of / binding default fast-path triggers.
+      // Mirrors the #1468 struct-FIELD widening for `{ k: undefined }`. Scoped to
+      // the EXACT `undefined`/`void` primitive — `T | undefined` unions are already
+      // widened by `mapTsTypeToWasm`'s union branch, and Number/Boolean/symbol
+      // element types are excluded.
+      if (elemTsType && elemWasm.kind === "i32") {
+        const f = elemTsType.flags;
+        const exactlyUndefinedOrVoid =
+          (f & ts.TypeFlags.Undefined || f & ts.TypeFlags.Void) &&
+          !(f & ts.TypeFlags.Boolean) &&
+          !(f & ts.TypeFlags.BooleanLiteral) &&
+          !(f & ts.TypeFlags.Number) &&
+          !(f & ts.TypeFlags.NumberLiteral) &&
+          !(f & ts.TypeFlags.ESSymbol) &&
+          !(f & ts.TypeFlags.UniqueESSymbol);
+        if (exactlyUndefinedOrVoid) elemWasm = { kind: "externref" };
+      }
       const elemKey =
         elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
           ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
