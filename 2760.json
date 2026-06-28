@@ -1,8 +1,9 @@
 {
   "id": "2760",
   "assignee": "ttraenkler/senior-dev-2760",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2760-hybrid-array-oob-undefined",
   "claimed_at": "2026-06-28T01:25:55Z",
-  "updated_at": "2026-06-28T01:25:55Z"
+  "updated_at": "2026-06-28T02:30:05Z",
+  "released_at": "2026-06-28T02:30:05Z"
 }
