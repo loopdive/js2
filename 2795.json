@@ -1,8 +1,9 @@
 {
   "id": "2795",
   "assignee": "ttraenkler/diff-host",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2795-2796-diff-host-fidelity",
   "claimed_at": "2026-06-28T16:58:00Z",
-  "updated_at": "2026-06-28T16:58:00Z"
+  "updated_at": "2026-06-28T17:20:45Z",
+  "released_at": "2026-06-28T17:20:45Z"
 }
