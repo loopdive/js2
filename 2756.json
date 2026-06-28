@@ -1,8 +1,8 @@
 {
   "id": "2756",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-28T00:06:32Z",
-  "updated_at": "2026-06-28T00:06:32Z"
+  "assignee": "ttraenkler/sd-dstr-objdefault",
+  "status": "in-progress",
+  "branch": "issue-2756-array-obj-class-default",
+  "claimed_at": "2026-06-28T00:24:43Z",
+  "updated_at": "2026-06-28T00:24:43Z"
 }
