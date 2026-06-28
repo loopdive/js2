@@ -1,9 +1,8 @@
 {
   "id": "2725",
   "assignee": "ttraenkler/agent-a20aa13da21b8d592",
-  "status": "released",
-  "branch": "issue-2725-arguments-residual",
-  "claimed_at": "2026-06-28T00:40:14Z",
-  "updated_at": "2026-06-28T00:45:19Z",
-  "released_at": "2026-06-28T00:45:19Z"
+  "status": "in-progress",
+  "branch": "issue-2725-async-gen-indirect-spread",
+  "claimed_at": "2026-06-28T00:47:52Z",
+  "updated_at": "2026-06-28T00:47:52Z"
 }
