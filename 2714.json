@@ -1,8 +1,8 @@
 {
   "id": "2714",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T12:04:12Z",
-  "updated_at": "2026-06-26T12:04:12Z"
+  "assignee": "ttraenkler/sendev-soundness",
+  "status": "in-progress",
+  "branch": "issue-2714-object-spread-enumerable",
+  "claimed_at": "2026-06-28T00:40:03Z",
+  "updated_at": "2026-06-28T00:40:03Z"
 }
