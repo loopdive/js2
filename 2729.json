@@ -1,8 +1,8 @@
 {
   "id": "2729",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-26T21:13:15Z",
-  "updated_at": "2026-06-26T21:13:15Z"
+  "assignee": "ttraenkler/agent-aa6c288d8cd3cb14b",
+  "status": "in-progress",
+  "branch": "issue-2729-uint8array-touint8",
+  "claimed_at": "2026-06-28T01:50:11Z",
+  "updated_at": "2026-06-28T01:50:11Z"
 }
