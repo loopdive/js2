@@ -1,8 +1,9 @@
 {
   "id": "2804",
   "assignee": "ttraenkler/sendev-objspread",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2804-object-spread-assign-rep",
   "claimed_at": "2026-06-28T17:42:39Z",
-  "updated_at": "2026-06-28T17:42:39Z"
+  "updated_at": "2026-06-28T18:46:42Z",
+  "released_at": "2026-06-28T18:46:42Z"
 }
