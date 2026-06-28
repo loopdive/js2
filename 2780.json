@@ -1,8 +1,8 @@
 {
   "id": "2780",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-28T07:50:47Z",
-  "updated_at": "2026-06-28T07:50:47Z"
+  "assignee": "ttraenkler/sendev-arraylit-widening",
+  "status": "in-progress",
+  "branch": "issue-2780-arraylit-widening-escape",
+  "claimed_at": "2026-06-28T07:51:05Z",
+  "updated_at": "2026-06-28T07:51:05Z"
 }
