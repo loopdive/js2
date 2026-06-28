@@ -1,8 +1,9 @@
 {
   "id": "2782",
   "assignee": "ttraenkler/sendev-nobox",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2782-hybrid-ir-nobox-number-locals",
   "claimed_at": "2026-06-28T09:14:53Z",
-  "updated_at": "2026-06-28T09:14:53Z"
+  "updated_at": "2026-06-28T09:41:00Z",
+  "released_at": "2026-06-28T09:41:00Z"
 }
