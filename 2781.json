@@ -1,8 +1,8 @@
 {
   "id": "2781",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-28T08:35:28Z",
-  "updated_at": "2026-06-28T08:35:28Z"
+  "assignee": "ttraenkler/sendev-binproof",
+  "status": "in-progress",
+  "branch": "issue-2781-hybrid-ir-binary-proof-gate",
+  "claimed_at": "2026-06-28T08:35:43Z",
+  "updated_at": "2026-06-28T08:35:43Z"
 }
