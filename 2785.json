@@ -1,8 +1,9 @@
 {
   "id": "2785",
   "assignee": "ttraenkler/sendev-box",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2785-hybrid-type-aware-box-primitive",
   "claimed_at": "2026-06-28T10:59:19Z",
-  "updated_at": "2026-06-28T10:59:19Z"
+  "updated_at": "2026-06-28T11:13:47Z",
+  "released_at": "2026-06-28T11:13:47Z"
 }
