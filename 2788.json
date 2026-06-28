@@ -1,8 +1,9 @@
 {
   "id": "2788",
   "assignee": "ttraenkler/agent-af367ef55d7ab6b0d",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2788-i32-number-local-nobox",
   "claimed_at": "2026-06-28T12:52:48Z",
-  "updated_at": "2026-06-28T12:52:48Z"
+  "updated_at": "2026-06-28T12:58:11Z",
+  "released_at": "2026-06-28T12:58:11Z"
 }
