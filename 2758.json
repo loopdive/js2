@@ -1,8 +1,9 @@
 {
   "id": "2758",
   "assignee": "ttraenkler/dstr758",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2758-dstr-default-skipped",
   "claimed_at": "2026-06-28T19:46:55Z",
-  "updated_at": "2026-06-28T19:46:55Z"
+  "updated_at": "2026-06-28T20:23:53Z",
+  "released_at": "2026-06-28T20:23:53Z"
 }
