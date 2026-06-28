@@ -26,10 +26,25 @@ name: Cross-backend parity (advisory)
 # gaps it documents are tracked as child issues #2715-#2721.
 
 on:
+  # Advisory compile-and-diff harness — only meaningful when compiler/test/build
+  # source changes. Docs/planning-only PRs (.claude/**, plan/**, docs/**, *.md)
+  # cannot change codegen, so skip the matrix there (#2239 follow-up: a docs-only
+  # PR was burning the full differential harness). NOT a required check, so a
+  # skipped run never blocks merge.
   pull_request:
     branches: [main]
+    paths: &code-paths
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig*.json"
+      - "vitest.config.ts"
+      - ".github/workflows/cross-backend-parity.yml"
   push:
     branches: [main]
+    paths: *code-paths
 
 permissions:
   contents: read

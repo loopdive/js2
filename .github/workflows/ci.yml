@@ -16,6 +16,53 @@ permissions:
   contents: write
 
 jobs:
+  # #2239 follow-up — detect whether this PR touches compiler/test/build source.
+  # The heavy compile-and-run suites (equivalence-shard, equivalence-gate,
+  # linear-tests) only matter when codegen or tests change; a docs/planning-only
+  # PR (.claude/**, plan/**, docs/**, *.md) was needlessly running all 8
+  # equivalence shards + linear-tests. They are NOT required checks, so gating
+  # them to "skipped" on docs-only PRs never blocks merge. `quality` stays
+  # unconditional (it gates markdown format, issue integrity, and link checks
+  # that DO apply to docs). Defensive default: any uncertainty => code=true.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          # Only path-gate pull_request. push (to main) and merge_group always
+          # run the heavy suites — they validate the integrated state.
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "non-PR event ($EVENT) -> run heavy suites"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=200 origin main 2>/dev/null \
+            || git fetch --no-tags origin main 2>/dev/null || true
+          BASE=$(git merge-base origin/main HEAD 2>/dev/null || true)
+          if [ -z "$BASE" ]; then
+            echo "no merge-base resolvable -> run heavy suites (safe default)"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE"...HEAD)
+          echo "Changed files:"; echo "$CHANGED"
+          # Run the heavy suites iff any compiler / test / build-config path changed.
+          if echo "$CHANGED" | grep -qE '^(src/|tests/|scripts/|package\.json$|pnpm-lock\.yaml$|tsconfig.*\.json$|vitest\.config\.ts$|\.github/workflows/ci\.yml$)'; then
+            echo "code/test/build paths changed -> run heavy suites"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs/planning-only diff -> skip heavy suites"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   quality:
     runs-on: ubuntu-latest
     steps:
@@ -234,6 +281,8 @@ jobs:
   # on main, so this runs them directly (no baseline-gate needed); any failure
   # is a genuine regression and blocks the PR. Single-fork keeps peak RAM low.
   linear-tests:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -262,6 +311,8 @@ jobs:
   # only NEW failures (not in the baseline) fail CI, so the existing failure
   # backlog does not block every PR while still catching genuine regressions.
   equivalence-shard:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -290,8 +341,9 @@ jobs:
           retention-days: 3
 
   equivalence-gate:
+    needs: [changes, equivalence-shard]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    needs: equivalence-shard
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v6
