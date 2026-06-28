@@ -1,9 +1,8 @@
 {
   "id": "2795",
-  "assignee": "ttraenkler/sendev-taoob",
-  "status": "released",
-  "branch": "issue-2795-hybrid-typed-array-oob-undefined",
-  "claimed_at": "2026-06-28T15:21:39Z",
-  "updated_at": "2026-06-28T16:04:16Z",
-  "released_at": "2026-06-28T16:04:16Z"
+  "assignee": "ttraenkler/diff-host",
+  "status": "in-progress",
+  "branch": "issue-2795-2796-diff-host-fidelity",
+  "claimed_at": "2026-06-28T16:58:00Z",
+  "updated_at": "2026-06-28T16:58:00Z"
 }
