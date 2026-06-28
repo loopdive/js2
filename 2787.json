@@ -1,8 +1,8 @@
 {
   "id": "2787",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-28T11:53:21Z",
-  "updated_at": "2026-06-28T11:53:21Z"
+  "assignee": "ttraenkler/senior-developer",
+  "status": "in-progress",
+  "branch": "issue-2787-hybrid-packed-i32-readside-proof",
+  "claimed_at": "2026-06-28T11:53:42Z",
+  "updated_at": "2026-06-28T11:53:42Z"
 }
