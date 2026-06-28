@@ -1,8 +1,9 @@
 {
   "id": "2757",
   "assignee": "ttraenkler/sd-dstr-objdefault",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2757-assign-dstr-rest-hole",
   "claimed_at": "2026-06-28T00:28:56Z",
-  "updated_at": "2026-06-28T00:28:56Z"
+  "updated_at": "2026-06-28T00:35:32Z",
+  "released_at": "2026-06-28T00:35:32Z"
 }
