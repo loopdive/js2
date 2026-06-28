@@ -1,8 +1,8 @@
 {
   "id": "2790",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-28T12:56:03Z",
-  "updated_at": "2026-06-28T12:56:03Z"
+  "assignee": "ttraenkler/agent-af367ef55d7ab6b0d",
+  "status": "in-progress",
+  "branch": "issue-2788-i32-number-local-nobox",
+  "claimed_at": "2026-06-28T12:58:23Z",
+  "updated_at": "2026-06-28T12:58:23Z"
 }
