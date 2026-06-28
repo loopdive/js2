@@ -1,8 +1,8 @@
 {
   "id": "2649",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-06-24T20:59:51Z",
-  "updated_at": "2026-06-24T20:59:51Z"
+  "assignee": "ttraenkler/agent-a3bfd116a51704f18",
+  "status": "in-progress",
+  "branch": "issue-2649-typedarray-subarray-length",
+  "claimed_at": "2026-06-28T00:53:41Z",
+  "updated_at": "2026-06-28T00:53:41Z"
 }
