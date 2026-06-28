@@ -1,8 +1,9 @@
 {
   "id": "2745",
   "assignee": "ttraenkler/agent-a3bfd116a51704f18",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2745-function-bind-residual",
   "claimed_at": "2026-06-28T00:00:20Z",
-  "updated_at": "2026-06-28T00:00:20Z"
+  "updated_at": "2026-06-28T00:55:36Z",
+  "released_at": "2026-06-28T00:55:36Z"
 }
