@@ -1,9 +1,8 @@
 {
   "id": "2745",
-  "assignee": "ttraenkler/dev2",
-  "status": "released",
-  "branch": "issue-2745-function-bind",
-  "claimed_at": "2026-06-27T08:30:39Z",
-  "updated_at": "2026-06-27T08:34:15Z",
-  "released_at": "2026-06-27T08:34:15Z"
+  "assignee": "ttraenkler/agent-a3bfd116a51704f18",
+  "status": "in-progress",
+  "branch": "issue-2745-function-bind-residual",
+  "claimed_at": "2026-06-28T00:00:20Z",
+  "updated_at": "2026-06-28T00:00:20Z"
 }
