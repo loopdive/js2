@@ -1,8 +1,9 @@
 {
   "id": "2791",
   "assignee": "ttraenkler/senior-dev-row4",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2791-hybrid-monomorphic-struct-proof",
   "claimed_at": "2026-06-28T13:15:42Z",
-  "updated_at": "2026-06-28T13:15:42Z"
+  "updated_at": "2026-06-28T13:52:29Z",
+  "released_at": "2026-06-28T13:52:29Z"
 }
