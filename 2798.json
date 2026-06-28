@@ -1,8 +1,9 @@
 {
   "id": "2798",
   "assignee": "ttraenkler/sendev-taoob",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2795-hybrid-typed-array-oob-undefined",
   "claimed_at": "2026-06-28T16:04:25Z",
-  "updated_at": "2026-06-28T16:04:25Z"
+  "updated_at": "2026-06-28T16:14:51Z",
+  "released_at": "2026-06-28T16:14:51Z"
 }
