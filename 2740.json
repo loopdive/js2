@@ -1,8 +1,9 @@
 {
   "id": "2740",
   "assignee": "ttraenkler/dev-instanceof",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2740-instanceof-residual",
   "claimed_at": "2026-06-27T23:52:45Z",
-  "updated_at": "2026-06-27T23:52:45Z"
+  "updated_at": "2026-06-28T00:41:35Z",
+  "released_at": "2026-06-28T00:41:35Z"
 }
