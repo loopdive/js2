@@ -1,8 +1,9 @@
 {
   "id": "2826",
   "assignee": "ttraenkler/impl2826",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2826-cps-capture",
   "claimed_at": "2026-06-29T03:14:36Z",
-  "updated_at": "2026-06-29T03:14:36Z"
+  "updated_at": "2026-06-29T03:42:57Z",
+  "released_at": "2026-06-29T03:42:57Z"
 }
