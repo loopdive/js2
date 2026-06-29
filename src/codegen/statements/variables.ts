@@ -10,7 +10,7 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
-import { needsTdzFlag, resolveWasmType } from "../index.js";
+import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
 import { objectLiteralSpreadTakesHostPath, resolveComputedKeyExpression } from "../literals.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { getOrRegisterArrayType, getOrRegisterSubviewType, getOrRegisterVecType } from "../registry/types.js";
@@ -42,6 +42,20 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
 
   let inferredElemType: ts.Type | null = null;
 
+  // (#2806) A write whose value type is purely `undefined` / `void` / `null`
+  // must NOT pin the array's element kind to a numeric (i32) vec. The canonical
+  // source is acorn's `var elt = (void 0); elt = <nodeRef>; elts.push(elt)`:
+  // the binding's DECLARED type is `undefined`, but the runtime value is an AST
+  // node reference. Letting `undefined` resolve the element type to i32 lowers
+  // `elts` to an i32 vec, so every pushed reference coerces to i32 `0` — silently
+  // dropping the node refs (#2801, the compiled-acorn `arguments` bug). Skip such
+  // writes exactly like `any` (let a later concrete write pin the kind; if none,
+  // the caller falls through to `any[]` → externref). Genuine numeric pushes
+  // (`number`/`boolean` literals) still pin f64/i32 and keep the fast path.
+  const isUnpinnableWriteType = (t: ts.Type): boolean =>
+    (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) !== 0 &&
+    (t.flags & ~(ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) === 0;
+
   function visit(node: ts.Node) {
     if (inferredElemType) return;
 
@@ -54,7 +68,7 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
       node.left.expression.text === varName
     ) {
       const valType = ctx.checker.getTypeAtLocation(node.right);
-      if (!(valType.flags & ts.TypeFlags.Any)) {
+      if (!isUnpinnableWriteType(valType)) {
         inferredElemType = valType;
         return;
       }
@@ -70,7 +84,7 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
       node.arguments.length >= 1
     ) {
       const valType = ctx.checker.getTypeAtLocation(node.arguments[0]!);
-      if (!(valType.flags & ts.TypeFlags.Any)) {
+      if (!isUnpinnableWriteType(valType)) {
         inferredElemType = valType;
         return;
       }
@@ -97,8 +111,17 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
  *  that resolveWasmType would produce for the TS return type (e.g. string[]). */
 const HOST_ARRAY_STRING_METHODS = new Set(["split"]);
 
-function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type): ValType {
-  return isNullablePrimitiveType(type) ? { kind: "externref" } : resolveWasmType(ctx, type);
+function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.VariableDeclaration): ValType {
+  if (isNullablePrimitiveType(type)) return { kind: "externref" };
+  // (#2806) A `var x = (void 0)` binding needs an externref slot (the same one
+  // `= undefined` gets), so a later reference assignment isn't coerced to numeric
+  // `0`. Shared with the var-hoister so the hoisted slot and this declaration path
+  // agree (a `var` reuses its hoisted slot). NARROW: void-EXPRESSION initializer
+  // only — a bare `undefined`-typed binding (e.g. an optional-property read) must
+  // stay numeric for the delete/undefined f64-sentinel machinery (#1112). See
+  // `varBindingNeedsExternrefForUndefined`.
+  if (varBindingNeedsExternrefForUndefined(decl)) return { kind: "externref" };
+  return resolveWasmType(ctx, type);
 }
 
 function stripInferenceWrapper(expr: ts.Expression): ts.Expression {
@@ -783,7 +806,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                         // the target's closure struct (which traps → null binding).
                         decl.initializer && !ctx.standalone && !noJsHost(ctx) && isBindHostCall(decl.initializer)
                         ? { kind: "externref" as const }
-                        : localTypeForDeclaration(ctx, varType)));
+                        : localTypeForDeclaration(ctx, varType, decl)));
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)
@@ -1170,69 +1193,6 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     }
     // Set local TDZ flag to 1 (initialized) if this is a hoisted let/const
     emitLocalTdzInit(fctx, name);
-
-    // (#2826) Bug C (CPS-capture half): re-point IMMUTABLE hoisted-fn captures
-    // from the stale pre-hoisted slot A to the fresh slot B. This is the exact
-    // INVERSE of #2820's reuse gate above (~L837), composing with it with ZERO
-    // overlap:
-    //   • #2820 collapses A→B (reuses the pre-hoist slot A) ONLY for a block-`let`
-    //     captured by a PLAIN (non-CPS) hoisted fn. It DELIBERATELY skips the
-    //     collapse when a CPS-lowered (async/generator) fn captures the name,
-    //     because collapsing the duplicate slot perturbs the for-await-of
-    //     continuation state machine (43 `for-await-of/async-{func,gen}-decl-dstr-*`
-    //     regressions, net −14). The CPS-excluded path therefore lands the
-    //     block-`let` in a FRESH slot B (`freshLocalForLetConst` here).
-    //   • But a hoisted async/generator fn that captured this name pinned its
-    //     `outerLocalIdx` to slot A (recorded at hoist-compile time, before
-    //     `let s = …` ran). `let s = 42` writes B; A is never written. The
-    //     immutable construction-site read is a bare `local.get cap.outerLocalIdx`
-    //     (calls.ts), so it reads A's zero-init (⇒ 0), not B's 42.
-    // Fix: keep BOTH slots (A stays a dead pre-hoist slot, B is the real storage)
-    // so the producer layout / CPS state struct is BYTE-IDENTICAL to baseline (no
-    // state-machine perturbation), and re-point ONLY the immutable, unboxed
-    // capture's `outerLocalIdx` from A→B. Because that mutates the single source
-    // of truth (`nestedFuncCaptures[*].outerLocalIdx`), every downstream
-    // construction site that reads it resolves to B with no read-site edit.
-    //
-    // NEVER touch a MUTABLE (boxed) capture (`cap.mutable === true`): the boxed
-    // construction path (calls.ts ~12904-12928) READS `outerLocalIdx` to seed the
-    // ref cell, so re-pointing it would change bytes — and that boxed path is
-    // exactly the 43-regression class #2820 had to exclude. Discriminate strictly
-    // by mutability, NOT by Wasm kind.
-    //
-    // `freshLocalForLetConst` guarantees no overlap with #2820: when #2820 reused
-    // A, `existingIdx === A` ⇒ `isHoistedLetConst` ⇒ `freshLocalForLetConst ===
-    // false`, so this branch never fires for a #2820-reused decl. It also never
-    // fires when `name` was pre-boxed (mutable capture) — that sets localMap ⇒
-    // `existingIdx` defined ⇒ `freshLocalForLetConst === false`.
-    if (freshLocalForLetConst) {
-      const preHoistedForRepoint = fctx.preHoistedLetConstSlots?.get(decl);
-      if (preHoistedForRepoint !== undefined && localIdx !== preHoistedForRepoint.valueSlot) {
-        const staleValueSlot = preHoistedForRepoint.valueSlot;
-        const staleFlagSlot = preHoistedForRepoint.flagSlot;
-        const liveFlagSlot = fctx.tdzFlagLocals?.get(name);
-        for (const caps of ctx.nestedFuncCaptures.values()) {
-          for (const cap of caps) {
-            // Immutable / unboxed captures of THIS name still pinned to the stale
-            // pre-hoist slot A only. A non-hoisted capturer (async arrow / fn-expr
-            // assigned AFTER the `let`) recorded against localMap-at-B ⇒ its
-            // `outerLocalIdx !== A` ⇒ skipped (already correct). Pattern bindings
-            // carry no pre-hoist slot ⇒ no capture pinned to A ⇒ skipped.
-            if (cap.name !== name) continue;
-            if (cap.mutable === true) continue;
-            if (cap.outerLocalIdx !== staleValueSlot) continue;
-            cap.outerLocalIdx = localIdx;
-            // Re-point the construction-time TDZ-flag metadata in lockstep so the
-            // recorded flag tracks the live (B) flag, not the dead pre-hoist flag.
-            // (Live TDZ routing already goes through fctx.tdzFlagLocals.get(name);
-            // this keeps the stored metadata consistent for any future reader.)
-            if (staleFlagSlot !== undefined && liveFlagSlot !== undefined && cap.outerTdzFlagIdx === staleFlagSlot) {
-              cap.outerTdzFlagIdx = liveFlagSlot;
-            }
-          }
-        }
-      }
-    }
 
     // (#1672) If compiling this initializer promoted `name` to a captured
     // global (because a method/accessor body in the initializer referenced
