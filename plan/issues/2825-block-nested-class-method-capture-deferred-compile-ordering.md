@@ -3,8 +3,10 @@ id: 2825
 title: "Bug C (class-method half, spec'd): block-nested class compiled eagerly, so captured-globals promotion never fires for an outer block-let"
 parent: 2818
 related: [2820, 2818, 2826, 2811, 2669, 1672]
-status: ready
+status: done
+assignee: ttraenkler/impl2825
 created: 2026-06-29
+completed: 2026-06-29
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -255,3 +257,47 @@ ordering changes). Watch specifically for:
   members return pass.
 - No regression in fn-scope class-method/accessor capture (#1672), the #2820
   function-declaration fix, or TDZ throws — on full merge_group.
+
+## Implementation Notes (impl2825, senior-dev)
+
+**Fix** — exactly the spec's lever. In `compileClassesFromStatements`
+(`src/codegen/declarations.ts`) every control-flow recursion now forwards the
+*current* `insideFunction` (anchors verified on current `origin/main`):
+
+- `ts.isBlock` (was line 4223) → `(stmt.statements, insideFunction)`
+- `if` then/else (4216/4219), for/while/do body block (4233), `switch` clause
+  (4237), `try`/`catch`/`finally` (4240/4242/4245), labeled block (4249) — all
+  forward `insideFunction`.
+- The function-decl recursion (4214) and the arrow/fn-expr recursions in
+  `compileClassesFromFunctionBody` keep their hardcoded `true` — left untouched.
+- A module-top-level control-flow scope still passes `insideFunction = false`
+  (no enclosing fctx) → its class stays eager. One-word change per call site;
+  no change to `nested-declarations.ts` / `closures.ts` was needed — deferral
+  reuses the already-proven `deferredClassBodies` → `compileNestedClassDeclaration`
+  → `promoteAccessorCapturesToGlobals` path.
+
+**Mechanism verified (WAT, host/gc lane)** for `{ let s=42; class C { m(){return s} } new C().m() }`:
+`(global $__captured_s (mut f64) (f64.const 0))` is now emitted (absent before),
+`$test` syncs `local.get $s; global.set $__captured_s`, and `$C_m` reads the
+global. Runtime returns 42 (was 0).
+
+**Reachability edge case — RESOLVED, no post-pass sweep needed.** The spec
+flagged a risk that a block-nested class in a *never-called* nested function
+could be deferred-and-unreached (stub with no body → Wasm validation error). It
+does **not** manifest: a nested function declaration's body is compiled by
+`compileStatement` regardless of whether it is ever *called* (declarations are
+not runtime-gated), so the deferred class body is always reached. Verified: an
+uncalled nested fn (plain and lifted-capture) containing a block-nested class
+compiles + instantiates + runs (returns the outer constant). The optional
+defensive sweep was therefore left out as dead weight.
+
+**Regression-control results (local host/gc, `compileAndInstantiate`):**
+29/30 in `tests/issue-2825.test.ts` pass; the 1 `it.skip` is the
+sibling-block same-name collision the spec scoped out (name-keyed
+`structMap`/`deferredClassBodies`; already wrong pre-fix). Broader suites
+(`issue-1161`, `issue-1594a/b`, `generators`, `generator-methods`,
+`accessor-side-effects`, etc.) — 56/56 actual tests pass. The only "failures"
+in the sweep (`classes.test.ts` family, `issue-1712`) reproduce **identically
+on unmodified `main`** — a stale-harness `string_constants` import issue +
+pre-existing `#1712` failures, not introduced here. Broad-impact ⇒ authoritative
+validation is the merge_group full CI incl. standalone floor.
