@@ -10,7 +10,7 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
-import { needsTdzFlag, resolveWasmType } from "../index.js";
+import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
 import { objectLiteralSpreadTakesHostPath, resolveComputedKeyExpression } from "../literals.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { getOrRegisterArrayType, getOrRegisterSubviewType, getOrRegisterVecType } from "../registry/types.js";
@@ -42,6 +42,20 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
 
   let inferredElemType: ts.Type | null = null;
 
+  // (#2806) A write whose value type is purely `undefined` / `void` / `null`
+  // must NOT pin the array's element kind to a numeric (i32) vec. The canonical
+  // source is acorn's `var elt = (void 0); elt = <nodeRef>; elts.push(elt)`:
+  // the binding's DECLARED type is `undefined`, but the runtime value is an AST
+  // node reference. Letting `undefined` resolve the element type to i32 lowers
+  // `elts` to an i32 vec, so every pushed reference coerces to i32 `0` — silently
+  // dropping the node refs (#2801, the compiled-acorn `arguments` bug). Skip such
+  // writes exactly like `any` (let a later concrete write pin the kind; if none,
+  // the caller falls through to `any[]` → externref). Genuine numeric pushes
+  // (`number`/`boolean` literals) still pin f64/i32 and keep the fast path.
+  const isUnpinnableWriteType = (t: ts.Type): boolean =>
+    (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) !== 0 &&
+    (t.flags & ~(ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) === 0;
+
   function visit(node: ts.Node) {
     if (inferredElemType) return;
 
@@ -54,7 +68,7 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
       node.left.expression.text === varName
     ) {
       const valType = ctx.checker.getTypeAtLocation(node.right);
-      if (!(valType.flags & ts.TypeFlags.Any)) {
+      if (!isUnpinnableWriteType(valType)) {
         inferredElemType = valType;
         return;
       }
@@ -70,7 +84,7 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
       node.arguments.length >= 1
     ) {
       const valType = ctx.checker.getTypeAtLocation(node.arguments[0]!);
-      if (!(valType.flags & ts.TypeFlags.Any)) {
+      if (!isUnpinnableWriteType(valType)) {
         inferredElemType = valType;
         return;
       }
@@ -97,8 +111,17 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
  *  that resolveWasmType would produce for the TS return type (e.g. string[]). */
 const HOST_ARRAY_STRING_METHODS = new Set(["split"]);
 
-function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type): ValType {
-  return isNullablePrimitiveType(type) ? { kind: "externref" } : resolveWasmType(ctx, type);
+function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.VariableDeclaration): ValType {
+  if (isNullablePrimitiveType(type)) return { kind: "externref" };
+  // (#2806) A `var x = (void 0)` binding needs an externref slot (the same one
+  // `= undefined` gets), so a later reference assignment isn't coerced to numeric
+  // `0`. Shared with the var-hoister so the hoisted slot and this declaration path
+  // agree (a `var` reuses its hoisted slot). NARROW: void-EXPRESSION initializer
+  // only — a bare `undefined`-typed binding (e.g. an optional-property read) must
+  // stay numeric for the delete/undefined f64-sentinel machinery (#1112). See
+  // `varBindingNeedsExternrefForUndefined`.
+  if (varBindingNeedsExternrefForUndefined(decl)) return { kind: "externref" };
+  return resolveWasmType(ctx, type);
 }
 
 function stripInferenceWrapper(expr: ts.Expression): ts.Expression {
@@ -783,7 +806,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                         // the target's closure struct (which traps → null binding).
                         decl.initializer && !ctx.standalone && !noJsHost(ctx) && isBindHostCall(decl.initializer)
                         ? { kind: "externref" as const }
-                        : localTypeForDeclaration(ctx, varType)));
+                        : localTypeForDeclaration(ctx, varType, decl)));
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)

@@ -4780,6 +4780,34 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       elemWasm = elemTsType ? resolveWasmType(ctx, elemTsType) : { kind: "f64" };
     }
 
+    // (#2809 Site B) `new Array(undefined, …)` / `new Array<void>(…)`: keep the
+    // construction's element/vec representation in lockstep with the
+    // `Array<undefined>`/`Array<void>` → externref rule in `resolveWasmType`'s
+    // Array branch (#2806 site #3). The vec type above is taken from
+    // `resolveWasmType(exprType)` (an externref vec via #3), but `elemWasm` is
+    // resolved from the *scalar* undefined element → i32/f64, so `array.new_fixed`
+    // pushes a numeric value into an externref array and validation fails
+    // (`array.new_fixed[0] expected type externref, f64`) while consumers
+    // mis-read `.length`. Force the element (and vec/arr) to externref so the
+    // pushed boxed-undefined values, the array.new_* element type, and the vec
+    // struct all agree. Pure Undefined/Void only — `number[]` (f64) / `boolean[]`
+    // (i32) carry Number/Boolean and `number | undefined` carries the Union flag,
+    // so the guard does not fire and they stay numeric.
+    {
+      const ctorTypeArgs = ctx.checker.getTypeArguments(exprType as ts.TypeReference);
+      const ctorElemTs = ctorTypeArgs?.[0];
+      const pureUndefinedVoidElem =
+        !!ctorElemTs &&
+        (elemWasm.kind === "i32" || elemWasm.kind === "f64") &&
+        (ctorElemTs.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0 &&
+        (ctorElemTs.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0;
+      if (pureUndefinedVoidElem) {
+        elemWasm = { kind: "externref" };
+        vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+        arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+      }
+    }
+
     // #1197: i32-specialized number[] override — caller (variable-declaration
     // codegen) flagged this `new Array(...)` as belonging to an i32-specialized
     // local. Override the element kind from f64 to i32. We must also re-resolve

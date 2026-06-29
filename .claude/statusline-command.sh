@@ -323,10 +323,17 @@ if [ -z "$in_worktree" ] && [ "$branch" = "main" ]; then
     # stale) pre-built cache directly (deduplicated, wont-fix counted as done).
     sprints_json="/workspace/website/dashboard/data/sprints.json"
     if [ -f "$sprints_json" ]; then
+      # Prefer the live `current` window (#2751); else the latest active numbered
+      # sprint. The label is "cur" for the current window, else its number.
       sprint_data=$(jq -r '
-        [ .[] | select(.sprintNumber != null and .isClosed == false and .isPlanning == false) ]
-        | sort_by(.sprintNumber) | last
-        | "\(.sprintNumber) \(.completedIssueIds | length) \(.issueIds | length)"
+        ( ( [ .[] | select(.isCurrent == true) ] | first )
+          // ( [ .[] | select(.sprintNumber != null and .isClosed == false and .isPlanning == false) ]
+               | sort_by(.sprintNumber) | last ) ) as $s
+        | if $s == null then empty
+          else (if $s.isCurrent then "cur" else ($s.sprintNumber | tostring) end)
+               + " " + ($s.completedIssueIds | length | tostring)
+               + " " + ($s.issueIds | length | tostring)
+          end
       ' "$sprints_json" 2>/dev/null)
       if [ -n "$sprint_data" ]; then
         sprint_n=$(echo "$sprint_data" | awk '{print $1}')
@@ -337,13 +344,19 @@ if [ -z "$in_worktree" ] && [ "$branch" = "main" ]; then
   fi
   if [ -n "$sprint_n" ] && [ "$sprint_total" -gt 0 ]; then
     sprint_pct=$((sprint_done * 100 / sprint_total))
-    awk -v p="$sprint_pct" -v n="$sprint_n" -v done="$sprint_done" -v total="$sprint_total" 'BEGIN {
+    # Numbered sprint → "sN"; the live `current` window emits the non-numeric
+    # token "cur" → render it as-is (no `s` prefix, and never coerce to s0).
+    case "$sprint_n" in
+      ''|*[!0-9]*) sprint_label="$sprint_n" ;;
+      *)           sprint_label="s$sprint_n" ;;
+    esac
+    awk -v p="$sprint_pct" -v lbl="$sprint_label" -v done="$sprint_done" -v total="$sprint_total" 'BEGIN {
       if (p >= 67)      { fill=42;         fg=30 }
       else if (p >= 33) { fill=43;         fg=30 }
       else              { fill="48;5;196"; fg=30 }
       width = 12
       filled = int(p * width / 100)
-      label = sprintf(" %d/%d s%d", done, total, n)
+      label = sprintf(" %d/%d %s", done, total, lbl)
       bar = ""
       for (i = 0; i < width; i++) bar = bar " "
       bar = label substr(bar, length(label) + 1)

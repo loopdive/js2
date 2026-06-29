@@ -11792,9 +11792,31 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     if (sym?.name === "Array" || sym?.name === "ReadonlyArray") {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
       const elemTsType = typeArgs[0];
-      const elemWasm: ValType = elemTsType
+      let elemWasm: ValType = elemTsType
         ? resolveWasmType(ctx, elemTsType, _depth + 1, _visited)
         : { kind: "externref" };
+      // (#2806) An array whose element type is **purely** `undefined` / `void`
+      // must lower to an externref-element vec, not a numeric (i32) vec — the
+      // same alignment applied to `var x = (void 0)` slots. The canonical source
+      // is acorn's `parseExprList`: `var elt = (void 0); … elt = <nodeRef>;
+      // elts.push(elt); return elts`. TS infers the *function return type* as
+      // `undefined[]`, so the returned vec type would be an i32 vec while the
+      // local `elts` is an externref vec — `return elts` then copies/coerces
+      // each pushed REFERENCE to i32 `0`, dropping the AST node refs (#2801).
+      // Resolving `undefined[]`/`void[]` to externref here keeps the return type
+      // (and any field/param so typed) in lockstep with the externref local.
+      // `never[]` already resolves to externref; this closes the `undefined[]`
+      // gap. Pure undefined/void only (no Number/Boolean/etc.) so `number[]`
+      // (f64) and `boolean[]` (i32) are untouched; `number | undefined` carries
+      // the Union flag, not Undefined, and is left alone.
+      if (
+        elemTsType &&
+        (elemWasm.kind === "i32" || elemWasm.kind === "f64") &&
+        (elemTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0 &&
+        (elemTsType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0
+      ) {
+        elemWasm = { kind: "externref" };
+      }
       const elemKey =
         elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
           ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
@@ -12893,6 +12915,17 @@ const WASI_STDIN_REACTOR_INTRINSICS = new Set([
   "__wasiStdinAvailable",
   "__wasiStdinEof",
   "__wasiStdinSetReader",
+  // #2817 — `__wasiStdinStop` (added in #2735 for a NON-EOF reactor exit: it
+  // drops the fd0 subscription so the run loop terminates on in-band shutdown /
+  // `process.stdin.destroy()` / pre-`proc_exit`). Its every call site is
+  // inline-lowered by `emitStdinStop` (async-scheduler.ts) via tryWasiTimerCall
+  // — a native `global.set` clearing `__stdin_fd_active`, NO host import. The
+  // sibling intrinsics above were already skipped; #2735 forgot to add this one,
+  // so its prelude `declare function __wasiStdinStop` stub re-registered here as
+  // a DEAD `env.__wasiStdinStop` host import (dropped from the binary, but
+  // firing the spurious "not on the dual-mode allowlist" warning on the
+  // otherwise-runnable standalone nm_js2wasm_node_process.ts build). Skip it.
+  "__wasiStdinStop",
 ]);
 
 // `libReferencedNames`, when provided (lib-file scan only), gates ambient
@@ -14049,6 +14082,40 @@ export function collectEnumDeclarations(ctx: CodegenContext, sourceFile: ts.Sour
  * variable not yet in localMap, so identifiers are valid before their
  * declaration site (JavaScript var-hoisting semantics).
  */
+/**
+ * (#2806) Does this variable binding require an **externref** slot because its
+ * declared type is (only) `undefined` / `void`?
+ *
+ * Root cause of the compiled-acorn `CallExpression.arguments` drop: acorn writes
+ * `var elt = (void 0); … elt = this.parseMaybeAssign(...); elts.push(elt)`. The
+ * `void 0` EXPRESSION pins the binding to TS type `undefined` — UNLIKE
+ * `var elt = undefined` / `var elt;`, which TS treats as evolving-any (→ `any`,
+ * → externref). `resolveWasmType(undefined)` is a numeric (i32) slot, so a later
+ * REFERENCE assignment is coerced to i32 `0` and the node ref is dropped.
+ *
+ * The fix routes a `void`-expression initializer through the SAME externref slot
+ * that `= undefined` already gets — a correctness alignment, not new behaviour.
+ * Used by BOTH the `var` hoister and the let/const declaration path so the slot
+ * type is uniform (a `var` reuses its hoisted slot, so both sites MUST agree).
+ *
+ * IMPORTANT — trigger on the `void`-EXPRESSION INITIALIZER ONLY, not on a bare
+ * "purely `undefined`/`void` declared type". A binding can be `undefined`-typed
+ * for unrelated reasons (e.g. `const afterA = obj.a` reading an optional
+ * `a?: number` after `delete obj.a`), and those MUST stay a numeric slot — the
+ * delete / optional-property machinery encodes `undefined` as an f64 sNaN
+ * sentinel and relies on the local being f64/i32 so `afterA === undefined`
+ * detects the sentinel. Forcing those to externref boxes the sentinel via
+ * `__box_number` and breaks the `=== undefined` check (regressed
+ * delete-sentinel #1112). The `void 0` expression is the precise, narrow signal
+ * for the acorn evolving-local idiom.
+ */
+export function varBindingNeedsExternrefForUndefined(decl: ts.VariableDeclaration | undefined): boolean {
+  // `var x = (void 0)` / `var x = void <expr>` — strip parens to find the void.
+  let init = decl?.initializer;
+  while (init && ts.isParenthesizedExpression(init)) init = init.expression;
+  return init !== undefined && ts.isVoidExpression(init);
+}
+
 export function hoistVarDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -14201,7 +14268,7 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
       }
     }
     const wasmType: ValType =
-      initForcesExternref || isNullablePrimitiveType(varType)
+      initForcesExternref || isNullablePrimitiveType(varType) || varBindingNeedsExternrefForUndefined(decl)
         ? { kind: "externref" as const }
         : resolveWasmType(ctx, varType);
     if (initForcesExternref) ctx.externrefAccessorVars.add(name);

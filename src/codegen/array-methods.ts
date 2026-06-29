@@ -6842,6 +6842,24 @@ function compileArrayReduceRight(
 
   const numKind = ctx.fast ? "i32" : "f64";
   const bridgeName = ctx.fast ? "__call_2_i32" : "__call_2_f64";
+
+  // (#2809) Pre-ensure `__get_undefined` BEFORE `setupArrayCallback` emits the
+  // callback closure's `ref.func`. The seed/loop below map a `$Hole` element to
+  // `undefined` via `holeToUndefinedInstrs`, which calls `emitUndefined` into a
+  // DETACHED body — so its internal `flushLateImportShifts` patches that detached
+  // array, NOT the real `fctx.body` holding the closure `ref.func`. If
+  // `__get_undefined` is first registered there, the late-import funcIdx shift is
+  // silently consumed and the closure `ref.func` is left pointing at the wrong
+  // (pre-shift) function → `call_ref` dereferences a stale/null funcref and traps
+  // (the regressed sparse-`[,,,]` `reduceRight` null-deref, reference_1461 class).
+  // Registering it here, while `fctx.body` is the real body, makes the shift flush
+  // against the right instrs and renders the later `holeToUndefinedInstrs`
+  // registrations idempotent (no further shift).
+  if (ctx.usesArrayHoles && elemType.kind === "externref") {
+    ensureGetUndefined(ctx);
+    flushLateImportShifts(ctx, fctx);
+  }
+
   const setup = setupArrayCallback(ctx, fctx, callExpr, "reduceRight", "rr", bridgeName);
   if (!setup) return null;
 
@@ -6902,13 +6920,9 @@ function compileArrayReduceRight(
     fctx.body.push({ op: "local.set", index: iTmp });
   }
 
-  // (#2001 S1) Pre-ensure `__get_undefined` (reduceRight builds its loop struct
-  // manually, not via setupArrayLoop) so the detached `holeToUndefinedInstrs`
-  // for the per-iteration element load below can't shift a captured funcIdx.
-  if (ctx.usesArrayHoles && elemType.kind === "externref") {
-    ensureGetUndefined(ctx);
-    flushLateImportShifts(ctx, fctx);
-  }
+  // (#2001 S1 / #2809) `__get_undefined` is pre-ensured at the top of this
+  // function (before the closure `ref.func` is emitted) so the detached
+  // `holeToUndefinedInstrs` below can't shift a captured funcIdx.
 
   // Build the loop locals struct for buildClosureCallInstrs compatibility
   const loop: ArrayLoopLocals = {

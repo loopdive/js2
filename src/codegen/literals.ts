@@ -3957,7 +3957,24 @@ export function compileArrayConstructorCall(
   const rawTypeArgs = ctx.checker.getTypeArguments(exprType as ts.TypeReference);
   const elemTsType = rawTypeArgs?.[0];
   const untypedElem = !elemTsType || (elemTsType.flags & ts.TypeFlags.Any) !== 0;
-  if (!untypedElem) {
+  // (#2809 PROTOTYPE — partial; see issue) Keep this builtin's vec representation
+  // in lockstep with the `Array<undefined>`/`Array<void>` → externref rule in
+  // `resolveWasmType`'s Array branch (#2806 site #3). Without this,
+  // `Array(undefined, undefined)` builds an i32 vec here (scalar
+  // `resolveWasmType(undefined)` = i32) while every CONSUMER resolves the value's
+  // `Array<undefined>` type to an externref vec — a type/value mismatch that
+  // mis-reads `.length` and trips `array.new_fixed` validation. This fixes the
+  // non-`new` `Array(undefined, …)` case (test262 S15.4.1) and leaves numeric
+  // arrays untouched. NOTE: `new Array(…)` (new-super.ts), sparse `[,,,]` holes,
+  // and `.sort()` still need the SAME alignment — that spread is the
+  // representation-scale decision #2809 carves for the architect.
+  const pureUndefinedVoidElem =
+    !!elemTsType &&
+    (elemTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0 &&
+    (elemTsType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0;
+  if (pureUndefinedVoidElem) {
+    elemWasm = { kind: "externref" };
+  } else if (!untypedElem) {
     elemWasm = resolveWasmType(ctx, elemTsType!);
   } else if (args.length === 1 && !ts.isSpreadElement(args[0]!)) {
     // #1998: `Array(n)` with an untyped element type is a *sparse* array of `n`

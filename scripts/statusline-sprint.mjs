@@ -49,7 +49,7 @@ function sprintFromRemote(remote) {
   // git grep output format: <ref>:<path>:<matched-line>
   const grepResult = spawnSync(
     "git",
-    ["-C", ROOT, "grep", "-E", "^(sprint: [0-9]|status: )", ref, "--", "plan/issues/*.md"],
+    ["-C", ROOT, "grep", "-E", "^(sprint: [0-9]|sprint: current|status: )", ref, "--", "plan/issues/*.md"],
     { encoding: "utf8", timeout: 8000, maxBuffer: 16 * 1024 * 1024 },
   );
 
@@ -58,7 +58,7 @@ function sprintFromRemote(remote) {
 
   // Parse output lines: <ref>:<path>:<content>
   // Split only on the first two colons (paths never contain colons on Linux).
-  const byFile = new Map(); // path -> { sprint?, status? }
+  const byFile = new Map(); // path -> { sprint?, current?, status? }
   for (const line of grepResult.stdout.split("\n")) {
     if (!line) continue;
     const c1 = line.indexOf(":");
@@ -76,9 +76,10 @@ function sprintFromRemote(remote) {
 
     const file = byFile.get(path) ?? {};
     // First-wins: frontmatter appears before body text
-    if (file.sprint === undefined) {
+    if (file.sprint === undefined && file.current === undefined) {
       const m = content.match(/^sprint:\s*(\d+)\s*$/);
       if (m) file.sprint = Number(m[1]);
+      else if (/^sprint:\s*current\s*$/.test(content)) file.current = true;
     }
     if (file.status === undefined) {
       const m = content.match(/^status:\s*(\S+)/);
@@ -110,9 +111,17 @@ function sprintFromRemote(remote) {
     }
   }
 
-  // Build sprint buckets from the parsed file map.
+  // Build sprint buckets from the parsed file map. The rolling budget-window
+  // model (#2751) tags live work `sprint: current`; that is the active window
+  // and takes precedence over any frozen numbered sprint.
   const bySprint = new Map(); // sprintNum -> { total, done }
-  for (const { sprint, status } of byFile.values()) {
+  const current = { total: 0, done: 0 }; // the `sprint: current` window
+  for (const { sprint, current: isCurrent, status } of byFile.values()) {
+    if (isCurrent) {
+      current.total++;
+      if (status === "done" || status === "wont-fix") current.done++;
+      continue;
+    }
     if (!sprint) continue;
     const bucket = bySprint.get(sprint) ?? { total: 0, done: 0 };
     bucket.total++;
@@ -120,9 +129,12 @@ function sprintFromRemote(remote) {
     bySprint.set(sprint, bucket);
   }
 
+  // The live `current` window wins when it has any work.
+  if (current.total > 0) return { sprint: "cur", done: current.done, total: current.total };
+
   if (bySprint.size === 0) return null;
 
-  // Current sprint = highest numbered sprint that is not inactive.
+  // Fallback: highest numbered sprint that is not inactive.
   const nums = [...bySprint.keys()].filter((n) => !inactive.has(n)).sort((a, b) => b - a);
   const sprintNum = nums[0] ?? 0;
   if (!sprintNum) return null;
@@ -137,15 +149,18 @@ function fromJson() {
   if (!existsSync(SPRINTS_JSON)) return null;
   try {
     const sprints = JSON.parse(readFileSync(SPRINTS_JSON, "utf8"));
-    // Active sprint: not closed, not planning (same logic as dashboard)
-    const active = sprints
-      .filter((s) => Number.isFinite(s.sprintNumber) && !s.isClosed && !s.isPlanning)
-      .sort((a, b) => a.sprintNumber - b.sprintNumber)
-      .at(-1);
+    // Prefer the live `current` window (#2751); else the latest active numbered
+    // sprint (not closed, not planning — same logic as the dashboard).
+    const active =
+      sprints.find((s) => s.isCurrent) ??
+      sprints
+        .filter((s) => Number.isFinite(s.sprintNumber) && !s.isClosed && !s.isPlanning)
+        .sort((a, b) => a.sprintNumber - b.sprintNumber)
+        .at(-1);
     if (!active) return null;
     const total = (active.issueIds || []).length;
     const done = (active.completedIssueIds || []).length;
-    return { sprint: active.sprintNumber, done, total };
+    return { sprint: active.isCurrent ? "cur" : active.sprintNumber, done, total };
   } catch {
     return null;
   }
@@ -154,14 +169,16 @@ function fromJson() {
 const ISSUE_FILE_RE = /^\d+[a-z]?(?:[-_].+)?\.md$/i;
 const NON_ISSUE = new Set(["backlog.md", "index.md", "SCHEMA.md", "log.md", "1578-test262-analysis.md"]);
 
-// Scan the flat issue tree once, bucketing by numeric `sprint:` value.
+// Scan the flat issue tree once, bucketing by numeric `sprint:` value plus the
+// live `sprint: current` window (#2751).
 function scanFlatTree() {
   const bySprint = new Map(); // sprintNum -> { total, done }
+  const current = { total: 0, done: 0 }; // the `sprint: current` window
   let names = [];
   try {
     names = readdirSync(ISSUES_DIR);
   } catch {
-    return bySprint;
+    return { bySprint, current };
   }
   for (const f of names) {
     if (NON_ISSUE.has(f) || !ISSUE_FILE_RE.test(f)) continue;
@@ -172,14 +189,20 @@ function scanFlatTree() {
       continue;
     }
     const sprintRaw = content.match(/^sprint:\s*(\S+)/m)?.[1] ?? "";
+    const isDone = /^status:\s*(done|wont-fix)\b/m.test(content);
+    if (sprintRaw === "current") {
+      current.total++;
+      if (isDone) current.done++;
+      continue;
+    }
     if (!/^\d+$/.test(sprintRaw)) continue; // skip Backlog / 0 / unset
     const n = Number(sprintRaw);
     const bucket = bySprint.get(n) ?? { total: 0, done: 0 };
     bucket.total++;
-    if (/^status:\s*(done|wont-fix)\b/m.test(content)) bucket.done++;
+    if (isDone) bucket.done++;
     bySprint.set(n, bucket);
   }
-  return bySprint;
+  return { bySprint, current };
 }
 
 let _flatCache = null;
@@ -213,15 +236,20 @@ function inactiveSprintNumbers() {
   return out;
 }
 
+// Returns "cur" when the live `current` window has work, else the highest
+// non-inactive numbered sprint (or 0).
 function currentSprintLocal() {
-  const buckets = flatTree();
+  const { bySprint, current } = flatTree();
+  if (current.total > 0) return "cur";
   const inactive = inactiveSprintNumbers();
-  const nums = [...buckets.keys()].filter((n) => !inactive.has(n)).sort((a, b) => b - a);
+  const nums = [...bySprint.keys()].filter((n) => !inactive.has(n)).sort((a, b) => b - a);
   return nums[0] ?? 0;
 }
 
 function sprintProgressLocal(n) {
-  return flatTree().get(n) ?? { done: 0, total: 0 };
+  const { bySprint, current } = flatTree();
+  if (n === "cur") return current;
+  return bySprint.get(n) ?? { done: 0, total: 0 };
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -283,4 +311,6 @@ const [r, g, b] = interpolateColor(pct);
 const colored = `\x1b[38;2;${r};${g};${b}m`;
 const reset = "\x1b[0m";
 
-process.stdout.write(`${colored}s${sprint} ${done}/${total}${reset}`);
+// Numbered sprint → "sN"; the live `current` window → "cur" (no `s` prefix).
+const sprintLabel = sprint === "cur" ? "cur" : `s${sprint}`;
+process.stdout.write(`${colored}${sprintLabel} ${done}/${total}${reset}`);
