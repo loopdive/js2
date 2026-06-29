@@ -923,6 +923,46 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       }
     }
 
+    // (#2826) Bug C — CPS-capture half. The #2820 reuse gate above DECLINES to
+    // collapse the duplicate slot when ANY CPS (async/generator) function
+    // captures this block-`let` — collapsing perturbs the for-await-of
+    // continuation state machine (43 `for-await-of/async-{func,gen}-decl-dstr-*`
+    // regressions). That leaves an IMMUTABLE CPS capture pinned to the stale
+    // pre-hoisted slot A (never written) → the callee reads the 0/null zero-init.
+    // Fix WITHOUT collapsing: keep the fresh slot B (`localIdx`) as the real
+    // storage and re-point the already-recorded capture metadata from A to B.
+    // This mutates the single source of truth
+    // (`nestedFuncCaptures[*].outerLocalIdx`), so every downstream construction /
+    // call site (calls.ts immutable `local.get`, the lazy closure builders)
+    // resolves to B automatically — no read-site edit. Touch ONLY immutable
+    // captures: mutable boxed captures already thread the value correctly and are
+    // exactly the 43-regression class. Producer slot layout is unchanged (A stays
+    // allocated but dead) so the continuation state struct is byte-identical to
+    // baseline. Fires on the complementary branch to #2820's gate
+    // (`capturedByPlainFn && !cpsCaptured`), so the two compose with no overlap;
+    // a block-`let` captured by BOTH a plain and a CPS fn lands here (gate
+    // declined reuse) and both capturers' immutable entries re-point to B.
+    if (isLetConstDecl && freshLocalForLetConst) {
+      const preHoistedA = fctx.preHoistedLetConstSlots?.get(decl);
+      if (preHoistedA !== undefined && preHoistedA.valueSlot !== localIdx) {
+        const newTdzFlag = fctx.tdzFlagLocals?.get(name);
+        for (const [, caps] of ctx.nestedFuncCaptures) {
+          for (const cap of caps) {
+            if (cap.name !== name || cap.mutable === true) continue;
+            if (cap.outerLocalIdx !== preHoistedA.valueSlot) continue;
+            cap.outerLocalIdx = localIdx;
+            if (
+              preHoistedA.flagSlot !== undefined &&
+              cap.outerTdzFlagIdx === preHoistedA.flagSlot &&
+              newTdzFlag !== undefined
+            ) {
+              cap.outerTdzFlagIdx = newTdzFlag;
+            }
+          }
+        }
+      }
+    }
+
     // If we reused a pre-hoisted slot but inference found a more precise type
     // (e.g. Array<any> hoisted as vec_externref, but inferred as vec_f64),
     // update the local's type so it matches what the initializer will produce.

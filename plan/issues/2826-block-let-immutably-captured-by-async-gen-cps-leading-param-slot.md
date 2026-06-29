@@ -3,7 +3,8 @@ id: 2826
 title: "Bug C (CPS-capture half): block-scoped let immutably captured by a hoisted async/generator declaration reads the stale pre-hoisted slot"
 parent: 2818
 related: [2820, 2818, 2825, 2811, 2669]
-status: ready
+status: done
+completed: 2026-06-30
 created: 2026-06-29
 priority: high
 feasibility: hard
@@ -260,3 +261,38 @@ comment for the precise regression signature.)
 - **Zero** regressions in the 43-test `for-await-of/async-{func,gen}-decl-dstr-*`
   mutable-capture class on full merge_group.
 - TDZ throws for pre-init reads through a CPS capture preserved.
+
+## Resolution (2026-06-30)
+
+Implemented **Design 1A** (producer-side capture re-point) in
+`src/codegen/statements/variables.ts`, immediately after the fresh-slot (B)
+allocation + TDZ-flag realloc, on the complementary branch to #2820's reuse gate
+(`isLetConstDecl && freshLocalForLetConst`):
+
+- When the block-`let`'s own pre-hoisted slot A (`preHoistedLetConstSlots.get(decl)`)
+  differs from the freshly-allocated slot B (`localIdx`), iterate
+  `ctx.nestedFuncCaptures` and **re-point** every IMMUTABLE capture
+  (`cap.mutable !== true`) still pinned to A (`cap.outerLocalIdx === A`) onto B.
+  The matching `outerTdzFlagIdx` is re-pointed in lockstep when a TDZ flag was
+  re-allocated.
+- Slot **layout is unchanged** (A stays allocated but dead), so the for-await-of
+  continuation state struct is byte-identical to baseline — the 43-test
+  `async-{func,gen}-decl-dstr-*` mutable-capture class is untouched (mutable
+  boxed captures are explicitly skipped).
+
+Mutating the single source of truth (`nestedFuncCaptures[*].outerLocalIdx`) means
+all downstream construction/call sites (`calls.ts` immutable `local.get`, lazy
+closure builders) resolve to B with no read-site edit.
+
+## Test Results
+
+`tests/issue-2826.test.ts` — 9/9 pass:
+- block async / block generator capturer (numeric + string) → captured value
+- mixed plain + CPS capturer of the same block-`let` → both read it (84)
+- `const` variant
+- controls: fn-scope async/generator capture, plain (#2820) block capture — unchanged
+
+Regression (scoped, local): `tests/issue-2820.test.ts` (15), `tests/issue-2811.test.ts`
+(9), `tests/async-await.test.ts`, `tests/flatmap-closure.test.ts`,
+`tests/generator-method-destructuring.test.ts` — all green. The 43-test
+`for-await-of` mutable-capture class is validated on the full `merge_group` (CI).
