@@ -187,6 +187,10 @@ the link step. Use this variant only when you want the same binary to link again
 an external `node:fs` provider; for a drop-in standalone host, prefer `--target
 wasi` alone above.
 
+> **Running the output under a runtime** (the exact Wasmtime `-W` proposal flags
+> plus `bun -b` / Deno) is documented in
+> [Standalone I/O → Running the output across runtimes](../../docs/standalone-io.md#running-the-output-across-runtimes).
+
 > The `-o` flag is an **output directory**, not a filename. js2wasm names the
 > output after the input basename (`nm_js2wasm_node_fs.wasm`).
 

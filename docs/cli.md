@@ -121,6 +121,10 @@ js2wasm hello.ts --target wasi
 The WASI target auto-enables native (WasmGC i16) string arrays in place of
 `wasm:js-string` builtins, so the binary runs in any WASI host without JS glue.
 
+To **run** the resulting `.wasm` — the exact Wasmtime `-W` proposal flags (and
+the `all-proposals` caveat), plus `bun -b` and Deno — see the runtime matrix in
+[Standalone I/O → Running the output across runtimes](./standalone-io.md#running-the-output-across-runtimes).
+
 ## Permission flags
 
 ### `--allow-fs`

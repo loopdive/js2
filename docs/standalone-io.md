@@ -104,6 +104,39 @@ $ cat out.txt
 file contents
 ```
 
+## Running the output across runtimes
+
+A `--target wasi` build is a **WasmGC** module. Any runtime that runs it must
+support the proposals the codegen relies on — **GC, typed function references,
+tail calls, and exception handling**. The flags differ per runtime:
+
+| Runtime | Command | Notes |
+| --- | --- | --- |
+| **Wasmtime** (44+) | `wasmtime -W gc=y,function-references=y,tail-call=y,exceptions=y program.wasm` | Use this **targeted** flag set, **not** `-W all-proposals=y` — all-proposals also turns on stack-switching, which Wasmtime 44/45 rejects at module load (`the wasm_stack_switching feature is not supported on this compiler configuration`), so the module exits before running. Add `--dir .` to grant filesystem access (see [Writing arbitrary files](#writing-arbitrary-files)). |
+| **Bun** | `bun -b program.wasm` | Executes the WasmGC module directly; the required proposals are on by default — no extra flags. |
+| **Deno** | `deno run --allow-read --allow-write program.wasm` (or via a small `WebAssembly.instantiate` loader) | Runs the module on the V8 WasmGC engine; grant the `--allow-*` permissions the program needs. |
+
+> **STDIN/STDOUT/STDERR** map to WASI fds 0/1/2 in every runtime above — the I/O
+> patterns on this page are runtime-independent. Only the launch flags differ.
+
+### The `node:fs` host variant (`--link node:fs`)
+
+If you compiled a `node:fs` host module instead of a pure WASI command (i.e. the
+source uses `readSync`/`writeSync` from `node:fs`), there are two ways to run it:
+
+- **`--target wasi` alone** (no `--link`): the `node:fs` calls are lowered
+  **inline** to WASI `fd_read`/`fd_write`, so the module is a self-contained WASI
+  command — run it under any runtime in the table above.
+- **`--link node:fs`**: the module instead *imports* a stable `node:fs`
+  interface and must be linked against a provider before it runs — the
+  [`node-fs.wat`](../examples/native-messaging/node-fs.wat) adapter (maps
+  `node:fs` → WASI `fd_read`/`fd_write`), a native WASI host, or the real
+  `node:fs` module under a JS host. Running a `--link node:fs` module under bare
+  `wasmtime` with no link step fails with `unknown import: node:fs::readSync`
+  (loopdive/js2#389 bug 2) — link it first. See
+  [`examples/native-messaging/README.md`](../examples/native-messaging/README.md)
+  for the full recipe.
+
 ## Summary
 
 | Operation | JS you write | WASI mechanism |

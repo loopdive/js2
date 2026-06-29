@@ -1,9 +1,10 @@
 ---
 id: 2813
 title: "Doc: running js2wasm --target wasi output across runtimes (wasmtime / bun -b / deno) + required -W flags"
-status: ready
+status: done
+completed: 2026-06-30
 created: 2026-06-29
-updated: 2026-06-29
+updated: 2026-06-30
 priority: low
 feasibility: easy
 task_type: docs
