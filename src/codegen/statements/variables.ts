@@ -1171,6 +1171,69 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // Set local TDZ flag to 1 (initialized) if this is a hoisted let/const
     emitLocalTdzInit(fctx, name);
 
+    // (#2826) Bug C (CPS-capture half): re-point IMMUTABLE hoisted-fn captures
+    // from the stale pre-hoisted slot A to the fresh slot B. This is the exact
+    // INVERSE of #2820's reuse gate above (~L837), composing with it with ZERO
+    // overlap:
+    //   • #2820 collapses A→B (reuses the pre-hoist slot A) ONLY for a block-`let`
+    //     captured by a PLAIN (non-CPS) hoisted fn. It DELIBERATELY skips the
+    //     collapse when a CPS-lowered (async/generator) fn captures the name,
+    //     because collapsing the duplicate slot perturbs the for-await-of
+    //     continuation state machine (43 `for-await-of/async-{func,gen}-decl-dstr-*`
+    //     regressions, net −14). The CPS-excluded path therefore lands the
+    //     block-`let` in a FRESH slot B (`freshLocalForLetConst` here).
+    //   • But a hoisted async/generator fn that captured this name pinned its
+    //     `outerLocalIdx` to slot A (recorded at hoist-compile time, before
+    //     `let s = …` ran). `let s = 42` writes B; A is never written. The
+    //     immutable construction-site read is a bare `local.get cap.outerLocalIdx`
+    //     (calls.ts), so it reads A's zero-init (⇒ 0), not B's 42.
+    // Fix: keep BOTH slots (A stays a dead pre-hoist slot, B is the real storage)
+    // so the producer layout / CPS state struct is BYTE-IDENTICAL to baseline (no
+    // state-machine perturbation), and re-point ONLY the immutable, unboxed
+    // capture's `outerLocalIdx` from A→B. Because that mutates the single source
+    // of truth (`nestedFuncCaptures[*].outerLocalIdx`), every downstream
+    // construction site that reads it resolves to B with no read-site edit.
+    //
+    // NEVER touch a MUTABLE (boxed) capture (`cap.mutable === true`): the boxed
+    // construction path (calls.ts ~12904-12928) READS `outerLocalIdx` to seed the
+    // ref cell, so re-pointing it would change bytes — and that boxed path is
+    // exactly the 43-regression class #2820 had to exclude. Discriminate strictly
+    // by mutability, NOT by Wasm kind.
+    //
+    // `freshLocalForLetConst` guarantees no overlap with #2820: when #2820 reused
+    // A, `existingIdx === A` ⇒ `isHoistedLetConst` ⇒ `freshLocalForLetConst ===
+    // false`, so this branch never fires for a #2820-reused decl. It also never
+    // fires when `name` was pre-boxed (mutable capture) — that sets localMap ⇒
+    // `existingIdx` defined ⇒ `freshLocalForLetConst === false`.
+    if (freshLocalForLetConst) {
+      const preHoistedForRepoint = fctx.preHoistedLetConstSlots?.get(decl);
+      if (preHoistedForRepoint !== undefined && localIdx !== preHoistedForRepoint.valueSlot) {
+        const staleValueSlot = preHoistedForRepoint.valueSlot;
+        const staleFlagSlot = preHoistedForRepoint.flagSlot;
+        const liveFlagSlot = fctx.tdzFlagLocals?.get(name);
+        for (const caps of ctx.nestedFuncCaptures.values()) {
+          for (const cap of caps) {
+            // Immutable / unboxed captures of THIS name still pinned to the stale
+            // pre-hoist slot A only. A non-hoisted capturer (async arrow / fn-expr
+            // assigned AFTER the `let`) recorded against localMap-at-B ⇒ its
+            // `outerLocalIdx !== A` ⇒ skipped (already correct). Pattern bindings
+            // carry no pre-hoist slot ⇒ no capture pinned to A ⇒ skipped.
+            if (cap.name !== name) continue;
+            if (cap.mutable === true) continue;
+            if (cap.outerLocalIdx !== staleValueSlot) continue;
+            cap.outerLocalIdx = localIdx;
+            // Re-point the construction-time TDZ-flag metadata in lockstep so the
+            // recorded flag tracks the live (B) flag, not the dead pre-hoist flag.
+            // (Live TDZ routing already goes through fctx.tdzFlagLocals.get(name);
+            // this keeps the stored metadata consistent for any future reader.)
+            if (staleFlagSlot !== undefined && liveFlagSlot !== undefined && cap.outerTdzFlagIdx === staleFlagSlot) {
+              cap.outerTdzFlagIdx = liveFlagSlot;
+            }
+          }
+        }
+      }
+    }
+
     // (#1672) If compiling this initializer promoted `name` to a captured
     // global (because a method/accessor body in the initializer referenced
     // `name` itself), the store above wrote only the local — but the promotion
