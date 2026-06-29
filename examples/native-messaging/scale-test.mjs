@@ -201,7 +201,9 @@ function buildVariant(v) {
   const js = join(WORK, `${v.name}.js`);
   bunBundle(v.src, js, v.bunExtra);
   js2wasm(js, v.js2wasmExtra);
-  const wasm = join(WORK, `${v.name}.js.wasm`);
+  // #2816 stripped the source extension from CLI output names, so compiling
+  // `<name>.js -o WORK` now writes `<name>.wasm`, not `<name>.js.wasm`.
+  const wasm = join(WORK, `${v.name}.wasm`);
   if (!statSync(wasm, { throwIfNoEntry: false })) throw new Error(`${wasm} not produced`);
   return wasm;
 }
