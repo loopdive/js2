@@ -1,8 +1,9 @@
 {
   "id": "2726",
   "assignee": "ttraenkler/del2726",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2726-delete-nonthrow",
   "claimed_at": "2026-06-29T01:23:20Z",
-  "updated_at": "2026-06-29T01:23:20Z"
+  "updated_at": "2026-06-29T01:59:36Z",
+  "released_at": "2026-06-29T01:59:36Z"
 }
