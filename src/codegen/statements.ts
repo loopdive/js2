@@ -147,11 +147,11 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // Save localMap entries for any block-scoped (let/const) names that shadow
     // existing variables.  Wasm locals are flat (no block scope), so we need to
     // restore the outer mapping after the block ends.
-    const savedLocals = saveBlockScopedShadows(fctx, stmt);
+    const savedLocals = saveBlockScopedShadows(ctx, fctx, stmt);
     for (const s of stmt.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedLocals);
+    restoreBlockScopedShadows(ctx, fctx, savedLocals);
     return;
   }
 

@@ -108,11 +108,11 @@ export function compileWhileStatement(ctx: CodegenContext, fctx: FunctionContext
   // Compile body — must save/restore block-scoped shadows so that let/const
   // declarations inside the loop body do not leak into the outer scope (#817).
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -1115,11 +1115,11 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   // Body (inside $continue block) — save/restore block-scoped shadows so that
   // let/const declarations inside the loop body do not leak into outer scope (#817).
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -1299,11 +1299,11 @@ export function compileDoWhileStatement(ctx: CodegenContext, fctx: FunctionConte
 
   // Compile body — save/restore block-scoped shadows for let/const (#817).
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -3348,9 +3348,9 @@ function compileForOfNativeMapEntries(
   // inside the body) exits the body block and falls through to the loop's `br`.
   const savedLoopBody = pushBody(fctx);
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) compileStatement(ctx, fctx, s);
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -3625,11 +3625,11 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
 
   // Compile body — save/restore block-scoped shadows for let/const (#817).
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -3991,11 +3991,11 @@ function compileForOfArray(
 
   // Compile body — save/restore block-scoped shadows for let/const (#817).
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -4324,11 +4324,11 @@ function emitArrayKeysEntriesLoop(
 
   // Compile body — save/restore block-scoped shadows for let/const (#817).
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -4900,11 +4900,11 @@ function compileForOfDirectIterator(
 
   // Compile body
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -5271,11 +5271,11 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
 
   // Compile body — save/restore block-scoped shadows for let/const (#817).
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -5517,9 +5517,9 @@ function emitArrayForIn(
   }
 
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) compileStatement(ctx, fctx, s);
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }
@@ -5998,11 +5998,11 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
 
   // Compile the user's loop body — save/restore block-scoped shadows for let/const (#817).
   if (ts.isBlock(stmt.statement)) {
-    const savedScope = saveBlockScopedShadows(fctx, stmt.statement);
+    const savedScope = saveBlockScopedShadows(ctx, fctx, stmt.statement);
     for (const s of stmt.statement.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedScope);
+    restoreBlockScopedShadows(ctx, fctx, savedScope);
   } else {
     compileStatement(ctx, fctx, stmt.statement);
   }

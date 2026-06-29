@@ -310,6 +310,69 @@ describe("#2825 controls — pre-existing behavior must be unchanged", () => {
   });
 });
 
+describe("#2825 captured-global must NOT leak past the block scope (merge_group regression guard)", () => {
+  // A block-nested class's capture-promotion registers a name-keyed
+  // `__captured_<name>` module global. Without block-scoping that registration,
+  // it LEAKED past the block: a later same-named (outer / sibling-block) binding's
+  // class capture hit the `capturedGlobals.has(name)` short-circuit and reused the
+  // inner block's global. These are clean pass->fail regressions on the merged
+  // baseline (they were correct before the deferral change). The block-scope
+  // reconciliation in `restoreBlockScopedShadows` (#2825) fixes them.
+
+  it("a block-let capture does not leak to a LATER fn-scope class of the same name", async () => {
+    // C captures inner block s=2; D (fn-scope) must capture the OUTER s=1.
+    expect(
+      await runNum(`export function test(): number {
+        let s = 1;
+        { let s = 2; class C { m(): number { return s; } } }
+        class D { m(): number { return s; } }
+        return new D().m();
+      }`),
+    ).toBe(1);
+  });
+
+  it("sibling-block captures of the same name resolve to their own block's binding", async () => {
+    expect(
+      await runNum(`export function test(): number {
+        let a = 0;
+        { let s = 2; class C { m(): number { return s; } } a = new C().m(); }
+        { let s = 3; class D { m(): number { return s; } } return a * 10 + new D().m(); }
+      }`),
+    ).toBe(23);
+  });
+
+  it("inner shadow capture is correct AND the post-block fn-scope capture sees the outer", async () => {
+    // C captures inner s=2 (→ r=2); D captures outer s=1.  r*10 + D.m() = 21.
+    expect(
+      await runNum(`export function test(): number {
+        let s = 1;
+        let r = 0;
+        { let s = 2; class C { m(): number { return s; } } r = new C().m(); }
+        class D { m(): number { return s; } }
+        return r * 10 + new D().m();
+      }`),
+    ).toBe(21);
+  });
+
+  it("captured-global does not leak across sibling functions in the same module", async () => {
+    expect(
+      await runNum(`function a(): number { let s = 5; { let s = 9; class C { m(): number { return s; } } return new C().m(); } }
+        export function test(): number { let s = 1; class D { m(): number { return s; } } return a() * 100 + new D().m(); }`),
+    ).toBe(901);
+  });
+
+  it("a fn-scope class capture before a shadowing block stays correct", async () => {
+    expect(
+      await runNum(`export function test(): number {
+        let s = 1;
+        class C { m(): number { return s; } }
+        { let s = 2; let inner = new C().m(); s + inner; }
+        return new C().m();
+      }`),
+    ).toBe(1);
+  });
+});
+
 describe("#2825 known pre-existing limitation (out of scope — documented, not fixed here)", () => {
   // `structMap` / `deferredClassBodies` are name-keyed, so two same-named classes
   // in sibling blocks collide: the second `C`'s deferral is consumed by the

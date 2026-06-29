@@ -5,7 +5,7 @@
  */
 import { ts } from "../../ts-api.js";
 import type { Instr } from "../../ir/types.js";
-import type { FunctionContext, NullGuardFact } from "../context/types.js";
+import type { CodegenContext, FunctionContext, NullGuardFact } from "../context/types.js";
 
 /**
  * Adjust the depth of all entries in the catchRethrowStack by `delta`.
@@ -48,6 +48,22 @@ export interface BlockScopeSave {
   tdzFlags: Map<string, number> | null;
   constBindings: Map<string, boolean> | null;
   nullGuardAliases: Map<string, NullGuardFact | null> | null;
+  /**
+   * #2825 — entry-state snapshot of the module-level captured-global maps for
+   * this block's block-scoped names. A block-nested class's capture-promotion
+   * (`promoteAccessorCapturesToGlobals`) registers `ctx.capturedGlobals[name]`
+   * (a `__captured_<name>` module global) and is name-keyed with no scope
+   * discrimination. Without scoping, that registration LEAKS past the block:
+   * a later same-named (outer / sibling-block) binding's class capture hits the
+   * `capturedGlobals.has(name)` short-circuit and wrongly reuses the inner
+   * block's global. We snapshot the entry-state (value or `undefined`/`false`
+   * for "absent") here, read-only, and on block exit delete/restore any entry
+   * the block's nested-class promotion added or changed. Maps the block-scoped
+   * name → its pre-block value (`undefined` = was absent).
+   */
+  capturedGlobals: Map<string, number | undefined> | null;
+  tdzGlobals: Map<string, number | undefined> | null;
+  capturedGlobalsWidened: Map<string, boolean> | null;
 }
 
 function collectBindingPatternNames(pattern: ts.BindingPattern, names: string[]): void {
@@ -97,7 +113,11 @@ export function collectBlockScopedNames(stmt: ts.Block): string[] {
  * tdzFlagLocals) so that compileVariableStatement will allocate fresh locals.
  * Returns the saved state to restore after the block.
  */
-export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): BlockScopeSave | null {
+export function saveBlockScopedShadows(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  block: ts.Block,
+): BlockScopeSave | null {
   const blockNames = collectBlockScopedNames(block);
   if (blockNames.length === 0) return null;
 
@@ -105,6 +125,13 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
   let savedTdz: Map<string, number> | null = null;
   let savedConstBindings: Map<string, boolean> | null = null;
   let savedNullGuardAliases: Map<string, NullGuardFact | null> | null = null;
+  // #2825 — entry-state snapshot of the module-level captured-global maps for
+  // this block's names (read-only; we do NOT clear at entry so existing byte
+  // output is unchanged). Block exit reconciles against this to undo any
+  // block-scoped capture-global a nested class registered.
+  let savedCapturedGlobals: Map<string, number | undefined> | null = null;
+  let savedTdzGlobals: Map<string, number | undefined> | null = null;
+  let savedCapturedGlobalsWidened: Map<string, boolean> | null = null;
   for (const name of blockNames) {
     if (!savedConstBindings) savedConstBindings = new Map();
     savedConstBindings.set(name, fctx.constBindings?.has(name) ?? false);
@@ -112,6 +139,13 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
     if (!savedNullGuardAliases) savedNullGuardAliases = new Map();
     savedNullGuardAliases.set(name, fctx.nullGuardAliases?.get(name) ?? null);
     fctx.nullGuardAliases?.delete(name);
+
+    if (!savedCapturedGlobals) savedCapturedGlobals = new Map();
+    savedCapturedGlobals.set(name, ctx.capturedGlobals.get(name));
+    if (!savedTdzGlobals) savedTdzGlobals = new Map();
+    savedTdzGlobals.set(name, ctx.tdzGlobals.get(name));
+    if (!savedCapturedGlobalsWidened) savedCapturedGlobalsWidened = new Map();
+    savedCapturedGlobalsWidened.set(name, ctx.capturedGlobalsWidened.has(name));
 
     const existing = fctx.localMap.get(name);
     if (existing !== undefined) {
@@ -130,12 +164,14 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
       }
     }
   }
-  if (!savedLocals && !savedTdz && !savedConstBindings && !savedNullGuardAliases) return null;
   return {
     locals: savedLocals,
     tdzFlags: savedTdz,
     constBindings: savedConstBindings,
     nullGuardAliases: savedNullGuardAliases,
+    capturedGlobals: savedCapturedGlobals,
+    tdzGlobals: savedTdzGlobals,
+    capturedGlobalsWidened: savedCapturedGlobalsWidened,
   };
 }
 
@@ -143,7 +179,11 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
  * Restore localMap (and TDZ flag) entries that were saved before entering
  * a block scope.
  */
-export function restoreBlockScopedShadows(fctx: FunctionContext, saved: BlockScopeSave | null): void {
+export function restoreBlockScopedShadows(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  saved: BlockScopeSave | null,
+): void {
   if (!saved) return;
   if (saved.locals) {
     for (const [name, idx] of saved.locals) {
@@ -168,6 +208,40 @@ export function restoreBlockScopedShadows(fctx: FunctionContext, saved: BlockSco
     for (const [name, alias] of saved.nullGuardAliases) {
       if (alias) fctx.nullGuardAliases.set(name, alias);
       else fctx.nullGuardAliases.delete(name);
+    }
+  }
+  // #2825 — reconcile the module-level captured-global maps against the
+  // block-entry snapshot. A block-nested class's `promoteAccessorCapturesToGlobals`
+  // may have registered a `__captured_<name>` global keyed only by name; that
+  // entry is block-scoped and must NOT leak past the block, or a later
+  // same-named (outer / sibling-block) binding's class capture would reuse it
+  // (the `capturedGlobals.has(name)` short-circuit). For each block-scoped name:
+  // if the current entry differs from the pre-block snapshot, the block added or
+  // shadowed it → delete (was absent) or restore the outer value (was present).
+  // No-op when the block registered nothing (the common case), keeping existing
+  // output byte-identical.
+  if (saved.capturedGlobals) {
+    for (const [name, prev] of saved.capturedGlobals) {
+      const curr = ctx.capturedGlobals.get(name);
+      if (curr === prev) continue;
+      if (prev === undefined) ctx.capturedGlobals.delete(name);
+      else ctx.capturedGlobals.set(name, prev);
+    }
+  }
+  if (saved.tdzGlobals) {
+    for (const [name, prev] of saved.tdzGlobals) {
+      const curr = ctx.tdzGlobals.get(name);
+      if (curr === prev) continue;
+      if (prev === undefined) ctx.tdzGlobals.delete(name);
+      else ctx.tdzGlobals.set(name, prev);
+    }
+  }
+  if (saved.capturedGlobalsWidened) {
+    for (const [name, had] of saved.capturedGlobalsWidened) {
+      const has = ctx.capturedGlobalsWidened.has(name);
+      if (has === had) continue;
+      if (had) ctx.capturedGlobalsWidened.add(name);
+      else ctx.capturedGlobalsWidened.delete(name);
     }
   }
 }

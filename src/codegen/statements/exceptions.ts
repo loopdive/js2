@@ -288,11 +288,11 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
     const savedForFinally = pushBody(fctx);
     // Save/restore block-scoped shadows for let/const in the finally block (#817).
-    const savedFinallyScope = saveBlockScopedShadows(fctx, stmt.finallyBlock);
+    const savedFinallyScope = saveBlockScopedShadows(ctx, fctx, stmt.finallyBlock);
     for (const s of stmt.finallyBlock.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedFinallyScope);
+    restoreBlockScopedShadows(ctx, fctx, savedFinallyScope);
     finallyInstrs = fctx.body;
     popBody(fctx, savedForFinally);
 
@@ -356,7 +356,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
   }
 
   // Save/restore block-scoped shadows for let/const in the try block (#817).
-  const savedTryScope = saveBlockScopedShadows(fctx, stmt.tryBlock);
+  const savedTryScope = saveBlockScopedShadows(ctx, fctx, stmt.tryBlock);
   // While compiling the try body, record that a catch handler encloses it so
   // `return f()` is NOT rewritten to `return_call` — return_call replaces the
   // caller frame and a throw from the callee would skip this catch (#1972).
@@ -367,7 +367,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
     compileStatement(ctx, fctx, s);
   }
   if (stmt.catchClause) fctx.tryCatchDepth!--;
-  restoreBlockScopedShadows(fctx, savedTryScope);
+  restoreBlockScopedShadows(ctx, fctx, savedTryScope);
 
   // Pop finallyStack before inlining the normal-path finally (avoid double-inline)
   if (finallyInstrs) {
@@ -477,11 +477,11 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       }
 
       // Save/restore block-scoped shadows for let/const in the catch block (#817).
-      const savedCatchScope = saveBlockScopedShadows(fctx, stmt.catchClause.block);
+      const savedCatchScope = saveBlockScopedShadows(ctx, fctx, stmt.catchClause.block);
       for (const s of stmt.catchClause.block.statements) {
         compileStatement(ctx, fctx, s);
       }
-      restoreBlockScopedShadows(fctx, savedCatchScope);
+      restoreBlockScopedShadows(ctx, fctx, savedCatchScope);
       if (finallyInstrs) {
         // Pop the finallyStack entry we pushed for the catch body
         fctx.finallyStack!.pop();
