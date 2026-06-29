@@ -907,6 +907,11 @@
       }
 
       function getLatestActiveSprint(sprints) {
+        // The rolling budget-window model (#2751) tags live work `sprint: current`;
+        // build-data emits it as a synthetic `isCurrent` window which is the active
+        // board, taking precedence over any frozen numbered sprint.
+        const current = sprints.find((s) => s.isCurrent);
+        if (current) return current;
         return (
           [...sprints]
             .filter((s) => Number.isFinite(s.sprintNumber))
@@ -1202,7 +1207,7 @@
 
         sprintSelect.innerHTML = sprintOptions
           .filter((s) => Number.isFinite(s.sprintNumber))
-          .map((s) => `<option value="${s.sprintNumber}">${s.sprintNumber}</option>`)
+          .map((s) => `<option value="${s.sprintNumber}">${s.isCurrent ? "current" : s.sprintNumber}</option>`)
           .join("");
 
         if (currentSelectedSprint) {

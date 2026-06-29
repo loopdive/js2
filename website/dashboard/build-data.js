@@ -218,7 +218,17 @@ const allIssueEntries = [
 ];
 const issueIdsBySprint = new Map();
 const completedIssueIdsBySprint = new Map();
+// The rolling budget-window model (#2751) tags live work `sprint: current` — a
+// non-numeric value the numbered bucketing below would drop. Collect it into a
+// dedicated active-window bucket and emit a synthetic sprint object afterwards.
+const currentIssueIds = new Set();
+const currentCompletedIssueIds = new Set();
 for (const issue of allIssueEntries) {
+  if (issue.sprint === "current") {
+    currentIssueIds.add(String(issue.id));
+    if (issue.status === "done" || issue.status === "wont-fix") currentCompletedIssueIds.add(String(issue.id));
+    continue;
+  }
   const sprintNumber = extractSprintNumberFromLabel(issue.sprint);
   if (!Number.isFinite(sprintNumber)) continue;
   if (!issueIdsBySprint.has(sprintNumber)) issueIdsBySprint.set(sprintNumber, new Set());
@@ -364,6 +374,34 @@ for (const sprint of sprints) {
     // Legacy sprint with no status field: closed if at or below the explicit threshold.
     sprint.isClosed = sprint.sprintNumber <= explicitlyClosedMax || sprint.explicitCarryOver;
   }
+}
+
+// Synthetic active-window sprint for the rolling `sprint: current` model (#2751).
+// It has no `sprints/<N>.md` doc, so it is built here from the collected current
+// bucket and appended with a finite sentinel number (highest numbered sprint + 1)
+// so the dashboard's `Number.isFinite(sprintNumber)` filters include it and
+// `getLatestActiveSprint` selects it. `isCurrent` lets consumers label it "current".
+if (currentIssueIds.size > 0) {
+  const maxSprintNumber = sprints.reduce(
+    (m, s) => Math.max(m, Number.isFinite(s.sprintNumber) ? s.sprintNumber : 0),
+    0,
+  );
+  const sortIds = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+  sprints.push({
+    name: "current",
+    sprintNumber: maxSprintNumber + 1,
+    status: "active",
+    date: "",
+    baseline: "",
+    result: "",
+    issueCount: currentIssueIds.size,
+    issueIds: [...currentIssueIds].sort(sortIds),
+    completedIssueIds: [...currentCompletedIssueIds].sort(sortIds),
+    explicitCarryOver: false,
+    isCurrent: true,
+    isClosed: false,
+    isPlanning: false,
+  });
 }
 writeFileSync(join(OUT, "sprints.json"), JSON.stringify(sprints, null, 2));
 console.log(`Sprints: ${sprints.length} entries`);

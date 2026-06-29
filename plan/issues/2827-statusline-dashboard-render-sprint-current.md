@@ -3,15 +3,16 @@ id: 2827
 title: "Statusline + dashboard kanban ignore `sprint: current` (unfinished #2751 acceptance criterion)"
 parent: 2751
 related: [2751, 2750]
-status: ready
+status: done
 created: 2026-06-29
+completed: 2026-06-29
 priority: medium
 feasibility: medium
 reasoning_effort: medium
 task_type: chore
 area: tooling
 goal: maintainability
-sprint: Backlog
+sprint: current
 horizon: s
 architect_spec: done
 ---
@@ -160,9 +161,27 @@ highest-priority-status dedupe at build-data.js:173-181 should cover it; verify)
 - No regression for repos/branches still on the numbered-only model (empty
   `current` bucket → previous behaviour).
 
-## Notes
+## Resolution (implemented in this PR)
 
-- **No source change in this issue** — spec only (this PR adds the issue file
-  alone). Do not edit `statusline-sprint.mjs` / `build-data.js` / `index.html`
-  here; that is the implementation issue, scheduled later.
-- In-lane tooling; no dependency on codegen / substrate work.
+Both halves landed together (issue file + source):
+
+- **Statusline** (`scripts/statusline-sprint.mjs`): added a `current` bucket —
+  the remote grep and local scan now recognize `sprint: current`, and when any
+  `current` work exists it is emitted as the active window with the `cur` token
+  (`--porcelain` → `cur <done> <total>`); numbered sprints remain the fallback
+  when there is no `current` work. `.claude/statusline-command.sh` renders the
+  badge label as `cur <done>/<total>` for the non-numeric token (numeric
+  sprints still render `s<N> …`), and its `sprints.json` last-resort fallback
+  emits `cur` for the `isCurrent` entry. Budget chips (`wkly`/`d left`)
+  unchanged.
+- **Dashboard** (`website/dashboard/build-data.js`): `sprint: current` issues are
+  routed into a synthetic active-window sprint object
+  (`{ name:"current", sprintNumber: maxNumbered+1, isCurrent:true,
+  isClosed:false, isPlanning:false, issueIds, completedIssueIds }`) appended to
+  `sprints.json` instead of being dropped. `website/dashboard/index.html`:
+  `getLatestActiveSprint` prefers the `isCurrent` window and the sprint dropdown
+  labels it `current`; the existing `Number.isFinite(sprintNumber)` filters
+  already include it (the synthetic carries a finite number).
+
+In-lane tooling; no dependency on codegen / substrate work. Numbered-sprint
+fallback preserved (empty `current` bucket → previous behaviour).
