@@ -2,8 +2,10 @@
 id: 2818
 title: "Bug C (class-method half): block-scoped let captured by a class method reads null (captured-globals promotion ordering)"
 parent: 2669
-related: [2820, 2811, 1672]
-status: ready
+related: [2820, 2811, 1672, 2854]
+status: done
+completed: 2026-06-30
+assignee: sendev-ecmaver
 created: 2026-06-29
 priority: high
 feasibility: hard
@@ -109,3 +111,42 @@ async-generator methods, private methods, and the TDZ flag promotion
   the #2820 function-declaration fix, or TDZ throws.
 - `tests/issue-2818.test.ts` with the repros + a class-method cluster slice +
   fn-scope-capture regression controls.
+
+---
+
+## Resolution (sendev-ecmaver, 2026-06-30)
+
+**Root cause (refined from the issue's "early-return skips promotion" framing):**
+the bug was upstream of the `compileNestedClassDeclaration` early-return — in the
+**eager class-body compile pass** `compileClassesFromStatements`
+(`declarations.ts`). It only propagated its `insideFunction` flag when recursing
+into a **function body** (`stmt.body.statements, true`); it **dropped the flag**
+when recursing into `block` / `if` / `for|while|do` / `switch` / `try` /
+`labeled` statements. So a class nested in such a statement *inside a function*
+was treated as `insideFunction === false` and compiled **eagerly** via
+`compileClassBodies` (line ~4412) instead of being added to `deferredClassBodies`.
+Eager compilation happens before the enclosing function runs, so the block-`let`
+is not yet a promotable local → `promoteAccessorCapturesToGlobals` never fires →
+`$C_m` resolves `s` to the `ref.null.extern` fallback (the early-return at
+`nested-declarations.ts:99` is then a *symptom*: `structMap.has` is true and the
+class is **not** in `deferredClassBodies`, so it bails before promotion).
+
+**Fix:** propagate `insideFunction` through every control-flow recursion in
+`compileClassesFromStatements`. A function-nested class is now **deferred** and
+compiled in-scope by `compileNestedClassDeclaration` (after the block-`let`
+stores), where promotion + the `local.get; global.set __captured_<name>` sync
+land correctly. Module-level blocks keep `insideFunction === false` (eager,
+unchanged). ~9 call sites, +`insideFunction` arg each.
+
+**Verify-first (host/gc, `buildImports`):** before → `methodCapture: null`,
+`arrowInMethod: null`, `numeric: 0`, `fnScopeControl: "outer"` (control passes);
+after → all return the captured value. `tests/issue-2818.test.ts` (11 cases:
+string/numeric, arrow-in-method, generator/private/static methods, param-default,
+mutation-observed, if-block, for-block, fn-scope control) green.
+
+**Adjacent pre-existing bug found & filed as #2854 (NOT fixed here):** a
+**doubly-nested** (if-in-for) **numeric** block-`let` *captured* by a closure
+(arrow OR class method) fails Wasm validation with `ref.is_null[0] expected
+reference type, found local.get of type f64` — a TDZ-flag-on-numeric-capture
+bug. It reproduces on `main` with a plain arrow (no class) and is independent of
+this deferral fix (broken identically before & after). Out of scope; see #2854.
