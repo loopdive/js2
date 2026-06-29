@@ -3,7 +3,7 @@ id: 2826
 title: "Bug C (CPS-capture half): block-scoped let immutably captured by a hoisted async/generator declaration reads the stale pre-hoisted slot"
 parent: 2818
 related: [2820, 2818, 2825, 2811, 2669]
-status: ready
+status: blocked
 created: 2026-06-29
 priority: high
 feasibility: hard
@@ -15,7 +15,8 @@ language_feature: closures
 goal: spec-completeness
 sprint: current
 horizon: m
-architect_spec: done
+architect_spec: needs-revision
+blocked_reason: "Design 1A regresses CPS guardrail async-generator-interleaved; needs architect re-spec (transitive-capture-graph gate). See ## Implementation attempt (impl2826)."
 ---
 
 # #2826 — Bug C (CPS-capture half): block-`let` immutably captured by a hoisted async/generator declaration
@@ -260,3 +261,95 @@ comment for the precise regression signature.)
 - **Zero** regressions in the 43-test `for-await-of/async-{func,gen}-decl-dstr-*`
   mutable-capture class on full merge_group.
 - TDZ throws for pre-init reads through a CPS capture preserved.
+
+## Implementation attempt (impl2826, senior-dev) — Design 1A is UNSAFE, do not merge
+
+**Verdict: STOP / re-spec.** Design 1A (producer-side immutable `outerLocalIdx`
+A→B re-point) was implemented byte-for-byte per the spec and **regresses a named
+guardrail test** while delivering **zero conformance gain** on the cited targets.
+The implementation is preserved in git history (commit `e851cbf` on branch
+`issue-2826-cps-capture`) and **reverted** at the branch tip (`0329c7c`) so
+nothing ships. Debug-validated on current `origin/main` (`43394821800b`),
+host/gc lane.
+
+### What worked
+The synthetic #2826 repro is fixed by the re-point:
+`t5` (block async), `t6` (block generator), the string variant, and the mixed
+plain+CPS capturer all return the captured value (42 / "hi" / 14) — up from 0 on
+baseline. The re-point fires correctly: `[2826] name=s A=0 B=2 mutable=false`.
+
+### The byte-identical proof DID hold for the *mutable boxed* path
+WAT diff of `async-func-decl-dstr-array-rest-after-element.js` (a mutable
+loop-state cluster member) base→fix is exactly **two lines**: the immutable
+captures' construction reads change `local.get 0/2` → `local.get 7/8`. The
+**mutable boxed captures** (`struct.new <ref-cell>`; `local.tee`) are
+**byte-identical** — the `cap.mutable === true` gate held. So the spec's claim
+"never touch the boxed mutable path" is satisfied.
+
+### Why it still regresses — the spec's "producer byte-identical" premise is false
+The immutable captures are **also spilled into the async-generator continuation
+state struct** (`struct.new` of the captured-by-value consts) at the construction
+site. `outerLocalIdx` is read there too, so re-pointing it A→B changes *which
+slot is snapshotted into the CPS state struct* — perturbing the state machine.
+The spec assumed keeping both slots (A dead, B live) makes the producer
+byte-identical; it does not, because the **construction-site spill** reads
+`outerLocalIdx`, not just the trivial leading-param `local.get`.
+
+Concrete failure — **`language/expressions/await/async-generator-interleaved.js`
+(a NAMED guardrail test) regresses pass → fail**:
+```
+BASE  MUST-PASS  pass  async-generator-interleaved.js
+FIX   MUST-PASS  fail  async-generator-interleaved.js
+      -> "dereferencing a null pointer in pushAwait() at L19 (via callAsync@L19 ← test@L8)"
+```
+Debug shows the re-point firing on genuinely immutable consts captured by the
+async generator:
+```
+[2826] name=actual      A=0 B=6 mutable=false fnName=test   (captured by pushAwait + checkAssertions)
+[2826] name=iterations  A=4 B=9 mutable=false fnName=test   (captured by async generator callAsync)
+```
+`callAsync` is an `async function*` with `await` in a loop; `pushAwait` (capturing
+`actual`) is **transitively** captured by it. Re-pointing `actual`/`iterations`
+A→B breaks the snapshot the CPS lowering takes → null read inside `pushAwait`.
+This is the exact 43-regression *mechanism* (#2820's gate comment), reached here
+via the **immutable** path rather than the mutable one.
+
+`t5`/`t6` survive the same re-point because their capturer is constructed **and
+consumed inline** (`return await f()`) reading the freshly-written B — no escaping
+closure, no state-struct spill snapshot.
+
+### The cited conformance targets are blocked by a DIFFERENT bug (no #2826 payoff)
+`async-{func,gen}-dstr-let-ary-ptrn-rest-obj-prop-id.js` (the spec's
+"test262 paths this unblocks") **fail on baseline AND fix identically**, at
+`assert.sameValue(v, 7)` — assert **#1**, long before the `length === "outer"`
+assert (#6) that #2826 would address. `v` is a binding from
+`for await (let [...{ 0: v, 1: w, ... }] of [[7,8,9]])` — a **for-await
+rest-to-object-pattern destructuring** bug, orthogonal to the immutable capture.
+So even a correct #2826 fix yields **zero** flips on the cited targets until that
+destructuring bug is fixed.
+
+### Recommendation (for the architect)
+A producer-side `outerLocalIdx` re-point cannot be made safe by a mutability gate
+alone — the immutable re-point itself perturbs CPS state-struct spills. Options:
+1. **Transitive-capture-graph gate**: re-point only when **no** capturer of the
+   name (directly or transitively) is a CPS function that *suspends* (has a
+   continuation state struct that snapshots captures). `t5`/`t6` (capturer
+   constructed-and-consumed inline, no escaping spill) qualify; `callAsync` /
+   `pushAwait`-under-`callAsync` do not. Requires building the capture DAG and a
+   "spills-captures" predicate per nested fn — non-trivial, architect-owned.
+2. **Construction-site mirror (not re-point)**: leave `outerLocalIdx = A` (spill
+   stays byte-identical) and additionally **store the initializer value into A**
+   (write-through) so the stale-A read/snapshot observes the live value. Keeps B
+   as the live binding. Needs validation that A is otherwise dead and that the
+   double-write doesn't itself perturb the CPS frame. NOT the reverted #1177
+   construction-site re-resolve (Design 1B) — that's the confirmed minefield.
+3. **Re-scope / defer**: given the cited conformance targets are blocked by the
+   separate for-await rest-object-destructuring bug, the real-world value of
+   #2826 in isolation is low. Consider deferring behind that destructuring fix,
+   or narrowing #2826 to the verified `t5`/`t6` shapes only via option 1.
+
+### Reproduction harness (kept for re-spec)
+`.tmp/probe-2826.mts` (t5/t6/controls/mixed), `.tmp/run262-2826.mts`
+(end-to-end runner on the 5 guardrail + 2 target files), `.tmp/bytecmp-2826.mts`
+(SHA-256 of wrapped binaries), `.tmp/wat-one.mts` (single-file WAT). All under
+`.tmp/` (gitignored).
