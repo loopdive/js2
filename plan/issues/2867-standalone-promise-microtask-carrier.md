@@ -1,9 +1,9 @@
 ---
 id: 2867
 title: "Standalone: Promise / async microtask leaks Promise_resolve/reject/then + __make_callback host imports"
-status: blocked
-assignee: ttraenkler/senior-dev-promise
-blocked_on: "floor-accounting decision — leaky host-import passes already count in the standalone floor, so native-carrier migration regresses it (see ## Senior-dev verify-first findings). Escalated to stakeholder; gates carrier clusters #2864/#2865/#2866/#2867."
+status: done
+assignee: ttraenkler/sendev-promise
+completed: 2026-06-30
 created: 2026-06-30
 updated: 2026-06-30
 priority: medium
@@ -168,3 +168,71 @@ Full `merge_group` + standalone high-water. Sequence before async generators
 (#2865 depends on this + #2864). Preserve the #2375 caution: Promise proto
 value-read path must not collide with runtime async-capability state (the
 null-deref noted in property-access.ts:736).
+
+## Implementation notes (PR-B — sendev-promise, 2026-06-30)
+
+PR-A (gate-broaden `isStandalonePromiseActive` → `ctx.wasi || ctx.standalone`)
+is **unblocked** by #2360/#2879: the honest host-free metric counts a standalone
+pass only when host-free, so a leaky-pass → native-carrier migration can only
+move `host_free_pass` UP (a Promise test leaked on main → `host_free=0`; the
+native carrier makes it either a real host-free pass `+1` or a host-free fail,
+still `0`). The two real defects sr-promisegate found are fixed here.
+
+### Defect 1 — late-import funcIdx-shift in the native `.then` path (the +CE)
+`Promise.reject(<object>).then(fn1, fn2)` where a callback body pulls in a LATE
+host import (`new Test262Error(...)` → `__new_Test262Error`) failed Wasm
+validation with **"not enough arguments on the stack for call (need 1, got 0)"**.
+
+Root cause: `compilePromiseThenReceiverBuffer` /
+`compileStandalonePromiseThenCallback` (`src/codegen/expressions/calls.ts`) swap
+`fctx.body` to a scratch buffer via a plain JS-local `savedBody`, compile the
+receiver/closure into the buffer, then restore. While swapped, the **enclosing
+function body** (held only in `savedBody`) is invisible to
+`shiftLateImportIndices` — it walks `fctx.body` / `ctx.currentFunc.body` (both
+now the buffer) and `ctx.liveBodies` (the buffers), but NOT the orphaned saved
+array. A late import added during the callback compile shifts every defined
+function +1, but the already-emitted `call __new_plain_object` (from an earlier
+`var a = {}`) stayed at its pre-shift index, which now resolves to the 1-arg
+`__obj_hash`. This is the #1384/#2503 detached-body class, for the swapped-OUT
+body. Fix: register `savedBody` in `ctx.liveBodies` for the swap window (remove
+after only if we added it — it may be an outer buffer for nested `.then`).
+
+### Defect 2 — verdict-path drain gap (the false-pass / false-fail)
+The test262 harness records `ret = test()` synchronously; the generated `test()`
+reads `__fail` immediately after the user body. Native `.then` reactions are
+QUEUED, not run synchronously, so the assertions inside them set `__fail` only
+once the microtask ring drains. Under the host-leak path this silently passed
+(the reaction never ran, `__fail` stayed 0 → false pass); under the native
+carrier it false-failed.
+
+Fix has two parts:
+1. **`__drain_microtasks()` compiler intrinsic** (`compileCallExpression`,
+   calls.ts): a call to the bare identifier `__drain_microtasks()` lowers to the
+   native drain (`getDrainFuncIdxForWasiStart`) **only when a Promise queue was
+   already registered**; otherwise it emits NOTHING. So it is a byte-neutral
+   no-op for every JS-host compile and every Promise-free module — verified
+   byte-identical on `gc`/`standalone`/`wasi` (`tests/issue-2867.test.ts`).
+2. **Harness wrapper injection** (`wrapTest`, test262-runner.ts): a bare
+   `__drain_microtasks();` statement between the user body and the `__fail` read
+   (both the synchronous and top-level-await wrappers). Bare (not `try{}catch`)
+   to keep the wrapper byte-identical off the Promise path — no empty-try churn
+   across ~43k tests, so `gc` and non-Promise standalone output is unchanged.
+
+### Measured (in-process `runTest262File(…, "standalone")`, the #2095 path)
+120 files `Promise/{resolve,reject,prototype/then}`:
+- gate-broaden only (no fixes): pass 27 / `host_free_pass` 14 / CE 33 — but 7 of
+  the 14 were **false passes** (reaction never validated).
+- with both fixes: pass 20 / **`host_free_pass` 7 (honest)** / CE 28. The +CE
+  "not enough arguments" cluster is gone; the false passes are now honest fails.
+  vs main (gate off, these all leaked → `host_free=0`): **+7 honest host-free**.
+
+Remaining standalone CE/fail on this subset are pre-existing carrier-completeness
+gaps **out of scope** for PR-B and `host_free=0` on main (no regression):
+`Promise.{resolve,reject,then}` as a static **value-read** (#2375 caution),
+`new Promise(executor)` capability records, `__get_builtin` dynamic-shape (#1472
+Phase B), `__to_primitive` (#1806).
+
+### Deferred — async-function `await` returns NaN (both wasi+standalone)
+Tied to await-on-`$Frame`; the convergence point with #2864's resumable-frame
+substrate. NOT touched here to avoid duplicating sr-frame's work — coordinate on
+the shared `$Frame` lowering.

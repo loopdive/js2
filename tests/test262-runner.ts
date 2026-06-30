@@ -2442,8 +2442,12 @@ ${preamble}
 ${hoistedDecls}
 ${implicitDecls.trim()}
 `;
+    // (#2867) Same microtask-drain-before-verdict as the synchronous wrapper —
+    // see the note on `postBody` below. Bare statement → byte-neutral no-op off
+    // the Promise path.
     const tlaPostBody = `
 export function test(): number {
+  __drain_microtasks();
   if (__fail) { return __fail; }
   return 1;
 }
@@ -2464,11 +2468,27 @@ export function test(): number {
   ${implicitDecls}
   try {
     `;
+  // (#2867) Drain the native microtask queue AFTER the user body runs but
+  // BEFORE the `__fail` verdict is read. Standalone/WASI Promise `.then`
+  // reactions (and async `$DONE` callbacks) are queued, not run synchronously,
+  // so the assertions they contain set `__fail` only once the queue drains. The
+  // old wrapper read `__fail` immediately after the try block — i.e. before any
+  // reaction ran — so every reaction-gated async test recorded its (stale)
+  // verdict as a false pass under the host-leak path and a false fail once the
+  // native carrier replaced it. `__drain_microtasks()` is a compiler intrinsic
+  // (calls.ts): a single native drain call when a Promise queue was registered,
+  // and — critically — emits NOTHING for every JS-host compile and every
+  // Promise-free module (the intrinsic is a no-op when no queue exists). A bare
+  // statement (not a `try { … } catch`) keeps the `test()` wrapper BYTE-IDENTICAL
+  // on those paths (no empty try/catch churn across all ~43k tests), so `gc` and
+  // non-Promise standalone output is unchanged. A reaction that throws uncaught
+  // surfaces as a runtime error → fail, which is the honest verdict.
   const postBody = `
   } catch (e) {
     if (!__fail) __fail = -1;
     throw e;
   }
+  __drain_microtasks();
   if (__fail) { return __fail; }
   return 1;
 }
