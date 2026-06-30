@@ -13,6 +13,7 @@ import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
 import { emitExternrefDestructureGuard, emitObjectPatternRestFromVec } from "../destructuring-params.js";
 import {
+  emitAssignToTarget,
   findUnresolvableInArrayPattern,
   findUnresolvableInObjectPattern,
   isStrictContext,
@@ -2090,6 +2091,40 @@ function compileForOfAssignDestructuring(
         continue;
       }
 
+      // (#2869) Member-expression value target in an object pattern:
+      // `for ({a: x.y} of …)` (and `{a: x.y = d}`). The `prop.initializer` is the
+      // assignment target, not a binding identifier — route it through the shared
+      // member-set dispatch instead of dropping it. Emits into the live loop body.
+      if (ts.isPropertyAssignment(prop)) {
+        let memTarget: ts.Expression | undefined;
+        let memDefault: ts.Expression | undefined;
+        if (ts.isPropertyAccessExpression(prop.initializer) || ts.isElementAccessExpression(prop.initializer)) {
+          memTarget = prop.initializer;
+        } else if (
+          ts.isBinaryExpression(prop.initializer) &&
+          prop.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          (ts.isPropertyAccessExpression(prop.initializer.left) || ts.isElementAccessExpression(prop.initializer.left))
+        ) {
+          memTarget = prop.initializer.left;
+          memDefault = prop.initializer.right;
+        }
+        if (memTarget) {
+          const memFieldEntry = fields[fieldIdx];
+          if (!memFieldEntry) continue;
+          const memFieldType = memFieldEntry.type;
+          const tmpMem = allocLocal(fctx, `__forof_omemtgt_${fctx.locals.length}`, memFieldType);
+          fctx.body.push({ op: "local.get", index: elemLocal });
+          fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+          if (memDefault) {
+            emitDefaultValueCheck(ctx, fctx, memFieldType, tmpMem, memDefault, memFieldType);
+          } else {
+            fctx.body.push({ op: "local.set", index: tmpMem });
+          }
+          emitAssignToTarget(ctx, fctx, memTarget, tmpMem, memFieldType);
+          continue;
+        }
+      }
+
       let targetLocal = fctx.localMap.get(targetName);
       let targetSyncGlobalIdx: number | undefined;
       if (targetLocal === undefined) {
@@ -2284,6 +2319,24 @@ function compileForOfAssignDestructuring(
           defaultInit = el.right;
         }
 
+        // (#2869) Member-expression target: `for ([x.y] of …)` / `[x.y = d]`.
+        // Extract field `i` into a temp (applying the default), then route through
+        // the shared member-set dispatch (`emitAssignToTarget`). This path emits
+        // into the LIVE loop `fctx.body` (no detached buffer), so the dispatcher
+        // reserve flush walks it correctly — no liveBodies registration needed.
+        if (ts.isPropertyAccessExpression(targetEl) || ts.isElementAccessExpression(targetEl)) {
+          const tmpMem = allocLocal(fctx, `__forof_memtgt_${fctx.locals.length}`, fieldType);
+          fctx.body.push({ op: "local.get", index: elemLocal });
+          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: i });
+          if (defaultInit) {
+            emitDefaultValueCheck(ctx, fctx, fieldType, tmpMem, defaultInit, fieldType);
+          } else {
+            fctx.body.push({ op: "local.set", index: tmpMem });
+          }
+          emitAssignToTarget(ctx, fctx, targetEl, tmpMem, fieldType);
+          continue;
+        }
+
         if (!ts.isIdentifier(targetEl)) continue;
 
         let targetLocal = fctx.localMap.get(targetEl.text);
@@ -2398,6 +2451,25 @@ function compileForOfAssignDestructuring(
         if (ts.isBinaryExpression(el) && el.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
           targetEl = el.left;
           defaultInit = el.right;
+        }
+
+        // (#2869) Member-expression target: `for ([x.y] of …)` over a vec source.
+        // Bounds-checked read of element `i` into a temp (applying the default),
+        // then route through the shared member-set dispatch. Emits into the live
+        // loop body — no liveBodies registration needed.
+        if (ts.isPropertyAccessExpression(targetEl) || ts.isElementAccessExpression(targetEl)) {
+          const tmpMem = allocLocal(fctx, `__forof_memtgt_${fctx.locals.length}`, innerElemType);
+          fctx.body.push({ op: "local.get", index: elemLocal });
+          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 });
+          fctx.body.push({ op: "i32.const", value: i });
+          emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType);
+          if (defaultInit) {
+            emitDefaultValueCheck(ctx, fctx, innerElemType, tmpMem, defaultInit, innerElemType);
+          } else {
+            fctx.body.push({ op: "local.set", index: tmpMem });
+          }
+          emitAssignToTarget(ctx, fctx, targetEl, tmpMem, innerElemType);
+          continue;
         }
 
         if (!ts.isIdentifier(targetEl)) continue;

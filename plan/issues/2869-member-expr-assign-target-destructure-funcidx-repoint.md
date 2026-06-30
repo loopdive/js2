@@ -1,8 +1,9 @@
 ---
 id: 2869
 title: "Destructuring with a member-expression assignment target ([x.y]=vals, {k:x.y}=src) — funcIdx-repoint of detached body buffer (~53 fails)"
-status: in-progress
+status: done
 assignee: ttraenkler/senior-dev-promise
+completed: 2026-06-30
 created: 2026-06-30
 updated: 2026-06-30
 parent: 2669
@@ -399,3 +400,52 @@ changes the `$Object` store ABI or the union-import set, re-merge `origin/main`
 and re-verify the dispatcher fill. No expected conflict in `assignment.ts` /
 `loops.ts`. Recommend landing after, or merging up from, the substrate PRs to
 inherit any `__extern_set_strict` changes.
+
+## Implementation (2026-06-30) — DONE
+
+Implemented all three changes from the architect spec in
+`src/codegen/expressions/assignment.ts` + `src/codegen/statements/loops.ts`:
+
+- **Change 1** — `emitAssignToTarget`: the `PropertyAccessExpression` branch now
+  keeps the static-struct-field fast path but, on a miss (plain `{}` / accessor /
+  host externref / unresolved struct shape), falls through to the #2664
+  `emitAlternateStructSetDispatch` (`__set_member_<name>`, terminal
+  `__extern_set_strict`) instead of silently dropping the write. Private-field and
+  reserved-name (`length`/`constructor`/`__proto__`/`prototype`/`name`) targets
+  preserve the prior drop (out of cluster scope). Exported for reuse by loops.ts.
+- **Change 2** — registered the three detached destructure-element buffers
+  (`arrDestructInstrsADA`, `destructInstrsDA`, `odflInstrs`) with `ctx.liveBodies`
+  for their open window (add at swap, delete after splice), the #2567/#1109
+  precedent, so the late-import funcIdx-shift walker keeps the dispatcher `call`
+  repointed. `emitArrayDestructureFromLocal`'s buffer does NOT reach a member
+  target (its loop skips them), so it needs no registration.
+- **Change 3** — `compileForOfAssignDestructuring` (tuple, vec, and struct-object
+  branches) now routes a `PropertyAccess`/`ElementAccess` element/value target
+  through `emitAssignToTarget` (extracting the field/element into a temp,
+  applying any `= default`). for-await shares this lowering → fixed transitively.
+
+### Verify-first (before → after)
+
+`[x.y] = [4]` returned `0` (write dropped) on BOTH gc and standalone before; in
+gc the array path additionally hit `Maximum call stack` (the funcIdx-repoint
+off-by-one). After: returns `1`, host-free preserved on standalone (0 env
+imports).
+
+### Measured (test262, in-process runner)
+
+- Deterministic destructuring set (`language/expressions/assignment/dstr` +
+  `language/statements/for-of/dstr`, 937 files): pass **332 → 340** (+8),
+  fail 234 → 226, CE 1 → 1. **Exact pass-set diff: 0 regressions, +8 gains.**
+- Full 2,171-file destructuring set (incl. for-await): pass 1,407 → 1,416,
+  no new compile-errors, no new throws.
+- New unit test `tests/issue-2869.test.ts` (12 cases, gc + standalone) green.
+
+### Out of scope (follow-on)
+
+- Member target WITH a default in the array assignment-expression path
+  (`[x.y = d] = []`) — the defaulted-element branch in
+  `compileArrayDestructuringAssignment` still handles identifier targets only.
+- Receiver-base getter/setter exact-once + setter-side-effect tests
+  (`*-prop-ref-no-get`, `*-init-active`) — deeper [[Set]] accessor semantics.
+- Assignment to `const`/unresolvable target throw (`array-elem-put-const/let`) —
+  a separate binding-immutability feature, not a member-target drop.
