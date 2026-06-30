@@ -104,11 +104,13 @@ import {
   emitNonObjectArgGuard,
 } from "../object-ops.js";
 import {
+  BUILTIN_CTOR_NAMES,
   emitArrayIsArrayExternrefPredicate,
   emitNullCheckThrow,
   receiverIsCaughtErrorStringRead,
   receiverIsNativeStringValType,
   receiverMayBeNativeStringAtRuntime,
+  tryEnsureNativeProtoBrand,
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import { emitToNumber, emitToString } from "../coercion-engine.js";
@@ -998,7 +1000,31 @@ function tryEmitNativeProtoReflectiveCall(
   // Only a `method`-kind member has the `(self, this, …args)` shape we thread.
   if (glue.memberKind(member) !== "method") return undefined;
 
-  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, "method");
+  return emitReflectiveNativeProtoClosureCall(ctx, fctx, expr, receiver, brand, member, "method", isCall);
+}
+
+/**
+ * (#2876) Shared tail for a reflective `<closure>.call/apply(thisArg, …args)` on a
+ * value-erased native-proto member closure. Ensures the `(brand, member, kind)`
+ * closure to obtain the wrapper struct type + lifted func type, reshapes the args
+ * to the closure's `(self, this, …args)` ABI, recovers the wrapper from the
+ * runtime `receiver` value (`any.convert_extern` + `ref.cast`), and `call_ref`s
+ * the funcref stored in its field 0 — so the ACTUAL stored member runs, with
+ * `thisArg → param 1`. Works for both `method` and `getter` kinds (a getter's
+ * user-arg list is just `[thisArg]`, threaded into the closure's lone `this`
+ * param). Returns the result ValType, or `undefined` to fall through.
+ */
+function emitReflectiveNativeProtoClosureCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  receiver: ts.Expression,
+  brand: number,
+  member: string,
+  kind: "method" | "getter",
+  isCall: boolean,
+): ValType | undefined {
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind);
   if (!closure) return undefined; // member body refuses / not native yet → fall through
   const closureInfo = ctx.closureInfoByTypeIdx.get(closure.type.typeIdx);
   if (!closureInfo) return undefined;
@@ -1085,6 +1111,151 @@ function tryEmitNativeProtoReflectiveCall(
   emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: closureInfo.funcTypeIdx });
   fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx } as Instr);
   return closureInfo.returnType ?? { kind: "externref" };
+}
+
+/** Unwrap parenthesized / `as` / non-null wrappers to the underlying expression. */
+function unwrapTransparent(e: ts.Expression): ts.Expression {
+  let cur = e;
+  while (ts.isParenthesizedExpression(cur) || ts.isAsExpression(cur) || ts.isNonNullExpression(cur)) {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+/** True if `e` is `Object.getOwnPropertyDescriptor(…)`. */
+function isObjectGopdCall(e: ts.Expression): e is ts.CallExpression {
+  if (!ts.isCallExpression(e)) return false;
+  const callee = e.expression;
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Object" &&
+    callee.name.text === "getOwnPropertyDescriptor"
+  );
+}
+
+/** Follow an identifier to its (single) variable-declaration initializer, if any. */
+function traceVarInitializer(ctx: CodegenContext, ident: ts.Identifier): ts.Expression | undefined {
+  let sym: ts.Symbol | undefined;
+  try {
+    sym = ctx.checker.getSymbolAtLocation(ident);
+  } catch {
+    return undefined;
+  }
+  const decl = sym?.valueDeclaration ?? sym?.declarations?.[0];
+  if (decl && ts.isVariableDeclaration(decl) && decl.initializer) return decl.initializer;
+  return undefined;
+}
+
+/**
+ * (#2876) Resolve a `.call`/`.apply` receiver to the builtin-proto accessor
+ * descriptor it came from: `{ accessorName, gopdCall }` for the shapes
+ *   - `gOPD(...).get`                 (inline accessor access)
+ *   - `<ident=gOPD(...).get>`         (var holding the accessor closure)
+ *   - `<ident=gOPD(...)>.get`         (var holding the descriptor)
+ * or `undefined` when it doesn't trace to one.
+ */
+function resolveDescriptorAccessorSource(
+  ctx: CodegenContext,
+  recv: ts.Expression,
+): { accessorName: string; gopdCall: ts.CallExpression } | undefined {
+  const r = unwrapTransparent(recv);
+
+  // `<obj>.get` / `<obj>.set`
+  if (ts.isPropertyAccessExpression(r) && (r.name.text === "get" || r.name.text === "set")) {
+    const obj = unwrapTransparent(r.expression);
+    if (isObjectGopdCall(obj)) return { accessorName: r.name.text, gopdCall: obj };
+    if (ts.isIdentifier(obj)) {
+      const init = traceVarInitializer(ctx, obj);
+      if (init && isObjectGopdCall(unwrapTransparent(init))) {
+        return { accessorName: r.name.text, gopdCall: unwrapTransparent(init) as ts.CallExpression };
+      }
+    }
+    return undefined;
+  }
+
+  // `<ident>` whose initializer is `gOPD(...).get`
+  if (ts.isIdentifier(r)) {
+    const init = traceVarInitializer(ctx, r);
+    if (!init) return undefined;
+    const i = unwrapTransparent(init);
+    if (ts.isPropertyAccessExpression(i) && (i.name.text === "get" || i.name.text === "set")) {
+      const obj = unwrapTransparent(i.expression);
+      if (isObjectGopdCall(obj)) return { accessorName: i.name.text, gopdCall: obj };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * (#2876) Parse `Object.getOwnPropertyDescriptor(<Builtin>.prototype, "<member>")`
+ * → `{ builtinName, member }`, gated like the gOPD-synthesis site: arg0 is an
+ * unshadowed `BUILTIN_CTOR_NAMES` `.prototype` access, arg1 a string literal.
+ */
+function parseBuiltinProtoGopdCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  call: ts.CallExpression,
+): { builtinName: string; member: string } | undefined {
+  if (call.arguments.length < 2) return undefined;
+  const arg0 = unwrapTransparent(call.arguments[0]!);
+  const arg1 = call.arguments[1]!;
+  if (!ts.isStringLiteral(arg1)) return undefined;
+  if (
+    !ts.isPropertyAccessExpression(arg0) ||
+    arg0.name.text !== "prototype" ||
+    !ts.isIdentifier(arg0.expression) ||
+    !BUILTIN_CTOR_NAMES.has(arg0.expression.text)
+  ) {
+    return undefined;
+  }
+  const builtinName = arg0.expression.text;
+  if (fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false)) return undefined;
+  return { builtinName, member: arg1.text };
+}
+
+/**
+ * (#2876) Reflective `.call/.apply` on a getter pulled from a builtin-proto
+ * accessor descriptor — `var get = Object.getOwnPropertyDescriptor(RegExp.prototype,
+ * "global").get; get.call(R)` (and the inline `gOPD(...).get.call(R)` form).
+ *
+ * The descriptor `get` is the brand-keyed getter closure synthesized by #2885;
+ * stored in a variable it erases to `externref`, so `tryEmitNativeProtoReflectiveCall`
+ * (which keys off the receiver's TS *symbol*, a MethodSignature on a lib
+ * interface) can't recover it. Here we recover (brand, member) by STATICALLY
+ * tracing the receiver's data-flow back to its `gOPD(<Builtin>.prototype,
+ * "<member>").get` initializer, then reuse the shared call_ref emitter (which
+ * call_ref's the funcref stored in the runtime wrapper, so the right member runs
+ * with thisArg → its `this` param). The getter body's #2885 proto-identity arm +
+ * brand recovery then yield the spec result: undefined for `R === proto`, the
+ * field value for a real instance, a catchable TypeError for a non-brand `this`.
+ *
+ * Standalone-only; returns `undefined` (no behaviour change) when the receiver
+ * doesn't trace to a builtin-proto accessor descriptor.
+ */
+function tryEmitNativeProtoDescriptorAccessorCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  recv: ts.Expression,
+  isCall: boolean,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (expr.arguments.length === 0) return undefined; // need at least a thisArg
+
+  const resolved = resolveDescriptorAccessorSource(ctx, recv);
+  if (!resolved || resolved.accessorName !== "get") return undefined; // setter synthesis not wired
+
+  const info = parseBuiltinProtoGopdCall(ctx, fctx, resolved.gopdCall);
+  if (!info) return undefined;
+
+  const brand = tryEnsureNativeProtoBrand(ctx, info.builtinName);
+  if (brand === undefined) return undefined;
+  const glue = getNativeProtoBuiltinGlue(ctx, brand);
+  if (!glue || !glue.memberCsv.split(",").includes(info.member)) return undefined;
+  if (glue.memberKind(info.member) !== "getter") return undefined;
+
+  return emitReflectiveNativeProtoClosureCall(ctx, fctx, expr, recv, brand, info.member, "getter", isCall);
 }
 
 /**
@@ -4211,6 +4382,12 @@ function compileCallExpression(
         }
         const reflResult = tryEmitNativeProtoReflectiveCall(ctx, fctx, expr, recv, isCall);
         if (reflResult !== undefined) return reflResult;
+
+        // (#2876) Reflective `.call`/`.apply` on a getter pulled from a
+        // builtin-proto accessor descriptor (`gOPD(RegExp.prototype, "global").get`),
+        // recovered by data-flow trace rather than a TS symbol.
+        const descAccResult = tryEmitNativeProtoDescriptorAccessorCall(ctx, fctx, expr, recv, isCall);
+        if (descAccResult !== undefined) return descAccResult;
       }
 
       // Sub-fix 3 (#1596): Function.prototype.{apply,call}.call(fn, ...) reshape.
@@ -6941,6 +7118,73 @@ function compileCallExpression(
               if (argResult) fctx.body.push({ op: "drop" });
               fctx.body.push({ op: "ref.null.extern" });
               return { kind: "externref" };
+            }
+          }
+        }
+      }
+
+      // (#2885 Site 2) Standalone builtin-proto descriptor synthesis. The native
+      // `__getOwnPropertyDescriptor` only understands `$Object`; an INTRINSIC
+      // accessor/method on a virtual `$NativeProto` (e.g. `RegExp.prototype.global`)
+      // is invisible to it, so gOPD returns undefined and `desc.get` then derefs
+      // undefined → trap. Synthesize the descriptor directly from the brand-keyed
+      // closure factory when arg0 is a literal `<Builtin>.prototype` and arg1 names
+      // a member the glue advertises. Anything that doesn't resolve falls through
+      // to the dynamic fallback below (no behavior change for other receivers).
+      if (
+        ctx.standalone &&
+        propLiteral !== undefined &&
+        ts.isPropertyAccessExpression(arg0) &&
+        !ts.isPrivateIdentifier(arg0.name) &&
+        arg0.name.text === "prototype" &&
+        ts.isIdentifier(arg0.expression) &&
+        BUILTIN_CTOR_NAMES.has(arg0.expression.text) &&
+        !(fctx.localMap.has(arg0.expression.text) || (fctx.boxedCaptures?.has(arg0.expression.text) ?? false))
+      ) {
+        const protoBuiltin = arg0.expression.text;
+        const protoBrand = tryEnsureNativeProtoBrand(ctx, protoBuiltin);
+        const protoGlue = protoBrand !== undefined ? getNativeProtoBuiltinGlue(ctx, protoBrand) : undefined;
+        if (protoBrand !== undefined && protoGlue && protoGlue.memberCsv.split(",").includes(propLiteral)) {
+          const memberKind = protoGlue.memberKind(propLiteral);
+          const protoClosure = ensureStandaloneNativeMethodClosure(ctx, protoBrand, propLiteral, memberKind);
+          if (protoClosure) {
+            if (memberKind === "getter") {
+              // Accessor descriptor: get=<closure>, set=undefined,
+              // {enumerable:false, configurable:true} (intrinsic accessor attrs).
+              const createAccIdx = ensureLateImport(
+                ctx,
+                "__create_accessor_descriptor",
+                [{ kind: "externref" }, { kind: "externref" }, { kind: "i32" }],
+                [{ kind: "externref" }],
+              );
+              flushLateImportShifts(ctx, fctx);
+              if (createAccIdx !== undefined) {
+                fctx.body.push({ op: "ref.func", funcIdx: protoClosure.funcIdx } as Instr);
+                fctx.body.push({ op: "struct.new", typeIdx: protoClosure.type.typeIdx } as Instr);
+                fctx.body.push({ op: "extern.convert_any" } as Instr); // get
+                fctx.body.push({ op: "ref.null.extern" } as Instr); // set = undefined
+                fctx.body.push({ op: "i32.const", value: 0x04 } as Instr); // FLAG_CONFIGURABLE
+                fctx.body.push({ op: "call", funcIdx: createAccIdx } as Instr);
+                return { kind: "externref" };
+              }
+            } else {
+              // Data descriptor: value=<method closure>,
+              // {writable:true, enumerable:false, configurable:true}.
+              const createIdx = ensureLateImport(
+                ctx,
+                "__create_descriptor",
+                [{ kind: "externref" }, { kind: "i32" }],
+                [{ kind: "externref" }],
+              );
+              flushLateImportShifts(ctx, fctx);
+              if (createIdx !== undefined) {
+                fctx.body.push({ op: "ref.func", funcIdx: protoClosure.funcIdx } as Instr);
+                fctx.body.push({ op: "struct.new", typeIdx: protoClosure.type.typeIdx } as Instr);
+                fctx.body.push({ op: "extern.convert_any" } as Instr); // value
+                fctx.body.push({ op: "i32.const", value: 0x05 } as Instr); // FLAG_WRITABLE | FLAG_CONFIGURABLE
+                fctx.body.push({ op: "call", funcIdx: createIdx } as Instr);
+                return { kind: "externref" };
+              }
             }
           }
         }

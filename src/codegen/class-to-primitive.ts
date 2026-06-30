@@ -42,6 +42,8 @@
 import type { CodegenContext } from "./context/types.js";
 import type { Instr, WasmFunction } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
+import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 
 export const CLASS_TO_PRIMITIVE = "__class_to_primitive";
 
@@ -128,46 +130,197 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
 
   const L_OBJ = 0; // externref param: the candidate class instance
   const L_HINT = 1; // i32 param: 1 = string hint, 0 = number/default
-  const L_RESULT = 2; // externref scratch
+  const L_RV = 2; // externref: valueOf dispatcher result
+  const L_RS = 3; // externref: toString dispatcher result
 
-  // Call a dispatcher (by funcIdx) on the obj; tee into result; if non-null,
-  // return it. When the dispatcher is absent (only one of the two methods is
-  // present anywhere in the module), skip that arm.
-  const tryDispatcher = (idx: number | undefined): Instr[] => {
-    if (idx === undefined) return [];
+  // (#2891) §7.1.1.1 OrdinaryToPrimitive requires "if the method result is not
+  // a primitive, try the next method", and a §7.1.1.1 step-6 TypeError when none
+  // yields a primitive. The per-struct `__call_valueOf`/`__call_toString`
+  // dispatchers return `ref.null.extern` when the object has no such OWN method,
+  // but for a method that RETURNS an object they `boxResult` it via
+  // `extern.convert_any` — a NON-null externref that is still an object. The old
+  // "first non-null wins" tail therefore accepted an object-returning `valueOf`
+  // and skipped the fall-through to `toString` (wrong relational/additive value)
+  // and never threw the both-objects TypeError. We now classify each dispatcher
+  // result as primitive (number/boolean/string) vs object, falling through and
+  // modelling the (un-materialized in standalone) inherited Object.prototype
+  // methods: inherited `valueOf` returns the object (non-primitive); inherited
+  // `toString` returns "[object Object]" (a primitive string). Standalone-only —
+  // the driver is reserved only under `ctx.standalone`, so GC/host is untouched.
+  const typeofNumberIdx = ctx.funcMap.get("__typeof_number");
+  const typeofBooleanIdx = ctx.funcMap.get("__typeof_boolean");
+  const typeofStringIdx = ctx.funcMap.get("__typeof_string");
+  const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
+
+  // If the primitive-classification or TypeError machinery is unavailable for
+  // some reason, fall back to the pre-#2891 "first non-null wins" behaviour so
+  // we never emit invalid code (these are always present in the standalone
+  // `__to_primitive` build that reserves this driver).
+  if (typeofNumberIdx === undefined || typeofStringIdx === undefined || typeErrorCtorIdx === undefined) {
+    const tryDispatcher = (idx: number | undefined): Instr[] => {
+      if (idx === undefined) return [];
+      return [
+        { op: "local.get", index: L_OBJ },
+        { op: "call", funcIdx: idx },
+        { op: "local.tee", index: L_RV },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: L_RV }, { op: "return" }],
+        } as Instr,
+      ];
+    };
+    fn.locals = [{ name: "rv", type: { kind: "externref" } }];
+    fn.body = [
+      { op: "local.get", index: L_HINT },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [...tryDispatcher(callToStringIdx), ...tryDispatcher(callValueOfIdx)],
+        else: [...tryDispatcher(callValueOfIdx), ...tryDispatcher(callToStringIdx)],
+      } as Instr,
+      { op: "local.get", index: L_OBJ },
+    ];
+    return;
+  }
+
+  const exnTagIdx = ensureExnTag(ctx);
+  const OBJECT_TAG = "[object Object]";
+  const TYPE_ERR_MSG = "Cannot convert object to primitive value";
+  addStringConstantGlobal(ctx, OBJECT_TAG);
+  addStringConstantGlobal(ctx, TYPE_ERR_MSG);
+
+  // i32: 1 when the externref in `localIdx` is a primitive (number/boolean/
+  // string), 0 otherwise (an object). `null` is handled by the caller via a
+  // separate `ref.is_null` presence test, so it never reaches here.
+  const isPrimitive = (localIdx: number): Instr[] => {
+    const parts: Instr[] = [
+      { op: "local.get", index: localIdx },
+      { op: "call", funcIdx: typeofNumberIdx },
+    ];
+    if (typeofBooleanIdx !== undefined) {
+      parts.push({ op: "local.get", index: localIdx }, { op: "call", funcIdx: typeofBooleanIdx }, { op: "i32.or" });
+    }
+    parts.push({ op: "local.get", index: localIdx }, { op: "call", funcIdx: typeofStringIdx }, { op: "i32.or" });
+    return parts;
+  };
+
+  const returnObjectTag: Instr[] = [...stringConstantExternrefInstrs(ctx, OBJECT_TAG), { op: "return" } as Instr];
+  const throwTypeError: Instr[] = [
+    ...stringConstantExternrefInstrs(ctx, TYPE_ERR_MSG),
+    { op: "call", funcIdx: typeErrorCtorIdx } as Instr,
+    { op: "throw", tagIdx: exnTagIdx } as Instr,
+  ];
+
+  // Call a dispatcher, store into `dst`; if the result is a non-null PRIMITIVE,
+  // return it. Leaves the (possibly null/object) result in `dst` for the caller
+  // to classify by presence afterwards. Absent dispatcher → store null.
+  const callAndReturnIfPrimitive = (idx: number | undefined, dst: number): Instr[] => {
+    if (idx === undefined) {
+      return [{ op: "ref.null.extern" } as Instr, { op: "local.set", index: dst }];
+    }
     return [
       { op: "local.get", index: L_OBJ },
       { op: "call", funcIdx: idx },
-      { op: "local.tee", index: L_RESULT },
+      { op: "local.set", index: dst },
+      // present (non-null) ?
+      { op: "local.get", index: dst },
       { op: "ref.is_null" },
       { op: "i32.eqz" },
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: L_RESULT }, { op: "return" }],
+        then: [
+          ...isPrimitive(dst),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: dst }, { op: "return" }],
+          } as Instr,
+        ],
       } as Instr,
     ];
   };
 
-  // string hint → toString first; number/default → valueOf first.
-  const body: Instr[] = [
-    {
-      op: "local.get",
-      index: L_HINT,
-    },
+  const presentNonNull = (localIdx: number): Instr[] => [
+    { op: "local.get", index: localIdx },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+  ];
+
+  // number / default hint: valueOf → toString.
+  const numberHint: Instr[] = [
+    ...callAndReturnIfPrimitive(callValueOfIdx, L_RV),
+    ...callAndReturnIfPrimitive(callToStringIdx, L_RS),
+    // Neither own method produced a primitive. Classify by presence.
+    ...presentNonNull(L_RV), // valueOf present & object?
     {
       op: "if",
       blockType: { kind: "empty" },
-      // string hint: toString → valueOf
-      then: [...tryDispatcher(callToStringIdx), ...tryDispatcher(callValueOfIdx)],
-      // number / default hint: valueOf → toString
-      else: [...tryDispatcher(callValueOfIdx), ...tryDispatcher(callToStringIdx)],
+      // valueOf present & object
+      then: [
+        ...presentNonNull(L_RS), // toString present & object?
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          // both present-object → §7.1.1.1 TypeError
+          then: throwTypeError,
+          // toString absent → inherited Object.prototype.toString → "[object Object]"
+          else: returnObjectTag,
+        } as Instr,
+      ],
+      // valueOf absent → inherited valueOf returns the object (non-primitive)
+      else: [
+        ...presentNonNull(L_RS), // toString present & object?
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          // valueOf inherited-object + toString present-object → TypeError
+          then: throwTypeError,
+          // both absent → fall through to the shared "return input unchanged" tail
+          else: [],
+        } as Instr,
+      ],
     } as Instr,
-    // Neither matched (class without valueOf/toString) → return the input
-    // unchanged, exactly as the pre-#2638 "return input unchanged" tail did.
-    { op: "local.get", index: L_OBJ },
   ];
 
-  fn.locals = [{ name: "result", type: { kind: "externref" } }];
-  fn.body = body;
+  // string hint: toString → valueOf. Inherited toString yields the primitive
+  // "[object Object]", so an ABSENT toString resolves to it as the FIRST method.
+  const stringHint: Instr[] = [
+    ...callAndReturnIfPrimitive(callToStringIdx, L_RS),
+    // toString absent → inherited toString → "[object Object]" (primitive, first)
+    ...presentNonNull(L_RS),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      // toString present & object → try valueOf next
+      then: [
+        ...callAndReturnIfPrimitive(callValueOfIdx, L_RV),
+        // valueOf absent (inherited → object) or present-object → both object → TypeError
+        ...throwTypeError,
+      ],
+      // toString absent → default Object.prototype.toString
+      else: returnObjectTag,
+    } as Instr,
+  ];
+
+  fn.locals = [
+    { name: "rv", type: { kind: "externref" } },
+    { name: "rs", type: { kind: "externref" } },
+  ];
+  fn.body = [
+    { op: "local.get", index: L_HINT },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: stringHint,
+      else: numberHint,
+    } as Instr,
+    // Shared tail: reached only when BOTH methods are absent (number hint) —
+    // a nominal struct with no valueOf/toString → return the input unchanged,
+    // exactly as the pre-#2638 fall-through did (no regression).
+    { op: "local.get", index: L_OBJ },
+  ];
 }

@@ -37,14 +37,25 @@ import { emitBrandCheckTypeError } from "./native-proto.js";
 import { addFuncType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "./shared.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { resolveSpillLocalValType } from "./statements/variables.js";
+import { ensureExnTag } from "./registry/imports.js";
 
 const STATE_FIELD = 0;
 const SENT_FIELD = 1;
 const MODE_FIELD = 2;
 const ABRUPT_FIELD = 3;
+// (#2864 F2) `gen.throw(e)` error payload. Always externref (an Error object),
+// independent of the carrier — the `abrupt`/`sent` carrier fields can be f64 in a
+// numeric generator, so the thrown value needs its own slot. Resume mode 2 reads
+// it and re-throws after running enclosing finalizers.
+const ERROR_FIELD = 4;
 const RESULT_VALUE_FIELD = 0;
 const RESULT_DONE_FIELD = 1;
-const PARAM_FIELD_OFFSET = 4;
+const PARAM_FIELD_OFFSET = 5;
+// Resume modes stored in MODE_FIELD: 0 = next, 1 = return (abrupt), 2 = throw.
+const MODE_NEXT = 0;
+const MODE_RETURN = 1;
+const MODE_THROW = 2;
 const MAX_NATIVE_GENERATOR_STATES = 256;
 
 /**
@@ -95,6 +106,15 @@ interface NativeGeneratorState {
 interface NativeGeneratorPlan {
   states: NativeGeneratorState[];
   spills: string[];
+  /**
+   * (#2864 F1b) The wasm ValType for each spilled local, keyed by name. A local
+   * carried across a `yield` gets a state-struct field at its ACTUAL type
+   * (object → `ref_null $Object`, string → the native-string ref, number → f64),
+   * not the historical f64. A `let x = yield …` resume binding takes the carrier
+   * (`sent`-field) type. Every spill resolves to a supported kind or the plan
+   * bails to the host path (see `buildNativeGeneratorPlan`).
+   */
+  spillTypes: Map<string, ValType>;
   /** (#2171) Uniform yield element ValType — f64 (numeric) or native string. */
   elemValType: ValType;
   /**
@@ -287,7 +307,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // this array is the terminator's `siteIndex`.
   const delegationSites: { innerName: string }[] = [];
   const spillSet = new Set<string>();
-  const addSpill = (name: string): void => {
+  // (#2864 F1b) The variable declaration that introduced each spilled name, so
+  // the spill's wasm type can be resolved at its actual ValType.
+  const spillDecls = new Map<string, ts.VariableDeclaration>();
+  const addSpill = (name: string, decl?: ts.VariableDeclaration): void => {
+    if (decl !== undefined && !spillDecls.has(name)) spillDecls.set(name, decl);
     if (spillSet.has(name)) return;
     spillSet.add(name);
     spills.push(name);
@@ -746,7 +770,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   function collectSpillsIn(node: ts.Node): void {
     function visit(n: ts.Node): void {
       if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)) {
-        addSpill(n.name.text);
+        addSpill(n.name.text, n);
       }
       if (
         ts.isFunctionDeclaration(n) ||
@@ -780,20 +804,43 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   if (suspendCount === 0) return null;
   if (states.length > MAX_NATIVE_GENERATOR_STATES) return null;
 
-  // (#2864 F1) The boxed-any carrier types only the per-frame scalars (sent /
-  // abrupt / yielded value) as externref; it does NOT yet type the spill slots
-  // for live-across-yield LOCALS. A faithful spill field must carry the local's
-  // exact wasm type (an object literal lowers to a concrete `ref $Object`, which
-  // the up-front struct layout cannot know without a body pre-pass — the
-  // "deeper rewrite" flagged in the #2864 plan). So a heterogeneous generator
-  // that needs to spill any local bails to the host path here (consistent across
-  // `isNativeGeneratorCandidate` and `registerNativeGenerator`, both of which
-  // route through this builder, so the host imports stay registered and no
-  // undefined funcidx is baked). Numeric / string carriers are unaffected (their
-  // spills are f64). Follow-up: two-pass spill typing widens this.
-  if (elemIsAny && spills.length > 0) return null;
+  // (#2864 F1b) Type every spilled local at its ACTUAL wasm ValType so a live-
+  // across-yield object / string / typed-struct local survives the frame, rather
+  // than the F1 blanket bail (`elemIsAny && spills.length > 0`) or the historical
+  // f64-only assumption. Two kinds of spill:
+  //   • a `let x = yield …` RESUME BINDING — its value comes from the `sent`
+  //     carrier field, so it must match the carrier type (f64 for numeric/string,
+  //     externref for the boxed-any carrier), NOT resolveWasmType(x) (the declared
+  //     `TNext`, usually `any`).
+  //   • a plain body LOCAL — resolved via `resolveSpillLocalValType`, which mirrors
+  //     the type the resume function's var-declaration will assign it.
+  // If ANY spill cannot be resolved to a supported, struct-storable kind, the
+  // whole generator bails to the host path (return null) — consistent across the
+  // candidate gate and registration (both route through this builder), so the
+  // host imports stay registered and no undefined funcidx is baked.
+  const resumeBindingNames = new Set<string>();
+  for (const s of states) for (const b of s.resumeBindings) resumeBindingNames.add(b);
+  const carrierType = genCarrierFieldType(elemValType);
+  const spillTypes = new Map<string, ValType>();
+  for (const name of spills) {
+    if (resumeBindingNames.has(name)) {
+      // A `let x = yield …` binding reads `.next(v)`'s value from the `sent`
+      // carrier field. For numeric / native-string carriers (sent = f64 / string)
+      // this round-trips and was already supported. For the BOXED-ANY carrier the
+      // sent value is an externref whose later member reads need the any-receiver
+      // dispatch (#2151) — not yet correct here (it silently computes a wrong
+      // value), so keep bailing that shape to the host path, exactly as F1 did.
+      if (carrierIsAny(elemValType)) return null;
+      spillTypes.set(name, carrierType);
+      continue;
+    }
+    const declNode = spillDecls.get(name);
+    const resolved = declNode ? resolveSpillLocalValType(ctx, declNode) : null;
+    if (!resolved) return null;
+    spillTypes.set(name, resolved);
+  }
 
-  return { states, spills, elemValType, delegationSites };
+  return { states, spills, spillTypes, elemValType, delegationSites };
 }
 
 /** A `break`/`continue` inside a yield-loop body is not modeled in this slice. */
@@ -1113,17 +1160,10 @@ export function registerNativeGenerator(
   if (!plan) return null;
 
   const elemValType = plan.elemValType;
-  const elemIsString = elemValType.kind !== "f64";
-  // (#2171) Scope guard for the string slice: spilled locals are typed f64 in
-  // the state struct, so a string generator that needs to spill a live local
-  // across a suspension can't faithfully store it yet. Bail to the host/#680
-  // path for that shape (numeric generators are unaffected — they spill f64).
-  // This keeps the slice to the dominant `yield "a"; yield "b"` shape; spilled
-  // non-numeric locals are the documented follow-up.
-  const bodySpillsForGuard = plan.spills.filter(
-    (s) => !decl.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === s),
-  );
-  if (elemIsString && bodySpillsForGuard.length > 0) return null;
+  // (#2864 F1b) Spilled locals are now typed at their actual ValType
+  // (`plan.spillTypes`), so the historical string/any guards that bailed any
+  // generator with a live-across-yield non-numeric local are retired — the plan
+  // builder already returned null for any spill whose type it could not resolve.
 
   const resultTypeIdx = ensureNativeGeneratorResultType(ctx, elemValType);
   // (#2571) The synthetic `this` (when present) is the FIRST param name, aligned
@@ -1139,6 +1179,8 @@ export function registerNativeGenerator(
     { name: "sent", type: carrierFieldType, mutable: true },
     { name: "mode", type: { kind: "i32" }, mutable: true },
     { name: "abrupt", type: carrierFieldType, mutable: true },
+    // (#2864 F2) `gen.throw(e)` payload — externref regardless of carrier.
+    { name: "error", type: { kind: "externref" }, mutable: true },
   ];
   for (let i = 0; i < paramTypes.length; i++) {
     stateFields.push({
@@ -1152,10 +1194,15 @@ export function registerNativeGenerator(
   // but params already live in the struct. Spills cover body-declared locals.
   const paramNameSet = new Set(paramNames);
   const bodySpills = plan.spills.filter((s) => !paramNameSet.has(s));
-  for (const spill of bodySpills) {
+  // (#2864 F1b) Spill field at the local's actual ValType (object → ref_null
+  // struct, string → native-string ref, number → f64), aligned 1:1 with
+  // `bodySpills` so the resume-load local, store/load, and struct-init default
+  // all agree. `plan.spillTypes` is guaranteed to hold an entry for each spill.
+  const spillTypes: ValType[] = bodySpills.map((s) => plan.spillTypes.get(s) ?? { kind: "f64" });
+  for (let i = 0; i < bodySpills.length; i++) {
     stateFields.push({
-      name: `spill_${spill}`,
-      type: { kind: "f64" },
+      name: `spill_${bodySpills[i]}`,
+      type: spillTypes[i]!,
       mutable: true,
     });
   }
@@ -1198,6 +1245,7 @@ export function registerNativeGenerator(
     modeFieldIdx: MODE_FIELD,
     abruptFieldIdx: ABRUPT_FIELD,
     spillNames: bodySpills,
+    spillTypes,
     spillFieldOffset,
     yieldCount,
     doneState: plan.states.length - 1, // the final `done` state id
@@ -1236,6 +1284,25 @@ function emptyResult(info: NativeGeneratorInfo): Instr[] {
     { op: "i32.const", value: 1 },
     { op: "struct.new", typeIdx: info.resultTypeIdx },
   ];
+}
+
+// (#2864 F1b) The inert default a spill field is constructed with, by ValType.
+// Overwritten by the body's declaration on first entry into the owning state, so
+// it only has to satisfy `struct.new`'s field type. Mirrors `defaultElemValueInstr`
+// but spans the full set of supported spill kinds.
+function defaultSpillInstr(type: ValType): Instr {
+  switch (type.kind) {
+    case "f64":
+      return { op: "f64.const", value: NaN };
+    case "i32":
+      return { op: "i32.const", value: 0 };
+    case "i64":
+      return { op: "i64.const", value: 0n } as Instr;
+    case "externref":
+      return { op: "ref.null.extern" } as Instr;
+    default:
+      return { op: "ref.null", typeIdx: (type as { typeIdx: number }).typeIdx } as Instr;
+  }
 }
 
 function emptyResultForType(resultTypeIdx: number): Instr[] {
@@ -1550,8 +1617,12 @@ function compileState(
   // import would over-shift any `call` funcIdx already in the outer body.
   ctx.liveBodies.add(saved);
 
-  // Abrupt-resume (.return()) handling: if we resumed into this state in mode 1
-  // (return), run finalizers, store spills, and complete with the abrupt value.
+  // Abrupt-resume handling: if we resumed into this state in an abrupt mode
+  // (mode != 0), run the enclosing finalizers, then either complete with the
+  // `.return(v)` value (mode 1) or RE-THROW the `.throw(e)` error (mode 2, #2864
+  // F2). Both share the finalizer run + spill store + done transition; they
+  // diverge only at the tail. The finalizers are compiled ONCE into `abruptBody`,
+  // which the outer `if (mode != 0)` guards.
   if (state.abruptResume) {
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
@@ -1561,29 +1632,47 @@ function compileState(
     }
     abruptBody.push(...storeSpills(info, fctx, selfLocal));
     abruptBody.push(...setStateInstrs(info, selfLocal, info.doneState));
-    // (#2171/#2864) `.return(v)` value lives in the `abrupt` field. When the
-    // field carrier matches the result `value` type — numeric (both f64) or the
-    // boxed-any carrier (both externref) — the abrupt field IS the completion
-    // value, so read it. For a string generator the result `value` is a string
-    // ref while `abrupt` stays f64, so string `.return(v)` is not yet wired —
-    // complete with the elem-type default so the result struct typechecks.
-    // (String `.return(v)` is a documented follow-up.)
+
+    // mode 2 (throw): re-throw the stored error. `throw` is stack-polymorphic
+    // (control leaves the resume function), so no value/`br` is needed and the
+    // generator surfaces the error to the `.throw(e)` caller, finalizers having
+    // run first (§27.5.3.4 GeneratorResumeAbrupt with a throw completion, no
+    // catch in this slice — try/catch-across-yield stays the next slice).
+    const throwBody: Instr[] = [
+      { op: "local.get", index: selfLocal },
+      { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
+      { op: "throw", tagIdx: ensureExnTag(ctx) } as Instr,
+    ];
+
+    // mode 1 (return): complete with the abrupt value (unchanged from F1). The
+    // `.return(v)` value lives in `abrupt` when its carrier matches the result
+    // `value` type (numeric / boxed-any); for a string generator the abrupt
+    // field stays f64, so complete with the elem default (string `.return(v)` is
+    // a documented follow-up). br depth is exitDepth + 2 — inside the outer
+    // `if (mode != 0)` AND the inner `if (mode == 2) … else …`.
+    const returnBody: Instr[] = [];
     if (valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)) {
-      abruptBody.push({ op: "local.get", index: selfLocal });
-      abruptBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
+      returnBody.push({ op: "local.get", index: selfLocal });
+      returnBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
     } else {
-      abruptBody.push(defaultElemValueInstr(info.elemValType));
+      returnBody.push(defaultElemValueInstr(info.elemValType));
     }
-    abruptBody.push({ op: "i32.const", value: 1 });
-    abruptBody.push({ op: "struct.new", typeIdx: info.resultTypeIdx });
-    abruptBody.push({ op: "local.set", index: resultLocal });
-    abruptBody.push({ op: "br", depth: exitDepth + 1 }); // +1: inside the `if`
+    returnBody.push({ op: "i32.const", value: 1 });
+    returnBody.push({ op: "struct.new", typeIdx: info.resultTypeIdx });
+    returnBody.push({ op: "local.set", index: resultLocal });
+    returnBody.push({ op: "br", depth: exitDepth + 2 });
+
+    abruptBody.push({ op: "local.get", index: selfLocal });
+    abruptBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx });
+    abruptBody.push({ op: "i32.const", value: MODE_THROW });
+    abruptBody.push({ op: "i32.eq" });
+    abruptBody.push({ op: "if", blockType: { kind: "empty" }, then: throwBody, else: returnBody });
     fctx.body = savedAbrupt;
 
     body.push({ op: "local.get", index: selfLocal });
     body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx });
-    body.push({ op: "i32.const", value: 1 });
-    body.push({ op: "i32.eq" });
+    body.push({ op: "i32.const", value: MODE_NEXT });
+    body.push({ op: "i32.ne" });
     body.push({ op: "if", blockType: { kind: "empty" }, then: abruptBody, else: [] });
   }
 
@@ -1812,9 +1901,13 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     resumeFctx.body.push({ op: "local.set", index: localIdx });
   }
 
-  // Load spills into locals.
+  // Load spills into locals. (#2864 F1b) The load local is minted at the spill's
+  // actual ValType so the `struct.get` (of the same-typed field) round-trips. The
+  // body's var-declaration reuses this exact slot (it is already in `localMap`),
+  // and because the resume fctx carries no analysis caches, its computed type
+  // equals `resolveSpillLocalValType` → no slot re-type, no mismatch.
   for (let i = 0; i < info.spillNames.length; i++) {
-    const localIdx = allocLocal(resumeFctx, info.spillNames[i]!, { kind: "f64" });
+    const localIdx = allocLocal(resumeFctx, info.spillNames[i]!, info.spillTypes[i]!);
     resumeFctx.body.push({ op: "local.get", index: 0 });
     resumeFctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + i });
     resumeFctx.body.push({ op: "local.set", index: localIdx });
@@ -1834,6 +1927,32 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
       resumeFctx.body.push(...emitTrampoline(ctx, resumeFctx, info, plan, 0, resultLocal));
     } finally {
       ctx.currentFunc = savedFunc;
+    }
+  }
+
+  // (#2864 F1b) Reconcile each spill's struct field with the FINAL type its
+  // resume-function local settled on. The body's var-declaration reuses the
+  // pre-allocated spill slot and may re-type it (e.g. a predicted `ref_null`
+  // narrowed by the declaration to a non-null `ref`); a non-null ref has no
+  // struct-construction default and would not round-trip through `struct.get`,
+  // so widen it back to `ref_null` and pin BOTH the local slot and the spill
+  // field (+ `info.spillTypes`, which the constructor's init default reads) to
+  // that common type. This runs before any `struct.new` of the state struct —
+  // the constructor (`compileNativeGeneratorFunction`) calls this function
+  // first — so the init defaults observe the reconciled types.
+  const stateStruct = ctx.mod.types[info.stateTypeIdx];
+  for (let i = 0; i < info.spillNames.length; i++) {
+    const localIdx = resumeFctx.localMap.get(info.spillNames[i]!);
+    if (localIdx === undefined || localIdx < resumeFctx.params.length) continue;
+    const slot = resumeFctx.locals[localIdx - resumeFctx.params.length];
+    if (!slot) continue;
+    let finalType = slot.type;
+    if (finalType.kind === "ref") finalType = { kind: "ref_null", typeIdx: finalType.typeIdx };
+    slot.type = finalType;
+    info.spillTypes[i] = finalType;
+    if (stateStruct && stateStruct.kind === "struct") {
+      const field = stateStruct.fields[info.spillFieldOffset + i];
+      if (field) field.type = finalType;
     }
   }
 
@@ -1858,10 +1977,11 @@ export function compileNativeGeneratorFunction(
   const carrierInit: Instr = carrierIsAny(info.elemValType)
     ? ({ op: "ref.null.extern" } as Instr)
     : { op: "f64.const", value: NaN };
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push(carrierInit);
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push(carrierInit);
+  fctx.body.push({ op: "i32.const", value: 0 }); // state
+  fctx.body.push(carrierInit); // sent
+  fctx.body.push({ op: "i32.const", value: 0 }); // mode = MODE_NEXT
+  fctx.body.push(carrierInit); // abrupt
+  fctx.body.push({ op: "ref.null.extern" } as Instr); // (#2864 F2) error
   // (#2571) Read every wasm param into its `param_*` state slot. For an instance
   // method generator the synthetic `this` is wasm param 0 and user params are
   // 1..n, so iterate `info.paramTypes.length` (which includes the synthetic
@@ -1870,8 +1990,12 @@ export function compileNativeGeneratorFunction(
   for (let i = 0; i < info.paramTypes.length; i++) {
     fctx.body.push({ op: "local.get", index: i });
   }
+  // (#2864 F1b) Spill slots start at their type's inert default — `f64 NaN`
+  // (numeric, unchanged), `i32`/`i64` 0, a null ref for object/string spills, or
+  // a null externref for boxed-any spills — so the `struct.new` typechecks before
+  // the body's declaration overwrites the slot on first entry.
   for (let i = 0; i < info.spillNames.length; i++) {
-    fctx.body.push({ op: "f64.const", value: NaN });
+    fctx.body.push(defaultSpillInstr(info.spillTypes[i]!));
   }
   // (#2170) `yield*` delegation slots start null — the inner generator is
   // materialized lazily on first entry into the yield-star state.
@@ -1931,8 +2055,6 @@ function compileDirectNativeGeneratorMethod(
   methodName: string,
   args: readonly ts.Expression[],
 ): ValType | null | undefined {
-  if (methodName === "throw") return undefined;
-
   if (receiverType.kind === "ref_null") {
     fctx.body.push({ op: "ref.as_non_null" });
   }
@@ -1941,6 +2063,56 @@ function compileDirectNativeGeneratorMethod(
     typeIdx: info.stateTypeIdx,
   });
   fctx.body.push({ op: "local.set", index: selfLocal });
+
+  if (methodName === "throw") {
+    // (#2864 F2) `gen.throw(e)` — §27.5.3.4 GeneratorResumeAbrupt(throw).
+    // Compile the error to externref into the dedicated error slot, then:
+    //   • SUSPENDED (state != start && state != done): set mode=2 and resume —
+    //     the resume function runs enclosing finalizers and re-throws (this slice
+    //     has no try/catch-across-yield, so it always propagates).
+    //   • NOT-STARTED / DONE: complete the generator and throw the error directly.
+    const errorTmp = allocLocal(fctx, `__native_gen_err_${fctx.locals.length}`, { kind: "externref" });
+    if (args[0]) {
+      const t = compileExpression(ctx, fctx, args[0], { kind: "externref" });
+      if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+      else if (!t) fctx.body.push({ op: "ref.null.extern" });
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    fctx.body.push({ op: "local.set", index: errorTmp });
+    compileIgnoredArgs(ctx, fctx, args.slice(1));
+
+    const tagIdx = ensureExnTag(ctx);
+    // suspended = (state != START) && (state != doneState)
+    fctx.body.push({ op: "local.get", index: selfLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.ne" });
+    fctx.body.push({ op: "local.get", index: selfLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
+    fctx.body.push({ op: "i32.const", value: info.doneState });
+    fctx.body.push({ op: "i32.ne" });
+    fctx.body.push({ op: "i32.and" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: info.resultTypeIdx } },
+      then: [
+        { op: "local.get", index: selfLocal },
+        { op: "local.get", index: errorTmp },
+        { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
+        ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, MODE_THROW),
+        { op: "local.get", index: selfLocal },
+        { op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) },
+      ],
+      else: [
+        // Not-started / completed: mark done and throw the error to the caller.
+        ...setStateI32FromConst(info, selfLocal, STATE_FIELD, info.doneState),
+        { op: "local.get", index: errorTmp },
+        { op: "throw", tagIdx } as Instr,
+      ],
+    });
+    return { kind: "ref", typeIdx: info.resultTypeIdx };
+  }
 
   if (methodName === "next") {
     const sentTmp = emitCarrierValue(ctx, fctx, args[0], info);
@@ -2006,6 +2178,8 @@ function buildNativeGeneratorDispatch(
   // branches). When no any-carrier generator participates this is undefined and
   // the dispatch is byte-identical to pre-#2864.
   valueAnyLocal?: number,
+  // (#2864 F2) externref error local for `.throw(e)`.
+  errorLocal?: number,
 ): { instrs: Instr[]; resultType: ValType } {
   const infos = Array.from(ctx.nativeGenerators.values());
   // (#2864 F1) When ANY generator in the chain uses the boxed-any carrier, the
@@ -2039,7 +2213,52 @@ function buildNativeGeneratorDispatch(
     const info = infos[index]!;
     const vLocal = branchValueLocal(info);
     let thenBody: Instr[];
-    if (methodName === "next") {
+    if (methodName === "throw") {
+      // (#2864 F2) `gen.throw(e)` — suspended: write the error, set mode=2, and
+      // resume (the resume function runs enclosing finalizers then re-throws);
+      // not-started / done: complete and throw the error directly. Mirrors the
+      // direct-path throw. `throw` is stack-polymorphic so the not-started/done
+      // arm satisfies the block's `resultType` without leaving a value.
+      const tagIdx = ensureExnTag(ctx);
+      thenBody = [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: info.stateTypeIdx },
+        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ne" },
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: info.stateTypeIdx },
+        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+        { op: "i32.const", value: info.doneState },
+        { op: "i32.ne" },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: resultType },
+          then: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: info.stateTypeIdx },
+            { op: "local.get", index: errorLocal! },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: info.stateTypeIdx },
+            { op: "i32.const", value: MODE_THROW },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: info.stateTypeIdx },
+            { op: "call", funcIdx: ensureNativeGeneratorResumeFunction(ctx, info) },
+          ],
+          else: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: info.stateTypeIdx },
+            { op: "i32.const", value: info.doneState },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+            { op: "local.get", index: errorLocal! },
+            { op: "throw", tagIdx } as Instr,
+          ],
+        },
+      ];
+    } else if (methodName === "next") {
       thenBody = [
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: info.stateTypeIdx },
@@ -2133,7 +2352,7 @@ export function tryCompileNativeGeneratorMethodCall(
   methodName: string,
   args: readonly ts.Expression[],
 ): ValType | null | undefined {
-  if (methodName !== "next" && methodName !== "return") return undefined;
+  if (methodName !== "next" && methodName !== "return" && methodName !== "throw") return undefined;
   if (ctx.nativeGenerators.size === 0) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, receiverExpr);
@@ -2166,7 +2385,22 @@ export function tryCompileNativeGeneratorMethodCall(
   const dispatchHasAny = Array.from(ctx.nativeGenerators.values()).some((i) => carrierIsAny(i.elemValType));
   let valueLocal: number | undefined;
   let valueAnyLocal: number | undefined;
-  if (methodName === "return" || methodName === "next") {
+  let errorLocal: number | undefined;
+  if (methodName === "throw") {
+    // (#2864 F2) The thrown value is an externref error, independent of any
+    // generator's carrier — store it in a dedicated local for the dispatch's
+    // throw branch (which writes it to the state struct's `error` field).
+    errorLocal = allocLocal(fctx, `__gen_throw_err_${fctx.locals.length}`, { kind: "externref" });
+    if (args[0]) {
+      const t = compileExpression(ctx, fctx, args[0], { kind: "externref" });
+      if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+      else if (!t) fctx.body.push({ op: "ref.null.extern" });
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    fctx.body.push({ op: "local.set", index: errorLocal });
+    compileIgnoredArgs(ctx, fctx, args.slice(1));
+  } else if (methodName === "return" || methodName === "next") {
     if (dispatchHasAny) {
       valueAnyLocal = emitOpenAnyArgValue(ctx, fctx, args[0]);
       compileIgnoredArgs(ctx, fctx, args.slice(1));
@@ -2180,7 +2414,14 @@ export function tryCompileNativeGeneratorMethodCall(
     }
   }
 
-  const { instrs, resultType } = buildNativeGeneratorDispatch(ctx, anyLocal, methodName, valueLocal, valueAnyLocal);
+  const { instrs, resultType } = buildNativeGeneratorDispatch(
+    ctx,
+    anyLocal,
+    methodName,
+    valueLocal,
+    valueAnyLocal,
+    errorLocal,
+  );
   fctx.body.push(...instrs);
   return resultType;
 }

@@ -121,3 +121,160 @@ export function test(): number { let s = 0; for (const x of g()) s += x; return 
     ).toBe(6);
   });
 });
+
+// #2864 F1b — typed live-across-yield LOCAL spills. F1 spilled only f64 (numeric)
+// or a uniform native-string ref; a generator with an OBJECT / STRING / typed
+// local carried across a `yield` either mis-compiled (the f64 spill field could
+// not hold a `ref`) or bailed to the host path. F1b types each spill field at the
+// local's ACTUAL ValType (resolved by `resolveSpillLocalValType`, mirroring the
+// resume function's var-declaration), so the value survives the frame host-free.
+describe("#2864 F1b typed live-across-yield local spills (standalone)", () => {
+  it("verify-first: object local carried across a yield, host-free + correct", async () => {
+    // The exact case from the issue: `function* g(){ let o={n:1}; yield 1; yield o.n }`.
+    expect(
+      await runStandalone(`function* g() { let o = {n:1}; yield 1; yield o.n; }
+export function test(): number {
+  let it = g();
+  let a = it.next().value as number;
+  let b = it.next().value as number;
+  return a + b; // 1 + 1 — the object survived the suspension and o.n read back
+}`),
+    ).toBe(2);
+  });
+
+  it("string local carried across a yield in a numeric generator", async () => {
+    expect(
+      await runStandalone(`function* g() { let s = "abc"; yield 1; yield s.length; }
+export function test(): number {
+  let it = g();
+  let a = it.next().value as number;
+  let b = it.next().value as number;
+  return a + b; // 1 + 3
+}`),
+    ).toBe(4);
+  });
+
+  it("object yield carrier WITH an object local spill (both externref)", async () => {
+    expect(
+      await runStandalone(`function* g() { let o = {a:1}; yield {a:10}; yield o; }
+export function test(): number {
+  let it = g();
+  let r1 = it.next().value as any;
+  let r2 = it.next().value as any;
+  return r1.a + r2.a; // 10 + 1
+}`),
+    ).toBe(11);
+  });
+
+  it("loop-carried object spill consumed via for-of, host-free", async () => {
+    expect(
+      await runStandalone(`function* g() {
+  let base = {a:5};
+  let i = 0;
+  while (i < 2) { yield {a: base.a + i}; i = i + 1; }
+}
+export function test(): number {
+  let s = 0;
+  for (const o of g()) { s += (o as any).a; }
+  return s; // (5+0) + (5+1) = 11
+}`),
+    ).toBe(11);
+  });
+
+  it("numeric local spill stays on the f64 fast path (unchanged)", async () => {
+    expect(
+      await runStandalone(`function* g() { let n = 5; yield 1; yield n; }
+export function test(): number {
+  let it = g();
+  return (it.next().value as number) + (it.next().value as number); // 1 + 5
+}`),
+    ).toBe(6);
+  });
+
+  it("typed-numeric .next(v) resume binding carried across a yield", async () => {
+    expect(
+      await runStandalone(`function* g(): Generator<number, void, number> { let x = yield 1; yield x + 10; }
+export function test(): number {
+  let it = g();
+  it.next();
+  return it.next(5).value as number; // 5 + 10
+}`),
+    ).toBe(15);
+  });
+});
+
+// #2864 F2 — `gen.throw()` abrupt completion. F1 wired `.return()` (mode 1, run
+// finalizers + complete); `.throw()` was unimplemented (the open dispatch lumped
+// it with `.return()` so it silently completed instead of throwing, and never ran
+// the finally). F2 adds a dedicated externref error slot, a `.throw()` dispatch
+// (direct + open), and a mode-2 resume arm that runs the enclosing finalizers
+// then RE-THROWS — so the error surfaces to the `.throw(e)` caller host-free.
+// (try/catch-ACROSS-yield is the next slice; it still bails to the host path.)
+describe("#2864 F2 gen.throw() abrupt completion (standalone)", () => {
+  it("verify-first: throw() runs the enclosing finally, then propagates", async () => {
+    expect(
+      await runStandalone(`let log = 0;
+function* g() { try { yield 1; yield 2; } finally { log = 42; } }
+export function test(): number {
+  let it = g();
+  it.next();
+  let propagated = 0;
+  try { it.throw(new Error("boom")); } catch (e) { propagated = 1; }
+  return log + propagated; // 42 (finally ran) + 1 (error propagated)
+}`),
+    ).toBe(43);
+  });
+
+  it("throw() on a generator suspended at a plain yield propagates the error", async () => {
+    expect(
+      await runStandalone(`function* g() { yield 1; yield 2; }
+export function test(): number {
+  let it = g();
+  it.next();
+  let caught = 0;
+  try { it.throw(new Error("x")); } catch (e) { caught = 1; }
+  return caught;
+}`),
+    ).toBe(1);
+  });
+
+  it("throw() on a NOT-started generator throws (never runs the body)", async () => {
+    expect(
+      await runStandalone(`let ran = 0;
+function* g() { ran = 1; yield 1; }
+export function test(): number {
+  let it = g();
+  let caught = 0;
+  try { it.throw(new Error("x")); } catch (e) { caught = 1; }
+  return caught * 10 + ran; // 10 + 0 — error thrown, body never entered
+}`),
+    ).toBe(10);
+  });
+
+  it("throw() on an exhausted (done) generator throws", async () => {
+    expect(
+      await runStandalone(`function* g() { yield 1; }
+export function test(): number {
+  let it = g();
+  it.next();
+  it.next(); // done
+  let caught = 0;
+  try { it.throw(new Error("x")); } catch (e) { caught = 1; }
+  return caught;
+}`),
+    ).toBe(1);
+  });
+
+  it("return() through a try/finally still completes (mode-1 unchanged)", async () => {
+    expect(
+      await runStandalone(`let log = 0;
+function* g() { try { yield 1; yield 2; } finally { log = 7; } }
+export function test(): number {
+  let it = g();
+  it.next();
+  let r = it.return(99 as any);
+  return log + (r.done ? 1 : 0); // 7 (finally) + 1 (done)
+}`),
+    ).toBe(8);
+  });
+});

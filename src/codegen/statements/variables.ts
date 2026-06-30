@@ -124,6 +124,99 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   return resolveWasmType(ctx, type);
 }
 
+/**
+ * (#2864 F1b) Resolve the wasm ValType a body-local would receive **in the
+ * native-generator resume function**, so the generator's spill field, its
+ * resume-load local, and the state-struct init default can all be minted at the
+ * local's actual type (object / string / typed-struct locals carried across a
+ * `yield`), not the historical f64.
+ *
+ * The resume function compiles the generator body with a FRESH FunctionContext
+ * whose analysis caches (`i32CoercedLocals`, `i32SpecializedArrays`,
+ * `pendingStringBuilders`, …) are empty and whose locals never resolve to a
+ * module global (the spill is always a local shadow). So the type the resume
+ * var-declaration computes reduces to the **fctx-independent** subset of the
+ * `compileVariableStatement` cascade: the ctx/AST externref-forcing overrides
+ * plus `localTypeForDeclaration`. This helper replicates exactly that subset and
+ * returns `null` for any form whose representation the up-front spill layout
+ * cannot match (the caller then keeps the whole generator on the host path — a
+ * conservative, non-regressing bail). Returning `null` for non-nullable `ref`
+ * types is deliberate: the state-struct field needs a valid default value at
+ * construction, and only `ref_null` refs have one (`ref.null`).
+ */
+export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
+  if (!ts.isIdentifier(decl.name)) return null;
+  const name = decl.name.text;
+  // Names the main-body analysis already routed to a host / externref slot
+  // (accessor literal, host-spread literal, growable / out-of-shape object).
+  if (ctx.externrefAccessorVars.has(name)) return { kind: "externref" };
+  if (ctx.growableObjectLiteralVars.has(name)) return { kind: "externref" };
+  // A var whose properties were widened (empty-obj + later prop writes) gets a
+  // synthesized struct; mirror it if the struct is registered, else bail.
+  const widenedStructName = ctx.widenedVarStructMap.get(name);
+  if (widenedStructName !== undefined) {
+    const idx = ctx.structMap.get(widenedStructName);
+    return idx === undefined ? null : { kind: "ref_null", typeIdx: idx };
+  }
+  const init = decl.initializer;
+  if (init) {
+    if (ts.isObjectLiteralExpression(init)) {
+      const forcesHostObject = init.properties.some(
+        (p) =>
+          ts.isGetAccessorDeclaration(p) ||
+          ts.isSetAccessorDeclaration(p) ||
+          (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) ||
+          (ts.isPropertyAssignment(p) && p.name !== undefined && ts.isComputedPropertyName(p.name)),
+      );
+      if (forcesHostObject) return { kind: "externref" };
+      if (objectLiteralSpreadTakesHostPath(ctx, init)) return { kind: "externref" };
+    }
+    if (isProxyConstruction(init)) return { kind: "externref" };
+    // Representations the var-decl path computes from a decl/receiver-driven
+    // inference that diverges from resolveWasmType — defer to the host path.
+    if (inferStandaloneRegExpMatchArrayType(ctx, init) !== null) return null;
+    const unwrapped = stripInferenceWrapper(init);
+    if (
+      ts.isCallExpression(unwrapped) &&
+      ts.isPropertyAccessExpression(unwrapped.expression) &&
+      unwrapped.expression.name.text === "subarray"
+    ) {
+      return null;
+    }
+    if (isPromiseHostCall(ctx, init) || isBindHostCall(init) || isStringMethodReturningHostArray(ctx, init)) {
+      return null;
+    }
+  }
+  const varType = ctx.checker.getTypeAtLocation(decl);
+  // Array<any> takes a decl-driven vec inference (inferArrayVecType) ≠ the
+  // generic resolveWasmType vec — defer.
+  if (varType.flags & ts.TypeFlags.Object) {
+    const sym = (varType as ts.TypeReference).symbol ?? varType.symbol;
+    if (sym?.name === "Array") {
+      const typeArgs = ctx.checker.getTypeArguments(varType as ts.TypeReference);
+      if (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any) return null;
+    }
+  }
+  const t = localTypeForDeclaration(ctx, varType, decl);
+  switch (t.kind) {
+    case "f64":
+    case "i32":
+    case "i64":
+    case "externref":
+    case "ref_null":
+      return t;
+    // A non-nullable `ref` has no struct-construction default and a wasm local is
+    // widened to nullable anyway, so carry it as `ref_null` — the same type the
+    // resume var-declaration's slot settles on (the spill field, load local, and
+    // init default then all agree; reads `struct.get` a nullable ref, which is
+    // valid and traps-on-null exactly as the source semantics require).
+    case "ref":
+      return { kind: "ref_null", typeIdx: t.typeIdx };
+    default:
+      return null;
+  }
+}
+
 function stripInferenceWrapper(expr: ts.Expression): ts.Expression {
   while (
     ts.isParenthesizedExpression(expr) ||

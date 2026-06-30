@@ -13,6 +13,7 @@ import { addImport } from "../registry/imports.js";
 import { addFuncType } from "../registry/types.js";
 import { addUnionImportsViaRegistry } from "../shared.js";
 import { ensureObjectRuntime, OBJECT_RUNTIME_HELPER_NAMES } from "../object-runtime.js";
+import { ensureSymbolCarrier } from "../symbol-native.js";
 
 /**
  * #1471: helper names that `addUnionImports` provides Wasm-native
@@ -436,6 +437,18 @@ export function ensureLateImport(
   // ensureObjectRuntime.
   if ((ctx.standalone || ctx.wasi) && OBJECT_RUNTIME_HELPER_NAMES.has(name)) {
     ensureObjectRuntime(ctx);
+    return ctx.funcMap.get(name);
+  }
+  // #2866 — under no-JS-host mode `__box_symbol` has a Wasm-native carrier
+  // builder (`ensureSymbolCarrier`) that boxes a symbol-handle i32 into a real
+  // `$Symbol` GC struct → externref, instead of the unsatisfiable host-only
+  // `env::__box_symbol`. Registered as a DEFINED function (no import → no index
+  // shift), same invariant as the boxing/object-runtime helpers above. This is
+  // the leak fix: before #2866, a standalone `o[sym] = v` / `symbol[]` read
+  // reached the `addImport("env","__box_symbol")` fallthrough below and emitted
+  // an `env::__box_symbol` import that failed at instantiation.
+  if ((ctx.standalone || ctx.wasi) && name === "__box_symbol") {
+    ensureSymbolCarrier(ctx);
     return ctx.funcMap.get(name);
   }
   // #1472 Phase A — refuse dynamic-shape object/property host imports under

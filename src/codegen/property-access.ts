@@ -127,7 +127,7 @@ import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
 
-const BUILTIN_CTOR_NAMES = new Set([
+export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
   "Array",
   "Function",
@@ -701,7 +701,7 @@ function ensureStandaloneNativeMethodClosureLocal(
  * core (caller falls through to the existing refusal). S1 wires RegExp only;
  * S3 adds %TypedArray% / the concrete views.
  */
-function tryEnsureNativeProtoBrand(ctx: CodegenContext, builtinName: string): number | undefined {
+export function tryEnsureNativeProtoBrand(ctx: CodegenContext, builtinName: string): number | undefined {
   if (builtinName === "RegExp") {
     return ensureRegExpNativeProtoGlue(ctx);
   }
@@ -920,6 +920,31 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   const kind = glue.memberKind(member);
   const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind);
   if (!closure) return undefined;
+
+  if (kind === "getter") {
+    // (#2885 Site 3) A plain read of `<Builtin>.prototype.<getter>` must INVOKE
+    // the accessor on the receiver, not return the getter closure value. This
+    // site only fires for the literal `<Builtin>.prototype.<getter>` shape, so
+    // the receiver is always the proto object (`$NativeProto` externref): the
+    // proto-identity arm in the getter body (Site 1) then yields `undefined`
+    // (§22.2.6), e.g. `RegExp.prototype.global === undefined`. Instance reads
+    // (`re.global`) route through `tryCompileStandaloneRegExpPropertyRead`, not
+    // here. Returns externref (the unified getter result type).
+    const closureInfo = ctx.closureInfoByTypeIdx.get(closure.type.typeIdx);
+    if (!closureInfo) return undefined;
+
+    // self struct (param 0) — unused by the body (no captures) but type-required.
+    fctx.body.push({ op: "ref.func", funcIdx: closure.funcIdx } as Instr);
+    fctx.body.push({ op: "struct.new", typeIdx: closure.type.typeIdx } as Instr);
+    // `this` arg (param 1): the builtin proto object externref.
+    if (!emitLazyNativeProtoGet(ctx, fctx, brand)) return undefined;
+    // call_ref operand: the typed funcref. `ref.func` yields `(ref liftedType)`
+    // directly (the func's declared type IS the lifted closure type), so no
+    // struct.get / guard-cast is needed.
+    fctx.body.push({ op: "ref.func", funcIdx: closure.funcIdx } as Instr);
+    fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx } as Instr);
+    return closureInfo.returnType ?? { kind: "externref" };
+  }
 
   fctx.body.push({ op: "ref.func", funcIdx: closure.funcIdx } as Instr);
   fctx.body.push({ op: "struct.new", typeIdx: closure.type.typeIdx } as Instr);

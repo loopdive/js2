@@ -36,6 +36,7 @@ import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { allocLocal } from "./context/locals.js";
 
 // ── Brand space (shared with #2101 — MUST stay coherent) ──────────────────────
 //
@@ -436,7 +437,12 @@ export function ensureStandaloneNativeMethodClosure(
     ctx.funcMap.set(funcName, funcIdx);
 
     if (!ctx.nativeClosureMeta) ctx.nativeClosureMeta = new Map();
-    ctx.nativeClosureMeta.set(funcIdx, { name: member, length: arity });
+    // (#2885) §10.2.9 — accessor functions are named `"get <key>"` (resp.
+    // `"set <key>"`). The reflective `desc.get.name` read resolves the closure's
+    // name from `nativeClosureMeta`, so getter closures must carry the accessor
+    // spelling, not the bare member. Methods keep the bare member name.
+    const accessorName = kind === "getter" ? `get ${member}` : member;
+    ctx.nativeClosureMeta.set(funcIdx, { name: accessorName, length: arity });
   }
 
   // (#2193 PR-B) A `"method"` closure's first user param is the receiver
@@ -466,4 +472,65 @@ export function emitBrandCheckTypeError(ctx: CodegenContext, body: Instr[], mess
     body.push({ op: "call", funcIdx: newTypeErrorIdx } as Instr);
   }
   body.push({ op: "throw", tagIdx: ensureExnTag(ctx) } as Instr);
+}
+
+/** The `eq` abstract heap type, signed-LEB128 -19 (= 0x6d). `ref.test`/`ref.cast`
+ *  against it narrow an `anyref` to an `eqref` so `ref.eq` (which requires eqref
+ *  operands) can run. Mirrors the constant in `binary-ops.ts`. */
+const EQ_HEAP_TYPE = -19;
+
+/**
+ * (#2885 Site 1) Emit the spec's "SameValue(thisValue, %Proto%) → return
+ * undefined" identity arm for a builtin-proto accessor getter. Per §22.2.6 (and
+ * the analogous String/TypedArray accessor steps), reading an intrinsic getter
+ * with `this === <Builtin>.prototype` returns `undefined` rather than throwing
+ * the brand-check TypeError — so the getter closure must short-circuit BEFORE the
+ * brand-recovery prologue throws.
+ *
+ * Appends to `fctx.body`: force-materialize the `$NativeProto` global for `brand`,
+ * compare it by reference identity (`ref.eq`) against the closure's externref
+ * `this` (param `thisParamIdx`), and on a match emit `undefinedResult` followed by
+ * `return`. A non-eqref / non-matching `this` falls through unchanged so the
+ * caller's brand check still runs.
+ *
+ * The getter closure result type is unified to `externref` (callers box i32/f64
+ * field results), so `undefinedResult` is the `ref.null.extern` form.
+ */
+export function emitNativeProtoIdentityReturnUndefined(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  brand: number,
+  thisParamIdx: number,
+  undefinedResult: Instr[],
+): void {
+  // Force-materialize the proto object and stash its anyref view.
+  const protoAny = allocLocal(fctx, `__proto_id_proto_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  emitLazyNativeProtoGet(ctx, fctx, brand); // leaves the proto externref on the stack
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "local.set", index: protoAny } as Instr);
+
+  // `this` (externref) → anyref; only an eqref can be `ref.eq`-compared.
+  const thisAny = allocLocal(fctx, `__proto_id_this_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  fctx.body.push({ op: "local.get", index: thisParamIdx } as Instr);
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "local.tee", index: thisAny } as Instr);
+  fctx.body.push({ op: "ref.test", typeIdx: EQ_HEAP_TYPE } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      { op: "local.get", index: thisAny } as Instr,
+      { op: "ref.cast", typeIdx: EQ_HEAP_TYPE } as Instr,
+      { op: "local.get", index: protoAny } as Instr,
+      { op: "ref.cast", typeIdx: EQ_HEAP_TYPE } as Instr,
+      { op: "ref.eq" } as Instr,
+    ],
+    else: [{ op: "i32.const", value: 0 } as Instr],
+  } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [...undefinedResult, { op: "return" } as Instr],
+    else: [],
+  } as Instr);
 }

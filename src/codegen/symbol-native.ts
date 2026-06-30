@@ -32,6 +32,71 @@ import { compileNativeStringLiteral } from "./string-ops.js";
 const INITIAL_CAP = 128;
 
 /**
+ * (#2866) Ensure the native `$Symbol` carrier struct and the host-free
+ * `__box_symbol(i32 id) -> externref` builder exist. Idempotent. Sets
+ * `ctx.symbolTypeIdx` and registers `__box_symbol` in `ctx.funcMap` as a DEFINED
+ * function (no import → no index shift, same invariant as the #1471 boxing
+ * helpers and the #1472 object-runtime helpers).
+ *
+ * A standalone/WASI Symbol VALUE is a bare i32 counter id (`compileSymbolCall`,
+ * literals.ts); its description lives in the id→string side table
+ * (`ensureSymbolDescTable`). The carrier is needed only when a Symbol must cross
+ * an **externref channel** — chiefly entering the `$Object` property key path
+ * (externref-typed), where the host-only `env::__box_symbol` import would
+ * otherwise leak (#2866). Identity is decided by the i32 `$id` (id-compare in
+ * `__obj_find`/`__key_equals`), so NO interning of carriers is required: a fresh
+ * `$Symbol` struct per box is fine because two carriers with the same id compare
+ * equal and the same well-known/registry id always reproduces the same id.
+ *
+ * `$desc` is carried for forward use (getOwnPropertySymbols → `.description`) but
+ * left null here; the description is always recoverable from the side table by
+ * id, so the box path stays trivial and side-table-free.
+ *
+ * MUST only be called in `ctx.standalone || ctx.wasi` (host/gc mode keeps the
+ * spec-accurate `env::__box_symbol` host import; registering a native carrier
+ * there would both collide with that import and shift host type indices).
+ */
+export function ensureSymbolCarrier(ctx: CodegenContext): number {
+  if (ctx.symbolTypeIdx < 0) {
+    // `ensureNativeStringHelpers` registers the native string types and sets
+    // `ctx.anyStrTypeIdx` (the carrier's `$desc` field type).
+    ensureNativeStringHelpers(ctx);
+    const anyStrTypeIdx = ctx.anyStrTypeIdx;
+    const idx = ctx.mod.types.length;
+    ctx.mod.types.push({
+      kind: "struct",
+      name: "$Symbol",
+      fields: [
+        { name: "id", type: { kind: "i32" }, mutable: false },
+        { name: "desc", type: { kind: "ref_null", typeIdx: anyStrTypeIdx }, mutable: false },
+      ],
+    });
+    ctx.symbolTypeIdx = idx;
+  }
+  if (ctx.funcMap.get("__box_symbol") === undefined) {
+    const symIdx = ctx.symbolTypeIdx;
+    const anyStrTypeIdx = ctx.anyStrTypeIdx;
+    const typeIdx = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "externref" }]);
+    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.funcMap.set("__box_symbol", funcIdx);
+    ctx.mod.functions.push({
+      name: "__box_symbol",
+      typeIdx,
+      locals: [],
+      body: [
+        // struct.new $Symbol { id = param0, desc = null } ; extern.convert_any
+        { op: "local.get", index: 0 },
+        { op: "ref.null", typeIdx: anyStrTypeIdx } as Instr,
+        { op: "struct.new", typeIdx: symIdx } as Instr,
+        { op: "extern.convert_any" },
+      ],
+      exported: false,
+    });
+  }
+  return ctx.symbolTypeIdx;
+}
+
+/**
  * Ensure the symbol description table's array type and lazy global exist.
  * Idempotent. Sets `ctx.symbolDescArrTypeIdx` and `ctx.symbolDescGlobalIdx`.
  */

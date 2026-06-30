@@ -73,12 +73,12 @@
   },
   {
     "edition": "ES2021",
-    "pass": 335,
-    "fail": 127,
+    "pass": 336,
+    "fail": 126,
     "ce": 1,
     "skip": 0,
     "total": 463,
-    "pct": 72
+    "pct": 73
   },
   {
     "edition": "ES2022",

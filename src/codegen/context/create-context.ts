@@ -153,6 +153,7 @@ export function createCodegenContext(
     anyStrTypeIdx: -1,
     nativeStrTypeIdx: -1,
     consStrTypeIdx: -1,
+    symbolTypeIdx: -1,
     utf8StrDataTypeIdx: -1,
     utf8StrTypeIdx: -1,
     nativeStrHelpersEmitted: false,

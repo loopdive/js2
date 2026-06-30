@@ -61,6 +61,7 @@ import {
 import { compilePattern, RepeatTooLargeError } from "./regex/compile.js";
 import {
   emitBrandCheckTypeError,
+  emitNativeProtoIdentityReturnUndefined,
   getBuiltinBrand,
   registerNativeProtoBuiltin,
   type NativeProtoBuiltinGlue,
@@ -2462,28 +2463,68 @@ function emitRegExpProtoMemberBody(
   member: string,
   kind: "getter" | "method",
 ): ValType | null {
-  // Brand-recovery prologue: `this` is closure param index 1 (externref).
-  const recovered = recoverRegExpStructFromExternref(ctx, fctx, 1);
-  if (recovered === null) return null;
-  const { regexpLocal, structTypeIdx } = recovered;
-
   if (kind === "getter") {
-    // Reuse the exact static-path field-read sequence. lastIndex is a data
-    // property, not an accessor — but reading it as a getter is harmless and
-    // keeps the closure-table uniform.
+    // (#2885 Site 1) The proto-identity arm MUST run BEFORE brand recovery:
+    // reading an intrinsic getter with `this === RegExp.prototype` returns
+    // `undefined` per §22.2.6 ("If SameValue(R, %RegExp.prototype%) return
+    // undefined"), NOT the brand-check TypeError. The getter-closure result is
+    // unified to externref (the undefined sentinel + every boxed field value
+    // share one type). Most getters yield `undefined` (`ref.null.extern`) on the
+    // proto, but per §22.2.6.13 the `source` getter returns `"(?:)"` and per
+    // §22.2.6.4 the `flags` getter returns `""` when `R === %RegExp.prototype%`
+    // (#2876) — so pass a member-specific proto result.
+    const brand = getBuiltinBrand(ctx, "RegExp");
+    if (brand !== undefined) {
+      let protoResult: Instr[];
+      if (member === "source") {
+        addStringConstantGlobal(ctx, "(?:)");
+        protoResult = stringConstantExternrefInstrs(ctx, "(?:)");
+      } else if (member === "flags") {
+        addStringConstantGlobal(ctx, "");
+        protoResult = stringConstantExternrefInstrs(ctx, "");
+      } else {
+        protoResult = [{ op: "ref.null.extern" } as Instr];
+      }
+      emitNativeProtoIdentityReturnUndefined(ctx, fctx, brand, 1, protoResult);
+    }
+
+    // Brand-recovery prologue: `this` is closure param index 1 (externref). On a
+    // genuine non-RegExp `this` (e.g. `get.call({})`) this throws a catchable
+    // TypeError (§22.2.6 step 2) — unchanged.
+    const recovered = recoverRegExpStructFromExternref(ctx, fctx, 1);
+    if (recovered === null) return null;
+    const { regexpLocal, structTypeIdx } = recovered;
+
+    // Reuse the exact static-path field-read sequence, then unify the result to
+    // externref so the closure-call ABI and the descriptor `.get` both see one
+    // type: native-string refs (`.flags`/`.source`) box via `extern.convert_any`,
+    // i32 flag booleans via `__box_boolean` (a JS boolean, not the number 0/1),
+    // and the defensive f64 (lastIndex is a method-kind member, never a getter)
+    // via `__box_number`.
     const fieldType = emitRegExpReflectionFieldRead(ctx, fctx, member, regexpLocal, structTypeIdx);
-    // The closure-call ABI is uniform on externref/i32/f64 results; a native
-    // string ref (`.flags`/`.source`) must be boxed to externref so it survives
-    // the `call_ref` boundary and the receiving `any` comparison. i32 flag
-    // booleans and the f64 lastIndex pass through unchanged.
     if (fieldType.kind === "ref" || fieldType.kind === "ref_null") {
       fctx.body.push({ op: "extern.convert_any" } as Instr);
+      return { kind: "externref" };
+    }
+    if (fieldType.kind === "i32") {
+      const boxBoolIdx = ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (boxBoolIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxBoolIdx } as Instr);
+      return { kind: "externref" };
+    }
+    if (fieldType.kind === "f64") {
+      coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
       return { kind: "externref" };
     }
     return fieldType;
   }
 
-  // Method bodies.
+  // Method bodies. Brand-recovery prologue: `this` is closure param index 1
+  // (externref) → `$NativeRegExp` or a catchable TypeError on a wrong `this`.
+  const recovered = recoverRegExpStructFromExternref(ctx, fctx, 1);
+  if (recovered === null) return null;
+  const { regexpLocal, structTypeIdx } = recovered;
+
   if (member === "test" || member === "@@9") {
     // `.test(s)` and `[Symbol.search]`-adjacent forms both run the search and
     // return an i32-ish result; here we return the i32 match flag for `.test`.

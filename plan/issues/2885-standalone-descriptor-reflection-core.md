@@ -1,7 +1,9 @@
 ---
 id: 2885
 title: "Standalone descriptor-reflection core: materialise builtin-proto intrinsic accessors for gOPD / reflection (unblocks #2875/#2876/#2872)"
-status: ready
+status: done
+assignee: ttraenkler/sr-reflect
+completed: 2026-06-30
 created: 2026-06-30
 priority: high
 task_type: bug
@@ -44,19 +46,19 @@ it as a concrete, shared standalone gap.
 ## Three coupled defect sites (verified against current main 2026-06-30)
 
 1. **Getter-closure factory** — `ensureStandaloneNativeMethodClosure(brand,
-   member, "getter")` (`native-proto.ts:387`) + the per-builtin getter body
+member, "getter")` (`native-proto.ts:387`) + the per-builtin getter body
    (`regexp-standalone.ts:emitRegExpProtoMemberBody`, `:2459`, getter arm at
    `:2470`). The brand-recovery prologue (`recoverRegExpStructFromExternref`,
    `:907`) `ref.test $NativeRegExp` and throws TypeError on failure. For a genuine
    non-RegExp `this` (`g.call({})`) the throw is correct; but for `this ===
-   RegExp.prototype` (the proto object) §22.2.6 step "if SameValue(R,
+RegExp.prototype` (the proto object) §22.2.6 step "if SameValue(R,
    %RegExp.prototype%) return undefined" requires **undefined, not a throw** —
    that arm is missing. Also `.name` is recorded as the bare member (`"global"`)
    not the accessor spelling `"get global"` (`native-proto.ts:439`).
 
 2. **`getOwnPropertyDescriptor` call-site** — `calls.ts:6693`. Its dynamic
    fallback (`:6903`+) only special-cases a bare builtin-ctor identifier (`arg0 ==
-   RegExp`) via `__get_builtin`; for `arg0 == RegExp.prototype` (a property
+RegExp`) via `__get_builtin`; for `arg0 == RegExp.prototype` (a property
    access) it compiles the receiver to externref and calls native
    `__getOwnPropertyDescriptor`, which finds no own entry on the `$NativeProto`
    and returns undefined. There is **no builtin-proto-accessor synthesis path**.
@@ -113,10 +115,10 @@ the tests read the OWN descriptor on the proto directly, so (b) covers them.
 
 **Site 1 — getter closure: proto-identity arm + accessor `.name`**
 
-*File: `src/codegen/native-proto.ts`*
+_File: `src/codegen/native-proto.ts`_
 
 - Add an exported helper `emitNativeProtoIdentityReturnUndefined(ctx, fctx,
-  brand, thisParamIdx, undefinedResult)` near `emitBrandCheckTypeError` (`:460`).
+brand, thisParamIdx, undefinedResult)` near `emitBrandCheckTypeError` (`:460`).
   It loads `this` (externref param), `any.convert_extern`, `ref.eq`-compares
   against the materialized proto global for `brand` (reuse the global from
   `nativeProtoGlobalMap` — export a `getNativeProtoGlobalIdx(ctx, brand)` or call
@@ -125,17 +127,16 @@ the tests read the OWN descriptor on the proto directly, so (b) covers them.
   spec's "SameValue(R, %Proto%) → undefined" arm so each builtin glue opts in
   with one call, keeping the shared factory's structure intact.
 - In `ensureStandaloneNativeMethodClosure` (`:439`), record the accessor name as
-  `kind === "getter" ? \`get ${member}\` : member` in `nativeClosureMeta`
-  (§10.2.9 — accessor functions are named `"get <key>"`). Spec-correct uniformly
+  `kind === "getter" ? \`get ${member}\` : member`in`nativeClosureMeta`(§10.2.9 — accessor functions are named`"get <key>"`). Spec-correct uniformly
   across all wired getter brands; verify no currently-passing test asserts the
   bare getter name (grep the standalone baseline before/after).
 
-*File: `src/codegen/regexp-standalone.ts`*
+_File: `src/codegen/regexp-standalone.ts`_
 
 - In `emitRegExpProtoMemberBody` getter arm (`:2470`), BEFORE
   `recoverRegExpStructFromExternref` throws, insert the proto-identity guard:
   call `emitNativeProtoIdentityReturnUndefined(ctx, fctx, brand=RegExp, 1,
-  <push undefined of the member's result type>)`. The member result type for
+<push undefined of the member's result type>)`. The member result type for
   RegExp getters is externref (flags/source) or i32/f64 (flag bits/lastIndex) —
   for the proto-identity arm return the externref-null form and unify the closure
   result type to externref for getters (box i32/f64 results via `__box_*`), so
@@ -147,7 +148,7 @@ the tests read the OWN descriptor on the proto directly, so (b) covers them.
 
 **Site 2 — gOPD builtin-proto descriptor synthesis**
 
-*File: `src/codegen/object-runtime.ts`*
+_File: `src/codegen/object-runtime.ts`_
 
 - Add native `__create_accessor_descriptor(get, set, flags) -> externref` as a
   sibling of `__create_descriptor` (`:5296`). Identical scaffold
@@ -156,7 +157,7 @@ the tests read the OWN descriptor on the proto directly, so (b) covers them.
   `value`/`writable`. Reuse the exact `setKeyCd`/`boolFlagCd` closures. params:
   0=get(externref) 1=set(externref) 2=flags(i32); local 3=desc.
 
-*File: `src/codegen/expressions/calls.ts`*
+_File: `src/codegen/expressions/calls.ts`_
 
 - In the gOPD handler, after the typed-receiver fast path and BEFORE the dynamic
   `__getOwnPropertyDescriptor` fallback (insert at `:6902`, just before the
@@ -173,14 +174,14 @@ the tests read the OWN descriptor on the proto directly, so (b) covers them.
     call `__create_accessor_descriptor`.
   - method → `ensureStandaloneNativeMethodClosure(brand, member, "method")`,
     wrap as a DATA descriptor `{value:<closure>, writable:true, enumerable:false,
-    configurable:true}` via the existing `__create_descriptor` (flags =
+configurable:true}` via the existing `__create_descriptor` (flags =
     `FLAG_WRITABLE | FLAG_CONFIGURABLE` = 0x05).
   - Return `{kind:"externref"}`. If the member/brand doesn't resolve, fall
     through to the existing dynamic fallback (no behavior change for other cases).
 
 **Site 3 — plain getter read invokes the closure**
 
-*File: `src/codegen/property-access.ts`*
+_File: `src/codegen/property-access.ts`_
 
 - In `tryCompileStandaloneBuiltinProtoMemberRead` (`:919-927`): split on
   `kind`. For `kind === "method"` keep the current closure-value emit. For
@@ -217,7 +218,7 @@ end
 - `ensureStandaloneNativeMethodClosure` and `emitNativeProtoIdentityReturnUndefined`
   are SHARED across ~30 wired brands. The `.name = "get <member>"` change and the
   getter-result-type unification to externref affect every wired getter brand
-  (ArrayBuffer.byteLength, DataView.*, TypedArray accessors, …).
+  (ArrayBuffer.byteLength, DataView.\*, TypedArray accessors, …).
   - **Guard A:** the proto-identity arm is OPT-IN per glue (only brands whose
     `emitMemberBody` calls the helper get it) — RegExp-only in PR1, so other
     brands are byte-unchanged until their cluster lands.
@@ -271,4 +272,76 @@ PR1+PR2 (the core) are the shared lever; the per-cluster issues retag
 - `test/built-ins/String/prototype/*/length.js`, `*/name.js` (#2875)
 - `test/built-ins/TypedArray/prototype/byteLength/length.js`,
   `*/prop-desc.js` (#2872 accessor reflection)
-</content>
+
+## Implementation Notes (sr-reflect, 2026-06-30)
+
+**Scope landed in this PR: PR1 + PR2 together (the #2885 core).** The architect's
+slicing kept PR1 (Site 1 + Site 3 + native helper) separate from PR2 (Site 2 gOPD
+synthesis) for review granularity. I combined them in one PR because:
+
+- The issue's **headline acceptance** is the gOPD verify-first
+  (`Object.getOwnPropertyDescriptor(RegExp.prototype, "global")` → proper accessor
+  descriptor, host-free), which is a PR2 deliverable — PR1 alone could not satisfy it.
+- **Blast radius is identical.** PR2 (Site 2) is purely additive: a new
+  `ctx.standalone` + `<Builtin>.prototype` + advertised-member–gated branch inserted
+  _before_ the existing dynamic gOPD fallback. It adds zero reach over PR1's shared
+  changes (Guard B `.name`, getter-result externref unification), which dominate the
+  risk regardless.
+- One merge-queue / CI cycle instead of two, unblocking #2875/#2876/#2872 faster.
+
+PR3 (per-cluster String/TypedArray `emitMemberBody` glue) remains a follow-up under
+those issues.
+
+**What works now (verified host-free, `imports: []`):**
+
+- gOPD returns a proper ACCESSOR descriptor `{get:<fn>, set:undefined,
+enumerable:false, configurable:true}` for `RegExp.prototype.<getter>` (was
+  `undefined` → deref-trap on main).
+- `get.call(RegExp.prototype) === undefined` (§22.2.6 proto-identity arm).
+- Plain read `RegExp.prototype.<getter>` invokes the getter → `undefined` for the
+  proto receiver (was: returned the getter closure value).
+- Native `__create_accessor_descriptor(get, set, flags)` carries the accessor
+  descriptor host-free (sibling of `__create_descriptor`).
+
+**Known follow-up (NOT a regression — same behaviour on main):** reflective
+operations on the _opaque descriptor-retrieved_ getter closure —
+`desc.get.call(<instance>)` returning the boolean, `desc.get.call(<non-RegExp>)`
+throwing TypeError, and `desc.get.name === "get global"` — still do not fully
+resolve. They route through `tryEmitNativeProtoReflectiveCall`, which recovers the
+brand+member from the _receiver's TS symbol_; a value pulled out of a descriptor has
+no such symbol, so the call falls to the legacy drop-`thisArg` path (returns
+undefined). This is the pre-existing #2193 reflective-call-on-opaque-closure
+limitation, independent of descriptor synthesis. Consequently
+`this-val-non-obj.js` / `name.js` stay `fail` (they were `fail`/errored on main too),
+while `this-val-regexp-prototype.js`, `global/length.js`, `source/length.js` flip to
+`pass`.
+
+### Changes
+
+- `src/codegen/native-proto.ts` — `emitNativeProtoIdentityReturnUndefined()`
+  helper (ref.eq identity vs the materialized proto global via `EQ_HEAP_TYPE`
+  cast); accessor `.name = "get <member>"` in `ensureStandaloneNativeMethodClosure`
+  (§10.2.9).
+- `src/codegen/regexp-standalone.ts` — getter arm runs the proto-identity arm
+  BEFORE brand recovery; getter result unified to externref (i32 flag bools box
+  via `__box_boolean`, defensive f64 via `__box_number`).
+- `src/codegen/object-runtime.ts` — native `__create_accessor_descriptor`.
+- `src/codegen/expressions/calls.ts` — Site 2 gOPD builtin-proto descriptor
+  synthesis (getter → accessor descriptor; method → data descriptor).
+- `src/codegen/property-access.ts` — Site 3 plain getter read invokes the
+  closure on the proto; exported `tryEnsureNativeProtoBrand` + `BUILTIN_CTOR_NAMES`.
+
+### Test Results
+
+- `tests/issue-2885.test.ts` — 5/5 pass (gOPD accessor shape, proto-identity
+  call, plain-read undefined, host-free zero-imports, user-struct gOPD unchanged).
+- `runTest262File(..., "standalone")`: `RegExp/prototype/global/this-val-regexp-prototype.js`
+  `pass`, `global/length.js` `pass`, `source/length.js` `pass`
+  (all errored on main); `this-val-non-obj.js` / `name.js` remain `fail`
+  (follow-up above — not regressions).
+- Regression smoke (identical output on main vs branch): `re.test`, `/x/g.global`,
+  `Array.prototype.slice.call`, method `.name`/`.length` meta-fold, gOPD on a user
+  struct — no behaviour change introduced.
+- `tsc --noEmit` clean.
+- Full conformance + the honest standalone floor (12,889) validated by CI
+  `merge_group`.

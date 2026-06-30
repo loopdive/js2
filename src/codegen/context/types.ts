@@ -238,6 +238,13 @@ export interface NativeGeneratorInfo {
   abruptFieldIdx: number;
   /** Function-local names spilled into the state struct across suspensions. */
   spillNames: string[];
+  /**
+   * (#2864 F1b) Wasm ValType of each spilled local, aligned 1:1 with
+   * `spillNames`. The state-struct spill field, the resume-load local, and the
+   * struct-construction init default are all minted at this type so object /
+   * string / typed-struct locals survive across a `yield` (historically f64).
+   */
+  spillTypes: ValType[];
   /** Field index where spilled locals start in the state struct. */
   spillFieldOffset: number;
   /** Number of top-level yield suspension points. */
@@ -1367,6 +1374,17 @@ export interface CodegenContext {
   anyStrTypeIdx: number;
   nativeStrTypeIdx: number;
   consStrTypeIdx: number;
+  /**
+   * (#2866) Type index of the native `$Symbol` carrier struct
+   * `(struct (field $id i32) (field $desc (ref null $AnyString)))`, used in
+   * `--target standalone`/`wasi` (host-free) to represent a Symbol value as a
+   * real GC reference instead of leaking the host-only `env::__box_symbol`
+   * import. Identity is decided by the i32 `$id` (well-known symbols get fixed
+   * ids 1-12, `Symbol()` ids monotonically from 100), so `Symbol("x") !==
+   * Symbol("x")` and the same well-known symbol is `===`. -1 until registered by
+   * `ensureSymbolCarrier`.
+   */
+  symbolTypeIdx: number;
   /**
    * (#40) Immutable `(array i32)` type index for the Unicode case-mapping tables
    * (emitNativeCaseConversion). Registered once on first use.

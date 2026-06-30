@@ -1674,18 +1674,19 @@ export function coerceType(
       }
     }
     // symbol → __box_symbol (takes the i32 handle/id directly; identity-stable
-    // via the host symbol cache). (#2792) HOST mode only: `addUnionImports` above
-    // registers `__box_symbol` as a host import, and the symbol brand is
-    // reconstructed only at the F1 `symbol[]` read site (`f1ElementBoxType`),
-    // which itself fires only in host mode (standalone defers `symbol[]` — a
-    // native `__box_symbol_struct` carrier shifted standalone type/func indices
-    // and broke unrelated tests, see the note there). Symbols are NOT broadly
-    // branded in type-mapper (that mismatched other boxing sites). Still guarded:
-    // falls through to the number box if the helper is absent, so the arm is
-    // purely additive and never leaks a host import into a standalone module.
+    // via the host symbol cache in gc mode, via the i32 `$id` in the native
+    // `$Symbol` carrier in standalone/wasi). (#2792/#2866) `ensureLateImport`
+    // resolves the right `__box_symbol`: a host `env::__box_symbol` import in gc
+    // mode (added by `addUnionImports` above) and the in-module `$Symbol` carrier
+    // builder under `ctx.standalone || ctx.wasi` (`ensureSymbolCarrier`). Before
+    // #2866 the standalone branch had no native helper, so a symbol-keyed boxing
+    // (e.g. `o[sym] = v`) fell through to the number box and corrupted the symbol
+    // id — or leaked an unsatisfiable host import. Still guarded: falls through to
+    // the number box only if the helper is genuinely absent.
     if (from.symbol === true) {
-      const boxSymIdx = ctx.funcMap.get("__box_symbol");
+      const boxSymIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
       if (boxSymIdx !== undefined) {
+        flushLateImportShifts(ctx, fctx);
         fctx.body.push({ op: "call", funcIdx: boxSymIdx });
         return;
       }

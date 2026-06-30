@@ -18,6 +18,15 @@ blocked_on: 2885
 > descriptor reads over `String.prototype` members (sub-cluster b) share the
 > builtin-proto intrinsic-accessor defect specced there; land #2885's core
 > (PR1+PR2) first, then fill in the String per-builtin glue member bodies.
+>
+> **Unblocked machinery (#2885 + #2876, both merged):** gOPD builtin-proto
+> accessor descriptor SYNTHESIS (#2885) and the brand-agnostic reflective
+> `.call`/`.apply` recovery of a descriptor-retrieved getter — static data-flow
+> trace of `gOPD(<Builtin>.prototype, "<getter>").get.call(R)` →
+> `emitReflectiveNativeProtoClosureCall`, `calls.ts` (#2876). The remaining
+> String work is the **per-cluster glue**: wire the String getter/method
+> `emitMemberBody` arms (`ensureStringNativeProtoGlue`) + their proto-identity
+> opt-in; the gOPD + reflective-call surfaces then apply for free.
 
 # Standalone: String.prototype.\* failures (de-masked)
 
