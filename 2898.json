@@ -1,9 +1,8 @@
 {
   "id": "2898",
-  "assignee": "ttraenkler/lead",
+  "assignee": "ttraenkler/es3-2898",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-06-30T18:12:28Z",
-  "claimed_at": "2026-06-30T18:12:28Z",
-  "updated_at": "2026-06-30T18:12:28Z"
+  "branch": "issue-2898-yield-assign-target-early",
+  "claimed_at": "2026-06-30T19:05:33Z",
+  "updated_at": "2026-06-30T19:05:33Z"
 }
