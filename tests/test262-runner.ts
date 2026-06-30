@@ -2472,12 +2472,10 @@ ${preamble}
 ${hoistedDecls}
 ${implicitDecls.trim()}
 `;
-    // (#2867) Same microtask-drain-before-verdict as the synchronous wrapper —
-    // see the note on `postBody` below. Bare statement → byte-neutral no-op off
-    // the Promise path.
+    // (#2867) Microtask-drain-before-verdict deferred — see the note on `postBody`
+    // below (blocked on the #1897 guard adopting host-free accounting).
     const tlaPostBody = `
 export function test(): number {
-  __drain_microtasks();
   if (__fail) { return __fail; }
   return 1;
 }
@@ -2498,27 +2496,22 @@ export function test(): number {
   ${implicitDecls}
   try {
     `;
-  // (#2867) Drain the native microtask queue AFTER the user body runs but
-  // BEFORE the `__fail` verdict is read. Standalone/WASI Promise `.then`
-  // reactions (and async `$DONE` callbacks) are queued, not run synchronously,
-  // so the assertions they contain set `__fail` only once the queue drains. The
-  // old wrapper read `__fail` immediately after the try block — i.e. before any
-  // reaction ran — so every reaction-gated async test recorded its (stale)
-  // verdict as a false pass under the host-leak path and a false fail once the
-  // native carrier replaced it. `__drain_microtasks()` is a compiler intrinsic
-  // (calls.ts): a single native drain call when a Promise queue was registered,
-  // and — critically — emits NOTHING for every JS-host compile and every
-  // Promise-free module (the intrinsic is a no-op when no queue exists). A bare
-  // statement (not a `try { … } catch`) keeps the `test()` wrapper BYTE-IDENTICAL
-  // on those paths (no empty try/catch churn across all ~43k tests), so `gc` and
-  // non-Promise standalone output is unchanged. A reaction that throws uncaught
-  // surfaces as a runtime error → fail, which is the honest verdict.
+  // (#2867) NOTE: an honest microtask-drain-before-verdict (`__drain_microtasks();`
+  // injected here) is the correct end-state — native `.then`/`$DONE` reactions are
+  // queued, not run synchronously, so a reaction-gated async test only records its
+  // real verdict once the queue drains. The `__drain_microtasks()` compiler
+  // intrinsic (calls.ts) exists and is byte-neutral off the Promise path. The
+  // injection is deliberately NOT wired yet: the merge_group #1897 standalone
+  // regression guard counts raw status pass→fail flips and is not host-free-aware,
+  // so converting a leaky/false-pass into an honest host-free fail trips it even
+  // though #2879 §4 says such a flip is NOT a real regression. Re-enable this drain
+  // injection once the #1897 guard excludes leaky-baseline pass→fail (host-free
+  // accounting). Until then the verdict is read directly after the body.
   const postBody = `
   } catch (e) {
     if (!__fail) __fail = -1;
     throw e;
   }
-  __drain_microtasks();
   if (__fail) { return __fail; }
   return 1;
 }

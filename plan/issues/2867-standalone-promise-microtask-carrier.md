@@ -236,3 +236,49 @@ Phase B), `__to_primitive` (#1806).
 Tied to await-on-`$Frame`; the convergence point with #2864's resumable-frame
 substrate. NOT touched here to avoid duplicating sr-frame's work — coordinate on
 the shared `$Frame` lowering.
+
+## Re-park diagnosis (PR #2367 merge_group, 2026-06-30) — root cause is #1897, not the drain
+
+PR #2367 passed every PR-level check but **failed `merge shard reports`** in the
+merge_group. Breakdown of the failed run (28428158322):
+
+- **High-water floor (#2097/#2879 §2): PASSED** — `current pass=13136, mark=12883,
+  delta=+253`. The host-free gain is real and banked.
+- **#1897 standalone regression guard: FAILED** — `net -1337 (improvements 76 −
+  regressions 1413)`. Top buckets: `class/elements` 224+212, `dynamic-import` 170,
+  `object/dstr` 72, `Promise/prototype/then` 52.
+
+**Diagnosis (data, not hypothesis).** Re-measured the regressed buckets on this
+branch with the drain injection reverted, then classified each pass→fail flip
+against the standalone baseline JSONL by `host_import_leak_class`:
+
+- Removing the drain left `class/elements` (pass=29) and `Promise/then` (pass=9)
+  **unchanged** — only `dynamic-import` improved (7→14). So the **gate-broaden
+  itself**, not the drain, is the dominant regression source: it swaps the
+  COMPLETE host Promise for the in-progress native carrier, so tests that only
+  passed by leaning on the host now fail.
+- 120-file sample of the regressed buckets: **19 pass→fail flips, ALL
+  leaky-baseline** (the baseline pass carried an `env::` import), **0 genuine
+  host-free regressions**.
+
+Per **#2879 §4** a leaky-pass → host-free-fail is explicitly NOT a regression
+("the floor is on host_free_pass, so it does not breach … treat Δhost_free_pass
+≥ 0 as the pass/fail signal for standalone, not Δpass"). But the **#1897
+standalone guard** (`scripts/diff-test262.ts` via the `Standalone regression
+guard` step in `test262-sharded.yml`) counts **raw status pass→fail** and is NOT
+host-free-aware — so it trips on exactly the migrations #2879 set out to credit.
+This blocks every carrier-migration PR (#2864 generators slipped through only
+because generators run synchronously and don't convert host-passes to fails at
+this scale).
+
+**Required unblock (escalated):** make the #1897 standalone guard host-free-aware
+— exclude a pass→fail flip from the regression count when the BASELINE entry was
+a leaky pass (`host_import_leak_class` set / had an `env::` import) and the new
+result is host-free. This is the completion of #2879 §4 for the per-test guard,
+and a shared-CI-gate change (owner sendev-hostfree / coordinator sign-off).
+
+**Branch state:** gate-broaden + funcIdx-shift fix + `__drain_microtasks()`
+intrinsic retained (all correct, tested). The broad `wrapTest` drain INJECTION is
+reverted (deferred) — it is a secondary contributor and the honest-verdict drain
+should re-land together with the #1897 host-free accounting fix, so the reactions
+it runs are credited honestly rather than counted as regressions.
