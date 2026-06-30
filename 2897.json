@@ -1,9 +1,8 @@
 {
   "id": "2897",
-  "assignee": "ttraenkler/lead",
+  "assignee": "ttraenkler/es3-2897",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-06-30T18:12:05Z",
-  "claimed_at": "2026-06-30T18:12:05Z",
-  "updated_at": "2026-06-30T18:12:05Z"
+  "branch": "issue-2897-arguments-assign-target",
+  "claimed_at": "2026-06-30T19:02:03Z",
+  "updated_at": "2026-06-30T19:02:03Z"
 }
