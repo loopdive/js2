@@ -1,8 +1,9 @@
 {
   "id": "2826",
   "assignee": "ttraenkler/cps2826",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2826-cps-writethrough",
   "claimed_at": "2026-06-30T02:21:49Z",
-  "updated_at": "2026-06-30T02:21:49Z"
+  "updated_at": "2026-06-30T02:55:58Z",
+  "released_at": "2026-06-30T02:55:58Z"
 }
