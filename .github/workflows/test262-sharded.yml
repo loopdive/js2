@@ -757,8 +757,15 @@ jobs:
             exit 1
           fi
           set +e
+          # #2890 / #2879 §4 — host-free accounting for the STANDALONE lane only:
+          # a leaky-baseline pass that flips to a host-free fail (a carrier
+          # migration removing a host dependency) is NOT a regression (it never
+          # counted toward host_free_pass). A baseline that was already host-free
+          # flipping to fail STILL trips at full strength. The js-host
+          # catastrophic guard (line ~683) deliberately omits this flag.
           npx tsx scripts/diff-test262.ts /tmp/cat-baselines/test262-standalone-current.jsonl \
             merged-reports/test262-standalone-results-merged.jsonl --quiet \
+            --exclude-leaky-baseline-regressions \
             ${TEST262_SCOPE:+--path-filter "$TEST262_SCOPE"} > /tmp/standalone-diff.txt 2>&1
           diff_exit=$?
           set -e

@@ -111,6 +111,65 @@ interface TestResult {
    * tests/test262-oracle-version.ts.
    */
   oracle_version?: number;
+  /**
+   * #2879 §1 — leak class of the host imports this row's module declared, or
+   * null/absent when the module ran host-free (no `env::` import). Computed by
+   * `classifyHostImportLeak` (scripts/test262-worker.mjs) and recorded by
+   * `recordResult`. Authoritative for host-free-ness (verified identical to
+   * "no `env::` import" in #2879).
+   */
+  host_import_leak_class?: string | null;
+  /**
+   * #2879 — the `env::`-namespaced host imports the compiled module declared
+   * (e.g. `["env::Promise_then", "env::__make_callback"]`). Empty/absent ⇒
+   * host-free. Used as the fallback host-free signal when `host_import_leak_class`
+   * is not present on a row.
+   */
+  imports?: string[] | null;
+}
+
+/**
+ * #2890 / #2879 §4 — host-free-ness helpers for the standalone regression guard.
+ *
+ * A standalone result is **host-free** iff it declared no `env::` host import —
+ * authoritatively captured by a null/absent `host_import_leak_class` (verified in
+ * #2879 to be identical to "no `env::` import"), with the raw `imports` array as a
+ * fallback for rows that predate the leak-class field. A compile_error / skip
+ * carries no binary and therefore no host import, so it is host-free by this
+ * definition (it does not lean on the host).
+ */
+export function entryHasEnvImport(imports?: string[] | null): boolean {
+  return Array.isArray(imports) && imports.some((i) => typeof i === "string" && i.startsWith("env::"));
+}
+
+export function isHostFreeResult(entry: Pick<TestResult, "host_import_leak_class" | "imports"> | undefined): boolean {
+  if (!entry) return true; // absent on the new side ⇒ no host dependency
+  if (entry.host_import_leak_class) return false; // a recorded leak class ⇒ leaky
+  return !entryHasEnvImport(entry.imports);
+}
+
+/** A row that leaned on the host: a recorded leak class, or an `env::` import. */
+export function isLeaky(entry: Pick<TestResult, "host_import_leak_class" | "imports"> | undefined): boolean {
+  if (!entry) return false;
+  if (entry.host_import_leak_class) return true;
+  return entryHasEnvImport(entry.imports);
+}
+
+/**
+ * #2879 §4 — the ONLY pass→fail flip excused from the standalone regression
+ * count: the BASELINE was a **leaky pass** (it only passed by leaning on the
+ * host) AND the NEW result is **host-free** (it no longer leans on the host).
+ * This is a carrier migration removing a host dependency — `host_free_pass` is
+ * unchanged (the leaky pass never counted), so it is NOT a real standalone
+ * regression. A baseline that was ALREADY host-free flipping to fail is NOT
+ * excused — it still trips the guard at full strength.
+ */
+export function isLeakyBaselineToHostFreeRegression(
+  base: TestResult | undefined,
+  cur: TestResult | undefined,
+): boolean {
+  if (!base || base.status !== "pass") return false;
+  return isLeaky(base) && isHostFreeResult(cur);
 }
 
 type StatusMap = Map<string, TestResult>;
@@ -218,10 +277,14 @@ Environment:
     .split("|")
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
+  // #2890 / #2879 §4 — opt-in host-free accounting for the STANDALONE lane only.
+  // The standalone guard step passes this; the js-host catastrophic guard /
+  // dev-self-merge / triage callers do NOT, so their behaviour is unchanged.
+  const excludeLeakyBaseline = args.includes("--exclude-leaky-baseline-regressions");
 
   const maxShow = showAll ? Infinity : verbose ? 50 : 20;
 
-  run(baselinePath, newPath, maxShow, quiet, baselineMetaPath, pathFilter);
+  run(baselinePath, newPath, maxShow, quiet, baselineMetaPath, pathFilter, excludeLeakyBaseline);
 }
 
 function applyPathFilter(map: StatusMap, patterns: string[]): StatusMap {
@@ -240,6 +303,7 @@ async function run(
   quiet: boolean,
   baselineMetaPath?: string,
   pathFilter: string[] = [],
+  excludeLeakyBaseline = false,
 ) {
   const [baselineLoaded, newerLoaded] = await Promise.all([loadJsonl(baselinePath), loadJsonl(newPath)]);
   let baseline = baselineLoaded.map;
@@ -330,6 +394,14 @@ async function run(
      * "pass→compile_timeout is runner-load flake unless baseline compile >5s".
      */
     baselineCompileMs?: number;
+    /**
+     * #2890 / #2879 §4 — true when the baseline was a LEAKY pass (leaned on the
+     * host) and the new result is HOST-FREE. Such a flip removes a host
+     * dependency (host_free_pass unchanged), so it is excused from the gated
+     * standalone regression count when `--exclude-leaky-baseline-regressions` is
+     * set. The js-host lane never sets the flag, so this is always counted there.
+     */
+    leakyBaselineToHostFree: boolean;
   }[] = [];
   const improvements: { file: string; from: string; to: string }[] = [];
   const otherChanges: { file: string; from: string; to: string }[] = [];
@@ -374,6 +446,10 @@ async function run(
         error_category: cur?.error_category,
         wasmUnchanged,
         baselineCompileMs: typeof base?.compile_ms === "number" ? base.compile_ms : undefined,
+        // #2890 / #2879 §4 — leaky-baseline → host-free-fail (excused only under
+        // the standalone flag). `base`/`cur` are the full rows; `base` is a pass
+        // here by construction.
+        leakyBaselineToHostFree: isLeakyBaselineToHostFreeRegression(base, cur),
       });
     } else if (baseStatus !== "pass" && curStatus === "pass") {
       improvements.push({ file, from: baseStatus, to: curStatus });
@@ -531,12 +607,27 @@ async function run(
   // the baseline can refresh. Narrowly matched so it cannot mask real regressions.
   const isStaleAsyncArgsFlake = (r: { to: string; file: string }) =>
     r.to === "compile_error" && /async/.test(r.file) && /returns-arguments-from-(own|parent)-function/.test(r.file);
+  // #2890 / #2879 §4 — under the standalone flag, a leaky-baseline → host-free-fail
+  // flip is NOT a regression (it removed a host dependency; host_free_pass is
+  // unchanged). Excused ONLY from the GATED count, ONLY when the flag is set, and
+  // ONLY for genuine leaky→host-free flips — a baseline that was already host-free
+  // flipping to fail (`leakyBaselineToHostFree === false`) still counts at full
+  // strength. The js-host catastrophic guard never sets the flag, so its count is
+  // byte-unchanged.
+  const isExcusedLeakyToHostFree = (r: { leakyBaselineToHostFree: boolean }) =>
+    excludeLeakyBaseline && r.leakyBaselineToHostFree;
+  const excusedLeakyToHostFree = regressions.filter(
+    (r) => r.to !== "compile_timeout" && !r.wasmUnchanged && !isStaleAsyncArgsFlake(r) && isExcusedLeakyToHostFree(r),
+  ).length;
   const noiseFiltered = regressions.filter(
-    (r) => !r.wasmUnchanged && r.to !== "compile_timeout" && !isStaleAsyncArgsFlake(r),
+    (r) => !r.wasmUnchanged && r.to !== "compile_timeout" && !isStaleAsyncArgsFlake(r) && !isExcusedLeakyToHostFree(r),
   );
   const regressionsWasmChange = noiseFiltered.length;
   const wasmIdenticalNoise = regressions.filter((r) => r.wasmUnchanged && r.to !== "compile_timeout").length;
   console.log(`=== Wasm-identical noise (pass → other, same wasm_sha): ${wasmIdenticalNoise} ===`);
+  if (excludeLeakyBaseline) {
+    console.log(`=== Excused leaky→host-free regressions (#2879 §4, standalone): ${excusedLeakyToHostFree} ===`);
+  }
   console.log(`=== Regressions with wasm-hash change: ${regressionsWasmChange} ===`);
   console.log();
 
