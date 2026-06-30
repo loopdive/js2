@@ -380,3 +380,53 @@ flip. Cause A (native `new Promise(executor)`) is an independent smaller
 increment (`new-super.ts`) but recovers only ~12% alone and still needs cause B.
 `status` → `blocked` (blocked_on #2864); the optimistic `done` was set by the
 impl PR before the merge_group regression surfaced.
+
+## Scoping feasibility verdict (sendev-promisecarrier, 2026-06-30 ~16:30) — CANNOT scope to net-positive; #2864 is the hard prerequisite
+
+Tested the coordinator's "scope the gate-flip to only the natively-working paths"
+proposal. Verdict: **not feasible to a meaningful net-positive.** Hard numbers
+from the merged-report delta (main #2377 = 26407 → #2367 = 25003):
+
+**Why call-site scoping fails.** `async-cps.ts` (the async-fn / generator /
+async-gen / for-await state machine) **does not gate on the flag at all** — it is
+*always* host (`Promise_resolve`/`Promise_then2`/`__make_callback`). So the
+regression is pure **native↔host promise-value mixing** at await / `.then` /
+`wrapAsyncReturn` / host-import boundaries (e.g. a native `$Promise` from native
+`Promise.resolve` handed to the host `dynamic_import`/`Promise_then2` import →
+`ToPrimitive` / `illegal_cast`).
+
+**Regression split (1460 total):**
+| | substrate (async-fn/gen/for-await/dyn-import) | plain-promise |
+|---|---|---|
+| illegal_cast | 332 | 288 |
+| assertion_fail | 530 | 47 |
+| to_primitive | 225 | 21 |
+| null_deref | 14 | 2 |
+| **total** | **1101** | **359** |
+
+- **1101 substrate regressions are unfixable by gating** — they already keep the
+  host path; they regress only because native promise values leak into it. Fixing
+  them = making the substrate consume/produce native promises = **#2864**.
+- Even a perfect fix of all 359 plain-promise regressions, keeping all +56
+  improvements, nets **+56 − 1101 = −1045**. Net-positive is unreachable.
+
+**Module-level gate (native only for modules with NO async/gen/for-await) —
+also not worth it.** It would eliminate the 1101 substrate regressions (those
+modules go fully host/leaky), but: (a) it does NOT fix the 359 plain-promise
+regressions (sync-Promise modules stay native → still broken — native
+`new Promise().then()` illegal_cast + native then-callback defects), and (b) of
+the +56 improvements, **54 are themselves substrate** (`async-private-gen-meth`,
+async methods) → lost when their modules revert to host; only **~2** are genuine
+sync-Promise wins (`Promise/prototype/finally/subclass-species-*`). So the
+best-case module-gate result is ≈ **+2**, contingent on ALSO landing native
+`new Promise` + native then-callback hardening, and on perfectly detecting every
+async-feature trigger (a single miss re-introduces a multi-hundred substrate
+regression). Cost/benefit is clearly negative.
+
+**Conclusion.** The native Promise carrier and the host async-CPS substrate share
+promise values across `await`/`.then`/return boundaries; partial activation mixes
+representations. There is no call-site or module-level gate that yields a
+worthwhile net-positive. **#2864/#2865 (async-fn + generator + async-generator
+native `$Frame` substrate) is the explicit gated prerequisite** for landing the
+`isStandalonePromiseActive` standalone flip. #2367 stays fully parked; do NOT
+re-enqueue. This is a dedicated multi-window effort, not a now-task.
