@@ -1,7 +1,8 @@
 ---
 id: 2869
 title: "Destructuring with a member-expression assignment target ([x.y]=vals, {k:x.y}=src) — funcIdx-repoint of detached body buffer (~53 fails)"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev-promise
 created: 2026-06-30
 updated: 2026-06-30
 parent: 2669
