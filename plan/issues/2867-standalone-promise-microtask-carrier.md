@@ -1,9 +1,8 @@
 ---
 id: 2867
 title: "Standalone: Promise / async microtask leaks Promise_resolve/reject/then + __make_callback host imports"
-status: done
+status: blocked
 assignee: ttraenkler/sendev-promise
-completed: 2026-06-30
 created: 2026-06-30
 updated: 2026-06-30
 priority: medium
@@ -14,6 +13,7 @@ goal: standalone
 sprint: current
 horizon: l
 related: [2860, 1326]
+blocked_on: [2864]
 umbrella: 2860
 architect_spec: candidate
 ---
@@ -337,3 +337,46 @@ rebuilds on the post-drift base + refreshed baseline. `issue-2867.test.ts` green
 (7/7). Escalated to the lead to remove the **bot park-hold** and re-enqueue ONCE
 (drift cleared; do not re-enqueue in a loop). The +247 host-free gain is real and
 ready to land.
+
+## DEFINITIVE re-diagnosis (sendev-promisecarrier, 2026-06-30 ~16:00) — NOT drift; #2367 is a real −1404 standalone regression, BLOCKED on #2864
+
+The "baseline drift" conclusion immediately above is **wrong** and caused the
+harmful re-enqueue (12:36→13:04 merge_group all failed `merge shard reports`).
+Proven by comparing the **actual merged-report artifacts** (not CI-log heuristics):
+
+- #2377's own merge_group (sha `02ec`, current main tip) standalone report =
+  **26407 pass** — its `Standalone regression guard (#1897)` + high-water floor
+  both ran and PASSED. The regression-gate baseline (26407) equals this exactly →
+  **baseline is fresh, not stale.**
+- #2346 (exn-demask) merge_group on the same base = **26407 pass** (no pass
+  regression). Main's standalone floor is intact at 26407.
+- **#2367's merge_group (sha `ff63fd3`/`1b16cf1`, #2367 + current main) = 25003
+  pass (−1404).** Identical signature only across the two #2367 runs (same PR
+  re-validated), NOT across different PRs → the cross-PR drift heuristic does not
+  apply.
+
+**Flaw in the drift argument:** "#2367 only touches Promise paths so it can't
+regress class/elements" is false — `class/elements` `static-async-method` /
+`async-gen` variants and `for-await-of` / `dynamic-import` all drive the
+async/Promise state machine the `isStandalonePromiseActive` flip rewires.
+
+**Residual decomposition** (60-test random sample of the 1460 regressions,
+compiled `--target standalone`, classified by host-import footprint):
+
+| Cause | share | mechanism |
+|---|---|---|
+| **A — `new Promise(executor)`** | **~12% (7/60)** | `new-super.ts:2774` still routes `new Promise` to the host `Promise_new` import (a JS-Promise externref), but `.then` is now native → native `.then` does `ref.cast externref→$Promise` on a host promise → **illegal cast** (620 illegal_cast in the merged report). |
+| **B — async/generator substrate** | **~88% (53/60)** | async-generators, async methods, for-await-of, dynamic-import, top-level-await. With the flag REVERTED these emit host `Promise_resolve`/`Promise_then2`/`Promise_reject`/`__make_callback` (verified) — leaky-baseline passes the harness satisfied with real host Promises. The flip removes the leak but the CPS async state-machine + async-iterator lowering are **not yet native** → mixed/broken module → ToPrimitive (246) + illegal_cast + assertion_fail. |
+
+**Conclusion:** net-positive on standalone (>26407, the stated bar) is
+**unreachable** without making the full async-function / generator / async-
+generator substrate native = **#2864 (await-on-`$Frame`, PR-B)**. The `+247` was
+never a standalone gain; on standalone #2367 is **+56 / −1460 = net −1404**. This
+is exactly the #2864 wall flagged at dispatch.
+
+**Recommendation:** keep #2367 **parked** (do NOT re-enqueue — it widens the gap).
+Re-sequence: land #2864 substrate FIRST, then the `isStandalonePromiseActive`
+flip. Cause A (native `new Promise(executor)`) is an independent smaller
+increment (`new-super.ts`) but recovers only ~12% alone and still needs cause B.
+`status` → `blocked` (blocked_on #2864); the optimistic `done` was set by the
+impl PR before the merge_group regression surfaced.
