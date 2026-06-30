@@ -1,9 +1,8 @@
 {
   "id": "2899",
-  "assignee": "ttraenkler/lead",
+  "assignee": "ttraenkler/es3-2899",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-06-30T18:12:49Z",
-  "claimed_at": "2026-06-30T18:12:49Z",
-  "updated_at": "2026-06-30T18:12:49Z"
+  "branch": "issue-2899-caller-poison-pill",
+  "claimed_at": "2026-06-30T19:00:43Z",
+  "updated_at": "2026-06-30T19:00:43Z"
 }
