@@ -20,6 +20,7 @@ import {
   emitStandalonePromiseResolve,
   getOrRegisterPromiseType,
   isStandalonePromiseActive,
+  emitDrainMicrotasks,
   PROMISE_STATE_FULFILLED,
   PROMISE_STATE_REJECTED,
 } from "./async-scheduler.js";
@@ -1205,6 +1206,21 @@ function compileExpressionInner(
   }
 
   if (ts.isCallExpression(expr)) {
+    // (#2895 PATH B) `__drain_microtasks()` intrinsic — lets the test262 harness
+    // (and standalone entrypoints) pump the microtask ring so genuinely-pending
+    // async-frame continuations run before a settled value is observed. On the
+    // host-free targets it lowers to the native drain; on the JS-host target
+    // there is no native microtask ring (async is synchronous there), so it is a
+    // void no-op — keeping the gc lane byte-identical.
+    if (ts.isIdentifier(expr.expression) && expr.expression.text === "__drain_microtasks") {
+      // Gate on the native-`$Promise` CARRIER (not merely `isAsyncDriveActive`):
+      // emit the real drain only where the drive layer actually produces native
+      // promises. With the carrier `wasi`-only today, `--target standalone` and
+      // the gc lane get a void no-op (no microtask infra registered, output
+      // unchanged); the #2895-1d carrier re-widen auto-activates it for standalone.
+      if (isStandalonePromiseActive(ctx)) emitDrainMicrotasks(ctx, fctx);
+      return VOID_RESULT;
+    }
     const callStart = fctx.body.length;
     const callResult = compileCallExpression(ctx, fctx, expr, expectedType);
     if (fctx.pendingCallbackWritebacks && fctx.pendingCallbackWritebacks.length > 0) {

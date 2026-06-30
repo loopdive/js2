@@ -2487,8 +2487,17 @@ export function test(): number {
     };
   }
 
+  // (#2895 PATH B) Async tests: pump the microtask ring before reading the
+  // result so genuinely-pending async-frame continuations (which carry the
+  // assertions) run. `__drain_microtasks()` is a compiler intrinsic — the native
+  // drain on the host-free targets (`--target standalone`/`wasi`), a void no-op
+  // on the JS-host gc lane (which has no native microtask ring), so the gc lane
+  // stays byte-identical. Declared so the wrapped TS type-checks.
+  const isAsyncTest = resolvedMeta.flags?.includes("async") || needsAsyncTest;
+  const asyncDrainDecl = isAsyncTest ? `declare function __drain_microtasks(): void;\n` : "";
+  const asyncDrainCall = isAsyncTest ? `  __drain_microtasks();\n` : "";
   const preBody = `${strictDirective}
-${preamble}
+${asyncDrainDecl}${preamble}
 ${hoistedDecls}
 export function test(): number {
   ${implicitDecls}
@@ -2499,7 +2508,7 @@ export function test(): number {
     if (!__fail) __fail = -1;
     throw e;
   }
-  if (__fail) { return __fail; }
+${asyncDrainCall}  if (__fail) { return __fail; }
   return 1;
 }
 `;

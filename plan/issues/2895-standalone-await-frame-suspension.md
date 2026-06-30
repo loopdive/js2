@@ -268,3 +268,41 @@ typed `(ref $Promise)` local once and reuse it.
 Remaining: **1d** — widen `isStandalonePromiseActive`/`isStandaloneThenChainNativeActive`
 to `standalone` + the runner `__drain_microtasks` hook for `flags:[async]` tests,
 measured NET-POSITIVE on the full `merge_group` standalone report.
+
+### Slice 1d — carrier re-widen: MEASURED NET-NEGATIVE, NOT shipped (verify-first)
+
+Per the spec's verify-first mandate, I measured the `--target standalone` carrier
+re-widen (`isStandalonePromiseActive` + `isStandaloneThenChainNativeActive` →
+`standalone`) on the real `language/statements/async-function` corpus (74 files)
+under `runTest262File(..., "standalone")`, before vs after:
+
+| gates | pass | fail | ce |
+|-------|------|------|----|
+| baseline (wasi-only) | **61** | 6 | 7 |
+| widened (+standalone) | **45** | 22 | 7 |
+
+**−16 pass / 0 gains** — the AG0 −31 pattern repeats. So the widen is **NOT
+shipped**; gates stay `wasi`-only. The drive layer itself is correct (validated
+host-free on wasi + on standalone-with-widen for the slice-1 shapes), but the
+carrier widen turns on the native `$Promise`/`.then`/async-result substrate for
+the WHOLE standalone async surface, while slice-1's drive layer only covers the
+single tail-await canonical shape. Async fns that pass in the legacy synchronous
+standalone model regress under the partial drive layer. Sampled regressions:
+`dflt-params-abrupt`, `evaluation-body-that-throws`, `returns-async-arrow`,
+`returns-async-function`, `try-reject-finally-throw`, `try-return-finally-return`
+— i.e. **try/finally-across-await, throw-to-rejection, async-arrow/return-shape,
+and default-param** async bodies the slice-1 `splitBodyAtAwait` shape does not
+cover (they fall through to a now-inconsistent legacy path, or are mis-driven).
+
+**1d is therefore BLOCKED on broader drive-layer shape coverage** (a multi-slice
+effort), not a single gate flip. Sequence for the follow-up: extend
+`asyncFnNeedsCps`/`splitBodyAtAwait` (or the resume builder) to cover
+try/finally-across-await, throw→reject, multi-await, async-arrow, and
+default-param bodies; re-measure the full corpus per shape; widen the carrier
+only once the standalone async corpus is net-positive.
+
+**Shipped scaffolding (inert on the CI lanes today):** the `__drain_microtasks()`
+compiler intrinsic (carrier-gated: real drain on wasi, void no-op on
+standalone/gc while the carrier is wasi-only) + the test262 runner hook that
+emits it for `flags:[async]` tests. These are no-ops on the gc + standalone CI
+lanes now and auto-activate when 1d eventually widens the carrier.
