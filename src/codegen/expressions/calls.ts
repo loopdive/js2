@@ -41,6 +41,7 @@ import {
   emitTimerCallbackWrapper,
   emitTimerCancel,
   ensureTimerHeap,
+  getDrainFuncIdxForWasiStart,
   getRunLoopNowFuncIdx,
   isStandalonePromiseActive,
   isStdinReactorActive,
@@ -3064,6 +3065,12 @@ function compilePromiseThenReceiverBuffer(
   liveBuffers.push(instrs);
   ctx.liveBodies.add(instrs);
   const savedBody = fctx.body;
+  // (#2867) Register the swapped-OUT body in `liveBodies` for the swap window —
+  // see the matching note in `compileStandalonePromiseThenCallback`. Without
+  // this the late-import funcIdx shift cannot reach the enclosing function body
+  // held only in `savedBody`.
+  const addedSaved = !ctx.liveBodies.has(savedBody);
+  if (addedSaved) ctx.liveBodies.add(savedBody);
   fctx.body = instrs;
   try {
     const type = compileExpression(ctx, fctx, expr, { kind: "externref" });
@@ -3072,6 +3079,7 @@ function compilePromiseThenReceiverBuffer(
     }
   } finally {
     fctx.body = savedBody;
+    if (addedSaved) ctx.liveBodies.delete(savedBody);
   }
   return instrs;
 }
@@ -3088,6 +3096,22 @@ function compileStandalonePromiseThenCallback(
   liveBuffers.push(instrs);
   ctx.liveBodies.add(instrs);
   const savedBody = fctx.body;
+  // (#2867) The swapped-OUT body (`savedBody`, here the enclosing function's
+  // body) is held only in this JS local while `fctx.body` points at the buffer.
+  // It is therefore invisible to the late-import funcIdx shift
+  // (`shiftLateImportIndices`), which walks `fctx.body` / `ctx.currentFunc.body`
+  // (both now the buffer) / `liveBodies` (the buffers) — but NOT this orphaned
+  // saved array. A late import added while compiling the callback closure body
+  // (e.g. `new Test262Error(...)` → the late `__new_Test262Error` host import)
+  // would then leave already-emitted `call`/`ref.func` indices in the enclosing
+  // body stale-low: the `call __new_plain_object` for an earlier `var a = {}`
+  // stays at its pre-shift index, which now resolves to the 1-arg `__obj_hash`
+  // ("not enough arguments on the stack for call (need 1, got 0)"). Register
+  // `savedBody` in `liveBodies` for the swap window so the shift reaches it;
+  // remove it after only if we added it (it may be an outer buffer already
+  // tracked, e.g. a nested `.then`).
+  const addedSaved = !ctx.liveBodies.has(savedBody);
+  if (addedSaved) ctx.liveBodies.add(savedBody);
   fctx.body = instrs;
   try {
     const type =
@@ -3111,6 +3135,7 @@ function compileStandalonePromiseThenCallback(
     return { instrs, closureInfo };
   } finally {
     fctx.body = savedBody;
+    if (addedSaved) ctx.liveBodies.delete(savedBody);
   }
 }
 
@@ -3637,6 +3662,27 @@ function compileCallExpression(
   {
     const r = tryWasiTimerCall(ctx, fctx, expr);
     if (r !== undefined) return r;
+  }
+
+  // (#2867) `__drain_microtasks()` — explicit microtask-queue drain intrinsic.
+  // Lets a standalone/WASI embedder (and the test262 harness verdict-read) flush
+  // pending native `$Promise` reactions before observing module state. Emits the
+  // native drain ONLY when the microtask queue is already registered (some
+  // `.then`/Promise lowered earlier in this module). Otherwise — every JS-host
+  // compile (the host owns its own microtask queue) and any standalone module
+  // with no Promise — it is a silent no-op, so the harness may inject the call
+  // unconditionally into its `test()` wrapper without leaking an import, forcing
+  // queue infrastructure into Promise-free modules, or disturbing JS-host tests.
+  if (
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "__drain_microtasks" &&
+    expr.arguments.length === 0
+  ) {
+    const drainIdx = getDrainFuncIdxForWasiStart(ctx);
+    if (drainIdx !== null) {
+      fctx.body.push({ op: "call", funcIdx: drainIdx });
+    }
+    return VOID_RESULT;
   }
 
   // Node-shaped process APIs are lowered in their own module so the generic
