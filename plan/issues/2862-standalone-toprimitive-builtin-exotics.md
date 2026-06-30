@@ -1,7 +1,7 @@
 ---
 id: 2862
 title: "Standalone: ToPrimitive throws 'Cannot convert object to primitive value' for built-in exotics + inherited valueOf/toString"
-status: ready
+status: blocked
 created: 2026-06-30
 updated: 2026-06-30
 priority: high
@@ -117,3 +117,60 @@ Standalone fail/CE → pass:
 Validate full `merge_group` + standalone high-water. Expect the **728 pure**
 to flip directly; re-measure the leak-bucket residual after #2864-#2867 land.
 Zero host-mode regression (all arms `ctx.standalone`).
+
+## Verify-first finding (2026-06-30, sendev) — root cause is mis-scoped; DO NOT code the substrate arms as-is
+
+Verify-first against current main (`runTest262File(file, cat, undefined, "standalone")`,
+the exact CI standalone path) shows the **proximate `"Cannot convert object to
+primitive value"` throw is a JS-HOST TEST-RUNNER artifact, not the in-Wasm
+`__to_primitive` engine.** The 728 "pure" tests are **heterogeneous** standalone
+failures, all collapsed onto one signature by the runner's error-formatter.
+
+### Mechanism (proven)
+1. The standalone module compiles fine and `test()` throws a real
+   `WebAssembly.Exception` at runtime (a genuine, per-test failure).
+2. The runner's `extractWasmExceptionMessage` (`tests/test262-runner.ts:2913`,
+   stack hits **line 2927**) extracts the payload via `err.getArg(tag, 0)` then
+   calls **`String(payload)`**. The payload is a standalone Error object
+   (Wasm-GC struct / `$Object`) with no JS-reachable `toString`, so the JS-host
+   `String()` itself throws `TypeError: Cannot convert object to primitive
+   value`. That host-side throw — NOT the in-Wasm engine — is what the baseline
+   records (as `compile_error`/`fail` with this message).
+
+### Evidence it is NOT the `__to_primitive` engine
+- Direct standalone probes of the engine's suspected misses **do not throw**:
+  `"" + new Uint8Array([1,2,3])` → `"1,2,3"` (works); plain `{}` → `"[object
+  Object]"` (works); inherited `toString` → works; `new Number(5)*2` → 10
+  (works). RegExp/DataView/ArrayBuffer concat return *wrong values* (0) but
+  **do not throw** the TypeError.
+- The sampled "ToPrimitive" failures test unrelated things:
+  - `Object/getOwnPropertyDescriptor/15.2.3.3-2-14.js` → number→string **key
+    coercion** (`ToString(+Infinity)`→`"Infinity"`); the in-Wasm throw is a
+    null-deref on `desc.value` (lookup missed), nothing to do with object
+    ToPrimitive.
+  - `DataView/.../getInt8/toindex-byteoffset.js` → `ToIndex(byteOffset)`.
+  - `TypedArray/prototype/fill/length.js` → `propertyHelper`/`verifyProperty`
+    formatting.
+  - `RegExp/prototype/global/this-val-regexp-prototype.js` → getter reflection
+    (`Object.getOwnPropertyDescriptor(RegExp.prototype,'global').get.call(...)`).
+
+### Recommended sequencing (supersedes the Implementation Plan sketch)
+1. **De-mask first (triage-enablement):** make `extractWasmExceptionMessage`
+   (and the CI worker `scripts/compiler-fork-worker.mjs`, if it shares the path)
+   never throw while stringifying a Wasm-GC payload — wrap `String(payload)` in
+   try/catch and/or read the error struct's message field defensively, falling
+   back to a generic class label. **Error-text only — flips zero pass/fail**, so
+   the standalone-floor (pass count) and the regression gate (pass→fail
+   transitions) are unaffected; it only relabels the ~2014 entries onto their
+   REAL signatures so the cluster can be triaged.
+2. **Re-triage** the now-visible signatures into real clusters (number→string
+   key coercion, `ToIndex` object coercion, getter reflection, propertyHelper
+   formatting, …) and file/route those as separate issues.
+3. The genuine `__to_primitive` arms A/B in the plan above ARE real spec gaps
+   but address only a subset (e.g. RegExp/DataView concat returning the wrong
+   value) — they must NOT be sold as flipping all 728.
+
+**Status set to `blocked`** pending the architect design pass this issue is
+already tagged for (`architect_spec: candidate`). The claim is released so the
+de-mask step (a test-infra change, not this compiler substrate) can be routed
+independently.
