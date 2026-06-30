@@ -8,10 +8,16 @@ task_type: bug
 area: codegen
 goal: standalone
 sprint: current
-horizon: m
-related: [2860, 2870, 2862]
+horizon: l
+related: [2860, 2870, 2862, 2885]
 umbrella: 2860
+blocked_on: 2885
 ---
+
+> **Blocked on #2885** (standalone descriptor-reflection core). The reflective
+> descriptor reads over `String.prototype` members (sub-cluster b) share the
+> builtin-proto intrinsic-accessor defect specced there; land #2885's core
+> (PR1+PR2) first, then fill in the String per-builtin glue member bodies.
 
 # Standalone: String.prototype.\* failures (de-masked)
 

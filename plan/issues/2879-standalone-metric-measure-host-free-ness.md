@@ -1,8 +1,9 @@
 ---
 id: 2879
 title: "Standalone metric must measure HOST-FREE-ness — credit only host-free passes, not host-satisfied leaky passes"
-status: ready
-assignee: sendev-hostfree
+status: done
+completed: 2026-06-30
+assignee: ttraenkler/dev-standalone
 created: 2026-06-30
 priority: high
 task_type: enhancement
@@ -150,3 +151,29 @@ With the gate on `host_free_pass`:
 - Spec authored by sendev (verify-first measurement). Low-risk part (§1 report
   counting) can land immediately; §2 re-baseline + §3b enforcement want stakeholder
   sign-off given the headline halving.
+
+## Completion (2026-06-30)
+
+- **§1 (report counting)** — landed in PR #2351 (`host_free_pass` + `leaky_pass`
+  in every summary scope of `build-test262-report.mjs`).
+- **§2 (floor gate switch + re-baseline)** — landed here.
+  `scripts/check-standalone-highwater.mjs` now keys `passFromReport`/
+  `officialFromReport` on `full_summary.host_free_pass` /
+  `official_summary.host_free_pass` (falling back to the legacy `pass` for old
+  report shapes). The high-water file is re-baselined from the leaky **26,039**
+  to the honest host-free **12,883** (`official_pass` 24,899 → **12,551**),
+  tolerance 50.
+  - **Re-measured on the live main baseline jsonl** (`test262-standalone-current.jsonl`,
+    48,118 records): host-free pass = **12,883** (full corpus), **12,551**
+    (official scope). The spec's ~12,450 estimate was scaled from the older
+    PR-2335 run (24,656 basis); 12,883 is the authoritative current-main number.
+  - Verified the host-free criterion: `host_import_leak_class` absent ⟺ no
+    `env::` import is an **exact** match on the live baseline (mismatch = 0).
+- **§4 (carrier-migration crediting)** — landed here as the natural consequence
+  of §2 (floor on `host_free_pass`) plus explicit documentation in the gate
+  header + breach message: a mid-flight carrier PR that only drops raw `pass`
+  (any-imports) does NOT breach (verified by `tests/issue-2879-standalone-host-free-floor.test.ts`).
+- **§3 (harness `strictNoHostImports` enforcement lane)** — DEFERRED (opt-in /
+  later, per the spec's 3b note + stakeholder direction). §3a (recording) is
+  already satisfied since the record carries `host_import_leak_class`. A future
+  issue can add the opt-in strict lane that turns leaks into honest CEs.

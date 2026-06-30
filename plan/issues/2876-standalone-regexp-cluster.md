@@ -8,10 +8,16 @@ task_type: bug
 area: codegen
 goal: standalone
 sprint: current
-horizon: m
-related: [2860, 2870, 2862, 682]
+horizon: l
+related: [2860, 2870, 2862, 682, 2885]
 umbrella: 2860
+blocked_on: 2885
 ---
+
+> **Blocked on #2885** (standalone descriptor-reflection core). ~70 of the 125
+> fail via `Object.getOwnPropertyDescriptor(RegExp.prototype, <accessor>)` →
+> undefined → `.get` deref TypeError — the builtin-proto intrinsic-accessor
+> reflection defect specced in #2885. Land #2885's core (PR1+PR2) first.
 
 # Standalone: RegExp.\* failures (de-masked)
 

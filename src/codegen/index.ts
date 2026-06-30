@@ -3245,7 +3245,7 @@ function emitToPrimitiveMethodExport(ctx: CodegenContext): void {
     addUnionImports(ctx);
   }
 
-  const entries: { typeIdx: number; funcIdx: number; resultType: ValType }[] = [];
+  const entries: { typeIdx: number; funcIdx: number; resultType: ValType; takesHint: boolean }[] = [];
 
   for (const [structName] of ctx.structFields) {
     const typeIdx = ctx.structMap.get(structName);
@@ -3268,13 +3268,26 @@ function emitToPrimitiveMethodExport(ctx: CodegenContext): void {
         ? funcType.results[0]!
         : { kind: "externref" };
 
-    // The hint param is param[1] (param[0] is `self`). Only forward when it is
-    // an externref; skip nativeStrings string-ref params (see doc comment).
-    const hintParamType =
-      funcType && funcType.kind === "func" && funcType.params.length > 1 ? funcType.params[1] : undefined;
+    // (#2883) The resolved `${structName}_@@toPrimitive` function is either a
+    // 2-param `(self, hint) -> result` method (the method declared its hint
+    // param — nominal class OR object literal `[Symbol.toPrimitive](hint)`) or a
+    // 1-param `(self) -> result` body (the method ignores the hint, e.g. the very
+    // common `[Symbol.toPrimitive]() { throw … }` abrupt-completion shape, whose
+    // object-literal closure body is `(captureStruct) -> result`). The dispatcher
+    // must forward the hint ONLY in the 2-param case; pushing `self + hint` into a
+    // 1-param callee produced an arity mismatch that a downstream arg-coercion
+    // pass "repaired" by dropping the result and leaving the struct ref on the
+    // stack — yielding an invalid `fallthru[0] (expected externref, got (ref N))`
+    // module for ~40 suite-wide tests. Branch on the real param count.
+    const paramCount = funcType && funcType.kind === "func" ? funcType.params.length : 1;
+    const takesHint = paramCount >= 2;
+    // When the hint IS forwarded, skip nativeStrings non-externref string-ref
+    // hint params (the runtime that calls `__call_@@toPrimitive` is JS-host-only
+    // and cannot synthesize the WasmGC string-ref hint inline — see doc comment).
+    const hintParamType = takesHint && funcType && funcType.kind === "func" ? funcType.params[1] : undefined;
     if (hintParamType !== undefined && hintParamType.kind !== "externref") continue;
 
-    entries.push({ typeIdx, funcIdx, resultType });
+    entries.push({ typeIdx, funcIdx, resultType, takesHint });
   }
 
   if (entries.length === 0) return;
@@ -3299,9 +3312,15 @@ function emitToPrimitiveMethodExport(ctx: CodegenContext): void {
     const testAndCall: Instr[] = [
       { op: "local.get", index: 2 } as Instr,
       { op: "ref.cast", typeIdx: entry.typeIdx } as Instr,
-      { op: "local.get", index: 1 } as Instr, // hint (externref)
-      { op: "call", funcIdx: entry.funcIdx } as Instr,
     ];
+    // (#2883) Forward the ToPrimitive hint ONLY to a method that declared it.
+    // A hint-less `[Symbol.toPrimitive]()` body takes a single (self/capture)
+    // param; pushing the hint there is an arity mismatch that corrupts the
+    // dispatcher (see entry-collection comment above).
+    if (entry.takesHint) {
+      testAndCall.push({ op: "local.get", index: 1 } as Instr); // hint (externref)
+    }
+    testAndCall.push({ op: "call", funcIdx: entry.funcIdx } as Instr);
 
     if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
       testAndCall.push({ op: "extern.convert_any" } as Instr);

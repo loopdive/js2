@@ -1693,9 +1693,38 @@ function isConstructor(f: number): number { return 0; }`;
   }
 
   if (needsDecimalToHex) {
+    // Faithful port of test262/harness/decimalToHexString.js — defines BOTH
+    // `decimalToHexString` and `decimalToPercentHexString`. The previous stub
+    // returned a constant "0" for decimalToHexString and never defined
+    // decimalToPercentHexString at all, which silently broke every
+    // encode/decode-URI test (built-ins/{decodeURI,decodeURIComponent,
+    // encodeURI,encodeURIComponent}/*) that builds its percent-encoded test
+    // input via decimalToPercentHexString: the input came out as garbage, so
+    // the expected URIError was never thrown and the test recorded a false
+    // `#…` failure. The harness self-test (test/harness/decimalToHexString.js)
+    // also asserts decimalToHexString(-1) === "FFFFFFFF" etc., which the
+    // constant stub failed. Both functions are pure number→string and compile
+    // through the standard codegen path (verified: no host imports added).
     p += `
 
-function decimalToHexString(n: number): string { return "0"; }`;
+function decimalToHexString(n: number): string {
+  const hex = "0123456789ABCDEF";
+  n = n >>> 0;
+  let s = "";
+  while (n) {
+    s = hex[n & 0xf] + s;
+    n = n >>> 4;
+  }
+  while (s.length < 4) {
+    s = "0" + s;
+  }
+  return s;
+}
+
+function decimalToPercentHexString(n: number): string {
+  const hex = "0123456789ABCDEF";
+  return "%" + hex[(n >> 4) & 0xf] + hex[n & 0xf];
+}`;
   }
 
   if (needsNans) {
@@ -2140,7 +2169,8 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
   const needsPropertyHelper = includes.includes("propertyHelper.js");
   const needsFnGlobalObject = includes.includes("fnGlobalObject.js") && /\bfnGlobalObject\b/.test(body);
   const needsIsConstructor = includes.includes("isConstructor.js") && /\bisConstructor\b/.test(body);
-  const needsDecimalToHex = includes.includes("decimalToHexString.js") && /\bdecimalToHexString\b/.test(body);
+  const needsDecimalToHex =
+    includes.includes("decimalToHexString.js") && /\bdecimalTo(?:Percent)?HexString\b/.test(body);
   const needsNans = includes.includes("nans.js") && /\bdistinctNaNs\b/.test(body);
   const needsIsNativeFunction = includes.includes("nativeFunctionMatcher.js") && /\bisNativeFunction\b/.test(body);
   const needsAssertNativeFunction =
