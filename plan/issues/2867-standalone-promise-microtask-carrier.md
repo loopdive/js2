@@ -282,3 +282,58 @@ intrinsic retained (all correct, tested). The broad `wrapTest` drain INJECTION i
 reverted (deferred) — it is a secondary contributor and the honest-verdict drain
 should re-land together with the #1897 host-free accounting fix, so the reactions
 it runs are credited honestly rather than counted as regressions.
+
+## CORRECTED re-park diagnosis (sendev-promise-unstick, 2026-06-30 ~14:50) — root cause is BASELINE DRIFT, not #2367
+
+The #2890 host-free guard fix landed and the drain injection was re-landed
+(HEAD `ad5b1f14a`), yet `merge shard reports` **kept failing** at 09:45/09:51.
+Pulled the regressed-test delta from the failed merge_group runs and cross-checked
+against UNRELATED PRs' runs in the same window. The prior diagnosis above
+(attributing `class/elements` to the gate-broaden) is **wrong** — corrected here:
+
+**The dominant ~1,200 regressions are systemic baseline DRIFT, categorically not
+attributable to #2367:**
+
+| Bucket | #2367 run (28435313054, 09:51) | NO-#2367 run (28429650086, 08:04) |
+|---|---|---|
+| `class/elements` stmt+expr | 214 + 202 | 224 + 212 |
+| `dynamic-import` catch+usage | 100 + 70 | 100 + 70 |
+| `object/dstr` | 72 | 72 |
+| `Promise/prototype/then` | **excused, below 50** | 52 |
+| Excused leaky->host-free | **73** | -- |
+
+- **#2367 was bot-parked at 07:43**, so it was NOT in the 08:04 merge group -- yet
+  that run shows the **identical** `class/elements`/`dynamic-import`/`dstr` cluster.
+  Every failed merge_group run in the **07:35-09:51 window** (multiple unrelated
+  PRs, bucket signatures `95e30cc5`/`01e72c3c`/`7ad07ec0`) carries the same
+  ~1,400-regression cluster. Per `feedback_baseline_drift_cross_check`: identical
+  clusters across unrelated PRs = drift, not a PR regression.
+- **#2367 cannot produce those buckets by construction.** Its only code changes
+  are `async-scheduler.ts` + `calls.ts` (Promise/`.then` paths) + the harness
+  drain. `class/elements`, `dynamic-import`, `object/dstr` are non-async language
+  features that never invoke Promise lowering. The `__drain_microtasks()`
+  intrinsic is provably byte-neutral off the Promise path
+  (`getDrainFuncIdxForWasiStart` returns `null` with no registered queue;
+  `tests/issue-2867.test.ts` confirms byte-identity on `gc`/`standalone`/`wasi`).
+- **#2890's accounting IS working as intended** -- 73 leaky->host-free Promise
+  migrations excused; the `Promise/prototype/then` bucket dropped below the
+  50-test threshold in #2367's run (it was 52 = a GATE FAIL in the no-#2367 drift
+  run). So the host-free guard is NOT the unblock gap; suspect (a) is closed.
+
+**Rules out all three architect suspects: NOT (a) second accounting path
+[#2890 works], NOT (b) the drain regressing non-Promise tests [byte-neutral +
+appears without #2367], NOT (c) floor drop [+262 high-water].**
+
+**The drift has cleared.** merge_group runs pass from 09:56 onward; sibling
+standalone-carrier PR #2377 (symbol) merged cleanly through the same gate after
+09:56. A main-side baseline mismatch in the 07:35-09:51 window (a real standalone
+regression on main vs a not-yet-refreshed baseline JSONL, or a nondeterministic
+standalone compile for those buckets) inflated the count for every PR in that
+window; a later `promote-baseline` on a main push re-synced it.
+
+**Action taken:** no code change needed -- #2367 is innocent. Caught the branch up
+to current `upstream/main` (`02ec97471`, merge `f4e2850ce`) so the merge_group
+rebuilds on the post-drift base + refreshed baseline. `issue-2867.test.ts` green
+(7/7). Escalated to the lead to remove the **bot park-hold** and re-enqueue ONCE
+(drift cleared; do not re-enqueue in a loop). The +247 host-free gain is real and
+ready to land.
