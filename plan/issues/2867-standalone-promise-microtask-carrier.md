@@ -1,8 +1,9 @@
 ---
 id: 2867
 title: "Standalone: Promise / async microtask leaks Promise_resolve/reject/then + __make_callback host imports"
-status: in-progress
+status: blocked
 assignee: ttraenkler/senior-dev-promise
+blocked_on: "floor-accounting decision — leaky host-import passes already count in the standalone floor, so native-carrier migration regresses it (see ## Senior-dev verify-first findings). Escalated to stakeholder; gates carrier clusters #2864/#2865/#2866/#2867."
 created: 2026-06-30
 updated: 2026-06-30
 priority: medium
