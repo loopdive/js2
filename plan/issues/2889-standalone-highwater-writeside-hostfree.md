@@ -1,7 +1,8 @@
 ---
 id: 2889
 title: "Standalone high-water WRITE side must emit host_free_pass — promote-baseline clobbered the honest mark back to the leaky 26k"
-status: in-progress
+status: done
+completed: 2026-06-30
 assignee: ttraenkler/sendev-highwater
 created: 2026-06-30
 priority: high
