@@ -1,9 +1,8 @@
 {
   "id": "2869",
-  "assignee": "ttraenkler/archmember",
+  "assignee": "ttraenkler/member2869",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-06-30T02:35:25Z",
-  "claimed_at": "2026-06-30T02:35:25Z",
-  "updated_at": "2026-06-30T02:35:25Z"
+  "branch": "issue-2869-member-target-impl",
+  "claimed_at": "2026-06-30T02:46:44Z",
+  "updated_at": "2026-06-30T02:46:44Z"
 }
