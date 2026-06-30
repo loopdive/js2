@@ -1,7 +1,8 @@
 ---
 id: 2864
 title: "Standalone: no Wasm-native generator carrier — sync generators leak __create_generator/__gen_* host imports"
-status: ready
+status: in-progress
+assignee: ttraenkler/sendev-genframe
 created: 2026-06-30
 updated: 2026-06-30
 priority: high
@@ -84,3 +85,80 @@ Standalone fail/CE → pass:
 Full `merge_group` + standalone high-water. This is the single largest lever
 (sync 697 + async 986 = 1,683 combined with #2865). Sequence #2864 before #2865
 (async generators build on this).
+
+## F1 — heterogeneous (boxed-`any`) carrier (landed)
+
+**Scope shipped:** object / mixed-type yields now lower to the Wasm-native
+generator carrier host-free in standalone/WASI, via the dominant consumers:
+`.next()` / `.next().value` (open dispatch), `for-of`, and array destructuring.
+Verify-first (`function* g(){ yield {a:1}; yield 2 }` → `r1.value.a + r2.value`)
+compiles with **zero host imports** and returns `3` (the yielded object survives
+the frame). gc-mode unchanged; numeric / string carriers byte-for-byte unchanged.
+
+### Why these decisions (root-cause, not symptom)
+
+The resumable frame already existed — `src/codegen/generators-native.ts` is a
+`br_table`-on-state-machine, but its `value`/`sent`/`abrupt`/spill slots were
+f64-only (#1665) or a uniform native-string ref (#2171). `generatorElemValType`
+returned `null` for object/mixed yields, which routed them to the eager-buffer
+**host** path (`__gen_*` imports) — fatal under standalone. F1 generalises the
+frame rather than building a new one.
+
+- **Carrier = `externref`, not a bespoke tagged struct.** The `any` TS type
+  already maps to `externref` (`type-mapper.ts`), and the boxing seams
+  (`__box_number`, `extern.convert_any`) are **native defined funcs** under
+  `target: standalone|wasi` (`addUnionImportsAsNativeFuncs`), so every JS value
+  boxes to externref with NO host import. Using externref (over anyref) means a
+  consumer reading `.value` / a for-of loop var as `any` needs no extra coercion
+  — the carrier IS the `any` representation the rest of codegen agrees on.
+- **`sent`/`abrupt` typed PER-CARRIER** (`genCarrierFieldType`): externref for
+  the boxed-any carrier, f64 for numeric/string. The state struct is minted
+  per-generator, so this keeps the numeric/string structs and all their call
+  sites byte-identical — zero regression risk to the ~250 existing native-gen
+  tests — while the any frame carries arbitrary `.next(v)`/`.return(v)` values.
+- **Open dispatch (`buildNativeGeneratorDispatch`) was the load-bearing path.**
+  `let it = g()` types `it` as `Generator<…>` → externref (the state struct is
+  boxed), so `it.next()` routes through the open anyref dispatch, NOT the
+  concrete-typed direct path. The dispatch keyed its enclosing block on the f64
+  IteratorResult singleton and set one shared f64 `sent` across branches — it
+  could not host a boxed-any branch (distinct result struct, externref sent). Fix
+  is **gated on `hasAny`**: a module with no any-carrier generator keeps the
+  exact f64-singleton dispatch (byte-identical); a module that has one switches
+  the block type to `eqref` (common supertype of all result structs) and emits
+  the `.next(v)` arg both as externref (any branches) and f64 (numeric branches,
+  derived by one unbox so a side-effecting arg evals once). This confines all
+  behavioural change to modules that actually use the new carrier.
+- **Open result reader** (`tryCompileNativeGeneratorResultProperty`) now
+  ref-tests EVERY distinct result struct (not just the f64 singleton): `.done`
+  is uniformly i32; `.value` picks its return ValType from the **static** type of
+  the `.value` property (number → f64 fast path preserved; object/any →
+  externref). This is why numeric `.next().value` reads are unchanged.
+
+### Deferred (follow-ups; all bail cleanly / are non-regressing today)
+
+- **Typed LOCAL spills for the any carrier** — a live-across-yield local of
+  object type lowers to a concrete `ref $Object`, whose exact wasm type the
+  up-front state-struct layout cannot know without a body pre-pass (the "deeper
+  rewrite" the architect flagged). So an any-carrier generator that needs to
+  spill ANY local bails to the host path in `buildNativeGeneratorPlan`
+  (consistent across the candidate gate and registration). Numeric/string spills
+  (f64) are unaffected. This is the single biggest remaining widener — needs a
+  two-pass spill-typing pass.
+- **Spread / `Array.from` precision for the boxed-any carrier** — drains to a
+  vec whose element type must match the array-literal heuristic; for an object
+  generator the literal infers a concrete-struct vec ≠ the externref drain vec,
+  so the conservative skip leaves an (empty, host-free, valid) array. Strictly
+  better than the pre-F1 host-import instantiation failure, but semantically
+  incomplete. Array destructuring (which uses the carrier vec directly) DOES work.
+- **F2** (try/catch/finally across yield + `return()`/`throw()`), **F3**
+  (`yield*` over arbitrary iterables) — separate PRs per the issue's slicing.
+
+### Files
+
+- `src/codegen/generators-native.ts` — carrier decision, per-carrier frame
+  field typing, boxed-any yield/sent/abrupt emission, gated open dispatch +
+  generalised open result reader.
+- `src/codegen/literals.ts`, `src/codegen/statements/destructuring.ts` — vec
+  drain consumers parametrised on the generator's carrier element type.
+- `tests/issue-2864-standalone-generator-carrier.test.ts` — 8 standalone cases
+  (zero-host-import asserted).

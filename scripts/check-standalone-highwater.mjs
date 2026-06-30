@@ -46,9 +46,14 @@
 //   (not Δpass) as the standalone pass/fail signal.
 //
 // High-water file: benchmarks/results/test262-standalone-highwater.json
-//   { "pass": <host_free int>, "sha": "<commit>", "generated_at": "<iso>", "tolerance": 50 }
+//   { "pass": <host_free int>, "host_free_pass": <host_free int>,
+//     "official_pass": <host_free official>, "official_total": <int>,
+//     "sha": "<commit>", "generated_at": "<iso>", "tolerance": 50 }
 //   (#2879 §2: `pass` here is the host-free count; re-baselined from the leaky
 //    ~26k to the honest ~12.9k with stakeholder sign-off — the headline halves.)
+//   (#2889: every write also emits the explicit, self-describing `host_free_pass`
+//    field — `pass` is kept == it for back-compat. The field is what lets the
+//    WRITE side refuse to clobber the honest mark with a stale leaky number.)
 //
 // Exit codes:
 //   0 — pass within tolerance of the mark (and, with --update, mark refreshed)
@@ -128,6 +133,52 @@ export function officialFromReport(reportPath) {
   return null;
 }
 
+/**
+ * (#2889) STRICT host-free WRITE reader — the value used to RATCHET the mark.
+ *
+ * Unlike `passFromReport` (the gate READ, which deliberately falls back to the
+ * leaky `pass` so the gate never crashes mid-rollout), the WRITE path must
+ * NEVER ratchet the high-water mark from a leaky pass. A report that lacks
+ * `host_free_pass` (a pre-#2879-§1 report shape, or one whose rows dropped the
+ * `host_import_leak_class`) would otherwise let the leaky ~26k inflate the
+ * honest ~12.9k mark and breach every later standalone PR — exactly the
+ * `d4bc147d3` clobber. So read host_free_pass STRICTLY here and return `null`
+ * when it is absent, signalling "refuse to raise".
+ *
+ * @param {string} reportPath
+ * @returns {number|null} host-free full-corpus pass, or null if not present
+ */
+export function hostFreeFromReport(reportPath) {
+  try {
+    const report = JSON.parse(readFileSync(reportPath, "utf-8"));
+    const hf = report?.full_summary?.host_free_pass ?? report?.summary?.host_free_pass;
+    return typeof hf === "number" ? hf : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * (#2889) STRICT host-free OFFICIAL-scope reader for the WRITE path. Reads only
+ * `official_summary.host_free_pass` (no leaky fallback); returns null when
+ * absent so the write never records a leaky official number.
+ *
+ * @param {string} reportPath
+ * @returns {{pass:number, total:number}|null}
+ */
+export function officialHostFreeFromReport(reportPath) {
+  try {
+    const report = JSON.parse(readFileSync(reportPath, "utf-8"));
+    const o = report?.official_summary;
+    if (o && typeof o.host_free_pass === "number" && typeof o.total === "number") {
+      return { pass: o.host_free_pass, total: o.total };
+    }
+  } catch {
+    /* no official_summary — older report shape */
+  }
+  return null;
+}
+
 /** Load the committed high-water mark, or null if it does not exist yet. */
 export function loadHighwater() {
   if (!existsSync(HIGHWATER_PATH)) return null;
@@ -135,10 +186,23 @@ export function loadHighwater() {
 }
 
 /**
+ * (#2889) The authoritative host-free count stored in a committed mark.
+ * Prefers the explicit `host_free_pass` field (every #2889+ write emits it);
+ * falls back to `pass` for marks written before the field existed (where, by
+ * the #2879 §2 convention, `pass` already held the host-free count).
+ *
+ * @param {{pass?:number, host_free_pass?:number}|null} mark
+ * @returns {number}
+ */
+export function markHostFree(mark) {
+  return mark?.host_free_pass ?? mark?.pass ?? 0;
+}
+
+/**
  * Evaluate the current pass count against the committed mark.
  *
- * @param {number} pass current standalone pass count
- * @param {{pass:number, tolerance?:number}|null} mark committed high-water
+ * @param {number} pass current standalone host-free pass count
+ * @param {{pass:number, host_free_pass?:number, tolerance?:number}|null} mark committed high-water
  * @param {number} tolerance slack below the mark
  * @returns {{ ok: boolean, floor: number, delta: number, mark: number }}
  */
@@ -146,8 +210,9 @@ export function evaluate(pass, mark, tolerance) {
   // No mark yet → nothing to breach; treat as a pass (the --update path seeds it).
   if (!mark) return { ok: true, floor: 0, delta: pass, mark: 0 };
   const tol = mark.tolerance ?? tolerance;
-  const floor = mark.pass - tol;
-  return { ok: pass >= floor, floor, delta: pass - mark.pass, mark: mark.pass };
+  const markPass = markHostFree(mark);
+  const floor = markPass - tol;
+  return { ok: pass >= floor, floor, delta: pass - markPass, mark: markPass };
 }
 
 function parseArgs(argv) {
@@ -219,24 +284,53 @@ function main() {
   }
 
   if (args.update) {
-    // Ratchet UP only: never lower the committed mark here (that is the job of
-    // an explicit re-seed). A net improvement raises the floor so future
-    // slides are caught against the new, higher reference.
-    if (!mark || pass > mark.pass) {
-      const official = args.report ? officialFromReport(resolve(args.report)) : null;
+    // (#2889) WRITE side — STRICT host-free ratchet. The mark is RAISED only
+    // from a genuine host-free measurement read STRICTLY (no leaky-`pass`
+    // fallback). This is the asymmetry that closes the d4bc147d3 clobber: the
+    // gate READ above may fall back to the leaky `pass` (safe — a leaky number
+    // ≥ an honest floor never false-breaches), but if the WRITE ratcheted on a
+    // leaky pass it would inflate the honest ~12.9k mark back to the leaky
+    // ~26k and breach every later standalone PR. So:
+    //   • a report lacking `host_free_pass` (pre-#2879-§1 shape, or rows that
+    //     dropped the leak class) → REFUSE to touch the file (no raise).
+    //   • every write emits an explicit `host_free_pass` field (== `pass`) so a
+    //     stale checkout can only ever hold an honest host-free mark — a leaky
+    //     number can never re-enter the file.
+    const hostFree = args.report
+      ? hostFreeFromReport(resolve(args.report))
+      : // --pass escape hatch: the caller asserts N is the host-free count.
+        Number.isFinite(args.pass)
+        ? args.pass
+        : null;
+
+    if (hostFree === null) {
+      console.warn(
+        "[standalone-highwater] report has no host_free_pass (leaky/old report shape) — NOT raising the mark " +
+          "(refusing to clobber the honest host-free high-water with a leaky pass; see #2889).",
+      );
+    } else if (!mark || hostFree > markHostFree(mark)) {
+      const official = args.report ? officialHostFreeFromReport(resolve(args.report)) : null;
       const next = {
-        pass,
-        // official-scope (no-proposals) count for the statusline / "without
-        // proposals" rate — falls back to absent on older report shapes.
+        // `pass` kept == host-free for back-compat (evaluate / the #2879 test
+        // read `pass`); `host_free_pass` is the explicit, self-describing field
+        // (#2889) that makes a future leaky clobber structurally impossible.
+        pass: hostFree,
+        host_free_pass: hostFree,
+        // official-scope (no-proposals) HOST-FREE count for the statusline /
+        // "without proposals" rate — absent on older report shapes.
         ...(official ? { official_pass: official.pass, official_total: official.total } : {}),
         sha: args.sha ?? mark?.sha ?? "unknown",
         generated_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
         tolerance: mark?.tolerance ?? args.tolerance,
       };
       writeFileSync(HIGHWATER_PATH, `${JSON.stringify(next, null, 2)}\n`);
-      console.log(`[standalone-highwater] raised mark ${mark?.pass ?? 0} → ${pass} (commit ${next.sha}).`);
+      console.log(
+        `[standalone-highwater] raised host-free mark ${markHostFree(mark)} → ${hostFree} (commit ${next.sha}).`,
+      );
     } else {
-      console.log(`[standalone-highwater] mark unchanged (current ${pass} ≤ mark ${mark.pass}); within tolerance.`);
+      console.log(
+        `[standalone-highwater] mark unchanged (host-free ${hostFree} ≤ mark ${markHostFree(mark)}); within tolerance.`,
+      );
     }
   }
 

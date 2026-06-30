@@ -16,6 +16,9 @@ import {
   passFromReport,
   officialFromReport,
   evaluate,
+  hostFreeFromReport,
+  officialHostFreeFromReport,
+  markHostFree,
   HIGHWATER_PATH,
 } from "../scripts/check-standalone-highwater.mjs";
 
@@ -80,5 +83,55 @@ describe("#2879 §2 — the committed high-water file is re-baselined to the hon
     expect(mark.pass).toBeGreaterThan(10000);
     expect(mark.pass).toBeLessThan(20000);
     expect(mark.tolerance).toBe(50);
+  });
+
+  it("(#2889) the committed mark carries an explicit host_free_pass field == pass", () => {
+    const mark = JSON.parse(readFileSync(HIGHWATER_PATH, "utf-8"));
+    // The self-describing field is what makes a future leaky clobber impossible.
+    expect(Number.isInteger(mark.host_free_pass)).toBe(true);
+    expect(mark.host_free_pass).toBe(mark.pass);
+    expect(mark.host_free_pass).toBeGreaterThan(10000);
+    expect(mark.host_free_pass).toBeLessThan(20000);
+  });
+});
+
+describe("#2889 — the WRITE side keys on host_free_pass and refuses to clobber", () => {
+  it("hostFreeFromReport reads full_summary.host_free_pass (the ratchet value)", () => {
+    const tmp = writeReport("w-hf", { full_summary: { pass: 26039, host_free_pass: 12883 } });
+    expect(hostFreeFromReport(tmp)).toBe(12883);
+  });
+
+  it("hostFreeFromReport returns null when host_free_pass is ABSENT (no leaky fallback)", () => {
+    // A pre-#2879-§1 / leak-less report shape: only a leaky `pass`. The WRITE
+    // reader must NOT fall back to it — returning null tells --update to refuse
+    // to raise, so the leaky 26k can never inflate the honest mark (d4bc147d3).
+    const tmp = writeReport("w-legacy", { full_summary: { pass: 26039 } });
+    expect(hostFreeFromReport(tmp)).toBeNull();
+  });
+
+  it("officialHostFreeFromReport reads official_summary.host_free_pass strictly", () => {
+    const tmp = writeReport("w-off", {
+      official_summary: { pass: 24899, host_free_pass: 12551, total: 43136 },
+    });
+    expect(officialHostFreeFromReport(tmp)).toEqual({ pass: 12551, total: 43136 });
+  });
+
+  it("officialHostFreeFromReport returns null when official host_free_pass is absent", () => {
+    const tmp = writeReport("w-off-legacy", { official_summary: { pass: 24899, total: 43136 } });
+    expect(officialHostFreeFromReport(tmp)).toBeNull();
+  });
+
+  it("markHostFree prefers host_free_pass, falls back to pass for pre-#2889 marks", () => {
+    expect(markHostFree({ host_free_pass: 12883, pass: 12883 })).toBe(12883);
+    // A mark written before the field existed (§2 stored host-free in `pass`).
+    expect(markHostFree({ pass: 12883 })).toBe(12883);
+    expect(markHostFree(null)).toBe(0);
+  });
+
+  it("evaluate keys on the mark's host_free_pass when present", () => {
+    const mark = { pass: 12883, host_free_pass: 12883, tolerance: 50 };
+    expect(evaluate(12883, mark, 50).ok).toBe(true);
+    expect(evaluate(12832, mark, 50).ok).toBe(false); // below floor 12833
+    expect(evaluate(12833, mark, 50).ok).toBe(true);
   });
 });

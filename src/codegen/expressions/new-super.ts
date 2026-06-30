@@ -239,6 +239,42 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
   return true;
 }
 
+/**
+ * (#2886) The global builtin **functions** that are NOT constructors per
+ * ECMA-262 §19.2 (`decodeURI`/`encodeURI`/…/`parseInt`/`parseFloat`/`isNaN`/
+ * `isFinite`). Each is an ordinary built-in function object that does **not**
+ * implement `[[Construct]]`, so `new <fn>()` must throw a `TypeError`
+ * (§13.3.5.1 EvaluateNew step 5: `IsConstructor(constructor) === false`).
+ * `eval` is intentionally omitted — it is filtered out of test262 and handled
+ * elsewhere.
+ */
+const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+]);
+
+/**
+ * (#2886) Does `id` resolve to the **ambient global** binding (declared only in
+ * the TypeScript lib `.d.ts` files), rather than a user-defined shadow? A user
+ * who writes `function parseInt() {}` (or `class isNaN {}`) has a declaration in
+ * a real source file and *is* constructable — we must not intercept those. The
+ * ambient builtin's symbol has all of its declarations in declaration files.
+ * Unresolved symbols (no declaration anywhere) are treated as the global.
+ */
+function resolvesToAmbientGlobal(ctx: CodegenContext, id: ts.Identifier): boolean {
+  const sym = ctx.checker.getSymbolAtLocation(id);
+  if (!sym) return true;
+  const decls = sym.declarations;
+  if (!decls || decls.length === 0) return true;
+  return decls.every((d) => d.getSourceFile().isDeclarationFile);
+}
+
 /** Compile super.method(args) — resolve to ParentClass_method and call with this */
 /**
  * (#1614) Dispatch `super.method(args)` where the parent is a builtin extern
@@ -2709,6 +2745,24 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // in test262 negative cases (S11.2.2_A4_T*) observes a TypeError
         // instance, not a bare string. Falls back to a string throw when
         // `__new_TypeError` isn't registered (standalone mode).
+        emitThrowTypeError(ctx, fctx, `${name} is not a constructor`);
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+      // (#2886) Global builtin FUNCTIONS that lack [[Construct]] — `new
+      // decodeURI()`, `new parseFloat()`, etc. Without this, the callee falls
+      // through to the unknown-ctor path and is mis-routed to an `extern_class`
+      // host import, which throws a bare `Error: No dependency provided for
+      // extern class "decodeURI"` at runtime — not a `TypeError`. The Sputnik
+      // `S15.1.*_A5.7`/`A7.7` tests strictly check `e instanceof TypeError`.
+      // Gate on the ambient-global binding so a user-defined shadow (e.g.
+      // `function parseInt(){}`, which IS constructable) keeps the normal path.
+      if (
+        GLOBAL_NON_CONSTRUCTOR_FUNCTIONS.has(name) &&
+        !ctx.classSet.has(name) &&
+        !ctx.externClasses.has(name) &&
+        resolvesToAmbientGlobal(ctx, unwrapped)
+      ) {
         emitThrowTypeError(ctx, fctx, `${name} is not a constructor`);
         fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };

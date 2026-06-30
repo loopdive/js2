@@ -1057,7 +1057,12 @@ export function compileArrayDestructuring(
   if (!isVecArray) {
     const genInfo = nativeGeneratorInfoForForOfSubject(ctx, resultType);
     if (genInfo) {
-      const genVecTypeIdx = getOrRegisterVecType(ctx, "f64");
+      // (#2864 F1) Drain into a vec whose element type matches the generator's
+      // carrier: f64 for numeric (unchanged) or externref for the boxed-any
+      // carrier (object / mixed yields), so the destructured bindings receive a
+      // faithful `any` value rather than a mis-typed f64.
+      const genElemKind = genInfo.elemValType.kind === "externref" ? "externref" : "f64";
+      const genVecTypeIdx = getOrRegisterVecType(ctx, genElemKind);
       const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);
       // genState ref is currently on the stack; emitNativeGeneratorToVec
       // consumes it and leaves (ref $vec_f64). trimToLength=true: the

@@ -3590,12 +3590,18 @@ export function compileArrayLiteral(
       // normal materialized vec spread (same shape as the externref path).
       const genInfo = nativeGeneratorInfoForForOfSubject(ctx, srcType);
       if (genInfo) {
-        const genVecTypeIdx = getOrRegisterVecType(ctx, "f64");
+        // (#2864 F1) Drain into a vec whose element type matches the generator's
+        // carrier: f64 for numeric (unchanged) or externref for the boxed-any
+        // carrier (object / mixed yields). The native-string carrier is handled
+        // by the dedicated string-spread arm below, so only f64 / externref reach
+        // here; anything else keeps the f64 default and is skipped by the guard.
+        const genElemKind = genInfo.elemValType.kind === "externref" ? "externref" : "f64";
+        const genVecTypeIdx = getOrRegisterVecType(ctx, genElemKind);
         const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);
         if (vecTypeIdx !== genVecTypeIdx) {
-          // Result element type isn't f64 (mixed literal whose first-element
-          // heuristic picked another type) — copying f64s into that array would
-          // be invalid Wasm. Preserve the conservative skip for this rare shape.
+          // Result element type doesn't match the generator's carrier (mixed
+          // literal whose first-element heuristic picked another type) — copying
+          // into that array would be invalid Wasm. Conservative skip.
           fctx.body.push({ op: "drop" });
           continue;
         }

@@ -26,7 +26,7 @@
  *     (try/finally without catch is, as in Phase 1).
  */
 import { ts } from "../ts-api.js";
-import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
+import { isBooleanType, isNumberType, isStringType, mapTsTypeToWasm } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import { popBody, pushBody } from "./context/bodies.js";
@@ -134,15 +134,26 @@ function isStringYieldExpression(ctx: CodegenContext, expr: ts.Expression | unde
 }
 
 /**
- * Decide a generator's uniform yield element ValType, or null when the yields
- * are mixed / unsupported (caller bails). Walks every `yield` in the body
- * (not descending into nested functions). Returns `{kind:"f64"}` when there are
- * no yields (degenerate; the plan rejects zero-yield generators separately).
+ * Decide a generator's uniform yield element ValType. Walks every `yield` in
+ * the body (not descending into nested functions).
+ *
+ *  - all-numeric (or zero-yield) → `{kind:"f64"}` (the historical fast path);
+ *  - all-string → the native `$AnyString` ref (#2171);
+ *  - anything else (object yields, or a MIX of numeric/string/object) →
+ *    `{kind:"externref"}`, the universal boxed-`any` carrier (#2864 F1). Every
+ *    JS value coerces to externref host-free in standalone/WASI (numbers via the
+ *    native `__box_number`, objects/strings via `extern.convert_any`), so the
+ *    heterogeneous frame needs no host import. This is the seam that unblocks
+ *    object/mixed-yield generators that previously bailed to the eager-buffer
+ *    host path (and thus refused under standalone).
+ *
+ * Never returns null now — the externref carrier subsumes the formerly-bailing
+ * cases; zero-yield generators are rejected separately by the plan builder.
  */
-function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType | null {
+function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType {
   let sawNumeric = false;
   let sawString = false;
-  let unsupported = false;
+  let sawOther = false;
   const visit = (node: ts.Node): void => {
     if (
       ts.isFunctionDeclaration(node) ||
@@ -155,15 +166,32 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
     if (ts.isYieldExpression(node) && !node.asteriskToken) {
       if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
       else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
-      else unsupported = true;
+      else sawOther = true;
     }
     ts.forEachChild(node, visit);
   };
   if (decl.body) visit(decl.body);
-  if (unsupported) return null;
-  if (sawString && sawNumeric) return null; // mixed — deferred follow-up
-  if (sawString) return nativeStringType(ctx);
-  return { kind: "f64" };
+  // Uniform numeric (or no yields): the f64 fast path, byte-identical to before.
+  if (!sawOther && !sawString) return { kind: "f64" };
+  // Uniform string: the native-string carrier (#2171), byte-identical to before.
+  if (!sawOther && !sawNumeric && sawString) return nativeStringType(ctx);
+  // Heterogeneous (object and/or mixed types): the boxed-any externref carrier.
+  return { kind: "externref" };
+}
+
+/** True when a generator uses the boxed-`any` externref carrier (#2864 F1). */
+function carrierIsAny(elemValType: ValType): boolean {
+  return elemValType.kind === "externref";
+}
+
+/**
+ * The ValType of the per-frame `sent` / `abrupt` scalar fields. For the boxed-any
+ * carrier these hold a boxed `any` (externref) so `.next(v)` / `.return(v)` carry
+ * an arbitrary value; for the numeric & string carriers they stay f64 (a
+ * `.next(v)`/`.return(v)` argument coerces to f64, byte-identical to pre-#2864).
+ */
+function genCarrierFieldType(elemValType: ValType): ValType {
+  return carrierIsAny(elemValType) ? { kind: "externref" } : { kind: "f64" };
 }
 
 function statementContainsYield(stmt: ts.Statement): boolean {
@@ -241,16 +269,17 @@ function nodeContainsYield(root: ts.Node): boolean {
 function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): NativeGeneratorPlan | null {
   if (!decl.body) return null;
 
-  // (#2171) Decide the uniform yield element type up-front. Numeric → f64 (the
-  // historical path); all-string → native string ref; mixed / unsupported →
-  // bail. `yieldValueOk` then gates each per-yield check on that decision so a
-  // string yield is accepted only in a string-typed generator (and a numeric
-  // yield only in a numeric one).
+  // (#2171/#2864) Decide the uniform yield element type up-front. Numeric → f64
+  // (the historical path); all-string → native string ref; mixed / object →
+  // the boxed-any externref carrier. `yieldValueOk` then gates each per-yield
+  // check on that decision: a string yield is accepted only in a string-typed
+  // generator, a numeric yield only in a numeric one, and ANY yield is accepted
+  // in the boxed-any carrier (every value coerces to externref).
   const elemValType = generatorElemValType(ctx, decl);
-  if (elemValType === null) return null;
   const elemIsString = elemValType.kind === "ref" || elemValType.kind === "ref_null";
+  const elemIsAny = carrierIsAny(elemValType);
   const yieldValueOk = (expr: ts.Expression | undefined): boolean =>
-    elemIsString ? isStringYieldExpression(ctx, expr) : isNumericExpression(ctx, expr);
+    elemIsAny ? true : elemIsString ? isStringYieldExpression(ctx, expr) : isNumericExpression(ctx, expr);
 
   const states: NativeGeneratorState[] = [];
   const spills: string[] = [];
@@ -751,6 +780,19 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   if (suspendCount === 0) return null;
   if (states.length > MAX_NATIVE_GENERATOR_STATES) return null;
 
+  // (#2864 F1) The boxed-any carrier types only the per-frame scalars (sent /
+  // abrupt / yielded value) as externref; it does NOT yet type the spill slots
+  // for live-across-yield LOCALS. A faithful spill field must carry the local's
+  // exact wasm type (an object literal lowers to a concrete `ref $Object`, which
+  // the up-front struct layout cannot know without a body pre-pass — the
+  // "deeper rewrite" flagged in the #2864 plan). So a heterogeneous generator
+  // that needs to spill any local bails to the host path here (consistent across
+  // `isNativeGeneratorCandidate` and `registerNativeGenerator`, both of which
+  // route through this builder, so the host imports stay registered and no
+  // undefined funcidx is baked). Numeric / string carriers are unaffected (their
+  // spills are f64). Follow-up: two-pass spill typing widens this.
+  if (elemIsAny && spills.length > 0) return null;
+
   return { states, spills, elemValType, delegationSites };
 }
 
@@ -1088,11 +1130,15 @@ export function registerNativeGenerator(
   // with the caller's `paramTypes[0] === receiverType`. User params follow.
   const userParamNames = decl.parameters.map((p) => (ts.isIdentifier(p.name) ? p.name.text : ""));
   const paramNames = synthesizedThis ? ["this", ...userParamNames] : userParamNames;
+  // (#2864 F1) `sent` / `abrupt` carry the `.next(v)` / `.return(v)` value. For
+  // the boxed-any carrier they are externref so an arbitrary value survives; for
+  // numeric / string carriers they stay f64 (byte-identical to before).
+  const carrierFieldType = genCarrierFieldType(elemValType);
   const stateFields: FieldDef[] = [
     { name: "state", type: { kind: "i32" }, mutable: true },
-    { name: "sent", type: { kind: "f64" }, mutable: true },
+    { name: "sent", type: carrierFieldType, mutable: true },
     { name: "mode", type: { kind: "i32" }, mutable: true },
-    { name: "abrupt", type: { kind: "f64" }, mutable: true },
+    { name: "abrupt", type: carrierFieldType, mutable: true },
   ];
   for (let i = 0; i < paramTypes.length; i++) {
     stateFields.push({
@@ -1179,6 +1225,8 @@ function ensureRegisteredNativeGenerator(ctx: CodegenContext, name: string): Nat
 function defaultElemValueInstr(elemValType: ValType): Instr {
   if (elemValType.kind === "f64") return { op: "f64.const", value: 0 };
   if (elemValType.kind === "i32") return { op: "i32.const", value: 0 };
+  // (#2864 F1) The boxed-any carrier's inert default is a null externref.
+  if (elemValType.kind === "externref") return { op: "ref.null.extern" } as Instr;
   return { op: "ref.null", typeIdx: (elemValType as { typeIdx: number }).typeIdx } as Instr;
 }
 
@@ -1272,6 +1320,63 @@ function emitExpressionAsF64(ctx: CodegenContext, fctx: FunctionContext, expr: t
     coerceType(ctx, fctx, resultType, { kind: "f64" });
   }
   const tmp = allocLocal(fctx, `__gen_value_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push({ op: "local.set", index: tmp });
+  return tmp;
+}
+
+/**
+ * (#2864 F1) Compile a `.next(v)` / `.return(v)` argument to the generator's
+ * carrier field type and return a local holding it. For numeric / string
+ * carriers this is exactly `emitExpressionAsF64` (the f64 `sent`/`abrupt` field,
+ * byte-identical to before). For the boxed-any carrier the value is compiled to
+ * externref (host-free boxing in standalone/WASI), so an arbitrary `.next(v)`
+ * survives into the resume function. A missing arg yields the carrier default
+ * (`NaN` for f64, null externref for the boxed-any carrier).
+ */
+function emitCarrierValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Expression | undefined,
+  info: NativeGeneratorInfo,
+): number {
+  if (!carrierIsAny(info.elemValType)) return emitExpressionAsF64(ctx, fctx, expr);
+  const carrier: ValType = { kind: "externref" };
+  const tmp = allocLocal(fctx, `__gen_carrier_${fctx.locals.length}`, carrier);
+  if (!expr) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+    fctx.body.push({ op: "local.set", index: tmp });
+    return tmp;
+  }
+  const t = compileExpression(ctx, fctx, expr, carrier);
+  if (t === null) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+  } else if (!valTypesMatch(t, carrier)) {
+    coerceType(ctx, fctx, t, carrier);
+  }
+  fctx.body.push({ op: "local.set", index: tmp });
+  return tmp;
+}
+
+/**
+ * (#2864 F1) Compile a `.next(v)` / `.return(v)` argument to externref (the
+ * boxed-`any` representation) for the open dispatch, returning a local holding
+ * it. A missing argument is a null externref. Used only when the dispatch chain
+ * includes an any-carrier generator.
+ */
+function emitOpenAnyArgValue(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression | undefined): number {
+  const carrier: ValType = { kind: "externref" };
+  const tmp = allocLocal(fctx, `__gen_any_arg_${fctx.locals.length}`, carrier);
+  if (!expr) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+    fctx.body.push({ op: "local.set", index: tmp });
+    return tmp;
+  }
+  const t = compileExpression(ctx, fctx, expr, carrier);
+  if (t === null) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+  } else if (!valTypesMatch(t, carrier)) {
+    coerceType(ctx, fctx, t, carrier);
+  }
   fctx.body.push({ op: "local.set", index: tmp });
   return tmp;
 }
@@ -1456,12 +1561,14 @@ function compileState(
     }
     abruptBody.push(...storeSpills(info, fctx, selfLocal));
     abruptBody.push(...setStateInstrs(info, selfLocal, info.doneState));
-    // (#2171) `.return(v)` value lives in the f64 `abrupt` field. For a numeric
-    // generator that f64 IS the completion value; for a string generator the
-    // result `value` is a string ref, and string `.return(v)` is not yet wired
-    // (the abrupt field stays f64) — complete with the elem-type default so the
-    // result struct typechecks. (String `.return(v)` is a documented follow-up.)
-    if (info.elemValType.kind === "f64") {
+    // (#2171/#2864) `.return(v)` value lives in the `abrupt` field. When the
+    // field carrier matches the result `value` type — numeric (both f64) or the
+    // boxed-any carrier (both externref) — the abrupt field IS the completion
+    // value, so read it. For a string generator the result `value` is a string
+    // ref while `abrupt` stays f64, so string `.return(v)` is not yet wired —
+    // complete with the elem-type default so the result struct typechecks.
+    // (String `.return(v)` is a documented follow-up.)
+    if (valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)) {
       abruptBody.push({ op: "local.get", index: selfLocal });
       abruptBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
     } else {
@@ -1744,11 +1851,17 @@ export function compileNativeGeneratorFunction(
   info: NativeGeneratorInfo,
 ): void {
   ensureNativeGeneratorResumeFunction(ctx, info);
-  // Construct the state struct: state=0, sent=NaN, mode=0, abrupt=NaN, params…, spills(NaN)…
+  // Construct the state struct: state=0, sent=⊥, mode=0, abrupt=⊥, params…, spills(NaN)…
+  // (#2864 F1) `sent`/`abrupt` init to the carrier default — `f64 NaN` for the
+  // numeric/string carriers (unchanged) or a null externref for the boxed-any
+  // carrier so the struct.new typechecks before the first `.next(v)`.
+  const carrierInit: Instr = carrierIsAny(info.elemValType)
+    ? ({ op: "ref.null.extern" } as Instr)
+    : { op: "f64.const", value: NaN };
   fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "f64.const", value: NaN });
+  fctx.body.push(carrierInit);
   fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "f64.const", value: NaN });
+  fctx.body.push(carrierInit);
   // (#2571) Read every wasm param into its `param_*` state slot. For an instance
   // method generator the synthetic `this` is wasm param 0 and user params are
   // 1..n, so iterate `info.paramTypes.length` (which includes the synthetic
@@ -1830,7 +1943,7 @@ function compileDirectNativeGeneratorMethod(
   fctx.body.push({ op: "local.set", index: selfLocal });
 
   if (methodName === "next") {
-    const sentTmp = emitExpressionAsF64(ctx, fctx, args[0]);
+    const sentTmp = emitCarrierValue(ctx, fctx, args[0], info);
     compileIgnoredArgs(ctx, fctx, args.slice(1));
     fctx.body.push(...setStateFieldFromLocal(info, selfLocal, info.sentFieldIdx, sentTmp));
     fctx.body.push(...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0));
@@ -1840,7 +1953,7 @@ function compileDirectNativeGeneratorMethod(
   }
 
   if (methodName === "return") {
-    const valueTmp = emitExpressionAsF64(ctx, fctx, args[0]);
+    const valueTmp = emitCarrierValue(ctx, fctx, args[0], info);
     compileIgnoredArgs(ctx, fctx, args.slice(1));
     fctx.body.push({ op: "local.get", index: selfLocal });
     fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
@@ -1886,9 +1999,32 @@ function buildNativeGeneratorDispatch(
   anyLocal: number,
   methodName: string,
   valueLocal?: number,
-): Instr[] {
+  // (#2864 F1) The boxed-`any` carrier's `sent`/`abrupt`/result are externref.
+  // When the dispatch chain includes an any-carrier generator the caller emits
+  // the `.next(v)`/`.return(v)` argument BOTH as f64 (`valueLocal`, for numeric /
+  // string branches, unchanged) AND as externref (`valueAnyLocal`, for any
+  // branches). When no any-carrier generator participates this is undefined and
+  // the dispatch is byte-identical to pre-#2864.
+  valueAnyLocal?: number,
+): { instrs: Instr[]; resultType: ValType } {
   const infos = Array.from(ctx.nativeGenerators.values());
-  const resultType: ValType = { kind: "ref", typeIdx: ensureNativeGeneratorResultType(ctx) };
+  // (#2864 F1) When ANY generator in the chain uses the boxed-any carrier, the
+  // enclosing block must accept every carrier's result struct, so its type is
+  // `eqref` (the common supertype) and the chain produces concrete result
+  // structs (eqref subtypes). For numeric/string-only modules (the existing,
+  // dominant case) there is no any carrier — keep the f64 IteratorResult
+  // singleton block type, byte-identical to before, so no numeric generator
+  // regresses.
+  const hasAny = infos.some((i) => carrierIsAny(i.elemValType));
+  const resultType: ValType = hasAny
+    ? { kind: "eqref" }
+    : { kind: "ref", typeIdx: ensureNativeGeneratorResultType(ctx) };
+  // The per-branch `.next(v)`/`.return(v)` value local: an any-carrier branch
+  // consumes the externref `valueAnyLocal`; numeric / string branches consume the
+  // f64 `valueLocal` (unchanged). `valueLocal` is always present when valueAnyLocal
+  // is (the caller derives one from the other).
+  const branchValueLocal = (info: NativeGeneratorInfo): number =>
+    carrierIsAny(info.elemValType) ? valueAnyLocal! : valueLocal!;
   // #1344 — the receiver matched NONE of the native generator state types, i.e.
   // `[[GeneratorState]]` is absent (e.g. `GeneratorPrototype.next.call({})`).
   // Per §27.5.3.2 GeneratorValidate step 2 / §27.5.1.2-4, throw a *catchable*
@@ -1901,12 +2037,13 @@ function buildNativeGeneratorDispatch(
   function branch(index: number): Instr[] {
     if (index >= infos.length) return fallback;
     const info = infos[index]!;
+    const vLocal = branchValueLocal(info);
     let thenBody: Instr[];
     if (methodName === "next") {
       thenBody = [
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: info.stateTypeIdx },
-        { op: "local.get", index: valueLocal! },
+        { op: "local.get", index: vLocal },
         { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.sentFieldIdx },
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: info.stateTypeIdx },
@@ -1935,7 +2072,7 @@ function buildNativeGeneratorDispatch(
             { op: "ref.cast", typeIdx: info.stateTypeIdx },
             { op: "i32.const", value: 0 },
             { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
-            { op: "local.get", index: valueLocal! },
+            { op: "local.get", index: vLocal },
             { op: "i32.const", value: 1 },
             { op: "struct.new", typeIdx: info.resultTypeIdx },
           ],
@@ -1953,14 +2090,14 @@ function buildNativeGeneratorDispatch(
                 { op: "ref.cast", typeIdx: info.stateTypeIdx },
                 { op: "i32.const", value: 0 },
                 { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
-                { op: "local.get", index: valueLocal! },
+                { op: "local.get", index: vLocal },
                 { op: "i32.const", value: 1 },
                 { op: "struct.new", typeIdx: info.resultTypeIdx },
               ],
               else: [
                 { op: "local.get", index: anyLocal },
                 { op: "ref.cast", typeIdx: info.stateTypeIdx },
-                { op: "local.get", index: valueLocal! },
+                { op: "local.get", index: vLocal },
                 { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx },
                 { op: "local.get", index: anyLocal },
                 { op: "ref.cast", typeIdx: info.stateTypeIdx },
@@ -1986,7 +2123,7 @@ function buildNativeGeneratorDispatch(
       },
     ];
   }
-  return branch(0);
+  return { instrs: branch(0), resultType };
 }
 
 export function tryCompileNativeGeneratorMethodCall(
@@ -2019,14 +2156,33 @@ export function tryCompileNativeGeneratorMethodCall(
   const anyLocal = allocLocal(fctx, `__native_gen_any_${fctx.locals.length}`, { kind: "anyref" });
   fctx.body.push({ op: "local.set", index: anyLocal });
 
+  // (#2864 F1) When the open dispatch must service an any-carrier generator, the
+  // `.next(v)`/`.return(v)` argument is needed BOTH as externref (any branches)
+  // and as f64 (numeric / string branches). Compile it ONCE to externref (its
+  // natural representation when `it` is statically opaque), then derive the f64
+  // by unboxing — so a side-effecting argument is evaluated exactly once. For
+  // numeric/string-only modules (no any carrier) keep the historical f64-only
+  // emission, byte-identical to before.
+  const dispatchHasAny = Array.from(ctx.nativeGenerators.values()).some((i) => carrierIsAny(i.elemValType));
   let valueLocal: number | undefined;
+  let valueAnyLocal: number | undefined;
   if (methodName === "return" || methodName === "next") {
-    valueLocal = emitExpressionAsF64(ctx, fctx, args[0]);
-    compileIgnoredArgs(ctx, fctx, args.slice(1));
+    if (dispatchHasAny) {
+      valueAnyLocal = emitOpenAnyArgValue(ctx, fctx, args[0]);
+      compileIgnoredArgs(ctx, fctx, args.slice(1));
+      valueLocal = allocLocal(fctx, `__gen_sent_f64_${fctx.locals.length}`, { kind: "f64" });
+      fctx.body.push({ op: "local.get", index: valueAnyLocal });
+      coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+      fctx.body.push({ op: "local.set", index: valueLocal });
+    } else {
+      valueLocal = emitExpressionAsF64(ctx, fctx, args[0]);
+      compileIgnoredArgs(ctx, fctx, args.slice(1));
+    }
   }
 
-  fctx.body.push(...buildNativeGeneratorDispatch(ctx, anyLocal, methodName, valueLocal));
-  return { kind: "ref", typeIdx: ctx.nativeGeneratorResultTypeIdx };
+  const { instrs, resultType } = buildNativeGeneratorDispatch(ctx, anyLocal, methodName, valueLocal, valueAnyLocal);
+  fctx.body.push(...instrs);
+  return resultType;
 }
 
 export function tryCompileNativeGeneratorResultProperty(
@@ -2067,24 +2223,107 @@ export function tryCompileNativeGeneratorResultProperty(
 
   const anyLocal = allocLocal(fctx, `__native_gen_result_${fctx.locals.length}`, { kind: "anyref" });
   fctx.body.push({ op: "local.set", index: anyLocal });
-  const fieldType: ValType = propName === "value" ? { kind: "f64" } : { kind: "i32" };
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: ctx.nativeGeneratorResultTypeIdx });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: fieldType },
-    then: [
-      { op: "local.get", index: anyLocal },
-      { op: "ref.cast", typeIdx: ctx.nativeGeneratorResultTypeIdx },
-      {
-        op: "struct.get",
-        typeIdx: ctx.nativeGeneratorResultTypeIdx,
-        fieldIdx: propName === "value" ? RESULT_VALUE_FIELD : RESULT_DONE_FIELD,
-      },
-    ],
-    else: [propName === "value" ? { op: "f64.const", value: 0 } : { op: "i32.const", value: 1 }],
-  });
+
+  // (#2864 F1) Distinct IteratorResult struct types in this module: the f64
+  // singleton (when present) plus each registered generator's per-elem result
+  // type (native string, boxed-any externref). The open reader must runtime-test
+  // every one, not just the f64 singleton — otherwise a `.done`/`.value` read off
+  // an any-carrier result (which is NOT the singleton) fell through to the
+  // default (`done:true` / `0`).
+  const resultEntries: { typeIdx: number; elemValType: ValType }[] = [];
+  const seenResult = new Set<number>();
+  const pushEntry = (typeIdx: number, elem: ValType): void => {
+    if (typeIdx >= 0 && !seenResult.has(typeIdx)) {
+      seenResult.add(typeIdx);
+      resultEntries.push({ typeIdx, elemValType: elem });
+    }
+  };
+  if (ctx.nativeGeneratorResultTypeIdx >= 0) pushEntry(ctx.nativeGeneratorResultTypeIdx, { kind: "f64" });
+  for (const info of ctx.nativeGenerators.values()) pushEntry(info.resultTypeIdx, info.elemValType);
+
+  if (propName === "done") {
+    // `done` is i32 for every carrier — test each result type, read field 1.
+    fctx.body.push(buildOpenResultRead(anyLocal, resultEntries, RESULT_DONE_FIELD, { kind: "i32" }));
+    return { kind: "i32" };
+  }
+
+  // `value`: choose the return ValType from the STATIC type of the result's
+  // `value` property. A numeric generator keeps the f64 fast path (byte-identical
+  // to before); an object / mixed (boxed-any) generator returns externref. This
+  // is what keeps existing numeric `.next().value` reads unchanged.
+  let valueWantsRef = false;
+  const itType = ctx.checker.getTypeAtLocation(resultExpr);
+  const valSym = itType.getProperty?.("value");
+  if (valSym) {
+    const mapped = mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(valSym, resultExpr), ctx.checker);
+    valueWantsRef =
+      mapped.kind === "externref" ||
+      mapped.kind === "anyref" ||
+      mapped.kind === "eqref" ||
+      mapped.kind === "ref" ||
+      mapped.kind === "ref_null";
+  }
+
+  if (valueWantsRef) {
+    // Read the value off whichever boxed-any result type matched, leaving an
+    // externref. Only the any-carrier (externref-elem) result types carry an
+    // externref value; a numeric result's f64 value can't be returned here, so it
+    // falls to the inert null default (a numeric value statically typed `any` is
+    // not a shape F1 targets).
+    const anyEntries = resultEntries.filter((e) => e.elemValType.kind === "externref");
+    fctx.body.push(buildOpenResultRead(anyLocal, anyEntries, RESULT_VALUE_FIELD, { kind: "externref" }));
+    return { kind: "externref" };
+  }
+
+  // Numeric value (or no static info): the historical f64-singleton fast path.
+  const fieldType: ValType = { kind: "f64" };
+  const f64Entries = resultEntries.filter((e) => e.elemValType.kind === "f64");
+  fctx.body.push(buildOpenResultRead(anyLocal, f64Entries, RESULT_VALUE_FIELD, fieldType));
   return fieldType;
+}
+
+/**
+ * (#2864 F1) Build a runtime ref.test chain over candidate IteratorResult struct
+ * types, reading `fieldIdx` off the first match and leaving a `returnVT`. The
+ * default (no match) is the inert value for the field: `i32.const 1` (done) /
+ * `f64.const 0` / null externref. The matched struct's field type already equals
+ * `returnVT` for both the f64 singleton (value f64 / done i32) and the boxed-any
+ * result (value externref / done i32), so no per-entry coercion is needed.
+ */
+function buildOpenResultRead(
+  anyLocal: number,
+  entries: { typeIdx: number; elemValType: ValType }[],
+  fieldIdx: number,
+  returnVT: ValType,
+): Instr {
+  const def: Instr =
+    fieldIdx === RESULT_DONE_FIELD
+      ? { op: "i32.const", value: 1 }
+      : returnVT.kind === "externref"
+        ? ({ op: "ref.null.extern" } as Instr)
+        : { op: "f64.const", value: 0 };
+  // Each level emits its own `ref.test` condition then the `if`; the tail (no
+  // match) yields the inert default.
+  const wrap = (i: number): Instr[] => {
+    if (i >= entries.length) return [def];
+    const e = entries[i]!;
+    return [
+      { op: "local.get", index: anyLocal },
+      { op: "ref.test", typeIdx: e.typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: returnVT },
+        then: [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.cast", typeIdx: e.typeIdx },
+          { op: "struct.get", typeIdx: e.typeIdx, fieldIdx },
+        ],
+        else: wrap(i + 1),
+      } as Instr,
+    ];
+  };
+  // Wrap the chain in a single block so the caller pushes exactly one Instr.
+  return { op: "block", blockType: { kind: "val", type: returnVT }, body: wrap(0) } as Instr;
 }
 
 /**

@@ -1674,9 +1674,26 @@ export function compileStringBinaryOp(
       case ts.SyntaxKind.LessThanEqualsToken:
       case ts.SyntaxKind.GreaterThanToken:
       case ts.SyntaxKind.GreaterThanEqualsToken: {
-        // Lexicographic comparison via __str_compare (returns -1, 0, 1)
-        compileExpression(ctx, fctx, expr.left);
-        compileExpression(ctx, fctx, expr.right);
+        // Lexicographic comparison via __str_compare (returns -1, 0, 1).
+        // `__str_compare` takes `(ref $AnyString, ref $AnyString)`. A non-native
+        // string operand — e.g. a `String` wrapper object (`new String("1")`),
+        // a boxed/dynamic externref, or a number — must be lowered to a native
+        // `ref $AnyString` first or the module is invalid (#2873: standalone
+        // `new String("1") < "1"` pushed the raw struct/externref and tripped
+        // `__str_compare`'s param type → CompileError). The `+` concat case
+        // already does this via `compileNativeConcatOperand`; relational did
+        // not. Mirror it under `noJsHost` (standalone / WASI), where every
+        // operand lowers to a native `ref $AnyString` in pure Wasm via
+        // ToString (String wrapper → `tryStructToString`/`$__any_to_string`,
+        // dynamic externref → `__extern_toString`, number → `number_toString`).
+        // The legacy JS-host `nativeStrings` path keeps its original raw push.
+        if (noJsHost(ctx)) {
+          compileNativeConcatOperand(ctx, fctx, expr.left);
+          compileNativeConcatOperand(ctx, fctx, expr.right);
+        } else {
+          compileExpression(ctx, fctx, expr.left);
+          compileExpression(ctx, fctx, expr.right);
+        }
         const funcIdx = ctx.nativeStrHelpers.get("__str_compare");
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx });

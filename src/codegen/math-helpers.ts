@@ -982,7 +982,12 @@ export function emitInlineMathFunctions(ctx: CodegenContext, needed: Set<string>
       name: "Math_pow",
       params: [f64Type, f64Type],
       results: f64Result,
-      locals: [{ name: "absBase", type: f64Type }],
+      locals: [
+        { name: "absBase", type: f64Type }, // 2
+        { name: "powRes", type: f64Type }, // 3 — squaring accumulator
+        { name: "powBase", type: f64Type }, // 4 — repeatedly squared base
+        { name: "powN", type: i32Type }, // 5 — |exponent| as i32 loop counter
+      ],
       body: buildPowBody(expIdx, logIdx),
     });
   }
@@ -1551,7 +1556,84 @@ function buildPowBody(expIdx: number, logIdx: number): Instr[] {
       ],
     } as Instr,
 
-    // base < 0: non-integer exp → NaN; integer exp → handle sign
+    // ── Integer-exponent fast path (exact) ─────────────────────────────
+    // For an integer exponent that fits in an i32 counter, compute base^|exp|
+    // by exponentiation-by-squaring (mirrors V8's `power_double_int`). This is
+    // EXACT for integer base/exponent within f64 range, so e.g. 3**3 === 27 and
+    // (-3)**3 === -27, instead of the ~1-ULP-low `exp(exp*log|base|)` result
+    // (3**3 → 26.999…) the generic path below produces. Repeated multiplication
+    // also carries the sign of a negative base correctly (no separate odd/even
+    // negation needed) and overflows to ±Inf / underflows to ±0 the same way the
+    // generic path would for huge exponents. Reached only after the
+    // exp ∈ {0,1,-1,0.5,2} and base ∈ {0,±1,±Inf} special cases returned, so the
+    // base here is finite, non-zero, ≠ ±1 and the exponent is a finite integer
+    // not already handled. (#2887)
+    localGet(1),
+    localGet(1),
+    ftrunc,
+    feq, // exponent is an integer?
+    localGet(1),
+    fabs,
+    f64c(2147483648), // |exp| < 2^31 so it fits the i32 loop counter
+    flt,
+    { op: "i32.and" } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        f64c(1),
+        localSet(3), // powRes = 1
+        localGet(0),
+        localSet(4), // powBase = base
+        localGet(1),
+        fabs,
+        truncSatI32,
+        localSet(5), // powN = |exp|
+        blockLoop([
+          localGet(5),
+          i32eqz,
+          { op: "br_if", depth: 1 } as Instr,
+          // if (powN & 1) powRes *= powBase
+          localGet(5),
+          i32const(1),
+          { op: "i32.and" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [localGet(3), localGet(4), mul, localSet(3)],
+          } as Instr,
+          // powBase *= powBase
+          localGet(4),
+          localGet(4),
+          mul,
+          localSet(4),
+          // powN >>= 1 (unsigned)
+          localGet(5),
+          i32const(1),
+          { op: "i32.shr_u" } as Instr,
+          localSet(5),
+          { op: "br", depth: 0 } as Instr,
+        ]),
+        // Negative exponent → reciprocal
+        localGet(1),
+        f64c(0),
+        flt,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [f64c(1), localGet(3), div, localSet(3)],
+        } as Instr,
+        localGet(3),
+        ret,
+      ],
+    } as Instr,
+
+    // base < 0: non-integer exp → NaN; otherwise (a non-finite |exp|, i.e.
+    // ±Infinity, or an integer exponent too large for the i32 fast path above)
+    // → exp(exp * log(|base|)) with the sign reapplied for odd integer exponents.
+    // The common small-integer base<0 case already returned from the fast path;
+    // this branch only covers |exp| ≥ 2^31 and ±Infinity (where the result is
+    // ±Inf / 0 anyway, so the exp/log approximation is exact enough).
     localGet(0),
     f64c(0),
     flt,
@@ -1559,13 +1641,13 @@ function buildPowBody(expIdx: number, logIdx: number): Instr[] {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // Non-integer exponent → NaN
+        // Non-integer (finite) exponent → NaN
         localGet(1),
         localGet(1),
         ftrunc,
         fne,
         { op: "if", blockType: { kind: "empty" }, then: [f64c(NaN), ret] } as Instr,
-        // Integer exponent: result = exp(exp * log(|base|))
+        // |exp| == Infinity or huge integer: result = exp(exp * log(|base|))
         localGet(0),
         fabs,
         localSet(2),
@@ -1575,8 +1657,7 @@ function buildPowBody(expIdx: number, logIdx: number): Instr[] {
         mul,
         call(expIdx),
         localSet(2), // reuse absBase local to store result
-        // If exponent is odd, negate the result
-        // odd check: floor(exp/2)*2 != exp (for integer exp)
+        // If exponent is odd, negate the result (odd: floor(exp/2)*2 != exp)
         localGet(1),
         ftrunc,
         f64c(2),
@@ -1596,7 +1677,7 @@ function buildPowBody(expIdx: number, logIdx: number): Instr[] {
       ],
     } as Instr,
 
-    // General case: exp(exponent * log(base))
+    // General case (base > 0, non-integer exponent): exp(exponent * log(base))
     localGet(1),
     localGet(0),
     call(logIdx),
