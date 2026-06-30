@@ -1,8 +1,9 @@
 {
   "id": "2884",
   "assignee": "ttraenkler/explore6",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2884-decimaltohex-harness-shim",
   "claimed_at": "2026-06-30T05:28:17Z",
-  "updated_at": "2026-06-30T05:28:17Z"
+  "updated_at": "2026-06-30T05:39:06Z",
+  "released_at": "2026-06-30T05:39:06Z"
 }
