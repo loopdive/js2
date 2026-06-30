@@ -3037,10 +3037,21 @@ export function emitStandalonePromiseThen(
 }
 
 /**
- * #1326 — Check whether standalone-mode Promise codegen is active.
- * Auto-enables in WASI target mode (the JS host imports for Promise are
- * unavailable); opt-in elsewhere via a flag.
+ * #1326 / #2867 — Check whether standalone-mode (host-free) Promise codegen is
+ * active. Auto-enables for BOTH host-free targets:
+ *   - `--target wasi`       (`ctx.wasi`)       — the original #1326/#1326c path,
+ *   - `--target standalone` (`ctx.standalone`) — pure WasmGC, no JS host (#2867).
+ * Both lack the JS host's `Promise_*` / `__make_callback` imports, so they use
+ * the native `$Promise` struct + microtask ring + `__drain_microtasks` carrier.
+ * The JS-host (`gc`/`linear`) targets keep the host-import fast path.
+ *
+ * NOTE (#2867 PR-A): broadening this gate is necessary but not sufficient for
+ * the non-WASI export path — standalone has no `_start` auto-drain wrapper, so
+ * the microtask queue must be drained explicitly. `__drain_microtasks` is
+ * exported whenever the queue is registered (independent of `ctx.wasi`), and
+ * the standalone test262 harness drives it after the entry call so queued
+ * `.then` reactions actually run.
  */
 export function isStandalonePromiseActive(ctx: CodegenContext): boolean {
-  return ctx.wasi === true;
+  return ctx.wasi === true || ctx.standalone === true;
 }
