@@ -2472,10 +2472,12 @@ ${preamble}
 ${hoistedDecls}
 ${implicitDecls.trim()}
 `;
-    // (#2867) Microtask-drain-before-verdict deferred — see the note on `postBody`
-    // below (blocked on the #1897 guard adopting host-free accounting).
+    // (#2867) Same microtask-drain-before-verdict as the synchronous wrapper —
+    // see the note on `postBody` below. Bare statement → byte-neutral no-op off
+    // the Promise path; honest verdict credited by the #2890 host-free-aware guard.
     const tlaPostBody = `
 export function test(): number {
+  __drain_microtasks();
   if (__fail) { return __fail; }
   return 1;
 }
@@ -2496,22 +2498,23 @@ export function test(): number {
   ${implicitDecls}
   try {
     `;
-  // (#2867) NOTE: an honest microtask-drain-before-verdict (`__drain_microtasks();`
-  // injected here) is the correct end-state — native `.then`/`$DONE` reactions are
-  // queued, not run synchronously, so a reaction-gated async test only records its
-  // real verdict once the queue drains. The `__drain_microtasks()` compiler
-  // intrinsic (calls.ts) exists and is byte-neutral off the Promise path. The
-  // injection is deliberately NOT wired yet: the merge_group #1897 standalone
-  // regression guard counts raw status pass→fail flips and is not host-free-aware,
-  // so converting a leaky/false-pass into an honest host-free fail trips it even
-  // though #2879 §4 says such a flip is NOT a real regression. Re-enable this drain
-  // injection once the #1897 guard excludes leaky-baseline pass→fail (host-free
-  // accounting). Until then the verdict is read directly after the body.
+  // (#2867) Drain the native microtask queue AFTER the user body runs but BEFORE
+  // the `__fail` verdict is read. Standalone/WASI Promise `.then` reactions (and
+  // async `$DONE` callbacks) are QUEUED, not run synchronously, so the assertions
+  // they contain set `__fail` only once the queue drains. `__drain_microtasks()`
+  // is a compiler intrinsic (calls.ts): a single native drain call when a Promise
+  // queue was registered, and — critically — emits NOTHING for every JS-host
+  // compile and every Promise-free module (no-op when no queue exists), so the
+  // bare statement keeps the `test()` wrapper BYTE-IDENTICAL off the Promise path.
+  // Re-enabled now that the #1897 standalone guard is host-free-aware (#2890): a
+  // leaky/false-pass turning into an honest host-free fail is credited (not a
+  // regression) per #2879 §4, so the honest verdict can land.
   const postBody = `
   } catch (e) {
     if (!__fail) __fail = -1;
     throw e;
   }
+  __drain_microtasks();
   if (__fail) { return __fail; }
   return 1;
 }
