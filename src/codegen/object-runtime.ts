@@ -5293,6 +5293,72 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
 
+  // ── __create_descriptor(value, flags) -> externref (#2874 standalone-native) ─
+  //
+  // Standalone-native carrier for the host `__create_descriptor` consumed by the
+  // `Object.getOwnPropertyDescriptor` typed-receiver fast path
+  // (`expressions/calls.ts:6652`/`:6808`). That fast path inlines `struct.get`
+  // for a statically-typed receiver, then calls `__create_descriptor(value,
+  // flags)` to wrap the field value in a data descriptor. The host import has no
+  // standalone carrier, so the typed-receiver case leaked `env::__create_descriptor`
+  // and the standalone module trapped (#2874; the `any`-typed / inline-literal
+  // receiver already resolves natively).
+  //
+  // Builds a fresh DATA descriptor `$Object`
+  // `{ value, writable, enumerable, configurable }` from the value externref +
+  // the flag bits (1=writable, 2=enumerable, 4=configurable) — identical shape to
+  // the host `runtime.ts:__create_descriptor` and to the data branch of the
+  // native `__getOwnPropertyDescriptor` above. Keys are native `$AnyString`s; the
+  // attribute booleans are boxed via `__box_boolean`.
+  //
+  // params: 0=value(externref) 1=flags(i32) ; locals: 2=desc(externref)
+  {
+    addUnionImportsViaRegistry(ctx);
+    const boxBoolIdx = ctx.funcMap.get("__box_boolean")!;
+    const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object")!;
+    const externSetCdIdx = ctx.funcMap.get("__extern_set")!;
+
+    // `desc["<key>"] = <value externref>` — desc is in local 2.
+    const setKeyCd = (key: string, valueInstrs: Instr[]): Instr[] => [
+      { op: "local.get", index: 2 },
+      ...nativeStringLiteralInstrs(ctx, key),
+      { op: "extern.convert_any" } as Instr,
+      ...valueInstrs,
+      { op: "call", funcIdx: externSetCdIdx },
+    ];
+
+    // Box `(flags & mask) != 0` as a JS boolean externref.
+    const boolFlagCd = (mask: number): Instr[] => [
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: mask },
+      { op: "i32.and" },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ne" },
+      { op: "call", funcIdx: boxBoolIdx },
+    ];
+
+    const body: Instr[] = [
+      // desc = __new_plain_object()
+      { op: "call", funcIdx: newPlainObjectIdx },
+      { op: "local.set", index: 2 },
+      // desc.value = value (param 0)
+      ...setKeyCd("value", [{ op: "local.get", index: 0 }]),
+      // desc.writable / enumerable / configurable = box(flags & bit)
+      ...setKeyCd("writable", boolFlagCd(FLAG_WRITABLE)),
+      ...setKeyCd("enumerable", boolFlagCd(FLAG_ENUMERABLE)),
+      ...setKeyCd("configurable", boolFlagCd(FLAG_CONFIGURABLE)),
+      // return desc
+      { op: "local.get", index: 2 },
+    ];
+    registerNative(
+      "__create_descriptor",
+      [{ kind: "externref" }, { kind: "i32" }],
+      [{ kind: "externref" }],
+      [{ name: "desc", type: { kind: "externref" } }],
+      body,
+    );
+  }
+
   // ── __getOwnPropertyNames(externref obj) -> externref (#2042 S3) ──────────
   //
   // `Object.getOwnPropertyNames(obj)` / `Reflect.ownKeys(obj)` (string subset)

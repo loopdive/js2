@@ -2171,6 +2171,9 @@ export function compileArrayPrototypeCall(
 
   // Check if the method is a known array method
   if (!ARRAY_METHODS.has(methodName)) return undefined;
+  // (#2863 Phase 2) `toLocaleString` is array-native only under standalone/wasi;
+  // host keeps the `__extern_toLocaleString` path.
+  if (methodName === "toLocaleString" && !ctx.standalone && !ctx.wasi) return undefined;
 
   // Resolve array info from shape map or TypeScript type
   let receiverTsType: ts.Type | undefined;
@@ -2845,6 +2848,11 @@ const ARRAY_METHODS = new Set([
   // default "," separator. Without this, it fell through to the generic object
   // dispatch and produced "[object Array]".
   "toString",
+  // (#2863 Phase 2) Array/TypedArray.prototype.toLocaleString — recognised only
+  // under --target standalone/wasi (host-guarded at the gates below), where it
+  // has no host `__extern_toLocaleString` carrier. The locale-independent
+  // default collapses to the same comma-join as toString (§23.1.3.32).
+  "toLocaleString",
   // TypedArray-specific (#1664) — native WasmGC lowering avoids the generic
   // __extern_get / __extern_length host-import fallback under --target wasi.
   "set",
@@ -2869,6 +2877,11 @@ export function compileArrayMethodCall(
   const methodName =
     overrideMethodName ?? (ts.isPropertyAccessExpression(propAccess) ? propAccess.name.text : undefined);
   if (!methodName || !ARRAY_METHODS.has(methodName)) return undefined;
+  // (#2863 Phase 2) `toLocaleString` is array-dispatched ONLY under standalone/
+  // wasi (no host `__extern_toLocaleString` carrier). In host (gc) mode fall
+  // through to the host `__extern_toLocaleString` path (real Intl grouping +
+  // per-element abrupt-completion propagation) — return undefined here.
+  if (methodName === "toLocaleString" && !ctx.standalone && !ctx.wasi) return undefined;
 
   // (#2007/#1448) Record closure-allocating array methods so the standalone
   // vec-concat join fast-path can avoid a late `number_toString` registration
@@ -3045,6 +3058,10 @@ export function compileArrayMethodCall(
     // with the default "," separator. compileArrayJoin already defaults the
     // separator to "," when no argument is present, and toString receives no
     // arguments, so the two share the same lowering.
+    // (#2863 Phase 2) Array/TypedArray.prototype.toLocaleString — standalone/wasi
+    // only (host-guarded above); the locale-independent default is the same
+    // comma-join. Shares the join lowering.
+    case "toLocaleString":
     case "toString":
       // #1286: when the probe found the receiver to be externref at runtime,
       // route through the host-import fallback. The WasmGC-native path expects

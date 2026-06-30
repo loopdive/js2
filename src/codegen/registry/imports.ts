@@ -8,6 +8,7 @@
 import type { Import, Instr, TagDef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { buildStrictHostImportError, isHostImportAllowed } from "../host-import-allowlist.js";
+import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "../../string-surrogate.js";
 import { addFuncType } from "./types.js";
 
 /**
@@ -111,7 +112,15 @@ export function addStringConstantGlobal(ctx: CodegenContext, value: string): voi
   const oldNumImportGlobals = ctx.numImportGlobals;
 
   const globalIdx = ctx.numImportGlobals;
-  addImport(ctx, "string_constants", value, {
+  // (#2880) A wasm import field name must be valid UTF-8. A literal containing a
+  // lone surrogate cannot be its own field name (TextEncoder makes it lossy,
+  // V8 rejects WTF-8), so route it through the `string_constants16` namespace
+  // keyed by the hex of its UTF-16 code units (ASCII). The runtime mirrors this
+  // key in `buildStringConstants16`. Surrogate-free literals are unchanged.
+  const useSurrogateNs = hasLoneSurrogate(value);
+  const importModule = useSurrogateNs ? STRING_CONSTANTS16_NS : "string_constants";
+  const importName = useSurrogateNs ? hexCodeUnits(value) : value;
+  addImport(ctx, importModule, importName, {
     kind: "global",
     type: { kind: "externref" },
     mutable: false,

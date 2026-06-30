@@ -94,3 +94,23 @@ Standalone CE → pass:
 
 Full `merge_group` + standalone high-water; zero host-mode regression
 (`ctx.standalone`-gated).
+
+## Progress (2026-06-30)
+
+- **Phase 2 (`__extern_toLocaleString`) — DONE** (this slice). Array/TypedArray
+  receivers route to the native comma-join (shared with `toString`, gated to
+  standalone/wasi in `array-methods.ts`); generic dynamic receivers route to the
+  native `__extern_toString` (`expressions/calls.ts`). Host (gc) mode keeps
+  `__extern_toLocaleString` for real Intl. Tests:
+  `tests/issue-2863-standalone-tolocalestring.test.ts`.
+- **Phase 1 staleness note** — the issue's premise that namespace data constants
+  (`Math.PI`/`E`/`LN2`, `Number.MAX_SAFE_INTEGER`/`EPSILON`) refuse is now
+  **partly stale**: those statically-named reads already compile + fold on
+  current main. The remaining Phase 1 work is the static-METHOD **value reads**
+  (`JSON.stringify`/`Reflect.get` as a value), reflective `any`-typed
+  `namespace[computedKey]` (currently TRAPs, not CE), and any residual
+  `__get_builtin` after #2861 landed — re-measure the 314 bucket against current
+  main before picking it up.
+- **Phase 3 (`Object.groupBy`/`fromEntries`)** — NOT started. `Object.groupBy`
+  also needs a lib-types update (currently a TS-level "does not exist on
+  ObjectConstructor" error, separate from codegen).

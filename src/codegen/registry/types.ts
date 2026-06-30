@@ -25,6 +25,18 @@ function funcTypeKey(params: ValType[], results: ValType[]): string {
       if ((v as { boolean?: true }).boolean) s += ":bool";
       else if ((v as { symbol?: true }).symbol) s += ":sym";
     }
+    // (#2846) Same brand-propagation hazard as i32 (#2795), one slot down: a
+    // bigint-branded `i64` (`{ kind:"i64"; bigint:true }`) backs a BigInt and
+    // boxes to the host via `__box_bigint`, whereas a plain native `i64`
+    // (`type i64 = number`) boxes via `__box_number` (`f64.convert_i64_s`,
+    // lossy past 2^53). A brand-blind dedup collapses a `(...)->bigint`
+    // signature onto a previously-registered plain-`i64` one, so
+    // `getWasmFuncReturnType` hands callers a PLAIN i64 and acorn's
+    // `stringToBigInt` return got boxed as a rounded number (#2846). Keep the
+    // branded i64 signature distinct.
+    else if (v.kind === "i64") {
+      if ((v as { bigint?: true }).bigint) s += ":big";
+    }
     return s;
   };
   return params.map(part).join(",") + "|" + results.map(part).join(",");
@@ -49,6 +61,12 @@ function valTypeEq(a: ValType, b: ValType): boolean {
   if (a.kind !== b.kind) return false;
   if ((a.kind === "ref" || a.kind === "ref_null") && (b.kind === "ref" || b.kind === "ref_null")) {
     return a.typeIdx === (b as { typeIdx: number }).typeIdx;
+  }
+  // (#2846) Keep the two i64 brands non-equal so `funcTypeEq` (structural-match
+  // callers) does not re-merge a bigint-branded i64 with a plain i64 — mirrors
+  // the `funcTypeKey` `:big` bucket above and the #2795 i32 precedent.
+  if (a.kind === "i64") {
+    return Boolean((a as { bigint?: true }).bigint) === Boolean((b as { bigint?: true }).bigint);
   }
   return true;
 }

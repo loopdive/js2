@@ -3137,7 +3137,37 @@ function compileNumberIsPredicate(
 ): ValType {
   const argTsType = ctx.checker.getTypeAtLocation(arg);
   const argWasm = resolveWasmType(ctx, argTsType);
-  const isStaticNumber = isNumberType(argTsType) || argWasm.kind === "f64" || argWasm.kind === "i32";
+
+  // #2034 follow-up: a `symbol`-typed argument is statically NOT a Number, so
+  // every `Number.is*` predicate is `false` (ES §21.1.2.x). A Symbol's Wasm
+  // representation is a single-slot reference that BOTH the i32/f64 "static
+  // number" fast path AND the runtime `__typeof_number` guard mis-handle (the
+  // guard reports it as a number), so neither generic arm yields the spec
+  // answer. Fold it at compile time: evaluate the argument for its side effects
+  // (the Symbol expression may be an observable call) and push `false`.
+  // (test262 Number/{isInteger,isFinite,isSafeInteger}/arg-is-not-number.js.)
+  if ((argTsType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
+    const t = compileExpression(ctx, fctx, arg);
+    if (t) fctx.body.push({ op: "drop" } as Instr);
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+
+  // Several non-Number primitive types reuse a numeric Wasm representation that
+  // would otherwise hijack the "static number" fast path and coerce, violating
+  // the no-coercion rule (ES §21.1.2.x):
+  //   - `boolean` is i32 (`true`→1.0 / `false`→0.0), and
+  //   - `undefined` / `void` / `null` lower to an f64 `NaN` (CLAUDE.md: "null/
+  //     undefined in f64 context → f64.const NaN"). For `isInteger`/`isFinite`/
+  //     `isSafeInteger` the NaN happens to yield the correct `false`, but
+  //     `Number.isNaN(undefined)` would wrongly return `true`.
+  // Exclude them so they take the runtime `__typeof_number` guard, which reports
+  // a non-number and yields `false`.
+  // (test262 Number/{isInteger,isFinite,isNaN,isSafeInteger}/arg-is-not-number.js.)
+  const nonNumberMask = ts.TypeFlags.BooleanLike | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
+  const isNonNumberPrimitive = (argTsType.flags & nonNumberMask) !== 0;
+  const isStaticNumber =
+    !isNonNumberPrimitive && (isNumberType(argTsType) || argWasm.kind === "f64" || argWasm.kind === "i32");
 
   if (isStaticNumber) {
     // Fast path: the argument is statically a number — apply the test directly.
@@ -5120,6 +5150,18 @@ function compileCallExpression(
       // non-Number value is `false` (ES §21.1.2.x). compileNumberIsPredicate
       // guards an any-typed argument with `__typeof_number` before applying the
       // numeric test; a static number keeps the direct f64 fast path.
+      // No argument ⇒ the argument is `undefined`, whose Type is not Number, so
+      // every `Number.is*` predicate returns `false` (ES §21.1.2.x). Without this
+      // the `arguments.length >= 1` guards below fall through to the generic
+      // member-call path and mis-handle the bare call.
+      // (test262 Number/{isInteger,isFinite,isNaN,isSafeInteger}/arg-is-not-number.js.)
+      if (
+        expr.arguments.length === 0 &&
+        (method === "isNaN" || method === "isInteger" || method === "isFinite" || method === "isSafeInteger")
+      ) {
+        fctx.body.push({ op: "i32.const", value: 0 });
+        return { kind: "i32" };
+      }
       if (method === "isNaN" && expr.arguments.length >= 1) {
         // NaN !== NaN is true; for any other number it's false.
         return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
@@ -6659,6 +6701,13 @@ function compileCallExpression(
     ) {
       const arg0 = expr.arguments[0]!;
       const arg1 = expr.arguments[1]!;
+
+      // (#2874) Under standalone, register the native object runtime so the
+      // typed-receiver fast path's `ensureLateImport("__create_descriptor", …)`
+      // below resolves to the native `__create_descriptor` (object-runtime.ts)
+      // instead of leaking the `env::__create_descriptor` host import (which has
+      // no standalone carrier — the module would trap). Idempotent.
+      if (ctx.standalone) ensureObjectRuntime(ctx);
 
       // Try compile-time fast path: known struct + literal property name
       const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
@@ -8748,84 +8797,154 @@ function compileCallExpression(
         return { kind: "f64" };
       }
       if (method === "UTC") {
-        // Date.UTC(year, month, day?, hours?, minutes?, seconds?, ms?)
-        // Same as new Date(y,m,d,...).getTime() but without the year 0-99 quirk
-        const daysFromCivilIdx = ensureDateDaysFromCivilHelper(ctx);
+        // Date.UTC(year, month?, date?, hours?, minutes?, seconds?, ms?) — §21.4.3.4.
+        //   1. y = ToNumber(year); each present component is ToNumber'd, else its
+        //      default (+0, or 1 for date).
+        //   8. If y is NaN, yr = NaN; else yr = MakeFullYear(y): if 0..99, 1900+y.
+        //   9. Return TimeClip(MakeDate(MakeDay(yr, m, dt), MakeTime(h,min,s,milli))).
+        // A non-finite component, or a |timestamp| > 8.64e15 (TimeClip §21.4.1.14),
+        // yields NaN. MakeDay (§21.4.1.12) rolls month overflow into the year:
+        // ym = yr + floor(m/12), mn = m modulo 12. This mirrors the proven
+        // new Date(y,m,…) constructor path in new-super.ts (#1343); the prior
+        // implementation skipped MakeFullYear, the non-finite/TimeClip clamp, the
+        // month normalization, and treated a missing year as 1970 instead of NaN.
         const args = expr.arguments;
 
-        // year
-        if (args.length >= 1) {
-          compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
-        } else {
-          fctx.body.push({ op: "f64.const", value: 1970 } as Instr);
+        // §21.4.3.4 step 1: with no year argument, y = ToNumber(undefined) = NaN,
+        // so the whole result is NaN (Date.UTC() ⇒ NaN).
+        if (args.length === 0) {
+          fctx.body.push({ op: "f64.const", value: NaN } as Instr);
+          return { kind: "f64" };
         }
+
+        const daysFromCivilIdx = ensureDateDaysFromCivilHelper(ctx);
+
+        // Non-finite accumulator: OR-in (v !== v) and (|v| > 8.64e15) for every
+        // *present* component (a missing arg uses a finite default and never
+        // contributes). i64.trunc_sat would otherwise silently clamp NaN/±Inf.
+        const nonFiniteLocal = allocTempLocal(fctx, { kind: "i32" });
+        fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+        fctx.body.push({ op: "local.set", index: nonFiniteLocal } as Instr);
+        const checkNonFinite = (f64Local: number) => {
+          fctx.body.push({ op: "local.get", index: nonFiniteLocal } as Instr);
+          fctx.body.push({ op: "local.get", index: f64Local } as Instr);
+          fctx.body.push({ op: "local.get", index: f64Local } as Instr);
+          fctx.body.push({ op: "f64.ne" } as Instr); // NaN: v !== v
+          fctx.body.push({ op: "i32.or" } as Instr);
+          fctx.body.push({ op: "local.get", index: f64Local } as Instr);
+          fctx.body.push({ op: "f64.abs" } as Instr);
+          fctx.body.push({ op: "f64.const", value: 8.64e15 } as Instr);
+          fctx.body.push({ op: "f64.gt" } as Instr);
+          fctx.body.push({ op: "i32.or" } as Instr);
+          fctx.body.push({ op: "local.set", index: nonFiniteLocal } as Instr);
+        };
+
+        // year → i64 (ToNumber via f64 coercion; non-finite tracked)
+        compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
+        const yearF64 = allocTempLocal(fctx, { kind: "f64" });
+        fctx.body.push({ op: "local.tee", index: yearF64 } as Instr);
+        checkNonFinite(yearF64);
         fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
         const yearL = allocTempLocal(fctx, { kind: "i64" });
         fctx.body.push({ op: "local.set", index: yearL } as Instr);
+        releaseTempLocal(fctx, yearF64);
 
-        // month (0-indexed) + 1
-        if (args.length >= 2) {
-          compileExpression(ctx, fctx, args[1]!, { kind: "f64" });
-          fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-          fctx.body.push({ op: "i64.const", value: 1n } as Instr);
-          fctx.body.push({ op: "i64.add" } as Instr);
-        } else {
-          fctx.body.push({ op: "i64.const", value: 1n } as Instr);
-        }
-        const monthL = allocTempLocal(fctx, { kind: "i64" });
-        fctx.body.push({ op: "local.set", index: monthL } as Instr);
+        // MakeFullYear §21.4.1.27: if 0 ≤ yr ≤ 99, yr += 1900.
+        fctx.body.push(
+          { op: "local.get", index: yearL } as Instr,
+          { op: "i64.const", value: 0n } as Instr,
+          { op: "i64.ge_s" } as Instr,
+          { op: "local.get", index: yearL } as Instr,
+          { op: "i64.const", value: 99n } as Instr,
+          { op: "i64.le_s" } as Instr,
+          { op: "i32.and" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: yearL } as Instr,
+              { op: "i64.const", value: 1900n } as Instr,
+              { op: "i64.add" } as Instr,
+              { op: "local.set", index: yearL } as Instr,
+            ],
+          },
+        );
 
-        // day (default 1)
-        if (args.length >= 3) {
-          compileExpression(ctx, fctx, args[2]!, { kind: "f64" });
-          fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-        } else {
-          fctx.body.push({ op: "i64.const", value: 1n } as Instr);
-        }
-        const dayL = allocTempLocal(fctx, { kind: "i64" });
-        fctx.body.push({ op: "local.set", index: dayL } as Instr);
+        // Optional component → i64. A present arg is ToNumber'd + non-finite
+        // tracked; an absent arg uses its (finite) default.
+        const compilePart = (idx: number, def: bigint): number => {
+          if (args.length > idx) {
+            compileExpression(ctx, fctx, args[idx]!, { kind: "f64" });
+            const f = allocTempLocal(fctx, { kind: "f64" });
+            fctx.body.push({ op: "local.tee", index: f } as Instr);
+            checkNonFinite(f);
+            releaseTempLocal(fctx, f);
+            fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
+          } else {
+            fctx.body.push({ op: "i64.const", value: def } as Instr);
+          }
+          const l = allocTempLocal(fctx, { kind: "i64" });
+          fctx.body.push({ op: "local.set", index: l } as Instr);
+          return l;
+        };
 
-        // hours (default 0)
-        if (args.length >= 4) {
-          compileExpression(ctx, fctx, args[3]!, { kind: "f64" });
-          fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-        } else {
-          fctx.body.push({ op: "i64.const", value: 0n } as Instr);
-        }
-        const hoursL = allocTempLocal(fctx, { kind: "i64" });
-        fctx.body.push({ op: "local.set", index: hoursL } as Instr);
+        // month is 0-indexed (default +0). date defaults to 1; the rest to +0.
+        const monthL = compilePart(1, 0n);
+        const dayL = compilePart(2, 1n);
+        const hoursL = compilePart(3, 0n);
+        const minutesL = compilePart(4, 0n);
+        const secondsL = compilePart(5, 0n);
+        const msL = compilePart(6, 0n);
 
-        // minutes (default 0)
-        if (args.length >= 5) {
-          compileExpression(ctx, fctx, args[4]!, { kind: "f64" });
-          fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-        } else {
-          fctx.body.push({ op: "i64.const", value: 0n } as Instr);
-        }
-        const minutesL = allocTempLocal(fctx, { kind: "i64" });
-        fctx.body.push({ op: "local.set", index: minutesL } as Instr);
+        // MakeDay §21.4.1.12: ym = yr + floor(m/12); mn = m modulo 12. i64.div_s/
+        // rem_s truncate toward zero, so adjust for a negative remainder to get the
+        // Euclidean floor-div / non-negative modulo. days_from_civil expects a
+        // 1..12 civil month, so feed it (mn + 1) and the rolled year.
+        const qL = allocTempLocal(fctx, { kind: "i64" });
+        const rL = allocTempLocal(fctx, { kind: "i64" });
+        fctx.body.push(
+          { op: "local.get", index: monthL } as Instr,
+          { op: "i64.const", value: 12n } as Instr,
+          { op: "i64.div_s" } as Instr,
+          { op: "local.set", index: qL } as Instr,
+          { op: "local.get", index: monthL } as Instr,
+          { op: "i64.const", value: 12n } as Instr,
+          { op: "i64.rem_s" } as Instr,
+          { op: "local.set", index: rL } as Instr,
+          // if (r < 0) { q -= 1; r += 12 }
+          { op: "local.get", index: rL } as Instr,
+          { op: "i64.const", value: 0n } as Instr,
+          { op: "i64.lt_s" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: qL } as Instr,
+              { op: "i64.const", value: 1n } as Instr,
+              { op: "i64.sub" } as Instr,
+              { op: "local.set", index: qL } as Instr,
+              { op: "local.get", index: rL } as Instr,
+              { op: "i64.const", value: 12n } as Instr,
+              { op: "i64.add" } as Instr,
+              { op: "local.set", index: rL } as Instr,
+            ],
+          },
+          // year += q
+          { op: "local.get", index: yearL } as Instr,
+          { op: "local.get", index: qL } as Instr,
+          { op: "i64.add" } as Instr,
+          { op: "local.set", index: yearL } as Instr,
+          // civil month = r + 1  (reuse monthL)
+          { op: "local.get", index: rL } as Instr,
+          { op: "i64.const", value: 1n } as Instr,
+          { op: "i64.add" } as Instr,
+          { op: "local.set", index: monthL } as Instr,
+        );
+        releaseTempLocal(fctx, rL);
+        releaseTempLocal(fctx, qL);
 
-        // seconds (default 0)
-        if (args.length >= 6) {
-          compileExpression(ctx, fctx, args[5]!, { kind: "f64" });
-          fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-        } else {
-          fctx.body.push({ op: "i64.const", value: 0n } as Instr);
-        }
-        const secondsL = allocTempLocal(fctx, { kind: "i64" });
-        fctx.body.push({ op: "local.set", index: secondsL } as Instr);
-
-        // ms (default 0)
-        if (args.length >= 7) {
-          compileExpression(ctx, fctx, args[6]!, { kind: "f64" });
-          fctx.body.push({ op: "i64.trunc_sat_f64_s" } as Instr);
-        } else {
-          fctx.body.push({ op: "i64.const", value: 0n } as Instr);
-        }
-        const msL = allocTempLocal(fctx, { kind: "i64" });
-        fctx.body.push({ op: "local.set", index: msL } as Instr);
-
-        // days_from_civil(year, month, day) * 86400000 + h*3600000 + m*60000 + s*1000 + ms
+        // ts = days_from_civil(year, civilMonth, day) * 86400000
+        //      + h*3600000 + min*60000 + s*1000 + ms
         fctx.body.push(
           { op: "local.get", index: yearL } as Instr,
           { op: "local.get", index: monthL } as Instr,
@@ -8847,9 +8966,28 @@ function compileCallExpression(
           { op: "i64.add" } as Instr,
           { op: "local.get", index: msL } as Instr,
           { op: "i64.add" } as Instr,
+        );
+        const tsL = allocTempLocal(fctx, { kind: "i64" });
+        fctx.body.push({ op: "local.set", index: tsL } as Instr);
+
+        // TimeClip §21.4.1.14: any non-finite component, or |ts| > 8.64e15 ⇒ NaN.
+        fctx.body.push(
+          { op: "local.get", index: nonFiniteLocal } as Instr,
+          { op: "local.get", index: tsL } as Instr,
           { op: "f64.convert_i64_s" } as Instr,
+          { op: "f64.abs" } as Instr,
+          { op: "f64.const", value: 8.64e15 } as Instr,
+          { op: "f64.gt" } as Instr,
+          { op: "i32.or" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [{ op: "f64.const", value: NaN } as Instr],
+            else: [{ op: "local.get", index: tsL } as Instr, { op: "f64.convert_i64_s" } as Instr],
+          },
         );
 
+        releaseTempLocal(fctx, tsL);
         releaseTempLocal(fctx, msL);
         releaseTempLocal(fctx, secondsL);
         releaseTempLocal(fctx, minutesL);
@@ -8857,6 +8995,7 @@ function compileCallExpression(
         releaseTempLocal(fctx, dayL);
         releaseTempLocal(fctx, monthL);
         releaseTempLocal(fctx, yearL);
+        releaseTempLocal(fctx, nonFiniteLocal);
 
         return { kind: "f64" };
       }
@@ -10831,12 +10970,18 @@ function compileCallExpression(
     // graceful null-extern fallback and the test fails with "null/undefined
     // access" instead of reaching the expected throw.
     if (propAccess.name.text === "toLocaleString" && expr.arguments.length === 0) {
-      const toLSIdx = ensureLateImport(
-        ctx,
-        "__extern_toLocaleString",
-        [{ kind: "externref" }],
-        [{ kind: "externref" }],
-      );
+      // (#2863 Phase 2) Standalone/WASI have no host `__extern_toLocaleString`
+      // (it's a dynamic-shape refusal — a host-only import with no native
+      // carrier). Without ECMA-402 the spec default
+      // `Object.prototype.toLocaleString` (§20.1.3.5) just calls the receiver's
+      // `toString`, and `Array.prototype.toLocaleString` (§23.1.3.32) joins the
+      // per-element `toLocaleString` results — both collapse to the same comma-
+      // join as `toString` in a locale-independent runtime. Route to the NATIVE
+      // `__extern_toString` (registered host-free under standalone via #1866),
+      // which removes the CE while matching the locale-independent value. Host
+      // (gc) mode keeps `__extern_toLocaleString` for real Intl grouping.
+      const toLSName = ctx.standalone || ctx.wasi ? "__extern_toString" : "__extern_toLocaleString";
+      const toLSIdx = ensureLateImport(ctx, toLSName, [{ kind: "externref" }], [{ kind: "externref" }]);
       flushLateImportShifts(ctx, fctx);
       if (toLSIdx !== undefined) {
         const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });

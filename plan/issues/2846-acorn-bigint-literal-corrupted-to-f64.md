@@ -1,12 +1,13 @@
 ---
 id: 2846
 title: "compiled-acorn corrupts BigInt literals — parsed/marshalled as float64, losing value AND the `bigint` string"
-status: ready
+status: done
 sprint: current
 priority: high
 horizon: m
 feasibility: hard
 created: 2026-06-29
+completed: 2026-06-30
 task_type: bugfix
 area: codegen, runtime
 language_feature: bigint
@@ -65,3 +66,31 @@ string corruption; the `value` BigInt object may defer to the i64-brand work.
   string field exact (no `primitive-mismatch @ .bigint`).
 - `value` either a real BigInt or documented-deferred to the i64-brand gate.
 - No test262 regression.
+
+## Resolution (2026-06-30)
+
+Fixed via the architect's narrow path (a): a 2-LOC change to the func-type
+dedup chokepoint in `src/codegen/registry/types.ts`.
+
+- `funcTypeKey` now emits a `:big` suffix for a bigint-branded i64 result/param,
+  so a `(...)->i64:big` signature keys distinctly from a plain `(...)->i64`.
+- `valTypeEq` gains an i64 `bigint`-brand equality check so structural-match
+  callers (`funcTypeEq`) do not re-merge the two.
+
+Root cause confirmed by probe: acorn's `stringToBigInt` has signature
+`(externref) -> i64:big`; on unfixed main its brand-blind key `externref|i64`
+collided (cacheHit) with a pre-existing plain `(externref) -> i64` def, so
+`getWasmFuncReturnType` returned a plain i64 → boxed via `__box_number`
+(`f64.convert_i64_s`) → precision loss past 2^53. Same class as #2795 (i32
+boolean/symbol brand).
+
+### Verify-first (acorn differential corpus, `corpus/literals.js` = `const big = 9007199254740993n;`)
+
+- BEFORE (main): `REAL×2` — `bigint-mismatch @ .value` expected `9007199254740993n`
+  actual `9007199254740992`; `primitive-mismatch @ .bigint` expected
+  `"9007199254740993"` actual `"9007199254740992"`.
+- AFTER (fix): `corpus/literals.js: EQUAL(±quirks)`, REAL=0 — `value` is a real
+  BigInt and `bigint` is the exact source digit string.
+
+Regression test: `tests/issue-2846.test.ts` (registry-level dedup-distinctness
+assertion that fails on unfixed main + BigInt round-trip e2e guards).

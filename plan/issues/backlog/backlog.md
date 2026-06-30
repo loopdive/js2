@@ -2,11 +2,25 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-06-30 — IR front-end migration ratchet (queued `sprint: current`)
+
+Direct-AST→Wasm → typed-IR migration, sliced by `IrFallbackReason` bucket. Epic
+[#2855](../2855-ir-frontend-migration-ratchet-buckets-to-zero.md) (tracking;
+supersedes stale `#1530`). Queued children (`sprint: current`, `status: ready`):
+
+- [#2856](../2856-ir-body-shape-rejected-to-zero.md) — `body-shape-rejected` (31) → 0 — high, horizon L (dominant).
+- [#2857](../2857-ir-class-method-residual-to-zero.md) — `class-method` (6) → 0 — medium, horizon M (#1370 Phase C/D/E residual).
+- [#2858](../2858-ir-call-graph-closure-to-zero.md) — `call-graph-closure` (7) → 0 — medium, horizon M (depends_on #2856+#2857).
+- [#2859](../2859-ir-param-type-not-resolvable-to-zero.md) — `param-type-not-resolvable` (1) → 0 — low, horizon S.
+
+Deferred (not queued): `async-function` (4) → #1373b.
+
 ## 2026-06-23 — Sprint-65 value-rep substrate landings (session)
 
 Architecture-spine slices that merged this session (0-regr vs `merge_group`
 floor #2097). They **advance** their parent epics — none close them, so the
 parents remain carried to s66 (see `plan/issues/sprints/65.md` carry-over):
+
 - [#2580](../2580-dynamic-receiver-length-undefined-substrate.md) M3 Stage A (PR #1975) — standalone inline-literal `[[Prototype]]` link; M3 B-pre `__is_truthy` desync fix open as PR #1986 (BLOCKED).
 - #2623 (PR #1977) — class-extends-Promise value-read identity unified (+1 row); feeds Promise epic #1042/#2614/promise-async-capability-residual.
 - #2623-A (PR #1981) — async-closure `alreadyBoxed` capture box-depth; feeds async epic #1042.
@@ -26,6 +40,7 @@ class/TA descriptors, #2036 array generics, #2042 defineProperty, #2039 invalid-
 ToPrimitive value-rep, BigInt #2044) and not deferred (async-gen/Proxy/eval/Temporal).
 All four also fail in JS-host, so devs can validate without standalone-only setup.
 Filed `sprint: 64`, `status: ready`:
+
 - [#2200](../2200-annexb-block-level-function-hoisting.md) — Annex B B.3.3 block-level function hoisting (~186) — medium, **highest impact**
 - [#2203](../2203-array-destructuring-elision-default-miscount.md) — array destructuring elision + default miscount (~54 standalone CE) — medium
 - [#2202](../2202-arguments-trailing-comma-spread-generator-method.md) — `arguments.length` for trailing-comma+spread in generator methods (~30) — medium
@@ -354,6 +369,7 @@ overlaps (#1098/#1172/#1095/#1530/#1850/#1852/#1854/#1855/#1858–#1860) were
 not re-filed; the issues below are net-new.
 
 **Fail-loud / correctness (children of #1858):**
+
 - [#1937](../1937-linear-backend-fail-loud-break-continue.md) — linear backend: `break`/`continue` never compiled (silent infinite loops); dispatchers need default-arm diagnostics — **critical**, easy, **backlog**
 - [#1941](../1941-differential-testing-optimize-output.md) — differential testing of `--optimize` output (wasm-opt miscompiles currently invisible; 3 reviewers converged) — **critical**, easy, **backlog**
 - [#1939](../1939-encodeinstr-default-throw-funcref-validation.md) — emit: `encodeInstr` silently drops unknown ops; default-throw + un-gate `validateFuncRefs` + round-trip test — high, easy, **backlog**
@@ -363,6 +379,7 @@ not re-filed; the issues below are net-new.
 - [#1940](../1940-wit-generator-silent-param-drop.md) — WIT generator silently drops unmappable params (arity mismatch) — medium, easy, **backlog**
 
 **Consolidation (divergent copies already shipping bugs):**
+
 - [#1922](../1922-shared-ir-traversal-while-loop-dce-defect.md) — shared IR traversal module; fixes probe-verified live defect (ordinary `while` loops demote off the IR path) — high, medium, **backlog**
 - [#1917](../1917-single-coercion-engine.md) — one coercion engine (4 matrices disagree: externref→f64 unboxes vs `f64.const 0` by context) — high, medium, **backlog**
 - [#1927](../1927-single-pipeline-driver.md) — one front-end pipeline driver (3 divergent clones; multi-file silently skips early errors/hardened/IR/JSX) — high, medium, **backlog**
@@ -372,6 +389,7 @@ not re-filed; the issues below are net-new.
 - [#1931](../1931-decompose-detect-early-errors-treeshake.md) — decompose `detectEarlyErrors` (3,350-line fn), run on every path; wire or delete dead `treeshake` option — medium, medium, **backlog**
 
 **Gates that don't match documentation:**
+
 - [#1943](../1943-enforce-ratio-bucket-thresholds-ci.md) — enforce the documented 10%-ratio / 50-per-bucket thresholds in CI (today only net ≥ 0 is enforced) — high, easy, **backlog**
 - [#1942](../1942-compile-time-regression-gate.md) — compile-time regression gate (`pass→compile_timeout` excluded from every gate today) — high, easy, **backlog**
 - [#1923](../1923-meter-ir-post-claim-demotions.md) — meter IR post-claim demotions in the fallback ratchet (build/verify/lower failures invisible to CI) — high, easy, **backlog**
@@ -380,6 +398,7 @@ not re-filed; the issues below are net-new.
 - [#1944](../1944-ci-cost-bundle-once-pnpm-cache.md) — CI cost: bundle-once artifact + pnpm cache (~120–170 wasted runner-min/run) — medium, medium, **backlog**
 
 **Type information & performance:**
+
 - [#1946](../1946-closure-devirtualization-singleton-callees.md) — closure devirtualization for singleton callees (~15-instr dynamic dispatch Binaryen provably can't remove) — high, medium, **backlog**
 - [#1948](../1948-shared-numeric-i32-lattice.md) — shared numeric i32 lattice (3 duplicated matchers; `i-1` f64 round-trip survives -O3) — high, medium, **backlog**
 - [#1947](../1947-end-to-end-gc-ref-typing.md) — end-to-end GC-ref typing; externref at host boundary only (unlocks Binaryen GC passes) — high, hard, **backlog**, needs `/architect-spec`
@@ -387,15 +406,18 @@ not re-filed; the issues below are net-new.
 - [#1950](../1950-default-on-optimization-pipeline.md) — default-on optimization (CLI/playground `-O` default; tiny always-on cleanups; **blocked by #1941**) — medium, easy, **backlog**
 
 **Diagnostics & API quality:**
+
 - [#1928](../1928-source-position-remapping-preparse-rewrites.md) — source-position remapping for pre-parse rewrites (diagnostics report wrong lines whenever a rewrite fires) — high, medium, **backlog**
 - [#1929](../1929-compileerror-file-flatten-chains.md) — `CompileError.file` + flattened TS diagnostic chains — medium, easy, **backlog**
 
 **Runtime hygiene:**
+
 - [#1932](../1932-version-env-abi.md) — version the env ABI (~200 names, no handshake; regex engine already shows the pattern) — high, easy, **backlog**
 - [#1933](../1933-runtime-multi-instance-isolation-leak.md) — multi-instance isolation (symbol/RegExp state bleed) + `_subclassCtors` instance-retention leak — high, medium, **backlog**
 - [#1935](../1935-retire-undefined-sentinel-protocol.md) — retire the undefined-as-sentinel protocol (`MISS` symbol; getters returning `undefined` misread as absent) — medium, medium, **backlog**
 
 **Strategic (architect-spec first):**
+
 - [#1916](../1916-symbolic-function-references-codegen.md) — symbolic function references in WasmGC codegen; retire the late-import index-shift machinery (≥7 regressions trace to it) — high, hard, **backlog**, needs `/architect-spec`
 - [#1930](../1930-typeoracle-type-query-boundary.md) — TypeOracle: one type-query boundary (~397 raw checker sites; unblocks TS7; kills suppression heuristics) — high, hard, **backlog**, needs `/architect-spec`
 - [#1936](../1936-async-contract-migration-enable-cps.md) — async contract migration: enable the built-but-disabled CPS lowering via call-site census + await-elision — high, hard, **backlog**, needs `/architect-spec`
@@ -405,11 +427,12 @@ not re-filed; the issues below are net-new.
 ## 2026-06-12 — Sprint-62 planning triage (Fable architecture sprint)
 
 Full record: `plan/issues/sprints/62.md` (+ pre-staged `63.md`). Summary:
+
 - Scheduled into 62 (architecture/Fable): #1804 #1853 #1854 #1855(spec)
   #1899 #1919 #1921 #1922 #1923 #1924 #1925 #1926 #1927 #1931 #1950 #2085
   #2089 #2090 #2092 #2100 #2101 #2104 #2105 #2106 #2107 + #1095(re-scoped)
-  + from sprint 61: #1916 #1917 #1930 #1965 #1979-#1981 #1983 #1988-#1990
-  #2009 #2015 #2022 #2051 #2059 #2072 #2079 #2080 #2081 #2084
+  - from sprint 61: #1916 #1917 #1930 #1965 #1979-#1981 #1983 #1988-#1990
+    #2009 #2015 #2022 #2051 #2059 #2072 #2079 #2080 #2081 #2084
 - New issues filed: #2134-#2143 (sprint 62), #2144-#2147 (sprint 63)
 - Moved 61→63 (routine): #1994 #2001 #2007 #2008 #2011-#2013 #2017 #2021
   #2023-#2028 #2033 #2035 #2076 #2077 #2083 #2118 #2119; backlog→63:
@@ -427,6 +450,7 @@ ES2015 ~4280 failing. Priority ES3 > ES5 > ES6, biggest fail-count clusters
 first; eval / dynamic-code deprioritized. All added to sprint 66.
 
 New issues (uncovered/residual clusters):
+
 - [#2666](../2666-es3-member-ref-eval-order-compound-assign-incdec.md) — ≤ES3 `base[prop]` eval order in compound-assign + ++/-- (ToPropertyKey once) — ~100 tests across editions, **TOP**.
 - [#2667](../2667-es3-mapped-arguments-nonconfigurable-delete-residual.md) — ≤ES3 mapped arguments non-config/non-writable + delete (residual of #1511) — 12 tests.
 - [#2668](../2668-es5-object-defineproperty-descriptor-fidelity-residual.md) — ES5 Object.defineProperty/defineProperties descriptor fidelity residual — ~788, largest ES5.

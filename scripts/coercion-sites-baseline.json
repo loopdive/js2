@@ -9,7 +9,7 @@
   "codegen/declarations.ts": 20,
   "codegen/expressions/assignment.ts": 12,
   "codegen/expressions/calls-closures.ts": 2,
-  "codegen/expressions/calls.ts": 27,
+  "codegen/expressions/calls.ts": 28,
   "codegen/expressions/identifiers.ts": 2,
   "codegen/expressions/late-imports.ts": 4,
   "codegen/expressions/logical-ops.ts": 2,

@@ -4,6 +4,28 @@ Issues organized by dependency order -- work items at the top are ready now,
 items below unlock when their dependencies complete. No sprint batching needed:
 pick any "ready" item and start.
 
+## IR front-end migration — fallback-bucket ratchet (added 2026-06-30, `sprint: current`)
+
+Drive the **unintended** `IrFallbackReason` buckets to zero, then promote each
+reason into `STRICT_IR_REASONS` (`src/codegen/index.ts:1013`). Counts verified
+against `origin/main` @ dc29fd081 via `pnpm run check:ir-fallbacks -- --verbose`.
+Epic **#2855** is the tracking owner (supersedes the stale `#1530` citation in
+CLAUDE.md / codegen-axes.md / ir-adoption.md). Gate mechanism: #1376 / #2089 /
+#1923 (all done).
+
+| Issue | Bucket                      | Count | Priority | Horizon | Status                                                                       |
+| ----- | --------------------------- | ----- | -------- | ------- | ---------------------------------------------------------------------------- |
+| #2855 | (tracking epic)             | —     | high     | xl      | backlog (visible, not a code task)                                           |
+| #2856 | `body-shape-rejected`       | 31    | high     | l       | **ready** — dominant; diagnostic pass first, then slice by kind              |
+| #2857 | `class-method`              | 6     | medium   | m       | **ready** — #1370 Phase C/D/E residual (ctor/static/accessors/private/super) |
+| #2858 | `call-graph-closure`        | 7     | medium   | m       | **ready** — derivative; depends_on #2856 + #2857                             |
+| #2859 | `param-type-not-resolvable` | 1     | low      | s       | **ready** — single site (benchmarks/helpers.ts); TypeMap propagation         |
+
+Deferred (NOT queued): `async-function` (4) → #1373b (blocked on #1326c
+standalone microtask drain). Already-zero unintended buckets (`external-call`,
+`param-shape-rejected`, `return-type-not-resolvable`, `type-resolution-failure`,
+`destructuring-param-complex`) — retired by #1370/#1371/#1372/#1374/#1375.
+
 ## Sprint 65 landings (2026-06-23 session — value-rep substrate spine)
 
 > **Sprint 65 CLOSED 2026-06-24** (user-approved): 58 done, 34 carried to s66
@@ -14,13 +36,13 @@ This session's merged architecture slices (all 0-regr vs the `merge_group`
 standalone floor #2097 + per-process test262 floor). These advance — but do
 not close — their parent epics; the parent issues stay carried.
 
-| PR | Issue / parent epic | What landed |
-|----|---------------------|-------------|
-| #1975 | #2580 M3 Stage A (value-rep) | standalone inline-literal `[[Prototype]]` link — `Object.create({...}).foo` resolves |
-| #1977 | #2623 → Promise epic (#1042/#2614) | class-extends-Promise value-read identity unified w/ capability ctor (+1 row) |
-| #1981 | #2623-A → async epic (#1042) | single-box nested capture of an already-boxed var (`alreadyBoxed`); fixes `illegal cast in Constructor()` |
-| #1984 | #2618 Slice 1 → Proxy epic (#1355) | Proxy START-timing bridge + callable-target wrap; apply/construct 14→15 (+1) |
-| #1986 *(open, BLOCKED)* | #2580 M3 B-pre | re-resolve `__is_truthy` funcidx after callback compile (some/every/filter invalid-Wasm) |
+| PR                      | Issue / parent epic                | What landed                                                                                               |
+| ----------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| #1975                   | #2580 M3 Stage A (value-rep)       | standalone inline-literal `[[Prototype]]` link — `Object.create({...}).foo` resolves                      |
+| #1977                   | #2623 → Promise epic (#1042/#2614) | class-extends-Promise value-read identity unified w/ capability ctor (+1 row)                             |
+| #1981                   | #2623-A → async epic (#1042)       | single-box nested capture of an already-boxed var (`alreadyBoxed`); fixes `illegal cast in Constructor()` |
+| #1984                   | #2618 Slice 1 → Proxy epic (#1355) | Proxy START-timing bridge + callable-target wrap; apply/construct 14→15 (+1)                              |
+| #1986 _(open, BLOCKED)_ | #2580 M3 B-pre                     | re-resolve `__is_truthy` funcidx after callback compile (some/every/filter invalid-Wasm)                  |
 
 Docs/staging this session: #1973 (M3-A spec mis-attributed → DEFER), #1976/#1979
 (M3 Stage B scoping + cluster-composition re-ground), #1974 (#2618/#2623-C Slice
@@ -34,21 +56,21 @@ Architectural sprint. Two tracks; conformance guard is zero-regression.
 
 **Track 1 — self-hosting-dogfood** (compile + run acorn correctly):
 
-| #     | Title | Priority | Feasibility | Status | Depends on |
-|-------|-------|----------|-------------|--------|------------|
-| 1710  | acorn dogfood harness (compile + validate + diff-AST vs node-acorn) | high | medium | Done (s57) | — |
-| 1711  | triage harness surface → file sized child issues | high | medium | Done (s57) | #1710 |
-| 1712  | acceptance: compiled acorn AST == node-acorn on a representative .js | high | hard | Carried to sprint 58 (unblocked by #1745) | #1710, #1711 |
+| #    | Title                                                                | Priority | Feasibility | Status                                    | Depends on   |
+| ---- | -------------------------------------------------------------------- | -------- | ----------- | ----------------------------------------- | ------------ |
+| 1710 | acorn dogfood harness (compile + validate + diff-AST vs node-acorn)  | high     | medium      | Done (s57)                                | —            |
+| 1711 | triage harness surface → file sized child issues                     | high     | medium      | Done (s57)                                | #1710        |
+| 1712 | acceptance: compiled acorn AST == node-acorn on a representative .js | high     | hard        | Carried to sprint 58 (unblocked by #1745) | #1710, #1711 |
 
 Prior acorn blockers #1679 / #1690 / #1690b are **done** (regression-guarded by #1710).
 
 **Track 2 — backend-agnostic-ir** (decouple IR from WasmGC):
 
-| #     | Title | Priority | Feasibility | Status | Depends on |
-|-------|-------|----------|-------------|--------|------------|
-| 1713  | BackendEmitter trait: audit WasmGC bias + seam + WasmGcEmitter | high | hard | Ready — **needs architect spec first** | — |
-| 1714  | lower one IR node kind to BOTH WasmGC + linear via the trait | high | hard | Backlog→ready after #1713 | #1713 (**arch spec**) |
-| 1715  | minimal bytecode emitter + dispatch loop for an IR subset (proof) | medium | hard | Backlog→ready after #1713 | #1713 (**arch spec**) |
+| #    | Title                                                             | Priority | Feasibility | Status                                 | Depends on            |
+| ---- | ----------------------------------------------------------------- | -------- | ----------- | -------------------------------------- | --------------------- |
+| 1713 | BackendEmitter trait: audit WasmGC bias + seam + WasmGcEmitter    | high     | hard        | Ready — **needs architect spec first** | —                     |
+| 1714 | lower one IR node kind to BOTH WasmGC + linear via the trait      | high     | hard        | Backlog→ready after #1713              | #1713 (**arch spec**) |
+| 1715 | minimal bytecode emitter + dispatch loop for an IR subset (proof) | medium   | hard        | Backlog→ready after #1713              | #1713 (**arch spec**) |
 
 Feeds #1584 (in-Wasm bytecode interpreter) — gated on both tracks + #1712.
 
@@ -56,17 +78,17 @@ Feeds #1584 (in-Wasm bytecode interpreter) — gated on both tracks + #1712.
 
 Pulled into S50 alongside the original closure/dispatch cohort. Direct-dispatch items have no architect dependency; spec items wait on architect.
 
-| #   | Title | Priority | Feasibility | Status | Type |
-|-----|-------|----------|-------------|--------|------|
-| 1267 | Optimizer drops side-effectful method calls in stmt position | high | medium | Sprint 50 | Direct dispatch |
-| 859 | Map.forEach callback captures are immutable snapshots | high | medium | Sprint 50 | Direct dispatch |
-| 1268 | obj[key] ??= value returns NaN on index-signature types | medium | medium | Sprint 50 | Direct dispatch |
-| 1020 | await-using TDZ tests null_deref crash in assert_throwsAsync | medium | medium | Sprint 50 | Direct dispatch |
-| 1155 | test262 worker classifies WebAssembly.Exception as compile_error | medium | easy | Sprint 50 | Direct dispatch (quick win) |
-| 837 | Map/WeakMap upsert getOrInsert/getOrInsertComputed | low | easy | Sprint 50 | Direct dispatch (stretch) |
-| 1239 | Object literals with get/set accessors → JS host object | medium | hard | Sprint 50 | **Needs architect spec** |
-| 1158 | destructureParamArray fallback eagerly consumes iterators | medium | hard | Sprint 50 | **Needs architect spec (bundle with #1159)** |
-| 1159 | Nested empty array pattern with initializer iterator semantics | medium | hard | Sprint 50 | **Needs architect spec (bundle with #1158)** |
+| #    | Title                                                            | Priority | Feasibility | Status    | Type                                         |
+| ---- | ---------------------------------------------------------------- | -------- | ----------- | --------- | -------------------------------------------- |
+| 1267 | Optimizer drops side-effectful method calls in stmt position     | high     | medium      | Sprint 50 | Direct dispatch                              |
+| 859  | Map.forEach callback captures are immutable snapshots            | high     | medium      | Sprint 50 | Direct dispatch                              |
+| 1268 | obj[key] ??= value returns NaN on index-signature types          | medium   | medium      | Sprint 50 | Direct dispatch                              |
+| 1020 | await-using TDZ tests null_deref crash in assert_throwsAsync     | medium   | medium      | Sprint 50 | Direct dispatch                              |
+| 1155 | test262 worker classifies WebAssembly.Exception as compile_error | medium   | easy        | Sprint 50 | Direct dispatch (quick win)                  |
+| 837  | Map/WeakMap upsert getOrInsert/getOrInsertComputed               | low      | easy        | Sprint 50 | Direct dispatch (stretch)                    |
+| 1239 | Object literals with get/set accessors → JS host object          | medium   | hard        | Sprint 50 | **Needs architect spec**                     |
+| 1158 | destructureParamArray fallback eagerly consumes iterators        | medium   | hard        | Sprint 50 | **Needs architect spec (bundle with #1159)** |
+| 1159 | Nested empty array pattern with initializer iterator semantics   | medium   | hard        | Sprint 50 | **Needs architect spec (bundle with #1158)** |
 
 ## Legend
 
@@ -81,17 +103,17 @@ Pulled into S50 alongside the original closure/dispatch cohort. Direct-dispatch 
 From the dev-1553b destructuring-lane verification sweep. #1659 (CI equivalence
 coverage) gates #1658 in the sense that #1658 is only CI-visible once #1659 lands.
 
-| #    | Title | Priority | Feasibility | Status |
-|------|-------|----------|-------------|--------|
-| 1659 | CI does not run tests/equivalence/ (OOM) — equivalence regressions land silently | high | medium | **Ready** (gates CI-visibility of #1658) |
-| 1658 | Destructured/scalar function-parameter default not applied (returns 30, expects 40) | high | medium | **Ready** (depends on #1659 for CI gating) |
+| #    | Title                                                                               | Priority | Feasibility | Status                                     |
+| ---- | ----------------------------------------------------------------------------------- | -------- | ----------- | ------------------------------------------ |
+| 1659 | CI does not run tests/equivalence/ (OOM) — equivalence regressions land silently    | high     | medium      | **Ready** (gates CI-visibility of #1658)   |
+| 1658 | Destructured/scalar function-parameter default not applied (returns 30, expects 40) | high     | medium      | **Ready** (depends on #1659 for CI gating) |
 
 ## Sprint 55 — docs (added 2026-05-25)
 
-| #    | Title | Priority | Feasibility | Status |
-|------|-------|----------|-------------|--------|
-| 1661 | README programmatic-API example fails — `instantiate(binary, {})` vs default-mode host imports (guest #601) | high | easy | **Ready** (sprint 55, docs, plan-only) |
-| 1667 | DX: `compile()` returns a ready-to-pass import object for default/JS-host mode (guest #601) | medium | medium | **Ready** (Backlog, feature). Complements #1661 — adds the JS-host convenience; standalone stays the recommended default |
+| #    | Title                                                                                                       | Priority | Feasibility | Status                                                                                                                   |
+| ---- | ----------------------------------------------------------------------------------------------------------- | -------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 1661 | README programmatic-API example fails — `instantiate(binary, {})` vs default-mode host imports (guest #601) | high     | easy        | **Ready** (sprint 55, docs, plan-only)                                                                                   |
+| 1667 | DX: `compile()` returns a ready-to-pass import object for default/JS-host mode (guest #601)                 | medium   | medium      | **Ready** (Backlog, feature). Complements #1661 — adds the JS-host convenience; standalone stays the recommended default |
 
 ## WASI Native Messaging — AssemblyScript-reference alignment (added 2026-05-24)
 
@@ -103,13 +125,13 @@ APIs** (`process.stdin` / `process.stdout`), never bespoke builtins. The
 example is being rewritten onto `process.stdin.read()` (#1653) + already-shipped
 `process.stdout.write()` (#1651), with `Buffer`/`DataView` framing.
 
-| #    | Title | Priority | Feasibility | Status |
-|------|-------|----------|-------------|--------|
-| 1654 | DataView/ArrayBuffer-backed TypedArrays emit an invalid wasm module under --target wasi | high | medium | **Ready** (root) |
-| 1653 | process.stdin.read(buffer, offset?) — binary incremental stdin read (keystone) | high | hard | Blocked by #1654 |
-| 1655 | process.stdout.write(ArrayBuffer) — accept ArrayBuffer arg, not only Uint8Array literal | medium | easy | Blocked by #1654 |
-| 1530 | Native Messaging host example — Node-style rewrite (no bespoke builtins) | medium | medium | **Reopened** (`in-progress`); Blocked by #1653 + #1654 |
-| ~~1628~~ | ~~raw-byte stdout builtin `writeStdout(bytes)`~~ | — | — | **wont-fix** — superseded by `process.stdout.write` (#1651), the standard Node API; bespoke builtin is the wrong shape |
+| #        | Title                                                                                   | Priority | Feasibility | Status                                                                                                                 |
+| -------- | --------------------------------------------------------------------------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 1654     | DataView/ArrayBuffer-backed TypedArrays emit an invalid wasm module under --target wasi | high     | medium      | **Ready** (root)                                                                                                       |
+| 1653     | process.stdin.read(buffer, offset?) — binary incremental stdin read (keystone)          | high     | hard        | Blocked by #1654                                                                                                       |
+| 1655     | process.stdout.write(ArrayBuffer) — accept ArrayBuffer arg, not only Uint8Array literal | medium   | easy        | Blocked by #1654                                                                                                       |
+| 1530     | Native Messaging host example — Node-style rewrite (no bespoke builtins)                | medium   | medium      | **Reopened** (`in-progress`); Blocked by #1653 + #1654                                                                 |
+| ~~1628~~ | ~~raw-byte stdout builtin `writeStdout(bytes)`~~                                        | —        | —           | **wont-fix** — superseded by `process.stdout.write` (#1651), the standard Node API; bespoke builtin is the wrong shape |
 
 ```
 #1651 (process.stdout.write) -- DONE (standard Node write API; supersedes #1628/#1617)
@@ -129,9 +151,9 @@ attached to #1530). The current `cla-check` workflow is a no-op placeholder that
 records no acceptance, so external contributions land with no auditable CLA
 sign-off.
 
-| #    | Title | Priority | Feasibility | Status |
-|------|-------|----------|-------------|--------|
-| 1660 | Replace placeholder cla-check with a real CLA signature/approval gate | high | medium | **Done** — self-hosted in-repo signature gate (`.github/cla/`); internal/bot authors exempt, external humans sign by comment. Promotion to a *required* check deferred to an admin (see issue follow-up). |
+| #    | Title                                                                 | Priority | Feasibility | Status                                                                                                                                                                                                    |
+| ---- | --------------------------------------------------------------------- | -------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1660 | Replace placeholder cla-check with a real CLA signature/approval gate | high     | medium      | **Done** — self-hosted in-repo signature gate (`.github/cla/`); internal/bot authors exempt, external humans sign by comment. Promotion to a _required_ check deferred to an admin (see issue follow-up). |
 
 ```
 #1660 (real CLA gate) -- DONE: gates external-PR merges once promoted to required
@@ -140,10 +162,10 @@ sign-off.
 
 ## Sprint 55 — repo structure / website (added 2026-05-24)
 
-| #    | Title | Priority | Feasibility | Status |
-|------|-------|----------|-------------|--------|
-| 1656 | Consolidate all website/frontend files under website/ | medium | medium | **Ready — specced** (`## Implementation Plan` in issue file). Dev-claimable; one PR. NOTE: site config is `playground/vite.config.ts` (NOT root `vite.config.ts` = library build); wide `..`→repo-root fan-out in playground plugins + scripts. `deploy-pages.yml` edit needs CODEOWNERS review. Related: #1583, #1590 |
-| 1657 | Skip merge_group test262 shards for non-src changes (keep required check green) | medium | medium | **In review** — `changes` job + conservative path detector gates the merge_group shard matrix; "merge shard reports" always green. Related: #1656 |
+| #    | Title                                                                           | Priority | Feasibility | Status                                                                                                                                                                                                                                                                                                                 |
+| ---- | ------------------------------------------------------------------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1656 | Consolidate all website/frontend files under website/                           | medium   | medium      | **Ready — specced** (`## Implementation Plan` in issue file). Dev-claimable; one PR. NOTE: site config is `playground/vite.config.ts` (NOT root `vite.config.ts` = library build); wide `..`→repo-root fan-out in playground plugins + scripts. `deploy-pages.yml` edit needs CODEOWNERS review. Related: #1583, #1590 |
+| 1657 | Skip merge_group test262 shards for non-src changes (keep required check green) | medium   | medium      | **In review** — `changes` job + conservative path detector gates the merge_group shard matrix; "merge shard reports" always green. Related: #1656                                                                                                                                                                      |
 
 ---
 
@@ -159,29 +181,30 @@ These are the biggest bang-for-buck issues. Pick from here first.
 ```
 
 ### Done (sprint-30)
+
 ~~#852~~ ~~#846~~ ~~#848~~ ~~#847~~ ~~#827~~ ~~#825~~ ~~#860~~ ~~#857~~ ~~#850~~ ~~#824~~
 
-| #   | Title | Impact | Status |
-|-----|-------|--------|--------|
-| **822** | Wasm type mismatch compile errors | **907 CE** | **Blocked** — needs architect (repair passes caused +6K CE regression) |
-| ~~**826**~~ | ~~Illegal cast failures (sub of #820)~~ | ~~**~489 FAIL**~~ | **Done** (0 illegal_cast, 255 tests fixed) |
-| ~~**851**~~ | ~~Iterator close protocol~~ | ~~**~100 FAIL**~~ | **Done** (sync fixed, break/throw/continue call return()) |
-| ~~**839**~~ | ~~return_call stack/type mismatch in constructors~~ | ~~**158 CE**~~ | **Done** |
-| ~~**854**~~ | ~~Iterator protocol: null next/return/throw methods~~ | ~~**126 FAIL**~~ | **Done** (sub-issue 4: 32/64 iterable tests fixed) |
-| ~~**862**~~ | ~~Empty error message failures~~ | ~~**212 FAIL**~~ | **Done** (generator throw deferral) |
-| **865** | Console wrapper for fd_write in JS environments | — | **Ready** (MEDIUM) |
-| ~~**866**~~ | ~~Regression: NaN sentinel + ToPrimitive (71 tests)~~ | ~~**71 FAIL**~~ | **Done** |
+| #           | Title                                                 | Impact            | Status                                                                 |
+| ----------- | ----------------------------------------------------- | ----------------- | ---------------------------------------------------------------------- |
+| **822**     | Wasm type mismatch compile errors                     | **907 CE**        | **Blocked** — needs architect (repair passes caused +6K CE regression) |
+| ~~**826**~~ | ~~Illegal cast failures (sub of #820)~~               | ~~**~489 FAIL**~~ | **Done** (0 illegal_cast, 255 tests fixed)                             |
+| ~~**851**~~ | ~~Iterator close protocol~~                           | ~~**~100 FAIL**~~ | **Done** (sync fixed, break/throw/continue call return())              |
+| ~~**839**~~ | ~~return_call stack/type mismatch in constructors~~   | ~~**158 CE**~~    | **Done**                                                               |
+| ~~**854**~~ | ~~Iterator protocol: null next/return/throw methods~~ | ~~**126 FAIL**~~  | **Done** (sub-issue 4: 32/64 iterable tests fixed)                     |
+| ~~**862**~~ | ~~Empty error message failures~~                      | ~~**212 FAIL**~~  | **Done** (generator throw deferral)                                    |
+| **865**     | Console wrapper for fd_write in JS environments       | —                 | **Ready** (MEDIUM)                                                     |
+| ~~**866**~~ | ~~Regression: NaN sentinel + ToPrimitive (71 tests)~~ | ~~**71 FAIL**~~   | **Done**                                                               |
 
 ---
 
 ## Umbrella issues (analysis/tracking -- sub-issues above are the actionable work)
 
-| #   | Title | Impact | Notes |
-|-----|-------|--------|-------|
-| 820 | TypeError / null dereference failures | 6,077 FAIL | Sub-issues: #825, #826, #852, #854 |
-| 779 | Assert failures: wrong values | 10,099 FAIL | Sub-issues: #846, #847, #848, #849, #850, #1116, #1117 |
-| 786 | Multi-assertion failures (returned N > 2) | 2,142 FAIL | In-progress |
-| 696 | Classify "other fail" runtime errors | 4,649 FAIL | Analysis |
+| #   | Title                                     | Impact      | Notes                                                  |
+| --- | ----------------------------------------- | ----------- | ------------------------------------------------------ |
+| 820 | TypeError / null dereference failures     | 6,077 FAIL  | Sub-issues: #825, #826, #852, #854                     |
+| 779 | Assert failures: wrong values             | 10,099 FAIL | Sub-issues: #846, #847, #848, #849, #850, #1116, #1117 |
+| 786 | Multi-assertion failures (returned N > 2) | 2,142 FAIL  | In-progress                                            |
+| 696 | Classify "other fail" runtime errors      | 4,649 FAIL  | Analysis                                               |
 
 ---
 
@@ -189,24 +212,24 @@ These are the biggest bang-for-buck issues. Pick from here first.
 
 All independent -- can run in parallel (different codegen paths).
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 822 | Wasm type mismatch compile errors | **907 CE** | **Ready** |
-| ~~839~~ | ~~return_call stack args / type mismatch~~ | ~~**158 CE**~~ | **Done** |
-| ~~828~~ | ~~Unexpected undefined AST node in compileExpression~~ | ~~**149 CE**~~ | **Done** (already fixed by prior changes) |
-| 829 | Unsupported assignment target compile errors | **141 CE** | **Ready** |
-| 845 | Misc CE: object literals, RegExp-on-X, for-in/of edges | **340 CE** | **Ready** |
-| 844 | Unsupported new expression for built-in classes | **85 CE** | **Ready** |
-| 840 | Array concat/push/splice 0-arg support | **31 CE** | **Ready** |
-| 835 | Unknown extern class: Error types | **32 CE** | **Ready** |
-| 836 | Tagged templates with non-PropertyAccess tags | **20 CE** | **Ready** |
-| 843 | super keyword in object literals and edge cases | **20 CE** | **Ready** |
-| 842 | new Array() with non-literal/spread args | **14 CE** | **Ready** |
-| 831 | Negative test gaps: expected SyntaxError but compiled | **242 FAIL** | **Ready** |
-| 927 | Missing early/parse error detection (umbrella for #831) | **840 FAIL** | **Ready** |
-| 926 | Fixture tests not supported in unified mode | **172 CE** | **Ready** |
-| 764 | Immutable global assignment error | **240 CE** | **Ready** |
-| 736 | SyntaxError detection at compile time | 316 FAIL | **Ready** |
+| #       | Title                                                   | Impact         | Ready?                                    |
+| ------- | ------------------------------------------------------- | -------------- | ----------------------------------------- |
+| 822     | Wasm type mismatch compile errors                       | **907 CE**     | **Ready**                                 |
+| ~~839~~ | ~~return_call stack args / type mismatch~~              | ~~**158 CE**~~ | **Done**                                  |
+| ~~828~~ | ~~Unexpected undefined AST node in compileExpression~~  | ~~**149 CE**~~ | **Done** (already fixed by prior changes) |
+| 829     | Unsupported assignment target compile errors            | **141 CE**     | **Ready**                                 |
+| 845     | Misc CE: object literals, RegExp-on-X, for-in/of edges  | **340 CE**     | **Ready**                                 |
+| 844     | Unsupported new expression for built-in classes         | **85 CE**      | **Ready**                                 |
+| 840     | Array concat/push/splice 0-arg support                  | **31 CE**      | **Ready**                                 |
+| 835     | Unknown extern class: Error types                       | **32 CE**      | **Ready**                                 |
+| 836     | Tagged templates with non-PropertyAccess tags           | **20 CE**      | **Ready**                                 |
+| 843     | super keyword in object literals and edge cases         | **20 CE**      | **Ready**                                 |
+| 842     | new Array() with non-literal/spread args                | **14 CE**      | **Ready**                                 |
+| 831     | Negative test gaps: expected SyntaxError but compiled   | **242 FAIL**   | **Ready**                                 |
+| 927     | Missing early/parse error detection (umbrella for #831) | **840 FAIL**   | **Ready**                                 |
+| 926     | Fixture tests not supported in unified mode             | **172 CE**     | **Ready**                                 |
+| 764     | Immutable global assignment error                       | **240 CE**     | **Ready**                                 |
+| 736     | SyntaxError detection at compile time                   | 316 FAIL       | **Ready**                                 |
 
 ---
 
@@ -222,30 +245,30 @@ All independent -- can run in parallel (different codegen paths).
 #821 (BindingElement null guard) -- independent
 ```
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| ~~849~~ | ~~Mapped arguments object sync with named params~~ | ~~**200 FAIL**~~ | **Done** |
-| 855 | Promise resolution and async error handling | **210 FAIL** | **Ready** |
-| 856 | Expected TypeError but got wrong error type | **136 FAIL** | **Ready** |
-| 858 | Worker/timeout exits and eval-code null deref | **182 FAIL** | **Ready** |
-| 853 | WebAssembly objects are opaque (for-in/Object.create) | **58 FAIL** | **Ready** |
-| 737 | Undefined-handling edge cases | 276 FAIL | **Ready** |
-| 778 | Illegal cast errors (ref.cast wrong type) | 135 FAIL | **Ready** |
-| 821 | BindingElement null guard over-triggering | 537 FAIL | **Review** |
-| 928 | Unknown failure tests with empty error message | **209 FAIL** | **Ready** |
-| 929 | Object.defineProperty called on non-object | **53 FAIL** | **Ready** |
-| 930 | Not-a-constructor detection for built-in methods | **68 FAIL** | **Ready** |
+| #       | Title                                                 | Impact           | Ready?     |
+| ------- | ----------------------------------------------------- | ---------------- | ---------- |
+| ~~849~~ | ~~Mapped arguments object sync with named params~~    | ~~**200 FAIL**~~ | **Done**   |
+| 855     | Promise resolution and async error handling           | **210 FAIL**     | **Ready**  |
+| 856     | Expected TypeError but got wrong error type           | **136 FAIL**     | **Ready**  |
+| 858     | Worker/timeout exits and eval-code null deref         | **182 FAIL**     | **Ready**  |
+| 853     | WebAssembly objects are opaque (for-in/Object.create) | **58 FAIL**      | **Ready**  |
+| 737     | Undefined-handling edge cases                         | 276 FAIL         | **Ready**  |
+| 778     | Illegal cast errors (ref.cast wrong type)             | 135 FAIL         | **Ready**  |
+| 821     | BindingElement null guard over-triggering             | 537 FAIL         | **Review** |
+| 928     | Unknown failure tests with empty error message        | **209 FAIL**     | **Ready**  |
+| 929     | Object.defineProperty called on non-object            | **53 FAIL**      | **Ready**  |
+| 930     | Not-a-constructor detection for built-in methods      | **68 FAIL**      | **Ready**  |
 
 ---
 
 ## Cluster C: Built-in Methods `[E]`
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 733 | RangeError validation in built-ins | 442 FAIL | **Ready** (coordinates #846) |
-| 763 | RegExp runtime method gaps | ~400 FAIL | **Ready** |
-| 739 | Object.defineProperty correctness | 262 FAIL | **Ready** |
-| 841 | Unsupported Math methods (sumPrecise, cosh, sinh, tanh) | **19 CE** | **Ready** |
+| #   | Title                                                   | Impact    | Ready?                       |
+| --- | ------------------------------------------------------- | --------- | ---------------------------- |
+| 733 | RangeError validation in built-ins                      | 442 FAIL  | **Ready** (coordinates #846) |
+| 763 | RegExp runtime method gaps                              | ~400 FAIL | **Ready**                    |
+| 739 | Object.defineProperty correctness                       | 262 FAIL  | **Ready**                    |
+| 841 | Unsupported Math methods (sumPrecise, cosh, sinh, tanh) | **19 CE** | **Ready**                    |
 
 ---
 
@@ -262,45 +285,45 @@ All independent -- can run in parallel (different codegen paths).
 #735 (async iteration) -- blocked by generator work
 ```
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 766 | Symbol.iterator protocol for custom iterables | ~500 FAIL | **Ready** |
-| 851 | Iterator close protocol not implemented | **147 FAIL** | **Ready** |
-| 854 | Iterator protocol: null next/return/throw methods | **126 FAIL** | **Ready** |
-| 680 | Pure Wasm generators (state machines) | Eliminates 10 host imports | **Ready** |
-| 681 | Pure Wasm iterators (struct-based) | Eliminates 5 host imports | **Ready** |
-| 762 | Generator .next() argument handling | ~50 FAIL | Blocked by #680 |
-| 735 | Async iteration correctness | 329 FAIL | Blocked |
+| #   | Title                                             | Impact                     | Ready?          |
+| --- | ------------------------------------------------- | -------------------------- | --------------- |
+| 766 | Symbol.iterator protocol for custom iterables     | ~500 FAIL                  | **Ready**       |
+| 851 | Iterator close protocol not implemented           | **147 FAIL**               | **Ready**       |
+| 854 | Iterator protocol: null next/return/throw methods | **126 FAIL**               | **Ready**       |
+| 680 | Pure Wasm generators (state machines)             | Eliminates 10 host imports | **Ready**       |
+| 681 | Pure Wasm iterators (struct-based)                | Eliminates 5 host imports  | **Ready**       |
+| 762 | Generator .next() argument handling               | ~50 FAIL                   | Blocked by #680 |
+| 735 | Async iteration correctness                       | 329 FAIL                   | Blocked         |
 
 ---
 
 ## Cluster E: Property Model / Prototype Chain `[E][I]`
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 797 | Property descriptor subsystem (Phase 3 remaining) | ~5,000 FAIL | **Ready** (CRITICAL) |
-| 799 | Prototype chain (remaining: #802 for dynamic) | ~2,500 FAIL | **Ready** (CRITICAL) |
-| 802 | Dynamic prototype support (conditional __proto__) | property-model | **Ready** |
-| 678 | Dynamic prototype chain (reverted) | 625 FAIL | **Ready** |
-| 2126 | computed-key object construction: runtime key dropped, key side-effect skipped (#1971 residual of #140) | property-model | **Ready** |
-| 2127 | object spread of accessor source drops property (getter never fires) (#1971 residual of #492/#1112) | property-model | **Ready** |
-| 2128 | object-literal `set` accessor not invoked on assignment (#1971 residual of #1239) | property-model | **Ready** |
-| 2129 | duplicate object-literal keys: first-wins instead of last-wins (#1971) | property-model | **Ready** |
-| 2130 | `delete`/`in` resolved against static struct shape — post-delete/dynamic-key/rest wrong (#1971 residual of #1821; mirror of #1991) | property-model | **Ready** (hard) |
-| 2131 | JS-host enumeration ignores integer-keys-ascending (#1971 residual of #1837 standalone-only fix) | property-model | **Ready** |
-| 2132 | method call on null receiver = uncatchable trap, not catchable TypeError (#1971 residual of #785) | core-semantics | **Ready** |
+| #    | Title                                                                                                                              | Impact         | Ready?               |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------- | -------------------- |
+| 797  | Property descriptor subsystem (Phase 3 remaining)                                                                                  | ~5,000 FAIL    | **Ready** (CRITICAL) |
+| 799  | Prototype chain (remaining: #802 for dynamic)                                                                                      | ~2,500 FAIL    | **Ready** (CRITICAL) |
+| 802  | Dynamic prototype support (conditional **proto**)                                                                                  | property-model | **Ready**            |
+| 678  | Dynamic prototype chain (reverted)                                                                                                 | 625 FAIL       | **Ready**            |
+| 2126 | computed-key object construction: runtime key dropped, key side-effect skipped (#1971 residual of #140)                            | property-model | **Ready**            |
+| 2127 | object spread of accessor source drops property (getter never fires) (#1971 residual of #492/#1112)                                | property-model | **Ready**            |
+| 2128 | object-literal `set` accessor not invoked on assignment (#1971 residual of #1239)                                                  | property-model | **Ready**            |
+| 2129 | duplicate object-literal keys: first-wins instead of last-wins (#1971)                                                             | property-model | **Ready**            |
+| 2130 | `delete`/`in` resolved against static struct shape — post-delete/dynamic-key/rest wrong (#1971 residual of #1821; mirror of #1991) | property-model | **Ready** (hard)     |
+| 2131 | JS-host enumeration ignores integer-keys-ascending (#1971 residual of #1837 standalone-only fix)                                   | property-model | **Ready**            |
+| 2132 | method call on null receiver = uncatchable trap, not catchable TypeError (#1971 residual of #785)                                  | core-semantics | **Ready**            |
 
 ---
 
 ## Cluster F: Class Features `[E][S]`
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 848 | Class computed property / accessor correctness | **1,015 FAIL** | **Ready** |
-| 793 | Infinite compilation loop on private methods | 5 hang | **Ready** (coordinates #848) |
-| 334 | Private class fields and methods | -- | **Ready** |
-| 377 | Getter/setter accessor edge cases | -- | **Ready** |
-| 329 | Object.setPrototypeOf support | -- | **Ready** |
+| #   | Title                                          | Impact         | Ready?                       |
+| --- | ---------------------------------------------- | -------------- | ---------------------------- |
+| 848 | Class computed property / accessor correctness | **1,015 FAIL** | **Ready**                    |
+| 793 | Infinite compilation loop on private methods   | 5 hang         | **Ready** (coordinates #848) |
+| 334 | Private class fields and methods               | --             | **Ready**                    |
+| 377 | Getter/setter accessor edge cases              | --             | **Ready**                    |
+| 329 | Object.setPrototypeOf support                  | --             | **Ready**                    |
 
 ---
 
@@ -312,15 +335,15 @@ All independent -- can run in parallel (different codegen paths).
 #761 (rest/spread dropped -- ~200 FAIL)
 ```
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
+| #       | Title                                               | Impact             | Ready?                                                |
+| ------- | --------------------------------------------------- | ------------------ | ----------------------------------------------------- |
 | ~~852~~ | ~~Destructuring params: null_deref + illegal_cast~~ | ~~**1,525 FAIL**~~ | **Done** (arrow-function/dstr +34, type mutation fix) |
-| 847 | for-await-of / for-of destructuring wrong values | **660 FAIL** | **Ready** |
-| 761 | Rest/spread silently dropped in destructuring | ~200 FAIL | **Ready** |
-| 142 | Assignment destructuring failures | -- | **Ready** |
-| 328 | OmittedExpression (array holes/elision) | -- | **Ready** |
-| 379 | Tuple/destructuring type errors | -- | **Ready** |
-| 404 | Compound assignment on unresolvable property type | 88 CE | **Ready** |
+| 847     | for-await-of / for-of destructuring wrong values    | **660 FAIL**       | **Ready**                                             |
+| 761     | Rest/spread silently dropped in destructuring       | ~200 FAIL          | **Ready**                                             |
+| 142     | Assignment destructuring failures                   | --                 | **Ready**                                             |
+| 328     | OmittedExpression (array holes/elision)             | --                 | **Ready**                                             |
+| 379     | Tuple/destructuring type errors                     | --                 | **Ready**                                             |
+| 404     | Compound assignment on unresolvable property type   | 88 CE              | **Ready**                                             |
 
 ---
 
@@ -329,13 +352,13 @@ All independent -- can run in parallel (different codegen paths).
 Discovered via `scripts/analyze-wat-patterns.ts` (#948) — corpus of 3,619 modules.
 All independent, can run in parallel.
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 954 | Eliminate duplicate locals (57% modules, 3,366 extra locals) | Size/perf | **Ready** |
-| 955 | Eliminate redundant ref.test + ref.cast pairs (35.7%, 8,642 cases) | Size/perf | **Ready** |
-| 956 | Emit i32.const directly vs f64.const + trunc (8.8%, 673 cases) | Size/perf | **Ready** (easy) |
-| 957 | Eliminate local.set + drop dead-store pattern (4.8%, 272 cases) | Size/perf | **Ready** (easy) |
-| 958 | Batch string concat chains into multi-arg call (4.8%, 531 chains) | GC allocs | **Ready** (hard) |
+| #   | Title                                                              | Impact    | Ready?           |
+| --- | ------------------------------------------------------------------ | --------- | ---------------- |
+| 954 | Eliminate duplicate locals (57% modules, 3,366 extra locals)       | Size/perf | **Ready**        |
+| 955 | Eliminate redundant ref.test + ref.cast pairs (35.7%, 8,642 cases) | Size/perf | **Ready**        |
+| 956 | Emit i32.const directly vs f64.const + trunc (8.8%, 673 cases)     | Size/perf | **Ready** (easy) |
+| 957 | Eliminate local.set + drop dead-store pattern (4.8%, 272 cases)    | Size/perf | **Ready** (easy) |
+| 958 | Batch string concat chains into multi-arg call (4.8%, 531 chains)  | GC allocs | **Ready** (hard) |
 
 ### String-hash warm-perf levers (carved from #1746 umbrella, 2026-05-31)
 
@@ -343,9 +366,9 @@ Native differential (PR #997) found the string **build** loop, not the hash loop
 ~99% of warm wall time (the i32 hash path #1746 lever #1 is DONE and already ~3.8×
 faster/char than V8). The two remaining levers are now sized, dispatchable issues:
 
-| #    | Title | Impact | Ready? | Deps |
-|------|-------|--------|--------|------|
-| 1761 | Presize string-build buffer from static loop trip count (kill reallocs + per-append cap-check) | Warm perf — top AOT win | **Ready** (medium) | — (related #1746, #1580, #1744) |
+| #    | Title                                                                                           | Impact                        | Ready?                                   | Deps                                 |
+| ---- | ----------------------------------------------------------------------------------------------- | ----------------------------- | ---------------------------------------- | ------------------------------------ |
+| 1761 | Presize string-build buffer from static loop trip count (kill reallocs + per-append cap-check)  | Warm perf — top AOT win       | **Ready** (medium)                       | — (related #1746, #1580, #1744)      |
 | 1762 | Linear-memory string backing for build/hash hot path — drop the WasmGC `(array i16)` GC barrier | Warm perf — strategic ceiling | **Ready, likely needs arch spec** (hard) | — (related #1746, #679, #682, #1714) |
 
 #1746 stays the umbrella tracking issue.
@@ -362,17 +385,17 @@ faster/char than V8). The two remaining levers are now sized, dispatchable issue
 #685 (interprocedural return type) -- independent
 ```
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 743 | Whole-program type mapper | High pass impact | **Ready** (critical) |
-| 773 | Monomorphize functions with call-site types | High pass impact | **Ready** (critical) |
-| 745 | Tagged union types for WasmGC | Type precision | **Ready** |
-| 684 | Any-typed variable inference from usage | Many CE | **Ready** |
-| 685 | Interprocedural return type flow | Perf + correctness | **Ready** |
-| 686 | Closure capture type preservation | Perf | **Ready** |
-| 744 | Monomorphize: specialized function copies | Perf | Blocked by #743 |
-| 746 | Hidden class optimization | Perf | Blocked |
-| ~~747~~ | ~~Escape analysis / stack allocation~~ | Perf | **DONE** (s55, PR #545) |
+| #       | Title                                       | Impact             | Ready?                  |
+| ------- | ------------------------------------------- | ------------------ | ----------------------- |
+| 743     | Whole-program type mapper                   | High pass impact   | **Ready** (critical)    |
+| 773     | Monomorphize functions with call-site types | High pass impact   | **Ready** (critical)    |
+| 745     | Tagged union types for WasmGC               | Type precision     | **Ready**               |
+| 684     | Any-typed variable inference from usage     | Many CE            | **Ready**               |
+| 685     | Interprocedural return type flow            | Perf + correctness | **Ready**               |
+| 686     | Closure capture type preservation           | Perf               | **Ready**               |
+| 744     | Monomorphize: specialized function copies   | Perf               | Blocked by #743         |
+| 746     | Hidden class optimization                   | Perf               | Blocked                 |
+| ~~747~~ | ~~Escape analysis / stack allocation~~      | Perf               | **DONE** (s55, PR #545) |
 
 ---
 
@@ -380,31 +403,31 @@ faster/char than V8). The two remaining levers are now sized, dispatchable issue
 
 All independent -- low priority, can be picked up opportunistically.
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 661 | Temporal API via polyfill | 1,128 tests | **Ready** |
-| 674 | SharedArrayBuffer / Atomics | 493 tests | **Ready** |
-| 834 | ES2025 Set methods (union, intersection, etc.) | 216 skip | **Ready** |
-| 837 | Map/WeakMap upsert (getOrInsert/getOrInsertComputed) | ~110 skip | **Sprint 50** |
-| 838 | BigInt64Array / BigUint64Array typed arrays | 19 skip | **Ready** |
-| 830 | DisposableStack extern class missing | **38 CE** | **Ready** |
-| 1036 | DisposableStack/AsyncDisposableStack property-chain → Wasm null trap | **94 FAIL** | **Ready** |
-| 1037 | Symbol.dispose / Symbol.asyncDispose not accessible | **30 FAIL** | **Ready** |
-| 1038 | Function.prototype.bind not implemented | **70 FAIL** | **Ready** |
-| 675 | Dynamic import() | 471 tests | **Ready** |
+| #    | Title                                                                | Impact      | Ready?        |
+| ---- | -------------------------------------------------------------------- | ----------- | ------------- |
+| 661  | Temporal API via polyfill                                            | 1,128 tests | **Ready**     |
+| 674  | SharedArrayBuffer / Atomics                                          | 493 tests   | **Ready**     |
+| 834  | ES2025 Set methods (union, intersection, etc.)                       | 216 skip    | **Ready**     |
+| 837  | Map/WeakMap upsert (getOrInsert/getOrInsertComputed)                 | ~110 skip   | **Sprint 50** |
+| 838  | BigInt64Array / BigUint64Array typed arrays                          | 19 skip     | **Ready**     |
+| 830  | DisposableStack extern class missing                                 | **38 CE**   | **Ready**     |
+| 1036 | DisposableStack/AsyncDisposableStack property-chain → Wasm null trap | **94 FAIL** | **Ready**     |
+| 1037 | Symbol.dispose / Symbol.asyncDispose not accessible                  | **30 FAIL** | **Ready**     |
+| 1038 | Function.prototype.bind not implemented                              | **70 FAIL** | **Ready**     |
+| 675  | Dynamic import()                                                     | 471 tests   | **Ready**     |
 
 ---
 
 ## Cluster J: Test Infrastructure `[T]`
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 824 | Compilation timeouts (10s limit) | **548 CE** | **Ready** |
-| 687 | Live-streaming report with run selector | Developer UX | **Ready** |
-| 699 | Shared compiler pool for test262 | Perf | **Ready** |
-| 700 | Reuse ts.CompilerHost across compilations | 25% speedup | Blocked by #699 |
-| 832 | Upgrade to TypeScript 6.x for Unicode 16.0 identifiers | 82 skip | **Ready** |
-| 833 | Consider sloppy mode support for legacy octal escapes | 16 skip | **Ready** (low) |
+| #   | Title                                                  | Impact       | Ready?          |
+| --- | ------------------------------------------------------ | ------------ | --------------- |
+| 824 | Compilation timeouts (10s limit)                       | **548 CE**   | **Ready**       |
+| 687 | Live-streaming report with run selector                | Developer UX | **Ready**       |
+| 699 | Shared compiler pool for test262                       | Perf         | **Ready**       |
+| 700 | Reuse ts.CompilerHost across compilations              | 25% speedup  | Blocked by #699 |
+| 832 | Upgrade to TypeScript 6.x for Unicode 16.0 identifiers | 82 skip      | **Ready**       |
+| 833 | Consider sloppy mode support for legacy octal escapes  | 16 skip      | **Ready** (low) |
 
 ---
 
@@ -414,13 +437,13 @@ All independent -- low priority, can be picked up opportunistically.
 
 All independent — can run in parallel.
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 1094 | Shrink runtime.ts host boundary — compile-away JS semantics | Standalone/WASI readiness | **Ready** (H) |
-| 1095 | Eliminate `as unknown as Instr` casts (273 sites) | IR type safety | **Ready** (L) |
-| 1096 | Isolate env adapters — remove top-level await from core | Embedding/determinism | **Ready** (S) |
-| ~~1097~~ | ~~Remove stale import-helper generator in output.ts~~ | Dead code | **Done** ✓ PR#142 |
-| 1098 | Audit and reduce patch-layer accumulation in codegen (155 workarounds) | Code quality | **Ready** (M) |
+| #        | Title                                                                  | Impact                    | Ready?            |
+| -------- | ---------------------------------------------------------------------- | ------------------------- | ----------------- |
+| 1094     | Shrink runtime.ts host boundary — compile-away JS semantics            | Standalone/WASI readiness | **Ready** (H)     |
+| 1095     | Eliminate `as unknown as Instr` casts (273 sites)                      | IR type safety            | **Ready** (L)     |
+| 1096     | Isolate env adapters — remove top-level await from core                | Embedding/determinism     | **Ready** (S)     |
+| ~~1097~~ | ~~Remove stale import-helper generator in output.ts~~                  | Dead code                 | **Done** ✓ PR#142 |
+| 1098     | Audit and reduce patch-layer accumulation in codegen (155 workarounds) | Code quality              | **Ready** (M)     |
 
 ### Standalone execution & Wasm-native APIs
 
@@ -435,51 +458,51 @@ All independent — can run in parallel.
 #1662 (audit) -- empirical --target wasi host-import map; spawned #1663–#1666
 ```
 
-| #   | Title | Impact | Ready? |
-|-----|-------|--------|--------|
-| 1662 | Audit: standalone (--target wasi) host-import leaks per construct | Standalone gap map | **Done** (audit record) |
-| 1666 | Bug: --target wasi emits invalid wasm (class/closure/number→string/typed-array) | Standalone correctness | **Ready** (H) |
-| 1663 | Pure-Wasm parseInt / parseFloat / Number(string) | Standalone numerics | **Ready** (M, #1471 closed without it) |
-| 1664 | Residual __extern_/__register_/__iterator/__array_ leaks after #1472 | Standalone objects/iterators | **Ready** (H, after #1666) |
-| 1665 | Wasm-native generators (retire __gen_/__create_generator) | Standalone generators | **Ready** (H, after #1666) |
-| 1099 | Standalone execution demo — FizzBuzz on Wasmtime, zero JS | Production credibility | **Ready** (H, depends on #1094) |
-| 1103 | Wasm-native Map, Set, WeakMap, WeakSet | Standalone collections | **Ready** (H) |
-| 1105 | Wasm-native String methods on i16 arrays | Standalone string ops | **Ready** (H) |
-| 1104 | Wasm-native Error construction | Standalone errors | **Ready** (M) |
-| 1100 | Wasm-native Proxy meta-object protocol | Standalone Proxy | **Ready** (H) |
-| 1102 | Wasm-native eval (AOT compilation) | Standalone eval | **Ready** (H) |
-| 1101 | Wasm-native WeakRef / FinalizationRegistry | Standalone weak refs | **Ready** (H) |
+| #    | Title                                                                           | Impact                       | Ready?                                 |
+| ---- | ------------------------------------------------------------------------------- | ---------------------------- | -------------------------------------- |
+| 1662 | Audit: standalone (--target wasi) host-import leaks per construct               | Standalone gap map           | **Done** (audit record)                |
+| 1666 | Bug: --target wasi emits invalid wasm (class/closure/number→string/typed-array) | Standalone correctness       | **Ready** (H)                          |
+| 1663 | Pure-Wasm parseInt / parseFloat / Number(string)                                | Standalone numerics          | **Ready** (M, #1471 closed without it) |
+| 1664 | Residual **extern\_/**register*/**iterator/**array* leaks after #1472           | Standalone objects/iterators | **Ready** (H, after #1666)             |
+| 1665 | Wasm-native generators (retire **gen\_/**create_generator)                      | Standalone generators        | **Ready** (H, after #1666)             |
+| 1099 | Standalone execution demo — FizzBuzz on Wasmtime, zero JS                       | Production credibility       | **Ready** (H, depends on #1094)        |
+| 1103 | Wasm-native Map, Set, WeakMap, WeakSet                                          | Standalone collections       | **Ready** (H)                          |
+| 1105 | Wasm-native String methods on i16 arrays                                        | Standalone string ops        | **Ready** (H)                          |
+| 1104 | Wasm-native Error construction                                                  | Standalone errors            | **Ready** (M)                          |
+| 1100 | Wasm-native Proxy meta-object protocol                                          | Standalone Proxy             | **Ready** (H)                          |
+| 1102 | Wasm-native eval (AOT compilation)                                              | Standalone eval              | **Ready** (H)                          |
+| 1101 | Wasm-native WeakRef / FinalizationRegistry                                      | Standalone weak refs         | **Ready** (H)                          |
 
 ### Module extraction sub-tasks of #688. All independent, can run in parallel.
 
-| #   | Title | Ready? |
-|-----|-------|--------|
-| 803 | Extract call dispatch -> calls.ts | **Ready** |
-| 804 | Extract new expressions -> new-expression.ts | **Ready** |
-| 805 | Extract assignment/destructuring -> assignments.ts | **Ready** |
-| 806 | Extract increment/decrement -> unary-update.ts | **Ready** |
-| 807 | Extract Date/Math/console -> builtins.ts | **Ready** |
-| 808 | Extract string/import infra -> imports.ts | **Ready** |
-| 809 | Extract native string helpers -> native-strings.ts | **Ready** |
-| 810 | Extract class compilation -> class-codegen.ts | **Ready** |
-| 811 | Extract fixup passes -> fixups.ts | **Ready** |
-| 741 | Extract string/any helpers from index.ts | **Ready** |
-| 788 | Modularize src/ into focused subfolder structure | **Ready** |
-| 638 | Reverse typeIdxToStructName map | **Ready** |
-| 652 | Compile-time ARC / static lifetime analysis | **Ready** (research) |
-| 682 | RegExp Wasm engine for standalone mode | **Ready** |
+| #   | Title                                              | Ready?               |
+| --- | -------------------------------------------------- | -------------------- |
+| 803 | Extract call dispatch -> calls.ts                  | **Ready**            |
+| 804 | Extract new expressions -> new-expression.ts       | **Ready**            |
+| 805 | Extract assignment/destructuring -> assignments.ts | **Ready**            |
+| 806 | Extract increment/decrement -> unary-update.ts     | **Ready**            |
+| 807 | Extract Date/Math/console -> builtins.ts           | **Ready**            |
+| 808 | Extract string/import infra -> imports.ts          | **Ready**            |
+| 809 | Extract native string helpers -> native-strings.ts | **Ready**            |
+| 810 | Extract class compilation -> class-codegen.ts      | **Ready**            |
+| 811 | Extract fixup passes -> fixups.ts                  | **Ready**            |
+| 741 | Extract string/any helpers from index.ts           | **Ready**            |
+| 788 | Modularize src/ into focused subfolder structure   | **Ready**            |
+| 638 | Reverse typeIdxToStructName map                    | **Ready**            |
+| 652 | Compile-time ARC / static lifetime analysis        | **Ready** (research) |
+| 682 | RegExp Wasm engine for standalone mode             | **Ready**            |
 
 ---
 
 ## Cluster L: Platform Support
 
-| #   | Title | Ready? |
-|-----|-------|--------|
+| #   | Title                                        | Ready?    |
+| --- | -------------------------------------------- | --------- |
 | 639 | Full Component Model adapter (canonical ABI) | **Ready** |
-| 640 | WASI HTTP handler | **Ready** |
-| 644 | Integrate report into playground | **Ready** |
-| 641 | Shopify Functions template | **Ready** |
-| 642 | Deno/Cloudflare loader plugins | **Ready** |
+| 640 | WASI HTTP handler                            | **Ready** |
+| 644 | Integrate report into playground             | **Ready** |
+| 641 | Shopify Functions template                   | **Ready** |
+| 642 | Deno/Cloudflare loader plugins               | **Ready** |
 
 ---
 
@@ -495,15 +518,15 @@ All independent — can run in parallel.
 #483 (Symbol() narrow filter) ──┘
 ```
 
-| #   | Title | Ready? |
-|-----|-------|--------|
-| 481 | Symbol.iterator | **Ready** (critical) |
-| 483 | Symbol() constructor narrow filter | **Ready** |
-| 482 | Symbol.toPrimitive | Blocked by #481 |
-| 484 | Symbol.species | Blocked by #481 |
-| 485 | Symbol RegExp protocol | Blocked by #481 |
-| 486 | Symbol.toStringTag/hasInstance | Blocked by #481 |
-| 487 | User Symbol as property key | Blocked by #481, #483 |
+| #   | Title                              | Ready?                |
+| --- | ---------------------------------- | --------------------- |
+| 481 | Symbol.iterator                    | **Ready** (critical)  |
+| 483 | Symbol() constructor narrow filter | **Ready**             |
+| 482 | Symbol.toPrimitive                 | Blocked by #481       |
+| 484 | Symbol.species                     | Blocked by #481       |
+| 485 | Symbol RegExp protocol             | Blocked by #481       |
+| 486 | Symbol.toStringTag/hasInstance     | Blocked by #481       |
+| 487 | User Symbol as property key        | Blocked by #481, #483 |
 
 ---
 
@@ -511,79 +534,79 @@ All independent — can run in parallel.
 
 ### Generators / Yield `[S][E]`
 
-| #   | Title | Tests | Ready? |
-|-----|-------|-------|--------|
-| 287 | Generator function compile errors -- yield in loops/try | ~119 CE | **Ready** |
-| 288 | Try/catch/finally compile errors -- complex patterns | ~40 CE | Coordinates with #287 |
+| #   | Title                                                   | Tests   | Ready?                |
+| --- | ------------------------------------------------------- | ------- | --------------------- |
+| 287 | Generator function compile errors -- yield in loops/try | ~119 CE | **Ready**             |
+| 288 | Try/catch/finally compile errors -- complex patterns    | ~40 CE  | Coordinates with #287 |
 
 ### Property / Element access `[E]`
 
-| #   | Title | Ready? |
-|-----|-------|--------|
+| #   | Title                                             | Ready?    |
+| --- | ------------------------------------------------- | --------- |
 | 239 | Element access on struct types (bracket notation) | **Ready** |
 | 274 | Property access on function type (.name, .length) | **Ready** |
 
 ### Scope / Identifiers `[I][S]`
 
-| #   | Title | Ready? |
-|-----|-------|--------|
-| 146 | Unknown identifier / scope issues | **Ready** |
+| #   | Title                                         | Ready?    |
+| --- | --------------------------------------------- | --------- |
+| 146 | Unknown identifier / scope issues             | **Ready** |
 | 266 | Unknown identifier -- multi-variable patterns | **Ready** |
-| 380 | Unknown variable/function in test scope | **Ready** |
+| 380 | Unknown variable/function in test scope       | **Ready** |
 
 ### Loops / Iteration `[S]`
 
-| #   | Title | Ready? |
-|-----|-------|--------|
+| #   | Title                                       | Ready?     |
+| --- | ------------------------------------------- | ---------- |
 | 353 | For-of with generators and custom iterators | **Review** |
 
 ### Wasm validation `[E][I]`
 
-| #   | Title | Tests | Ready? |
-|-----|-------|-------|--------|
+| #   | Title                                                         | Tests   | Ready?    |
+| --- | ------------------------------------------------------------- | ------- | --------- |
 | 401 | Wasm validation errors (call args, struct.new, type mismatch) | 3672 CE | **Ready** |
-| 405 | Internal compiler errors -- undefined properties | 64 CE | **Ready** |
-| 406 | 'base' is possibly null errors | 81 CE | **Ready** |
+| 405 | Internal compiler errors -- undefined properties              | 64 CE   | **Ready** |
+| 406 | 'base' is possibly null errors                                | 81 CE   | **Ready** |
 
 ### Functions / Closures `[E]`
 
-| #   | Title | Ready? |
-|-----|-------|--------|
+| #   | Title                                             | Ready?    |
+| --- | ------------------------------------------------- | --------- |
 | 356 | Closure-as-value in assert and array-like objects | **Ready** |
-| 368 | Global/arrow `this` reference | **Ready** |
-| 382 | Spread argument in super/function calls | **Ready** |
+| 368 | Global/arrow `this` reference                     | **Ready** |
+| 382 | Spread argument in super/function calls           | **Ready** |
 
 ### Built-ins / Runtime `[E]`
 
-| #   | Title | Ready? |
-|-----|-------|--------|
+| #   | Title                                | Ready?    |
+| --- | ------------------------------------ | --------- |
 | 359 | Object.freeze/seal/preventExtensions | **Ready** |
-| 369 | globalThis support | **Ready** |
-| 385 | Array method argument count errors | **Ready** |
+| 369 | globalThis support                   | **Ready** |
+| 385 | Array method argument count errors   | **Ready** |
 
 ### Modules / Imports `[I]`
 
-| #   | Title | Ready? |
-|-----|-------|--------|
+| #   | Title                                  | Ready?    |
+| --- | -------------------------------------- | --------- |
 | 332 | Export declaration at top level errors | **Ready** |
-| 333 | Dynamic import modifier syntax errors | **Ready** |
+| 333 | Dynamic import modifier syntax errors  | **Ready** |
 
 ---
 
 ## Backlog (long-term / blocked)
 
-| #   | Title | Blocked by |
-|-----|-------|-----------|
-| 130 | Shape inference Phase 4 -- hashmap fallback | large scope |
-| 149 | Unsupported call expression patterns | #232 is Phase 1 |
-| 153 | Iterator protocol for destructuring | #268 |
-| 173 | Computed property names in classes | Ready (#242, #265 done) |
-| 79  | Gradual typing -- boxed `any` | large scope |
-| 339 | Async function and await support | large scope |
-| 340 | Error throwing and try/catch/finally | large scope |
-| 343 | Prototype chain support | large scope |
-| 351 | Async iteration (for-await-of) | depends on #339 |
-| 376 | Decorator syntax support | low priority |
+| #   | Title                                       | Blocked by              |
+| --- | ------------------------------------------- | ----------------------- |
+| 130 | Shape inference Phase 4 -- hashmap fallback | large scope             |
+| 149 | Unsupported call expression patterns        | #232 is Phase 1         |
+| 153 | Iterator protocol for destructuring         | #268                    |
+| 173 | Computed property names in classes          | Ready (#242, #265 done) |
+| 79  | Gradual typing -- boxed `any`               | large scope             |
+| 339 | Async function and await support            | large scope             |
+| 340 | Error throwing and try/catch/finally        | large scope             |
+| 343 | Prototype chain support                     | large scope             |
+| 351 | Async iteration (for-await-of)              | depends on #339         |
+| 376 | Decorator syntax support                    | low priority            |
 
 ---
 
@@ -592,31 +615,31 @@ All independent — can run in parallel.
 When picking parallel work items, avoid pairing issues that touch the same
 function in the same file.
 
-| Function | Issues |
-|----------|--------|
-| `compileCallExpression` | 382, 409, 489, 827, 857 |
-| `compileNewExpression` | 344, 412, 432, 842, 844 |
-| `compileDestructuringAssignment` | 142, 328, 379, 420, 761, 847, 852 |
-| `compileAssignment` (compound) | 404, 424, 426, 829 |
-| `coerceType` | 411, 431, 444, 448, 822, 839 |
-| class codegen | 329, 334, 377, 427, 793, 843, 848 |
-| null guard emission | 789, 820, 825, 852 |
-| ref.cast / type narrowing | 778, 826 |
-| loop codegen | 353, 417, 436, 847, 851 |
-| built-in runtime | 359, 369, 385, 421, 733, 840, 841, 846 |
-| generator codegen | 287, 288, 415, 422, 439, 680 |
-| iterator protocol | 481, 766, 851, 854 |
-| scope resolution | 146, 266, 380, 429, 443 |
-| template literals | 836 |
-| module/import handling | 332, 333, 440 |
-| return_call / tail call | 839 |
-| AST node handling | 828, 845 |
-| promise / async | 735, 855 |
-| arguments object | 849 |
-| property descriptor | 739, 797, 856 |
-| prototype chain | 678, 799, 802 |
-| Array methods | 827, 840, 857 |
-| diagnostic suppression | 381, 831 |
+| Function                         | Issues                                 |
+| -------------------------------- | -------------------------------------- |
+| `compileCallExpression`          | 382, 409, 489, 827, 857                |
+| `compileNewExpression`           | 344, 412, 432, 842, 844                |
+| `compileDestructuringAssignment` | 142, 328, 379, 420, 761, 847, 852      |
+| `compileAssignment` (compound)   | 404, 424, 426, 829                     |
+| `coerceType`                     | 411, 431, 444, 448, 822, 839           |
+| class codegen                    | 329, 334, 377, 427, 793, 843, 848      |
+| null guard emission              | 789, 820, 825, 852                     |
+| ref.cast / type narrowing        | 778, 826                               |
+| loop codegen                     | 353, 417, 436, 847, 851                |
+| built-in runtime                 | 359, 369, 385, 421, 733, 840, 841, 846 |
+| generator codegen                | 287, 288, 415, 422, 439, 680           |
+| iterator protocol                | 481, 766, 851, 854                     |
+| scope resolution                 | 146, 266, 380, 429, 443                |
+| template literals                | 836                                    |
+| module/import handling           | 332, 333, 440                          |
+| return_call / tail call          | 839                                    |
+| AST node handling                | 828, 845                               |
+| promise / async                  | 735, 855                               |
+| arguments object                 | 849                                    |
+| property descriptor              | 739, 797, 856                          |
+| prototype chain                  | 678, 799, 802                          |
+| Array methods                    | 827, 840, 857                          |
+| diagnostic suppression           | 381, 831                               |
 
 ## 2026-06-12 — Sprint 62 (Fable architecture sprint) dependency spine
 

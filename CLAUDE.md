@@ -34,7 +34,7 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 - This follows the pattern of #679 (dual string backend) and #682 (dual RegExp backend).
 - **Two orthogonal axes in codegen** (see #1527):
   - **Backend lowering**: `src/codegen/` (WasmGC) vs `src/codegen-linear/` (linear memory). These are **alternatives, not one superseding the other** — the choice depends on target (browser/WasmGC vs WASI/linear) and tradeoffs. Both stay.
-  - **Front-end**: direct AST→Wasm (legacy, accumulated hacks) vs IR (`src/ir/`, typed representation). IR **replaces the hacks**; it does **not** compete with the backend choice. IR adopts AST node kinds step by step, only for parts that do not yet need to decide between linear and WasmGC lowering. IR-path failures currently demote to a warning channel (#1530 phases this fallback out).
+  - **Front-end**: direct AST→Wasm (legacy, accumulated hacks) vs IR (`src/ir/`, typed representation). IR **replaces the hacks**; it does **not** compete with the backend choice. IR adopts AST node kinds step by step, only for parts that do not yet need to decide between linear and WasmGC lowering. IR-path failures currently demote to a warning channel (#2855 phases this fallback out).
   - Full discussion: [docs/architecture/codegen-axes.md](docs/architecture/codegen-axes.md). Per-AST-kind adoption status: [plan/log/ir-adoption.md](plan/log/ir-adoption.md).
 
 ## Project Structure
@@ -125,7 +125,7 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 
 To validate the baseline on demand, run `pnpm run test:262:validate-baseline` — the validator calls the fetch helper itself, then spot-checks 50 random `pass` entries against current HEAD (uses a deterministic seed; pass `PR_NUMBER=N` to reproduce a specific CI run, or `SAMPLE_SIZE=10 SEED=12345` for a quicker check). Set `SAMPLE_SIZE=50` to match CI exactly. The validator fails fast on the first 5 most-affected entries with a pointer to the fetch helper for forcing a refresh.
 
-## IR Fallback Budget (#1376) — being phased out (#1530)
+## IR Fallback Budget (#1376) — being phased out (#2855)
 
 The IR retirement gate `pnpm run check:ir-fallbacks` walks every `.ts` file
 under `playground/examples/` with `trackFallbacks: true` and aggregates
@@ -133,7 +133,7 @@ rejection reasons against `scripts/ir-fallback-baseline.json`. CI fails when
 any **unintended** bucket grows.
 
 **Direction**: this budget is a transitional safety net, not a permanent
-ceiling. #1530 prioritises ratcheting the unintended buckets to zero so the
+ceiling. #2855 prioritises ratcheting the unintended buckets to zero so the
 IR path becomes the only path for the affected node kinds. Once a bucket
 hits zero, the rejection reason gets added to `STRICT_IR_REASONS` in
 `src/codegen/index.ts`, which promotes any future regression of that
@@ -162,7 +162,7 @@ pnpm run check:ir-fallbacks -- --update
 git add scripts/ir-fallback-baseline.json
 ```
 
-**Ratchet** (#1530): `pnpm run check:ir-fallbacks -- --update-on-decrease`
+**Ratchet** (#2855): `pnpm run check:ir-fallbacks -- --update-on-decrease`
 auto-writes the new (lower) counts to `scripts/ir-fallback-baseline.json`
 when a PR shrinks any unintended bucket. Growth still fails. The
 post-merge CI job is the intended caller of this mode so improvements
@@ -406,7 +406,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 3. Update `plan/issues/backlog/backlog.md` if the issue was listed there
 
 <!-- AUTO:conformance-start -->
-**test262 conformance**: 33,032 / 43,135 (76.6 %)
+**test262 conformance**: 33,082 / 43,135 (76.7 %)
 <!-- AUTO:conformance-end -->
 
 ### Sprint History

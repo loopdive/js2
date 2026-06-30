@@ -2,6 +2,7 @@
 import { compileSource } from "./compiler.js";
 import type { ImportDescriptor, ImportIntent, ImportPolicy } from "./index.js";
 import { createEvalShim } from "./runtime-eval.js";
+import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "./string-surrogate.js";
 
 /**
  * Portable require() for loading Node.js builtin modules (#1044).
@@ -3483,11 +3484,19 @@ function _structToPlainObject(
       result[key] = val;
     }
   }
-  // Also include sidecar properties
+  // Also include sidecar properties (dynamically-assigned own props, e.g.
+  // acorn's `node.quasis = [...]` / `node.expressions = [...]`).
+  // (#2851/#2852) These MUST be deep-converted the same way nominal fields are
+  // (the `val = _wasmToPlain(getter(obj))` above): a sidecar value that is —
+  // or contains — raw WasmGC structs (a child AST node, or an ARRAY of child
+  // nodes) was previously merged verbatim, so a `marshal:"copy"`/JSON consumer
+  // saw `quasis[*]` / `expressions[*]` elements as blank/opaque. Recurse so the
+  // deep copy reaches struct values and array-of-struct elements. Idempotent
+  // for plain JS values (`_wasmToPlain` returns primitives as-is).
   const sc = _wasmStructProps.get(obj);
   if (sc) {
     for (const key of Object.keys(sc)) {
-      if (!(key in result)) result[key] = sc[key];
+      if (!(key in result)) result[key] = _wasmToPlain(sc[key], exports, seen);
     }
   }
   return result;
@@ -13634,8 +13643,35 @@ export function buildStringConstants(stringPool: string[] = []): Record<string, 
   // entries via the `s in constants` duplicate check.
   const constants: Record<string, WebAssembly.Global> = Object.create(null);
   for (const s of stringPool) {
+    // (#2880) Literals with a lone surrogate are imported from the
+    // `string_constants16` namespace (hex-keyed) instead — see
+    // buildStringConstants16. Skip them here so their lossy UTF-8 text isn't
+    // also installed under a wrong key.
+    if (hasLoneSurrogate(s)) continue;
     if (!(s in constants)) {
       constants[s] = new WebAssembly.Global({ value: "externref", mutable: false }, s);
+    }
+  }
+  return constants;
+}
+
+/**
+ * (#2880) Surrogate-safe sibling of {@link buildStringConstants}. A wasm import
+ * field name must be valid UTF-8, so a string literal containing a lone
+ * (unpaired) surrogate cannot be keyed by its own text. The compiler instead
+ * imports such constants from the `string_constants16` namespace keyed by the
+ * hex of their UTF-16 code units (ASCII). This mirrors that keying: the lookup
+ * key is the hex, the global's VALUE is the real JS string (externref holds any
+ * string, lone surrogates included). Surrogate-free literals are never routed
+ * here — they stay in the plain `string_constants` namespace, unchanged.
+ */
+export function buildStringConstants16(stringPool: string[] = []): Record<string, WebAssembly.Global> {
+  const constants: Record<string, WebAssembly.Global> = Object.create(null);
+  for (const s of stringPool) {
+    if (!hasLoneSurrogate(s)) continue;
+    const key = hexCodeUnits(s);
+    if (!(key in constants)) {
+      constants[key] = new WebAssembly.Global({ value: "externref", mutable: false }, s);
     }
   }
   return constants;
@@ -14092,6 +14128,7 @@ export function buildImports(
   env: Record<string, Function>;
   "wasm:js-string": typeof jsString;
   string_constants: Record<string, WebAssembly.Global>;
+  string_constants16: Record<string, WebAssembly.Global>;
   setExports?: (exports: Record<string, Function>) => void;
 } {
   // (#1933) Per-instance state for stateful imports. Created FIRST so the
@@ -14205,11 +14242,15 @@ export function buildImports(
     env: Record<string, Function>;
     "wasm:js-string": typeof jsString;
     string_constants: Record<string, WebAssembly.Global>;
+    string_constants16: Record<string, WebAssembly.Global>;
     setExports?: (exports: Record<string, Function>) => void;
   } = {
     env,
     "wasm:js-string": jsString,
     string_constants: buildStringConstants(stringPool),
+    // (#2880) surrogate-safe constants — hex-keyed; empty for surrogate-free
+    // programs (an unused import namespace is ignored by V8).
+    string_constants16: buildStringConstants16(stringPool),
   };
   // Always provide setExports — needed for callbacks, native string marshaling,
   // and struct field getter discovery (__sget_*).
@@ -14454,14 +14495,18 @@ export async function instantiateWasm(
   binary: ArrayBuffer | ArrayBufferView,
   env: Record<string, Function>,
   stringConstants?: Record<string, WebAssembly.Global>,
+  // (#2880) hex-keyed namespace for surrogate-containing string constants.
+  // Optional + default-empty so existing 3-arg callers keep working unchanged.
+  stringConstants16?: Record<string, WebAssembly.Global>,
 ): Promise<{ instance: WebAssembly.Instance; nativeBuiltins: boolean }> {
   const sc = stringConstants ?? {};
+  const sc16 = stringConstants16 ?? {};
   const bytes = binary as BufferSource;
   if (JS_STRINGS_NATIVE_BUILTIN) {
     try {
       const { instance } = await (WebAssembly.instantiate as Function)(
         bytes,
-        { env, string_constants: sc },
+        { env, string_constants: sc, [STRING_CONSTANTS16_NS]: sc16 },
         { builtins: ["js-string"], importedStringConstants: "string_constants" },
       );
       return { instance, nativeBuiltins: true };
@@ -14473,6 +14518,7 @@ export async function instantiateWasm(
     env,
     "wasm:js-string": jsString,
     string_constants: sc,
+    [STRING_CONSTANTS16_NS]: sc16,
   } as WebAssembly.Imports);
   return { instance, nativeBuiltins: false };
 }
@@ -14484,8 +14530,11 @@ export async function instantiateWasmStreaming(
   source: Response | Promise<Response> | RequestInfo | URL,
   env: Record<string, Function>,
   stringConstants?: Record<string, WebAssembly.Global>,
+  // (#2880) hex-keyed namespace for surrogate-containing string constants.
+  stringConstants16?: Record<string, WebAssembly.Global>,
 ): Promise<{ instance: WebAssembly.Instance; nativeBuiltins: boolean }> {
   const sc = stringConstants ?? {};
+  const sc16 = stringConstants16 ?? {};
   const response = source instanceof Response ? source : source instanceof Promise ? await source : await fetch(source);
   const byteFallback = response.clone();
 
@@ -14494,7 +14543,7 @@ export async function instantiateWasmStreaming(
       try {
         const { instance } = await (WebAssembly.instantiateStreaming as Function)(
           response,
-          { env, string_constants: sc },
+          { env, string_constants: sc, [STRING_CONSTANTS16_NS]: sc16 },
           { builtins: ["js-string"], importedStringConstants: "string_constants" },
         );
         return { instance, nativeBuiltins: true };
@@ -14507,6 +14556,7 @@ export async function instantiateWasmStreaming(
           env,
           "wasm:js-string": jsString,
           string_constants: sc,
+          [STRING_CONSTANTS16_NS]: sc16,
         } as WebAssembly.Imports);
         return { instance, nativeBuiltins: false };
       } catch {
@@ -14516,7 +14566,7 @@ export async function instantiateWasmStreaming(
   }
 
   const bytes = new Uint8Array(await byteFallback.arrayBuffer());
-  return instantiateWasm(bytes, env, sc);
+  return instantiateWasm(bytes, env, sc, sc16);
 }
 
 /** Compile TypeScript source and instantiate the Wasm module. */
@@ -14527,7 +14577,7 @@ export async function compileAndInstantiate(source: string, deps?: Record<string
   }
   const imports = buildImports(result.imports, deps, result.stringPool);
   const binary = new Uint8Array(result.binary);
-  const { instance } = await instantiateWasm(binary, imports.env, imports.string_constants);
+  const { instance } = await instantiateWasm(binary, imports.env, imports.string_constants, imports.string_constants16);
   if (imports.setExports) {
     imports.setExports(instance.exports as Record<string, Function>);
   }

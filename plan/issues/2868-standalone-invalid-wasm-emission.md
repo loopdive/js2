@@ -1,7 +1,8 @@
 ---
 id: 2868
 title: "Standalone: invalid Wasm binary emitted (correctness) — __uri_encode/__uri_decode, __str_flatten, and common user-body shapes"
-status: ready
+status: done
+completed: 2026-06-30
 created: 2026-06-30
 updated: 2026-06-30
 priority: high
@@ -91,3 +92,52 @@ Standalone CE → pass:
 
 Validate by re-compiling each repro to a valid module, then full `merge_group` +
 standalone high-water. Pure correctness win — no host-mode path touched.
+
+## Resolution (2026-06-30) — URI carriers fixed; residual → #2878
+
+Fixed the `__uri_encode`/`__uri_decode` carriers (the named, most-isolated
+sub-bugs — 81 invalid binaries across the four URI test dirs alone, > the 64
+estimate).
+
+### Root cause
+
+`src/codegen/uri-encoding-native.ts` built `throwURIError` as a **shared
+`const Instr[]`** and spread it (`...throwURIError`) at ~13 throw sites in each
+helper. A spread is shallow, so the single `{ op:"call", funcIdx: uriErrCtorIdx }`
+(and the `{ op:"throw", tagIdx }`) Instr **objects** were aliased at every site.
+When a late import was added after the helper was emitted (e.g. a thrown user
+class + `e instanceof URIError` pulling in `__box_boolean` / the error
+constructor), the index-shift walker `shiftLateImportIndices`
+(`src/codegen/expressions/late-imports.ts`) mutates `instr.funcIdx += delta`
+**once per occurrence** while walking the body — so the shared `call` object was
+shifted ~13× instead of once, landing on an out-of-range / wrong-signature
+function. The single-occurrence `__str_flatten` call was shifted correctly, which
+is why only the URIError-throw path corrupted. Class: shared-Instr-object
+aliasing (`reference_shared_instr_object_dce_double_remap`).
+
+### Fix
+
+Make `throwURIError` a **factory** (`(): Instr[] => [...]`) returning fresh Instr
+objects per call; replace every `...throwURIError` with `...throwURIError()`.
+Each emitted `call`/`throw` is now an independent object the shift visits exactly
+once. Two-line shape, applied to both the encode and decode helpers. Not
+standalone-gated, but host mode was unaffected (it adds these late imports too,
+just didn't surface the same shape) and is re-verified.
+
+### Verify-first
+
+Sweep of `test/built-ins/{decodeURI,decodeURIComponent,encodeURI,encodeURIComponent}`
+via the test262 `wrapTest` path, `--target standalone`:
+- BEFORE: 92 valid / **81 invalid** (`__uri_decode`/`__uri_encode failed: call[0]
+  expected type i32 …` / `throw[0] expected type externref …` / `not enough
+  arguments on the stack`).
+- AFTER: **173 valid / 0 invalid**; functional round-trips correct
+  (decode/encode lengths, non-ASCII round-trip, catchable `URIError` on malformed
+  input). `tests/issue-2868.test.ts` regression test fails on main / passes on fix.
+
+### Residual (out of scope here) → #2878
+
+`__str_flatten` (10) and the `test`/`inner`/`fn` user-body-shape clusters (322)
+were NOT addressed by the URI-carrier fix and are tracked in **#2878** (with a
+hypothesis that some may share this aliasing class, and a proposed
+walker-idempotency hardening).

@@ -122,7 +122,10 @@ const BUILTIN_BRAND_TABLE: Readonly<Record<string, number>> = {
   EvalError: BUILTIN_BRAND_BASE + 38,
   ReferenceError: BUILTIN_BRAND_BASE + 39,
 
-  // Next free slot: BUILTIN_BRAND_BASE + 40 (append only).
+  // ── Resource-management / weak builtins ──────────────────────────────────
+  FinalizationRegistry: BUILTIN_BRAND_BASE + 40,
+
+  // Next free slot: BUILTIN_BRAND_BASE + 41 (append only).
 };
 
 /**

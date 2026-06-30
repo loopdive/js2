@@ -270,8 +270,26 @@ copyDirectoryIfExists(join(ROOT, "spec-compliance"), join(PAGES_DIST, "spec-comp
 // Add the benchmark data files fetched by the public report pages. Public pages
 // should read from the already-curated public summaries, not from the full
 // internal benchmark results directory.
-copyFileIfExists(join(PUBLIC_BENCH, "history.json"), join(PAGES_DIST, "benchmarks", "results", "history.json"));
-copyFileIfExists(join(PUBLIC_BENCH, "latest.json"), join(PAGES_DIST, "benchmarks", "results", "latest.json"));
+// `latest.json` / `history.json` are committed in the canonical
+// `benchmarks/results/` dir, NOT under `website/public/benchmarks/results/`.
+// Prefer the canonical source (fall back to the public copy if curated there)
+// so the deployed report page can actually fetch them — otherwise the
+// "Performance Benchmarks" / "Performance Trends" sections render empty
+// because both files 404 on the live site.
+const benchHistorySource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "history.json"),
+  join(PUBLIC_BENCH, "history.json"),
+);
+const benchLatestSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "latest.json"),
+  join(PUBLIC_BENCH, "latest.json"),
+);
+if (benchHistorySource) {
+  copyFile(benchHistorySource, join(PAGES_DIST, "benchmarks", "results", "history.json"));
+}
+if (benchLatestSource) {
+  copyFile(benchLatestSource, join(PAGES_DIST, "benchmarks", "results", "latest.json"));
+}
 // Preference order:
 //   1. test262-current.{jsonl,json}  — committed by the nightly workflow,
 //      always present in CI checkouts. THIS is what GitHub Pages should serve.

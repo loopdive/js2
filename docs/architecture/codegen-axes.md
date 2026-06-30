@@ -135,7 +135,7 @@ Stay in `src/codegen/` (direct) until the listed issues land:
 
 `scripts/ir-fallback-baseline.json` is the ratchet. When a kind is
 adopted, its bucket goes to zero and the demote-to-warning escape hatch
-in `src/codegen/index.ts:889–896` is removed for that kind — see #1530.
+in `src/codegen/index.ts:889–896` is removed for that kind — see #2855.
 
 ## Current hidden bias in `src/ir/` (and what to do about it)
 
@@ -163,7 +163,7 @@ claimed, the failure is logged at severity `"warning"` and the legacy
 direct-codegen body is kept. This makes the IR safe to enable by default
 without breaking test262, but it also masks real IR bugs.
 
-**This is a transitional safety net, not the final design.** #1530 phases
+**This is a transitional safety net, not the final design.** #2855 phases
 the warning channel out. The endgame: when a node kind is IR-owned, the
 selector either claims it (and IR succeeds) or it stays direct (and the
 selector reports a structured "deferred" reason). There is no third
@@ -184,6 +184,6 @@ fallback budget (`pnpm run check:ir-fallbacks`).
 - #1131 — IR Phase 2 plan (what's claimed today).
 - #1370, #1372, #1373 — selector bucket reductions (the path forward).
 - #1376 — IR fallback budget (current ratchet).
-- #1530 — phase out the demote-to-warning channel.
+- #2855 — phase out the demote-to-warning channel.
 - #1526 — Instr `as unknown as` cast budget (related cleanup).
 - #1527 — this doc.

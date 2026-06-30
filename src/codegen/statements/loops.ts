@@ -13,6 +13,7 @@ import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
 import { emitExternrefDestructureGuard, emitObjectPatternRestFromVec } from "../destructuring-params.js";
 import {
+  emitAssignToTarget,
   findUnresolvableInArrayPattern,
   findUnresolvableInObjectPattern,
   isStrictContext,
@@ -2090,6 +2091,27 @@ function compileForOfAssignDestructuring(
         continue;
       }
 
+      // (#2869) Member-expression target — `for ({k: obj.y} of src)`. The
+      // identifier-only resolution below computes targetName=propName and drops
+      // the write (no local/global). Extract the field value into a temp and
+      // route through emitAssignToTarget → the #2664 member-set dispatcher. This
+      // emits into the LIVE loop body, so there is no detached-buffer funcIdx
+      // repoint hazard (unlike the assignment-expression path).
+      if (
+        ts.isPropertyAssignment(prop) &&
+        (ts.isPropertyAccessExpression(prop.initializer) || ts.isElementAccessExpression(prop.initializer))
+      ) {
+        const fieldEntryM = fields[fieldIdx];
+        if (!fieldEntryM) continue;
+        const fieldTypeM = fieldEntryM.type;
+        const tmpV = allocLocal(fctx, `__forof_objmemtgt_${fctx.locals.length}`, fieldTypeM);
+        fctx.body.push({ op: "local.get", index: elemLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+        fctx.body.push({ op: "local.set", index: tmpV });
+        emitAssignToTarget(ctx, fctx, prop.initializer, tmpV, fieldTypeM);
+        continue;
+      }
+
       let targetLocal = fctx.localMap.get(targetName);
       let targetSyncGlobalIdx: number | undefined;
       if (targetLocal === undefined) {
@@ -2284,6 +2306,23 @@ function compileForOfAssignDestructuring(
           defaultInit = el.right;
         }
 
+        // (#2869) Member-expression target — `for ([x.y] of [[4]])`. Read the
+        // tuple field into a temp (applying any default), then route through
+        // emitAssignToTarget → the #2664 member-set dispatcher. Emits into the
+        // LIVE loop body → no detached-buffer funcIdx repoint hazard.
+        if (ts.isPropertyAccessExpression(targetEl) || ts.isElementAccessExpression(targetEl)) {
+          const tmpV = allocLocal(fctx, `__forof_memtgt_${fctx.locals.length}`, fieldType);
+          fctx.body.push({ op: "local.get", index: elemLocal });
+          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: i });
+          if (defaultInit) {
+            emitDefaultValueCheck(ctx, fctx, fieldType, tmpV, defaultInit, fieldType);
+          } else {
+            fctx.body.push({ op: "local.set", index: tmpV });
+          }
+          emitAssignToTarget(ctx, fctx, targetEl, tmpV, fieldType);
+          continue;
+        }
+
         if (!ts.isIdentifier(targetEl)) continue;
 
         let targetLocal = fctx.localMap.get(targetEl.text);
@@ -2398,6 +2437,27 @@ function compileForOfAssignDestructuring(
         if (ts.isBinaryExpression(el) && el.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
           targetEl = el.left;
           defaultInit = el.right;
+        }
+
+        // (#2869) Member-expression target — `for ([x.y] of [[4]])` over a vec
+        // source. Bounds-checked read of elem.data[i] into a temp (applying any
+        // default), then route through emitAssignToTarget → the #2664 member-set
+        // dispatcher. Live loop body → no detached-buffer funcIdx hazard.
+        if (ts.isPropertyAccessExpression(targetEl) || ts.isElementAccessExpression(targetEl)) {
+          const memElemVT: ValType =
+            innerElemType.kind === "i8" || innerElemType.kind === "i16" ? { kind: "i32" } : innerElemType;
+          const tmpV = allocLocal(fctx, `__forof_memtgt_${fctx.locals.length}`, memElemVT);
+          fctx.body.push({ op: "local.get", index: elemLocal });
+          fctx.body.push({ op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 });
+          fctx.body.push({ op: "i32.const", value: i });
+          emitBoundsCheckedArrayGet(fctx, innerArrTypeIdx, innerElemType);
+          if (defaultInit) {
+            emitDefaultValueCheck(ctx, fctx, memElemVT, tmpV, defaultInit, memElemVT);
+          } else {
+            fctx.body.push({ op: "local.set", index: tmpV });
+          }
+          emitAssignToTarget(ctx, fctx, targetEl, tmpV, memElemVT);
+          continue;
         }
 
         if (!ts.isIdentifier(targetEl)) continue;

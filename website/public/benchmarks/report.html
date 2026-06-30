@@ -587,6 +587,86 @@
           gap: 2rem;
         }
       }
+      /* Horizontal-scroll wrapper so wide tables (e.g. "By Category" with its
+         Distribution column) don't overflow the viewport on narrow screens. */
+      .table-scroll {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+      }
+      .table-scroll::-webkit-scrollbar {
+        height: 6px;
+      }
+      .table-scroll::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 3px;
+      }
+      .table-scroll .cat-table {
+        min-width: 540px;
+      }
+      /* Mode switch: Host (JS) vs Standalone (pure Wasm) conformance numbers. */
+      .mode-switch {
+        display: inline-flex;
+        gap: 0.25rem;
+        padding: 0.25rem;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        margin-bottom: 1.5rem;
+      }
+      .mode-switch button {
+        appearance: none;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text-muted);
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        padding: 0.4rem 0.9rem;
+        border-radius: 7px;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .mode-switch button:hover {
+        color: var(--text);
+      }
+      .mode-switch button.active {
+        background: var(--surface-hover);
+        color: var(--text);
+        border-color: var(--border);
+      }
+      .mode-switch .mode-sub {
+        display: block;
+        font-size: 0.62rem;
+        letter-spacing: 0.03em;
+        opacity: 0.7;
+      }
+      .diff-note {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        margin: 0.25rem 0 0.75rem;
+      }
+      .rc-issue-link {
+        color: #6db3ff;
+        text-decoration: none;
+        font-size: 0.625rem;
+        margin-left: 0.4rem;
+      }
+      .rc-issue-link:hover {
+        text-decoration: underline;
+      }
+      @media (max-width: 640px) {
+        body {
+          padding: 1rem;
+          padding-top: 80px;
+        }
+        h1 {
+          font-size: 2rem;
+        }
+      }
     </style>
   </head>
   <body>
@@ -607,6 +687,13 @@
       const REPORT_JSON = "results/test262-report.json";
       const RESULTS_JSONL = "results/test262-results.jsonl";
       const CATEGORY_EDITIONS_JSON = "results/test262-category-editions.json";
+      // Standalone (pure-Wasm, no JS host) conformance data. Same schema as the
+      // host report; the standalone report additionally carries a curated
+      // `root_cause_map` of failures that are host-dependency gaps — i.e. that
+      // pass in JS-host mode but fail standalone (the differential view, #5).
+      const STANDALONE_REPORT_JSON = "results/test262-standalone-report.json";
+      const STANDALONE_EDITIONS_JSON = "results/test262-standalone-editions.json";
+      const HOST_EDITIONS_JSON = "results/test262-editions.json";
       const PROPOSAL_LABEL = "Proposals";
       const BENCH_SUITE_FILES = [
         "benchmarks/suites/strings.ts",
@@ -705,24 +792,35 @@
         }
       }
 
-      // Per-file results indexed by category
-      let filesByCategory = null;
-      async function loadFileResults() {
-        if (filesByCategory) return filesByCategory;
+      // Per-file results indexed by category, cached per source URL. The
+      // standalone view has no deployed per-file JSONL, so callers pass its
+      // (null) source and gracefully degrade to the report's aggregate data.
+      const _fileResultsCache = new Map();
+      // The per-file JSONL source for the currently-displayed conformance view
+      // (host vs standalone). Set by renderConformance; read by toggleDetail.
+      let activeFileResultsSrc = RESULTS_JSONL;
+      async function loadFileResults(src = RESULTS_JSONL) {
+        if (!src) return null;
+        if (_fileResultsCache.has(src)) return _fileResultsCache.get(src);
         try {
-          const resp = await fetch(RESULTS_JSONL);
-          if (!resp.ok) return null;
+          const resp = await fetch(src);
+          if (!resp.ok) {
+            _fileResultsCache.set(src, null);
+            return null;
+          }
           const text = await resp.text();
-          filesByCategory = new Map();
+          const byCategory = new Map();
           for (const line of text.split("\n")) {
             if (!line.trim()) continue;
             const entry = JSON.parse(line);
             const cat = entry.category;
-            if (!filesByCategory.has(cat)) filesByCategory.set(cat, []);
-            filesByCategory.get(cat).push(entry);
+            if (!byCategory.has(cat)) byCategory.set(cat, []);
+            byCategory.get(cat).push(entry);
           }
-          return filesByCategory;
+          _fileResultsCache.set(src, byCategory);
+          return byCategory;
         } catch {
+          _fileResultsCache.set(src, null);
           return null;
         }
       }
@@ -1383,7 +1481,11 @@
         detailRow.appendChild(detailCell);
         row.after(detailRow);
 
-        loadFileResults().then((map) => {
+        if (!activeFileResultsSrc) {
+          content.textContent = "Per-file detail is only available for host mode.";
+          return;
+        }
+        loadFileResults(activeFileResultsSrc).then((map) => {
           if (!map) {
             content.textContent = "No file-level data available.";
             return;
@@ -1429,7 +1531,10 @@
         });
       }
 
-      function renderConformance(data, container, conformanceRuns) {
+      function renderConformance(view, container, conformanceRuns) {
+        const data = view.report;
+        // Point per-file detail/error-pattern lookups at this view's source.
+        activeFileResultsSrc = view.fileResultsSrc;
         const scopeSummaries = data.scope_summaries || {};
         const standardSummary = scopeSummaries.standard || data.summary;
         const legacySummary = scopeSummaries.annex_b || null;
@@ -1478,7 +1583,7 @@
         controlsHost.appendChild(legacyToggle);
         const editionSection = el("div", { className: "edition-section" });
         const editionTimeline = document.createElement("t262-edition-timeline");
-        editionTimeline.setAttribute("src", "results/test262-editions.json");
+        editionTimeline.setAttribute("src", view.editionsSrc);
         if (data.timestamp) {
           editionTimeline.setAttribute("reference-timestamp", data.timestamp);
         }
@@ -1536,6 +1641,9 @@
           // before the table is built — the first call is a no-op until
           // `rowsByGroup` is populated.
           if (typeof applyFilters === "function") applyFilters();
+          // (#2871 #4) Re-render the error-pattern section so it only counts
+          // failures whose category falls in the selected edition range.
+          if (typeof rerenderErrorPatterns === "function") rerenderErrorPatterns();
         }
 
         function renderSummaryCard() {
@@ -1656,40 +1764,47 @@
         });
         editionTimeline.setAttribute("value", "overall");
 
+        // (#1398/#2871) Compute the set of category names that have at least
+        // one test in the editions ≤ the slider's selected edition. Returns
+        // `null` when no edition filter should apply — either the slider is at
+        // "overall", or the per-category×edition data isn't available (the
+        // standalone view ships no category-editions file, so we can't filter
+        // precisely and must show everything rather than blank the table).
+        // Shared by the category table (applyFilters) and the error-pattern
+        // section so both respect the slider (#2871 #4).
+        function computeAllowedCategories() {
+          const editionFilterActive =
+            scoreState.editionScope !== "overall" && scoreState.editionScope !== "overall+proposal";
+          if (!editionFilterActive) return null;
+          const categoryEditions = view.categoryEditions;
+          if (!categoryEditions || Object.keys(categoryEditions).length === 0) return null;
+          const limitRank = editionDetail?.limitRank;
+          const allowedEditionNames = new Set(
+            (editionDetail?.rows || [])
+              .filter((r) => typeof r.rank === "number" && typeof limitRank === "number" && r.rank <= limitRank)
+              .map((r) => r.edition),
+          );
+          const allowed = new Set();
+          for (const [catName, byEdition] of Object.entries(categoryEditions)) {
+            if (byEdition && Object.keys(byEdition).some((ed) => allowedEditionNames.has(ed))) allowed.add(catName);
+          }
+          return allowed;
+        }
+
         function applyFilters() {
           const query = searchInput.value.toLowerCase().trim();
           tbody.querySelectorAll(".detail-row").forEach((r) => r.remove());
 
-          // (#1398) Edition filter: when the timeline slider is set to a
-          // specific edition (`scoreState.editionScope` !== "overall"), hide
-          // category rows that have no tests in editions with rank ≤ the
-          // selected edition's rank. The data is keyed by the friendly
-          // edition name (e.g. "ES2022"), populated by
-          // `scripts/generate-editions.ts` (#1398 data pipeline).
-          const editionFilterActive =
-            scoreState.editionScope !== "overall" && scoreState.editionScope !== "overall+proposal";
-          const limitRank = editionFilterActive ? editionDetail?.limitRank : undefined;
-          const allowedEditionNames = editionFilterActive
-            ? new Set(
-                (editionDetail?.rows || [])
-                  .filter((r) => typeof r.rank === "number" && typeof limitRank === "number" && r.rank <= limitRank)
-                  .map((r) => r.edition),
-              )
-            : null;
-          const categoryEditions = data.category_editions || {};
+          const allowedCats = computeAllowedCategories();
 
           for (const [group, { groupRow, catRows }] of rowsByGroup) {
             let groupVisible = false;
             for (const { row, cat } of catRows) {
               const nameMatch =
                 !query || cat.name.toLowerCase().includes(query) || shortName(cat.name).toLowerCase().includes(query);
-              let editionMatch = true;
-              if (editionFilterActive && allowedEditionNames) {
-                // Show the row only if at least one of its edition buckets is
-                // within the allowed (≤ selected rank) set.
-                const byEdition = categoryEditions[cat.name];
-                editionMatch = byEdition ? Object.keys(byEdition).some((ed) => allowedEditionNames.has(ed)) : false;
-              }
+              // Show the row only if one of its edition buckets is within the
+              // allowed (≤ selected rank) set; `null` means no edition filter.
+              const editionMatch = !allowedCats || allowedCats.has(cat.name);
               const visible = nameMatch && editionMatch;
               row.style.display = visible ? "" : "none";
               if (visible) groupVisible = true;
@@ -1753,9 +1868,23 @@
         container.appendChild(filterBar);
 
         // --- Error Patterns section (between filters and category table) ---
+        // (#2871) Re-rendered whenever the edition slider moves (#4) or the
+        // differential toggle flips (#5). Differential state is per-view.
         const errorPatternsContainer = el("div");
         container.appendChild(errorPatternsContainer);
-        renderErrorPatterns(errorPatternsContainer);
+        const errorPatternState = { differentialOnly: false };
+        function rerenderErrorPatterns() {
+          renderErrorPatterns(errorPatternsContainer, {
+            view,
+            allowedCategories: computeAllowedCategories(),
+            differentialOnly: errorPatternState.differentialOnly,
+            setDifferential: (next) => {
+              errorPatternState.differentialOnly = next;
+              rerenderErrorPatterns();
+            },
+          });
+        }
+        rerenderErrorPatterns();
 
         container.appendChild(el("h3", null, "By Category"));
 
@@ -1873,10 +2002,203 @@
         }
 
         table.appendChild(tbody);
-        container.appendChild(table);
+        // (#2871 #2) Wrap in a horizontal-scroll container so the wide table
+        // (Distribution column) doesn't overflow the viewport on mobile.
+        const tableScroll = el("div", { className: "table-scroll" });
+        tableScroll.appendChild(table);
+        container.appendChild(tableScroll);
       }
 
-      async function renderErrorPatterns(container) {
+      // (#2871) Renders the failure-analysis section. In host mode this is the
+      // per-file "Error Patterns" view (grouped by normalized message); in
+      // standalone mode there is no deployed per-file JSONL, so it renders the
+      // report's curated `root_cause_map` buckets instead. Both honor the
+      // edition slider (#4) and the standalone differential filter (#5).
+      //   opts = { view, allowedCategories: Set|null, differentialOnly, setDifferential }
+      async function renderErrorPatterns(container, opts = {}) {
+        const { view = { mode: "host", fileResultsSrc: RESULTS_JSONL }, allowedCategories = null } = opts;
+        container.textContent = "";
+        if (view.mode === "standalone") {
+          renderStandaloneRootCauses(container, opts);
+          return;
+        }
+        return renderHostErrorPatterns(container, view.fileResultsSrc, allowedCategories);
+      }
+
+      // Buckets in the standalone root_cause_map that are, by construction,
+      // host-dependency gaps: they fail in pure-Wasm standalone mode but pass
+      // when a JS host supplies the missing capability. Used by the #5
+      // "differential" filter to show only standalone-specific failures.
+      const HOST_DEPENDENT_BUCKET_IDS = new Set([
+        "leaked-host-import",
+        "late-import-index-shift",
+        "binary-emit-u32-out-of-range",
+        "standalone-json-codec",
+        "standalone-regexp",
+        "standalone-regexp-phase-2d",
+        "standalone-regexp-phase-2b",
+        "standalone-regexp-string-protocol",
+        "standalone-regexp-native-engine",
+        "standalone-dynamic-object-property",
+        "standalone-reflect-refusal",
+        "standalone-iterator-protocol",
+        "standalone-getter-callback-bridge",
+        "issamevalue-invalid-wasm",
+        "object-to-primitive",
+        "extern-class-metadata",
+      ]);
+
+      function renderStandaloneRootCauses(container, opts) {
+        const { view, allowedCategories = null, differentialOnly = false, setDifferential } = opts;
+        const rcMap = view.report.root_cause_map;
+        if (!rcMap || !Array.isArray(rcMap.buckets)) {
+          container.appendChild(el("div", { className: "no-data" }, "No standalone root-cause data available."));
+          return;
+        }
+
+        container.appendChild(el("h2", null, "Standalone Failure Root Causes"));
+
+        // Differential toggle (#5).
+        const toggleWrap = el("div", { className: "filter-toggles", style: { marginBottom: "0.5rem" } });
+        const diffToggle = el("label", { className: "filter-toggle" + (differentialOnly ? " active" : "") });
+        const diffCheckbox = el("input", { type: "checkbox" });
+        diffCheckbox.checked = differentialOnly;
+        if (differentialOnly) diffCheckbox.setAttribute("checked", "checked");
+        diffCheckbox.addEventListener("change", () => setDifferential && setDifferential(diffCheckbox.checked));
+        diffToggle.appendChild(diffCheckbox);
+        diffToggle.appendChild(el("span", null, "Standalone-only (not in JS host)"));
+        toggleWrap.appendChild(diffToggle);
+        container.appendChild(toggleWrap);
+        container.appendChild(
+          el(
+            "div",
+            { className: "diff-note" },
+            differentialOnly
+              ? "Showing host-dependency gaps: failures that occur in pure-Wasm standalone mode but pass with a JS host."
+              : "Failures grouped by root cause. Toggle above to isolate standalone-only (host-dependency) gaps.",
+          ),
+        );
+
+        // Edition filter (#4): keep only buckets that touch an allowed category
+        // (sample_files are paths like "test/built-ins/...js" → derive the
+        // category prefix and test membership against allowedCategories).
+        let buckets = rcMap.buckets.slice();
+        if (differentialOnly) {
+          buckets = buckets.filter((b) => HOST_DEPENDENT_BUCKET_IDS.has(b.id));
+        }
+        if (allowedCategories) {
+          buckets = buckets.filter((b) => bucketTouchesCategories(b, allowedCategories));
+        }
+        buckets.sort((a, b) => (b.count || 0) - (a.count || 0));
+
+        const totalShown = buckets.reduce((a, b) => a + (b.count || 0), 0);
+        container.appendChild(
+          el(
+            "div",
+            {
+              className: "subtitle",
+              style: { color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.75rem" },
+            },
+            buckets.length + " root-cause buckets · " + totalShown.toLocaleString() + " failures",
+          ),
+        );
+
+        if (buckets.length === 0) {
+          container.appendChild(el("div", { className: "no-data" }, "No matching failures for the current filters."));
+          return;
+        }
+
+        const list = el("div", { style: { display: "flex", flexDirection: "column", gap: "0.5rem" } });
+        for (const b of buckets) {
+          const card = el("div", { className: "card", style: { cursor: "pointer" } });
+          const header = el("div", {
+            style: { display: "flex", alignItems: "baseline", gap: "0.75rem", flexWrap: "wrap" },
+          });
+          header.appendChild(
+            el(
+              "span",
+              {
+                style: {
+                  background: "var(--error)",
+                  color: "var(--bg)",
+                  fontWeight: "700",
+                  fontSize: "0.75rem",
+                  padding: "2px 8px",
+                  borderRadius: "10px",
+                  flexShrink: "0",
+                },
+              },
+              (b.count || 0).toLocaleString(),
+            ),
+          );
+          header.appendChild(
+            el("span", { style: { fontSize: "0.8125rem", wordBreak: "break-word" } }, b.label || b.id),
+          );
+          for (const issue of b.issues || []) {
+            const num = String(issue).replace(/^#/, "");
+            header.appendChild(
+              el(
+                "a",
+                {
+                  className: "rc-issue-link",
+                  href: "https://github.com/loopdive/js2/issues/" + num,
+                  target: "_blank",
+                  rel: "noopener",
+                },
+                "#" + num,
+              ),
+            );
+          }
+          card.appendChild(header);
+
+          const detail = el("div", {
+            style: { display: "none", marginTop: "0.5rem", borderTop: "1px solid var(--border)", paddingTop: "0.5rem" },
+          });
+          for (const f of b.sample_files || []) {
+            detail.appendChild(
+              el(
+                "div",
+                { className: "detail-fname", style: { fontSize: "0.6875rem", padding: "2px 0" } },
+                (f || "").replace("test/", ""),
+              ),
+            );
+          }
+          for (const sig of b.sample_signatures || []) {
+            if (!sig) continue;
+            detail.appendChild(el("div", { className: "detail-err", style: { paddingLeft: "0" } }, sig));
+          }
+          if ((b.sample_files || []).length === 0 && (b.sample_signatures || []).length === 0) {
+            detail.appendChild(
+              el("div", { style: { color: "var(--text-muted)", fontSize: "0.625rem" } }, "No samples recorded."),
+            );
+          }
+          card.appendChild(detail);
+          card.addEventListener("click", () => {
+            detail.style.display = detail.style.display === "none" ? "block" : "none";
+          });
+          list.appendChild(card);
+        }
+        container.appendChild(list);
+      }
+
+      // Derive whether a root-cause bucket touches any allowed category, from
+      // its sample file paths (e.g. "test/built-ins/RegExp/..." → category
+      // prefix "built-ins/RegExp"). Coarse but consistent with the category
+      // table's edition filter. Buckets with no usable samples are kept (we
+      // can't prove they're outside the range).
+      function bucketTouchesCategories(bucket, allowedCategories) {
+        const samples = bucket.sample_files || [];
+        if (samples.length === 0) return true;
+        for (const f of samples) {
+          const rel = String(f).replace(/^test\//, "");
+          for (const cat of allowedCategories) {
+            if (rel.startsWith(cat + "/") || rel.startsWith(cat)) return true;
+          }
+        }
+        return false;
+      }
+
+      async function renderHostErrorPatterns(container, fileResultsSrc, allowedCategories) {
         const loadingEl = el(
           "div",
           { style: { color: "var(--text-muted)", padding: "1rem" } },
@@ -1884,7 +2206,7 @@
         );
         container.appendChild(loadingEl);
         try {
-          const map = await loadFileResults();
+          const map = await loadFileResults(fileResultsSrc);
           loadingEl.remove();
           if (!map) {
             container.appendChild(el("div", { className: "no-data" }, "No file-level data for error patterns"));
@@ -1894,6 +2216,9 @@
           // Group errors by normalized message
           const patterns = new Map(); // message -> { count, files: [{file, error, status}] }
           for (const [cat, files] of map) {
+            // (#2871 #4) Honor the edition slider: skip categories outside the
+            // selected edition range. `allowedCategories === null` ⇒ no filter.
+            if (allowedCategories && !allowedCategories.has(cat)) continue;
             for (const f of files) {
               if (f.status !== "compile_error" && f.status !== "fail") continue;
               const err = f.error || "";
@@ -1918,9 +2243,14 @@
 
           // Sort by count descending
           const sorted = [...patterns.entries()].sort((a, b) => b[1].count - a[1].count);
-          if (sorted.length === 0) return;
 
           container.appendChild(el("h2", null, "Error Patterns"));
+          if (sorted.length === 0) {
+            container.appendChild(
+              el("div", { className: "no-data" }, "No fail/compile-error patterns in the selected edition range."),
+            );
+            return;
+          }
           container.appendChild(
             el(
               "div",
@@ -2260,25 +2590,72 @@
       }
 
       async function main() {
-        const [conformance, benchmarkHistory, snippets, conformanceRuns, categoryEditions] = await Promise.all([
-          loadReportWithFallback(),
-          loadJSON(assetPath("benchmarks/results/history.json")),
-          loadBenchmarkSnippets(),
-          loadJSON(assetPath("benchmarks/results/runs/index.json")),
-          loadJSON(CATEGORY_EDITIONS_JSON),
-        ]);
+        const [conformance, standaloneReport, benchmarkHistory, snippets, conformanceRuns, categoryEditions] =
+          await Promise.all([
+            loadReportWithFallback(),
+            loadJSON(STANDALONE_REPORT_JSON),
+            loadJSON(assetPath("benchmarks/results/history.json")),
+            loadBenchmarkSnippets(),
+            loadJSON(assetPath("benchmarks/results/runs/index.json")),
+            loadJSON(CATEGORY_EDITIONS_JSON),
+          ]);
         const app = document.getElementById("app");
         app.textContent = "";
 
         if (conformance) {
-          // (#1398) Attach the per-category × per-edition counts so
-          // `renderConformance` can pass them into `applyFilters` for the
-          // category-table edition filter. Stored on the report object to
-          // avoid changing the signature of the chain of consumers.
-          if (categoryEditions) {
-            conformance.category_editions = categoryEditions;
+          // (#2871 #1) Host (JS) vs Standalone (pure Wasm) views. Both share the
+          // same report schema; standalone ships no per-file JSONL nor a
+          // per-category×edition file, so those degrade gracefully.
+          const hostView = {
+            mode: "host",
+            report: conformance,
+            editionsSrc: HOST_EDITIONS_JSON,
+            categoryEditions: categoryEditions || null,
+            fileResultsSrc: RESULTS_JSONL,
+          };
+          const standaloneView = standaloneReport
+            ? {
+                mode: "standalone",
+                report: standaloneReport,
+                editionsSrc: STANDALONE_EDITIONS_JSON,
+                categoryEditions: null,
+                fileResultsSrc: null,
+              }
+            : null;
+
+          // Mode switch (only shown when standalone data is available).
+          const conformanceHost = el("div");
+          let activeMode = standaloneView && localStorage.getItem("t262-mode") === "standalone" ? "standalone" : "host";
+          const renderActive = () => {
+            conformanceHost.textContent = "";
+            const view = activeMode === "standalone" && standaloneView ? standaloneView : hostView;
+            renderConformance(view, conformanceHost, conformanceRuns);
+          };
+          if (standaloneView) {
+            const modeSwitch = el("div", { className: "mode-switch" });
+            const mkBtn = (mode, main, sub) => {
+              const b = el(
+                "button",
+                { className: mode === activeMode ? "active" : "" },
+                main,
+                el("span", { className: "mode-sub" }, sub),
+              );
+              b.addEventListener("click", () => {
+                if (activeMode === mode) return;
+                activeMode = mode;
+                localStorage.setItem("t262-mode", mode);
+                modeSwitch.querySelectorAll("button").forEach((x) => x.classList.remove("active"));
+                b.classList.add("active");
+                renderActive();
+              });
+              return b;
+            };
+            modeSwitch.appendChild(mkBtn("host", "Host mode", "JS runtime imports"));
+            modeSwitch.appendChild(mkBtn("standalone", "Standalone", "pure Wasm, no JS host"));
+            app.appendChild(modeSwitch);
           }
-          renderConformance(conformance, app, conformanceRuns);
+          app.appendChild(conformanceHost);
+          renderActive();
         } else {
           app.appendChild(
             el("div", { className: "no-data" }, "No test262 report found. Run: npx vitest run tests/test262.test.ts"),

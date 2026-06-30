@@ -1013,6 +1013,10 @@ function compileDestructuringAssignment(
   const savedBodyDA = fctx.body;
   const destructInstrsDA: Instr[] = [];
   fctx.body = destructInstrsDA;
+  // (#2869) See compileArrayDestructuringAssignment — keep the detached buffer
+  // reachable by the func-idx/global repoint passes for the member-target
+  // (`{k: x.y} = src`) dispatcher `call`; deleted after the splice.
+  ctx.liveBodies.add(destructInstrsDA);
 
   // For each property in the destructuring pattern, set the existing local
   for (const prop of target.properties) {
@@ -1360,6 +1364,8 @@ function compileDestructuringAssignment(
   } else {
     fctx.body.push(...destructInstrsDA);
   }
+  // (#2869) Buffer reattached — drop the registration (avoid the #1109 double-shift).
+  ctx.liveBodies.delete(destructInstrsDA);
 
   // The result of a destructuring assignment is the RHS value
   fctx.body.push({ op: "local.get", index: tmpLocal });
@@ -1591,6 +1597,15 @@ function compileArrayDestructuringAssignment(
   const savedBodyADA = fctx.body;
   const arrDestructInstrsADA: Instr[] = [];
   fctx.body = arrDestructInstrsADA;
+  // (#2869) Keep the detached element buffer reachable by the late-import
+  // func-idx repoint pass (`shiftLateImportIndices`) AND the module-global
+  // shift (`fixupModuleGlobalIndices`) — both walk `ctx.liveBodies`. A member
+  // target (`[x.y] = …`) reserves the #2664 member-set dispatcher here; a LATER
+  // in-window flush (a heterogeneous element's `__extern_is_undefined`, or the
+  // `buildDestructureNullThrow` splice-gap below) would otherwise leave the
+  // already-emitted `call <dispIdx>` stale-low. Deleted right after the splice
+  // (no flush in that gap) to avoid the #1109 double-shift. Mirrors #2567.
+  ctx.liveBodies.add(arrDestructInstrsADA);
 
   // Helper: get element type at index i
   const getElemType = (i: number): ValType => {
@@ -1902,6 +1917,90 @@ function compileArrayDestructuringAssignment(
           then: thenInit,
           else: elseAssign,
         } as Instr);
+      } else if (ts.isPropertyAccessExpression(assignTarget) || ts.isElementAccessExpression(assignTarget)) {
+        // (#2869) Member-expression target WITH a default: `[x.y = d] = vals`.
+        // Mirror the identifier-default machinery above (read element →
+        // value-or-default into a temp), then route the resolved value through
+        // emitAssignToTarget → the #2664 member-set dispatcher. Previously the
+        // whole `else if (Binary EqualsToken)` branch handled ONLY identifier
+        // targets, so a member target with a default was SILENTLY DROPPED (the
+        // `*-put-*-prop-ref-init` cluster). The same OOB-default limitation the
+        // identifier path has applies here (a separate pre-existing issue).
+        const elemValType: ValType = elemType.kind === "i8" || elemType.kind === "i16" ? { kind: "i32" } : elemType;
+        const tmpElem = allocLocal(fctx, `__mdflt_${fctx.locals.length}`, elemValType);
+        const absentLocal = allocLocal(fctx, `__mdflt_absent_${fctx.locals.length}`, { kind: "i32" });
+        const tmpResolved = allocLocal(fctx, `__mdflt_res_${fctx.locals.length}`, elemValType);
+
+        const buildInBoundsInit = (): Instr[] => {
+          const saved = fctx.body;
+          fctx.body = [];
+          emitElementGet(i);
+          if (elemType.kind === "externref" && ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx);
+          fctx.body.push({ op: "local.set", index: tmpElem } as Instr);
+          if (elemType.kind === "externref") {
+            const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+            flushLateImportShifts(ctx, fctx);
+            fctx.body.push({ op: "local.get", index: tmpElem } as Instr);
+            if (undefIdx !== undefined) fctx.body.push({ op: "call", funcIdx: undefIdx } as Instr);
+            else fctx.body.push({ op: "ref.is_null" } as Instr);
+            fctx.body.push({ op: "local.set", index: absentLocal } as Instr);
+          } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
+            fctx.body.push({ op: "local.get", index: tmpElem } as Instr);
+            fctx.body.push({ op: "ref.is_null" } as Instr);
+            fctx.body.push({ op: "local.set", index: absentLocal } as Instr);
+          } else {
+            fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+            fctx.body.push({ op: "local.set", index: absentLocal } as Instr);
+          }
+          const instrs = fctx.body;
+          fctx.body = saved;
+          return instrs;
+        };
+
+        if (isVecStruct) {
+          fctx.body.push({ op: "local.get", index: tmpLocal });
+          fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // length
+          fctx.body.push({ op: "i32.const", value: i });
+          fctx.body.push({ op: "i32.gt_s" } as Instr);
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildInBoundsInit(),
+            else: [{ op: "i32.const", value: 1 } as Instr, { op: "local.set", index: absentLocal } as Instr],
+          } as Instr);
+        } else if (i < typeDef.fields.length) {
+          fctx.body.push(...buildInBoundsInit());
+        } else {
+          fctx.body.push({ op: "i32.const", value: 1 } as Instr);
+          fctx.body.push({ op: "local.set", index: absentLocal } as Instr);
+        }
+
+        const thenInit: Instr[] = (() => {
+          const saved = fctx.body;
+          fctx.body = [];
+          compileExpression(ctx, fctx, defaultExpr, elemValType);
+          fctx.body.push({ op: "local.set", index: tmpResolved } as Instr);
+          const instrs = fctx.body;
+          fctx.body = saved;
+          return instrs;
+        })();
+        const elseAssign: Instr[] = (() => {
+          const saved = fctx.body;
+          fctx.body = [];
+          fctx.body.push({ op: "local.get", index: tmpElem } as Instr);
+          fctx.body.push({ op: "local.set", index: tmpResolved } as Instr);
+          const instrs = fctx.body;
+          fctx.body = saved;
+          return instrs;
+        })();
+        fctx.body.push({ op: "local.get", index: absentLocal });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: thenInit,
+          else: elseAssign,
+        } as Instr);
+        emitAssignToTarget(ctx, fctx, assignTarget, tmpResolved, elemValType);
       }
     }
     // else: unsupported element target — skip
@@ -1923,6 +2022,10 @@ function compileArrayDestructuringAssignment(
   } else {
     fctx.body.push(...arrDestructInstrsADA);
   }
+  // (#2869) Buffer reattached above — drop the liveBodies registration so a later
+  // flush walks it only via `fctx.body` (the spread-splice shares element objects
+  // with `fctx.body`, so keeping both registered would double-shift — #1109).
+  ctx.liveBodies.delete(arrDestructInstrsADA);
 
   // The result of a destructuring assignment is the RHS value
   fctx.body.push({ op: "local.get", index: tmpLocal });
@@ -2147,7 +2250,93 @@ function compileExternrefArrayDestructuringAssignment(
 }
 
 /** Assign value from a local to a property access or element access target */
-function emitAssignToTarget(
+/**
+ * (#2869) Write an already-materialized destructure value (`valueLocal`) into a
+ * dynamic member-expression target `obj.prop` whose receiver/field the static
+ * struct-field fast path could NOT resolve — a plain `{}`/accessor/host receiver,
+ * or a field only known at finalize (a late `__fnctor_<F>` struct). Routes through
+ * the SAME #2664 deferred member-set dispatcher as a plain `obj.x = v` write
+ * (`emitAlternateStructSetDispatch`), whose terminal else-arm is the
+ * `__extern_set_strict` sidecar (native `$Object` store standalone / strict host
+ * set in JS mode — a getter-only accessor throws per §[[Set]]). The value is
+ * already in `valueLocal`; do NOT recompile the value AST (matches the `-no-get`
+ * "read exactly once" assertions).
+ *
+ * IMPORTANT — funcIdx repoint: when the CALLER emits into a DETACHED destructure
+ * body buffer (arrDestructInstrsADA / destructInstrsDA / odflInstrs / adflInstrs),
+ * that buffer MUST be registered in `ctx.liveBodies` for its compile window (see
+ * the `.add`/`.delete` around each swap/splice). The dispatch `call` baked here is
+ * correct at emit time (reserveMemberSetDispatch flushes its import batch first),
+ * but a LATER in-window late import (a heterogeneous element's `__extern_is_undefined`
+ * flush, or the `buildDestructureNullThrow` splice-gap) shifts every defined-func
+ * index up by `added`; without the liveBodies registration the detached buffer's
+ * already-emitted `call <dispIdx>` is never walked by `shiftLateImportIndices`
+ * (nor `fixupModuleGlobalIndices`), goes stale-low by one, and the module is
+ * invalid (`need 3 got 2`) / recurses on a plain `{}`. Mirrors #2567/#1109.
+ */
+function emitDynamicMemberSet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  valueLocal: number,
+  valueType: ValType,
+): void {
+  if (ts.isPrivateIdentifier(target.name)) return; // `#x` private — out of scope, drop
+  const propName = target.name.text;
+
+  // Receiver (reference before value, matching plain `obj.x = v` ordering) → externref local.
+  const recvRes = compileExpression(ctx, fctx, target.expression);
+  if (recvRes && recvRes.kind !== "externref") {
+    coerceType(ctx, fctx, recvRes, { kind: "externref" });
+  } else if (!recvRes) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
+  }
+  const objLocal = allocLocal(fctx, `__dstr_set_obj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: objLocal });
+
+  // Value (already materialized by the destructure driver) → externref local.
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  if (valueType.kind !== "externref") {
+    coerceType(ctx, fctx, valueType, { kind: "externref" });
+  }
+  const valLocal = allocLocal(fctx, `__dstr_set_val_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: valLocal });
+
+  // Reserved-name carve-out (mirror tryEmitPinnedStructMemberSet:2753–2761):
+  // length / constructor / __proto__ / prototype / name must NOT use the named
+  // struct dispatcher (it would write a same-named struct slot, e.g. a vec
+  // `length` field). Emit a bare `__extern_set_strict` terminal instead. These
+  // are outside the 53 in-scope tests; correct-but-bare beats dropped.
+  const reserved =
+    propName === "length" ||
+    propName === "constructor" ||
+    propName === "__proto__" ||
+    propName === "prototype" ||
+    propName === "name";
+
+  if (!reserved) {
+    const dispatched = emitAlternateStructSetDispatch(ctx, fctx, objLocal, valLocal, propName, /*strict*/ true);
+    if (dispatched) return;
+    // else: dispatcher unreservable (no __extern_set_strict import) — bare sidecar below.
+  }
+
+  // Bare `__extern_set_strict(recv, "<name>", val)` terminal (reserved name or no
+  // dispatcher). Mirrors compileExternPropertySet's `!dispatched` arm.
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set_strict",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+  addStringConstantGlobal(ctx, propName);
+  fctx.body.push({ op: "local.get", index: objLocal });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  fctx.body.push({ op: "local.get", index: valLocal });
+  if (setIdx !== undefined) fctx.body.push({ op: "call", funcIdx: setIdx });
+}
+
+export function emitAssignToTarget(
   ctx: CodegenContext,
   fctx: FunctionContext,
   target: ts.Expression,
@@ -2161,25 +2350,31 @@ function emitAssignToTarget(
       return;
     }
 
+    // Static struct-field fast path: when the receiver resolves to a registered
+    // struct that statically owns the field, write the SLOT directly.
     const typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
-    if (!typeName) return;
-
-    const structTypeIdx = ctx.structMap.get(typeName);
-    const fields = ctx.structFields.get(typeName);
-    if (structTypeIdx === undefined || !fields) return;
-
-    const fieldName = target.name.text;
-    const fieldIdx = fields.findIndex((f) => f.name === fieldName);
-    if (fieldIdx === -1) return;
-
-    const fieldType = fields[fieldIdx]!.type;
-    // Push obj ref, then value
-    compileExpression(ctx, fctx, target.expression);
-    fctx.body.push({ op: "local.get", index: valueLocal });
-    if (!valTypesMatch(valueType, fieldType)) {
-      coerceType(ctx, fctx, valueType, fieldType);
+    const structTypeIdx = typeName !== undefined ? ctx.structMap.get(typeName) : undefined;
+    const fields = typeName !== undefined ? ctx.structFields.get(typeName) : undefined;
+    const fieldName = ts.isPrivateIdentifier(target.name) ? undefined : target.name.text;
+    const fieldIdx = fields && fieldName !== undefined ? fields.findIndex((f) => f.name === fieldName) : -1;
+    if (structTypeIdx !== undefined && fields && fieldIdx !== -1) {
+      const fieldType = fields[fieldIdx]!.type;
+      // Push obj ref, then value
+      compileExpression(ctx, fctx, target.expression);
+      fctx.body.push({ op: "local.get", index: valueLocal });
+      if (!valTypesMatch(valueType, fieldType)) {
+        coerceType(ctx, fctx, valueType, fieldType);
+      }
+      fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+      return;
     }
-    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+
+    // (#2869) Dynamic member target — a plain `{}`/accessor/host receiver, or a
+    // field only known at finalize. The three field/struct misses above used to
+    // early-`return` here and SILENTLY DROP the write; route them through the
+    // #2664 deferred member-set dispatcher instead (the `[x.y] = vals` cluster).
+    emitDynamicMemberSet(ctx, fctx, target, valueLocal, valueType);
+    return;
   } else if (ts.isElementAccessExpression(target)) {
     const arrType = compileExpression(ctx, fctx, target.expression);
     if (!arrType || (arrType.kind !== "ref" && arrType.kind !== "ref_null")) return;
@@ -2267,6 +2462,10 @@ function emitObjectDestructureFromLocal(
   const savedBodyODFL = fctx.body;
   const odflInstrs: Instr[] = [];
   fctx.body = odflInstrs;
+  // (#2869) Member target inside a nested object pattern (`[{k: x.y}] = …`)
+  // reserves the member-set dispatcher into this detached buffer — register it
+  // with the repoint passes; deleted after the splice (see #2567/#1109).
+  ctx.liveBodies.add(odflInstrs);
 
   for (const prop of pattern.properties) {
     if (ts.isShorthandPropertyAssignment(prop)) {
@@ -2370,6 +2569,8 @@ function emitObjectDestructureFromLocal(
   } else {
     fctx.body.push(...odflInstrs);
   }
+  // (#2869) Buffer reattached — drop the registration (avoid the #1109 double-shift).
+  ctx.liveBodies.delete(odflInstrs);
 }
 
 /** Destructure an array from a local variable (used for nested patterns) */
@@ -2490,6 +2691,11 @@ function emitArrayDestructureFromLocal(
   const savedBodyADFL = fctx.body;
   const adflInstrs: Instr[] = [];
   fctx.body = adflInstrs;
+  // (#2869) This buffer reaches a member-set dispatcher TRANSITIVELY (a nested
+  // `emitObjectDestructureFromLocal` splices its dispatcher `call` in here), and
+  // its own `buildDestructureNullThrow` splice-gap can flush a late import — so
+  // register it with the repoint passes too; deleted after the splice (#2567/#1109).
+  ctx.liveBodies.add(adflInstrs);
 
   for (let i = 0; i < pattern.elements.length; i++) {
     const element = pattern.elements[i]!;
@@ -2550,6 +2756,8 @@ function emitArrayDestructureFromLocal(
   } else {
     fctx.body.push(...adflInstrs);
   }
+  // (#2869) Buffer reattached — drop the registration (avoid the #1109 double-shift).
+  ctx.liveBodies.delete(adflInstrs);
 }
 
 /**

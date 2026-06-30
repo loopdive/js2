@@ -57,10 +57,19 @@ function createCounts() {
     compile_timeout: 0,
     skip: 0,
     total: 0,
+    // (#2879) Host-free passes — `status === "pass"` AND the module emitted no
+    // host runtime import (`host_import_leak_class` absent). This is the HONEST
+    // *standalone* metric: a leaky pass that only passes because the JS host
+    // satisfied its `env::__*` imports is NOT counted here. The field is
+    // computed in both lanes (the gc/js-host lane legitimately uses host
+    // imports, so there `pass` stays the headline and `host_free_pass` is just
+    // informational); for `--target standalone` `host_free_pass` is the headline.
+    host_free_pass: 0,
   };
 }
 
 function buildSummary(counter) {
+  const hostFreePass = counter.host_free_pass ?? 0;
   return {
     total: counter.total,
     pass: counter.pass,
@@ -69,6 +78,9 @@ function buildSummary(counter) {
     compile_timeout: counter.compile_timeout,
     skip: counter.skip,
     compilable: counter.pass + counter.fail,
+    // (#2879) honest standalone accounting — credit only host-free passes.
+    host_free_pass: hostFreePass,
+    leaky_pass: (counter.pass ?? 0) - hostFreePass,
     stale: 0,
   };
 }
@@ -805,20 +817,31 @@ async function main() {
     const strict = record.strict ?? "both";
     const category = record.category ?? "unknown";
 
+    // (#2879) A pass is HOST-FREE iff it emitted no host runtime import. The
+    // worker records `host_import_leak_class` exactly when an `env::__*` import
+    // leaked (verified equivalent to "no env:: import"); its absence on a pass
+    // means the module ran without the JS host. Counted in parallel to status
+    // so the honest standalone metric is available per scope/category.
+    const hostFreePass = status === "pass" && !record.host_import_leak_class;
+
     statuses.total++;
     statuses[status] = (statuses[status] ?? 0) + 1;
+    if (hostFreePass) statuses.host_free_pass = (statuses.host_free_pass ?? 0) + 1;
 
     if (!scopeCounts.has(scope)) scopeCounts.set(scope, createCounts());
     const scopeCounter = scopeCounts.get(scope);
     scopeCounter.total++;
     scopeCounter[status] = (scopeCounter[status] ?? 0) + 1;
+    if (hostFreePass) scopeCounter.host_free_pass = (scopeCounter.host_free_pass ?? 0) + 1;
 
     if (scopeOfficial) {
       officialStatuses.total++;
       officialStatuses[status] = (officialStatuses[status] ?? 0) + 1;
+      if (hostFreePass) officialStatuses.host_free_pass = (officialStatuses.host_free_pass ?? 0) + 1;
       if (strict !== "no") {
         strictCounts.total++;
         strictCounts[status] = (strictCounts[status] ?? 0) + 1;
+        if (hostFreePass) strictCounts.host_free_pass = (strictCounts.host_free_pass ?? 0) + 1;
       }
     }
 
@@ -826,6 +849,7 @@ async function main() {
     const categoryCounter = categories.get(category);
     categoryCounter.total++;
     categoryCounter[status] = (categoryCounter[status] ?? 0) + 1;
+    if (hostFreePass) categoryCounter.host_free_pass = (categoryCounter.host_free_pass ?? 0) + 1;
 
     if (record.error_category) {
       errorCategories.set(record.error_category, (errorCategories.get(record.error_category) ?? 0) + 1);

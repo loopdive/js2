@@ -1,7 +1,8 @@
 ---
 id: 2851
 title: "compiled-acorn marshals TemplateLiteral `quasis[]` TemplateElement nodes BLANK (type/value/tail dropped across host boundary)"
-status: ready
+status: done
+completed: 2026-06-30
 sprint: current
 priority: high
 horizon: m
@@ -71,3 +72,24 @@ marshalling for array-of-struct fields, and whether `TemplateElement`'s
 - A focused equivalence test asserting a marshalled `TemplateLiteral` carries
   `type`, `value.raw`, `value.cooked`, `tail` on each `quasis` element.
 - No test262 regression.
+
+## Resolution (2026-06-30) — fixed with #2852 (shared root cause)
+
+Root cause: `_structToPlainObject` (`src/runtime.ts`) deep-converted the
+NOMINAL struct fields (`val = _wasmToPlain(getter(obj))`) but merged the
+SIDECAR (dynamically-assigned) props VERBATIM: `result[key] = sc[key]`. acorn
+builds nodes via `new Node()` then assigns `node.quasis = [...]` etc., so
+`quasis` is a sidecar prop holding an array of WasmGC `TemplateElement` structs.
+Merged raw, those struct elements stayed opaque → `marshal:"copy"`/JSON saw the
+fields blank. (Distinct from #2841, which fixed the host-JS-array path in
+`_wasmToPlain`; sidecar values never reached that recursion.)
+
+Fix (1 line): recurse `_wasmToPlain` on sidecar values —
+`result[key] = _wasmToPlain(sc[key], exports, seen)` — mirroring the
+nominal-field path. Idempotent for plain JS values.
+
+Verify-first (acorn differential corpus): BEFORE `corpus/templates.js` had
+REAL `missing-field @ quasis[*].{type,value,tail}`; AFTER `templates.js`,
+`escapes-unicode.js`, `sequence-misc.js`, `operators.js` are all
+EQUAL(±quirks), REAL=0. Regression test: `tests/issue-2851.test.ts`. The one
+fix also closes **#2852** (SequenceExpression `expressions[]`).

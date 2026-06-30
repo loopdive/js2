@@ -1,7 +1,8 @@
 ---
 id: 2852
 title: "compiled-acorn marshals SequenceExpression `expressions[]` child nodes BLANK (all fields dropped across host boundary)"
-status: ready
+status: done
+completed: 2026-06-30
 sprint: current
 priority: high
 horizon: m
@@ -73,3 +74,13 @@ with #2841/#2851.
 - A focused equivalence test asserting a marshalled `SequenceExpression` carries
   fully-populated child nodes.
 - No test262 regression.
+
+## Resolution (2026-06-30) — fixed together with #2851 (shared root cause)
+
+Same root cause and fix as #2851: `_structToPlainObject` merged SIDECAR
+(dynamically-assigned) props verbatim instead of recursing `_wasmToPlain`, so a
+sidecar array of child WasmGC structs (`node.expressions = [...]`) came back
+with blank elements. Fix: `result[key] = _wasmToPlain(sc[key], exports, seen)`
+in `src/runtime.ts`. Verify-first: `corpus/operators.js` (`const seq = (1,2,3)`)
+and `corpus/sequence-misc.js` go from REAL `missing-field @ expressions[*].*`
+to EQUAL(±quirks), REAL=0. Covered by `tests/issue-2851.test.ts`.

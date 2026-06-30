@@ -15,7 +15,8 @@ language_feature: closures
 goal: spec-completeness
 sprint: current
 horizon: m
-architect_spec: done
+architect_spec: needs-revision
+blocked_reason: "THREE approaches now fail: Design 1A re-point (impl2826) AND write-through-to-A (cps2826) BOTH perturb the CPS continuation state — identical async-generator-interleaved null-deref + array-elem-iter-nrml-close nextCount=2 signatures. PROVEN un-gateable: the regressing names (nextCount/iterations) are indistinguishable from the required-fix name (length) at the let-init site (same mutability / captured-global / capturer set). Needs the transitive-capture/continuation-snapshot graph analysis (recommendation #1) — genuinely architect-owned. See ## Implementation attempt 2."
 ---
 
 # #2826 — Bug C (CPS-capture half): block-`let` immutably captured by a hoisted async/generator declaration
@@ -297,3 +298,94 @@ predicate #2820 used to *exclude* CPS capturers, inverted to its single
 intended case. **Validate against a full `merge_group` / local-CI test262 run
 BEFORE re-enqueue** — a scoped check cannot see this cluster. PR #2333 branch
 + this diagnosis must survive; re-open this issue for the narrowed attempt.
+
+## Implementation attempt 2 (cps2826, senior-dev) — write-through-to-A is ALSO unsafe; PROVEN un-gateable → architect
+
+**Verdict: STOP / defer to architect (third strike).** The corrected approach —
+impl2826's recommendation #2, *write-through-to-A* (leave `outerLocalIdx = A`,
+also store the block-`let`'s value INTO slot A at let-init so the stale-A
+read/CPS-snapshot observes the live value) — was implemented and **reproduces the
+EXACT same CPS-state perturbation as the reverted Design 1A re-point.** Reverted;
+**nothing ships** (this PR is docs-only). Debug-validated on current `origin/main`,
+host/gc lane. Harness: `.tmp/probe-2826.mts` (t5/t6/t8 + controls),
+`.tmp/run262-2826.mts` (guardrail + 43-class samples + the 4 cited targets).
+
+### Re-grounding: #2844 advanced the cited targets, but NOT to the #2826 assert
+The premise for the retry was that #2844 (for-await rest→object-pattern dstr,
+now merged) unblocks the cited `ary-ptrn-rest-obj-prop-id` targets. Confirmed
+#2844 is on main — the targets advanced from **assert #1** (`v===7`) to **assert
+#5** (`z===3`, "returned 6"). But assert #5 (`length: z` reads the rest array's
+`.length`) is **yet another orthogonal dstr bug**, still short of assert #6
+(`length === "outer"` — the actual #2826 immutable-outer-`let` capture). So on a
+*correct* baseline the cited targets remain blocked upstream of #2826.
+
+### What write-through fixes
+Synthetic repro fixed: `t5`/`t6`/`t5s`/`t8` (mixed plain+CPS) return the captured
+value (42 / "hi" / 28) vs 0 on baseline; `t4`/`t7` fn-scope controls unchanged.
+And — notably — write-through on `length` **flips all 4 cited targets fail→pass**
+(it satisfies assert #5+#6 together), so the conformance payoff is real *when it
+fires on the right name*.
+
+### Why it is unsafe (same mechanism as Design 1A, reached via the write)
+Writing B→A at the let-init **clobbers slot A, which the CPS continuation relies
+on** (it is NOT a dead pre-hoist slot for escaping/suspending capturers). Two
+named regressions, **identical signatures to the reverted re-point** (PR #2333):
+- `language/expressions/await/async-generator-interleaved.js` (NAMED guardrail):
+  pass→fail, *"dereferencing a null pointer in pushAwait()"* (`actual`/`iterations`).
+- `for-await-of/async-{func,gen}-decl-dstr-array-elem-iter-nrml-close.js` (43-class):
+  pass→fail, *`assert.sameValue(nextCount, 1)` returned 2* (`nextCount`/`iterator`).
+
+### The decisive finding: the regression is UN-GATEABLE at the let-init site
+Instrumented every write-through firing. The name that **must** get the fix
+(`length`) and the names that **regress** (`nextCount`, `iterations`, `iterator`)
+have **identical state** at `compileVariableStatement` — no discriminator exists:
+
+| name (test)                     | mutable-cap? | captured-global? | capturers | write-through |
+| ------------------------------- | ------------ | ---------------- | --------- | ------------- |
+| `length` (target) — **needs fix** | no         | no               | `[fn]`    | **safe (fix)** |
+| `nextCount` (array-elem) — **regresses** | no  | no               | `[fn]`    | **null/2**    |
+| `iterator` (array-elem) — **regresses**  | no  | no               | `[fn]`    | **regress**   |
+| `iterations` (interleaved) — **regresses** | no | no             | `[callAsync]` | **null-deref** |
+| `x`/`y` (array-rest) — harmless | no           | no               | `[fn]`    | stays green   |
+
+`length` (safe) and `nextCount`/`iterator` (regress) are **byte-for-byte identical
+in every signal available** — same `mutable` across all cap entries, same
+not-a-captured-global, same single capturer `fn`. The difference is purely the
+**runtime dataflow of the captured value through the CPS continuation**:
+- `length` — a plain immutable read inside the for-await body of an inline-driven
+  `fn().next()`;
+- `nextCount`/`returnCount`/`args` — mutated inside **object-literal iterator
+  methods** (`next(){ nextCount += 1 }`) that escape into the iteration protocol —
+  the mutation is **invisible** to a `nestedFuncCaptures` mutability scan;
+- `iterations` — read inside `callAsync`, an `async function*` that **suspends**
+  at `await pushAwait()` in a loop; the continuation snapshots `pushAwait`'s
+  closure (which holds `actual` from slot A) at a timeline the let-init write
+  cannot satisfy. `pushAwait` reaches `callAsync` by a **direct call** (funcIdx),
+  not a capture edge, so it is invisible to the capture graph too.
+
+Gates attempted and disproven on the sample: (a) per-entry `cap.mutable !== true`;
+(b) per-NAME "no mutable cap anywhere"; (c) "no direct capturer is itself
+captured" (transitive); (d) `!capturedGlobals.has(name)`. **None** separate
+`length` from `nextCount`/`iterations` — because the distinguishing information
+(object-method mutation, call-graph through suspending continuations, snapshot
+timing) is **not materialized as metadata** when `compileVariableStatement` runs.
+
+### Recommendation → architect (recommendation #1 only; #2 disproven)
+A producer-side slot fix (whether re-point A→B or write-through B→A) **cannot be
+made safe by any predicate computable at the let-init site.** Both perturb the
+CPS state and the safe/unsafe boundary is whole-program. The only remaining
+viable path is impl2826 **recommendation #1**: build the **transitive
+capture+call graph** and a per-nested-fn **"spills captures into a *suspending*
+continuation state struct"** predicate; apply the fix **only** when no capturer
+of the name (directly or transitively, including through object-literal
+iterator/accessor methods and direct calls into suspending async/gen bodies)
+snapshots the name into a continuation. `t5`/`t6`/`t8` + `length` qualify;
+`callAsync`/`pushAwait`/the iterator-protocol mutators do not. This is genuinely
+architect-owned and must be validated on a **full `merge_group`/local-CI
+test262** run before re-enqueue — the flips do not manifest on a scoped sweep.
+
+Given (i) three failed approaches and (ii) the cited targets remain blocked
+upstream of #2826 by the separate assert-#5 `length: z` dstr bug even after
+#2844, the practical recommendation is to **keep #2826 blocked behind the
+architect's transitive-continuation-graph design** rather than ship any
+producer-side heuristic. Reproduction harness preserved under `.tmp/` (gitignored).

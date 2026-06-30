@@ -215,7 +215,15 @@ export function emitNativeUriEncode(ctx: CodegenContext): void {
   // ── URIError throw sequence (raw Instrs) ──
   // (ctor + string constant + exn tag were registered up top so they don't shift
   // our funcIdx; reuse the captured `uriErrCtorIdx` / `tagIdx`.)
-  const throwURIError: Instr[] = [
+  // (#2868) A FACTORY, not a shared const: `throwURIError` is spread at ~13
+  // sites in the helper body. A spread is shallow, so a single shared
+  // `{ op:"call", funcIdx }` Instr OBJECT would alias every throw site; the
+  // late-import index-shift walker (`shiftLateImportIndices`) mutates
+  // `instr.funcIdx += delta` once PER occurrence, over-shifting the shared
+  // object to an out-of-range funcIdx and emitting an invalid binary (the
+  // single-occurrence `flattenIdx` call stayed correct). Returning fresh Instr
+  // objects per call keeps every `call` independently shiftable.
+  const throwURIError = (): Instr[] => [
     ...stringConstantExternrefInstrs(ctx, "URI malformed"),
     { op: "call", funcIdx: uriErrCtorIdx } as Instr,
     { op: "throw", tagIdx } as Instr,
@@ -311,7 +319,7 @@ export function emitNativeUriEncode(ctx: CodegenContext): void {
                 get(L_I),
                 get(L_LEN),
                 { op: "i32.ge_s" } as Instr,
-                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
                 // lo = data[i]
                 get(L_DATA),
                 get(L_I),
@@ -326,7 +334,7 @@ export function emitNativeUriEncode(ctx: CodegenContext): void {
                 { op: "i32.le_u" } as Instr,
                 { op: "i32.and" } as Instr,
                 { op: "i32.eqz" } as Instr,
-                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
                 // cp = 0x10000 + ((c-0xD800)<<10) + (lo-0xDC00)
                 c(0x10000),
                 get(L_C),
@@ -355,7 +363,7 @@ export function emitNativeUriEncode(ctx: CodegenContext): void {
             c(0xdfff),
             { op: "i32.le_u" } as Instr,
             { op: "i32.and" } as Instr,
-            { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+            { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
 
             // ── UTF-8 encode cp into %XX bytes ──
             // nbytes = cp<=0x7F?1 : cp<=0x7FF?2 : cp<=0xFFFF?3 : 4
@@ -562,7 +570,15 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
   const set = (i: number): Instr => ({ op: "local.set", index: i }) as Instr;
   const c = (value: number): Instr => ({ op: "i32.const", value }) as Instr;
 
-  const throwURIError: Instr[] = [
+  // (#2868) A FACTORY, not a shared const: `throwURIError` is spread at ~13
+  // sites in the helper body. A spread is shallow, so a single shared
+  // `{ op:"call", funcIdx }` Instr OBJECT would alias every throw site; the
+  // late-import index-shift walker (`shiftLateImportIndices`) mutates
+  // `instr.funcIdx += delta` once PER occurrence, over-shifting the shared
+  // object to an out-of-range funcIdx and emitting an invalid binary (the
+  // single-occurrence `flattenIdx` call stayed correct). Returning fresh Instr
+  // objects per call keeps every `call` independently shiftable.
+  const throwURIError = (): Instr[] => [
     ...stringConstantExternrefInstrs(ctx, "URI malformed"),
     { op: "call", funcIdx: uriErrCtorIdx } as Instr,
     { op: "throw", tagIdx } as Instr,
@@ -652,19 +668,19 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
     { op: "i32.add" } as Instr,
     get(L_LEN),
     { op: "i32.ge_s" } as Instr,
-    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
     // data[idx] == '%' ?
     ...dataAt([get(idxLocal)]),
     c(37 /* '%' */),
     { op: "i32.ne" } as Instr,
-    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
     // hi = hexVal(data[idx+1]); if hi<0 throw
     ...hexVal(dataAt([get(idxLocal), c(1), { op: "i32.add" } as Instr])),
     set(targetLocal),
     get(targetLocal),
     c(0),
     { op: "i32.lt_s" } as Instr,
-    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
     // byte = hi<<4
     get(targetLocal),
     c(4),
@@ -678,7 +694,7 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
     get(L_LO2),
     c(0),
     { op: "i32.lt_s" } as Instr,
-    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
     get(targetLocal),
     get(L_LO2),
     { op: "i32.or" } as Instr,
@@ -831,7 +847,7 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
                           op: "if",
                           blockType: { kind: "empty" },
                           then: [c(4), set(L_NB), get(L_B0), c(0x07), { op: "i32.and" } as Instr, set(L_CP)],
-                          else: [...throwURIError],
+                          else: [...throwURIError()],
                         } as Instr,
                       ],
                     } as Instr,
@@ -903,7 +919,7 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
                     { op: "i32.and" } as Instr,
                     c(0x80),
                     { op: "i32.ne" } as Instr,
-                    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+                    { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
                     // cp = (cp << 6) | (cb & 0x3F)
                     get(L_CP),
                     c(6),
@@ -936,7 +952,7 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
                 get(L_CP),
                 c(0x80),
                 { op: "i32.lt_u" } as Instr,
-                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
               ],
             } as Instr,
             get(L_NB),
@@ -949,7 +965,7 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
                 get(L_CP),
                 c(0x800),
                 { op: "i32.lt_u" } as Instr,
-                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
                 // surrogate range 0xD800..0xDFFF is invalid in UTF-8
                 get(L_CP),
                 c(0xd800),
@@ -958,7 +974,7 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
                 c(0xdfff),
                 { op: "i32.le_u" } as Instr,
                 { op: "i32.and" } as Instr,
-                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
               ],
             } as Instr,
             get(L_NB),
@@ -975,7 +991,7 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
                 c(0x10ffff),
                 { op: "i32.gt_u" } as Instr,
                 { op: "i32.or" } as Instr,
-                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError] } as Instr,
+                { op: "if", blockType: { kind: "empty" }, then: [...throwURIError()] } as Instr,
               ],
             } as Instr,
             // emit cp as UTF-16: BMP -> 1 unit; astral -> surrogate pair
