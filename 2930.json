@@ -1,8 +1,8 @@
 {
   "id": "2930",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-01T23:34:01Z",
-  "updated_at": "2026-07-01T23:34:01Z"
+  "assignee": "ttraenkler/dev-2900",
+  "status": "in-progress",
+  "branch": "issue-2900-module-indirect-default-binding",
+  "claimed_at": "2026-07-01T23:36:42Z",
+  "updated_at": "2026-07-01T23:36:42Z"
 }
