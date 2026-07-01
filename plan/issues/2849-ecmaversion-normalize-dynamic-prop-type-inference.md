@@ -1,7 +1,9 @@
 ---
 id: 2849
 title: "dynamic-object numeric property reads back 0 when the same property is also compared via === string / == null (acorn ecmaVersion 2022 not normalised → spurious import attributes)"
-status: ready
+status: done
+assignee: ttraenkler/dev-2878
+completed: 2026-07-02
 sprint: current
 priority: medium
 horizon: l
@@ -109,3 +111,59 @@ is a **dynamic-object property type-inference / storage** bug, likely broad
   `__extern_get`/`__extern_set` numeric coercion). Likely the same family as the
   any-value polymorphic-read substrate work.
 - Repro scripts (this branch, `.tmp/nm-2841/repro-ecma*.mjs`, gitignored).
+
+## Resolution (2026-07-02, dev-2878)
+
+### Root cause (WAT-bisected, host mode)
+
+Not a numeric-vs-string type-inference issue as originally hypothesised — the
+trigger is a **representation-coherence** split between a dynamic-key write and a
+widened struct read:
+
+1. `var o = {}` is given a **concrete WasmGC struct** type by
+   `collectEmptyObjectWidening` (declarations.ts) because a sibling STATIC
+   dot-write `o.ecmaVersion = 1e8` (inside the never-taken `=== "latest"` /
+   `== null` guard body) contributes an `f64 ecmaVersion` field. Widening makes
+   the dot-reads lower to a direct, unguarded `struct.get $N 0`.
+2. The for-in write `for (k in d) o[k] = opts[k]` has a **non-literal computed
+   key** (`k` is the loop var), so it CANNOT resolve to a struct field and lowers
+   to the dynamic `__extern_set` **sidecar** — NOT the struct slot.
+3. Read/write diverge: `struct.get` returns the field default (`0`), never the
+   sidecar-written `2022`. (Bisected: `var k = "x"; o[k]=v` const-propagates the
+   key → lowers to `struct.set` → coherent → no bug; only the non-resolvable key
+   breaks.)
+
+Why host-only: the demotion guard that keeps such objects open
+(`markObjectHashConsumers`, #2584) is **standalone-gated**, and the host
+"live-mirror Proxy writeback" does NOT cover a dynamic-key write.
+
+### Fix
+
+`src/codegen/declarations.ts` — new `hasNonLiteralComputedWrite` detector, wired
+into `collectEmptyObjectWidening` **mode-agnostically**: a non-literal
+computed-key write `o[<expr>] = v` suppresses empty-object struct widening, so
+the receiver stays a `$Object` and both the dynamic write and the dot reads route
+through the same (guarded / sidecar) representation. String/number-**literal**
+computed keys are deliberately NOT matched — they resolve to a field and lower to
+`struct.set`, staying coherent (and keeping the struct fast path). Standalone was
+already covered by the (broader) `markObjectHashConsumers` poison.
+
+### Verification
+
+- Minimal repro `run(2022) === 13` with the `=== "latest"` / `== null` guards
+  present (host). All variant forms correct; literal-key writes still fast-path;
+  pure-numeric path unchanged.
+- **0 regressions** in a base-vs-mine differential over 1,399 object / for-in /
+  property-accessor test262 files (the directly-affected surface).
+- Test: `tests/issue-2849-dynamic-key-object-numeric-read.test.ts`.
+
+### Out of scope (separate pre-existing gaps)
+
+- **Standalone** (`--target standalone`) still reads the property back as an
+  externref/object (returns `{}`, not `13`) — an INDEPENDENT gap in the
+  standalone dynamic-`$Object` numeric substrate (verified identical on `main`,
+  unaffected by this fix). Tracked with the `$Object` dynamic-reader value-rep
+  work.
+- The acorn `attributes` acceptance (edge.js module differential) remains gated
+  on #2325 (edge.js can't parse module source on `main` yet); the underlying
+  compiler mis-read that produced it is fixed here.
