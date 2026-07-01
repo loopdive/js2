@@ -233,6 +233,8 @@ const ES_BASE_LIB_NAMES = [
   "lib.es2023.intl.d.ts",
   // ES2024
   "lib.es2024.collection.d.ts",
+  // ES2024 — Object.groupBy (#2863; Map.groupBy is in es2024.collection above)
+  "lib.es2024.object.d.ts",
   // ESNext — Set methods (union, intersection, difference, etc.)
   "lib.esnext.collection.d.ts",
   // ESNext — DisposableStack / AsyncDisposableStack (#1036)
