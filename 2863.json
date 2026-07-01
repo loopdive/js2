@@ -1,8 +1,9 @@
 {
   "id": "2863",
   "assignee": "ttraenkler/dev-2863",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2863-standalone-get-builtin-groupby",
   "claimed_at": "2026-07-01T22:36:45Z",
-  "updated_at": "2026-07-01T22:36:45Z"
+  "updated_at": "2026-07-01T23:23:25Z",
+  "released_at": "2026-07-01T23:23:25Z"
 }
