@@ -1,9 +1,8 @@
 {
   "id": "2914",
-  "assignee": "ttraenkler/review2911",
+  "assignee": "ttraenkler/fix2914",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-07-01T01:17:00Z",
-  "claimed_at": "2026-07-01T01:17:00Z",
-  "updated_at": "2026-07-01T01:17:00Z"
+  "branch": "issue-2914-standalone-host-free",
+  "claimed_at": "2026-07-01T01:35:57Z",
+  "updated_at": "2026-07-01T01:35:57Z"
 }
