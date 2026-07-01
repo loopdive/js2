@@ -1,8 +1,9 @@
 {
   "id": "2873",
   "assignee": "ttraenkler/dev-2873",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2873-standalone-toprimitive-operators",
   "claimed_at": "2026-07-01T22:36:24Z",
-  "updated_at": "2026-07-01T22:36:24Z"
+  "updated_at": "2026-07-01T23:20:16Z",
+  "released_at": "2026-07-01T23:20:16Z"
 }
