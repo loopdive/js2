@@ -1991,9 +1991,15 @@ export function coerceType(
     fctx.body.push({ op: "f64.const", value: 0 });
     return;
   }
-  // externref → eqref: any.convert_extern (eqref is subtype of anyref)
+  // externref → eqref: any.convert_extern yields ANYREF (the SUPERtype of
+  // eqref), so a bare conversion is one step too wide — a consuming eqref-slot
+  // store fails validation ("expected eqref, found anyref"). Narrow anyref →
+  // eqref with a nullable ref.cast to the abstract `eq` heap type (-19). Mirrors
+  // the fctx-less `coercionInstrs` arm (#2878).
   if (from.kind === "externref" && to.kind === "eqref") {
+    const EQ_HEAP_TYPE = -19;
     fctx.body.push({ op: "any.convert_extern" } as Instr);
+    fctx.body.push({ op: "ref.cast_null", typeIdx: EQ_HEAP_TYPE } as Instr);
     return;
   }
   // Remaining → externref fallback (funcref, etc.): drop and push null
@@ -3214,9 +3220,14 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
   if (from.kind === "externref" && to.kind === "anyref") {
     return [{ op: "any.convert_extern" } as Instr];
   }
-  // externref → eqref: any.convert_extern (anyref is supertype of eqref, but close enough for validation)
+  // externref → eqref: defensive fallback mirroring the `coercionPlan` row
+  // (which normally intercepts this above). `any.convert_extern` yields ANYREF —
+  // the SUPERtype of eqref — so it must be narrowed with a nullable ref.cast to
+  // the abstract `eq` heap type (-19), else an eqref-slot store fails validation
+  // (#2878). See coercion-plan.ts for the authoritative rationale.
   if (from.kind === "externref" && to.kind === "eqref") {
-    return [{ op: "any.convert_extern" } as Instr];
+    const EQ_HEAP_TYPE = -19;
+    return [{ op: "any.convert_extern" } as Instr, { op: "ref.cast_null", typeIdx: EQ_HEAP_TYPE } as Instr];
   }
   // externref → ref_null: any.convert_extern + guarded ref.cast_null
   if (from.kind === "externref" && to.kind === "ref_null") {

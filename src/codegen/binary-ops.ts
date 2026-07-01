@@ -1143,13 +1143,46 @@ export function compileBinaryExpression(
   // falling through to `ref.eq` (struct identity → always false for equal
   // content). Recognise the read shape at the AST level so `id.name === "x"`
   // routes to content-based string equality.
+  // (#2873) A `+` binary expression is a STRING concatenation — always a string
+  // at runtime — whenever either operand is statically string- or String-wrapper
+  // typed (`isStringType` covers both). TypeScript infers `new String("1") + 1`
+  // (and `new String("1") + new String("1")`, `1 + new String("1")`) as `any`,
+  // NOT `string`: only `String-wrapper + primitive-string` narrows to `string`.
+  // So an outer `=== "11"` / `!== "11"` sees an `any` LEFT, misses the native
+  // string-equality dispatch, and falls to `ref.eq`/tag-dispatch → a spurious
+  // `false` even though the concat itself is correct ("11"). This de-masked the
+  // standalone `language/expressions/addition/S11.6.1_A3.2_T{1.1,2.1-2.4}`
+  // cluster (String/Number/Boolean wrapper `+` operands). Recognise the concat
+  // shape at the AST level and treat it as a string operand so the comparison
+  // routes to `__str_equals`. Standalone/WASI (native-string) only — mirrors the
+  // `isStandaloneErrorStringPropRead` augmentation above and the #2888 relational
+  // String-wrapper lowering.
+  const isStringConcatExpr = (node: ts.Expression): boolean => {
+    if (!(ctx.standalone || ctx.wasi)) return false;
+    let cur: ts.Expression = node;
+    while (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = (cur as ts.ParenthesizedExpression | ts.AsExpression | ts.NonNullExpression | ts.TypeAssertion).expression;
+    }
+    if (!ts.isBinaryExpression(cur) || cur.operatorToken.kind !== ts.SyntaxKind.PlusToken) return false;
+    const lt = ctx.checker.getTypeAtLocation(cur.left);
+    const rt = ctx.checker.getTypeAtLocation(cur.right);
+    if (isBigIntType(lt) || isBigIntType(rt)) return false;
+    return isStringType(lt) || isStringType(rt);
+  };
   const leftIsStrLike =
     isStringOrNullableString(leftTsType) ||
     isStandaloneErrorStringPropRead(expr.left) ||
+    isStringConcatExpr(expr.left) ||
     isLogicalAssignNamedEvalNameRead(ctx, expr.left);
   const rightIsStrLike =
     isStringOrNullableString(rightTsType) ||
     isStandaloneErrorStringPropRead(expr.right) ||
+    isStringConcatExpr(expr.right) ||
     isLogicalAssignNamedEvalNameRead(ctx, expr.right);
   if (
     ctx.nativeStrings &&

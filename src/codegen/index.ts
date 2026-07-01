@@ -4595,8 +4595,20 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           { op: "local.get", index: anyLocal } as Instr,
           { op: "ref.cast", typeIdx: entry.typeIdx },
           { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx } as Instr,
-          // externref field → anyref → eqref scratch
+          // externref field → anyref → concrete closure ref → eqref scratch.
+          // (#2878) `any.convert_extern` yields `anyref`, which is the SUPERtype
+          // of the `eqref` scratch local — a bare `local.set` of anyref into an
+          // eqref local fails validation ("local.set expected eqref, found
+          // anyref of type anyref"), the standalone `__call_toString` /
+          // `__call_valueOf` invalid-Wasm bucket (#2860/#2868 residual). Narrow
+          // to the concrete closure struct type first (a valid eqref subtype);
+          // the field holds `extern.convert_any(closureStruct)`, so this recovers
+          // exactly that struct. The `ref.cast entry.closureTypeIdx` uses of
+          // `closureLocal` below become redundant re-casts of the same concrete
+          // type (harmless), and this adds no new trap — that cast already ran
+          // unconditionally on the value.
           { op: "any.convert_extern" } as Instr,
+          { op: "ref.cast", typeIdx: entry.closureTypeIdx },
           { op: "local.set", index: closureLocal } as Instr,
           // self-param: the closure struct
           { op: "local.get", index: closureLocal } as Instr,

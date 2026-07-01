@@ -158,9 +158,26 @@ export function coercionPlan(from: ValType, to: ValType, helpers: CoercionHelper
     return { instrs: [{ op: "extern.convert_any" } as Instr] };
   }
 
-  // ── externref → anyref/eqref: any.convert_extern ──
-  if (isExternKind(from.kind) && (toK === "anyref" || toK === "eqref")) {
+  // ── externref → anyref: any.convert_extern (anyref IS the exact target) ──
+  if (isExternKind(from.kind) && toK === "anyref") {
     return { instrs: [{ op: "any.convert_extern" } as Instr] };
+  }
+
+  // ── externref → eqref: any.convert_extern + narrowing ref.cast to `eq` ──
+  // `any.convert_extern` yields ANYREF, the SUPERtype of eqref — a bare
+  // conversion is one representation step too wide. A consuming `struct.set` /
+  // `local.set` into an eqref slot then fails Wasm validation ("expected eqref,
+  // found anyref"), the standalone `__set_member_toString` / `__call_*`
+  // invalid-Wasm bucket (#2878, #2860/#2868 residual). Narrow anyref → eqref
+  // with a nullable ref.cast to the abstract `eq` heap type (-19 signed-LEB;
+  // every concrete GC struct/array ref and i31 is an eq-subtype, so a boxed GC
+  // ref — the only value that legitimately lands in an eqref field — casts
+  // cleanly, and null stays null rather than trapping).
+  if (isExternKind(from.kind) && toK === "eqref") {
+    const EQ_HEAP_TYPE = -19;
+    return {
+      instrs: [{ op: "any.convert_extern" } as Instr, { op: "ref.cast_null", typeIdx: EQ_HEAP_TYPE } as Instr],
+    };
   }
 
   // ── ref_null → ref (same typeIdx handled by caller); only nullability drop ──
