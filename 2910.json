@@ -1,9 +1,8 @@
 {
   "id": "2910",
-  "assignee": "ttraenkler/lead",
+  "assignee": "ttraenkler/impl2910",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-07-01T00:43:33Z",
-  "claimed_at": "2026-07-01T00:43:33Z",
-  "updated_at": "2026-07-01T00:43:33Z"
+  "branch": "issue-2910-editions-reconcile",
+  "claimed_at": "2026-07-01T01:05:54Z",
+  "updated_at": "2026-07-01T01:05:54Z"
 }
