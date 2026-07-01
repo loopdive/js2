@@ -1,8 +1,9 @@
 {
   "id": "2900",
   "assignee": "ttraenkler/dev-2900",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2900-module-indirect-default-binding",
   "claimed_at": "2026-07-01T22:52:05Z",
-  "updated_at": "2026-07-01T22:52:05Z"
+  "updated_at": "2026-07-01T23:29:50Z",
+  "released_at": "2026-07-01T23:29:50Z"
 }
