@@ -2231,6 +2231,24 @@ export function collectEmptyObjectWidening(
             }
           }
 
+          // (#2849) Mode-agnostic (host AND standalone): a NON-LITERAL
+          // computed-key write `varName[<expr>] = v` (e.g. `for (k in d)
+          // o[k] = opts[k]`) lowers to the dynamic `__extern_set` sidecar, which
+          // a widened closed-struct read (`struct.get`) would miss → the value
+          // reads back 0. Host was previously unprotected (the
+          // `markObjectHashConsumers` poison above is standalone-gated, and the
+          // "live-mirror Proxy writeback" does NOT cover a dynamic-key write).
+          // Suppress widening so the receiver stays a `$Object` and every access
+          // — the dynamic write AND the dot reads — routes through the same
+          // (guarded / sidecar) representation. String/number-literal computed
+          // keys are intentionally NOT matched (they lower to `struct.set`).
+          for (const s of stmts) {
+            if (hasNonLiteralComputedWrite(s, varName)) {
+              ctx.objectHashConsumerVars.add(varName);
+              break;
+            }
+          }
+
           // (#2372) Standalone: if any `Object.defineProperty(varName, …)` on
           // this receiver used a *dynamic* (non-inline-literal) descriptor, the
           // struct-widening fast path is unsound — the dynamic define is applied
@@ -2566,6 +2584,51 @@ function isAccessorDescriptor(descArg: ts.Expression): boolean {
  * matching the existing widening pre-pass (aliasing is a shared, documented
  * limitation — see the issue's `## Deferred`).
  */
+/**
+ * (#2849) Does `node` contain a COMPUTED-key write `varName[<non-literal>] = …`
+ * whose key is NOT a static string/number literal (e.g. `o[k] = v` inside
+ * `for (var k in d)`, a parameter key, or any expression key)?
+ *
+ * Such a write cannot be resolved to a static struct field, so codegen lowers it
+ * to the dynamic `__extern_set` **sidecar**. If `varName` were ALSO widened to a
+ * closed WasmGC struct (because a sibling STATIC dot-write `varName.k = v`
+ * triggered `collectEmptyObjectWidening`), the widened `struct.get` read would
+ * MISS the sidecar-written value and return the field default (0). That is the
+ * `for (k in d) o[k] = opts[k]; … o.ecmaVersion` mis-read (compiled acorn
+ * `getOptions` normalisation reading back 0).
+ *
+ * A string/number LITERAL computed key (`o["ecmaVersion"] = v`) is SAFE — it
+ * resolves to a field and lowers to `struct.set`, staying coherent with the
+ * struct read — so it is deliberately NOT matched here. Compound assignments
+ * (`o[k] += v`) are matched too (they also write through the sidecar).
+ */
+function hasNonLiteralComputedWrite(node: ts.Node, varName: string): boolean {
+  const isVarRef = (n: ts.Node): boolean => ts.isIdentifier(n) && n.text === varName;
+  const isLiteralKey = (e: ts.Expression): boolean =>
+    ts.isStringLiteralLike(e) ||
+    ts.isNumericLiteral(e) ||
+    // `-1` / `+2` style numeric-literal keys (unary on a numeric literal).
+    (ts.isPrefixUnaryExpression(e) && ts.isNumericLiteral(e.operand));
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      n.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isElementAccessExpression(n.left) &&
+      isVarRef(n.left.expression) &&
+      !isLiteralKey(n.left.argumentExpression)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return found;
+}
+
 function markObjectHashConsumers(node: ts.Node, varName: string, poisonSet: Set<string>): void {
   const isVarRef = (n: ts.Node): boolean => ts.isIdentifier(n) && n.text === varName;
 
