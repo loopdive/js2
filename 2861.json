@@ -1,8 +1,9 @@
 {
   "id": "2861",
   "assignee": "ttraenkler/dev-2863",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2861-standalone-builtin-value-read",
   "claimed_at": "2026-07-01T23:24:44Z",
-  "updated_at": "2026-07-01T23:24:44Z"
+  "updated_at": "2026-07-01T23:58:23Z",
+  "released_at": "2026-07-01T23:58:23Z"
 }
