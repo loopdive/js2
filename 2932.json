@@ -1,8 +1,9 @@
 {
   "id": "2932",
   "assignee": "ttraenkler/dev-2900f",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2932-fixture-allowjs-hoist-imports",
   "claimed_at": "2026-07-02T04:41:02Z",
-  "updated_at": "2026-07-02T04:41:02Z"
+  "updated_at": "2026-07-02T10:39:03Z",
+  "released_at": "2026-07-02T10:39:03Z"
 }
