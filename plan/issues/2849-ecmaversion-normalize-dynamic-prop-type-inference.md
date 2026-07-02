@@ -1,8 +1,7 @@
 ---
 id: 2849
 title: "dynamic-object numeric property reads back 0 when the same property is also compared via === string / == null (acorn ecmaVersion 2022 not normalised → spurious import attributes)"
-status: done
-completed: 2026-07-02
+status: blocked
 assignee: ttraenkler/fable-dev
 sprint: current
 priority: medium
@@ -14,11 +13,25 @@ task_type: bugfix
 area: codegen
 language_feature: dynamic-object-property-type-inference
 goal: acorn-dogfood
-related: [2841, 2836, 1712]
+related: [2841, 2836, 1712, 2937, 2944]
 depends_on: []
+blocked_on: 2944
 blocks: [1712]
 umbrella: 1712
 ---
+
+> **REOPENED 2026-07-02 (was `done`).** The host-mode fix (PR #2432, extend the
+> `objectHashConsumerVars` poison to host) was **REVERTED in #2937**: keeping
+> acorn's poisoned `{}` vars on `$Object` in host mode broke compiled-acorn with
+> a uniform null-deref on EVERY input, because the poisoned value ESCAPES the
+> identifier into struct-typed slots (`getOptions` return, `this.options` field)
+> that the poison never re-types — a total host-mode parse break, strictly worse
+> than this narrow `getOptions` quirk. So this host bug is live again. The
+> **real cure is the escape-discipline substrate slice #2944** (externref-typed
+> escapes for poisoned `$Object` values); this issue is `blocked_on: 2944`.
+> Standalone is UNAFFECTED (its poison was never reverted). The reduced host
+> arms in `tests/issue-2849.test.ts` are marked `it.fails` pinned here — they
+> flip red (forcing restoration) when #2944 lands.
 
 # #2849 — dynamic-object property mis-typed when read in heterogeneous (string-`===` / `==null` AND numeric) contexts
 

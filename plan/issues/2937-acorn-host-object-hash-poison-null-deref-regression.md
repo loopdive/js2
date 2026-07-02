@@ -1,7 +1,8 @@
 ---
 id: 2937
 title: "Regression: host-mode $Object-hash poison (#2849) makes compiled-acorn parse null-deref on every input"
-status: ready
+status: done
+completed: 2026-07-02
 created: 2026-07-02
 updated: 2026-07-02
 priority: high
@@ -15,8 +16,26 @@ goal: runtime-eval
 sprint: current
 parent: 2927
 depends_on: []
-related: [2849, 2584, 2432, 1712, 1710, 2850, 2853]
+related: [2849, 2584, 2432, 1712, 1710, 2850, 2853, 2944]
 ---
+
+> **FIXED BY REVERT (2026-07-02, tech-lead decision).** Backed out PR #2432's
+> host extension of the `objectHashConsumerVars` poison — restored the
+> `if (ctx.standalone)` gate at `declarations.ts` `collectEmptyObjectWidening`.
+> Compiled-acorn `parse("")`/`parse("1")`/all corpus inputs parse again in host
+> mode; standalone codegen is byte-identical (its poison was never touched). The
+> narrow #2849 host bug the extension had fixed **reopens** (`plan/issues/2849`
+> back to `blocked`), because the two constraints genuinely conflict under the
+> current representation model — the poisoned `$Object` value ESCAPES the
+> identifier (returned from `getOptions`, stored in the struct-typed
+> `this.options` field) into struct-typed slots the poison never re-types, so a
+> scoped receiver bail cannot fix it (measured: host poison + bail → 22/23 acorn
+> corpus inputs still throw; pure revert → all parse). Full escape analysis is
+> seeded into **#2944**. The **proper cure for BOTH** is the escape-discipline
+> substrate slice **#2944** (externref-typed escapes for poisoned `$Object`
+> values); the reverted host arms in `tests/issue-2849.test.ts` are
+> `it.fails`-pinned to it. (The "Fix direction" section below is the pre-decision
+> investigation record, superseded by this banner.)
 
 # #2937 — host-mode `$Object`-hash poison regresses compiled-acorn to a uniform null-deref
 
@@ -112,6 +131,7 @@ throw has line/col `0`, so it can't be located from the payload), recompile
 Acorn, and read which member-access site fires — then reduce from that site.
 
 ### Reduced shapes (verbatim — all returned the CORRECT value in host mode on
+
 current `main`; extend these toward the Acorn trigger)
 
 Each is `compile(src, { fileName: "t.ts" })` → instantiate → `wrapExports` →
@@ -119,36 +139,84 @@ Each is `compile(src, { fileName: "t.ts" })` → instantiate → `wrapExports` �
 
 ```ts
 // P1 — for-in copy of a primitive + a poisoning static write, static read (=13)
-const src: any = { ecmaVersion: 13 }; const o: any = {};
-for (const k in src) { o[k] = src[k]; } o.extra = 1; return o.ecmaVersion;
+const src: any = { ecmaVersion: 13 };
+const o: any = {};
+for (const k in src) {
+  o[k] = src[k];
+}
+o.extra = 1;
+return o.ecmaVersion;
 
 // P2 — copied value is an OBJECT, then chained read (=42)
-const inner: any = { v: 42 }; const src: any = { node: inner }; const o: any = {};
-for (const k in src) { o[k] = src[k]; } o.extra = 1; return o.node.v;
+const inner: any = { v: 42 };
+const src: any = { node: inner };
+const o: any = {};
+for (const k in src) {
+  o[k] = src[k];
+}
+o.extra = 1;
+return o.node.v;
 
 // P3 — bracket-write of an object, static read returns object, member access (=7)
-const o: any = {}; const key = "node"; o[key] = { v: 7 }; o.flag = 1; return o.node.v;
+const o: any = {};
+const key = "node";
+o[key] = { v: 7 };
+o.flag = 1;
+return o.node.v;
 
 // P4 — static read of copied object into a local, then member access (=99)
-const inner: any = { v: 99 }; const src: any = { keywords: inner }; const o: any = {};
-for (const k in src) { o[k] = src[k]; } o.pos = 0; const kw: any = o.keywords; return kw.v;
+const inner: any = { v: 99 };
+const src: any = { keywords: inner };
+const o: any = {};
+for (const k in src) {
+  o[k] = src[k];
+}
+o.pos = 0;
+const kw: any = o.keywords;
+return kw.v;
 
 // E1 — ESCAPE: poisoned object RETURNED from a fn, caller reads chained (=42)
-function make(): any { const src: any = { ecmaVersion: 13, node: { v: 42 } };
-  const o: any = {}; for (const k in src) { o[k] = src[k]; } o.extra = 1; return o; }
+function make(): any {
+  const src: any = { ecmaVersion: 13, node: { v: 42 } };
+  const o: any = {};
+  for (const k in src) {
+    o[k] = src[k];
+  }
+  o.extra = 1;
+  return o;
+}
 // test(): const opts: any = make(); return opts.node.v;
 
 // E2 — ESCAPE via `this`: ctor builds poisoned obj on this.options, method reads (=13)
-class P { options: any; constructor(opts: any) { const src: any = opts; const o: any = {};
-  for (const k in src) { o[k] = src[k]; } o.extra = 1; this.options = o; }
-  read(): number { return this.options.ecmaVersion; } }
+class P {
+  options: any;
+  constructor(opts: any) {
+    const src: any = opts;
+    const o: any = {};
+    for (const k in src) {
+      o[k] = src[k];
+    }
+    o.extra = 1;
+    this.options = o;
+  }
+  read(): number {
+    return this.options.ecmaVersion;
+  }
+}
 // test(): const p = new P({ ecmaVersion: 13 }); return p.read();
 
 // E3 — getOptions-exact: default-copy + `in`-guard + ecmaVersion normalize (=13)
 const defaults: any = { ecmaVersion: 5, sourceType: "script" };
-function getOptions(opts: any): any { const options: any = {};
-  for (const opt in defaults) { options[opt] = (opts && opt in opts) ? opts[opt] : defaults[opt]; }
-  if (options.ecmaVersion >= 2015) { options.ecmaVersion -= 2009; } return options; }
+function getOptions(opts: any): any {
+  const options: any = {};
+  for (const opt in defaults) {
+    options[opt] = opts && opt in opts ? opts[opt] : defaults[opt];
+  }
+  if (options.ecmaVersion >= 2015) {
+    options.ecmaVersion -= 2009;
+  }
+  return options;
+}
 // test(): const o: any = getOptions({ ecmaVersion: 2022 }); return o.ecmaVersion;  // 13
 ```
 

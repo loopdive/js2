@@ -15,6 +15,20 @@
 //   if (o.ecmaVersion === "latest") …            // static-named guard write
 //   else if (o.ecmaVersion == null) …
 //   else if (o.ecmaVersion >= 2015) o.ecmaVersion -= 2009;   // 2022 → 13
+//
+// (#2937 REVERT) The host extension of the poison was REVERTED in #2937: extending
+// it to host kept acorn's poisoned `{}` vars on `$Object`, but the poisoned value
+// ESCAPES into struct-typed slots (return / `this.options` field) the poison never
+// re-types, so compiled-acorn null-dereferenced on EVERY host-mode input — strictly
+// worse than this narrow `getOptions` quirk. So the HOST for-in-copy-WITH-GUARD arms
+// below now reopen the pre-#2849 host bug (`o.ecmaVersion` reads back the widened
+// struct default, not the sidecar value) and are marked `it.fails` — a HONEST
+// known-fail pinned to reopened #2849, whose real cure is the escape-discipline
+// substrate slice #2944. When #2944 lands, `it.fails` flips red, forcing these arms
+// back to plain `it`. Standalone is UNCHANGED (its poison was never reverted) and
+// the host NO-GUARD + STATIC-ONLY arms still pass (the guard is what triggers the
+// widen→sidecar divergence).
+const HOST_KNOWN_FAIL_2849 = new Set(["== null guard", '=== "latest" guard', "numeric-only guard"]);
 
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
@@ -69,7 +83,11 @@ const variants: Record<string, string> = {
 describe("#2849 dynamic-object static-write field-vs-sidecar coherence", () => {
   for (const [name, guard] of Object.entries(variants)) {
     const src = FORIN_COPY.replace("__GUARD__", guard);
-    it(`host: for-in copy + [${name}] normalises 2022 → 13`, async () => {
+    // (#2937) The guard-bearing host arms reopen the #2849 host bug after the
+    // revert — mark them known-fail (blocked on substrate #2944). The no-guard
+    // host arm still normalises correctly (no string/null guard → no divergence).
+    const hostIt = HOST_KNOWN_FAIL_2849.has(name) ? it.fails : it;
+    hostIt(`host: for-in copy + [${name}] normalises 2022 → 13`, async () => {
       expect(await runHost(src, 2022)).toBe(13);
     });
     it(`standalone: for-in copy + [${name}] stays pure and does not trap`, async () => {
@@ -88,7 +106,9 @@ export function run(ev) {
   if (ev < 0) { o.ecmaVersion = 999; }   // never taken for ev = 2022
   return o.ecmaVersion;
 }`;
-  it("host: unreached static write does not shadow the sidecar (reads 2022)", async () => {
+  // (#2937) Known-fail after the revert (reopened #2849, blocked on #2944): the
+  // unreached static write again shadows the sidecar in host mode.
+  it.fails("host: unreached static write does not shadow the sidecar (reads 2022)", async () => {
     expect(await runHost(DEAD_BRANCH, 2022)).toBe(2022);
   });
   it("standalone: unreached static write compiles pure and does not trap", async () => {

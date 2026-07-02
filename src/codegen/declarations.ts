@@ -2225,20 +2225,29 @@ export function collectEmptyObjectWidening(
           // stays a `$Object`. Scan the whole enclosing statement list (the same
           // tree `collectPropsFromStatements` walks).
           //
-          // (#2849) This was ORIGINALLY `ctx.standalone`-gated on the assumption
-          // "host keeps the struct fast path via the live-mirror Proxy". That
-          // assumption is false for the for-in copy pattern
-          // (`o={}; for (k in d) o[k]=src[k]; … o.prop`): the dynamic-key writes
-          // `o[k]=` land in the sidecar, but a STATIC-named write `o.prop = c`
-          // anywhere (even an unreached branch) widens `prop` into a real struct
-          // field via `collectPropsFromStatements`, so the read `o.prop` lowers
-          // to `struct.get` of the empty field (0) — the Proxy never bridges the
-          // for-in-write→struct-read divergence. Applying the poison in host mode
-          // too keeps such objects on `$Object` so writes + reads share one
-          // representation. Vars with only static access are NOT poisoned, so the
-          // struct fast path (and its byte output) is unchanged.
-          for (const s of stmts) {
-            markObjectHashConsumers(s, varName, ctx.objectHashConsumerVars);
+          // (#2849 extended this poison to host; #2937 REVERTS that extension —
+          // restored to standalone-only.) Why the revert: extending the poison to
+          // host kept acorn's for-in-copied `{}` vars (e.g. `getOptions`'s
+          // `options`) on `$Object`, but the poison is honored ONLY at this
+          // widening DECISION — the read/write codegen still resolves such a
+          // receiver via `resolveStructName(TS-type)`, which mis-binds it to a
+          // colliding `__anon` struct registered under the same TS object type.
+          // Worse, the poisoned `$Object` value ESCAPES the identifier (returned
+          // from `getOptions`, stored in the struct-typed `this.options` field,
+          // read via `this.options.ecmaVersion`) into struct-typed slots a
+          // receiver-level bail cannot reach → compiled-acorn null-dereferenced on
+          // EVERY host-mode input (#2937). A total host-mode parse break is
+          // strictly worse than the narrow `getOptions` shape bug the host
+          // extension fixed (which existed quietly for months), so the gate is
+          // restored to standalone-only. The proper cure — externref-typed escape
+          // discipline for poisoned `$Object` values — is the substrate slice
+          // #2944 (see #2937 / #2849). Standalone keeps the poison (unchanged; the
+          // #2584/#2372 divergences it guards are real there, and standalone
+          // codegen stays byte-identical).
+          if (ctx.standalone) {
+            for (const s of stmts) {
+              markObjectHashConsumers(s, varName, ctx.objectHashConsumerVars);
+            }
           }
 
           // (#2372) Standalone: if any `Object.defineProperty(varName, …)` on
