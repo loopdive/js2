@@ -1,8 +1,9 @@
 {
   "id": "2877",
   "assignee": "ttraenkler/dev-2912f",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2877-standalone-error-message",
   "claimed_at": "2026-07-02T05:46:35Z",
-  "updated_at": "2026-07-02T05:46:35Z"
+  "updated_at": "2026-07-02T10:04:09Z",
+  "released_at": "2026-07-02T10:04:09Z"
 }
