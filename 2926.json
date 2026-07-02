@@ -1,8 +1,9 @@
 {
   "id": "2926",
   "assignee": "ttraenkler/shepherd-f",
-  "status": "in-progress",
+  "status": "released",
   "branch": "chore-rescue-stranded-jul2",
   "claimed_at": "2026-07-02T01:56:21Z",
-  "updated_at": "2026-07-02T01:56:21Z"
+  "updated_at": "2026-07-02T04:43:44Z",
+  "released_at": "2026-07-02T04:43:44Z"
 }
