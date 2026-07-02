@@ -1,9 +1,8 @@
 {
   "id": "2671",
-  "assignee": "ttraenkler/dev-2671e",
-  "status": "released",
-  "branch": "issue-2671e-regexp-lastindex",
-  "claimed_at": "2026-06-26T13:14:26Z",
-  "updated_at": "2026-06-26T14:36:12Z",
-  "released_at": "2026-06-26T14:36:12Z"
+  "assignee": "ttraenkler/dev-2937f",
+  "status": "in-progress",
+  "branch": "issue-2671-es6-builtin-residuals",
+  "claimed_at": "2026-07-02T05:33:59Z",
+  "updated_at": "2026-07-02T05:33:59Z"
 }
