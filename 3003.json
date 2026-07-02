@@ -1,8 +1,8 @@
 {
   "id": "3003",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-02T20:29:29Z",
-  "updated_at": "2026-07-02T20:29:29Z"
+  "assignee": "ttraenkler/dev-3003",
+  "status": "in-progress",
+  "branch": "issue-3003-verdict-oracle-guard",
+  "claimed_at": "2026-07-02T20:37:57Z",
+  "updated_at": "2026-07-02T20:37:57Z"
 }
