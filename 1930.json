@@ -1,8 +1,8 @@
 {
   "id": "1930",
-  "assignee": "ttraenkler/dev-2937f",
+  "assignee": "ttraenkler/dev-1930o",
   "status": "in-progress",
-  "branch": "issue-1930-slice3-i32-matchers",
-  "claimed_at": "2026-07-02T15:24:08Z",
-  "updated_at": "2026-07-02T15:24:08Z"
+  "branch": "issue-1930-oracle-slices",
+  "claimed_at": "2026-07-02T20:27:48Z",
+  "updated_at": "2026-07-02T20:27:48Z"
 }
