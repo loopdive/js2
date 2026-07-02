@@ -439,6 +439,9 @@ function irTypeKey(t: IrType): string {
     const parts = [...t.members].map(irTypeKey).sort();
     return `u:${parts.join("|")}`;
   }
+  // #2949 — dynamic keyed with its optional JsTag refinement (distinct
+  // refinements are distinct types under irTypeEquals; keys must match that).
+  if (t.kind === "dynamic") return t.tag === undefined ? "dyn" : `dyn:${t.tag}`;
   return `b:${irTypeKey(t.inner)}`;
 }
 

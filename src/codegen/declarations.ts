@@ -77,6 +77,7 @@ import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.j
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
 import { compileExpression, compileStatement } from "./shared.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 
 /** Accumulated state for the single-pass collector */
@@ -3747,7 +3748,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         const funcIdx = ctx.funcMap.get(targetName)!;
 
         // Mark the function as exported (for dead-code elimination etc.)
-        const func = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+        const func = definedFuncAt(ctx, funcIdx);
         if (func && !func.exported) {
           func.exported = true;
         }
@@ -3788,7 +3789,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         const exportedName = spec.name.text;
         if (!ctx.funcMap.has(localName)) continue;
         const funcIdx = ctx.funcMap.get(localName)!;
-        const func = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+        const func = definedFuncAt(ctx, funcIdx);
         if (func && !func.exported) func.exported = true;
         if (!ctx.mod.exports.some((e) => e.name === exportedName)) {
           ctx.mod.exports.push({ name: exportedName, desc: { kind: "func", index: funcIdx } });
@@ -3835,7 +3836,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if (ctx.funcMap.has(targetName)) {
           hasModuleExportsDefault = true;
           const funcIdx = ctx.funcMap.get(targetName)!;
-          const func = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+          const func = definedFuncAt(ctx, funcIdx);
           if (func && !func.exported) func.exported = true;
 
           const alreadyExported = ctx.mod.exports.some((e) => e.desc.kind === "func" && e.desc.index === funcIdx);
@@ -3907,7 +3908,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           if (!key || !valName) continue;
           if (!ctx.funcMap.has(valName)) continue;
           const funcIdx = ctx.funcMap.get(valName)!;
-          const func = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+          const func = definedFuncAt(ctx, funcIdx);
           if (func && !func.exported) func.exported = true;
           if (!ctx.mod.exports.some((e) => e.name === key)) {
             ctx.mod.exports.push({ name: key, desc: { kind: "func", index: funcIdx } });
@@ -3951,7 +3952,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         } else {
           // Function already registered (e.g., as a FunctionDeclaration) — just export it
           const funcIdx = ctx.funcMap.get(name)!;
-          const func = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+          const func = definedFuncAt(ctx, funcIdx);
           if (func && !func.exported) func.exported = true;
           if (!ctx.mod.exports.some((e) => e.name === name)) {
             ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
@@ -3962,7 +3963,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         const targetName = expr.right.text;
         if (ctx.funcMap.has(targetName)) {
           const funcIdx = ctx.funcMap.get(targetName)!;
-          const func = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+          const func = definedFuncAt(ctx, funcIdx);
           if (func && !func.exported) func.exported = true;
           if (!ctx.mod.exports.some((e) => e.name === exportName)) {
             ctx.mod.exports.push({ name: exportName, desc: { kind: "func", index: funcIdx } });
@@ -4334,6 +4335,34 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // `$Object` is populated. Host/GC mode is byte-identical (gated, dropped
         // as before). Mirrors the Array.prototype CPR keep-in-init above.
         if (ctx.standalone && isFnctorPrototypeAssignTarget(ctx, expr.left)) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
+        // (#2671) `F.<prop> = …` — a STATIC property write on a top-level
+        // FUNCTION DECLARATION (`Test262Error.thrower = function () {…}`, the
+        // test262 harness-prelude shape every Promise capability test passes
+        // as its reject callback). `F` is not a module global, so the generic
+        // check below dropped the statement: the static silently never
+        // existed at runtime (wasm-side reads → null → call traps; the host
+        // mirror shows undefined → V8's NewPromiseCapability throws "Promise
+        // resolve or reject function is not callable"). Keep the statement in
+        // __module_init so the ordinary property-write arm runs — the same
+        // write from inside a function already worked; only the top-level
+        // collection dropped it. Scoped narrowly:
+        //   - DIRECT `F.<name> = …` only (bare-identifier receiver);
+        //     `F.prototype = …` / `F.prototype.m = …` chains stay excluded —
+        //     those are consumed by the compile-time fnctor-prototype lift,
+        //     and re-running them at init would double-apply.
+        //   - Host/GC lanes only: standalone's write-arm for fnctor statics
+        //     is separate work (its prototype case has its own #2660 S2 keep
+        //     above); standalone codegen stays byte-identical.
+        if (
+          !ctx.standalone &&
+          ts.isPropertyAccessExpression(expr.left) &&
+          ts.isIdentifier(expr.left.expression) &&
+          expr.left.name.text !== "prototype" &&
+          ctx.topLevelFunctionNames.has(expr.left.expression.text)
+        ) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
@@ -4731,6 +4760,37 @@ export function compileDeclarations(
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   let compiledInitFctx: FunctionContext | null = null;
 
+  // (#2965) The module-init body is compiled TWICE (the second pass, below,
+  // re-runs after top-level function bodies so call sites see the final
+  // inlinable-function registry). Statement compilation mutates ctx state that
+  // encodes PROGRAM ORDER — `definedPropertyFlags` ("this key was already
+  // defined with these attributes") and `frozenVars`/`sealedVars`/
+  // `nonExtensibleVars` ("this object is frozen from here on"). If pass 2
+  // starts from pass 1's END state, every first `Object.defineProperty` at the
+  // top level looks like a REDEFINE — the struct call-site then emits its
+  // runtime SameValue guard comparing the field's ZERO-INIT default against
+  // the descriptor value, so `defineProperty(o, "x", { value: <non-zero> })`
+  // spuriously throws "Cannot redefine property" in the shipped body — and
+  // defines that PRECEDE an `Object.freeze(o)` compile as if the object were
+  // already frozen. Snapshot the order-sensitive state before pass 1 and
+  // restore it before pass 2 so both passes compile from the same initial
+  // state. (Function bodies compiled BETWEEN the passes keep seeing pass-1 end
+  // state — a function called post-init observes the final integrity state;
+  // that behavior is unchanged. After pass 2 the maps converge back to the
+  // same end state pass 1 produced, so later consumers see no difference.)
+  const propOrderStateSnapshot = {
+    definedPropertyFlags: new Map(ctx.definedPropertyFlags),
+    frozenVars: new Set(ctx.frozenVars),
+    sealedVars: new Set(ctx.sealedVars),
+    nonExtensibleVars: new Set(ctx.nonExtensibleVars),
+  };
+  function restorePropOrderState(): void {
+    ctx.definedPropertyFlags = new Map(propOrderStateSnapshot.definedPropertyFlags);
+    ctx.frozenVars = new Set(propOrderStateSnapshot.frozenVars);
+    ctx.sealedVars = new Set(propOrderStateSnapshot.sealedVars);
+    ctx.nonExtensibleVars = new Set(propOrderStateSnapshot.nonExtensibleVars);
+  }
+
   function compileModuleInitBody(): FunctionContext {
     const initFctx: FunctionContext = {
       name: "__module_init",
@@ -4909,7 +4969,7 @@ export function compileDeclarations(
   if (ctx.preRegisteredBodyless?.size) {
     for (const name of Array.from(ctx.preRegisteredBodyless)) {
       const funcIdx = ctx.funcMap.get(name);
-      const func = funcIdx !== undefined ? ctx.mod.functions[funcIdx - ctx.numImportFuncs] : undefined;
+      const func = funcIdx !== undefined ? definedFuncAt(ctx, funcIdx) : undefined;
       if (func && func.body.length === 0) {
         const typeDef = ctx.mod.types[func.typeIdx];
         const returnType = typeDef?.kind === "func" ? typeDef.results[0] : undefined;
@@ -4923,6 +4983,10 @@ export function compileDeclarations(
   // inside module-level code can see the final inlinable-function registry.
   // The first compile above still serves early closure/setup discovery.
   if (hasModuleInits || hasStaticInits) {
+    // (#2965) Reset the program-order-sensitive property state to its
+    // pre-pass-1 value so this recompile does not treat pass 1's own
+    // defineProperty/freeze effects as pre-existing (see snapshot above).
+    restorePropOrderState();
     compiledInitFctx = compileModuleInitBody();
     ctx.pendingInitBody = compiledInitFctx.body;
   }

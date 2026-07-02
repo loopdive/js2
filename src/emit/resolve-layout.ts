@@ -51,6 +51,89 @@
 
 import type { FuncHandle, GlobalHandle, TypeHandle, WasmModule } from "../ir/types.js";
 
+// ---------------------------------------------------------------------------
+// #1916 S3 — the two-regime function handle space.
+//
+// A FuncHandle value lives in exactly one of two numerically DISJOINT regimes:
+//
+//   live regime    h < STABLE_FUNC_BASE   h IS the current absolute function
+//                                         index; the legacy shifters keep it
+//                                         current on every late import.
+//   stable regime  h >= STABLE_FUNC_BASE  h = STABLE_FUNC_BASE + ordinal is a
+//                                         NEVER-renumbered id minted at
+//                                         registration; `mod.funcOrdinalToPosition`
+//                                         maps ordinal → position in
+//                                         `mod.functions` (recorded at push).
+//                                         Shifters and dead-elim's remap skip
+//                                         it by construction.
+//
+// The disjointness is what makes the migration incremental: producers flip to
+// stable minting one at a time (each flip byte-identity-provable), while
+// unconverted producers keep working exactly as before. This is sound where
+// #1899's idx-keyed repair was not, because a number here IS the identity by
+// construction — there is never a moment where one value means two functions.
+//
+// STABLE_FUNC_BASE = 1 << 21: no legitimate live absolute index can reach the
+// stable range (largest observed modules: <10k functions), and resolved final
+// indices stay far below it (the emit-time `vIdx` bounds-check enforces this).
+// ---------------------------------------------------------------------------
+export const STABLE_FUNC_BASE = 1 << 21;
+
+/** True when `h` is a stable-regime function handle. */
+export function isStableFuncHandle(h: FuncHandle): boolean {
+  return h >= STABLE_FUNC_BASE;
+}
+
+/**
+ * #1916 S3 — the shift predicate for the LIVE handle regime. A funcIdx is
+ * shifted iff it is at/above the insertion point AND below `STABLE_FUNC_BASE`:
+ * stable-regime handles are layout-independent ids that NEVER shift —
+ * resolution to a concrete index happens once, at emit. Every shifter
+ * comparison (`shiftLateImportIndices`, `reconcileNativeStrFinalizeShift`,
+ * the inline shifters in codegen/index.ts, the async side-channel walker)
+ * must use this predicate, never a bare `>= importsBefore`.
+ */
+export function inLiveShiftRange(idx: number, importsBefore: number): boolean {
+  return idx >= importsBefore && idx < STABLE_FUNC_BASE;
+}
+
+/**
+ * Normalize a function handle to the CURRENT absolute function index. The one
+ * primitive every mid-compile/mod-only pass (stack-balance, fixups, wat, the
+ * func-space chokepoints) uses to interpret a possibly-stable handle. For a
+ * live-regime handle this is the identity. For a stable handle it resolves
+ * ordinal → position via `mod.funcOrdinalToPosition` and offsets by the
+ * CURRENT import count (recomputed from `mod` — never a cached value, since
+ * dead-elim removes imports without updating caches).
+ * Throws on an unrecorded ordinal: that means a producer minted a handle but
+ * never pushed its function — a loud producer bug, never silent wrong code.
+ */
+export function absoluteFuncIndex(mod: WasmModule, h: FuncHandle): number {
+  if (h < STABLE_FUNC_BASE) return h;
+  let numImportFuncs = 0;
+  for (const imp of mod.imports) if (imp.desc.kind === "func") numImportFuncs++;
+  return absoluteFuncIndexCached(mod, numImportFuncs, h);
+}
+
+/**
+ * `absoluteFuncIndex` with the func-import count precomputed by the caller —
+ * for hot loops (emit, stack-balance, fixups) that already maintain the count.
+ * The caller's count MUST be derived from the CURRENT `mod.imports` (or, on
+ * the codegen-context path, be `ctx.numImportFuncs`, which the add/remove
+ * passes keep in lockstep).
+ */
+export function absoluteFuncIndexCached(mod: WasmModule, numImportFuncs: number, h: FuncHandle): number {
+  if (h < STABLE_FUNC_BASE) return h;
+  const pos = mod.funcOrdinalToPosition[h - STABLE_FUNC_BASE];
+  // undefined = never minted; NaN = minted but never pushed (the
+  // `mintDefinedFunc` reservation sentinel). Both are producer bugs that must
+  // fail loudly here, never flow into an emitted index.
+  if (pos === undefined || Number.isNaN(pos)) {
+    throw new Error(`absoluteFuncIndex: stable handle ${h} (ordinal ${h - STABLE_FUNC_BASE}) has no recorded position`);
+  }
+  return numImportFuncs + pos;
+}
+
 /**
  * The resolved final layout of one module's index spaces. `binary.ts` (and,
  * at flip time, `wat.ts` / `object.ts`) dereference every handle through this
@@ -71,17 +154,17 @@ export interface ModuleLayout {
  * downstream of `ctx.indexSpaceFrozen = true` in `generateModule`, the point
  * both finalize arms guarantee no further import can be added.
  *
- * IDENTITY PHASE: handles == live indices by construction (the shifters keep
- * them current), so the identity map is definitionally correct. The `mod`
- * parameter is unused today but is the flip-time input (import counts +
- * registration registry + liveness), so callers already pass it.
+ * Live-regime handles == live indices by construction (the shifters keep them
+ * current), so they resolve as the identity. Stable-regime handles resolve
+ * through `absoluteFuncIndex`, which at this post-churn point IS the final
+ * index (import count settled, positions settled).
  */
-export function resolveLayout(_mod: WasmModule): ModuleLayout {
-  return IDENTITY_LAYOUT;
+export function resolveLayout(mod: WasmModule): ModuleLayout {
+  let numImportFuncs = 0;
+  for (const imp of mod.imports) if (imp.desc.kind === "func") numImportFuncs++;
+  return {
+    func: (h: FuncHandle): number => absoluteFuncIndexCached(mod, numImportFuncs, h),
+    global: (h: GlobalHandle): number => h,
+    type: (h: TypeHandle): number => h,
+  };
 }
-
-const IDENTITY_LAYOUT: ModuleLayout = {
-  func: (h: FuncHandle): number => h,
-  global: (h: GlobalHandle): number => h,
-  type: (h: TypeHandle): number => h,
-};

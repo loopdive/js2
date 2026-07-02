@@ -47,6 +47,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { addFuncType } from "./registry/types.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. */
 const ITER_KIND_VEC = 3;
@@ -487,8 +488,8 @@ export function fillNativeIteratorUserArms(ctx: CodegenContext): void {
   const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
   if (iteratorIdx === undefined || iteratorNextIdx === undefined) return;
 
-  const iteratorFn = ctx.mod.functions[iteratorIdx - ctx.numImportFuncs];
-  const iteratorNextFn = ctx.mod.functions[iteratorNextIdx - ctx.numImportFuncs];
+  const iteratorFn = definedFuncAt(ctx, iteratorIdx);
+  const iteratorNextFn = definedFuncAt(ctx, iteratorNextIdx);
   if (iteratorFn) iteratorFn.body = buildIteratorBody(types, deps);
   if (iteratorNextFn) iteratorNextFn.body = buildIteratorNextBody(types, deps);
 }

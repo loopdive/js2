@@ -50,6 +50,7 @@ import {
   registerEmitArgumentsObject,
   registerHoistFunctionDeclarations,
 } from "../shared.js";
+import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -1533,8 +1534,7 @@ export function hoistFunctionDeclarations(
       }
       const hasReservedBodylessEntry = ctx.preRegisteredBodyless?.has(funcName) ?? false;
       const reservedFuncIdx = hasReservedBodylessEntry ? ctx.funcMap.get(funcName) : undefined;
-      const reservedEntry =
-        reservedFuncIdx !== undefined ? ctx.mod.functions[reservedFuncIdx - ctx.numImportFuncs] : undefined;
+      const reservedEntry = reservedFuncIdx !== undefined ? definedFuncAt(ctx, reservedFuncIdx) : undefined;
       if (!ctx.funcMap.has(funcName) || reservedEntry) {
         // Save state so we can roll back if compilation fails
         const errorsBefore = ctx.errors.length;
@@ -1574,7 +1574,7 @@ export function hoistFunctionDeclarations(
           // textual position (where captures are in scope), exactly as the
           // pre-existing `hoistFailedFuncs` re-attempt intends.
           const failedIdx = ctx.funcMap.get(funcName);
-          const failedEntry = failedIdx !== undefined ? ctx.mod.functions[failedIdx - ctx.numImportFuncs] : undefined;
+          const failedEntry = failedIdx !== undefined ? definedFuncAt(ctx, failedIdx) : undefined;
           if (reservedEntry) {
             reservedEntry.locals = [];
             reservedEntry.body = [{ op: "unreachable" } as Instr];

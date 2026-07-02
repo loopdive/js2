@@ -14,6 +14,11 @@
 // Phase 2 & 3 widen the Instr and Terminator sets.
 
 import type { ValType } from "./types.js";
+// #2949 slice 1 — the canonical JS-type tag enum, from the dependency-free
+// leaf `codegen/js-tag.ts` (extracted there precisely so this pure-leaf
+// module can carry it without importing the codegen policy chain). Type-only:
+// nodes.ts stays free of value imports.
+import type { JsTag } from "../codegen/js-tag.js";
 
 // ---------------------------------------------------------------------------
 // Symbolic references
@@ -99,6 +104,11 @@ export type IrSymRef = IrFuncRef | IrGlobalRef | IrTypeRef;
 //                                inner IrType's ValType as its `$val`
 //                                (unwrapped via `asVal` at the resolver
 //                                boundary).
+//   { kind: "dynamic", tag? }  → `resolver.resolveDynamic()` — the module's
+//                                canonical boxed-any carrier (#2949/#1852:
+//                                `ref_null $AnyValue` in fast/standalone,
+//                                `externref` in host mode). The `tag`
+//                                refinement never changes the carrier.
 
 /**
  * A canonical object shape — a sorted list of named fields with their IR
@@ -235,7 +245,36 @@ export type IrType =
   // not a raw ValType); the resolver unwraps it to a ValType and delegates
   // to `getOrRegisterRefCellType` so legacy and IR ref cells share the same
   // WasmGC struct.
-  | { readonly kind: "boxed"; readonly inner: IrType };
+  | { readonly kind: "boxed"; readonly inner: IrType }
+  // #2949 slice 1 — the DYNAMIC leaf: a value whose JS type is not statically
+  // known (JS `any` / `unknown`, propagation-lattice top, reflective access
+  // results). This is the lattice TOP of the IrType system: every other
+  // IrType is convertible INTO dynamic via an explicit `box` instruction and
+  // OUT of it via explicit `unbox` (after a `tag.test` proof). There are NO
+  // implicit conversions — the verifier rejects a dynamic operand feeding
+  // any op that requires a concrete kind (see verify.ts #2949 rules).
+  //
+  // `tag` is an OPTIONAL static refinement: when present, the producer has
+  // proved the runtime `JsTag` partition of the value (e.g. after a
+  // `tag.test` branch), enabling checked unboxes and op selection without a
+  // runtime re-test. Absence means "partition unknown". The refinement is
+  // erased at joins: two dynamics with different (or one missing) tags are
+  // NOT equal under `irTypeEquals` — producers must widen to the bare
+  // `{kind:"dynamic"}` before a join point (branch args, slot writes).
+  //
+  // Lowering contract (per the ratified #1852 representation table):
+  //   - WasmGC: `resolver.resolveDynamic()` returns the module's canonical
+  //     boxed-any carrier ValType — `ref_null $AnyValue` in fast/standalone
+  //     mode, `externref` in host mode — matching legacy `resolveWasmType`'s
+  //     any/unknown arm EXACTLY so IR-claimed and legacy-compiled functions
+  //     agree on the `any` ABI. Boxing/unboxing routes through the existing
+  //     `__any_box_*` / `$AnyValue` helper family (never a second engine).
+  //   - Linear: f64-value + i32-tag parallel cell — DEFERRED (#1852-G4 /
+  //     #2956); `resolveDynamic` stays unimplemented there and lowering
+  //     throws.
+  // The `tag` refinement never changes the carrier — it is compile-time
+  // knowledge only.
+  | { readonly kind: "dynamic"; readonly tag?: JsTag };
 
 /** Wrap a plain ValType as an IrType — the common path for Phase 1/2 callers. */
 export function irVal(v: ValType): IrType {
@@ -263,6 +302,22 @@ export function irValSigned(v: ValType, signed: boolean): IrType {
  */
 export function asVal(t: IrType): ValType | null {
   return t.kind === "val" ? t.val : null;
+}
+
+/**
+ * #2949 slice 1 — construct a dynamic IrType, optionally refined with a
+ * statically-proven `JsTag` partition. `irDynamic()` is the lattice top
+ * (partition unknown); `irDynamic(JsTag.String)` is a refinement a producer
+ * may emit after a `tag.test` proof. See the `dynamic` arm of `IrType` for
+ * the full contract (joins erase refinements; carrier is tag-independent).
+ */
+export function irDynamic(tag?: JsTag): IrType {
+  return tag === undefined ? { kind: "dynamic" } : { kind: "dynamic", tag };
+}
+
+/** #2949 slice 1 — narrow an IrType to its dynamic arm (refined or not). */
+export function isDynamic(t: IrType): t is Extract<IrType, { kind: "dynamic" }> {
+  return t.kind === "dynamic";
 }
 
 /**
@@ -310,6 +365,14 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
   // match.
   if (a.kind === "extern" && b.kind === "extern") {
     return a.className === b.className;
+  }
+  // #2949 slice 1 — dynamic equality is EXACT on the `tag` refinement (both
+  // absent, or both present and equal). Deliberately strict: silently
+  // merging two different refinements at a join would keep whichever tag the
+  // first producer wrote, which is provably wrong for the other path.
+  // Producers widen to the bare `{kind:"dynamic"}` before joins instead.
+  if (a.kind === "dynamic" && b.kind === "dynamic") {
+    return (a.tag ?? null) === (b.tag ?? null);
   }
   return false;
 }
@@ -714,10 +777,20 @@ export interface IrInstrRawWasm extends IrInstrBase {
 }
 
 /**
- * Box a scalar into a tagged-union struct. `toType` must be an `IrType.union`
- * whose `members` contains `value`'s static ValType. Lowering emits
- * `struct.new $union_<members>` with the matching tag constant + the value
- * in the `$val` field. Result is `(ref $union_<members>)` / the `toType`.
+ * Box a value into a tagged carrier. Two targets (discriminated by
+ * `toType.kind` — ONE boxing concept in the IR, the type system carries the
+ * representation):
+ *
+ *   - `toType.kind === "union"` (V1, scalar tagged unions): `members` must
+ *     contain `value`'s static ValType. Lowering emits `struct.new
+ *     $union_<members>` with the matching tag constant + the value in the
+ *     `$val` field. Result is `(ref $union_<members>)`.
+ *   - `toType.kind === "dynamic"` (#2949): erase `value` into the module's
+ *     canonical boxed-any carrier (per the #1852 table — `$AnyValue` family
+ *     on WasmGC, routed through the existing `__any_box_*` helpers; never a
+ *     second boxing engine). `value` must NOT itself be dynamic (a re-box is
+ *     provably redundant — the verifier rejects it). Lowering lands in
+ *     #2949 slice 3; until then the lowerer throws a staged error.
  */
 export interface IrInstrBox extends IrInstrBase {
   readonly kind: "box";
@@ -726,27 +799,48 @@ export interface IrInstrBox extends IrInstrBase {
 }
 
 /**
- * Unbox a tagged-union value to one of its member ValTypes. The caller must
- * have proved the tag already (via `tag.test` earlier in the same IR path);
- * lowering emits a plain `struct.get $val` without a tag check at runtime.
- * A debug-mode assertion can still verify the tag.
+ * Unbox a tagged value to a concrete payload. The caller must have proved
+ * the tag already (via `tag.test` earlier in the same IR path); lowering
+ * emits a payload read without a runtime tag check. A debug-mode assertion
+ * can still verify the tag.
+ *
+ *   - union operand (V1): `tag` (REQUIRED here) names the member ValType to
+ *     extract; lowers to `struct.get $val`.
+ *   - dynamic operand (#2949): `jsTag` (REQUIRED here) names the proven JS
+ *     partition; it must have a payload (`jsTagUnboxKind(jsTag) !== null` —
+ *     Null/Undefined are singleton partitions and cannot be unboxed). `tag`,
+ *     when also present, must be consistent with the partition's payload
+ *     kind (exact for scalar partitions, ref-shaped for String/Object/
+ *     Function). Lowering lands in #2949 slice 3.
  */
 export interface IrInstrUnbox extends IrInstrBase {
   readonly kind: "unbox";
   readonly value: IrValueId;
-  readonly tag: ValType;
+  /** Target member ValType — REQUIRED for union operands (V1 contract). */
+  readonly tag?: ValType;
+  /** Proven JS partition — REQUIRED for dynamic operands (#2949). */
+  readonly jsTag?: JsTag;
 }
 
 /**
  * Runtime tag discriminator — result (via `IrInstrBase.result`) is `i32`,
- * 1 if `value`'s runtime tag matches `tag`, else 0. `value` must be a
- * tagged-union type containing `tag` as a member. Lowers to
- * `struct.get $tag; i32.const <N>; i32.eq`.
+ * 1 if `value`'s runtime tag matches, else 0.
+ *
+ *   - union operand (V1): `tag` (REQUIRED here) must be a member ValType;
+ *     lowers to `struct.get $tag; i32.const <N>; i32.eq`.
+ *   - dynamic operand (#2949): `jsTag` (REQUIRED here) names the JS
+ *     partition under test — ANY partition, including the payload-less
+ *     Null/Undefined (testing for them is the point). Lowering (slice 3)
+ *     dispatches on the carrier's runtime tag via the canonical classifier
+ *     path (`emitTagLoad`/`emitTagTest` on the backend emitter).
  */
 export interface IrInstrTagTest extends IrInstrBase {
   readonly kind: "tag.test";
   readonly value: IrValueId;
-  readonly tag: ValType;
+  /** Member ValType under test — REQUIRED for union operands (V1 contract). */
+  readonly tag?: ValType;
+  /** JS partition under test — REQUIRED for dynamic operands (#2949). */
+  readonly jsTag?: JsTag;
 }
 
 // ---------------------------------------------------------------------------

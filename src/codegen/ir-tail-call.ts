@@ -36,6 +36,7 @@
  */
 import type { CodegenContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { definedFuncAt, isImportFuncIdx } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /** Caller signature derived from its own funcType. */
 interface CallerSig {
@@ -51,12 +52,15 @@ function funcTypeOf(ctx: CodegenContext, typeIdx: number): { params: ValType[]; 
 
 /** The funcType index for a callee function index (import or defined). */
 function calleeTypeIdx(ctx: CodegenContext, calleeIdx: number): number | undefined {
-  if (calleeIdx < ctx.numImportFuncs) {
+  if (isImportFuncIdx(ctx, calleeIdx)) {
+    // NOTE (pre-existing, preserved for byte-identity — #1916 S3 review): this
+    // indexes the FULL imports array by func-space index, which only lines up
+    // while func imports precede non-func imports; a mismatch degrades to
+    // undefined via the kind guard.
     const imp = ctx.mod.imports[calleeIdx];
     return imp?.desc.kind === "func" ? imp.desc.typeIdx : undefined;
   }
-  const fn = ctx.mod.functions[calleeIdx - ctx.numImportFuncs];
-  return fn?.typeIdx;
+  return definedFuncAt(ctx, calleeIdx)?.typeIdx;
 }
 
 /** Mirror of the legacy return-type compatibility check (control-flow.ts). */

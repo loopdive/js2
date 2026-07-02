@@ -14,6 +14,7 @@ import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { funcSignatureOf } from "../func-space.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
@@ -403,27 +404,8 @@ export function isEffectivelyVoidReturn(ctx: CodegenContext, retType: ts.Type, f
  * Handles both imported functions (index < numImportFuncs) and local functions.
  */
 export function getFuncParamTypes(ctx: CodegenContext, funcIdx: number): ValType[] | undefined {
-  if (funcIdx < ctx.numImportFuncs) {
-    let importFuncCount = 0;
-    for (const imp of ctx.mod.imports) {
-      if (imp.desc.kind === "func") {
-        if (importFuncCount === funcIdx) {
-          const typeDef = ctx.mod.types[imp.desc.typeIdx];
-          if (typeDef?.kind === "func") return typeDef.params;
-          return undefined;
-        }
-        importFuncCount++;
-      }
-    }
-  } else {
-    const localIdx = funcIdx - ctx.numImportFuncs;
-    const func = ctx.mod.functions[localIdx];
-    if (func) {
-      const typeDef = ctx.mod.types[func.typeIdx];
-      if (typeDef?.kind === "func") return typeDef.params;
-    }
-  }
-  return undefined;
+  // #1916 S2 — funcSignatureOf is the positional-read chokepoint (func-space.ts).
+  return funcSignatureOf(ctx, funcIdx)?.params;
 }
 
 /**
@@ -432,26 +414,9 @@ export function getFuncParamTypes(ctx: CodegenContext, funcIdx: number): ValType
  * a `call` instruction pushes a value onto the stack.
  */
 export function wasmFuncReturnsVoid(ctx: CodegenContext, funcIdx: number): boolean {
-  if (funcIdx < ctx.numImportFuncs) {
-    let importFuncCount = 0;
-    for (const imp of ctx.mod.imports) {
-      if (imp.desc.kind === "func") {
-        if (importFuncCount === funcIdx) {
-          const typeDef = ctx.mod.types[imp.desc.typeIdx];
-          return !typeDef || typeDef.kind !== "func" || typeDef.results.length === 0;
-        }
-        importFuncCount++;
-      }
-    }
-    return true; // not found — assume void to be safe
-  }
-  const localIdx = funcIdx - ctx.numImportFuncs;
-  const func = ctx.mod.functions[localIdx];
-  if (func) {
-    const typeDef = ctx.mod.types[func.typeIdx];
-    return !typeDef || typeDef.kind !== "func" || typeDef.results.length === 0;
-  }
-  return true; // not found — assume void to be safe
+  // #1916 S2 — funcSignatureOf is the positional-read chokepoint (func-space.ts).
+  const sig = funcSignatureOf(ctx, funcIdx);
+  return !sig || sig.results.length === 0; // not found — assume void to be safe
 }
 
 /** Check whether a function *type* (by type index) has zero results. */
@@ -467,31 +432,9 @@ export function wasmFuncTypeReturnsVoid(ctx: CodegenContext, typeIdx: number): b
  * when TS type says 'any' (→ externref) but the Wasm function returns f64/i32.
  */
 export function getWasmFuncReturnType(ctx: CodegenContext, funcIdx: number): ValType | undefined {
-  if (funcIdx < ctx.numImportFuncs) {
-    let importFuncCount = 0;
-    for (const imp of ctx.mod.imports) {
-      if (imp.desc.kind === "func") {
-        if (importFuncCount === funcIdx) {
-          const typeDef = ctx.mod.types[imp.desc.typeIdx];
-          if (typeDef?.kind === "func" && typeDef.results.length > 0) {
-            return typeDef.results[0]!;
-          }
-          return undefined;
-        }
-        importFuncCount++;
-      }
-    }
-    return undefined;
-  }
-  const localIdx = funcIdx - ctx.numImportFuncs;
-  const func = ctx.mod.functions[localIdx];
-  if (func) {
-    const typeDef = ctx.mod.types[func.typeIdx];
-    if (typeDef?.kind === "func" && typeDef.results.length > 0) {
-      return typeDef.results[0]!;
-    }
-  }
-  return undefined;
+  // #1916 S2 — funcSignatureOf is the positional-read chokepoint (func-space.ts).
+  const sig = funcSignatureOf(ctx, funcIdx);
+  return sig && sig.results.length > 0 ? sig.results[0]! : undefined;
 }
 
 /**

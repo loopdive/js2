@@ -425,13 +425,13 @@ describe("IIFE and call expression edge cases", () => {
   it("tagged template literals — same call site returns same object across calls", async () => {
     await assertEquivalent(
       `
-      function eq(a: string[], b: string[]): number {
+      function eq(a: TemplateStringsArray, b: TemplateStringsArray): number {
         return a === b ? 1 : 0;
       }
-      function tag(strings: string[]): string[] {
+      function tag(strings: TemplateStringsArray): TemplateStringsArray {
         return strings;
       }
-      function getTemplate(): string[] {
+      function getTemplate(): TemplateStringsArray {
         return tag\`hello\`;
       }
       export function test1(): number {
@@ -447,10 +447,10 @@ describe("IIFE and call expression edge cases", () => {
   it("tagged template literals — different sites produce different objects", async () => {
     await assertEquivalent(
       `
-      function eq(a: string[], b: string[]): number {
+      function eq(a: TemplateStringsArray, b: TemplateStringsArray): number {
         return a === b ? 1 : 0;
       }
-      function tag(strings: string[]): string[] {
+      function tag(strings: TemplateStringsArray): TemplateStringsArray {
         return strings;
       }
       export function test1(): number {
@@ -466,13 +466,13 @@ describe("IIFE and call expression edge cases", () => {
   it("tagged template literals — same site caches even with different expression values", async () => {
     await assertEquivalent(
       `
-      function eq(a: string[], b: string[]): number {
+      function eq(a: TemplateStringsArray, b: TemplateStringsArray): number {
         return a === b ? 1 : 0;
       }
-      function tag(strings: string[], ...subs: number[]): string[] {
+      function tag(strings: TemplateStringsArray, ...subs: number[]): TemplateStringsArray {
         return strings;
       }
-      function getTemplate(x: number): string[] {
+      function getTemplate(x: number): TemplateStringsArray {
         return tag\`head\${x}tail\`;
       }
       export function test1(): number {

@@ -1255,6 +1255,8 @@ function describeIrType(t: IrType): string {
   if (t.kind === "extern") return `extern<${t.className}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrType).join(",")}>`;
+  // #2949 — dynamic leaf; render the optional JsTag refinement when present.
+  if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic<tag:${t.tag}>`;
   return `boxed<${describeIrType(t.inner)}>`;
 }
 

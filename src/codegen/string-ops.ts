@@ -2238,6 +2238,23 @@ export function compileNativeStringMethodCall(
       emitNativeStringRefFromExternref(ctx, fctx);
       return nativeStringType(ctx);
     }
+    // (#2934 slice 3) A reflective `String.prototype.X.call(obj, …)` receiver
+    // can compile to a concrete OBJECT struct ref — §22.1.3.x requires
+    // ToString(this) first (dispatching the object's own toString, which may
+    // throw — S15.5.4.6_A4_T2 expects exactly that). Feeding the raw struct
+    // ref to a native string helper is invalid Wasm (`call[0] expected (ref
+    // null $AnyString), found global.get of (ref null N)`). `tryStructToString`
+    // performs that dispatch and normalises to `ref $AnyString`; string-typed
+    // refs are untouched (excluded here, and not in the struct-name map).
+    if (
+      t &&
+      (t.kind === "ref" || t.kind === "ref_null") &&
+      (t as { typeIdx: number }).typeIdx !== ctx.anyStrTypeIdx &&
+      (t as { typeIdx: number }).typeIdx !== ctx.nativeStrTypeIdx &&
+      tryStructToString(ctx, fctx, t)
+    ) {
+      return nativeStringType(ctx);
+    }
     return t;
   };
 

@@ -1,8 +1,8 @@
 [
   {
     "edition": "≤ ES3",
-    "pass": 272,
-    "fail": 1,
+    "pass": 273,
+    "fail": 0,
     "ce": 0,
     "skip": 0,
     "total": 273,
@@ -10,8 +10,8 @@
   },
   {
     "edition": "ES5",
-    "pass": 10115,
-    "fail": 2828,
+    "pass": 10119,
+    "fail": 2824,
     "ce": 132,
     "skip": 0,
     "total": 13075,
@@ -57,9 +57,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11677,
-    "fail": 3535,
-    "ce": 174,
+    "pass": 11691,
+    "fail": 3524,
+    "ce": 171,
     "skip": 0,
     "total": 15386,
     "pct": 76,
@@ -85,8 +85,8 @@
       {
         "name": "TypedArray",
         "pass": 978,
-        "fail": 121,
-        "ce": 4,
+        "fail": 124,
+        "ce": 1,
         "skip": 0,
         "total": 1103,
         "pct": 89
@@ -247,8 +247,8 @@
       {
         "name": "uint8array-base64",
         "pass": 32,
-        "fail": 34,
-        "ce": 2,
+        "fail": 36,
+        "ce": 0,
         "skip": 0,
         "total": 68,
         "pct": 47
@@ -782,8 +782,8 @@
   {
     "edition": "ES2017",
     "pass": 471,
-    "fail": 188,
-    "ce": 8,
+    "fail": 189,
+    "ce": 7,
     "skip": 0,
     "total": 667,
     "pct": 71,
@@ -800,8 +800,8 @@
       {
         "name": "SharedArrayBuffer",
         "pass": 108,
-        "fail": 133,
-        "ce": 4,
+        "fail": 134,
+        "ce": 3,
         "skip": 0,
         "total": 245,
         "pct": 44
@@ -1462,12 +1462,12 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1468,
-    "fail": 369,
+    "pass": 1477,
+    "fail": 360,
     "ce": 41,
     "skip": 18,
     "total": 1896,
-    "pct": 77,
+    "pct": 78,
     "features": [
       {
         "name": "BigInt",
@@ -1516,12 +1516,12 @@
       },
       {
         "name": "Promise.allSettled",
-        "pass": 65,
-        "fail": 32,
+        "pass": 75,
+        "fail": 22,
         "ce": 1,
         "skip": 0,
         "total": 98,
-        "pct": 66
+        "pct": 77
       },
       {
         "name": "ArrayBuffer",
@@ -1660,12 +1660,12 @@
       },
       {
         "name": "import.meta",
-        "pass": 11,
-        "fail": 11,
+        "pass": 10,
+        "fail": 12,
         "ce": 1,
         "skip": 0,
         "total": 23,
-        "pct": 48
+        "pct": 43
       },
       {
         "name": "arbitrary-module-namespace-names",
@@ -1878,12 +1878,12 @@
   },
   {
     "edition": "ES2021",
-    "pass": 336,
-    "fail": 126,
+    "pass": 341,
+    "fail": 121,
     "ce": 1,
     "skip": 0,
     "total": 463,
-    "pct": 73,
+    "pct": 74,
     "features": [
       {
         "name": "numeric-separator-literal",
@@ -1896,12 +1896,12 @@
       },
       {
         "name": "Promise.any",
-        "pass": 74,
-        "fail": 17,
+        "pass": 79,
+        "fail": 12,
         "ce": 1,
         "skip": 0,
         "total": 92,
-        "pct": 80
+        "pct": 86
       },
       {
         "name": "logical-assignment-operators",
@@ -2141,8 +2141,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 3126,
-    "fail": 1074,
+    "pass": 3127,
+    "fail": 1073,
     "ce": 34,
     "skip": 0,
     "total": 4234,
@@ -2258,8 +2258,8 @@
       },
       {
         "name": "top-level-await",
-        "pass": 163,
-        "fail": 25,
+        "pass": 162,
+        "fail": 26,
         "ce": 5,
         "skip": 0,
         "total": 193,
@@ -2366,12 +2366,12 @@
       },
       {
         "name": "regexp-match-indices",
-        "pass": 24,
-        "fail": 3,
+        "pass": 26,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 89
+        "pct": 96
       },
       {
         "name": "DataView",
@@ -2501,12 +2501,12 @@
       },
       {
         "name": "regexp-named-groups",
-        "pass": 5,
-        "fail": 2,
+        "pass": 7,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 7,
-        "pct": 71
+        "pct": 100
       },
       {
         "name": "dynamic-import",
@@ -3191,8 +3191,8 @@
   },
   {
     "edition": "ES2025",
-    "pass": 962,
-    "fail": 312,
+    "pass": 964,
+    "fail": 310,
     "ce": 0,
     "skip": 0,
     "total": 1274,
@@ -3209,8 +3209,8 @@
       },
       {
         "name": "explicit-resource-management",
-        "pass": 258,
-        "fail": 83,
+        "pass": 260,
+        "fail": 81,
         "ce": 0,
         "skip": 0,
         "total": 341,
@@ -3272,12 +3272,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 12,
-        "fail": 12,
+        "pass": 13,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 24,
-        "pct": 50
+        "pct": 54
       },
       {
         "name": "globalThis",
@@ -3925,9 +3925,9 @@
   {
     "edition": "Proposals",
     "pass": 1491,
-    "fail": 3178,
-    "ce": 217,
-    "skip": 96,
+    "fail": 3171,
+    "ce": 215,
+    "skip": 105,
     "total": 4982,
     "pct": 30
   }

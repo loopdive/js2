@@ -11,8 +11,10 @@ import { coercionPlan } from "./coercion-plan.js";
 import { boxToAny } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { definedFuncAt } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
+import { emitThrowTypeError } from "./expressions/helpers.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
@@ -1106,11 +1108,17 @@ function emitVecToVecBody(
   // dstArr[i] = coerce(srcArr[i])
   fctx.body.push({ op: "local.get", index: dstArrLocal });
   fctx.body.push({ op: "local.get", index: iLocal });
-  // Read source element
+  // Read source element. (#2934 1c) A packed i8/i16 source (byte/short typed
+  // array backing) must read with `array.get_u`/`get_s` — a plain `array.get`
+  // on a packed array is invalid Wasm. No view name exists on this generic
+  // coercion path (the i8_byte array type is shared by Int8Array AND
+  // Uint8Array), so use the storage-kind heuristic; the read value is the
+  // widened i32.
   fctx.body.push({ op: "local.get", index: srcLocal });
   fctx.body.push({ op: "struct.get", typeIdx: fromTypeIdx, fieldIdx: 1 });
   fctx.body.push({ op: "local.get", index: iLocal });
-  fctx.body.push({ op: "array.get", typeIdx: srcVec.arrTypeIdx });
+  fctx.body.push({ op: elemGetOp(srcVec.elemType, undefined), typeIdx: srcVec.arrTypeIdx } as Instr);
+  const readElemType = unpackedElemType(srcVec.elemType);
   // Coerce element type. Important: comparing only `.kind` is insufficient
   // when both sides are `ref` / `ref_null` to DIFFERENT struct types — e.g.
   // a vec of `IncompatibleKeyError` being copied into a vec of `__anon_24`
@@ -1118,15 +1126,15 @@ function emitVecToVecBody(
   // `kind: "ref"`, so the old check skipped the coercion and the
   // `array.set` below saw a value of the wrong element type, failing Wasm
   // validation. Force a coercion when the typeIdx differs too.
-  const srcKind = srcVec.elemType.kind;
+  const srcKind = readElemType.kind;
   const dstKind = dstVec.elemType.kind;
   const srcRefIdx =
-    srcKind === "ref" || srcKind === "ref_null" ? (srcVec.elemType as { typeIdx: number }).typeIdx : undefined;
+    srcKind === "ref" || srcKind === "ref_null" ? (readElemType as { typeIdx: number }).typeIdx : undefined;
   const dstRefIdx =
     dstKind === "ref" || dstKind === "ref_null" ? (dstVec.elemType as { typeIdx: number }).typeIdx : undefined;
   const needsCoerce = srcKind !== dstKind || srcRefIdx !== dstRefIdx;
   if (needsCoerce) {
-    coerceType(ctx, fctx, srcVec.elemType, dstVec.elemType);
+    coerceType(ctx, fctx, readElemType, dstVec.elemType);
   }
   // Write to destination
   fctx.body.push({ op: "array.set", typeIdx: dstVec.arrTypeIdx });
@@ -1832,8 +1840,7 @@ export function coerceType(
         pushStringHint(ctx, fctx, hint);
         fctx.body.push({ op: "call", funcIdx: toPrimFuncIdx });
         // Coerce result to externref if needed
-        const funcDefIdx = toPrimFuncIdx - ctx.numImportFuncs;
-        const funcDef = funcDefIdx >= 0 ? ctx.mod.functions[funcDefIdx] : undefined;
+        const funcDef = definedFuncAt(ctx, toPrimFuncIdx);
         const funcType = funcDef ? ctx.mod.types[funcDef.typeIdx] : undefined;
         // Default to "externref" for imports (funcDefIdx < 0) which typically return externref
         const retKind = (funcType?.kind === "func" && funcType.results?.[0]?.kind) || "externref";
@@ -2095,7 +2102,7 @@ export function coerceType(
         pushStringHint(ctx, fctx, hint);
         fctx.body.push({ op: "call", funcIdx: toPrimFuncIdx });
         // Coerce result to f64 if needed
-        const funcDef = ctx.mod.functions[toPrimFuncIdx - ctx.numImportFuncs];
+        const funcDef = definedFuncAt(ctx, toPrimFuncIdx);
         const funcType = funcDef ? ctx.mod.types[funcDef.typeIdx] : undefined;
         const retKind = (funcType?.kind === "func" && funcType.results?.[0]?.kind) || "f64";
         if (retKind === "i32") {
@@ -2124,8 +2131,7 @@ export function coerceType(
             // Call ClassName_valueOf(self) — self is already on stack
             fctx.body.push({ op: "call", funcIdx: valueOfFuncIdx });
             // Check return type — if not f64, convert to f64
-            const voFuncDefIdx = valueOfFuncIdx - ctx.numImportFuncs;
-            const voFuncDef = voFuncDefIdx >= 0 ? ctx.mod.functions[voFuncDefIdx] : undefined;
+            const voFuncDef = definedFuncAt(ctx, valueOfFuncIdx);
             const funcType = voFuncDef ? ctx.mod.types[voFuncDef.typeIdx] : undefined;
             if (funcType?.kind === "func" && funcType.results?.[0]?.kind === "i32") {
               fctx.body.push({ op: "f64.convert_i32_s" });
@@ -2432,7 +2438,7 @@ export function coerceType(
           // function rather than a closure stored in the struct field.
           const standaloneValueOf = ctx.funcMap.get(`${name}_valueOf`);
           if (standaloneValueOf !== undefined) {
-            const funcType = ctx.mod.types[ctx.mod.functions[standaloneValueOf - ctx.numImportFuncs]?.typeIdx ?? -1];
+            const funcType = ctx.mod.types[definedFuncAt(ctx, standaloneValueOf)?.typeIdx ?? -1];
             const retKind = funcType?.kind === "func" ? funcType.results?.[0]?.kind : undefined;
             // (#1525b §7.1.1.1 step 6) For object-ref return, we must re-route
             // through the host helper using the ORIGINAL struct. Save it before
@@ -2629,7 +2635,7 @@ function tryToStringFallback(
   const toStrFuncIdx = ctx.funcMap.get(`${structName}_toString`);
   if (toStrFuncIdx !== undefined) {
     fctx.body.push({ op: "call", funcIdx: toStrFuncIdx });
-    const funcType = ctx.mod.types[ctx.mod.functions[toStrFuncIdx - ctx.numImportFuncs]?.typeIdx ?? -1];
+    const funcType = ctx.mod.types[definedFuncAt(ctx, toStrFuncIdx)?.typeIdx ?? -1];
     const retKind = funcType?.kind === "func" ? funcType.results?.[0]?.kind : undefined;
     emitToStringResultToF64ByKind(ctx, fctx, retKind);
     return true;
@@ -2686,6 +2692,19 @@ export function tryStructToString(ctx: CodegenContext, fctx: FunctionContext, fr
   // (which handles AnyValue boxes + AnyString passthrough). A bare ref_null
   // string is cast to the concrete $AnyString so the value type is exact.
   const normaliseToString = (retKind: string | undefined): void => {
+    // (#2934 slice 3) A dispatched method whose Wasm func type has NO result —
+    // it either always throws (never; e.g. `toString(){ throw "x"; }`,
+    // S15.5.4.6_A4_T2) or returns undefined (void). Nothing is on the stack, so
+    // the arms below would under-feed their consumer (`call $__any_to_string`
+    // with 0 operands — "not enough arguments on the stack"). Per §7.1.1
+    // OrdinaryToPrimitive, a toString that yields no primitive ends in
+    // TypeError; emit that throw — for the always-throwing case it is dead
+    // code after the call, and `throw` leaves the stack polymorphic so the
+    // enclosing arm's declared `ref $AnyString` result validates.
+    if (retKind === undefined || retKind === "void") {
+      emitThrowTypeError(ctx, fctx, "Cannot convert object to primitive value");
+      return;
+    }
     if (retKind === "externref" || retKind === "ref_extern") {
       // externref holding a native string → any.convert_extern + cast.
       fctx.body.push({ op: "any.convert_extern" } as Instr);
@@ -2715,8 +2734,7 @@ export function tryStructToString(ctx: CodegenContext, fctx: FunctionContext, fr
   };
 
   const funcResultKind = (funcIdx: number): string | undefined => {
-    const defIdx = funcIdx - ctx.numImportFuncs;
-    const def = defIdx >= 0 ? ctx.mod.functions[defIdx] : undefined;
+    const def = definedFuncAt(ctx, funcIdx);
     const ft = def ? ctx.mod.types[def.typeIdx] : undefined;
     return ft?.kind === "func" ? ft.results?.[0]?.kind : undefined;
   };

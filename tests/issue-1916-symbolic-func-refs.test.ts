@@ -81,6 +81,78 @@ describe("#1916 S1 — late-import-after-bodies programs stay valid through the 
   });
 });
 
+describe("#1916 S3a — stable-regime handles (two-regime coexistence)", () => {
+  // The acceptance criterion of the whole migration: a producer whose function
+  // handles are STABLE must stay correct when late imports land AFTER its
+  // functions were emitted and its call immediates were baked. The
+  // number-format family (number_toString/toFixed/toPrecision +
+  // __num_fmt_finalize sibling calls) is the first stable-regime producer;
+  // string concatenation + union returns force late imports around it.
+  it("stable-regime producer survives late-import churn (all targets)", async () => {
+    const src = `export function test(): number {
+      const hex: string = (255).toString(16);      // number-format family (stable handles)
+      const fixed: string = (1.5).toFixed(1);
+      let g: any; g = function () { return 2; };    // late closure/undefined-init imports
+      const s: string = hex + fixed;                // native-string helpers churn
+      return s.length + g();                        // "ff1.5".length + 2 = 7
+    }`;
+    for (const target of ["standalone", "wasi", "gc"] as const) {
+      const r = await compile(src, { target });
+      expect(r.errors ?? []).toEqual([]);
+      await WebAssembly.compile(r.binary);
+    }
+    const r = await compile(src, { target: "standalone" });
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(7);
+  });
+
+  it("a stable handle resolves through funcOrdinalToPosition at emit", async () => {
+    const { STABLE_FUNC_BASE } = await import("../src/emit/resolve-layout.js");
+    const mod = createEmptyModule();
+    mod.types.push({ kind: "func", params: [], results: [{ kind: "i32" }] });
+    // Two defined functions; the SECOND (position 1) is registered under
+    // stable ordinal 0. A call to STABLE_FUNC_BASE+0 must encode as index
+    // numImports(0) + position(1) = 1.
+    mod.functions.push({
+      name: "callsStable",
+      typeIdx: 0,
+      locals: [],
+      body: [{ op: "call", funcIdx: STABLE_FUNC_BASE + 0 }],
+      exported: true,
+    });
+    mod.functions.push({
+      name: "target",
+      typeIdx: 0,
+      locals: [],
+      body: [{ op: "i32.const", value: 41 }],
+      exported: false,
+    });
+    mod.funcOrdinalToPosition.push(1); // ordinal 0 → position 1
+    mod.exports.push({ name: "callsStable", desc: { kind: "func", index: 0 } });
+
+    const bytes = emitBinary(mod);
+    expect(WebAssembly.validate(bytes)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    expect((instance.exports.callsStable as () => number)()).toBe(41);
+  });
+
+  it("a minted-but-never-pushed stable handle fails loudly at emit", async () => {
+    const { STABLE_FUNC_BASE } = await import("../src/emit/resolve-layout.js");
+    const mod = createEmptyModule();
+    mod.types.push({ kind: "func", params: [], results: [{ kind: "i32" }] });
+    mod.functions.push({
+      name: "callsUnpushed",
+      typeIdx: 0,
+      locals: [],
+      body: [{ op: "call", funcIdx: STABLE_FUNC_BASE + 0 }],
+      exported: true,
+    });
+    mod.funcOrdinalToPosition.push(Number.NaN); // minted, never pushed
+    mod.exports.push({ name: "callsUnpushed", desc: { kind: "func", index: 0 } });
+    expect(() => emitBinary(mod)).toThrow(/no recorded position/);
+  });
+});
+
 describe("#1916 S1 — synthetic module exercises every resolver seam", () => {
   it("call / ref.func / global.get+set / exports / start / elem resolve to correct indices", async () => {
     const mod = createEmptyModule();

@@ -68,6 +68,15 @@ export interface WasmModule {
   asyncFunctions: Set<string>;
   /** Function indices referenced by ref.func that need declarative element segments */
   declaredFuncRefs: FuncHandle[];
+  /**
+   * #1916 S3 — stable-regime handle resolution table: ordinal → position in
+   * `functions`. A stable handle `STABLE_FUNC_BASE + ordinal` (see
+   * src/emit/resolve-layout.ts) is minted at registration and its position is
+   * recorded here at push time (`pushDefinedFunc`, src/codegen/func-space.ts).
+   * Lives on the module (not the codegen context) so mod-only passes
+   * (stack-balance, fixups, dead-elim, emit) can resolve handles.
+   */
+  funcOrdinalToPosition: number[];
   /** Linear memory definitions */
   memories: { min: number; max?: number }[];
   /** Data segments for linear memory (string literals, etc.) */
@@ -508,6 +517,7 @@ export function createEmptyModule(): WasmModule {
     stringLiteralValues: new Map(),
     asyncFunctions: new Set(),
     declaredFuncRefs: [],
+    funcOrdinalToPosition: [],
     memories: [],
     dataSegments: [],
   };

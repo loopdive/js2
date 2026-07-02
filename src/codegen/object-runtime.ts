@@ -73,6 +73,7 @@ import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-d
 import { ensureSymbolCarrier } from "./symbol-native.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
 import { reserveClassToPrimitive } from "./class-to-primitive.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1). */
 const INITIAL_CAP = 8;
@@ -7901,7 +7902,7 @@ export function fillProxyDispatch(ctx: CodegenContext): void {
   const fill = (name: string, argCount: number): void => {
     const driverIdx = ctx.funcMap.get(name);
     if (driverIdx === undefined) return;
-    const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+    const driverFn = definedFuncAt(ctx, driverIdx);
     if (!driverFn) return;
     if (applyClosureIdx === undefined || objVecNewIdx === undefined || objVecPushIdx === undefined) {
       // Closure bridge / objvec builders absent (no standalone closure in the
@@ -8184,8 +8185,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   if (!ctx.applyClosureReserved) return;
   const bridgeIdx = ctx.funcMap.get("__apply_closure");
   if (bridgeIdx === undefined) return;
-  const fnArrayIdx = bridgeIdx - ctx.numImportFuncs;
-  const bridgeFn = ctx.mod.functions[fnArrayIdx];
+  const bridgeFn = definedFuncAt(ctx, bridgeIdx);
   if (!bridgeFn) return;
 
   // Dependencies, all registered by now: __extern_length + __extern_get_idx
@@ -8326,7 +8326,7 @@ export function fillExternIsArray(ctx: CodegenContext): void {
   if (!ctx.externIsArrayReserved) return;
   const funcIdx = ctx.funcMap.get("__extern_is_array");
   if (funcIdx === undefined) return;
-  const fn = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+  const fn = definedFuncAt(ctx, funcIdx);
   if (!fn) return;
 
   const carrierTypeIdxs = collectStandaloneArrayCarrierTypeIdxs(ctx);
@@ -8559,7 +8559,7 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
   if (!ctx.externGetIdxReserved) return;
   const funcIdx = ctx.funcMap.get("__extern_get_idx");
   if (funcIdx === undefined) return;
-  const fn = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+  const fn = definedFuncAt(ctx, funcIdx);
   if (!fn) return;
   const types = ctx.objectRuntimeTypes;
   if (!types) return;

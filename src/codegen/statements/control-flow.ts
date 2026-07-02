@@ -28,6 +28,7 @@ import {
 } from "../shared.js";
 import { emitLinearU8ArenaReset } from "../linear-uint8-arena.js";
 import { adjustRethrowDepth } from "./shared.js";
+import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
  * (#2061) Compute the extra nesting depth between a finally-inline site and the
@@ -66,8 +67,7 @@ function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: numb
     if (imp?.desc.kind === "func") calleeTypeIdx = imp.desc.typeIdx;
   } else {
     // Local function
-    const localIdx = calleeIdx - ctx.numImportFuncs;
-    const func = ctx.mod.functions[localIdx];
+    const func = definedFuncAt(ctx, calleeIdx);
     if (func) calleeTypeIdx = func.typeIdx;
   }
   if (calleeTypeIdx === undefined) return false;

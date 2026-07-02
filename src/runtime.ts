@@ -11773,6 +11773,47 @@ assert._isSameValue = isSameValue;
       //     to a real JS array so native can iterate it.
       //   - Other primitives (number, boolean, symbol) → pass through; native
       //     rejects with TypeError per spec.
+      // (#2671) A USER THENABLE element — a wasm object-literal `{ then:
+      // function (onFulfilled, onRejected) {…} }` — must cross into the native
+      // combinator with a host-visible callable `then`: V8's PerformPromiseAll
+      // does `Invoke(C.resolve(elem), "then", «resolveElement, reject»)`, and a
+      // RAW WasmGC struct exposes no properties, so the Invoke threw TypeError
+      // and the aggregate rejected (the `call-resolve-element` / `new-resolve-
+      // function` / `resolve-before-loop-exit` test262 family — the combinator
+      // resolve-element protocol was unreachable). Wrap ONLY structs whose own
+      // `then` resolves to a callable (host fn or wasm closure) in the
+      // `_wrapForHost` live-mirror proxy — its `get` bridges the closure field
+      // to a host-callable, and the #2015 receiver-unwrap in the method bridge
+      // restores the raw struct as wasm-side `this`. Everything else passes
+      // through RAW, exactly as before, preserving fulfilled-value identity
+      // for non-thenable elements (`Promise.all([obj]) → values[0] === obj`).
+      // A thenable's pre-fix behavior was an unconditional reject, so there is
+      // no working identity to preserve for the wrapped class.
+      const _wrapThenableElement = (v: any): any => {
+        if (v == null || typeof v !== "object" || !_isWasmStruct(v)) return v;
+        const exports = callbackState?.getExports();
+        if (!exports) return v;
+        try {
+          // A struct-SHAPE `then` field is read via the compiled `__sget_then`
+          // getter — `_safeGet` reads only the sidecar/accessor/proto layers by
+          // design, so it alone misses the literal `{ then: function … }` shape.
+          // A sidecar-assigned `obj.then = fn` falls back to `_safeGet`.
+          let t: any;
+          try {
+            const sget = (exports as Record<string, Function>).__sget_then;
+            if (typeof sget === "function") t = sget(v);
+          } catch {
+            t = undefined;
+          }
+          if (t == null) t = _safeGet(v, "then", callbackState);
+          if (t != null && (typeof t === "function" || _isWasmClosureValue(t, callbackState))) {
+            return _wrapForHost(v, exports);
+          }
+        } catch {
+          /* not a thenable — pass through raw */
+        }
+        return v;
+      };
       const _toIterable = (iter: any): any => {
         // null/undefined: per spec, GetIterator throws TypeError. Native does
         // this when given undefined — pass through and let it reject.
@@ -11782,8 +11823,19 @@ assert._isSameValue = isSameValue;
         // Already JS-iterable: array, generator, custom Symbol.iterator,
         // arguments object, Set, Map, TypedArray, etc.
         if (typeof iter === "object") {
-          // Real JS Array — fast path.
-          if (Array.isArray(iter)) return iter;
+          // Real JS Array — fast path. (#2671) Re-materialize only when some
+          // element is a wasm-struct thenable (see _wrapThenableElement); the
+          // overwhelmingly common all-plain case returns the array unchanged.
+          if (Array.isArray(iter)) {
+            let needsWrap = false;
+            for (const v of iter) {
+              if (v !== _wrapThenableElement(v)) {
+                needsWrap = true;
+                break;
+              }
+            }
+            return needsWrap ? iter.map(_wrapThenableElement) : iter;
+          }
           // Detect WasmGC vec first via accessors (they return 0/null for
           // non-vec externrefs, so we materialize only when the round-trip
           // looks sane). We MUST attempt this before Symbol.iterator because
@@ -11809,7 +11861,9 @@ assert._isSameValue = isSameValue;
                 if (typeof len === "number" && len > 0) {
                   const result: any[] = new Array(len);
                   for (let i = 0; i < len; i++) {
-                    result[i] = vecGet(iter, i);
+                    // (#2671) Thenable struct elements get the live-mirror
+                    // proxy so V8's resolve-element Invoke sees `.then`.
+                    result[i] = _wrapThenableElement(vecGet(iter, i));
                   }
                   return result;
                 }

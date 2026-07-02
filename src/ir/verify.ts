@@ -22,6 +22,10 @@
 import type { IrBlock, IrFunction, IrInstr, IrType, IrValueId } from "./nodes.js";
 import { asVal, forEachInstrDeep, forEachNestedBuffer } from "./nodes.js";
 import type { ValType } from "./types.js";
+// #2949 slice 1 — canonical JsTag policy for the dynamic-operand rules
+// (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
+// from the dependency-free leaf, so this adds no codegen module-graph pull.
+import { JsTag, jsTagUnboxKind } from "../codegen/js-tag.js";
 
 /**
  * #1850 — successor block ids of a block, derived from its terminator.
@@ -387,9 +391,23 @@ function verifyBlock(
       // type-system-level, not SSA-scope — misuse should surface here rather
       // than silently lowering to a trap.
       if (instr.kind === "box") {
-        if (instr.toType.kind !== "union") {
+        if (instr.toType.kind === "dynamic") {
+          // #2949 R1 — box-to-dynamic erases any concrete value into the
+          // boxed-any carrier. Re-boxing an already-dynamic value is
+          // provably redundant (the intended node is a move or an unbox) —
+          // reject it so a producer bug surfaces here, not as a double-boxed
+          // runtime value.
+          const operandIr = operandIrType(func, block, instr.value, localDefs);
+          if (operandIr && operandIr.kind === "dynamic") {
+            errors.push({
+              message: `box operand is already dynamic — re-boxing a dynamic value is invalid (#2949)`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+        } else if (instr.toType.kind !== "union") {
           errors.push({
-            message: `box target must be a union IrType, got ${instr.toType.kind}`,
+            message: `box target must be a union or dynamic IrType, got ${instr.toType.kind}`,
             func: func.name,
             block: block.id as number,
           });
@@ -407,21 +425,75 @@ function verifyBlock(
         }
       }
       if (instr.kind === "unbox" || instr.kind === "tag.test") {
-        // value's defining IrType must be a union whose members contain `tag`.
         const operandIr = operandIrType(func, block, instr.value, localDefs);
-        if (operandIr && operandIr.kind !== "union") {
+        if (operandIr && operandIr.kind === "dynamic") {
+          // #2949 R2/R3 — dynamic operands discriminate on the JS partition,
+          // so `jsTag` is REQUIRED (the ValType `tag` cannot distinguish
+          // e.g. String from Object — both are reference-shaped).
+          if (instr.jsTag === undefined) {
+            errors.push({
+              message: `${instr.kind} on a dynamic operand requires jsTag (#2949)`,
+              func: func.name,
+              block: block.id as number,
+            });
+          } else {
+            const payload = jsTagUnboxKind(instr.jsTag);
+            // R2 — Null/Undefined are singleton partitions with no payload:
+            // unboxing them is invalid (identity is observed via tag.test).
+            if (instr.kind === "unbox" && payload === null) {
+              errors.push({
+                message: `unbox with payload-less JsTag ${JsTag[instr.jsTag]} is invalid — use tag.test (#2949)`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+            // When the producer also wrote a ValType `tag`, it must be
+            // consistent with the partition's payload kind: exact for the
+            // scalar partitions, ref-shaped for String/Object/Function.
+            if (instr.tag && payload !== null) {
+              const k = instr.tag.kind;
+              const refShaped =
+                k === "ref" ||
+                k === "ref_null" ||
+                k === "externref" ||
+                k === "ref_extern" ||
+                k === "eqref" ||
+                k === "anyref" ||
+                k === "funcref";
+              const consistent = payload === "ref" ? refShaped : k === payload;
+              if (!consistent) {
+                errors.push({
+                  message: `${instr.kind} tag ${k} is inconsistent with jsTag ${JsTag[instr.jsTag]} (payload kind ${payload}) (#2949)`,
+                  func: func.name,
+                  block: block.id as number,
+                });
+              }
+            }
+          }
+        } else if (operandIr && operandIr.kind !== "union") {
           errors.push({
-            message: `${instr.kind} operand must be a union IrType, got ${operandIr.kind}`,
+            message: `${instr.kind} operand must be a union or dynamic IrType, got ${operandIr.kind}`,
             func: func.name,
             block: block.id as number,
           });
-        } else if (operandIr && !unionContains(operandIr.members, instr.tag)) {
-          errors.push({
-            // #1926 — members are IrTypes; describe each member's ValType kind.
-            message: `${instr.kind} tag ${instr.tag.kind} is not a member of union<${operandIr.members.map((m) => asVal(m)?.kind ?? m.kind).join(",")}>`,
-            func: func.name,
-            block: block.id as number,
-          });
+        } else if (operandIr) {
+          // Union operand (V1) — the ValType `tag` is REQUIRED (#2949 made
+          // the field optional on the node because dynamic operands use
+          // `jsTag` instead) and must name a member of the union.
+          if (!instr.tag) {
+            errors.push({
+              message: `${instr.kind} on a union operand requires a ValType tag`,
+              func: func.name,
+              block: block.id as number,
+            });
+          } else if (!unionContains(operandIr.members, instr.tag)) {
+            errors.push({
+              // #1926 — members are IrTypes; describe each member's ValType kind.
+              message: `${instr.kind} tag ${instr.tag.kind} is not a member of union<${operandIr.members.map((m) => asVal(m)?.kind ?? m.kind).join(",")}>`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
         }
       }
 
@@ -864,10 +936,31 @@ function unopOperandKind(op: import("./nodes.js").IrUnop): ValType["kind"] | nul
 function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, IrType>, errors: IrVerifyError[]): void {
   const numSlots = func.slots?.length ?? 0;
 
+  // #2949 R4 — a dynamic-typed value may only feed box/unbox/tag.test, moves
+  // (locals/params/block args/branch args/slots), calls/returns with dynamic
+  // signatures, and dynamic-aware ops added by later slices. Every scalar
+  // binary/unary op requires an explicit `unbox` first — feeding the boxed
+  // carrier to e.g. `f64.add` is provably invalid Wasm. `valKindOf` returns
+  // null for dynamic (it is not a `val` kind), which would silently SKIP the
+  // kind rule below, so the dynamic case needs this explicit check.
+  const isDynamicValue = (v: IrValueId): boolean => typeOf.get(v)?.kind === "dynamic";
+
   const checkInstr = (instr: IrInstr, blockId: number): void => {
     switch (instr.kind) {
       case "binary": {
         const want = binopOperandKind(instr.op);
+        for (const [label, v] of [
+          ["lhs", instr.lhs],
+          ["rhs", instr.rhs],
+        ] as const) {
+          if (isDynamicValue(v)) {
+            errors.push({
+              message: `${instr.op} ${label} is dynamic — scalar ops require an explicit unbox (#2949) (value ${v})`,
+              func: func.name,
+              block: blockId,
+            });
+          }
+        }
         if (want) {
           for (const [label, v] of [
             ["lhs", instr.lhs],
@@ -898,6 +991,15 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
         break;
       }
       case "unary": {
+        // #2949 R4 — see the binary case; unary scalar ops (and ref.is_null,
+        // conservatively, until a slice needs it) reject dynamic operands.
+        if (isDynamicValue(instr.rand)) {
+          errors.push({
+            message: `${instr.op} operand is dynamic — requires an explicit unbox (#2949) (value ${instr.rand})`,
+            func: func.name,
+            block: blockId,
+          });
+        }
         const want = unopOperandKind(instr.op);
         if (want) {
           const k = valKindOf(typeOf, instr.rand);

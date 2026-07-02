@@ -37,6 +37,7 @@
 import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /** Reserved name for the accessor-get driver (arity-0 getter wrapper). */
 export const CALL_ACCESSOR_GET = "__call_accessor_get";
@@ -257,7 +258,7 @@ export function fillAccessorDrivers(ctx: CodegenContext): void {
   if (ctx.accessorGetDriverReserved) {
     const driverIdx = ctx.funcMap.get(CALL_ACCESSOR_GET);
     if (driverIdx !== undefined) {
-      const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+      const driverFn = definedFuncAt(ctx, driverIdx);
       if (driverFn) {
         const callMethod0 = ctx.funcMap.get("__call_fn_method_0");
         if (callMethod0 === undefined) {
@@ -281,7 +282,7 @@ export function fillAccessorDrivers(ctx: CodegenContext): void {
   if (ctx.accessorSetDriverReserved) {
     const driverIdx = ctx.funcMap.get(CALL_ACCESSOR_SET);
     if (driverIdx !== undefined) {
-      const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+      const driverFn = definedFuncAt(ctx, driverIdx);
       if (driverFn) {
         const callMethod1 = ctx.funcMap.get("__call_fn_method_1");
         if (callMethod1 === undefined) {
@@ -308,7 +309,7 @@ export function fillAccessorDrivers(ctx: CodegenContext): void {
   if (ctx.reviverDriverReserved) {
     const driverIdx = ctx.funcMap.get(CALL_REVIVER);
     if (driverIdx !== undefined) {
-      const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+      const driverFn = definedFuncAt(ctx, driverIdx);
       if (driverFn) {
         const callMethod2 = ctx.funcMap.get("__call_fn_method_2");
         if (callMethod2 === undefined) {
@@ -335,7 +336,7 @@ export function fillAccessorDrivers(ctx: CodegenContext): void {
   if (ctx.toJsonDriverReserved) {
     const driverIdx = ctx.funcMap.get(CALL_TO_JSON);
     if (driverIdx !== undefined) {
-      const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+      const driverFn = definedFuncAt(ctx, driverIdx);
       if (driverFn) {
         const callMethod1 = ctx.funcMap.get("__call_fn_method_1");
         if (callMethod1 === undefined) {
@@ -362,7 +363,7 @@ export function fillAccessorDrivers(ctx: CodegenContext): void {
   if (ctx.replacerDriverReserved) {
     const driverIdx = ctx.funcMap.get(CALL_REPLACER);
     if (driverIdx !== undefined) {
-      const driverFn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+      const driverFn = definedFuncAt(ctx, driverIdx);
       if (driverFn) {
         const callMethod2 = ctx.funcMap.get("__call_fn_method_2");
         if (callMethod2 === undefined) {

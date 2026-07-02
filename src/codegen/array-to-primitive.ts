@@ -31,6 +31,7 @@ import type { CodegenContext } from "./context/types.js";
 import type { Instr, WasmFunction, ValType } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 export const ARRAY_TO_PRIMITIVE_STRING = "__array_to_primitive_string";
 
@@ -83,7 +84,7 @@ export function fillArrayToPrimitive(ctx: CodegenContext): void {
   if (!ctx.arrayToPrimitiveReserved) return;
   const driverIdx = ctx.funcMap.get(ARRAY_TO_PRIMITIVE_STRING);
   if (driverIdx === undefined) return;
-  const fn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+  const fn = definedFuncAt(ctx, driverIdx);
   if (!fn) return;
 
   const externLengthIdx = ctx.funcMap.get("__extern_length");

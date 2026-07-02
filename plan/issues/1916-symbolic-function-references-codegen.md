@@ -137,12 +137,46 @@ orthogonal to index binding and stays tracked in those issues.
   × {gc, standalone, wasi}, 992 real binaries — **byte-identical**.
   Late-shift class holds: issue-329/1677/1809/1839/1899/2191/2193/2918
   suites green (51 tests) + new `tests/issue-1916-symbolic-func-refs.test.ts`.
-- **S2 (=2710 slice 3) — convert positional reads.** The ~94
-  `mod.functions[idx - numImportFuncs]` reads + `idx - numImportFuncs`
-  arithmetic become chokepoint accessors (registry-keyed); globals'
-  `localGlobalIdx`/`nextModuleGlobalIdx` analogues audited. Enumerate by
-  temporarily flipping the brand to `unique symbol` (tsc lists every
-  violation), convert, keep byte-identity.
+- **S2 (=2710 slice 3) — convert positional reads.** DONE (PR 2, this
+  slice) for the FUNCTION space. Implementation notes (the WHY, for S3):
+  - **New chokepoint module `src/codegen/func-space.ts`**: `definedFuncAt`
+    (handle→defined-record, the ONLY place `idx - numImportFuncs` lives),
+    `isImportFuncIdx`, `funcSignatureOf` (import-scan + defined unified),
+    `replaceDefinedFuncAt` (the write-side twin — the IR integration
+    patches a lowered body in-place by handle). S3 rewrites THESE four to
+    registry lookups and every caller is already correct.
+  - **~40 call sites across 24 files converted**; 4 duplicated
+    signature-scan helper clones collapsed onto `funcSignatureOf`
+    (`getFuncParamTypes`/`wasmFuncReturnsVoid`/`getWasmFuncReturnType` in
+    expressions/helpers.ts, `getFuncSignature` in closures.ts,
+    `getFuncResultType` in expressions/new-super.ts). Zero
+    `mod.functions[idx - numImportFuncs]` / `- numImportFuncs` arithmetic
+    remains in `src/codegen` + `src/ir` outside func-space.ts.
+  - **Semantics-preservation rule discovered**: several sites (e.g. the
+    toPrimitive retKind reads in type-coercion.ts) deliberately treat an
+    IMPORT handle as "unknown → default" — converting those to
+    `funcSignatureOf` (which resolves import signatures) would CHANGE
+    behavior. They use `definedFuncAt`, preserving exact semantics;
+    byte-identity is the proof. Flag for S3+: whether the import-default
+    behavior is itself a latent bug is a separate question.
+  - **Position-space reads are NOT this surface** (and were left alone):
+    `funcByName`-map reads in class-bodies.ts / declarations.ts index
+    `mod.functions` by POSITION (never mixing `numImportFuncs`) —
+    positions don't shift when imports are added, so they are already
+    stable and stay valid post-flip. Plain whole-array iteration
+    (shifters/DCE/emit) is layout work, also out of scope.
+  - **Known latent positional-import reads preserved for byte-identity**
+    (flagged in-code for S3 review): `ir-tail-call.ts` `calleeTypeIdx` and
+    `statements/control-flow.ts` index `mod.imports[calleeIdx]` by
+    func-space index — only correct while func imports precede non-func
+    imports; a mismatch degrades to undefined via the kind guard.
+  - **Out of scope**: `src/codegen-linear/c-abi.ts` (1 site) — the linear
+    backend uses bare mod/numImportFuncs locals, not `CodegenContext`;
+    convert when the linear backend gets its own registry (or S3 unifies).
+  - Proof: byte-identical over the same 1215-record corpus; the four
+    late-shift issue suites (329/1899/1916/2941, 32 tests) green. The
+    `ir-*-equivalence` harness failures observed locally reproduce
+    identically on clean origin/main (pre-existing, container-env).
 - **S3 (=2710 slice 4b/4c, func space — the heart of #1916).** Mint
   stable func handles at registration; `resolveLayout` computes the real
   permutation (imports in declaration order, then live defined funcs in
@@ -156,6 +190,102 @@ orthogonal to index binding and stays tracked in those issues.
 - **S4 (=2710 slice 4a/4d) — globals (`fixupModuleGlobalIndices` + ~25
   cached fields, the #2078 site), then types (DCE renumber through
   `resolveLayout`).** May land under #2710 directly.
+
+## S3 design — the two-regime incremental flip (dev-1916f, 2026-07-02)
+
+**The naive S3 is atomic and unshippable**: you cannot mint stable
+handles gradually while shifters still walk bodies (they would corrupt
+stable handles), and you cannot delete the shifters before every mint
+site is converted (~209 canonical `numImportFuncs +
+mod.functions.length` sites + 10 variants + `addImport`). One mega-PR
+over that surface violates the slice discipline.
+
+**Resolution — numerically disjoint handle regimes coexist.** Mint
+stable defined-func handles in a range that cannot collide with live
+indices: `STABLE_BASE + definitionOrdinal` with `STABLE_BASE = 1 << 21`
+(a module with ≥2M functions is rejected at emit; today's biggest
+modules have <10k). Definition ordinal = position in `mod.functions`,
+which IS stable: the array only appends (dead-elim removes func IMPORTS
+and types, never defined functions), and imports prepend only in the
+INDEX SPACE, not in the array. So `STABLE_BASE + position` is a stable,
+collision-free id requiring no registry map. The two regimes are then
+distinguishable by magnitude, like a tagged union:
+
+- `definedFuncAt`: `h >= STABLE_BASE ? mod.functions[h - STABLE_BASE] :
+  mod.functions[h - numImportFuncs]` — S2 made this THE read chokepoint,
+  so dual-mode lands in one function (+ its 3 siblings).
+- `binary.ts` `fIdx` (the S1 seam): `h >= STABLE_BASE ? finalNumImports
+  + (h - STABLE_BASE) : h`.
+- **Each of the 4 shifters + dead-elim's fR remap get a one-line guard:
+  skip any `funcIdx >= STABLE_BASE`** (a stable handle never shifts).
+  Transitional; deleted with the shifters.
+- Import handles stay in the live regime initially — they are already
+  *prefix-stable* (an import's index never changes once minted; imports
+  only append among themselves). The only breaker is dead-elim REMOVING
+  a func import; that is resolveLayout's import-ordinal remap table in
+  the endgame slice.
+
+**Why this is sound where #1899's B2 was not**: B2 tried to recover
+identity FROM an ambiguous number after the fact. Here the number IS
+the identity by construction (disjoint ranges, stable ordinal); there
+is never a moment where one value means two functions.
+
+**S3 slices (each byte-identity-provable):**
+- S3a — LANDED (PR 3): the full two-regime infrastructure + the FIRST
+  flipped producer, proven byte-identical. As-built notes:
+  - `src/emit/resolve-layout.ts`: `STABLE_FUNC_BASE` (1<<21),
+    `isStableFuncHandle`, `absoluteFuncIndex[Cached]` (the one
+    normalization primitive; throws on minted-never-pushed), and
+    `inLiveShiftRange` (the shift predicate); `resolveLayout.func` now
+    resolves stable handles via `mod.funcOrdinalToPosition`.
+  - `WasmModule.funcOrdinalToPosition: number[]` — ordinal→position,
+    on the MODULE so mod-only passes can resolve. NaN = minted, not yet
+    pushed (loud failure if it reaches emit).
+  - Mint/push protocol in `func-space.ts`: `mintDefinedFunc` (reserves
+    an ordinal — decoupled from position, so nested emission between
+    mint and push is safe) + `pushDefinedFunc` (records position;
+    throws on double-push). Read chokepoints are dual-regime via
+    `definedPositionOf`.
+  - ALL FOUR shifters + `reconcileNativeStrFinalizeShift` +
+    `shiftAsyncSideChannelFuncIdxs` guard every comparison with
+    `inLiveShiftRange` (instruction immediates AND every side-table:
+    funcMap, nativeStr/Regex/map helpers, trampolines, nativeGenerators,
+    async side-channels, exports, elems, declaredFuncRefs, start).
+  - Dual-regime consumers: `stack-balance.ts` (stable ALIASES registered
+    in `buildFuncSigs` + `getFullParamTypes`/2 inline reads normalized),
+    `fixups.ts` (4 reads normalized), `object.ts` (symbol aliases).
+    `dead-elimination.ts` needs NO change (proven: all defined funcs are
+    unconditionally live; the `fR` remap keys can never match a stable
+    value). `wat.ts` prints the raw handle value (debug-only; uniquely
+    identifies; normalize in S3-final).
+  - First flipped producer: `number-format-native.ts` (6 helpers incl.
+    the `__num_fmt_finalize` sibling-call fan-in). Proof: corpus
+    byte-IDENTICAL (1215 records — the flip resolves to exactly the
+    bytes the shifter regime produced), issue-1537 (33) + issue-49 (7)
+    + late-shift suites green, and a new acceptance test: stable
+    producer + forced late-import churn compiles/validates/runs on all
+    3 targets.
+- S3b..N: flip remaining producers batchwise (~203 canonical
+  `numImportFuncs + mod.functions.length` sites + 10 variants across 49
+  files → `mintDefinedFunc`/`pushDefinedFunc`). Byte-identity after
+  every batch. Import handles stay live-regime (prefix-stable) until
+  S3-final.
+- S3-final: zero live-regime defined-func mints remain → delete
+  `shiftLateImportIndices`, `reconcileNativeStrFinalizeShift`, both
+  inline shifters, `flushLateImportShifts`, the `liveBodies`/
+  `parentBodiesStack` bookkeeping, and dead-elim's funcIdx body remap;
+  resolveLayout computes the real permutation incl. the dead-import
+  ordinal remap; normalize `wat.ts`. Full CI + merge_group.
+
+**Consumers between freeze and emit that interpret funcIdx** (must be
+dual-mode by S3a): `stackBalance` (reads callee signatures — takes
+`mod` only, so the import-count context must be derivable from `mod`;
+audit), `repairStructTypeMismatches`/`fixupExternConvertAny` (bake NEW
+calls post-dead-elim from side-tables — with stable handles those bakes
+become correct by construction, retiring the #1899 fix's reason to
+exist), `eliminateDeadImports` liveness walk, `wat.ts`, `object.ts`,
+`validateFuncRefs` (validate RESOLVED values). `addImport` already
+enforces the freeze point (#1984 throw) — the flip inherits it.
 
 Coordination note: #2710 is claim-held by `ttraenkler/sd-indexshift`
 (2026-06-26, no active agent, no open PR). S1–S3 are being advanced

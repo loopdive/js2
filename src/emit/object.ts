@@ -22,6 +22,7 @@ import {
 } from "./binary.js";
 import { WasmEncoder } from "./encoder.js";
 import { GC, LINKING_SUBSECTION, OP, RELOC, SECTION, SYM_FLAGS, SYMTAB, TYPE } from "./opcodes.js";
+import { STABLE_FUNC_BASE } from "./resolve-layout.js"; // (#1916 S3)
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -105,6 +106,16 @@ export function emitObject(mod: WasmModule): Uint8Array {
     });
     funcIdxToSymIdx.set(funcIdx, symIdx);
     funcIdx++;
+  }
+  // (#1916 S3) Stable-handle ALIASES: a `call`/`ref.func` immediate may carry a
+  // stable handle (STABLE_FUNC_BASE + ordinal) instead of an absolute index.
+  // Alias the same symbol under the handle key so relocation lookup is
+  // dual-regime with no per-site changes.
+  for (let ordinal = 0; ordinal < mod.funcOrdinalToPosition.length; ordinal++) {
+    const pos = mod.funcOrdinalToPosition[ordinal]!;
+    if (Number.isNaN(pos)) continue;
+    const symIdx = funcIdxToSymIdx.get(numImportFuncs + pos);
+    if (symIdx !== undefined) funcIdxToSymIdx.set(STABLE_FUNC_BASE + ordinal, symIdx);
   }
 
   // Imported globals

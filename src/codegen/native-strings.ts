@@ -7277,6 +7277,7 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
     });
   }
 
+  const importsBeforeBridge = ctx.numImportFuncs;
   const fromMemIdx = ensureLateImport(
     ctx,
     "__str_from_mem",
@@ -7285,6 +7286,23 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
   )!;
   const toMemIdx = ensureLateImport(ctx, "__str_to_mem", [{ kind: "externref" }, { kind: "i32" }], [])!;
   const externLenIdx = ensureLateImport(ctx, "__str_extern_len", [{ kind: "externref" }], [{ kind: "i32" }])!;
+  // (#2934 slice 3) Close the deferred late-import batch BEFORE baking
+  // `fromMemIdx`/`toMemIdx`/`externLenIdx` into the helper bodies below. The
+  // deferred flush repairs STALE refs by bumping every `funcIdx >=
+  // importsBefore` — it cannot distinguish a freshly-baked, already-final
+  // import index (these three) from a stale defined-function ref, so leaving
+  // the batch open until some later flush bumps the baked import refs onto
+  // whatever defined function lands at that offset (`__str_to_extern`'s
+  // `call __str_from_mem` resolved to `__str_copy_tree`, arity 3 — "not
+  // enough arguments on the stack" for every object-with-own-toString string
+  // coercion, S15.5.4.6_A4_T2). Flushing here settles all pre-batch stale
+  // refs and makes the subsequent flush a no-op for this batch. Gated on
+  // actually having REGISTERED imports (a funcMap-hit lookup is pure and must
+  // not force-flush an outer batch), so already-registered paths are
+  // byte-identical.
+  if (ctx.numImportFuncs > importsBeforeBridge) {
+    flushLateImportShifts(ctx, null);
+  }
 
   {
     const typeIdx = addFuncType(ctx, [strRef], [{ kind: "externref" }]);

@@ -27,6 +27,7 @@
  */
 import { coercionPlan } from "./coercion-plan.js";
 import type { BlockType, FuncTypeDef, Instr, TypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
+import { STABLE_FUNC_BASE, absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
 
 /**
  * (#2934) Widen a packed i8/i16 STORAGE type to the i32 that actually lives on
@@ -1164,6 +1165,7 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
   }
 
   // Then defined functions
+  const numImports = idx;
   for (const func of mod.functions) {
     const ft = resolveFuncType(mod.types, func.typeIdx);
     if (ft) {
@@ -1171,6 +1173,17 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
       map.set(idx, { params: ft.params.length, results: ft.results.length, resultType });
     }
     idx++;
+  }
+
+  // (#1916 S3) Register stable-regime ALIASES: a `call` immediate may carry a
+  // stable handle (STABLE_FUNC_BASE + ordinal) instead of an absolute index.
+  // Aliasing the same sig record under the handle key makes every
+  // `sigs.get(funcIdx)` read site dual-regime with no per-site changes.
+  for (let ordinal = 0; ordinal < mod.funcOrdinalToPosition.length; ordinal++) {
+    const pos = mod.funcOrdinalToPosition[ordinal]!;
+    if (Number.isNaN(pos)) continue; // minted, never pushed — resolution throws elsewhere
+    const sig = map.get(numImports + pos);
+    if (sig) map.set(STABLE_FUNC_BASE + ordinal, sig);
   }
 
   return map;
@@ -1184,6 +1197,8 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
  * Resolve full param types for a function by index.
  */
 function getFullParamTypes(mod: WasmModule, funcIdx: number, numImports: number): ValType[] | null {
+  // (#1916 S3) normalize a possibly-stable handle to the absolute index first.
+  funcIdx = absoluteFuncIndexCached(mod, numImports, funcIdx);
   if (funcIdx < numImports) {
     let importFuncCount = 0;
     for (const imp of mod.imports) {
@@ -1340,7 +1355,7 @@ function inferInstrType(
   }
 
   if (op === "call") {
-    const funcIdx = (instr as any).funcIdx as number;
+    const funcIdx = absoluteFuncIndexCached(mod, numImports, (instr as any).funcIdx as number); // (#1916 S3)
     const pt = getFullParamTypes(mod, funcIdx, numImports);
     // Need result types, not params
     if (funcIdx < numImports) {
@@ -2319,7 +2334,7 @@ function updateTypeStack(
 
   // call: pop params, push results
   if (op === "call") {
-    const funcIdx = (instr as any).funcIdx as number;
+    const funcIdx = absoluteFuncIndexCached(mod, numImports, (instr as any).funcIdx as number); // (#1916 S3)
     const sig = sigs.get(funcIdx);
     if (sig) {
       for (let i = 0; i < sig.params; i++) stack.pop();

@@ -44,6 +44,7 @@ import type { Instr, WasmFunction } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 export const CLASS_TO_PRIMITIVE = "__class_to_primitive";
 
@@ -112,7 +113,7 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
   if (!ctx.classToPrimitiveReserved) return;
   const driverIdx = ctx.funcMap.get(CLASS_TO_PRIMITIVE);
   if (driverIdx === undefined) return;
-  const fn = ctx.mod.functions[driverIdx - ctx.numImportFuncs];
+  const fn = definedFuncAt(ctx, driverIdx);
   if (!fn) return;
 
   const callValueOfIdx = ctx.funcMap.get("__call_valueOf");

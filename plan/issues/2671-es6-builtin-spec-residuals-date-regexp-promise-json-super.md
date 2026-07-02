@@ -202,6 +202,7 @@ callable" (the wasm closures reach V8 as opaque structs). The codegen gate
 `calleeIsCapabilityCtorParam` (src/codegen/expressions/calls.ts) scanned only
 `Promise.{all,allSettled,race,any}.call(<fn>, …)`, so the `resolve`/`reject`
 capability sites fell through and the executor's closure args were never wrapped.
+
 - Fix: add `resolve`/`reject` to the scanned combinator set (one-line, additive,
   JS-host-only — the `emitBoundFunctionCall` route is already gated by
   `!ctx.standalone && !noJsHost(ctx)`, so standalone/WASI is untouched).
@@ -213,12 +214,59 @@ capability sites fell through and the executor's closure args were never wrapped
   (baseline-toggle differential). `tests/promise-combinators.test.ts`'s 2
   pre-existing failures are unrelated (present with the change reverted).
 - Guard: `tests/issue-2671-promise-executor.test.ts` (14/14).
-- ⏳ Remaining Promise: the `resolve-element-function-*` family
-  (`Promise.all.call(NotPromise, [thenable])`) is a SEPARATE, deeper marshaling
-  chain — the host must call a wasm-struct thenable's `then` method and store the
-  native resolve-element function back into a wasm `var`; `thenable.then` is never
-  invoked today (`resolveElementFunction` stays undefined). Not in this slice.
-  Also: invoke-resolve error-close paths, `then` spec asserts.
+
+**Progress (dev-2937f, 2026-07-02): capability slice 2 — fn statics + prelude
+`thrower` + thenable-element marshaling — SHIPPED (+28 test262, measured by
+full failing-Promise sweep, 0 regressions in a 29-file passing sample + 38-file
+cross-area sample).**
+
+Reground 2026-07-02 (fresh baseline): Date 57 / RegExp 129+7CE / Promise 132+5
+/ JSON 45+4CE / super 75. Biggest single-signature bucket: 25× "Promise resolve
+or reject function is not callable" — the `Promise.<agg>.call(Constructor,
+[thenables])` family. Root-caused as THREE stacked gaps, all fixed:
+
+1. **Compiler (`src/codegen/declarations.ts`)** — a TOP-LEVEL `F.<prop> = …`
+   static write on a function DECLARATION was silently dropped from
+   `__module_init` (the keep-in-init scan only recognized module-global roots
+   — same bug class as the documented #1268/#2660-S2 keeps beside it). So
+   `Test262Error.thrower = fn` (real sta.js) never existed. Fixed with a
+   narrowly-scoped keep: direct `F.<name> = …` (bare-identifier receiver, name
+   ≠ `prototype` — prototype chains stay with the compile-time fnctor lift)
+   where `F ∈ topLevelFunctionNames`, host lanes only (standalone
+   byte-identical).
+2. **Harness (`tests/test262-runner.ts`)** — the synthesized prelude's
+   `Test262Error` CLASS lacked the real sta.js `thrower` static entirely.
+   Added as a static METHOD (marshals host-callable as a value; the
+   assignment form would hit the classSet variant of gap 1).
+3. **Host runtime (`src/runtime.ts` `_toIterable`)** — a wasm object-literal
+   THENABLE element crossed as a RAW struct; V8's
+   `Invoke(C.resolve(elem), "then", «resolveElement, reject»)` found no
+   `.then` → aggregate rejected. Now wraps ONLY then-bearing structs
+   (detected via `__sget_then` + `_safeGet` fallback — note `_safeGet` alone
+   reads sidecar/accessor/proto layers, NOT struct-shape fields) in the
+   `_wrapForHost` live-mirror; non-thenables pass through raw (identity
+   preserved).
+
+- Flips **28** `built-ins/Promise` files: `new-resolve-function`,
+  `same-{resolve,reject}-function` ×3, the full `resolve-element-function-*` /
+  `reject-element-function-*` attribute families (all/allSettled/any), and
+  `invoke-resolve-on-{promises,values}-every-iteration-of-*`.
+- Guard: `tests/issue-2671-promise-capability.test.ts` (3/3).
+- ⏳ Remaining Promise (~107), bucketed with root causes:
+  - **#2976 (filed this slice)**: `call-resolve-element*` /
+    `resolve-before-loop-exit*` / `resolve-from-same-thenable*` (~10) — the
+    variants whose `Constructor` declares a CAPTURING inner `resolve`: a
+    capture-carrying nested fn decl materializes a FRESH closure per
+    reference (`Constructor === Constructor` → false), so the
+    `Constructor.resolve` static lands on a dead instance → V8 "resolve is
+    not a function". Compiler substrate — measured & filed as #2976.
+  - `new-{resolve,reject}-function` allSettled/any variants (~4): p2.then's
+    captured-counter increment doesn't write back (capture-writeback family,
+    #2826-adjacent) — p1's does; needs its own verification pass.
+  - `any/*` AggregateError `.errors` marshaling (~4): `error.errors.length`
+    reads 0.
+  - invoke-resolve error-close paths, `then` spec asserts (as before);
+    `allKeyed/*` (proposal dir, ~10 "Cannot convert undefined to object").
 
 ### JSON (44)
 

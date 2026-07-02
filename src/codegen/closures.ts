@@ -19,6 +19,7 @@ import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-ma
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
+import { definedFuncAt, funcSignatureOf } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
 import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
 import { noJsHost } from "./expressions/helpers.js"; // (#2025)
@@ -3307,27 +3308,9 @@ export function getFuncSignature(
   ctx: CodegenContext,
   funcIdx: number,
 ): { params: ValType[]; results: ValType[] } | null {
-  if (funcIdx < ctx.numImportFuncs) {
-    let importFuncCount = 0;
-    for (const imp of ctx.mod.imports) {
-      if (imp.desc.kind === "func") {
-        if (importFuncCount === funcIdx) {
-          const typeDef = ctx.mod.types[imp.desc.typeIdx];
-          if (typeDef?.kind === "func") return { params: typeDef.params, results: typeDef.results };
-          return null;
-        }
-        importFuncCount++;
-      }
-    }
-  } else {
-    const localIdx = funcIdx - ctx.numImportFuncs;
-    const func = ctx.mod.functions[localIdx];
-    if (func) {
-      const typeDef = ctx.mod.types[func.typeIdx];
-      if (typeDef?.kind === "func") return { params: typeDef.params, results: typeDef.results };
-    }
-  }
-  return null;
+  // #1916 S2 — funcSignatureOf is the positional-read chokepoint (func-space.ts).
+  const sig = funcSignatureOf(ctx, funcIdx);
+  return sig ? { params: sig.params, results: sig.results } : null;
 }
 
 /**
@@ -3703,8 +3686,7 @@ function buildNullThisTypeErrorThrow(ctx: CodegenContext): Instr[] | null {
  * so we don't silently regress the trap→TypeError fix.
  */
 function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean {
-  const localIdx = methodFuncIdx - ctx.numImportFuncs;
-  const fn = localIdx >= 0 ? ctx.mod.functions[localIdx] : undefined;
+  const fn = definedFuncAt(ctx, methodFuncIdx);
   if (!fn || !Array.isArray(fn.body)) return true;
   const walk = (instrs: Instr[]): boolean => {
     for (const instr of instrs) {

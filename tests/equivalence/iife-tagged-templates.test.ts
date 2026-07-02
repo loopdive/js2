@@ -6,7 +6,7 @@ describe("IIFE and call expression tagged templates", () => {
     await assertEquivalent(
       `
       export function test(): number {
-        return (function(strings: string[]): number {
+        return (function(strings: TemplateStringsArray): number {
           return strings.length;
         })\`hello\`;
       }
@@ -19,7 +19,7 @@ describe("IIFE and call expression tagged templates", () => {
     await assertEquivalent(
       `
       export function test(): number {
-        return (function(strings: string[], a: number, b: number): number {
+        return (function(strings: TemplateStringsArray, a: number, b: number): number {
           return strings.length + a + b;
         })\`hello \${10} world \${20}\`;
       }
@@ -32,7 +32,7 @@ describe("IIFE and call expression tagged templates", () => {
     await assertEquivalent(
       `
       export function test(): number {
-        return ((strings: string[]): number => strings.length)\`hello\`;
+        return ((strings: TemplateStringsArray): number => strings.length)\`hello\`;
       }
       `,
       [{ fn: "test", args: [] }],
@@ -42,8 +42,8 @@ describe("IIFE and call expression tagged templates", () => {
   it("call expression tagged template — function returning tag", async () => {
     await assertEquivalent(
       `
-      function makeTag(): (strings: string[]) => number {
-        return function(strings: string[]): number {
+      function makeTag(): (strings: TemplateStringsArray) => number {
+        return function(strings: TemplateStringsArray): number {
           return strings.length;
         };
       }
@@ -58,8 +58,8 @@ describe("IIFE and call expression tagged templates", () => {
   it("call expression tagged template — with substitutions", async () => {
     await assertEquivalent(
       `
-      function makeTag(): (strings: string[], val: number) => number {
-        return function(strings: string[], val: number): number {
+      function makeTag(): (strings: TemplateStringsArray, val: number) => number {
+        return function(strings: TemplateStringsArray, val: number): number {
           return val;
         };
       }

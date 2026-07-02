@@ -11,6 +11,7 @@
 
 import type { FuncTypeDef, Instr, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
 
 /**
  * Post-processing pass: mark leaf struct types in subtype hierarchies as final.
@@ -185,8 +186,9 @@ export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule
     // Check the function's return type; if it's externref but struct.get needs
     // a struct ref, insert a conversion.
     if (curr.op === "call") {
-      const funcIdx = (curr as { funcIdx: number }).funcIdx;
       const numImports = mod.imports.filter((imp) => imp.desc.kind === "func").length;
+      // (#1916 S3) normalize a possibly-stable handle to the absolute index.
+      const funcIdx = absoluteFuncIndexCached(mod, numImports, (curr as { funcIdx: number }).funcIdx);
       let retType: ValType | undefined;
       if (funcIdx < numImports) {
         const imp = mod.imports.filter((imp) => imp.desc.kind === "func")[funcIdx];
@@ -442,9 +444,10 @@ export function instrStackDelta(instr: Instr, mod: WasmModule): number {
 
     // call: consumes params, pushes results
     case "call": {
-      const funcIdx = (instr as { funcIdx: number }).funcIdx;
       // Look up function type
       const numImports = mod.imports.filter((imp) => imp.desc.kind === "func").length;
+      // (#1916 S3) normalize a possibly-stable handle to the absolute index.
+      const funcIdx = absoluteFuncIndexCached(mod, numImports, (instr as { funcIdx: number }).funcIdx);
       let typeIdx: number;
       if (funcIdx < numImports) {
         const imp = mod.imports.filter((imp) => imp.desc.kind === "func")[funcIdx];
@@ -933,11 +936,13 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
     for (let j = 0; j < instrs.length; j++) {
       const instr = instrs[j]!;
       if (instr.op !== "return_call" && instr.op !== "call") continue;
-      const funcIdx = (instr as any).funcIdx;
-      if (funcIdx === undefined) continue;
+      const rawFuncIdx = (instr as any).funcIdx;
+      if (rawFuncIdx === undefined) continue;
 
       // Get the target function's param types
       const totalImports = ctx.mod.imports.filter((imp: any) => imp.desc?.kind === "func").length;
+      // (#1916 S3) normalize a possibly-stable handle to the absolute index.
+      const funcIdx = absoluteFuncIndexCached(ctx.mod, totalImports, rawFuncIdx);
       let targetTypeIdx: number | undefined;
       if (funcIdx < totalImports) {
         // It's an import
@@ -1002,9 +1007,11 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
         }
         // call consumes M args and produces 1 value — skip its args
         if (argInstr.op === "call" || argInstr.op === "return_call") {
-          const callFuncIdx = (argInstr as any).funcIdx;
-          if (callFuncIdx !== undefined) {
+          const rawCallFuncIdx = (argInstr as any).funcIdx;
+          if (rawCallFuncIdx !== undefined) {
             const callTotalImports = ctx.mod.imports.filter((imp: any) => imp.desc?.kind === "func").length;
+            // (#1916 S3) normalize a possibly-stable handle to the absolute index.
+            const callFuncIdx = absoluteFuncIndexCached(ctx.mod, callTotalImports, rawCallFuncIdx);
             let callTargetTypeIdx: number | undefined;
             if (callFuncIdx < callTotalImports) {
               let ci = 0;

@@ -5,7 +5,7 @@ import { buildImports, compileToWasm } from "./equivalence/helpers.js";
 describe("Issue #141: Tagged template literal runtime failures", () => {
   it("basic tagged template with two substitutions", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[], a: number, b: number): number {
+      function tag(strings: TemplateStringsArray, a: number, b: number): number {
         return strings.length + a + b;
       }
       export function test(): number {
@@ -18,7 +18,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("tagged template with no substitutions", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[]): number {
+      function tag(strings: TemplateStringsArray): number {
         return strings.length;
       }
       export function test(): number {
@@ -30,7 +30,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("tagged template with rest params collects all substitutions", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[], ...values: number[]): number {
+      function tag(strings: TemplateStringsArray, ...values: number[]): number {
         return strings.length + values.length;
       }
       export function test(): number {
@@ -43,7 +43,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("tagged template with rest params and zero substitutions", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[], ...values: number[]): number {
+      function tag(strings: TemplateStringsArray, ...values: number[]): number {
         return strings.length + values.length;
       }
       export function test(): number {
@@ -56,7 +56,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("excess substitutions beyond declared params are dropped", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[]): number {
+      function tag(strings: TemplateStringsArray): number {
         return strings.length;
       }
       export function test(): number {
@@ -70,7 +70,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("returns substitution value directly", async () => {
     const e = await compileToWasm(`
-      function identity(strings: string[], val: number): number {
+      function identity(strings: TemplateStringsArray, val: number): number {
         return val;
       }
       export function test(): number {
@@ -82,7 +82,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("substitution expressions with variables", async () => {
     const e = await compileToWasm(`
-      function sum(strings: string[], a: number, b: number): number {
+      function sum(strings: TemplateStringsArray, a: number, b: number): number {
         return a + b;
       }
       export function test(): number {
@@ -96,7 +96,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("string content access from first element", async () => {
     const e = await compileToWasm(`
-      function first(strings: string[]): string {
+      function first(strings: TemplateStringsArray): string {
         return strings[0];
       }
       export function test(): string {
@@ -108,7 +108,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("string parts count with multiple expressions", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[], a: number, b: number, c: number): number {
+      function tag(strings: TemplateStringsArray, a: number, b: number, c: number): number {
         return strings.length;
       }
       export function test(): number {
@@ -120,7 +120,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("empty leading string part when expression comes first", async () => {
     const e = await compileToWasm(`
-      function first(strings: string[]): string {
+      function first(strings: TemplateStringsArray): string {
         return strings[0];
       }
       export function test(): string {
@@ -133,7 +133,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("concatenating string parts with substitution", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[], a: number): string {
+      function tag(strings: TemplateStringsArray, a: number): string {
         return strings[0] + String(a) + strings[1];
       }
       export function test(): string {
@@ -147,7 +147,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
     const e = await compileToWasm(`
       let callCount: number = 0;
 
-      function tag(strings: string[]): number {
+      function tag(strings: TemplateStringsArray): number {
         callCount = callCount + 1;
         return strings.length + callCount;
       }
@@ -164,7 +164,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("tagged template called multiple times with different values", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[], val: number): number {
+      function tag(strings: TemplateStringsArray, val: number): number {
         return val * 2;
       }
       export function test(): number {
@@ -179,7 +179,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("substitution with arithmetic expression", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[], val: number): number {
+      function tag(strings: TemplateStringsArray, val: number): number {
         return val;
       }
       export function test(): number {
@@ -191,7 +191,7 @@ describe("Issue #141: Tagged template literal runtime failures", () => {
 
   it("tag function with one param beyond strings accepts first sub only", async () => {
     const e = await compileToWasm(`
-      function tag(strings: string[], first: number): number {
+      function tag(strings: TemplateStringsArray, first: number): number {
         return first;
       }
       export function test(): number {

@@ -25,6 +25,7 @@ import {
   resolveWasmType,
   typedArrayVecStorage,
 } from "../index.js";
+import { coercionPlan } from "../coercion-plan.js"; // (#2934 1c) single coercion table for the copy-ctor element bridge
 import { getOrRegisterDvWindowType } from "../dataview-native.js"; // (#2159/#38) DataView windowing wrapper
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
@@ -72,6 +73,7 @@ import { localGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitFnctorProtoGet } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
+import { funcSignatureOf } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 // #2146: resolveEnclosingClassName now lives in shared.ts (imported above).
 
@@ -1813,26 +1815,9 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
  * expected anyref, found externref`). Returns `undefined` for void / unknown.
  */
 function getFuncResultType(ctx: CodegenContext, funcIdx: number): ValType | undefined {
-  if (funcIdx < ctx.numImportFuncs) {
-    let importFuncCount = 0;
-    for (const imp of ctx.mod.imports) {
-      if (imp.desc.kind === "func") {
-        if (importFuncCount === funcIdx) {
-          const typeDef = ctx.mod.types[imp.desc.typeIdx];
-          if (typeDef?.kind === "func" && typeDef.results.length > 0) return typeDef.results[0];
-          return undefined;
-        }
-        importFuncCount++;
-      }
-    }
-    return undefined;
-  }
-  const func = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
-  if (func) {
-    const typeDef = ctx.mod.types[func.typeIdx];
-    if (typeDef?.kind === "func" && typeDef.results.length > 0) return typeDef.results[0];
-  }
-  return undefined;
+  // #1916 S2 — funcSignatureOf is the positional-read chokepoint (func-space.ts).
+  const sig = funcSignatureOf(ctx, funcIdx);
+  return sig && sig.results.length > 0 ? sig.results[0] : undefined;
 }
 
 /**
@@ -3619,12 +3604,42 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
                     : srcArrDef.element.kind === "i16"
                       ? "array.get_s"
                       : "array.get";
-                const convertInstrs: Instr[] =
-                  srcArrDef.element.kind === "f64" && dstArrDef.element.kind !== "f64"
-                    ? [{ op: "i32.trunc_sat_f64_s" } as Instr]
-                    : srcArrDef.element.kind !== "f64" && dstArrDef.element.kind === "f64"
-                      ? [{ op: "f64.convert_i32_u" } as Instr]
-                      : [];
+                // (#2934 1c) The element-conversion matrix keys on the READ
+                // value's stack kind (packed i8/i16 widen to i32 via get_u/_s).
+                // The old matrix only knew f64↔int, so an EXTERNREF source
+                // element (`new Uint8Array([102])` where the literal compiled
+                // to an any[] externref vec) flowed uncoerced into the packed
+                // `array.set` — "array.set[2] expected i32, found array.get of
+                // externref" (the toBase64/`__cb_0` invalid-Wasm cluster). An
+                // externref element now unboxes (ToNumber) and truncates to
+                // integer storage; packed stores truncate width for free.
+                const srcReadKind =
+                  srcArrDef.element.kind === "i8" || srcArrDef.element.kind === "i16" ? "i32" : srcArrDef.element.kind;
+                const dstStoreKind =
+                  dstArrDef.element.kind === "i8" || dstArrDef.element.kind === "i16" ? "i32" : dstArrDef.element.kind;
+                let convertInstrs: Instr[];
+                if (srcReadKind === "externref" && dstStoreKind !== "externref") {
+                  // ToNumber the boxed element via the single coercion table
+                  // (#2108 — coercionPlan's externref→i32 row is exactly
+                  // unbox + trunc_sat; externref→f64 is the bare unbox).
+                  // Integer storage then truncates width on the packed store.
+                  addUnionImports(ctx);
+                  const plan = coercionPlan(
+                    { kind: "externref" },
+                    { kind: dstStoreKind === "f64" ? "f64" : "i32" },
+                    {
+                      boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
+                      unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+                    },
+                  );
+                  convertInstrs = plan?.instrs ?? [];
+                } else if (srcReadKind === "f64" && dstStoreKind !== "f64" && dstStoreKind !== "externref") {
+                  convertInstrs = [{ op: "i32.trunc_sat_f64_s" } as Instr];
+                } else if (srcReadKind !== "f64" && srcReadKind !== "externref" && dstStoreKind === "f64") {
+                  convertInstrs = [{ op: "f64.convert_i32_u" } as Instr];
+                } else {
+                  convertInstrs = [];
+                }
 
                 fctx.body.push({
                   op: "block",

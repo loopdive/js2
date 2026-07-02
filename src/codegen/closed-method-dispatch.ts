@@ -44,6 +44,7 @@ import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -214,7 +215,7 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
 
     const funcIdx = ctx.funcMap.get(`${structName}_${methodName}`);
     if (funcIdx === undefined) continue;
-    const funcDef = mod.functions[funcIdx - ctx.numImportFuncs];
+    const funcDef = definedFuncAt(ctx, funcIdx);
     const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
     if (!funcType || funcType.kind !== "func") continue;
     // Must be `this` + (exactArity) declared params, unless vararg (any arity).
@@ -311,7 +312,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     const arity = slash >= 0 ? Number.parseInt(key.slice(slash + 1), 10) || 0 : 0;
     const dispIdx = ctx.funcMap.get(dispatcherName(methodName, arity));
     if (dispIdx === undefined) continue;
-    const dispFn = mod.functions[dispIdx - ctx.numImportFuncs];
+    const dispFn = definedFuncAt(ctx, dispIdx);
     if (!dispFn) continue;
 
     // Param layout: local 0 = recv, locals 1..arity = externref args,
@@ -516,7 +517,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   for (const methodName of ctx.closedMethodDispatchVarargNames ?? []) {
     const dispIdx = ctx.funcMap.get(varargDispatcherName(methodName));
     if (dispIdx === undefined) continue;
-    const dispFn = mod.functions[dispIdx - ctx.numImportFuncs];
+    const dispFn = definedFuncAt(ctx, dispIdx);
     if (!dispFn) continue;
 
     // Param layout: local 0 = recv, local 1 = args (externref), local 2 = `any`.

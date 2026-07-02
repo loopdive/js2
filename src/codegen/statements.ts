@@ -42,6 +42,7 @@ import {
 } from "./statements/loops.js";
 import { compileNestedClassDeclaration, compileNestedFunctionDeclaration } from "./statements/nested-declarations.js";
 import { compileVariableStatement } from "./statements/variables.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the existing public API surface
@@ -257,7 +258,7 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // Now that we're in statement order, those locals should be available.
     if (funcName && hasReservedBodylessEntry) {
       const funcIdx = ctx.funcMap.get(funcName);
-      const reservedEntry = funcIdx !== undefined ? ctx.mod.functions[funcIdx - ctx.numImportFuncs] : undefined;
+      const reservedEntry = funcIdx !== undefined ? definedFuncAt(ctx, funcIdx) : undefined;
       compileNestedFunctionDeclaration(ctx, fctx, stmt, reservedEntry ? { reuseReservedEntry: reservedEntry } : {});
       ctx.preRegisteredBodyless?.delete(funcName);
     } else {

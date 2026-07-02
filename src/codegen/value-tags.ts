@@ -30,31 +30,15 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 /**
  * Canonical JS-type tag for the `$AnyValue` boxed representation.
  *
- * Invariant V1 (tag fidelity): the tag always equals the value's ECMAScript
- * type partition (the `typeof` partition with `null` split out). No consumer may
- * infer a JS type from a Wasm kind.
- *
- * Invariant V2 (numeric class): tags 2 and 3 are ONE JS type (`number`) — one
- * uses the i32 payload, one the f64 payload. Equality / relational / typeof /
- * ToString helpers must treat `{2,3}` as a single class.
- *
- * These values MUST match the runtime tags written by the `__any_box_*` helpers
- * in `any-helpers.ts` (asserted by tests). `Function` (7) is reserved for a
- * later phase (today closures box as `Object`).
- *
- * (Plain `enum`, not `const enum` — Biome's `noConstEnum` forbids the latter;
- * the numeric values are still inlined at our use sites.)
+ * #2949 slice 1 — the enum itself moved to the dependency-free leaf module
+ * `js-tag.ts` so the IR type lattice (`src/ir/nodes.ts`, which carries
+ * `{ kind: "dynamic", tag?: JsTag }`) can import it without pulling this
+ * module's `ts-api` / codegen-context dependency chain into the IR leaf.
+ * Re-exported here so every existing import site is unchanged; this file
+ * remains the tag POLICY home (classifier, boxing entry point, sentinel).
+ * See `js-tag.ts` for the invariants (V1 tag fidelity, V2 numeric class).
  */
-export enum JsTag {
-  Null = 0,
-  Undefined = 1,
-  NumberI32 = 2,
-  NumberF64 = 3,
-  Boolean = 4,
-  String = 5,
-  Object = 6,
-  Function = 7,
-}
+export { JsTag, jsTagUnboxKind } from "./js-tag.js";
 
 /** Static JS-type classification of an expression, resolved from its TS type. */
 export type JsStaticType =

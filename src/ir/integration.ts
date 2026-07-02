@@ -24,6 +24,7 @@
 
 import { ts } from "../ts-api.js";
 
+import { ensureAnyValueType } from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic
 import { getOrRegisterPromiseType } from "../codegen/async-scheduler.js";
 import { addGeneratorImports, addIteratorImports, addStringImports } from "../codegen/index.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
@@ -80,6 +81,7 @@ import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance } from "./verify-alloc.js";
 import type { FieldDef, FuncTypeDef, Instr, StructTypeDef, ValType } from "./types.js";
+import { definedFuncAt, replaceDefinedFuncAt } from "../codegen/func-space.js"; // (#1916 S2) positional read/write chokepoints
 
 export interface IrIntegrationReport {
   readonly compiled: readonly string[];
@@ -681,15 +683,15 @@ export function compileIrPathFunctions(
         errors.push({ func: name, message: `no funcIdx allocated for ${name}` });
         continue;
       }
-      const localIdx = funcIdx - ctx.numImportFuncs;
-      if (localIdx < 0 || localIdx >= ctx.mod.functions.length) {
+      // #1916 S2 — definedFuncAt/replaceDefinedFuncAt are the positional
+      // read/write chokepoints (func-space.ts).
+      const existing = definedFuncAt(ctx, funcIdx);
+      if (!existing) {
         errors.push({ func: name, message: `funcIdx ${funcIdx} out of local range for ${name}` });
         continue;
       }
 
       const { func: wasmFunc } = lowerIrFunctionToWasm(entry.fn, resolver);
-
-      const existing = ctx.mod.functions[localIdx];
       // #1370 Phase B: signature parity guard for class methods.
       //
       // The legacy `class-bodies.ts` pass pre-allocated this method's
@@ -722,13 +724,13 @@ export function compileIrPathFunctions(
       // here, where the full module type info is available to enforce the same
       // guards (param-count + return-type match, never inside a try-with-handler).
       const tcoBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
-      ctx.mod.functions[localIdx] = {
+      replaceDefinedFuncAt(ctx, funcIdx, {
         name: existing.name,
         typeIdx: wasmFunc.typeIdx,
         locals: wasmFunc.locals,
         body: tcoBody,
         exported: existing.exported,
-      };
+      });
       compiled.push(name);
     } catch (e) {
       errors.push({
@@ -1095,6 +1097,23 @@ function makeResolver(
     resolveString(): ValType {
       if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
         return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+      }
+      return { kind: "externref" };
+    },
+    // -------------------------------------------------------------------
+    // Dynamic (boxed-any) carrier dispatch (#2949 slice 1).
+    //
+    // MUST match legacy `resolveWasmType`'s any/unknown arm EXACTLY
+    // (codegen/index.ts — "any/unknown → ref_null $AnyValue in fast mode,
+    // externref otherwise") so IR-claimed and legacy-compiled functions
+    // agree on the `any` ABI. `ensureAnyValueType` is idempotent and only
+    // APPENDS a type (never shifts existing indices), the same lazy
+    // registration legacy performs at its own first `any` use.
+    // -------------------------------------------------------------------
+    resolveDynamic(): ValType {
+      if (ctx.fast) {
+        ensureAnyValueType(ctx);
+        return { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx };
       }
       return { kind: "externref" };
     },
@@ -1557,6 +1576,10 @@ function irTypeKey(t: IrType): string {
   if (t.kind === "extern") return `extern:${t.className}`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(irTypeKey).join(",")}>`;
+  // #2949 — dynamic is keyed with its optional JsTag refinement: two
+  // dynamics with different refinements are distinct types (irTypeEquals is
+  // exact on the tag), so their keys must differ too.
+  if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic:${t.tag}`;
   return `boxed<${irTypeKey(t.inner)}>`;
 }
 

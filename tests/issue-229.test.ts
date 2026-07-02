@@ -4,7 +4,7 @@ import { compileToWasm, assertEquivalent } from "./equivalence/helpers";
 describe("Issue #229: Tagged template cache", () => {
   it("basic tagged template does not crash", async () => {
     const exports = await compileToWasm(`
-      function tag(strings: string[]): number {
+      function tag(strings: TemplateStringsArray): number {
         return 42;
       }
       export function test(): number {
@@ -17,13 +17,13 @@ describe("Issue #229: Tagged template cache", () => {
   it("tagged template called multiple times returns cached template object", async () => {
     await assertEquivalent(
       `
-      function eq(a: string[], b: string[]): number {
+      function eq(a: TemplateStringsArray, b: TemplateStringsArray): number {
         return a === b ? 1 : 0;
       }
-      function tag(strings: string[]): string[] {
+      function tag(strings: TemplateStringsArray): TemplateStringsArray {
         return strings;
       }
-      function getTemplate(): string[] {
+      function getTemplate(): TemplateStringsArray {
         return tag\`hello\`;
       }
       export function test(): number {
@@ -39,7 +39,7 @@ describe("Issue #229: Tagged template cache", () => {
   it("different call sites produce different template objects", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[]): string[] {
+      function tag(strings: TemplateStringsArray): TemplateStringsArray {
         return strings;
       }
       export function test(): number {
@@ -55,10 +55,10 @@ describe("Issue #229: Tagged template cache", () => {
   it("same site caches even with different expression values", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[], ...subs: number[]): string[] {
+      function tag(strings: TemplateStringsArray, ...subs: number[]): TemplateStringsArray {
         return strings;
       }
-      function getTemplate(x: number): string[] {
+      function getTemplate(x: number): TemplateStringsArray {
         return tag\`head\${x}tail\`;
       }
       export function test(): number {
@@ -73,7 +73,7 @@ describe("Issue #229: Tagged template cache", () => {
 
   it("tagged template in a loop does not crash (array bounds)", async () => {
     const exports = await compileToWasm(`
-      function tag(strings: string[]): number {
+      function tag(strings: TemplateStringsArray): number {
         return 1;
       }
       export function test(): number {
@@ -90,13 +90,13 @@ describe("Issue #229: Tagged template cache", () => {
   it("same call site across multiple function calls returns cached ref", async () => {
     await assertEquivalent(
       `
-      function eq(a: string[], b: string[]): number {
+      function eq(a: TemplateStringsArray, b: TemplateStringsArray): number {
         return a === b ? 1 : 0;
       }
-      function tag(strings: string[]): string[] {
+      function tag(strings: TemplateStringsArray): TemplateStringsArray {
         return strings;
       }
-      function getIt(): string[] {
+      function getIt(): TemplateStringsArray {
         return tag\`cached\`;
       }
       export function test(): number {
@@ -109,7 +109,7 @@ describe("Issue #229: Tagged template cache", () => {
 
   it("tagged template with late string constant (bool-to-string) does not crash", async () => {
     const exports = await compileToWasm(`
-      function tag(strings: string[]): number {
+      function tag(strings: TemplateStringsArray): number {
         return 1;
       }
       export function test(): number {

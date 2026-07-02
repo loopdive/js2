@@ -177,6 +177,22 @@ export interface IrLowerResolver {
    */
   resolveString?(): ValType;
   /**
+   * #2949 slice 1 — resolve the Wasm value type used for `IrType.dynamic`
+   * (the boxed-any carrier) in the active backend/mode. The contract is the
+   * ratified #1852 representation table, and the returned ValType MUST match
+   * legacy `resolveWasmType`'s any/unknown arm exactly so IR-claimed and
+   * legacy-compiled functions agree on the `any` ABI:
+   *   - WasmGC fast/standalone mode → `ref_null $AnyValue` (registered via
+   *     `ensureAnyValueType`; the `__any_box_*` helper family's carrier).
+   *   - WasmGC host (non-fast) mode → `externref` (host-boxed values).
+   *   - Linear backend → DEFERRED (#1852-G4 / #2956): omit the method;
+   *     lowering a dynamic-typed function there fails loudly.
+   * Optional so Phase-1 resolvers without dynamic support can omit it; a
+   * function that actually carries a dynamic-typed value fails at lowering
+   * time when it's missing.
+   */
+  resolveDynamic?(): ValType;
+  /**
    * Slice 6 part 4 (#1183) refactored in #1185: returns whether the
    * compiler is in native-strings mode. Drives the for-of strategy
    * switch for `string`-typed iterables in `lowerForOfStatement`.
@@ -1025,6 +1041,14 @@ export function lowerIrFunctionBody<S>(
         for (const op of instr.ops) emitter.pushRaw(out, op);
         return;
       case "box": {
+        // #2949 slice 1 — box-to-dynamic is DEFINED at the IR level (see
+        // nodes.ts IrInstrBox) but its lowering (through the canonical
+        // `__any_box_*` family via the emitter contract, #2953) lands in
+        // slice 3. Staged error so a premature producer fails loudly with
+        // the right pointer instead of the misleading union message below.
+        if (instr.toType.kind === "dynamic") {
+          throw new Error(`ir/lower: box-to-dynamic lowering lands in #2949 slice 3 (${func.name})`);
+        }
         // `toType` must be a union (V1 only boxes into tagged unions). The
         // tag + value are pushed onto the stack in declaration order, then
         // struct.new builds the union instance.
@@ -1057,6 +1081,10 @@ export function lowerIrFunctionBody<S>(
         // Caller must have proved the tag already; lowering is a plain
         // `struct.get $val`. A future debug mode may prepend a tag check.
         const valueIrType = typeOf(instr.value);
+        // #2949 slice 1 — unbox-from-dynamic lowering lands in slice 3.
+        if (valueIrType.kind === "dynamic") {
+          throw new Error(`ir/lower: unbox-from-dynamic lowering lands in #2949 slice 3 (${func.name})`);
+        }
         if (valueIrType.kind !== "union") {
           throw new Error(`ir/lower: unbox value must be a union IrType, got ${valueIrType.kind} (${func.name})`);
         }
@@ -1079,8 +1107,18 @@ export function lowerIrFunctionBody<S>(
       case "tag.test": {
         // Emit struct.get $tag; i32.const <tagFor(tag)>; i32.eq.
         const valueIrType = typeOf(instr.value);
+        // #2949 slice 1 — tag.test-on-dynamic lowering lands in slice 3.
+        if (valueIrType.kind === "dynamic") {
+          throw new Error(`ir/lower: tag.test-on-dynamic lowering lands in #2949 slice 3 (${func.name})`);
+        }
         if (valueIrType.kind !== "union") {
           throw new Error(`ir/lower: tag.test value must be a union IrType, got ${valueIrType.kind} (${func.name})`);
+        }
+        // #2949 — `tag` became optional (dynamic operands use `jsTag`); the
+        // union path still REQUIRES it (verifier enforces; this is the
+        // structural backstop).
+        if (!instr.tag) {
+          throw new Error(`ir/lower: tag.test on a union operand requires a ValType tag (${func.name})`);
         }
         // #1926 — unwrap each member IrType to its backend ValType.
         const tagTestMembers = valueIrType.members.map((m) => memberValType(m, func.name));
@@ -2895,6 +2933,17 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     }
     return { kind: "ref", typeIdx: union.typeIdx };
   }
+  if (t.kind === "dynamic") {
+    // #2949 slice 1 — the dynamic leaf lowers to the module's canonical
+    // boxed-any carrier (see `IrLowerResolver.resolveDynamic` for the #1852
+    // contract). The optional JsTag refinement is compile-time knowledge
+    // only and never changes the carrier ValType.
+    const dyn = resolver.resolveDynamic?.();
+    if (!dyn) {
+      throw new Error(`ir/lower: resolver cannot lower dynamic IrType (resolveDynamic missing) (${funcName})`);
+    }
+    return dyn;
+  }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell
   // registry so legacy and IR ref cells share one WasmGC struct.
@@ -2935,6 +2984,8 @@ function describeIrTypeShallow(t: IrType): string {
   if (t.kind === "extern") return `extern<${t.className}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrTypeShallow).join(",")}>`;
+  // #2949 — dynamic leaf; render the optional JsTag refinement when present.
+  if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic<tag:${t.tag}>`;
   return `boxed<${describeIrTypeShallow(t.inner)}>`;
 }
 

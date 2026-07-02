@@ -48,6 +48,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coercionInstrs } from "./type-coercion.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /** Mangle a property name into the reserved member-get dispatcher name. */
 function dispatcherName(propName: string): string {
@@ -146,7 +147,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
   for (const propName of ctx.memberGetDispatchNames ?? []) {
     const dispIdx = ctx.funcMap.get(dispatcherName(propName));
     if (dispIdx === undefined) continue;
-    const dispFn = mod.functions[dispIdx - ctx.numImportFuncs];
+    const dispFn = definedFuncAt(ctx, dispIdx);
     if (!dispFn) continue;
 
     // Complete candidate set (full type table). Unlike the WRITE side, a READ

@@ -43,6 +43,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { buildVecFromExternMaterializer, coercionInstrs, getVecInfo } from "./type-coercion.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
  * Mangle a property name + fallback strictness into the reserved dispatcher name.
@@ -143,7 +144,7 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     const strict = sep >= 0 ? key.slice(sep + 1) === "S" : true;
     const dispIdx = ctx.funcMap.get(dispatcherName(propName, strict));
     if (dispIdx === undefined) continue;
-    const dispFn = mod.functions[dispIdx - ctx.numImportFuncs];
+    const dispFn = definedFuncAt(ctx, dispIdx);
     if (!dispFn) continue;
 
     // Enumerate the COMPLETE candidate set now (full type table). Only mutable

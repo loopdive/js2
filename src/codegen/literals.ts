@@ -79,6 +79,7 @@ import {
   buildAccessorClosure,
   ensureStructAccessorGlobal,
 } from "./struct-accessor-closure.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
@@ -1941,8 +1942,7 @@ export function compileObjectLiteralForStruct(
       // defined (the `existingFuncIdx === undefined && !forkToPrimitive`
       // short-circuit above already `continue`d), but TS can't narrow it.
       if (existingFuncIdx === undefined) continue;
-      const localIdx = existingFuncIdx - ctx.numImportFuncs;
-      const existingFunc = ctx.mod.functions[localIdx];
+      const existingFunc = definedFuncAt(ctx, existingFuncIdx);
       if (!existingFunc) continue;
       const existingType = ctx.mod.types[existingFunc.typeIdx];
       if (!existingType || existingType.kind !== "func") continue;
@@ -2575,8 +2575,7 @@ export function compileObjectLiteralForStruct(
       // a prior literal's function was dropped. Resolving the slot blindly
       // then crashed on `undefined.typeIdx` (#1608). Treat an unresolvable
       // slot as "no existing function" and synthesize a fresh one.
-      const localIdx = existingFuncIdx !== undefined ? existingFuncIdx - ctx.numImportFuncs : -1;
-      const existingFunc = existingFuncIdx !== undefined && localIdx >= 0 ? ctx.mod.functions[localIdx] : undefined;
+      const existingFunc = existingFuncIdx !== undefined ? definedFuncAt(ctx, existingFuncIdx) : undefined;
       let methodFunc: WasmFunction;
       if (existingFunc !== undefined) {
         methodFunc = existingFunc;

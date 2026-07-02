@@ -16,6 +16,7 @@ import {
   isStringWrapperType,
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
+import { definedFuncAt } from "./func-space.js";
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
 import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
@@ -1504,8 +1505,7 @@ function emitGetterCallWithDummy(
   if (!emitDummyStruct(ctx, fctx, className)) return null;
   fctx.body.push({ op: "call", funcIdx });
   // Determine return type from the getter's function type
-  const localIdx = funcIdx - ctx.numImportFuncs;
-  const funcDef = localIdx >= 0 ? ctx.mod.functions[localIdx] : undefined;
+  const funcDef = definedFuncAt(ctx, funcIdx);
   if (funcDef) {
     const funcType = ctx.mod.types[funcDef.typeIdx];
     if (funcType?.kind === "func" && funcType.results.length > 0) {
@@ -2263,7 +2263,7 @@ export function compileOptionalPropertyAccess(
         } else if (ctx.classAccessorSet.has(accessorKey) && getterIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: getterIdx });
           // Determine getter return type
-          const funcDef = ctx.mod.functions[getterIdx - ctx.numImportFuncs];
+          const funcDef = definedFuncAt(ctx, getterIdx);
           if (funcDef) {
             const typeDef = ctx.mod.types[funcDef.typeIdx];
             if (typeDef && typeDef.kind === "func" && typeDef.results.length > 0) {
@@ -3799,7 +3799,7 @@ export function compilePropertyAccess(
           // Resolve the getter funcIdx AFTER the throw branch settled imports.
           const getterIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName))!;
           successInstrs.push({ op: "call", funcIdx: getterIdx });
-          const funcDef = ctx.mod.functions[getterIdx - ctx.numImportFuncs];
+          const funcDef = definedFuncAt(ctx, getterIdx);
           const typeDef = funcDef ? ctx.mod.types[funcDef.typeIdx] : undefined;
           resultKind =
             typeDef && typeDef.kind === "func" && typeDef.results.length > 0
@@ -5173,8 +5173,7 @@ export function compilePropertyAccess(
         // Use actual Wasm return type of the getter function — TS checker
         // may report 'any' (externref) for Object.defineProperty accessors
         // while the getter actually returns f64/i32/ref.
-        const getterLocalIdx = funcIdx - ctx.numImportFuncs;
-        const getterDef = getterLocalIdx >= 0 ? ctx.mod.functions[getterLocalIdx] : undefined;
+        const getterDef = definedFuncAt(ctx, funcIdx);
         if (getterDef) {
           const getterType = ctx.mod.types[getterDef.typeIdx];
           if (getterType?.kind === "func" && getterType.results.length > 0) {
@@ -7078,8 +7077,7 @@ export function compileElementAccessBody(
             if (funcIdx !== undefined) {
               fctx.body.push({ op: "call", funcIdx });
               // Use actual Wasm return type of the getter
-              const elGetterLocalIdx = funcIdx - ctx.numImportFuncs;
-              const elGetterDef = elGetterLocalIdx >= 0 ? ctx.mod.functions[elGetterLocalIdx] : undefined;
+              const elGetterDef = definedFuncAt(ctx, funcIdx);
               if (elGetterDef) {
                 const elGetterType = ctx.mod.types[elGetterDef.typeIdx];
                 if (elGetterType?.kind === "func" && elGetterType.results.length > 0) {

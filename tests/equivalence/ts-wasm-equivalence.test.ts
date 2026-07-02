@@ -393,7 +393,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — basic", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[], a: number, b: number): number {
+      function tag(strings: TemplateStringsArray, a: number, b: number): number {
         return strings.length + a + b;
       }
       export function test1(): number {
@@ -407,7 +407,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — no substitutions", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[]): number {
+      function tag(strings: TemplateStringsArray): number {
         return strings.length;
       }
       export function test1(): number {
@@ -421,7 +421,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — rest params", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[], ...values: number[]): number {
+      function tag(strings: TemplateStringsArray, ...values: number[]): number {
         return strings.length + values.length;
       }
       export function test1(): number {
@@ -441,7 +441,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — string content access", async () => {
     await assertEquivalent(
       `
-      function first(strings: string[]): string {
+      function first(strings: TemplateStringsArray): string {
         return strings[0];
       }
       export function test1(): string {
@@ -455,7 +455,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — substitution values", async () => {
     await assertEquivalent(
       `
-      function sum(strings: string[], a: number, b: number): number {
+      function sum(strings: TemplateStringsArray, a: number, b: number): number {
         return a + b;
       }
       export function test1(): number {
@@ -471,7 +471,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — multiple string parts concatenated", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[], a: number): string {
+      function tag(strings: TemplateStringsArray, a: number): string {
         return strings[0] + String(a) + strings[1];
       }
       export function test1(): string {
@@ -485,7 +485,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — return substitution directly", async () => {
     await assertEquivalent(
       `
-      function identity(strings: string[], val: number): number {
+      function identity(strings: TemplateStringsArray, val: number): number {
         return val;
       }
       export function test1(): number {
@@ -499,7 +499,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — string parts count with expressions", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[], a: number, b: number, c: number): number {
+      function tag(strings: TemplateStringsArray, a: number, b: number, c: number): number {
         return strings.length;
       }
       export function test1(): number {
@@ -513,7 +513,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — excess substitutions dropped", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[]): number {
+      function tag(strings: TemplateStringsArray): number {
         return strings.length;
       }
       export function test1(): number {
@@ -527,7 +527,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — empty leading string part", async () => {
     await assertEquivalent(
       `
-      function first(strings: string[]): string {
+      function first(strings: TemplateStringsArray): string {
         return strings[0];
       }
       export function test1(): string {
@@ -541,7 +541,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — raw property access", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[]): string {
+      function tag(strings: TemplateStringsArray): string {
         return strings.raw[0];
       }
       export function test1(): string {
@@ -555,7 +555,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — raw vs cooked escape sequences", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[]): string {
+      function tag(strings: TemplateStringsArray): string {
         return strings.raw[0];
       }
       export function test1(): string {
@@ -569,7 +569,7 @@ describe("TS ↔ Wasm equivalence", () => {
   it("tagged template literals — raw length matches cooked length", async () => {
     await assertEquivalent(
       `
-      function tag(strings: string[], a: number): number {
+      function tag(strings: TemplateStringsArray, a: number): number {
         return strings.raw.length;
       }
       export function test1(): number {

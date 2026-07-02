@@ -44,6 +44,7 @@ import type { CodegenContext } from "./context/types.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { emitRyuToBuf } from "./number-ryu.js";
 import { addFuncType } from "./registry/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 
 const BUF_CAP = 256;
 const MAX_SAFE_INTEGER = 9007199254740991;
@@ -59,10 +60,16 @@ const C_LC_E = 101; // 'e'
 const C_LC_A_MINUS_10 = 87; // 'a' - 10
 
 /**
- * Allocate the next defined-function index. Mirrors parse-number-native.ts.
+ * #1916 S3 — FIRST STABLE-REGIME PRODUCER. This family mints layout-independent
+ * stable handles (`mintDefinedFunc`) instead of live absolute indices: the
+ * handles are baked into call immediates and funcMap entries, survive every
+ * late-import shift untouched (the shifters skip the stable range), and
+ * resolve to concrete indices exactly once, at emit (resolve-layout.ts).
+ * Every push below goes through `pushDefinedFunc`, which records the
+ * ordinal → position mapping.
  */
 function nextFuncIdx(ctx: CodegenContext): number {
-  return ctx.numImportFuncs + ctx.mod.functions.length;
+  return mintDefinedFunc(ctx);
 }
 
 /**
@@ -145,7 +152,7 @@ function emitFinalize(ctx: CodegenContext): number {
     body,
     exported: false,
   };
-  ctx.mod.functions.push(fn);
+  pushDefinedFunc(ctx, funcIdx, fn);
   return funcIdx;
 }
 
@@ -498,7 +505,7 @@ function emitToString(
   const typeIdx = addFuncType(ctx, [f64], [extern]);
   const funcIdx = nextFuncIdx(ctx);
   ctx.funcMap.set("number_toString", funcIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "number_toString",
     typeIdx,
     locals: [
@@ -839,7 +846,7 @@ function emitToStringRadix(
   const typeIdx = addFuncType(ctx, [f64, f64], [extern]);
   const funcIdx = nextFuncIdx(ctx);
   ctx.funcMap.set("number_toString_radix", funcIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "number_toString_radix",
     typeIdx,
     locals: [
@@ -1066,7 +1073,7 @@ function emitToFixed(
   const typeIdx = addFuncType(ctx, [f64, f64], [extern]);
   const funcIdx = nextFuncIdx(ctx);
   ctx.funcMap.set("number_toFixed", funcIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "number_toFixed",
     typeIdx,
     locals: [
@@ -1405,7 +1412,7 @@ function emitToExponential(
   const typeIdx = addFuncType(ctx, [f64, f64], [extern]);
   const funcIdx = nextFuncIdx(ctx);
   ctx.funcMap.set("number_toExponential", funcIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "number_toExponential",
     typeIdx,
     locals: [
@@ -1682,7 +1689,7 @@ function emitToPrecision(
   const typeIdx = addFuncType(ctx, [f64, f64], [extern]);
   const funcIdx = nextFuncIdx(ctx);
   ctx.funcMap.set("number_toPrecision", funcIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "number_toPrecision",
     typeIdx,
     locals: [

@@ -26,6 +26,7 @@ import { allocLocal } from "../context/locals.js";
 import { nextModuleGlobalIdx } from "../registry/imports.js";
 import { addFuncType } from "../registry/types.js";
 import { compileArrowAsClosure, resolveComputedKeyExpression } from "../shared.js";
+import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /** Canonical proto-owner token for `Array.prototype`. */
 const ARRAY_PROTO_TOKEN = "Array";
@@ -229,8 +230,7 @@ export function fillProtoIteratorDriver(ctx: CodegenContext): void {
   if (!ctx.protoIteratorDriverReserved) return;
   const driverIdx = ctx.funcMap.get(DRIVE_PROTO_ITERATOR);
   if (driverIdx === undefined) return;
-  const fnArrayIdx = driverIdx - ctx.numImportFuncs;
-  const driverFn = ctx.mod.functions[fnArrayIdx];
+  const driverFn = definedFuncAt(ctx, driverIdx);
   if (!driverFn) return;
 
   const callMethod0 = ctx.funcMap.get("__call_fn_method_0");

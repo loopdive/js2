@@ -33,6 +33,7 @@ import type { InnerResult } from "./shared.js";
 import { compileArrowAsClosure, compileExpression, VOID_RESULT } from "./shared.js";
 import { isNullOrUndefinedLiteral } from "./destructuring-params.js";
 import { coercionInstrs } from "./type-coercion.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
  *  object keys (only GC eqrefs can be compared by identity). */
@@ -1858,8 +1859,7 @@ function nativeStrDataFieldIdx(ctx: CodegenContext): number {
 function fixHashLocals(ctx: CodegenContext): void {
   const idx = ctx.mapHelpers.get("__hash_anyref");
   if (idx === undefined) return;
-  const fnPos = idx - ctx.numImportFuncs;
-  const fn = ctx.mod.functions[fnPos] as { locals: { name: string; type: ValType }[] } | undefined;
+  const fn = definedFuncAt(ctx, idx) as { locals: { name: string; type: ValType }[] } | undefined;
   if (!fn) return;
   fn.locals = [
     { name: "nv", type: { kind: "f64" } }, // local 1

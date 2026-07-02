@@ -65,6 +65,7 @@ import {
 import { adjustRethrowDepth, collectInstrs, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
 import { collectPatternBindingNames } from "./tdz.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
+import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 export function compileWhileStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.WhileStatement): void {
   // block $break
@@ -4786,7 +4787,7 @@ function compileForOfDirectIterator(
   iterMethodIdx: number,
 ): boolean {
   // Get the return type of the @@iterator method to find the iterator struct
-  const iterMethodDef = ctx.mod.functions[iterMethodIdx - ctx.numImportFuncs];
+  const iterMethodDef = definedFuncAt(ctx, iterMethodIdx);
   if (!iterMethodDef) return false;
   const iterMethodType = ctx.mod.types[iterMethodDef.typeIdx];
   if (!iterMethodType || iterMethodType.kind !== "func" || iterMethodType.results.length === 0) return false;
@@ -4812,7 +4813,7 @@ function compileForOfDirectIterator(
   if (nextMethodIdx === undefined) return false;
 
   // Get the return type of next() to find the result struct ({value, done})
-  const nextMethodDef = ctx.mod.functions[nextMethodIdx - ctx.numImportFuncs];
+  const nextMethodDef = definedFuncAt(ctx, nextMethodIdx);
   if (!nextMethodDef) return false;
   const nextMethodType = ctx.mod.types[nextMethodDef.typeIdx];
   if (!nextMethodType || nextMethodType.kind !== "func" || nextMethodType.results.length === 0) return false;

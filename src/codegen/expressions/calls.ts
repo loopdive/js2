@@ -7085,10 +7085,36 @@ function compileCallExpression(
       // no standalone carrier — the module would trap). Idempotent.
       if (ctx.standalone) ensureObjectRuntime(ctx);
 
-      // Try compile-time fast path: known struct + literal property name
+      // Try compile-time fast path: known struct + literal property name.
+      // (#2965) Standalone also canonicalizes NON-string literal keys
+      // (`gOPD(obj, -20)` / `gOPD(obj, true)`) to their §7.1.19 ToPropertyKey
+      // string form ("-20"/"true") so they hit the SAME struct fast path a
+      // string-literal key takes. Without this they fell through to the
+      // dynamic `__getOwnPropertyDescriptor` native, which answers `undefined`
+      // for a typed-struct receiver (it only walks `$Object`s), so
+      // `gOPD(obj, -20).value` threw on a property that exists as "-20"
+      // (test262 15.2.3.3-2-* — argument 'P' is a number/boolean). Host/gc
+      // mode is NOT rerouted (its dynamic path delegates ToPropertyKey to the
+      // host import and already passes) — gated on ctx.standalone so host
+      // bytes stay identical.
       const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
       const structName = resolveStructName(ctx, arg0TsType);
-      const propLiteral = ts.isStringLiteral(arg1) ? arg1.text : undefined;
+      const literalKeyText = (e: ts.Expression): string | undefined => {
+        if (ts.isStringLiteral(e)) return e.text;
+        if (!ctx.standalone) return undefined;
+        if (ts.isNumericLiteral(e)) return String(Number(e.text));
+        if (
+          ts.isPrefixUnaryExpression(e) &&
+          e.operator === ts.SyntaxKind.MinusToken &&
+          ts.isNumericLiteral(e.operand)
+        ) {
+          return String(-Number(e.operand.text));
+        }
+        if (e.kind === ts.SyntaxKind.TrueKeyword) return "true";
+        if (e.kind === ts.SyntaxKind.FalseKeyword) return "false";
+        return undefined;
+      };
+      const propLiteral = literalKeyText(arg1);
 
       if (structName && propLiteral !== undefined) {
         const structTypeIdx = ctx.structMap.get(structName);

@@ -469,12 +469,12 @@ via `scripts/diff-test262.ts`.
 
 ### (a) test262 delta — js-host lane, 48,088 shared tests (official + proposals)
 
-| status | baseline (flag OFF) | flagged (IR-first ON) | delta |
-|---|---|---|---|
-| pass | 34,781 | 34,766 | **−15 (−0.031%)** |
-| fail | 12,534 | 12,537 | +3 |
-| compile_error | 576 | 591 | +15 |
-| compile_timeout | 83 | 80 | −3 |
+| status          | baseline (flag OFF) | flagged (IR-first ON) | delta             |
+| --------------- | ------------------- | --------------------- | ----------------- |
+| pass            | 34,781              | 34,766                | **−15 (−0.031%)** |
+| fail            | 12,534              | 12,537                | +3                |
+| compile_error   | 576                 | 591                   | +15               |
+| compile_timeout | 83                  | 80                    | −3                |
 
 15 regressions, 0 improvements, **0 wasm-identical noise, 0 ct-flakes** —
 all 15 are real compiler-output differences, and they collapse into exactly
@@ -600,3 +600,39 @@ before/after pairs. Run AFTER Trap-4 lands so measurements are clean.
 **Superseded branch:** `issue-2138-ir-first-slice1` (origin) — my
 unconditional-hoist Slice 1, superseded by the landed flag-conditional
 implementation (6ac915824). Safe to delete; its issue-file docs were ported.
+
+## Measurement addendum (sr-irfirst, 2026-07-02) — the claim-rate stat, measured
+
+Closes the one item the merge-reconciliation note above left open ("the
+claim-rate ask … remains open as a runner extension"): measured at sample
+scale WITHOUT a runner change, via `scripts/ir-first-sweep.mts` (committed
+with this addendum — compiles each corpus file twice, flag off/on, in one
+process, and reads `CompileResult.irFirstSkipped` directly).
+
+**Corpus:** all example files + stride-20 test262 sample = 2,671 files,
+compiled on `main@bcea34ed1` (INCLUDES gate 4, unlike the full CI run above —
+gate 4 is latent, so results are comparable). Raw JSON:
+`.tmp/slice3-sweep-backup.json` on the measurement branch; regenerate with
+`STRIDE=20 npx tsx scripts/ir-first-sweep.mts <checkout> <out.json>`.
+
+- **Claim/skip rate: 14 / 437 = 3.2%** of top-level FunctionDeclarations in
+  flag-off-compiling files (497 in all files). Low as expected — raw test262
+  is untyped sloppy-mode JS, so the TypeMap resolves few signatures. On the
+  TYPED corpus the rate is what matters: `benchmarks.ts` skips 4/4 of its
+  benchable functions (fib, bench_fib, bench_loop, bench_string).
+- **Compile-time: the compile-once dividend is real and visible exactly
+  where claims are dense** — same-process A/B (not cross-run CI lottery):
+  `benchmarks.ts` 4,977 → 2,499 ms (**−50%**), `fib.ts` 863 → 660 ms
+  (**−24%**). Aggregate over all 2,671 files: −1.2% (dominated by unclaimed
+  files; consistent with the full run's "no measurable aggregate change"
+  verdict).
+- **Divergences: ZERO in both directions** (2,258 flag-off-ok files all
+  flag-on-ok; no reverse flips). Consistent with the full run's finding that
+  the #2945 class is retired; the #2972 harness-function class does not
+  appear because this sweep compiles raw files without the test262 harness
+  prelude (the full run remains the authority on harness-exposed
+  divergences). Nothing new to file.
+- **Re-measure trigger:** after #2856's host arms land (gate 4 becomes
+  load-bearing) — rerun the sweep; the skip set should stay trap-free while
+  the claim rate rises. The suite-scale per-run stat still needs the small
+  runner extension (`irFirstSkipped` into the JSONL rows) if wanted.
