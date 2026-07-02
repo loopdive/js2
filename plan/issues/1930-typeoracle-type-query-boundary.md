@@ -284,3 +284,72 @@ baseline+preauth; `--update-on-decrease` banks lower counts;
 `--update` reseeds wholesale (intentional changes only, with a written
 reason). Seeded with a +1 pre-authorization for #2972
 (declarations.ts, agreed with dev-2138f 2026-07-02).
+
+## Slice 3 (2026-07-02, dev-2937f) — i32-safety matcher unification: the three-question doctrine + divergence verdicts
+
+Full-body analysis of every matcher (including a SEVENTH the survey missed:
+`isI32SafeExpr` in `function-body.ts:448` — the scalar-local Q-CANON sibling
+that `isI32SafeExprForArray`'s own header says it "mirrors"). The matchers
+resolve into **three genuinely different questions** that MUST NOT merge into
+one predicate:
+
+- **Q-CANON** — "is this VALUE a canonical int32 (no observable i32↔f64
+  divergence — no −0, no overflow, no uint32 reinterpretation)?" Two
+  implementations: `isI32SafeExprForArray` (array packing, #2789) and
+  `isI32SafeExpr` (scalar-local promotion, #1236). Codegen-state-coupled
+  (i32-local sets) → NOT an oracle query (Constraint A); doctrine home is
+  the array matcher's header.
+- **Q-WRAP** — "may this be EVALUATED in i32 such that the result is
+  bit-identical to ToInt32(spec value), GIVEN an enclosing ToInt32
+  (bitwise/`|0`) context?" One implementation: `isI32PureExpr` +
+  `isI32MulSafe` (binary-ops.ts, #1179). Codegen-state-coupled (i32 locals,
+  #2682 loop proofs) → NOT an oracle query.
+- **Q-TAG** — "what JS tag does this statically produce?" Checker lane:
+  oracle `typeFactOf`/`isBooleanProducing`/`isStrictBooleanReturnType`;
+  syntactic lane: `isSyntacticallyBooleanExpr` (NOW defined once in
+  `src/checker/oracle.ts`, extracted from the `declarations.ts` kernel
+  fixpoint) + `isNumericExpr` (representability variant, packaged below).
+
+**Why one predicate is impossible** (the audit's implicit assumption was
+wrong): `a + b` of two i32 locals is Q-WRAP-safe (f64 add exact ≤ 2^32; wrap
+≡ ToInt32) but Q-CANON-UNSAFE (`i32.trunc_sat_f64_s` saturates on overflow —
+the #1236/#2789 miscompile class). `x >>> 1` is Q-WRAP-safe (bits identical
+under ToInt32) but Q-CANON-unsafe (value above 2^31 reinterprets negative).
+
+### Divergence-verdict table
+
+| #      | Divergence (same expression, different answers)                                                                                                            | Verdict                                                                                                                                                                                                 | Action                                                                                                                                                                                                            |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **V1** | Unary `-x` (non-literal operand): array Q-CANON **rejects** (#2789, −0 hazard); scalar Q-CANON **accepted** — violating its own header contract ("not −0") | **Scalar matcher was WRONG — latent silent miscompile.** Probed live on main: `let x = 0; let y = -x; Object.is(y, -0)` → `false` (spec: `true`); the #2789 fix was never propagated to the scalar lane | **FIXED this slice** (`function-body.ts` minus-arm now admits only `-<non-zero int literal>`, verbatim #2789 semantics; demotion-only ⇒ sound). Probe flips to spec. Guard: `tests/issue-1930-i32-safety.test.ts` |
+| **V2** | `a + b` / `a - b`: Q-WRAP accepts, Q-CANON rejects                                                                                                         | **Both correct** — different questions (wrap-equivalence vs canonicality; saturation only bites Q-CANON)                                                                                                | Doctrine cross-refs at both sites; never copy arms                                                                                                                                                                |
+| **V3** | `x >>> y`: Q-WRAP (`isBitwiseOpKind`) accepts, both Q-CANON matchers exclude                                                                               | **Both correct** — bits ToInt32-identical under the guaranteed parent; value diverges without it                                                                                                        | Doctrine cross-refs                                                                                                                                                                                               |
+| **V4** | Equality ops (`== === != !==`): array Q-CANON accepts (boolean 0/1 is canonical); scalar Q-CANON accepts only relational `< <= > >=`                       | **Scalar is conservatively incomplete, not wrong** (only demotes). Aligning would PROMOTE more locals — an optimization with its own proof burden                                                       | Documented; NOT changed this slice (behavior-neutral conservatism kept)                                                                                                                                           |
+| **V5** | `!x` / `x instanceof y` / `x in y`: Q-TAG boolean says yes; neither Q-CANON matcher has arms for them                                                      | **Conservative gap, not wrong** (boolean IS canonical i32; arrays/locals holding them demote to f64 today)                                                                                              | Documented; promotion = future optimization slice                                                                                                                                                                 |
+| **V6** | Q-TAG checker lane vs syntactic lane: a `: boolean`-typed identifier read is boolean per checker, rejected by the syntactic spine                          | **Both stay, separately** — merging would newly brand kernel returns (behavior change in return-type inference, #2795/#2770 lineage) and needs its own measured slice                                   | `isBooleanProducing` (checker) and `isSyntacticallyBooleanExpr` (syntactic) documented as deliberate siblings                                                                                                     |
+| **V7** | `isStrictBooleanReturnType` (shared.ts) vs oracle boolean fact                                                                                             | **Semantically identical** (same flag test incl. strict union rejection) — duplicated only because callers hold raw `ts.Type` from signature plumbing                                                   | Cross-ref locked; migration = Slice-4 `signatureOf` bucket (six `brandExternMethodResult` call sites)                                                                                                             |
+| **V8** | `isNumericExpr` treats `true`/`false`/`!x` as "numeric"                                                                                                    | **Intentional layering, not a divergence**: it answers REPRESENTABILITY in the numeric lanes (kernel return inference), not tag. Boolean ⊂ numeric-representable by design                              | Documented; its spine extraction mirrors the boolean one (mechanical, packaged)                                                                                                                                   |
+
+### Shipped this slice
+
+1. **V1 fix** — the scalar −0 miscompile (`function-body.ts`), probed
+   end-to-end (`Object.is(-x, -0)` now spec-correct).
+2. **`isSyntacticallyBooleanExpr`** — the Q-TAG syntactic boolean spine
+   defined ONCE in `src/checker/oracle.ts`; the `declarations.ts` kernel
+   fixpoint delegates with its live candidate-set hook (accept-set
+   verbatim-identical; byte-diff-verified).
+3. **Doctrine cross-references** at all sites (array-element-typing,
+   function-body via V1 comment, binary-ops, shared.ts) naming the question
+   each matcher answers and forbidding cross-question arm copying.
+
+### Packaged as mechanical follow-ups (NOT this slice — Opus-lane per doctrine)
+
+- `isNumericExpr` spine extraction (mirror of the boolean spine; same hook
+  pattern, larger arm set).
+- V7 migration: the six `brandExternMethodResult` sites onto
+  `oracle.signatureOf` (Slice-4 signature bucket).
+- Optional structural merge of the two Q-CANON implementations into one
+  parameterized `isCanonicalI32Expr(expr, opts)` — semantics are now
+  ALIGNED (post-V1) and documented; the merge is pure code motion with the
+  V4 conservatism table as the parity spec.
+- V4/V5 promotions (equality/boolean forms into Q-CANON) — optimization
+  slices with their own measurement obligations.
