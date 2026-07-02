@@ -1,9 +1,8 @@
 {
   "id": "1916",
-  "assignee": "ttraenkler/dev-1916o",
-  "status": "released",
-  "branch": "issue-1916-s3b9-native-strings",
-  "claimed_at": "2026-07-02T21:39:52Z",
-  "updated_at": "2026-07-02T21:50:31Z",
-  "released_at": "2026-07-02T21:50:31Z"
+  "assignee": "ttraenkler/dev-1916b",
+  "status": "in-progress",
+  "branch": "issue-1916-symbolic-func-refs-batch",
+  "claimed_at": "2026-07-02T21:52:18Z",
+  "updated_at": "2026-07-02T21:52:18Z"
 }
