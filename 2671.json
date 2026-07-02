@@ -1,8 +1,9 @@
 {
   "id": "2671",
   "assignee": "ttraenkler/dev-2937f",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2671-es6-builtin-residuals",
   "claimed_at": "2026-07-02T05:33:59Z",
-  "updated_at": "2026-07-02T05:33:59Z"
+  "updated_at": "2026-07-02T10:40:18Z",
+  "released_at": "2026-07-02T10:40:18Z"
 }
