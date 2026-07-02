@@ -1,9 +1,8 @@
 {
   "id": "2856",
-  "assignee": "ttraenkler/dev-2856",
-  "status": "released",
-  "branch": "issue-2856-ir-body-shape-rejected",
-  "claimed_at": "2026-07-02T01:03:26Z",
-  "updated_at": "2026-07-02T01:41:43Z",
-  "released_at": "2026-07-02T01:41:43Z"
+  "assignee": "ttraenkler/dev-2856f",
+  "status": "in-progress",
+  "branch": "issue-2856-reject-leaf-why",
+  "claimed_at": "2026-07-02T01:41:59Z",
+  "updated_at": "2026-07-02T01:41:59Z"
 }
