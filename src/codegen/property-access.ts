@@ -5941,6 +5941,52 @@ function compileExternPropertyGet(
     if (sizeResult !== undefined) return sizeResult as ValType;
   }
 
+  // (#2999) Standalone `<Builtin>.prototype.constructor` / `<builtin-instance>.constructor`
+  // static fold — drop the `env::Object_get_constructor` host-import leak.
+  //
+  // Reading `.constructor` on any extern-class receiver walks the inheritance
+  // chain to the `Object` base extern class (index.ts ~L13439, the only declarer
+  // of `constructor`), whose `importPrefix` is `Object`, so the getter path below
+  // emits an `Object_get_constructor` host import. Round-5 leak analysis flags
+  // this as 9 execution-verified sole-import standalone passes
+  // (`<Builtin>.prototype.constructor === <Builtin>` for Set/WeakMap/WeakRef/
+  // WeakSet/RegExp/FinalizationRegistry/DisposableStack/SuppressedError, plus
+  // instance forms `(new WeakMap()).constructor` / `/re/.constructor`).
+  //
+  // In standalone mode there is no JS host object to return: the host import
+  // resolves to `undefined`, and a bare builtin identifier (`Set`, `WeakMap`, …)
+  // compiles to the same standalone null-externref carrier (no native
+  // constructor-object identity yet). So the comparisons pass tautologically —
+  // both sides collapse to the shared nullish carrier — and the host import is
+  // pure dead weight. Fold `.constructor` to that SAME bare-builtin carrier
+  // (`ref.null.extern`): behaviour is preserved (LHS and RHS remain the identical
+  // nullish value SameValue-compares equal) and the import is gone.
+  //
+  // Spec soundness: per §20.x every `<Builtin>.prototype.constructor` /
+  // `(new <Builtin>()).constructor` IS `%<Builtin>%`, i.e. the value the bare
+  // `<Builtin>` identifier denotes — so routing the read to the same carrier as
+  // the identifier is correct, not a shortcut. When builtins gain real native
+  // constructor identity, the bare-identifier resolution and this site update in
+  // lockstep. Standalone-only: gc/host keeps the real `Object_get_constructor`
+  // read (a genuine value there), so no behaviour change off the standalone lane.
+  //
+  // Scoped to `BUILTIN_CTOR_NAMES` receivers (the extern class name is the
+  // builtin, e.g. `Set.prototype`→Set, `/re/`→RegExp, `new WeakMap()`→WeakMap):
+  // for those the bare identifier is guaranteed to compile to the SAME null
+  // carrier, so identity is preserved. User-`declare class` extern receivers are
+  // deliberately left on the host path — their bare value may not be nullish, so
+  // folding could mismatch.
+  if (ctx.standalone && propName === "constructor" && BUILTIN_CTOR_NAMES.has(className)) {
+    // Compile the receiver for its side effects, then discard it (mirrors the
+    // user-class `.constructor` path ~L5310, which drops only a real value).
+    const objResult = compileExpression(ctx, fctx, expr.expression);
+    if (objResult) {
+      fctx.body.push({ op: "drop" });
+    }
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+
   // Walk inheritance chain to find the class that declares the property
   const resolvedInfo = findExternInfoForMember(ctx, className, propName, "property");
   const propOwner = resolvedInfo ?? ctx.externClasses.get(className);
