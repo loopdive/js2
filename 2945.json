@@ -1,8 +1,9 @@
 {
   "id": "2945",
   "assignee": "ttraenkler/dev-2138f",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2945-ir-modulo-fmod",
   "claimed_at": "2026-07-02T09:34:02Z",
-  "updated_at": "2026-07-02T09:34:02Z"
+  "updated_at": "2026-07-02T14:34:56Z",
+  "released_at": "2026-07-02T14:34:56Z"
 }
