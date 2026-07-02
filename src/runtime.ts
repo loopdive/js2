@@ -12044,7 +12044,20 @@ assert._isSameValue = isSameValue;
           return (Promise as any).any.call(C, _toIterable(arr));
         };
       if (name === "Promise_resolve") return (val: any) => Promise.resolve(val);
-      if (name === "Promise_reject") return (val: any) => Promise.reject(val);
+      if (name === "Promise_reject")
+        return (val: any) => {
+          const p = Promise.reject(val);
+          // (#2978) Mark the rejection handled at the shim boundary. Every
+          // `Promise_reject` call otherwise creates a permanently-tracked
+          // unhandled rejection in Node — a Wasm loop constructing rejected
+          // promises (e.g. a never-`done` sync iterator driving `for await`)
+          // accumulated ~3 GB of tracked rejections in ~14 s and OOM-killed
+          // the test runner worker, racing the per-test timeout. The branch
+          // promise from `.catch` is discarded; consumers attach their own
+          // handlers to `p` as before.
+          p.catch(() => {});
+          return p;
+        };
       // (#1042) async/await CPS scheduling primitives. The state machine
       // allocates one pending outer Promise per async function, then settles
       // it from a continuation that runs as a microtask. We stash the

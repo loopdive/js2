@@ -31,6 +31,8 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
+// (#2978) for-await step unwrap: native-$Promise state classification.
+import { getOrRegisterPromiseType, PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "../async-scheduler.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, linearU8ArenaResetInstrs } from "../linear-uint8-arena.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { emitCollectionIteratorVec, ensureMapHelpers, MAP_LAYOUT } from "../map-runtime.js";
@@ -4915,9 +4917,24 @@ function compileForOfDirectIterator(
 
   // Look up the return() method on the iterator struct for iterator close (#851)
   const returnMethodIdx = ctx.funcMap.get(`${iterStructName}_return`);
+  // (#2934 3b / #2978) Result arity of `return()` — a void close method has no
+  // value to drop. Shared by the post-loop close and the rejected-step close.
+  const retDefHoisted =
+    returnMethodIdx !== undefined ? ctx.mod.functions[returnMethodIdx - ctx.numImportFuncs] : undefined;
+  const retFtHoisted = retDefHoisted ? ctx.mod.types[retDefHoisted.typeIdx] : undefined;
+  const returnHasResult = retFtHoisted?.kind === "func" && retFtHoisted.results.length > 0;
 
   // Done flag: tracks whether iterator completed normally (done=true) (#851)
   const doneFlagDirect = allocLocal(fctx, `__forit_done_${fctx.locals.length}`, { kind: "i32" });
+
+  // (#2978) `for await` step cap — see the note at the increment site below.
+  const forAwaitCap = stmt.awaitModifier && (ctx.standalone || ctx.wasi);
+  const forAwaitCapLocal = forAwaitCap ? allocLocal(fctx, `__forit_cap_${fctx.locals.length}`, { kind: "i32" }) : -1;
+  if (forAwaitCap) {
+    // Reset per loop ENTRY (the old #662 cap accumulated across re-entries).
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: forAwaitCapLocal });
+  }
 
   // Build loop body
   const savedBody = pushBody(fctx);
@@ -4930,10 +4947,33 @@ function compileForOfDirectIterator(
   fctx.breakStack.push(1);
   fctx.continueStack.push(0);
 
-  // #2067: no iteration cap — see the matching note in the __iterator_next path.
-  // The former 1,000,000-iteration `br_if` guard silently truncated long
-  // custom-iterator loops and accumulated across re-entries; the loop now runs
-  // to the iterator's own `done`.
+  // #2067: no iteration cap for SYNC for-of — the former 1,000,000-iteration
+  // `br_if` guard silently truncated long custom-iterator loops and
+  // accumulated across re-entries; the sync loop runs to the iterator's own
+  // `done`.
+  //
+  // (#2978) `for await` (standalone/WASI) is the ONE exception, and it THROWS
+  // loudly instead of truncating silently. A synchronously-lowered for-await
+  // cannot suspend; when the step value is an unclassifiable/pending promise
+  // rep (e.g. a host promise via env shims) over a never-`done` iterator, the
+  // loop starves the host event loop while per-iteration host allocations are
+  // queue-retained — ~3 GB in ~14 s, OOM-killing the test worker in a race
+  // with the 15 s timeout. The cap converts that into a deterministic,
+  // catchable TypeError long before memory pressure. Native `$Promise` values
+  // never reach the cap (a rejected step throws its reason on iteration 1 via
+  // emitForAwaitStepUnwrap).
+  if (forAwaitCap) {
+    fctx.body.push({ op: "local.get", index: forAwaitCapLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.tee", index: forAwaitCapLocal });
+    fctx.body.push({ op: "i32.const", value: 1_000_000 });
+    fctx.body.push({ op: "i32.gt_u" });
+    const capThrow = collectInstrs(fctx, () => {
+      emitThrowTypeError(ctx, fctx, "for await did not settle within 1000000 steps (unresolvable step promise?)");
+    });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: capThrow, else: [] });
+  }
 
   // Call next(): result = iter.next()
   fctx.body.push({ op: "local.get", index: iterLocal });
@@ -4987,6 +5027,36 @@ function compileForOfDirectIterator(
   }
   fctx.body.push({ op: "local.set", index: elemLocal });
 
+  // (#2978) `for await` step Await — see emitForAwaitStepUnwrap. On a REJECTED
+  // native `$Promise` value: close the sync iterator FIRST (§27.1.4.4
+  // closeOnRejection; the struct path has no throw-close wrapper, so the close
+  // happens inline, error-suppressed per §7.4.9 step 8), then throw the
+  // reason. Gated on the awaitModifier + host-free targets + an externref
+  // element (a typed non-externref value field cannot hold a promise).
+  if (stmt.awaitModifier && (ctx.standalone || ctx.wasi) && targetElemType.kind === "externref") {
+    const closeInstrs: Instr[] =
+      returnMethodIdx !== undefined
+        ? [
+            {
+              op: "try",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: iterLocal } as Instr,
+                ...(iterResultType.kind === "ref_null" ? [{ op: "ref.as_non_null" } as Instr] : []),
+                { op: "call", funcIdx: returnMethodIdx } as Instr,
+                ...(returnHasResult ? [{ op: "drop" } as Instr] : []),
+              ],
+              catches: [],
+              catchAll: [], // suppress close errors; the rejection wins (§7.4.9 step 8)
+            } as Instr,
+            // Mark done so no later close path double-closes.
+            { op: "i32.const", value: 1 } as Instr,
+            { op: "local.set", index: doneFlagDirect } as Instr,
+          ]
+        : [];
+    emitForAwaitStepUnwrap(ctx, fctx, elemLocal, closeInstrs);
+  }
+
   // If destructuring, handle it
   if (destructPatternIter) {
     compileForOfDestructuring(ctx, fctx, destructPatternIter, elemLocal, elemType, stmt);
@@ -5034,6 +5104,14 @@ function compileForOfDirectIterator(
   // Iterator close protocol (#851): call iterator.return() only on abrupt
   // completion (break/return), NOT on normal completion (done=true).
   if (returnMethodIdx !== undefined) {
+    // (#2934 3b / #2978) Only drop when `return()` actually produces a value.
+    // A VOID `return() { … }` (common in test262 close-count probes) compiles
+    // to a no-result func; the former unconditional drop underflowed the
+    // stack — "not enough arguments on the stack for drop" — making every
+    // for-of / for-await over such an iterator invalid standalone Wasm.
+    // Pair-locked with the #2978 scheduler fix (landing this alone un-masked
+    // a rejected-promise for-await OOM loop). `returnHasResult` hoisted above
+    // (shared with the rejected-step close).
     fctx.body.push({ op: "local.get", index: doneFlagDirect });
     fctx.body.push({ op: "i32.eqz" }); // if NOT done (abrupt exit)
     fctx.body.push({
@@ -5043,8 +5121,8 @@ function compileForOfDirectIterator(
         { op: "local.get", index: iterLocal } as Instr,
         ...(iterResultType.kind === "ref_null" ? [{ op: "ref.as_non_null" } as Instr] : []),
         { op: "call", funcIdx: returnMethodIdx } as Instr,
-        // Drop the return value (return() returns {value, done})
-        { op: "drop" } as Instr,
+        // Drop the return value ONLY if return() yields one ({value, done}).
+        ...(returnHasResult ? [{ op: "drop" } as Instr] : []),
       ],
       else: [],
     });
@@ -5071,6 +5149,78 @@ function findStructFieldsByTypeIdx(
     }));
   }
   return undefined;
+}
+
+/**
+ * (#2978) Per-step `Await` of a `for await` element under standalone/WASI.
+ *
+ * §27.1.4.4 AsyncFromSyncIteratorContinuation: each sync-iterator step's
+ * `.value` is awaited; a REJECTED value closes the sync iterator
+ * (closeOnRejection) and rejects the step — i.e. the loop completes abruptly
+ * with the reason. The legacy lowering skipped the await entirely (identity
+ * for settled plain values, per the #2038 degenerate-wrapper note), so a
+ * rejected `$Promise` value neither unwrapped nor aborted the loop — a
+ * never-`done` iterator then drove an unbounded allocation loop (the #2978
+ * OOM).
+ *
+ * Emits, with the element (externref) already stored in `elemLocal`:
+ *   - non-`$Promise` element → unchanged (the dominant settled-value shape);
+ *   - fulfilled `$Promise` → `elemLocal = promise.value`;
+ *   - rejected  `$Promise` → run `closeInstrs` (IteratorClose, error-suppressed
+ *     by the caller per §7.4.9 step 8), then `throw` the reason on the shared
+ *     exception tag — the surrounding user `try`/async machinery observes it;
+ *   - pending   `$Promise` → passthrough (true suspension is #2865 AG1/PATH B).
+ *
+ * Host (gc) mode is untouched: promises there are host objects the module
+ * cannot classify; for-await in host mode is owned by the CPS/host machinery.
+ */
+function emitForAwaitStepUnwrap(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemLocal: number,
+  closeInstrs: Instr[],
+): void {
+  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+  const tagIdx = ensureExnTag(ctx);
+  const readPromiseField = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: elemLocal } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.cast", typeIdx: promiseTypeIdx } as Instr,
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx } as Instr,
+  ];
+  fctx.body.push({ op: "local.get", index: elemLocal });
+  fctx.body.push({ op: "any.convert_extern" } as Instr);
+  fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      ...readPromiseField(0), // state
+      { op: "i32.const", value: PROMISE_STATE_REJECTED } as Instr,
+      { op: "i32.eq" } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...closeInstrs,
+          ...readPromiseField(1), // reason
+          { op: "throw", tagIdx } as Instr,
+        ],
+        else: [
+          ...readPromiseField(0), // state
+          { op: "i32.const", value: PROMISE_STATE_FULFILLED } as Instr,
+          { op: "i32.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...readPromiseField(1), { op: "local.set", index: elemLocal } as Instr],
+            else: [], // pending: passthrough (PATH B)
+          } as Instr,
+        ],
+      } as Instr,
+    ],
+    else: [],
+  });
 }
 
 /**
@@ -5262,6 +5412,16 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
     elemLocal = allocLocal(fctx, `__forof_elem_${fctx.locals.length}`, elemType);
   }
 
+  // (#2978) `for await` step cap — same rationale as the struct path (loud
+  // TypeError instead of an OOM-race; native `$Promise` rejections throw on
+  // step 1 and never reach it). Sync for-of stays uncapped (#2067).
+  const forAwaitCap = stmt.awaitModifier && (ctx.standalone || ctx.wasi);
+  const forAwaitCapLocal = forAwaitCap ? allocLocal(fctx, `__forof_cap_${fctx.locals.length}`, { kind: "i32" }) : -1;
+  if (forAwaitCap) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: forAwaitCapLocal });
+  }
+
   // Build loop body
   const savedBody = pushBody(fctx);
 
@@ -5323,12 +5483,26 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   fctx.breakStack.push(1); // break = depth 1 (exit block, inside try wrapper)
   fctx.continueStack.push(0); // continue = depth 0 (restart loop)
 
-  // #2067: no iteration cap. A prior 1,000,000-iteration `br_if` guard (#662,
-  // against collection-mutation hangs) silently truncated legitimately long
-  // iterations — and its counter local was never reset across re-entries of the
-  // same compiled loop, so repeated executions accumulated toward the cap.
-  // Silent wrong results violate "compile away, don't emulate"; the loop now
-  // runs to the iterator's own `done`, matching JS.
+  // #2067: no iteration cap for SYNC for-of. A prior 1,000,000-iteration
+  // `br_if` guard (#662, against collection-mutation hangs) silently truncated
+  // legitimately long iterations — and its counter local was never reset
+  // across re-entries of the same compiled loop, so repeated executions
+  // accumulated toward the cap. Silent wrong results violate "compile away,
+  // don't emulate"; the sync loop runs to the iterator's own `done`.
+  // (#2978) `for await` under standalone/WASI is the one exception — a LOUD
+  // throw, reset per entry; see the struct-path note.
+  if (forAwaitCap) {
+    fctx.body.push({ op: "local.get", index: forAwaitCapLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.tee", index: forAwaitCapLocal });
+    fctx.body.push({ op: "i32.const", value: 1_000_000 });
+    fctx.body.push({ op: "i32.gt_u" });
+    const capThrow = collectInstrs(fctx, () => {
+      emitThrowTypeError(ctx, fctx, "for await did not settle within 1000000 steps (unresolvable step promise?)");
+    });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: capThrow, else: [] });
+  }
 
   // Call __iterator_next(iter) → (i32 done, externref value) [multi-value].
   // Results are pushed left-to-right, so value (externref) is on top of the
@@ -5355,6 +5529,14 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // Get value: elem = value (already in resultLocal)
   fctx.body.push({ op: "local.get", index: resultLocal });
   fctx.body.push({ op: "local.set", index: elemLocal });
+
+  // (#2978) `for await` step Await — see emitForAwaitStepUnwrap. This path's
+  // #851 try/catch_all wrapper already closes the iterator on throw (doneFlag
+  // still 0 when the rejection fires), so no inline close is needed: the
+  // thrown reason triggers the wrapper's `__iterator_return` + rethrow.
+  if (stmt.awaitModifier && (ctx.standalone || ctx.wasi)) {
+    emitForAwaitStepUnwrap(ctx, fctx, elemLocal, []);
+  }
 
   // If destructuring pattern, destructure from the element
   if (destructPatternIter) {

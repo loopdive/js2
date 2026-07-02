@@ -25,6 +25,7 @@ import {
   PROMISE_STATE_REJECTED,
 } from "./async-scheduler.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
+import { ensureExnTag } from "./registry/imports.js"; // (#2978) rejected-await throw
 import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -443,18 +444,64 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
  */
 function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionContext): void {
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+  const tagIdx = ensureExnTag(ctx);
   const tmp = allocTempLocal(fctx, { kind: "externref" });
   // stack: externref(operand) → stash, then test the stashed copy.
   fctx.body.push({ op: "local.set", index: tmp });
   fctx.body.push({ op: "local.get", index: tmp });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });
+  // (#2978) The unwrap is now STATE-aware. The old blind `value`-field read
+  // returned the rejection REASON as the awaited value for a rejected
+  // `$Promise` (silently swallowing the rejection); per await semantics
+  // (§27.7.5.3 → §6.2.4 Await) a rejected operand must THROW its reason into
+  // the surrounding function. `throw` leaves the stack polymorphic, so the
+  // rejected arm still validates against the `if`'s externref result. A
+  // PENDING `$Promise` passes through unchanged (true frame suspension is
+  // #2865 AG1 / PATH B — same deferral as before).
   const thenBody: Instr[] = [
     { op: "local.get", index: tmp },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: promiseTypeIdx },
-    // $Promise field 1 = `value` (externref). See getOrRegisterPromiseType.
-    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+    // $Promise field 0 = `state` (i32). See getOrRegisterPromiseType.
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: PROMISE_STATE_REJECTED },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        // Rejected: throw the reason ($Promise field 1 = value/reason).
+        { op: "local.get", index: tmp } as Instr,
+        { op: "any.convert_extern" } as Instr,
+        { op: "ref.cast", typeIdx: promiseTypeIdx } as Instr,
+        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 } as Instr,
+        { op: "throw", tagIdx } as Instr,
+      ],
+      else: [
+        { op: "local.get", index: tmp } as Instr,
+        { op: "any.convert_extern" } as Instr,
+        { op: "ref.cast", typeIdx: promiseTypeIdx } as Instr,
+        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 } as Instr,
+        { op: "i32.const", value: PROMISE_STATE_FULFILLED } as Instr,
+        { op: "i32.eq" } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            // Fulfilled: unwrap to the resolved value.
+            { op: "local.get", index: tmp } as Instr,
+            { op: "any.convert_extern" } as Instr,
+            { op: "ref.cast", typeIdx: promiseTypeIdx } as Instr,
+            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 } as Instr,
+          ],
+          else: [
+            // Pending: passthrough (PATH B / #2865 AG1).
+            { op: "local.get", index: tmp } as Instr,
+          ],
+        } as Instr,
+      ],
+    } as Instr,
   ];
   const elseBody: Instr[] = [{ op: "local.get", index: tmp }];
   fctx.body.push({
