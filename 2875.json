@@ -1,8 +1,8 @@
 {
   "id": "2875",
-  "assignee": "ttraenkler/dev-2873",
+  "assignee": "ttraenkler/dev-2875b",
   "status": "in-progress",
-  "branch": "issue-2875-standalone-string-proto",
-  "claimed_at": "2026-07-01T23:22:48Z",
-  "updated_at": "2026-07-01T23:22:48Z"
+  "branch": "issue-2875-slice2-string-num",
+  "claimed_at": "2026-07-02T01:06:53Z",
+  "updated_at": "2026-07-02T01:06:53Z"
 }
