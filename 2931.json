@@ -1,8 +1,8 @@
 {
   "id": "2931",
-  "assignee": "ttraenkler/dev-2900",
+  "assignee": "ttraenkler/dev-2900b",
   "status": "in-progress",
-  "branch": "issue-2900-module-indirect-default-binding",
-  "claimed_at": "2026-07-01T23:36:52Z",
-  "updated_at": "2026-07-01T23:36:52Z"
+  "branch": "issue-2931-live-func-bindings",
+  "claimed_at": "2026-07-02T01:07:44Z",
+  "updated_at": "2026-07-02T01:07:44Z"
 }
