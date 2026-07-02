@@ -1,8 +1,8 @@
 {
   "id": "2924",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-01T23:22:34Z",
-  "updated_at": "2026-07-01T23:22:34Z"
+  "assignee": "ttraenkler/dev-2863",
+  "status": "in-progress",
+  "branch": "issue-2924-new-function-const",
+  "claimed_at": "2026-07-02T00:20:33Z",
+  "updated_at": "2026-07-02T00:20:33Z"
 }
