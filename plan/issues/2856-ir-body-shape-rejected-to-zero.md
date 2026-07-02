@@ -80,16 +80,37 @@ kind:
    precisely scoped. If the histogram shows several independent kinds, split
    this issue into per-kind child issues (one PR each) rather than a single
    mega-PR.
-2. **Land the highest-count kind first** (likely `SwitchStatement` or a
-   loop-control kind — confirm from the histogram). Add the `from-ast.ts`
-   handler + selector acceptance + IR lowering, with legacy-parity equivalence
-   coverage.
+2. **Land the highest-count kind first.** Per the Step-1 histogram (below,
+   2026-07-02) the highest-count arm is **host-global member access in `const`
+   initializers** (`vardecl-init-expr:PropertyAccessExpression` 13 +
+   `CallExpression` 4 = **17/31, 55%**) — `document.*`/`window.*`/`Math.*`/
+   `performance.*` receivers not in scope. **This is the approved first slice
+   (2026-07-02).** Add IR selector + `from-ast.ts` handling for host-global
+   receivers (a resolver notion of host globals whose member access lowers to
+   the existing extern-member path), with legacy-parity equivalence coverage.
+   **Mutable-assignment is demoted to the SECOND slice** (the original heuristic
+   over-weighted it — the recorder shows **0** mutable-assignment rejections in
+   this corpus). NB: this slice may reveal that some host-global access is
+   legitimately out-of-IR-scope (no closed shape) — if so, split those into a
+   `deferred`-category note rather than forcing them native.
 3. **Re-run the gate after each slice** and bank the decrease:
    `pnpm run check:ir-fallbacks -- --update-on-decrease`, commit the lowered
-   `scripts/ir-fallback-baseline.json`.
+   `scripts/ir-fallback-baseline.json`. **Verify adopted functions actually take
+   the IR path** — re-run the `--shape-diag` recorder / `trackFallbacks` and
+   confirm the target functions leave the `body-shape-rejected` set, not merely
+   that tests stay green (the hazard is a silent legacy-fallback that keeps tests
+   green while the IR path is NOT exercised).
 4. When the bucket reaches **0**, add `"body-shape-rejected"` to
    `STRICT_IR_REASONS` (`src/codegen/index.ts:1013`) and promote the affected
    rows in `plan/log/ir-adoption.md` (`pnpm run gen:ir-adoption`).
+
+**Slice order (re-scoped 2026-07-02, PO/lead approved):**
+
+1. **Host-global member access in const initializers** (17/31) — FIRST.
+2. Mutable-assignment / element-assignment — SECOND (0 hits in this corpus, but
+   kept for the broader IR surface).
+3. `vardecl-typenode:ArrayType` (2), body/tail `if`-statement arms (4), the 4
+   `unattributed-arm` class-member helper internals — later, smaller slices.
 
 ## Step-1 diagnostic pass (2026-07-01, dev-b) — hypothesis CORRECTED
 
