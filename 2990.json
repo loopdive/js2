@@ -1,8 +1,8 @@
 {
   "id": "2990",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-02T15:07:35Z",
-  "updated_at": "2026-07-02T15:07:35Z"
+  "assignee": "ttraenkler/dev-2912f",
+  "status": "in-progress",
+  "branch": "issue-2990-ir-effects-slice3",
+  "claimed_at": "2026-07-02T19:33:44Z",
+  "updated_at": "2026-07-02T19:33:44Z"
 }
