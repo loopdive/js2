@@ -1,8 +1,8 @@
 {
   "id": "2927",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-01T23:27:00Z",
-  "updated_at": "2026-07-01T23:27:00Z"
+  "assignee": "ttraenkler/dev-2927",
+  "status": "in-progress",
+  "branch": "issue-2927-interpreter-foundation",
+  "claimed_at": "2026-07-02T01:06:40Z",
+  "updated_at": "2026-07-02T01:06:40Z"
 }
