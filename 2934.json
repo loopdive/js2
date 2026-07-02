@@ -2,7 +2,7 @@
   "id": "2934",
   "assignee": "ttraenkler/dev-2934f",
   "status": "in-progress",
-  "branch": "issue-2934-dce-type-remap",
-  "claimed_at": "2026-07-02T05:41:28Z",
-  "updated_at": "2026-07-02T05:41:28Z"
+  "branch": "issue-2934-stack-arity",
+  "claimed_at": "2026-07-02T10:03:08Z",
+  "updated_at": "2026-07-02T10:03:08Z"
 }
