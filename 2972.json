@@ -1,8 +1,8 @@
 {
   "id": "2972",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-02T09:49:37Z",
-  "updated_at": "2026-07-02T09:49:37Z"
+  "assignee": "ttraenkler/dev-2138f",
+  "status": "in-progress",
+  "branch": "issue-2972-ir-string-elem-inbounds-read",
+  "claimed_at": "2026-07-02T14:38:54Z",
+  "updated_at": "2026-07-02T14:38:54Z"
 }
