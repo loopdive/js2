@@ -275,6 +275,20 @@ export interface CompileOptions {
    * direct-emission path (bit-by-bit divergence tests or emergency revert).
    */
   experimentalIR?: boolean;
+  /**
+   * (#2973) Opt this compile out of the `JS2WASM_IR_FIRST=1` compile-once
+   * inversion (#2138) even when the env flag is set. Set by in-process
+   * SUB-compiles — the `eval` host shim (`runtime-eval.ts`) wraps eval
+   * strings in a claimable `__eval_result` function, and its `catch` arms
+   * treat any compile failure as a recoverable fast-path miss, which
+   * silently swallowed the flag's fail-loud hard errors (observed as
+   * `undefined` instead of the eval result — test262 S12.4_A2_T2, the one
+   * silent violation in #2138's Slice-3 measurement). Sub-compiles are a
+   * semantics-critical fallback path, not a measurement target: they always
+   * take the proven legacy-then-overlay pipeline. Structural (options-based)
+   * by design — never mutate the ambient env around a compile.
+   */
+  disableIrFirst?: boolean;
   /** Compile-time constant definitions. Substitutes identifiers/dotted paths with literal values
    *  before TypeScript parsing. Example: `{ "process.env.NODE_ENV": '"production"' }`.
    *  Values must be valid JS expression literals (strings need inner quotes).

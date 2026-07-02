@@ -734,6 +734,11 @@ function buildCodegenOptions(
     // revert. Forwarded to ALL drivers now (#1927); `generateMultiModule`
     // ignores it until #2138 wires the IR overlay into the multi generator.
     experimentalIR: options.experimentalIR !== false,
+    // (#2973) In-process sub-compiles (the eval host shim) opt out of the
+    // JS2WASM_IR_FIRST inversion — their catch arms treat compile failures as
+    // recoverable fast-path misses, which would silently swallow the flag's
+    // fail-loud errors. See CompileOptions.disableIrFirst.
+    disableIrFirst: options.disableIrFirst === true,
     // Single-source-only import-preprocessing results (undefined in multi mode).
     // #1927: multi paths do not yet collect node-builtin / fs / jsx imports —
     // they resolve imports through the TS program; closing that gap is a

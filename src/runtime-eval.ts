@@ -214,6 +214,13 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
         fileName: filename,
         allowJs: true,
         skipSemanticDiagnostics: true,
+        // (#2973) Sub-compile: opt out of the JS2WASM_IR_FIRST inversion.
+        // The catch below (and the !result.success fallthrough) treat a
+        // compile failure as a recoverable fast-path miss — under the flag
+        // that silently swallowed the fail-loud hard errors (test262
+        // S12.4_A2_T2 returned undefined instead of 7). Eval sub-compiles
+        // always take the proven legacy-then-overlay pipeline.
+        disableIrFirst: true,
       });
     } catch {
       result = undefined;
@@ -227,6 +234,7 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
           fileName: filename,
           allowJs: true,
           skipSemanticDiagnostics: true,
+          disableIrFirst: true, // (#2973) — same sub-compile opt-out as above
         });
       } catch (e: any) {
         // Compiler crashed — surface as SyntaxError to mimic JS eval.

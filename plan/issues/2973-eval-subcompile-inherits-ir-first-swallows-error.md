@@ -1,7 +1,9 @@
 ---
 id: 2973
 title: "eval-shim sub-compiles inherit JS2WASM_IR_FIRST and swallow its hard errors — silent `undefined` instead of fail-loud"
-status: ready
+status: done
+completed: 2026-07-02
+assignee: ttraenkler/dev-2138f
 sprint: current
 created: 2026-07-02
 updated: 2026-07-02
@@ -63,3 +65,27 @@ visible failures; the shim's contract is graceful fallback.
 - Sub-compile opt-out is structural (options-based), not ambient env
   mutation, OR documented why env save/restore is safe (single-threaded
   compile path).
+
+## Resolution (dev-2138f, 2026-07-02) — structural options-based opt-out
+
+- `CompileOptions.disableIrFirst` (src/index.ts) → threaded by
+  `buildCodegenOptions` (src/compiler.ts) → `CodegenOptions.disableIrFirst`
+  (src/codegen/context/types.ts) → `generateModule`'s irFirst gate
+  (`!options?.disableIrFirst` — src/codegen/index.ts). No env mutation.
+- Both eval-shim sub-compile sites (`runtime-eval.ts` expression-form :213
+  and statement-form :226 wrappers) pass `disableIrFirst: true`. These are
+  the ONLY `compileSourceSync` callers in src/ (verified by grep); the
+  compile-time `eval-inline.ts` path compiles into the SAME module (no
+  sub-compile — a function containing `eval` is selector-rejected as
+  `deferred-feature`, so IR-first never touches it), and the public
+  `compileAndInstantiate`/runtime-instantiate `compileSource` calls are
+  user-facing normal compiles that legitimately keep the flag.
+- Fixture proven load-bearing: the exact wrapper
+  (`export function __eval_result() { return (5+1|0===0); }`) compiled
+  flag-on WITHOUT the opt-out hard-errors (`Phase 1 requires matching
+  operand types for '|'` on the skipped slot) — i.e. the regression test's
+  flag-ON case returned `undefined` pre-fix.
+- `tests/issue-2973.test.ts` (3): dynamic-path eval (param-sourced string,
+  immune to the #2923 const-fold fast path) returns 7 flag-off AND flag-on;
+  statement-form wrapper parity. Landed stacked on #2490 (the issue file's
+  own PR).
