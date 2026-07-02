@@ -1,8 +1,8 @@
 {
   "id": "2976",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-02T10:05:18Z",
-  "updated_at": "2026-07-02T10:05:18Z"
+  "assignee": "ttraenkler/dev-2937f",
+  "status": "in-progress",
+  "branch": "issue-2976-nested-fn-closure-identity",
+  "claimed_at": "2026-07-02T10:42:44Z",
+  "updated_at": "2026-07-02T10:42:44Z"
 }
