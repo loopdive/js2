@@ -1,8 +1,8 @@
 {
   "id": "2934",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-01T23:59:29Z",
-  "updated_at": "2026-07-01T23:59:29Z"
+  "assignee": "ttraenkler/dev-2878",
+  "status": "in-progress",
+  "branch": "issue-2934-typedarray-packed-array-get",
+  "claimed_at": "2026-07-02T00:06:14Z",
+  "updated_at": "2026-07-02T00:06:14Z"
 }
