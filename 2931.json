@@ -1,8 +1,9 @@
 {
   "id": "2931",
   "assignee": "ttraenkler/dev-2900b",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2931-live-func-bindings",
   "claimed_at": "2026-07-02T01:07:44Z",
-  "updated_at": "2026-07-02T01:07:44Z"
+  "updated_at": "2026-07-02T01:40:25Z",
+  "released_at": "2026-07-02T01:40:25Z"
 }
