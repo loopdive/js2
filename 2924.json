@@ -1,9 +1,8 @@
 {
   "id": "2924",
-  "assignee": "ttraenkler/dev-eval",
-  "status": "released",
+  "assignee": "ttraenkler/dev-evalf",
+  "status": "in-progress",
   "branch": "issue-2924-new-function-const",
-  "claimed_at": "2026-07-02T01:07:58Z",
-  "updated_at": "2026-07-02T01:58:40Z",
-  "released_at": "2026-07-02T01:58:40Z"
+  "claimed_at": "2026-07-02T01:58:56Z",
+  "updated_at": "2026-07-02T01:58:56Z"
 }
