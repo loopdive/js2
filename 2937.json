@@ -1,9 +1,8 @@
 {
   "id": "2937",
   "assignee": "ttraenkler/dev-2937f",
-  "status": "released",
+  "status": "in-progress",
   "branch": "issue-2937-host-poison-acorn-null-deref",
-  "claimed_at": "2026-07-02T01:35:14Z",
-  "updated_at": "2026-07-02T04:44:35Z",
-  "released_at": "2026-07-02T04:44:35Z"
+  "claimed_at": "2026-07-02T04:50:15Z",
+  "updated_at": "2026-07-02T04:50:15Z"
 }
