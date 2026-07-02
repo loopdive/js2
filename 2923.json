@@ -1,9 +1,8 @@
 {
   "id": "2923",
-  "assignee": "ttraenkler/dev-2863",
-  "status": "released",
+  "assignee": "ttraenkler/dev-evalf",
+  "status": "in-progress",
   "branch": "issue-2923-eval-const-broaden",
-  "claimed_at": "2026-07-01T23:58:30Z",
-  "updated_at": "2026-07-02T01:40:42Z",
-  "released_at": "2026-07-02T01:40:42Z"
+  "claimed_at": "2026-07-02T01:40:51Z",
+  "updated_at": "2026-07-02T01:40:51Z"
 }
