@@ -1,9 +1,8 @@
 {
   "id": "2934",
-  "assignee": "ttraenkler/dev-2878",
-  "status": "released",
-  "branch": "issue-2934-typedarray-packed-array-get",
-  "claimed_at": "2026-07-02T00:06:14Z",
-  "updated_at": "2026-07-02T01:06:05Z",
-  "released_at": "2026-07-02T01:06:05Z"
+  "assignee": "ttraenkler/dev-2934b",
+  "status": "in-progress",
+  "branch": "issue-2934-regexp-test-extern-convert-any",
+  "claimed_at": "2026-07-02T01:06:16Z",
+  "updated_at": "2026-07-02T01:06:16Z"
 }
