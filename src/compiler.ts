@@ -515,10 +515,84 @@ function isInOperatorOperandDiagnostic(diag: ts.Diagnostic): boolean {
   return false;
 }
 
+/**
+ * (#2982) A tagged template `tag`…`` implicitly passes a `TemplateStringsArray`
+ * (ECMA-262 §13.2.8.4 GetTemplateObject — a frozen Array carrying a `.raw`
+ * sibling) as the tag function's FIRST argument. TypeScript models this as
+ * `ReadonlyArray<string> & { raw }`, which is NOT assignable to a mutable
+ * `string[]` parameter, so a tag declared `function tag(strings: string[], …)`
+ * trips TS2345 at every call site. That is a TypeScript-strictness artifact, not
+ * a runtime incompatibility: at runtime the tag simply receives an array of
+ * strings, so annotating the first parameter `string[]` (or `readonly string[]`)
+ * is runtime-accurate and idiomatic (it is the dominant convention across the
+ * tagged-template corpus — tests/issue-141, the equivalence suite, etc.). The
+ * codegen lowers tag calls regardless of the first-parameter annotation, so the
+ * program is well-formed. Downgrade the 2345 so it compiles. Mirrors the
+ * #2616 / #2741 / #862 downgrades of TS being stricter than ES runtime semantics.
+ *
+ * Tightly scoped — suppress ONLY when ALL hold:
+ *   1. the diagnostic is a 2345 inside a TaggedTemplateExpression; and
+ *   2. its SOURCE type is literally `TemplateStringsArray` — i.e. it is the
+ *      synthesized first (template-object) argument that mismatches, NOT a
+ *      `${…}` substitution argument. TS checks arg0 first and, when `string[]`
+ *      is annotated, reports that mismatch and never reaches the substitutions,
+ *      so a substitution error surfaces only when arg0 is well-typed — in which
+ *      case its source type is the substitution's own type (e.g. `string`), not
+ *      `TemplateStringsArray`, and stays fatal; and
+ *   3. the tag's resolved first parameter is an array / readonly-array whose
+ *      element type is string-like (string, string-literal, any, or unknown) —
+ *      so `function tag(strings: number[], …)` (source `TemplateStringsArray`,
+ *      target `number[]`) remains a hard error.
+ */
+function isStringLikeType(type: ts.Type): boolean {
+  const parts = type.isUnion() ? type.types : [type];
+  return (
+    parts.length > 0 &&
+    parts.every(
+      (t) => !!(t.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral | ts.TypeFlags.Any | ts.TypeFlags.Unknown)),
+    )
+  );
+}
+
+function isArrayOfStringLike(type: ts.Type, checker: ts.TypeChecker): boolean {
+  // Array<T>, ReadonlyArray<T>, T[], readonly T[], and string-tuples all expose a
+  // numeric index signature; its element type must be string-like.
+  const parts = type.isUnion() ? type.types : [type];
+  if (parts.length === 0) return false;
+  for (const t of parts) {
+    const elem = checker.getIndexTypeOfType(t, ts.IndexKind.Number);
+    if (!elem || !isStringLikeType(elem)) return false;
+  }
+  return true;
+}
+
+function isTaggedTemplateStringsArrayFalsePositive(diag: ts.Diagnostic, checker: ts.TypeChecker): boolean {
+  if (diag.code !== 2345) return false;
+  const file = diag.file;
+  if (!file || diag.start === undefined) return false;
+  const node = findSmallestNodeAtPosition(file, diag.start);
+  if (!node) return false;
+  let tt: ts.Node | undefined = node;
+  while (tt && !ts.isTaggedTemplateExpression(tt)) tt = tt.parent;
+  if (!tt || !ts.isTaggedTemplateExpression(tt)) return false;
+  // The source type must be the synthesized `TemplateStringsArray` (arg0), not a
+  // `${…}` substitution argument — otherwise a genuine substitution type error
+  // (source e.g. `string`) would be masked. See the doc comment above.
+  const firstLine = ts.flattenDiagnosticMessageText(diag.messageText, "\n").split("\n")[0] ?? "";
+  if (!firstLine.startsWith("Argument of type 'TemplateStringsArray'")) return false;
+  const sig = checker.getResolvedSignature(tt);
+  if (!sig) return false;
+  const params = sig.getParameters();
+  if (params.length === 0) return false;
+  const p0Type = checker.getTypeOfSymbolAtLocation(params[0]!, tt);
+  return isArrayOfStringLike(p0Type, checker);
+}
+
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
   if (checker && isGuardedNullablePrimitiveDiagnostic(diag, checker)) return false;
+  if (checker && isTaggedTemplateStringsArrayFalsePositive(diag, checker)) return false;
   if (isProxyHandlerTrapDiagnostic(diag)) return false;
   if (isInOperatorOperandDiagnostic(diag)) return false;
   return true;
