@@ -9,6 +9,7 @@ priority: medium
 horizon: s
 feasibility: medium
 origin: plan/log/investigations/2026-07-02-leak-analysis-round5.md
+related: [2963]
 ---
 
 ## Problem
@@ -86,3 +87,77 @@ carrier. In `compileExternPropertyGet`, when `ctx.standalone`,
 - test/built-ins/WeakMap/prototype/constructor.js
 - test/built-ins/DisposableStack/prototype/constructor.js
 - test/built-ins/SuppressedError/prototype/constructor.js
+
+## Honest-accounting caveat — these 9 pass via a null≡null tautology, NOT constructor-identity correctness
+
+**Read this before merging.** This PR is a clean **host-import elimination**, not a
+correctness fix — and the two must not be conflated. Documenting the distinction
+explicitly, in the discipline the team established around the #2463 vacuity work.
+
+**What is genuinely fixed:** the `env::Object_get_constructor` host import is gone
+from these 9 standalone binaries. That is real and valid on its own — a standalone
+binary should not import a host getter it does not need.
+
+**What is NOT fixed (and this PR neither claims nor changes it):** real builtin
+constructor / prototype **object identity**. The 9 tests pass because BOTH sides of
+each `assert.sameValue(<Builtin>.prototype.constructor, <Builtin>)` collapse to the
+**same null-ish externref carrier** in standalone mode — the LHS `.constructor`
+read and the RHS bare-builtin identifier are each `ref.null.extern`, so
+`sameValue(null, null)` is trivially `true`. The comparison never exercises a real
+constructor object; it is a **null≡null tautology**. The predecessor's own
+cross-check proves it: `assert.sameValue(Set.prototype.constructor, Map)` —
+comparing against the **wrong** builtin — **also passes**. A genuine
+constructor-identity implementation would make that cross-check FAIL.
+
+**This is "coincidental wrongness", a distinct (and subtler) class than vacuity.**
+The #2463 vacuity problem is *dead code* — a callback body that never executes; an
+inject-throw execution-proof catches it. This is different: the code **does
+execute** (the round-5 inject-throw probe correctly labels
+`Object_get_constructor` **GENUINE**, i.e. non-vacuous), it just returns an
+**incorrect value** (null) that happens to equal another equally-incorrect value
+(null). An execution-proof / inject-throw check would **NOT** flag it — the body
+runs. So "GENUINE" in the round-5 table means "not vacuous", **not** "value-correct".
+
+**The fold is still the right change** — it is behaviour-preserving (LHS and RHS
+remain the identical null carrier the pre-fix path already produced) and removes a
+dead import. When builtins gain real native constructor identity, the
+bare-identifier resolution and this `.constructor` fold site update in lockstep
+(both stop being null), so the fold does not entrench the gap — it tracks it.
+
+**Substrate that actually closes the gap:** #2963 (*Reify builtins as first-class
+values*, with stable per-module identity — "the same builtin reference must yield
+the same object"). Once builtins carry a real reified constructor/prototype object,
+these 9 assertions pass on genuine identity and the cross-check
+(`...constructor === Map`) correctly fails. The round-5 investigation
+(`plan/log/investigations/2026-07-02-leak-analysis-round5.md`, recommendations
+§2 + §3) groups this with the sibling identity-substrate leak tails
+(`__iterator` 9 + `Object_get_constructor` 9 + `Object_set_constructor` 5 +
+`__new_Object` 5 ≈ 28 tests) — the same "no reified builtin
+constructor/prototype/intrinsic identity" root cause. A single consolidated
+issue for that ~28-test tail is not yet filed on `main`; #2963 is the substrate
+that subsumes it.
+
+## Broader-pattern sweep (2026-07-02, follow-up)
+
+Checked whether other currently-passing standalone tests rely on the same
+null≡null coincidence for `.constructor` / builtin-identity comparisons:
+
+- **test262 population:** ~55 `built-ins/**` files combine `.prototype.constructor`
+  with `assert.sameValue`; the 9 fixed here are the **sole-`env::`-import** subset.
+  The rest (TypedArray ctors, GeneratorFunction, Array/Object/Number/String, …)
+  follow the identical `<Builtin>.prototype.constructor === <Builtin>` shape, so
+  any of them that currently pass in standalone pass by the **same** null≡null
+  coincidence — this is a **substrate-wide** property of builtins lacking reified
+  identity, not unique to these 9. It is exactly what #2963 addresses.
+- **The coincidence is bounded, not blanket.** A direct probe of raw `===`
+  comparisons between builtin identifiers in compiled standalone code returned
+  `false` (e.g. `Set === Map`, and even `Set === Set`, evaluate to `0`), i.e. the
+  tautology is **specific to the `assert.sameValue` harness path** where both
+  operands become the null carrier — it is NOT a general "every builtin comparison
+  is true". Critically, because test262 only asserts spec-**true** facts, the
+  coincidence inflates *hollow* passes of otherwise-correct assertions; it does
+  **not** turn any *incorrect* assertion into a false pass.
+- **Conclusion:** the pattern is real and broader than these 9, but it is (a)
+  already tracked by #2963, (b) not created or worsened by this PR (the fold only
+  removes a dead import), and (c) bounded to the sameValue-null path. No new
+  regression risk; no separate issue needed beyond #2963.
