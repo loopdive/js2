@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import type { IrClosureSignature, IrType } from "./nodes.js";
 
 import { binaryOpCapability, prefixOpCapability } from "./capability.js";
 import type { LatticeType, TypeMap } from "./propagate.js";
@@ -752,7 +753,46 @@ function isIrClaimable(
 //     `return;` / fall-through tails. `void` in param position is rejected
 //     (no JS source emits a `void`-typed param value, so there's nothing to
 //     accept).
-type ResolvedKind = "f64" | "bool" | "string" | "object" | "any" | "void" | null;
+// #2859 — `closure` (param only): a FunctionTypeNode annotation whose params
+//   and return are all primitive-annotated (the same surface slice-3 closure
+//   literals support). Lowers to `IrType.closure`; calls through the param
+//   dispatch via `lowerClosureCall` exactly like a closure-typed local.
+type ResolvedKind = "f64" | "bool" | "string" | "object" | "any" | "void" | "closure" | null;
+
+/**
+ * #2859 — build an `IrClosureSignature` from an explicit function-type
+ * annotation (`(a: number, b: string) => number`), or return `null` when the
+ * annotation is outside the expressible surface. The primitive mapping MUST
+ * stay identical to `typeNodeToIr` in `from-ast.ts` (number→f64, boolean→i32,
+ * string→string): a closure-literal argument's signature is built there, and
+ * `lowerClosureCall` / `irTypeEquals` compare the two structurally — any
+ * divergence would reject valid calls at lowering time (post-claim demotion).
+ *
+ * Out-of-surface shapes (→ null, so the selector keeps the honest
+ * `param-type-not-resolvable` rejection): non-primitive param/return types,
+ * void returns (`emitClosureCall` is value-producing), rest/optional/default
+ * params, type parameters.
+ */
+export function irClosureSignatureFromFunctionTypeNode(node: ts.FunctionTypeNode): IrClosureSignature | null {
+  if (node.typeParameters && node.typeParameters.length > 0) return null;
+  const prim = (t: ts.TypeNode | undefined): IrType | null => {
+    if (!t) return null;
+    if (t.kind === ts.SyntaxKind.NumberKeyword) return { kind: "val", val: { kind: "f64" } };
+    if (t.kind === ts.SyntaxKind.BooleanKeyword) return { kind: "val", val: { kind: "i32" } };
+    if (t.kind === ts.SyntaxKind.StringKeyword) return { kind: "string" };
+    return null;
+  };
+  const params: IrType[] = [];
+  for (const p of node.parameters) {
+    if (p.questionToken || p.dotDotDotToken || p.initializer) return null;
+    const ir = prim(p.type);
+    if (!ir) return null;
+    params.push(ir);
+  }
+  const returnType = prim(node.type);
+  if (!returnType) return null;
+  return { params, returnType };
+}
 
 function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | undefined): ResolvedKind {
   if (p.type) {
@@ -764,6 +804,13 @@ function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | unde
     // AnyKeyword. JS spec leaves operations on `any` to runtime semantics,
     // and externref is the catch-all that already accepts any host value.
     if (p.type.kind === ts.SyntaxKind.AnyKeyword) return "any";
+    // #2859 — function-typed param (`fn: () => number`). Accepted when the
+    // signature is expressible with the slice-3 closure surface; the param
+    // lowers to the closure supertype struct and `fn()` dispatches through
+    // `lowerClosureCall`. Inexpressible function types stay rejected.
+    if (ts.isFunctionTypeNode(p.type)) {
+      return irClosureSignatureFromFunctionTypeNode(p.type) ? "closure" : null;
+    }
     // Slice 2 (#1169b) — accept TypeLiteral / TypeReference at the
     // selector level. The actual shape resolution happens in
     // codegen/index.ts:resolvePositionType, which materializes an
@@ -2150,6 +2197,22 @@ function collectLocalClasses(sourceFile: ts.SourceFile): Set<string> {
 function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
   const names = new Set<string>();
   if (!fn.body) return names;
+  // #2859 — function-typed params (`fn: () => number`). A call through such a
+  // param dispatches via the IR's closure machinery (`lowerClosureCall`),
+  // exactly like a slice-3 closure local — it is NOT an external call. Only
+  // expressible signatures count; an inexpressible function type keeps the
+  // function on `param-type-not-resolvable` anyway, so its call sites never
+  // reach the IR.
+  for (const p of fn.parameters) {
+    if (
+      ts.isIdentifier(p.name) &&
+      p.type &&
+      ts.isFunctionTypeNode(p.type) &&
+      irClosureSignatureFromFunctionTypeNode(p.type)
+    ) {
+      names.add(p.name.text);
+    }
+  }
   // Top-level walk: only direct children of the outer body. Nested
   // bindings inside an `if` arm or another function-like don't escape
   // their lexical scope, so they don't shadow the call-graph path.

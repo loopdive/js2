@@ -1,10 +1,12 @@
 ---
 id: 2859
 title: "IR: drive param-type-not-resolvable fallback bucket to zero (TypeMap propagation)"
-status: ready
+status: done
 sprint: current
 created: 2026-06-30
 updated: 2026-07-02
+completed: 2026-07-02
+assignee: ttraenkler/dev-2912f
 priority: high
 horizon: s
 feasibility: medium
@@ -68,3 +70,70 @@ functions/causes; this issue scopes only the single param-type rejection).
 - (possibly) the TypeMap propagation source feeding the selector.
 - `scripts/ir-fallback-baseline.json` — ratchet down.
 - `src/codegen/index.ts:1013` — `STRICT_IR_REASONS` once at zero.
+
+## Resolution (2026-07-02, dev-2912f)
+
+**Root cause** (per-function probe on `helpers.ts`): the rejection was
+`addBenchCard`'s `fn: () => number` param — `resolveParamType` had no
+`FunctionTypeNode` arm, so ANY callback-taking function demoted. Not a TypeMap
+propagation gap (option a); a missing annotation-resolution case (option b).
+
+**Fix — function-typed params lower to `IrType.closure`:**
+
+- `src/ir/select.ts`: new exported `irClosureSignatureFromFunctionTypeNode` —
+  builds an `IrClosureSignature` from a function-type annotation when params +
+  return are all primitive (the slice-3 closure-literal surface; identical
+  primitive mapping to `typeNodeToIr` so `irTypeEquals` holds between a param's
+  declared type and a closure-literal argument's signature). `resolveParamType`
+  accepts FunctionTypeNode via the helper (new `"closure"` ResolvedKind);
+  inexpressible signatures (non-primitive types, void return, rest/optional/
+  default params, generics) keep the honest rejection.
+- `src/ir/select.ts` `collectLocalClosureBindings`: calls through a
+  closure-typed param are intra-function closure dispatch, not `external-call`
+  (previously `fn()` marked the caller external and killed the claim).
+- `src/codegen/index.ts` `resolvePositionType`: FunctionTypeNode arm using the
+  SAME helper, so the override map / `calleeTypes` signatures agree with the
+  lowerer. Existing `lowerClosureCall` / `emitClosureCall` machinery handles
+  the call — params enter scope as `{kind: "local", type: closure}` and
+  dispatch exactly like slice-3 closure locals. No lower.ts changes needed.
+
+**Corpus effect** (`check:ir-fallbacks`): `param-type-not-resolvable` **1 → 0**;
+`addBenchCard` progresses past the param gate and now attributes honestly to
+`body-shape-rejected` (+1, 31 → 32 — its `addEventListener` arrow body is
+#2856's scope; a claim additionally needs `bcrd` via #2858). Total unintended
+unchanged at 45; baseline refreshed via `--update` (the bucket-attribution
+move is intentional). No post-claim demotions.
+
+### STRICT promotion deferred (acceptance criterion 3) — deliberate
+
+`STRICT_IR_REASONS` hard-errors a listed reason in **every compilation**
+(`src/codegen/index.ts:1455-1464`), not just the corpus gate. Verified
+empirically that common shapes still legitimately produce
+`param-type-not-resolvable`:
+
+- unannotated polymorphic param (plain JS): `function poly(x): number {...}`
+  called with number + string → lattice not concrete → this reason;
+- union-annotated param: `function pick(x: string | number)` → this reason.
+
+Promoting it would turn those legacy fallbacks into hard compile errors
+(mass test262/user breakage — violates criterion 4). Zero-in-corpus ≠
+structurally-zero: the reason remains the honest selector verdict for
+not-yet-expressible param types. STRICT promotion needs `resolveParamType`
+totality (union/generic/etc. handling) first — same reasoning applies to
+bundling `return-type-not-resolvable`/`type-resolution-failure` (the latter is
+the #1921 resolve-fallback channel, explicitly warning-severity by design).
+
+## Test Results
+
+- `tests/issue-2859.test.ts` — 8/8 green: selector claims + end-to-end
+  execution (zero-arg, one-arg, string/boolean signatures, param forwarding
+  closure→closure), helpers.ts shape no longer param-type-rejected,
+  inexpressible/void signatures stay rejected, signature-helper unit cases.
+- `check:ir-fallbacks`: param-type 0, gate OK against refreshed baseline; no
+  post-claim demotions.
+- `tests/ir/**`: 121 passed; the 8 failures in `passes.test.ts` (#1167a) /
+  `inline-small.test.ts` (#1167b) are PRE-EXISTING on origin/main (verified
+  identical on a pristine main worktree — `__unbox_number` import harness +
+  post-inline duplicate-SSA verify; not in the CI quality suite).
+- Adjacent suites green: `issue-2923` (dynamic dispatch), `issue-1382`
+  (closure bridge), `ir-vec-two-backend`. `tsc --noEmit` clean.

@@ -205,3 +205,219 @@ describe("#2919 arm 1 — native Promise.all/race over array-typed args (wasi ca
     expect(r).toEqual({ getVal: 5, getRj: 0 });
   });
 });
+
+// #2922 arms 2+3 — native `Promise.all`/`race` over NON-array-vec arguments.
+// Arm 2: statically- or dynamically-non-iterable arguments settle the result
+// promise REJECTED with a native TypeError (§27.2.4.1 step 3 /
+// IfAbruptRejectPromise) instead of trapping in the suppressed host path.
+// Arm 3a: Set/Map arguments materialize the #2162 collection projection
+// (Set → values, Map → [k, v] entries) at compile time and drive the arm-1
+// runtime loop. Arm 3b: custom `[Symbol.iterator]` iterables (and `any`-typed
+// values, dispatched at runtime by `__combinator_to_vec`) drain through the
+// closed-struct dispatchers into a canonical vec.
+//
+// NOT asserted here (pre-existing substrate gaps, verified via non-combinator
+// controls on the same base): `e.message` string reads on an any-typed native
+// error (#2962, in flight) and `pair[0]` index reads on an any-typed $ObjVec
+// entries pair — both behave identically outside the combinator path.
+describe("#2922 arms 2+3 — not-iterable→reject + Set + generic iterable (wasi carrier)", () => {
+  it("Promise.all(nonIterableAny) rejects with a TypeError", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const x: any = 1;
+        Promise.all(x).then((a: any[]) => { ff = 1; }, (e: any) => {
+          rj = e instanceof TypeError ? 2 : 1;
+        });
+      }
+      `,
+      ["getFf", "getRj"],
+    );
+    expect(r).toEqual({ getFf: 0, getRj: 2 });
+  });
+
+  it("Promise.all(null) rejects", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const x: any = null;
+        Promise.all(x).then((a: any[]) => { ff = 1; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getFf", "getRj"],
+    );
+    expect(r).toEqual({ getFf: 0, getRj: 1 });
+  });
+
+  it("Promise.race(undefined) rejects (race must not stay pending)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const x: any = undefined;
+        Promise.race(x).then((v: any) => { ff = 1; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getFf", "getRj"],
+    );
+    expect(r).toEqual({ getFf: 0, getRj: 1 });
+  });
+
+  it("Promise.all(numberLiteral) rejects (statically non-iterable)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        Promise.all(1 as any).then((a: any[]) => { ff = 1; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getFf", "getRj"],
+    );
+    expect(r).toEqual({ getFf: 0, getRj: 1 });
+  });
+
+  it("Promise.all(plainObject) rejects (no @@iterator)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const x: any = { a: 1 };
+        Promise.all(x).then((a: any[]) => { ff = 1; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getFf", "getRj"],
+    );
+    expect(r).toEqual({ getFf: 0, getRj: 1 });
+  });
+
+  it("Promise.all(set) fulfils with the element values (arm 3a)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const s = new Set<number>();
+        s.add(1); s.add(2);
+        Promise.all(s).then((a: any[]) => { val = a[0] + a[1]; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getVal", "getRj"],
+    );
+    expect(r).toEqual({ getVal: 3, getRj: 0 });
+  });
+
+  it("Promise.race(set) fulfils with the first value (arm 3a)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const s = new Set<number>();
+        s.add(5); s.add(6);
+        Promise.race(s).then((v: any) => { val = v; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getVal", "getRj"],
+    );
+    expect(r).toEqual({ getVal: 5, getRj: 0 });
+  });
+
+  it("Promise.all(map) fulfils with one entry pair per element (arm 3a)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const m = new Map<number, number>();
+        m.set(1, 10); m.set(2, 20);
+        Promise.all(m).then((a: any[]) => { ff = 1; val = a.length; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getFf", "getVal", "getRj"],
+    );
+    expect(r).toEqual({ getFf: 1, getVal: 2, getRj: 0 });
+  });
+
+  it("Promise.all(anyTypedArray) fulfils via the runtime vec passthrough (arm 3b)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const x: any = [Promise.resolve(4), Promise.resolve(5)];
+        Promise.all(x).then((a: any[]) => { val = a[0] + a[1]; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getVal", "getRj"],
+    );
+    expect(r).toEqual({ getVal: 9, getRj: 0 });
+  });
+
+  it("Promise.all(customIterable) drains and fulfils in order (arm 3b)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        let i = 0;
+        const it = {
+          [Symbol.iterator]() {
+            return {
+              next() {
+                i = i + 1;
+                if (i <= 2) return { value: i * 10, done: false };
+                return { value: 0, done: true };
+              },
+            };
+          },
+        };
+        Promise.all(it).then((a: any[]) => { val = a[0] * 10 + a[1]; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getVal", "getRj"],
+    );
+    expect(r).toEqual({ getVal: 120, getRj: 0 });
+  });
+
+  it("Promise.all(customIterable of pending promises) settles across microtasks (arm 3b)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        let i = 0;
+        const it = {
+          [Symbol.iterator]() {
+            return {
+              next() {
+                i = i + 1;
+                if (i === 1) return { value: Promise.resolve(1).then((v: number) => v + 10), done: false };
+                if (i === 2) return { value: Promise.resolve(2).then((v: number) => v + 20), done: false };
+                return { value: 0, done: true };
+              },
+            };
+          },
+        };
+        Promise.all(it).then((a: any[]) => { val = a[0] + a[1]; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getVal", "getRj"],
+    );
+    expect(r).toEqual({ getVal: 33, getRj: 0 });
+  });
+
+  it("Promise.all(emptyCustomIterable) fulfils with [] (arm 3b)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const it = {
+          [Symbol.iterator]() {
+            return { next() { return { value: 0, done: true }; } };
+          },
+        };
+        Promise.all(it).then((a: any[]) => { ff = 1; val = a.length; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getFf", "getVal", "getRj"],
+    );
+    expect(r).toEqual({ getFf: 1, getVal: 0, getRj: 0 });
+  });
+
+  it("Promise.all($Promise argument) rejects (a promise is not iterable)", async () => {
+    const r = await runWasi(
+      `
+      export function run(): void {
+        const p: any = Promise.resolve(1);
+        Promise.all(p).then((a: any[]) => { ff = 1; }, (e: any) => { rj = 1; });
+      }
+      `,
+      ["getFf", "getRj"],
+    );
+    expect(r).toEqual({ getFf: 0, getRj: 1 });
+  });
+});

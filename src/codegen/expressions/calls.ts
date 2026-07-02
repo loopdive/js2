@@ -158,9 +158,13 @@ import { resolvePromiseSubclassName, tryEmitPromiseSubclassReceiver } from "./pr
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCombinatorRuntime,
+  ensureCombinatorFunctions,
+  ensureCombinatorToVec,
   isNativeCombinatorMethod,
   resolveExternrefVecArg,
+  type NativeCombinator,
 } from "../promise-combinators.js";
+import { emitWasiErrorConstructor } from "../registry/error-types.js"; // (#2922) native TypeError for not-iterable reject
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import {
   defaultValueInstrs,
@@ -8746,9 +8750,13 @@ function compileCallExpression(
         // slice 1d), so gc/host + still-host-backed standalone lanes are
         // byte-unchanged. Literal no-spread arguments unroll at compile time
         // below; array-TYPED non-literal arguments take the (#2919 arm 1)
-        // runtime loop after that; `allSettled`/`any`, generic iterables,
-        // not-iterable→reject, and subclass capability-ctor receivers still
-        // fall through to the host path (follow-ups, #2919 arms 2/3).
+        // runtime loop after that; Set/Map arguments take the (#2922 arm 3a)
+        // compile-time collection projection; everything else except strings,
+        // `number[]` vecs, and native-generator subjects takes the (#2922 arms
+        // 2+3) dynamic `__combinator_to_vec` path (custom iterables drain,
+        // non-iterables reject with a native TypeError). `allSettled`/`any`
+        // and subclass capability-ctor receivers still fall through to the
+        // host path (follow-ups).
         const arg0 = expr.arguments[0];
         const nativeCombinatorEligible =
           isStandalonePromiseActive(ctx) &&
@@ -8794,17 +8802,66 @@ function compileCallExpression(
             fctx.savedBodies.length -= pushedBufs + 1;
           }
         }
+        // (#2922 arm 3a) Native combinator over a SET/MAP argument —
+        // `Promise.all(set)`. `$Map`-backed collections have NO runtime
+        // `@@iterator`/`next` dispatch (for-of iterates them via the
+        // compile-time #2162 projection), so the dynamic path below can never
+        // see them — handle them statically by materializing the same
+        // projection (Set → values, Map → [k, v] entries) into a canonical
+        // externref $Vec and driving the unchanged arm-1 runtime loop over it.
+        // Checker-only guard first (no emission for non-Set/Map args), then a
+        // #1919-transactional probe confirms the arg genuinely lowers to the
+        // native `$Map` struct (mirrors compileForOfNativeCollection).
+        if (nativeCombinatorEligible && arg0 !== undefined && ctx.nativeStrings && ctx.mapTypeIdx >= 0) {
+          const argTsType = ctx.checker.getTypeAtLocation(arg0);
+          const symName = argTsType.getSymbol()?.getName() ?? argTsType.aliasSymbol?.name;
+          if (symName === "Set" || symName === "Map") {
+            const isSet = symName === "Set";
+            const snap = snapshotSpeculative(ctx, fctx);
+            const recvType = compileExpression(ctx, fctx, arg0);
+            rollbackSpeculative(ctx, fctx, snap);
+            if (
+              recvType !== null &&
+              (recvType.kind === "ref" || recvType.kind === "ref_null") &&
+              recvType.typeIdx === ctx.mapTypeIdx
+            ) {
+              const vecResult = emitCollectionIteratorVec(ctx, fctx, arg0, isSet ? "values" : "entries", isSet);
+              if (
+                vecResult !== undefined &&
+                vecResult !== null &&
+                typeof vecResult === "object" &&
+                (vecResult.kind === "ref" || vecResult.kind === "ref_null")
+              ) {
+                const collArrTypeIdx = getArrTypeIdxFromVec(ctx, vecResult.typeIdx);
+                const collVecLocal = allocLocal(fctx, `__comb_argvec_${fctx.locals.length}`, {
+                  kind: "ref_null",
+                  typeIdx: vecResult.typeIdx,
+                });
+                fctx.body.push({ op: "local.set", index: collVecLocal });
+                return emitStandalonePromiseCombinatorRuntime(
+                  ctx,
+                  fctx,
+                  methodName,
+                  collVecLocal,
+                  vecResult.typeIdx,
+                  collArrTypeIdx,
+                );
+              }
+            }
+          }
+        }
         // (#2919 arm 1) Native combinator over an ARRAY-TYPED non-literal
         // argument — `Promise.all(arrVar)`, spread/holed literals, etc.
         // Transactionally compile the argument with its natural type; if it
         // lowers to an externref-backed vec (`Promise<T>[]`-shaped arrays do),
         // KEEP the compiled arg and loop over it at runtime feeding
-        // `__combinator_subscribe`. Anything else (f64-backed `number[]` vecs —
-        // the Gap-4 output-representation escalation —, `any`/externref,
-        // strings, generic iterables) is rolled back — body AND any locals /
-        // late imports / errors the probe allocated — via the #1919 helper (a
-        // raw `body.length =` rollback would leak a phantom late import), and
-        // control falls through to the host path byte-unchanged.
+        // `__combinator_subscribe`. Anything else is rolled back — body AND any
+        // locals / late imports / errors the probe allocated — via the #1919
+        // helper (a raw `body.length =` rollback would leak a phantom late
+        // import); the (#2922) dynamic path below then decides whether to take
+        // the probed shape at runtime or keep the host fallthrough
+        // byte-unchanged (f64-backed `number[]` vecs — the Gap-4
+        // output-representation escalation —, strings, native generators).
         if (nativeCombinatorEligible && arg0 !== undefined) {
           const snap = snapshotSpeculative(ctx, fctx);
           const argType = compileExpression(ctx, fctx, arg0);
@@ -8824,8 +8881,12 @@ function compileCallExpression(
               vecShape.arrTypeIdx,
             );
           }
-          // Didn't lower as an externref vec — roll back and use the host path.
+          // Didn't lower as an externref vec — roll back, then either take the
+          // (#2922 arms 2+3) dynamic path or fall through to the host path.
           rollbackSpeculative(ctx, fctx, snap);
+          if (isDynamicCombinatorArgEligible(ctx, argType, arg0)) {
+            return emitDynamicCombinatorArg(ctx, fctx, methodName, arg0);
+          }
         }
         const importName = `Promise_${methodName}`;
         // Three-arg signature: (thisArg, iterable, directCall) → result
@@ -16409,6 +16470,134 @@ function compileWasiStringArgToLinearMemory(ctx: CodegenContext, fctx: FunctionC
   // Fallback: unsupported dynamic string — trap at runtime
   // TODO: implement runtime GC-string to linear-memory copy for dynamic strings
   fctx.body.push({ op: "unreachable" } as Instr);
+}
+
+// ── #2922 arms 2+3 — dynamic Promise.all/race argument ──────────────────────
+
+/**
+ * (#2922) Decide whether a probed (and rolled-back) combinator argument may
+ * take the dynamic `__combinator_to_vec` path. Everything EXCEPT the shapes
+ * that must keep the host fallthrough byte-unchanged:
+ *   - `__vec_*` structs that are not externref-backed (`number[]` — the Gap-4
+ *     output-representation escalation documented in promise-combinators.ts);
+ *     externref-backed vecs were already committed by arm 1.
+ *   - strings (checker-typed OR lowering to a native string struct): strings
+ *     ARE iterable per spec (§22.1.5) — the drain has no string arm yet, so
+ *     routing them would produce a WRONG observable reject. Follow-up.
+ *   - native-generator subjects: they iterate via the dedicated compile-time
+ *     resume path (`emitNativeGeneratorToVec`), not the runtime dispatchers —
+ *     the drain would wrongly reject them. Follow-up.
+ *   - funcref/v128/i64-shaped values: conservative fallthrough.
+ */
+function isDynamicCombinatorArgEligible(ctx: CodegenContext, argType: ValType | null, arg0: ts.Expression): boolean {
+  if (argType === null) return false;
+  if (isStringType(ctx.checker.getTypeAtLocation(arg0))) return false;
+  switch (argType.kind) {
+    case "f64":
+    case "i32":
+    case "externref":
+    case "anyref":
+    case "eqref":
+      return true;
+    case "ref":
+    case "ref_null": {
+      const typeIdx = (argType as { typeIdx?: number }).typeIdx;
+      if (typeof typeIdx !== "number" || typeIdx < 0) return false;
+      const structName = ctx.typeIdxToStructName.get(typeIdx);
+      if (structName !== undefined && structName.startsWith("__vec_")) return false;
+      if (typeIdx === ctx.anyStrTypeIdx || typeIdx === ctx.nativeStrTypeIdx || typeIdx === ctx.consStrTypeIdx) {
+        return false;
+      }
+      if (nativeGeneratorInfoForForOfSubject(ctx, argType) !== undefined) return false;
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+/**
+ * (#2922 arms 2+3) Emit the dynamic combinator argument path:
+ *
+ *   arg      = <compile arg0 as externref>
+ *   drained  = __combinator_to_vec(arg)       ;; $Vec | null (= not iterable)
+ *   notIter  = drained == null                ;; (empty vec substituted)
+ *   <arm-1 runtime loop over drained, rejecting the result promise with a
+ *    native TypeError when notIter — see emitStandalonePromiseCombinatorRuntime>
+ *
+ * ALL ensure* registrations run BEFORE any instruction is built so no late
+ * import can land between an instr's funcIdx bake and its landing in
+ * `fctx.body` (where `shiftLateImportIndices` walks it, nested arms included).
+ * `ensureNativeIteratorRuntime` is required so `emitIteratorMethodExport`
+ * actually emits the `__call_*` dispatchers at finalize (it early-returns
+ * unless `__iterator` is registered) — without it `fillCombinatorToVec`
+ * could never fill the user-iterable arm.
+ */
+function emitDynamicCombinatorArg(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  methodName: NativeCombinator,
+  arg0: ts.Expression,
+): ValType {
+  ensureNativeIteratorRuntime(ctx);
+  const ids = ensureCombinatorFunctions(ctx);
+  ensureCombinatorToVec(ctx);
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  const msg = `Promise.${methodName} argument is not iterable`;
+  addStringConstantGlobal(ctx, msg);
+
+  // arg → externref (committed compile; the natural-type probe was rolled back).
+  compileExpression(ctx, fctx, arg0, { kind: "externref" });
+  const argLocal = allocLocal(fctx, `__comb_dynarg_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argLocal });
+
+  // drained = __combinator_to_vec(arg)
+  const drainedLocal = allocLocal(fctx, `__comb_drained_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.get", index: argLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__combinator_to_vec")! });
+  fctx.body.push({ op: "local.set", index: drainedLocal });
+
+  // notIter = drained == null; vec = notIter ? <fresh empty $Vec> : cast(drained)
+  const notIterLocal = allocLocal(fctx, `__comb_notiter_${fctx.locals.length}`, { kind: "i32" });
+  const vecLocal = allocLocal(fctx, `__comb_argvec_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: ids.vecTypeIdx,
+  });
+  fctx.body.push({ op: "local.get", index: drainedLocal });
+  fctx.body.push({ op: "ref.is_null" } as Instr);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: notIterLocal },
+      { op: "i32.const", value: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "array.new_default", typeIdx: ids.arrTypeIdx } as Instr,
+      { op: "struct.new", typeIdx: ids.vecTypeIdx } as Instr,
+      { op: "local.set", index: vecLocal },
+    ],
+    else: [
+      { op: "local.get", index: drainedLocal },
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.cast", typeIdx: ids.vecTypeIdx } as Instr,
+      { op: "local.set", index: vecLocal },
+    ],
+  } as Instr);
+
+  // Reject-reason instrs (externref TypeError instance). funcMap is read AFTER
+  // every ensure above (and after the arg compile), so the baked funcIdx is
+  // current; once embedded in fctx.body (inside the emitter's `if` arm) any
+  // later shift walks it like every other nested instruction.
+  const rejectReason: Instr[] = [
+    ...stringConstantExternrefInstrs(ctx, msg),
+    { op: "call", funcIdx: ctx.funcMap.get("__new_TypeError")! },
+  ];
+
+  return emitStandalonePromiseCombinatorRuntime(ctx, fctx, methodName, vecLocal, ids.vecTypeIdx, ids.arrTypeIdx, {
+    notIterLocal,
+    rejectReason,
+  });
 }
 
 export { compileCallExpression, compileIIFE, compileOptionalCallExpression };

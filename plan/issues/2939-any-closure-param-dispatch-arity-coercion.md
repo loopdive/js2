@@ -127,7 +127,74 @@ rule: leak-elim must prove bodies execute, not just that the import disappears).
   behavior on `ctx.standalone`.
 - Full `merge_group` net-positive.
 
+## Re-measurement post PR #2441 (dev-f2, 2026-07-02) — NEW sub-gap: nested-scope callbacks
+
+Task #16 attempted the runner shim now that PR #2441 (the arity half) landed.
+Measured on current main (`compile(..., {target:"standalone"})`, inject-throw
+discipline throughout):
+
+**1. Top-level dispatch works post-#2441** (minimal repro, callback function
+expression at module top level): 1-param and 2-param callbacks both INVOKE
+(counter=2, inject-throw traps), host-free. The arity fix is real.
+
+**2. NEW BLOCKER — a callback function-expression defined INSIDE another
+function is not a dispatch candidate.** The exact same shim + call, moved
+inside `export function test() { try { … } catch … }` (the test262 runner's
+wrap shape), silently drops the `fn(...)` dispatch:
+
+| shape                                                      | invoked?   |
+| ---------------------------------------------------------- | ---------- |
+| top-level `tw(function(TA){hit++}, null, ["passthrough"])` | YES (2)    |
+| same call inside `export function test()`                  | **NO** (0) |
+| 1-arg variant inside `test()`                              | **NO** (0) |
+
+Since the runner wraps EVERY test body inside `test()`, all real-corpus
+callbacks are nested → with the shim the wrapper compiles host-free but the
+body is dead. Deterministic 24-file corpus sample
+(`TypedArray/prototype/**/BigInt`, every-20th): control (main, no shim) =
+21/21 non-CE files honestly leaky (`env::__make_callback`); with shim =
+9 host-free + **9/9 VACUOUS by inject-throw**, 12 still leaky via secondary
+imports (`Uint8ClampedArray_*` HOF paths, `WeakMap_set`), 3 CE.
+**Genuine flips = 0. The shim was NOT shipped** (revert kept; shim text below
+for when this lands).
+
+**3. Also measured:** calling a function VALUE held in an any param
+(`makeCtorArg(7)` where the passed arg is a top-level named function) returns
+`undefined` — the 1-arg dynamic call finds no candidate (graceful fallback),
+independent of the nested-scope gap.
+
+So the remaining scope here is (a) **nested-scope function-expression
+candidate registration** — the closure registry/`tryEmitInlineDynamicCall`
+candidate scan must see function expressions created in inner scopes — plus
+(b) the original kind-coercion half, plus (c) 3.
+
+### Deferred runner-shim text (do NOT ship before (a) lands; then re-measure)
+
+The corpus needs the 3-arg harness signature — ~200 files call
+`testWithBigIntTypedArrayConstructors(fn, null, ["passthrough"])`; with a
+1-param shim even the DIRECT call is arity-dropped (measured: that alone made
+9/9 sampled files vacuous):
+
+```ts
+// gate: includes testTypedArray.js && /testWithBigIntTypedArrayConstructors/
+// (the existing needsTestTypedArray regex does NOT match the BigInt-infixed name)
+function __ta_makeCtorArgPassthrough(x: any): any {
+  return x;
+}
+function testWithBigIntTypedArrayConstructors(fn: any, ctors?: any, argFactories?: any): void {
+  let constructors: any = ctors;
+  if (constructors == null) {
+    constructors = [BigInt64Array, BigUint64Array];
+  }
+  for (let i = 0; i < constructors.length; i++) {
+    fn(constructors[i], __ta_makeCtorArgPassthrough);
+  }
+}
+```
+
 ## Notes
 
 Spun out of #2940 (blocked_on this). Repro scripts were under `.tmp/` during the
 #2940 investigation (dyncall / genuine probes); regenerate from the table above.
+Re-measurement probes: `.tmp/probe-2937-{dispatch,twoparam,nested,imports,control}.mjs`
+(gitignored; regenerate from this file — filenames predate the 2937→2940 re-id).

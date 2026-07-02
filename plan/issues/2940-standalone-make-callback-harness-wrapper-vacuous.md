@@ -137,3 +137,14 @@ Blocked pending the dynamic-dispatch fix (part 2). Genuine-flip yield with a
 bounded fix = 0 (< the 200 build-gate). Analysis delivered; claim released;
 recommend spinning part (2) as its own scoped codegen issue (broad value beyond
 this leak). Import-gate hypothesis disproven; sub-front 4 disproven.
+
+**Re-measured 2026-07-02 (dev-f2, task #16) after PR #2441 (arity fix)
+landed: STILL BLOCKED — genuine flips remain 0.** The arity half works at
+module top level, but the runner wraps every test body inside
+`export function test()`, and a callback function-expression defined in a
+nested scope is NOT a dispatch candidate — so the shimmed wrapper compiles
+host-free with a dead body (9/9 sampled host-free files VACUOUS by
+inject-throw; control on main = honestly leaky). Shim NOT shipped. Full data +
+the deferred shim text now live in #2939 ("Re-measurement post PR #2441").
+Remaining blocker = #2939 (a) nested-scope candidate registration, then
+(b) kind coercion.
