@@ -1,8 +1,9 @@
 {
   "id": "2921",
   "assignee": "ttraenkler/senior-conflicts",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2921-wasi-then-funcidx-drain-infra",
   "claimed_at": "2026-07-01T22:55:00Z",
-  "updated_at": "2026-07-01T22:55:00Z"
+  "updated_at": "2026-07-02T00:32:10Z",
+  "released_at": "2026-07-02T00:32:10Z"
 }
