@@ -36,6 +36,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 // ---------------------------------------------------------------------------
 // Compile-time table generation (BigInt). Produces byte-identical tables to
@@ -123,9 +124,14 @@ const RYU_INV_GLOBAL = "__ryu_pow5_inv";
 const RYU_POW_GLOBAL = "__ryu_pow5";
 const RYU_I64_ARR = "__ryu_i64_arr";
 
-/** Allocate the next defined-function index. Mirrors number-format-native.ts. */
+/**
+ * #1916 S3b — STABLE-REGIME PRODUCER (see number-format-native.ts, the first
+ * flip). Handles minted here are layout-independent: baked call immediates and
+ * funcMap entries survive every late-import shift and resolve at emit.
+ * Every push below goes through `pushDefinedFunc`.
+ */
 function nextFuncIdx(ctx: CodegenContext): number {
-  return ctx.numImportFuncs + ctx.mod.functions.length;
+  return mintDefinedFunc(ctx);
 }
 
 /** Register an immutable `(array i64)` type, idempotent. */
@@ -342,7 +348,7 @@ function emitRyuMulShift(ctx: CodegenContext): number {
   const typeIdx = addFuncType(ctx, [I64, I64, I64, I32], [I64]);
   const funcIdx = nextFuncIdx(ctx);
   ctx.funcMap.set("__ryu_mul_shift", funcIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "__ryu_mul_shift",
     typeIdx,
     locals: [
@@ -1024,7 +1030,7 @@ export function emitRyuDigits(ctx: CodegenContext): number {
   const typeIdx = addFuncType(ctx, [F64], [I64, I32]);
   const funcIdx = nextFuncIdx(ctx);
   ctx.funcMap.set("__num_ryu_digits", funcIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "__num_ryu_digits",
     typeIdx,
     locals: [
@@ -1603,7 +1609,7 @@ export function emitRyuToBuf(ctx: CodegenContext, strDataTypeIdx: number): numbe
   const typeIdx = addFuncType(ctx, [F64, I32, strDataRef, I32], [I32]);
   const funcIdx = nextFuncIdx(ctx);
   ctx.funcMap.set("__num_ryu_to_buf", funcIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "__num_ryu_to_buf",
     typeIdx,
     locals: [

@@ -57,6 +57,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { buildTypeMap } from "../src/ir/propagate.js";
 import { planIrCompilation, type IrFallbackReason } from "../src/ir/select.js";
+import { makeIrHostGlobalResolver } from "../src/ir/host-extern.js";
 import { compile } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -185,31 +186,33 @@ async function aggregate(): Promise<{
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
     skipLibCheck: true,
     noEmit: true,
+    // (#2856) The host-extern selector arm resolves ambient globals
+    // (`document`, `console`) through the checker — the program needs the
+    // REAL default libs (es + dom) for those `declare var`s to exist. The
+    // previous hand-rolled host declared `lib.d.ts` but had no lib dir on
+    // its search path, so the program ran lib-less and every ambient global
+    // was unresolvable — fine before #2856 (the selector was lib-blind),
+    // WRONG after (the gate would never see host-extern claims the real
+    // compiler makes).
+    lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
   };
 
   for (const filePath of corpus) {
     const source = readFileSync(filePath, "utf-8");
     const sf = ts.createSourceFile(filePath, source, ts.ScriptTarget.ES2022, true);
 
-    // Build a tiny program over just this file so we can derive a checker
-    // for the type-propagation pass. Use an in-memory host that returns the
-    // file source for `filePath` and falls back to the disk for libs.
+    // Build a program over just this file so we can derive a checker for the
+    // type-propagation pass AND (#2856) ambient-global resolution. The
+    // disk-backed default host resolves the bundled typescript lib files;
+    // only `filePath` is served from the pre-parsed in-memory source.
+    const baseHost = ts.createCompilerHost(compilerOptions, /* setParentNodes */ true);
     const host: ts.CompilerHost = {
-      getSourceFile: (name) => {
+      ...baseHost,
+      getSourceFile: (name, languageVersion, ...rest) => {
         if (name === filePath) return sf;
-        if (existsSync(name)) {
-          return ts.createSourceFile(name, readFileSync(name, "utf-8"), ts.ScriptTarget.ES2022, true);
-        }
-        return undefined;
+        return baseHost.getSourceFile(name, languageVersion, ...rest);
       },
       writeFile: () => {},
-      getDefaultLibFileName: () => "lib.d.ts",
-      getCurrentDirectory: () => REPO_ROOT,
-      getCanonicalFileName: (n) => n,
-      useCaseSensitiveFileNames: () => true,
-      getNewLine: () => "\n",
-      fileExists: (n) => existsSync(n),
-      readFile: (n) => (existsSync(n) ? readFileSync(n, "utf-8") : undefined),
     };
     const program = ts.createProgram([filePath], compilerOptions, host);
     const checker = program.getTypeChecker();
@@ -225,7 +228,21 @@ async function aggregate(): Promise<{
       continue;
     }
 
-    const selection = planIrCompilation(sourceFile, { experimentalIR: true, trackFallbacks: true }, typeMap);
+    // (#2856) Thread the SAME host-extern options the real compiler passes
+    // (`planIrOverlay` in src/codegen/index.ts) so the gate's selector
+    // verdicts match production exactly: JS-host mode (the corpus is
+    // playground/browser code) + the shared checker-backed ambient-global
+    // resolver.
+    const selection = planIrCompilation(
+      sourceFile,
+      {
+        experimentalIR: true,
+        trackFallbacks: true,
+        jsHostExterns: true,
+        resolveHostGlobal: makeIrHostGlobalResolver(checker),
+      },
+      typeMap,
+    );
     const fileReasons: Partial<Record<IrFallbackReason, number>> = {};
     for (const fb of selection.fallbacks ?? []) {
       const bucket = UNINTENDED.has(fb.reason) ? unintended : deferred;

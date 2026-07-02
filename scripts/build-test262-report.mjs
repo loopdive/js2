@@ -902,10 +902,17 @@ async function main() {
     // means the module ran without the JS host. Counted in parallel to status
     // so the honest standalone metric is available per scope/category.
     const hostFreePass = status === "pass" && !record.host_import_leak_class;
+    // (#2939/#2940) Vacuity correction: `fail` rows whose harness-wrapper
+    // callback never executed (previously-counted-as-pass before the in-runner
+    // vacuity gate). Tallied separately so the report surfaces the integrity
+    // correction ("N previously-counted passes are vacuous") without inflating
+    // the genuine-fail bucket's interpretation.
+    const isVacuous = record.vacuous === true;
 
     statuses.total++;
     statuses[status] = (statuses[status] ?? 0) + 1;
     if (hostFreePass) statuses.host_free_pass = (statuses.host_free_pass ?? 0) + 1;
+    if (isVacuous) statuses.vacuous = (statuses.vacuous ?? 0) + 1;
 
     if (!scopeCounts.has(scope)) scopeCounts.set(scope, createCounts());
     const scopeCounter = scopeCounts.get(scope);

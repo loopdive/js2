@@ -191,6 +191,23 @@ function isKnownNonCallable(ctx: CodegenContext, arg: ts.Expression): boolean {
     ts.TypeFlags.StringLike |
     ts.TypeFlags.BigIntLike;
   if (tsType.flags & NON_CALLABLE_FLAGS) return true;
+  // (#2934 host-bridge A) A plain OBJECT type with NO call and NO construct
+  // signatures is statically non-callable — `arr.map(new Object())`
+  // (map/15.4.4.19-4-7) must throw the §23.1.3.18 step-3 TypeError BEFORE
+  // iterating, instead of falling to the host callback bridge (which leaks
+  // `env::__call_1_f64` into standalone AND mis-types the element arg —
+  // "call[1] expected f64, found array.get of externref"). `any`/`unknown`
+  // and union types stay dynamic (their flags are not Object), so an
+  // imprecisely-typed value that may hold a function at runtime is never
+  // gated.
+  if (
+    tsType.flags & ts.TypeFlags.Object &&
+    !(tsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) &&
+    (tsType.getCallSignatures?.() ?? []).length === 0 &&
+    (tsType.getConstructSignatures?.() ?? []).length === 0
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -6316,21 +6333,46 @@ function buildBridgeCallInstrs(
   loop: ArrayLoopLocals,
   elemSource: { kind: "local"; index: number } | { kind: "inline" },
 ): Instr[] {
+  const conv = bridgeElemConvertInstrs(ctx, elemType);
   return [
     { op: "local.get", index: setup.cbTmp! } as Instr,
     ...(elemSource.kind === "local"
-      ? [
-          { op: "local.get", index: elemSource.index } as Instr,
-          ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
-        ]
+      ? [{ op: "local.get", index: elemSource.index } as Instr, ...conv]
       : [
           { op: "local.get", index: loop.dataTmp } as Instr,
           { op: "local.get", index: loop.iTmp } as Instr,
           { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
-          ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+          ...conv,
         ]),
     { op: "call", funcIdx: setup.callBridgeIdx! } as Instr,
   ];
+}
+
+/**
+ * (#2934 host-bridge C) Convert a loop ELEMENT (as read from the backing
+ * array) to the host bridge's numeric arg kind (`f64` in non-fast mode, `i32`
+ * in fast mode). The old inline conversion only knew `i32 → f64`, so:
+ *   - a BOXED-ANY (externref) element — `new Array(N)` / `any[]` vecs — flowed
+ *     raw into the f64 param: `call[1] expected type f64, found array.get of
+ *     type externref` (the `__closure_2/4` invalid-Wasm cluster,
+ *     `filter/create-species-poisoned.js`);
+ *   - a PACKED i8/i16 element reads as the widened i32 but compared as
+ *     `elemType.kind === "i32"` → no convert → i32 into f64 (same class).
+ * externref unboxes via `__unbox_number` (ToNumber; registered by
+ * `addUnionImports` — native in standalone, import in host mode, resolved at
+ * build time so the funcIdx is post-shift-correct and the pushed body is
+ * walked by any later shifts).
+ */
+function bridgeElemConvertInstrs(ctx: CodegenContext, elemType: ValType): Instr[] {
+  if (ctx.fast) return [];
+  const readKind = elemType.kind === "i8" || elemType.kind === "i16" ? "i32" : elemType.kind;
+  if (readKind === "i32") return [{ op: "f64.convert_i32_s" } as Instr];
+  if (readKind === "externref" || readKind === "ref_extern") {
+    addUnionImports(ctx);
+    const unboxIdx = ctx.funcMap.get("__unbox_number");
+    if (unboxIdx !== undefined) return [{ op: "call", funcIdx: unboxIdx } as Instr];
+  }
+  return [];
 }
 
 /** Build instructions to check truthiness of a callback result (-> i32). */
@@ -6810,7 +6852,9 @@ function compileArrayReduce(
       { op: "local.get", index: loop.dataTmp } as Instr,
       { op: "local.get", index: loop.iTmp } as Instr,
       { op: loop.getOp, typeIdx: arrTypeIdx } as Instr,
-      ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+      // (#2934 host-bridge C) externref/packed elems convert to the bridge's
+      // numeric arg kind — see bridgeElemConvertInstrs.
+      ...bridgeElemConvertInstrs(ctx, elemType),
       { op: "call", funcIdx: setup.callBridgeIdx! } as Instr,
       { op: "local.set", index: accTmp } as Instr,
     ];
@@ -6996,7 +7040,9 @@ function compileArrayReduceRight(
       { op: "local.get", index: dataTmp } as Instr,
       { op: "local.get", index: iTmp } as Instr,
       { op: getOp, typeIdx: arrTypeIdx } as Instr,
-      ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" } as Instr] : []),
+      // (#2934 host-bridge C) externref/packed elems convert to the bridge's
+      // numeric arg kind — see bridgeElemConvertInstrs.
+      ...bridgeElemConvertInstrs(ctx, elemType),
       { op: "call", funcIdx: setup.callBridgeIdx! } as Instr,
       { op: "local.set", index: accTmp } as Instr,
     ];

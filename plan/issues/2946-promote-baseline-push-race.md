@@ -1,7 +1,8 @@
 ---
 id: 2946
 title: "promote-baseline loses its baselines-repo push race under overlapping main runs (rebase retries can never resolve)"
-status: ready
+status: done
+completed: 2026-07-02
 sprint: current
 created: 2026-07-02
 priority: medium
@@ -10,7 +11,7 @@ feasibility: medium
 task_type: bug
 area: tooling
 goal: ci-hardening
-related: [2920, 1951, 1668]
+related: [2920, 1951, 1668, 2942]
 ---
 
 # #2946 — promote-baseline push race: retries rebase wholesale-regenerated JSONLs and always conflict
@@ -86,3 +87,35 @@ Filed from the #2920/#2424 revert verification (task #2, dev-2912f): the
 re-seed-before-revert ordering requirement was only satisfied by the _next_
 run's promote winning its race. See the "Revert record" section in
 `plan/issues/2920-strict-negative-verdict-succeeded-arm.md`.
+
+## Resolution (2026-07-02) — DUPLICATE, already fixed by #2942 / PR #2456
+
+I checked this against current `origin/main`'s `.github/workflows/test262-sharded.yml`
+before implementing anything, and the exact fix this issue prescribes is
+**already live** — landed by **#2942 (PR #2456, commit `d35a13cbb`, dev-f2)**
+at 2026-07-02 04:33, which superseded the old `#1861` fetch+rebase loop:
+
+- **Stop rebasing content → hard-reset + overwrite (Option-A re-anchor):**
+  `test262-sharded.yml` lines ~1663-1698 — on push rejection it re-fetches,
+  `git checkout -f -B "$BR" origin/$BR`, re-applies this run's snapshotted
+  baseline files wholesale, re-commits, retries (8 attempts, which now
+  *converge* because last-writer-wins on a whole-file snapshot). This is
+  Fix-direction §1 verbatim.
+- **Ancestor/descendant ordering guard by main-SHA generation:** lines
+  ~1671-1683 — parses the promoted main SHA out of the remote tip's commit
+  subject and, if OUR `github.sha` is an ancestor of it, treats this promote as
+  **superseded and drops it (exit success)** instead of clobbering the newer
+  baseline. This is Fix-direction §2 verbatim.
+- The louder stranding signal (`::error::Failed to push baselines after 8
+  re-anchor attempts … See #2942`, line ~1700) is also present.
+- Fix-direction §3 (job-level `concurrency` group) was **deliberately declined**
+  by #2942 (code comment lines ~1645-1648: the per-SHA push groups are
+  load-bearing, #2178) — not a gap.
+
+Both acceptance criteria are satisfied by #2942: overlapping runs both finish
+green (re-anchor converges), and an out-of-order older finisher no longer
+clobbers a newer baseline (the ancestry guard drops it). This issue's evidence
+(the #2424 landing window, 00:56-01:27) **predates** #2942 landing (04:33) and
+was filed as an independent rediscovery of the same race without
+cross-referencing #2942. No residual bug — closing as a duplicate, no code
+change. (dev opus-dev)

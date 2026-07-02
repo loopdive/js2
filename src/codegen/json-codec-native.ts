@@ -56,6 +56,7 @@ import { emitJsonQuoteString } from "./json-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { reserveReplacerDriver, reserveReviverDriver, reserveToJsonDriver } from "./accessor-driver.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 const EQ_HEAP_TYPE = -19; // signed LEB128 → 0x6d → TYPE.eq (for ref.null any/eq)
 
@@ -165,7 +166,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
     ],
     [strRefNull],
   );
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("__json_stringify_value", funcIdx);
 
   // ── Local plan ──────────────────────────────────────────────────────────
@@ -891,7 +892,7 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
     { op: "ref.null", typeIdx: anyStrTypeIdx },
   ];
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "__json_stringify_value",
     typeIdx,
     locals: [
@@ -940,9 +941,9 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   // ref $AnyString so the call site sees the same type the primitive
   // string-stringify path returns.
   const rootTypeIdx = addFuncType(ctx, [anyref], [strRef]);
-  const rootFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const rootFuncIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("__json_stringify_root", rootFuncIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, rootFuncIdx, {
     name: "__json_stringify_root",
     typeIdx: rootTypeIdx,
     locals: [{ count: 1, type: strRefNull }],
@@ -978,9 +979,9 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   // (the worker's separators collapse to ""). Same null→"null" coalescing as
   // the compact root.
   const rootIndentTypeIdx = addFuncType(ctx, [anyref, strRefNull], [strRef]);
-  const rootIndentFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const rootIndentFuncIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("__json_stringify_root_indent", rootIndentFuncIdx);
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, rootIndentFuncIdx, {
     name: "__json_stringify_root_indent",
     typeIdx: rootIndentTypeIdx,
     locals: [{ count: 1, type: strRefNull }],
@@ -1018,13 +1019,13 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const newObjIdx = ctx.funcMap.get("__new_plain_object")!;
   const externSetIdx = ctx.funcMap.get("__extern_set")!;
   const rootRepTypeIdx = addFuncType(ctx, [anyref, strRefNull, { kind: "externref" }, { kind: "externref" }], [strRef]);
-  const rootRepFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const rootRepFuncIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("__json_stringify_root_replacer", rootRepFuncIdx);
   // locals: 4 RR_ROOT externref  5 RR_VAL anyref  6 RR_RES strRefNull
   const RR_ROOT = 4;
   const RR_VAL = 5;
   const RR_RES = 6;
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, rootRepFuncIdx, {
     name: "__json_stringify_root_replacer",
     typeIdx: rootRepTypeIdx,
     locals: [
@@ -1213,15 +1214,18 @@ export function emitJsonParseText(ctx: CodegenContext): number {
   // types — the fresh $JsonP index never reaches a func type.
   // ════════════════════════════════════════════════════════════════════════
   const valueTypeIdx = addFuncType(ctx, [anyref], [anyref]); // (p:anyref) -> value:anyref
-  const valueFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  // (#1916 S3b) stable-regime handles — the old `valueFuncIdx + 1/+ 2` sibling
+  // derivation (which assumed the three functions land consecutively) is
+  // replaced by three explicit mints; pushes record the real positions.
+  const valueFuncIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__json_parse_value", valueFuncIdx);
 
   const strParseTypeIdx = addFuncType(ctx, [anyref], [strRefNative]); // (p:anyref) -> ref $NativeString
-  const strParseFuncIdx = valueFuncIdx + 1;
+  const strParseFuncIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__json_parse_str", strParseFuncIdx);
 
   const textTypeIdx = addFuncType(ctx, [externref], [anyref]);
-  const textFuncIdx = valueFuncIdx + 2;
+  const textFuncIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__json_parse_text", textFuncIdx);
 
   // ════════════════════════════════════════════════════════════════════════
@@ -2469,7 +2473,7 @@ export function emitJsonParseText(ctx: CodegenContext): number {
   // exactly once. Bodies hold only plain JSON-safe data (no funcs/cycles).
   const cloneBody = (b: Instr[]): Instr[] => JSON.parse(JSON.stringify(b)) as Instr[];
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, valueFuncIdx, {
     name: "__json_parse_value",
     typeIdx: valueTypeIdx,
     locals: [
@@ -2492,7 +2496,7 @@ export function emitJsonParseText(ctx: CodegenContext): number {
     exported: false,
   } as unknown as (typeof ctx.mod.functions)[number]);
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, strParseFuncIdx, {
     name: "__json_parse_str",
     typeIdx: strParseTypeIdx,
     locals: [
@@ -2513,7 +2517,7 @@ export function emitJsonParseText(ctx: CodegenContext): number {
     exported: false,
   } as unknown as (typeof ctx.mod.functions)[number]);
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, textFuncIdx, {
     name: "__json_parse_text",
     typeIdx: textTypeIdx,
     locals: [
@@ -2599,7 +2603,7 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
   //
   // __internalize_json_value(val, holder, key, reviver) -> externref
   const internTypeIdx = addFuncType(ctx, [externref, externref, externref, externref], [externref]);
-  const internFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const internFuncIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("__internalize_json_value", internFuncIdx);
 
   // params: 0=val 1=holder 2=key 3=reviver
@@ -2783,7 +2787,7 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
     { op: "call", funcIdx: reviverDriverIdx },
   ];
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, internFuncIdx, {
     name: "__internalize_json_value",
     typeIdx: internTypeIdx,
     locals: [
@@ -2808,7 +2812,7 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
   // return any.convert_extern(
   //          __internalize_json_value(val, root, "", reviver)).
   const rootTypeIdx = addFuncType(ctx, [externref, externref], [anyref]);
-  const rootFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const rootFuncIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("__json_parse_text_reviver", rootFuncIdx);
 
   void anyStrTypeIdx;
@@ -2840,7 +2844,7 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
     { op: "any.convert_extern" }, // back to anyref (the parse codec's result type)
   ];
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, rootFuncIdx, {
     name: "__json_parse_text_reviver",
     typeIdx: rootTypeIdx,
     locals: [

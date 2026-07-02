@@ -47,6 +47,8 @@ export interface TestResult {
   isException?: boolean;
   runtimeNegativePass?: boolean;
   runtimeNegativeNoThrow?: boolean;
+  /** (#2939/#2940) vacuity correction: a `fail` whose harness callback never ran. */
+  vacuous?: boolean;
 }
 
 interface PendingJob {

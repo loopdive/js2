@@ -1366,6 +1366,21 @@ process.on("message", async (msg) => {
           runtimeNegativeNoThrow: true,
           ...buildResultMetadata(result, true),
         });
+      } else if (ret === -262) {
+        // (#2939/#2940) Vacuity correction — the harness-wrapper callback never
+        // executed (invoked wrapper + zero counted asserts). Scored `fail` with
+        // a `vacuous` marker so host_free_pass / the standalone floor exclude it
+        // and the report can tally the integrity correction separately.
+        sendResult({
+          id,
+          status: "fail",
+          vacuous: true,
+          error: "vacuous: harness-wrapper callback never executed (#2940) — no assertion ran",
+          ret,
+          compileMs,
+          execMs,
+          ...buildResultMetadata(result, true),
+        });
       } else {
         sendResult({ id, status: ret === 1 ? "pass" : "fail", ret, compileMs, execMs, ...buildResultMetadata(result, true) });
       }

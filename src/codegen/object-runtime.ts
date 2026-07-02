@@ -2627,25 +2627,42 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     ];
     registerNative("__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }], [], toStringBody);
 
-    // #2042 R2 — now that `__extern_toString` exists, splice the object-key arm
-    // into `__to_property_key`'s body (built earlier, before this funcIdx was
-    // known). For a `$Object` key, ToPropertyKey = ToString(ToPrimitive(key,
-    // "string")) — exactly `__extern_toString`. Insert BEFORE the trailing
-    // `local.get 0` fallthrough so Symbol/opaque keys still pass through.
+    // #2042 R2 / #2985 — now that `__extern_toString` exists, splice the
+    // non-Symbol ToString arm into `__to_property_key`'s body (built earlier,
+    // before this funcIdx was known). By this point the key is neither an
+    // `$AnyString` nor a boxed number (both returned already). For EVERY
+    // remaining non-Symbol key — `$Object`, boolean, bigint, null/undefined,
+    // any other opaque primitive — ToPropertyKey = ToString(ToPrimitive(key,
+    // "string")), exactly `__extern_toString` (§7.1.1.1 → §7.1.17). Originally
+    // this arm only tested `$Object`, so a boolean/bigint/etc. computed key
+    // (`o[true]`, `Object.defineProperty(o, true, …)`) fell through UNCHANGED
+    // and then hit the downstream `ref.cast $AnyString` in
+    // `emitClassifyKey`/`__obj_hash`, trapping "illegal cast [in __obj_find()]"
+    // (#2985 residual). Broadening the test from "is `$Object`" to "is NOT a
+    // Symbol" canonicalises those keys instead. A genuine Symbol still falls
+    // through to the trailing `local.get 0` unchanged (Symbols are looked up by
+    // identity via `__key_equals`, not by string cast). When symbol keys are
+    // disabled there are no Symbol keys, so the ToString applies unconditionally.
     if (tpkBodyRef !== undefined) {
       const externToStringIdx = ctx.funcMap.get("__extern_toString")!;
-      const objArm: Instr[] = [
-        // if (ref.test $Object any) return __extern_toString(key)
-        { op: "local.get", index: 1 },
-        { op: "ref.test", typeIdx: objectTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: externToStringIdx }, { op: "return" }],
-        } as Instr,
+      const toStringArm: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: externToStringIdx },
+        { op: "return" },
       ];
-      // Splice before the last instruction (the unchanged-key fallthrough).
-      tpkBodyRef.splice(tpkBodyRef.length - 1, 0, ...objArm);
+      const nonSymbolToStringArm: Instr[] = symbolKeysEnabled
+        ? [
+            // if (!ref.test $Symbol any) return __extern_toString(key)
+            { op: "local.get", index: 1 },
+            { op: "ref.test", typeIdx: symbolTypeIdx },
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: toStringArm } as Instr,
+          ]
+        : // no Symbol keys in play → ToString every remaining key unconditionally
+          toStringArm;
+      // Splice before the last instruction (the unchanged-key fallthrough, which
+      // now only serves genuine Symbol keys under symbolKeysEnabled).
+      tpkBodyRef.splice(tpkBodyRef.length - 1, 0, ...nonSymbolToStringArm);
     }
   }
 
@@ -5477,6 +5494,20 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const HOST_FLAG_WRITABLE = FLAG_WRITABLE; // bit 0
     const HOST_FLAG_ENUMERABLE = FLAG_ENUMERABLE; // bit 1
     const HOST_FLAG_CONFIGURABLE = FLAG_CONFIGURABLE; // bit 2
+    // (#2989) "Desc has a [[X]] field" specified-bits + hasValue bit — the
+    // §10.1.6.3 ValidateAndApplyPropertyDescriptor preflight in
+    // `__defineProperty_value` gates every spec TypeError on THESE bits (a
+    // configurable/enumerable/writable change is only forbidden when the Desc
+    // actually *specifies* that attribute). The inline-literal fast path
+    // (`computeRuntimeFlags`, object-ops.ts) sets them; this dynamic-descriptor
+    // applier previously set only the value bits 0/1/2, so the preflight read
+    // "no attribute specified / no value" for every field → it never threw and
+    // an invalid redefine silently no-op'd (array length non-writable→writable,
+    // non-configurable redefine, non-extensible new prop via a `var` descriptor).
+    const HOST_WRITABLE_SPECIFIED = 1 << 3;
+    const HOST_ENUMERABLE_SPECIFIED = 1 << 4;
+    const HOST_CONFIGURABLE_SPECIFIED = 1 << 5;
+    const HOST_HAS_VALUE = 1 << 7;
 
     const L_DESC = 3; // desc as externref (after $Object validation)
     const L_DESC_ANY = 4;
@@ -5516,12 +5547,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       ];
     };
     // ToBoolean(getField(key)) → set valueBit; always set hasData when marksData.
-    const readBooleanFlag = (key: string, valueBit: number, marksData: boolean): Instr[] => [
+    // (#2989) When the field is present, ALSO set its "specified" bit so the
+    // `__defineProperty_value` §10.1.6.3 preflight can gate the spec TypeErrors.
+    const readBooleanFlag = (key: string, valueBit: number, marksData: boolean, specifiedBit: number): Instr[] => [
       ...hasField(key),
       {
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          ...setFlag(specifiedBit),
           ...(marksData
             ? ([
                 { op: "i32.const", value: 1 },
@@ -5598,7 +5632,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "ref.null.extern" },
       { op: "local.set", index: L_SETTER },
 
-      // value present → hasData, capture value.
+      // value present → hasData + hasValue bit (#2989), capture value.
       ...hasField("value"),
       {
         op: "if",
@@ -5606,13 +5640,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         then: [
           { op: "i32.const", value: 1 },
           { op: "local.set", index: L_HAS_DATA },
+          ...setFlag(HOST_HAS_VALUE),
           ...getField("value"),
           { op: "local.set", index: L_VALUE },
         ],
       },
-      ...readBooleanFlag("writable", HOST_FLAG_WRITABLE, true),
-      ...readBooleanFlag("enumerable", HOST_FLAG_ENUMERABLE, false),
-      ...readBooleanFlag("configurable", HOST_FLAG_CONFIGURABLE, false),
+      ...readBooleanFlag("writable", HOST_FLAG_WRITABLE, true, HOST_WRITABLE_SPECIFIED),
+      ...readBooleanFlag("enumerable", HOST_FLAG_ENUMERABLE, false, HOST_ENUMERABLE_SPECIFIED),
+      ...readBooleanFlag("configurable", HOST_FLAG_CONFIGURABLE, false, HOST_CONFIGURABLE_SPECIFIED),
       ...readAccessor("get", L_GETTER),
       ...readAccessor("set", L_SETTER),
 
@@ -5704,7 +5739,29 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // helpers (idempotent; defined funcs, no index shift) and resolve it.
     addUnionImportsViaRegistry(ctx);
     const boxBoolIdx = ctx.funcMap.get("__box_boolean")!;
+    const boxNumIdx = ctx.funcMap.get("__box_number")!;
     const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object")!;
+
+    // (#2987) String-wrapper exotic own-property synthesis. `new String("ab")`
+    // is a `$Object` wrapper carrying its [[StringData]] native string in the
+    // reserved FLAG_INTERNAL slot (#1910 S2). Its integer-index own properties
+    // ("0".."n-1") and "length" are String-exotic (§10.4.3) and have NO ordinary
+    // `$PropEntry`, so `__obj_find` misses them and gOPD returned `undefined`.
+    // When the ordinary lookup misses we recover the slot string and synthesize
+    // the spec descriptor: index → { value: char, writable:false, enumerable:true,
+    // configurable:false }; "length" → { value: len, writable:false,
+    // enumerable:false, configurable:false }. Standalone + nativeStrings only —
+    // the gc/host lane keeps its host `getOwnPropertyDescriptor` (byte-inert).
+    const charAtIdx = ctx.nativeStrHelpers.get("__str_charAt");
+    const strExotic = ctx.standalone && ctx.nativeStrings && anyStrTypeIdx >= 0 && charAtIdx !== undefined;
+    const stringExternG = (value: string): Instr[] => {
+      addStringConstantGlobal(ctx, value);
+      return stringConstantExternrefInstrs(ctx, value);
+    };
+    const boxBoolConst = (v: number): Instr[] => [
+      { op: "i32.const", value: v },
+      { op: "call", funcIdx: boxBoolIdx },
+    ];
 
     // `__extern_set(desc, "<key>", <value externref>)` — desc is in local 6.
     // `valueInstrs` must leave one externref on the stack.
@@ -5728,6 +5785,105 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "i32.ne" },
       { op: "call", funcIdx: boxBoolIdx },
     ];
+
+    // (#2987) String-wrapper exotic own-property arm — runs when the ordinary
+    // `__obj_find` misses. Locals: 7=sEnt(ref null $PropEntry) 8=sVal(anyref)
+    // 9=wStr(ref null $NativeString) 10=wLen(i32) 11=kStr(ref null $NativeString)
+    // 12=kIdx(i32). Always ends in a `return` on every control path.
+    const L_SENT = 7;
+    const L_SVAL = 8;
+    const L_WSTR = 9;
+    const L_WLEN = 10;
+    const L_KSTR = 11;
+    const L_KIDX = 12;
+    const undefRet: Instr[] = [{ op: "ref.null.extern" }, { op: "return" }];
+    // Build a fresh data descriptor into `desc` (local 6) and return it.
+    const exoticDataDesc = (valueInstrs: Instr[], enumerable: number): Instr[] => [
+      { op: "call", funcIdx: newPlainObjectIdx },
+      { op: "local.set", index: 6 },
+      ...setKey("value", valueInstrs),
+      ...setKey("writable", boxBoolConst(0)),
+      ...setKey("enumerable", boxBoolConst(enumerable)),
+      ...setKey("configurable", boxBoolConst(0)),
+      { op: "local.get", index: 6 },
+      { op: "return" },
+    ];
+    const stringExoticArm: Instr[] = strExotic
+      ? [
+          // key must be a string property key (else no exotic own property).
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "local.tee", index: 2 },
+          { op: "ref.test", typeIdx: anyStrTypeIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: undefRet },
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: anyStrTypeIdx },
+          { op: "call", funcIdx: strFlattenIdx },
+          { op: "local.set", index: L_KSTR },
+          // slotEnt = __obj_find(o, "[[PrimitiveValue]]") — absent ⇒ not a wrapper.
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          ...stringExternG(WRAPPER_PRIMITIVE_KEY),
+          { op: "call", funcIdx: objFindIdx },
+          { op: "local.tee", index: L_SENT },
+          { op: "ref.is_null" },
+          { op: "if", blockType: { kind: "empty" }, then: undefRet },
+          // sVal = slotEnt.value; a String wrapper's [[StringData]] is a string.
+          { op: "local.get", index: L_SENT },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+          { op: "local.tee", index: L_SVAL },
+          { op: "ref.test", typeIdx: anyStrTypeIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: undefRet },
+          // wStr = flatten([[StringData]]); wLen = wStr.len
+          { op: "local.get", index: L_SVAL },
+          { op: "ref.cast", typeIdx: anyStrTypeIdx },
+          { op: "call", funcIdx: strFlattenIdx },
+          { op: "local.tee", index: L_WSTR },
+          { op: "struct.get", typeIdx: nativeStrTypeIdx, fieldIdx: 0 },
+          { op: "local.set", index: L_WLEN },
+          // "length" → { value: len, writable:false, enumerable:false, configurable:false }
+          { op: "local.get", index: L_KSTR },
+          ...nativeStringLiteralInstrs(ctx, "length"),
+          { op: "call", funcIdx: strEqualsIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: exoticDataDesc(
+              [{ op: "local.get", index: L_WLEN }, { op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx }],
+              0,
+            ),
+          },
+          // integer index in [0, len) → { value: char, writable:false, enumerable:true, configurable:false }
+          { op: "local.get", index: L_KSTR },
+          { op: "call", funcIdx: objIndexOfKeyIdx },
+          { op: "local.tee", index: L_KIDX },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ge_s" },
+          { op: "local.get", index: L_KIDX },
+          { op: "local.get", index: L_WLEN },
+          { op: "i32.lt_s" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: exoticDataDesc(
+              [
+                { op: "local.get", index: L_WSTR },
+                { op: "ref.as_non_null" },
+                { op: "local.get", index: L_KIDX },
+                { op: "call", funcIdx: charAtIdx as number },
+                { op: "extern.convert_any" } as Instr,
+              ],
+              1,
+            ),
+          },
+          // no exotic own property matched → undefined
+          ...undefRet,
+        ]
+      : undefRet;
 
     const body: Instr[] = [
       // (#2896) Builtin-fn metadata arm: gOPD over a builtin function value
@@ -5769,12 +5925,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "local.get", index: 1 },
       { op: "call", funcIdx: objFindIdx },
       { op: "local.tee", index: 4 },
-      // if e == null → return undefined (own property does not exist)
+      // if e == null → try String-wrapper exotic own property (#2987), else undefined
       { op: "ref.is_null" },
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "ref.null.extern" }, { op: "return" }],
+        then: stringExoticArm,
       },
       // fl = e.flags
       { op: "local.get", index: 4 },
@@ -5837,6 +5993,20 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "e", type: entryRefNull },
         { name: "fl", type: { kind: "i32" } },
         { name: "desc", type: { kind: "externref" } },
+        // (#2987) String-wrapper exotic own-property arm locals (7..12). Only
+        // emitted when the arm is active (standalone) so every other lane — where
+        // `stringExoticArm` is the original `[null.extern, return]` — keeps its
+        // byte-identical function body + local vector.
+        ...(strExotic
+          ? ([
+              { name: "sEnt", type: entryRefNull },
+              { name: "sVal", type: { kind: "anyref" } },
+              { name: "wStr", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } },
+              { name: "wLen", type: { kind: "i32" } },
+              { name: "kStr", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } },
+              { name: "kIdx", type: { kind: "i32" } },
+            ] as { name: string; type: ValType }[])
+          : []),
       ],
       body,
     );

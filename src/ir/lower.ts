@@ -70,7 +70,17 @@ import {
   asVal,
   forEachNestedBuffer,
 } from "./nodes.js";
-import { isSideEffecting } from "./passes/dead-code.js";
+// #2134 — the unified IR effect model (formerly the private `SchedFx` table
+// here plus `isSideEffecting` in passes/dead-code.ts; moved verbatim), plus
+// the slice-2 independent schedule verifier.
+import {
+  effectsOf,
+  effectsArePure,
+  effectsConflict,
+  isSideEffecting,
+  verifyEmissionSchedule,
+  type IrEffects,
+} from "./effects.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
   IrBoxedLowering,
@@ -544,7 +554,7 @@ export function lowerIrFunctionBody<S>(
   // program order — this is purely an emission-scheduling fix.
   const anchorEager = new Set<IrValueId>();
   {
-    const fxCache = new Map<IrInstr, SchedFx>();
+    const fxCache = new Map<IrInstr, IrEffects>();
     const NEVER = Number.POSITIVE_INFINITY;
     for (const block of func.blocks) {
       const instrs = block.instrs;
@@ -607,14 +617,14 @@ export function lowerIrFunctionBody<S>(
         let e = NEVER;
         for (const c of consumers) e = Math.min(e, c === n ? n : emissionIdx[c]);
         if (e === NEVER) continue; // consumed only by dead chains — never emitted
-        const fx = schedFxOf(instr, fxCache);
+        const fx = effectsOf(instr, fxCache);
         let anchored = false;
-        if (!schedFxIsPure(fx)) {
+        if (!effectsArePure(fx)) {
           for (let k = i + 1; k < e && k < n; k++) {
             const ek = emissionIdx[k];
             if (ek === NEVER || ek > e) continue; // executes after our tree (or never) — def order preserved
             if (ek === e && treeConsumes(k, r)) continue; // same tree, operands emit before consumers
-            if (schedFxConflicts(fx, schedFxOf(instrs[k], fxCache))) {
+            if (effectsConflict(fx, effectsOf(instrs[k], fxCache))) {
               anchored = true;
               break;
             }
@@ -628,6 +638,23 @@ export function lowerIrFunctionBody<S>(
           emissionIdx[i] = e;
           isLazyAt[i] = true;
         }
+      }
+
+      // #2134 slice 2 — independent post-hoc verification of the computed
+      // schedule: pairwise over emitted effectful instrs, program order must
+      // be preserved for conflicting effects (an algorithmically separate
+      // re-derivation, so an anchor-pass bug cannot hide itself). The throw
+      // is caught by the integration loop; the "emission-schedule verify"
+      // marker classifies it kind "verify" → HARD failure under CI/test
+      // (`irVerifierHardFailureEnabled`), demote-to-legacy warning in
+      // production — a tripwire that can never miscompile silently.
+      const scheduleViolations = verifyEmissionSchedule(instrs, emissionIdx, isLazyAt, collectIrUses, fxCache);
+      if (scheduleViolations.length > 0) {
+        throw new Error(
+          `emission-schedule verify: ${scheduleViolations[0]!.reason}` +
+            (scheduleViolations.length > 1 ? ` (+${scheduleViolations.length - 1} more)` : "") +
+            ` in ${func.name} [#2134]`,
+        );
       }
     }
   }
@@ -2436,211 +2463,6 @@ export function lowerIrFunctionBody<S>(
     typeIdx,
     exported: func.exported,
   };
-}
-
-// --- #1982: emission-scheduling effect summaries ----------------------------
-//
-// `emitBlockBody`'s lazy use-site emission re-orders instruction trees
-// relative to program order. That is sound only for values that commute with
-// everything in between. These summaries classify what each instruction reads
-// and writes so the scheduler can anchor order-sensitive values at their def
-// position instead.
-//
-// Slots are Wasm locals of the current function: nothing but `slot.write`
-// (and the loop headers that own dedicated slot indices) can modify them —
-// calls cannot reach another function's locals, and mutable closure captures
-// go through refcells. That keeps slot conflicts precise per index, which
-// matters because `slot.read` is by far the most common deferred read.
-
-interface SchedFx {
-  /** Reads mutable heap state (struct fields, globals, vec elements, host objects). */
-  readsHeap: boolean;
-  /** Writes heap state or has arbitrary effects (calls, iterator advance, throw). */
-  writesHeap: boolean;
-  /** Touches statically-unknown slots (raw.wasm may local.set; gen.* use func-level slots). */
-  allSlots: boolean;
-  readSlots: Set<number>;
-  writeSlots: Set<number>;
-}
-
-function schedFxOf(instr: IrInstr, cache: Map<IrInstr, SchedFx>): SchedFx {
-  const hit = cache.get(instr);
-  if (hit) return hit;
-  const fx: SchedFx = {
-    readsHeap: false,
-    writesHeap: false,
-    allSlots: false,
-    readSlots: new Set(),
-    writeSlots: new Set(),
-  };
-  // Memoize BEFORE recursing — buffers cannot be cyclic, but this keeps the
-  // walk linear in total instr count.
-  cache.set(instr, fx);
-  const mergeBuffer = (body: readonly IrInstr[]): void => {
-    for (const sub of body) {
-      const s = schedFxOf(sub, cache);
-      fx.readsHeap ||= s.readsHeap;
-      fx.writesHeap ||= s.writesHeap;
-      fx.allSlots ||= s.allSlots;
-      for (const x of s.readSlots) fx.readSlots.add(x);
-      for (const x of s.writeSlots) fx.writeSlots.add(x);
-    }
-  };
-  switch (instr.kind) {
-    // Pure: constants, arithmetic, allocation of fresh objects, immutable
-    // string content ops. Re-ordering these is unobservable.
-    case "const":
-    case "string.const":
-    case "binary":
-    case "unary":
-    case "select":
-    case "box":
-    case "unbox":
-    case "tag.test":
-    case "coerce.to_externref":
-    case "string.concat":
-    case "string.eq":
-    case "string.len":
-    case "object.new":
-    case "vec.new_fixed": // #1804 — fresh vec allocation, pure (like object.new)
-    case "refcell.new":
-    case "closure.new":
-    case "extern.regex":
-      break;
-    // Reads of mutable heap state.
-    case "global.get":
-    case "object.get":
-    case "class.get":
-    case "vec.get":
-    case "vec.len":
-    case "refcell.get":
-    case "closure.cap":
-      fx.readsHeap = true;
-      break;
-    // Writes of heap state (void-result, so only ever hazards).
-    case "global.set":
-    case "object.set":
-    case "class.set":
-    case "refcell.set":
-      fx.writesHeap = true;
-      break;
-    // Call-like: may read AND write arbitrary heap state. `extern.prop` can
-    // trigger a host getter; iterator ops advance host iterator state; throw
-    // is a control effect treated as a full heap barrier.
-    case "call":
-    case "class.call":
-    case "closure.call":
-    case "extern.call":
-    case "class.new":
-    case "extern.new":
-    case "extern.prop":
-    case "extern.propSet":
-    case "iter.new":
-    case "iter.next":
-    case "iter.done":
-    case "iter.value":
-    case "iter.return":
-    case "throw":
-    case "await":
-    case "async.return":
-    case "async.throw":
-      fx.readsHeap = true;
-      fx.writesHeap = true;
-      break;
-    // Generator ops read/write the function-level buffer/pendingThrow slots
-    // (slot indices live on IrFunction, not on the instr) plus the heap.
-    case "gen.push":
-    case "gen.epilogue":
-    case "gen.yieldStar":
-      fx.readsHeap = true;
-      fx.writesHeap = true;
-      fx.allSlots = true;
-      break;
-    // Raw embedded Wasm may contain arbitrary ops including local.set.
-    case "raw.wasm":
-      fx.readsHeap = true;
-      fx.writesHeap = true;
-      fx.allSlots = true;
-      break;
-    case "slot.read":
-      fx.readSlots.add(instr.slotIndex);
-      break;
-    case "slot.write":
-      fx.writeSlots.add(instr.slotIndex);
-      break;
-    // Loop headers write their pre-allocated state slots every iteration;
-    // body/cond/update effects merge in recursively.
-    case "forof.vec":
-      fx.readsHeap = true;
-      for (const s of [instr.counterSlot, instr.lengthSlot, instr.vecSlot, instr.dataSlot, instr.elementSlot]) {
-        fx.writeSlots.add(s);
-      }
-      mergeBuffer(instr.body);
-      break;
-    case "forof.iter":
-      fx.readsHeap = true;
-      fx.writesHeap = true; // iterator protocol host calls
-      for (const s of [instr.iterSlot, instr.resultSlot, instr.elementSlot]) fx.writeSlots.add(s);
-      mergeBuffer(instr.body);
-      break;
-    case "forof.string":
-      fx.readsHeap = true;
-      for (const s of [instr.counterSlot, instr.lengthSlot, instr.strSlot, instr.elementSlot]) {
-        fx.writeSlots.add(s);
-      }
-      mergeBuffer(instr.body);
-      break;
-    case "while.loop":
-      mergeBuffer(instr.cond);
-      mergeBuffer(instr.body);
-      break;
-    case "for.loop":
-      mergeBuffer(instr.cond);
-      mergeBuffer(instr.body);
-      mergeBuffer(instr.update);
-      break;
-    case "try":
-      mergeBuffer(instr.body);
-      if (instr.catchClause) mergeBuffer(instr.catchClause.body);
-      if (instr.finallyBody) mergeBuffer(instr.finallyBody);
-      break;
-    case "if":
-      mergeBuffer(instr.then);
-      mergeBuffer(instr.else);
-      break;
-    default: {
-      // Future instruction kinds default to a full barrier so a new kind can
-      // never silently become re-orderable.
-      const _exhaustive: never = instr;
-      void _exhaustive;
-      fx.readsHeap = true;
-      fx.writesHeap = true;
-      fx.allSlots = true;
-      break;
-    }
-  }
-  return fx;
-}
-
-function schedFxIsPure(fx: SchedFx): boolean {
-  return !fx.readsHeap && !fx.writesHeap && !fx.allSlots && fx.readSlots.size === 0 && fx.writeSlots.size === 0;
-}
-
-/** May re-ordering `a` across `b` change observable behavior? */
-function schedFxConflicts(a: SchedFx, b: SchedFx): boolean {
-  if (a.writesHeap && (b.readsHeap || b.writesHeap)) return true;
-  if (b.writesHeap && a.readsHeap) return true;
-  const aTouchesSlots = a.allSlots || a.readSlots.size > 0 || a.writeSlots.size > 0;
-  const bTouchesSlots = b.allSlots || b.readSlots.size > 0 || b.writeSlots.size > 0;
-  if (a.allSlots && bTouchesSlots) return true;
-  if (b.allSlots && aTouchesSlots) return true;
-  for (const s of a.writeSlots) {
-    if (b.readSlots.has(s) || b.writeSlots.has(s)) return true;
-  }
-  for (const s of b.writeSlots) {
-    if (a.readSlots.has(s)) return true;
-  }
-  return false;
 }
 
 function collectIrUses(instr: IrInstr): readonly IrValueId[] {

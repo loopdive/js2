@@ -74,3 +74,15 @@ downstream of those callee rejections.
 - `scripts/ir-fallback-baseline.json` — ratchet down.
 - `src/codegen/index.ts:1013` — `STRICT_IR_REASONS` once at zero.
 - `plan/log/ir-adoption.md` — confirms the relevant rows once promoted.
+
+## Banked triage (2026-07-02, dev-2912f — pre-gate prep for the #2856-sequenced dispatch)
+
+`check:ir-fallbacks` snapshot (main `46e390c`-era): `call-graph-closure` is
+**7** — `benchmarks/helpers.ts` 1 (bcrd → unclaimed `el`, blocked on the
+extern-in-IR/body-shape work), `dom/calendar.ts` 3, `js/algorithms.ts` 1,
+`js/builtins.ts` 2. Consistent with this issue's "derivative" framing: most
+entries clear as their callees' `body-shape-rejected` /
+`vardecl-init-expr:PropertyAccessExpression` (13 instances, extern-in-IR
+dependency) causes are fixed by #2856/#2857 — expect this bucket to shrink
+substantially without direct work; re-run the gate before triaging what
+remains.

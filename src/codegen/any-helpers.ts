@@ -249,22 +249,79 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext): number | undefin
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   const EQ_HEAP_TYPE = -19;
 
-  const nullAny: Instr[] = [
-    { op: "i32.const", value: 1 },
-    { op: "i32.const", value: 0 },
-    { op: "f64.const", value: NaN },
-    { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
-    { op: "ref.null.extern" },
-    { op: "struct.new", typeIdx: anyTypeIdx },
-  ];
-  const fallbackStringAny: Instr[] = [
-    { op: "i32.const", value: 5 },
-    { op: "i32.const", value: 0 },
-    { op: "f64.const", value: 0 },
-    { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
-    { op: "local.get", index: 0 },
-    { op: "struct.new", typeIdx: anyTypeIdx },
-  ];
+  // (#2141 S1) The two regimes share every arm except the null box and the
+  // unrecognized-value fallback. Legacy (flag off, byte-identical): fresh
+  // tag-1 null box; everything unrecognized → tag 5 "string" (the #1888
+  // box-the-externref lie). Honest (ctx.honestAnyBoxing): null → the
+  // `$undefined` singleton when reserved; unrecognized → classify —
+  // `$AnyString` → honest tag 5, other eq-castable GC ref → tag 6 (identity in
+  // refval), non-eq host-opaque → tag 6 with the externref parked (unreachable
+  // in standalone/wasi; kept total). Honest additionally requires
+  // `anyStrTypeIdx` — without the string test a genuine string would
+  // mis-classify as tag-6 object, so fall back to the legacy arms instead.
+  const honest = ctx.honestAnyBoxing === true && ctx.anyStrTypeIdx >= 0;
+  const nullAny: Instr[] =
+    honest && ctx.undefinedGlobalIdx !== undefined
+      ? [{ op: "global.get", index: ctx.undefinedGlobalIdx } as Instr]
+      : [
+          { op: "i32.const", value: 1 },
+          { op: "i32.const", value: 0 },
+          { op: "f64.const", value: NaN },
+          { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
+          { op: "ref.null.extern" },
+          { op: "struct.new", typeIdx: anyTypeIdx },
+        ];
+  const fallbackStringAny: Instr[] = honest
+    ? [
+        // $AnyString → tag 5 (string, externval) — the only honest tag-5.
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "i32.const", value: 5 },
+            { op: "i32.const", value: 0 },
+            { op: "f64.const", value: 0 },
+            { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
+            { op: "local.get", index: 0 },
+            { op: "struct.new", typeIdx: anyTypeIdx },
+            { op: "return" },
+          ],
+        } as Instr,
+        // Other GC (eq-castable) reference → tag 6 object, identity in refval.
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "i32.const", value: 6 },
+            { op: "i32.const", value: 0 },
+            { op: "f64.const", value: 0 },
+            { op: "local.get", index: 1 },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE } as Instr,
+            { op: "ref.null.extern" },
+            { op: "struct.new", typeIdx: anyTypeIdx },
+            { op: "return" },
+          ],
+        } as Instr,
+        // Non-eq host-opaque extern → tag 6 with the externref parked.
+        { op: "i32.const", value: 6 },
+        { op: "i32.const", value: 0 },
+        { op: "f64.const", value: 0 },
+        { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
+        { op: "local.get", index: 0 },
+        { op: "struct.new", typeIdx: anyTypeIdx },
+      ]
+    : [
+        { op: "i32.const", value: 5 },
+        { op: "i32.const", value: 0 },
+        { op: "f64.const", value: 0 },
+        { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
+        { op: "local.get", index: 0 },
+        { op: "struct.new", typeIdx: anyTypeIdx },
+      ];
 
   const body: Instr[] = [
     { op: "local.get", index: 0 },
@@ -2145,6 +2202,16 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
       ],
       [{ name: "tag", type: { kind: "i32" } }],
     );
+  }
+
+  // (#2141 S1) Honest-boxing regime: pre-register `__any_from_extern` (whose
+  // null + fallback arms are honest under the flag — see the regime branch in
+  // ensureAnyFromExternHelper) alongside the other box helpers, so `boxToAny`'s
+  // flag-gated externref arm (a pure funcMap dispatch — it must not register)
+  // finds it. Gated on `ctx.honestAnyBoxing`, so the legacy regime's modules
+  // are byte-identical.
+  if (ctx.honestAnyBoxing) {
+    ensureAnyFromExternHelper(ctx);
   }
 }
 

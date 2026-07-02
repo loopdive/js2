@@ -1524,6 +1524,7 @@ function buildPreamble(
   needsAsyncTest: boolean,
   needsDoneForAsyncTest: boolean,
   needsTestTypedArray: boolean,
+  needsTestBigIntTypedArray: boolean,
   needsAssertThrowsAsync: boolean,
   needsTypedArrayBinding: boolean,
   needsIteratorBinding: boolean,
@@ -1533,6 +1534,19 @@ function buildPreamble(
 ): string {
   let p = `let __fail: number = 0;
 let __assert_count: number = 1;
+// (#2939/#2940) Vacuity sentinel. Harness wrappers that call a user callback in
+// a loop (testWith*Constructors and siblings) increment this per callback
+// invocation they ATTEMPT. If, post-run, a test "passed" (__fail === 0) but a
+// harness wrapper was invoked (__harness_cb_expected > 0) yet NO assertion ever
+// executed (__assert_count still at its initial 1 — every assert helper bumps
+// it), the callback body was DEAD (the dispatch-drop / dead-callback class):
+// the assertions live inside the callback, so zero counted asserts + an invoked
+// wrapper ⇒ vacuous. Such a pass is scored VACUOUS (a distinct status, NOT
+// pass) so host_free_pass structurally excludes it. Under-detection (asserts
+// outside the callback keep __assert_count > 1) is safe — the test just stays a
+// pass; over-detection is near-impossible for the harness class (its callbacks
+// always contain counted asserts).
+let __harness_cb_expected: number = 0;
 
 class Test262Error {
   message: string;
@@ -1861,7 +1875,34 @@ function $DETACHBUFFER(buf: any): void {
 function testWithTypedArrayConstructors(fn: any): void {
   const constructors = [Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array];
   for (let i = 0; i < constructors.length; i++) {
+    __harness_cb_expected = __harness_cb_expected + 1;
     fn(constructors[i]);
+  }
+}`;
+  }
+
+  // (#2939/#2940) BigInt TypedArray harness wrapper. The real test262
+  // `testWithBigIntTypedArrayConstructors(f, …)` (testTypedArray.js) calls
+  // `f(constructor, boundArgFactory)` — a 2-ARG invocation where the callback
+  // is typically `function (TA, makeCtorArg) { … }`. Passing only the ctor
+  // left `makeCtorArg` undefined; combined with the (now-fixed) nested-scope
+  // dispatch gap the whole callback body was dead (a vacuous host-free pass,
+  // ~814 tests). Shim the 2-arg signature with an identity `makeCtorArg`
+  // passthrough (maps a length/iterable straight to the ctor's first arg).
+  // Only emitted when the body actually references the BigInt variant, so the
+  // non-BigInt corpus preamble is byte-unchanged. Requires the #2939 dispatch
+  // fix to land in lockstep — else it produces dishonest vacuous passes.
+  if (needsTestBigIntTypedArray) {
+    p += `
+
+function __ta_makeCtorArgPassthrough(x: any): any {
+  return x;
+}
+function testWithBigIntTypedArrayConstructors(fn: any): void {
+  const constructors = [BigInt64Array, BigUint64Array];
+  for (let i = 0; i < constructors.length; i++) {
+    __harness_cb_expected = __harness_cb_expected + 1;
+    fn(constructors[i], __ta_makeCtorArgPassthrough);
   }
 }`;
   }
@@ -2244,6 +2285,11 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
   const needsAsyncTest = includes.includes("asyncHelpers.js") && /\basyncTest\b/.test(body);
   const needsDoneForAsyncTest = needsAsyncTest && !needsDone;
   const needsTestTypedArray = includes.includes("testTypedArray.js") && /testWithTypedArrayConstructors/.test(body);
+  // (#2939/#2940) The BigInt variant `testWithBigIntTypedArrayConstructors`
+  // ships in the SAME testTypedArray.js include; the plain regex above does not
+  // match its `…BigIntTypedArray…` infix, so it needs its own gate + shim.
+  const needsTestBigIntTypedArray =
+    includes.includes("testTypedArray.js") && /testWithBigIntTypedArrayConstructors/.test(body);
 
   // test262's testTypedArray.js include defines `var TypedArray = Object.getPrototypeOf(Int8Array);`
   // as the abstract %TypedArray% intrinsic. Our runtime's Object.getPrototypeOf(Int8Array) does not
@@ -2302,6 +2348,7 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
     needsAsyncTest,
     needsDoneForAsyncTest,
     needsTestTypedArray,
+    needsTestBigIntTypedArray,
     needsAssertThrowsAsync,
     needsTypedArrayBinding,
     needsIteratorBinding,
@@ -2333,6 +2380,7 @@ export function wrapTest(source: string, meta?: Test262Meta): WrapResult {
       needsAsyncTest,
       needsDoneForAsyncTest,
       needsTestTypedArray,
+      needsTestBigIntTypedArray,
       needsAssertThrowsAsync,
       needsTypedArrayBinding,
       needsIteratorBinding,
@@ -2619,6 +2667,9 @@ export function test(): number {
     throw e;
   }
 ${asyncDrainCall}  if (__fail) { return __fail; }
+  // (#2939/#2940) Vacuity gate: a would-be pass whose harness callback never
+  // executed (invoked wrapper + zero counted asserts) is VACUOUS, not a pass.
+  if (__harness_cb_expected > 0 && __assert_count === 1) { return -262; }
   return 1;
 }
 `;
@@ -2772,6 +2823,15 @@ export interface TestResult {
   status: "pass" | "fail" | "skip" | "compile_error";
   reason?: string;
   error?: string;
+  /**
+   * (#2939/#2940) True when this `fail` is actually a VACUITY correction: the
+   * test would have "passed" but its harness-wrapper callback (testWith*
+   * Constructors) never executed, so no assertion ran. Kept distinct from a
+   * genuine assertion/semantic fail so the report can tally the integrity
+   * correction separately (previously-counted-pass → not-pass). Excluded from
+   * `pass` (and thus `host_free_pass` / the standalone floor) by being `fail`.
+   */
+  vacuous?: boolean;
   timing?: TestTiming;
   /**
    * 12-char sha256 hex digest of the compiled Wasm binary, or null if no
@@ -3549,6 +3609,24 @@ export async function runTest262File(
 
     if (ret === 1 || ret === 1.0) {
       return { file: relPath, category, status: "pass", timing, wasm_sha };
+    }
+    // (#2939/#2940) ret === -262: VACUITY sentinel — a would-be pass whose
+    // harness-wrapper callback never executed (invoked wrapper + zero counted
+    // asserts). Scored as `fail` (so host_free_pass / the standalone floor
+    // structurally exclude it) with a distinct `vacuous` marker + reason so the
+    // report can surface the integrity correction ("N previously-counted passes
+    // are vacuous"). This is the durable vacuity rule enforced in-runner: a dead
+    // callback is not a pass.
+    if (ret === -262) {
+      return {
+        file: relPath,
+        category,
+        status: "fail",
+        vacuous: true,
+        error: "vacuous: harness-wrapper callback never executed (#2940) — no assertion ran",
+        timing,
+        wasm_sha,
+      };
     }
     // ret >= 2: the (ret-1)th assert (1-based) that failed
     //   (__assert_count starts at 1, incremented before check, so first assert → 2)

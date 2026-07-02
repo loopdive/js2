@@ -36,6 +36,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { allocLocal } from "./context/locals.js";
+import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import {
   ensureAsyncDriveRuntime,
   getOrRegisterPromiseType,
@@ -802,7 +803,7 @@ export function fillCombinatorToVec(ctx: CodegenContext): void {
   ) {
     return;
   }
-  const fn = ctx.mod.functions[funcIdx - ctx.numImportFuncs];
+  const fn = definedFuncAt(ctx, funcIdx);
   if (!fn) return;
 
   const vecTypeIdx = getOrRegisterVecType(ctx, "externref", EXTERNREF);

@@ -1,5 +1,5 @@
 {
-  "codegen/array-methods.ts": 19,
+  "codegen/array-methods.ts": 20,
   "codegen/array-object-proto.ts": 1,
   "codegen/array-to-primitive.ts": 5,
   "codegen/async-scheduler.ts": 3,

@@ -1,8 +1,9 @@
 ---
 id: 2989
 title: "Standalone defineProperty missing spec TypeErrors (~32: array length, non-extensible, non-configurable redefine)"
-status: ready
-sprint: Backlog
+status: done
+completed: 2026-07-02
+sprint: current
 priority: medium
 horizon: s
 feasibility: medium

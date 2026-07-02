@@ -26,8 +26,13 @@ import { compileIrPathFunctions, type IrIntegrationError } from "../ir/integrati
 import { irVal, type IrType } from "../ir/nodes.js";
 import { buildTypeMap, type LatticeType } from "../ir/propagate.js";
 import { planIrCompilation, irClosureSignatureFromFunctionTypeNode, type IrFallbackReason } from "../ir/select.js";
+import { makeIrHostGlobalResolver } from "../ir/host-extern.js"; // (#2856)
 import { createCodegenContext } from "./context/create-context.js";
-import { collectModuleTopLevelNames, irFirstBodyReadsHostNode } from "./ir-first-gate.js";
+import {
+  collectModuleTopLevelNames,
+  irFirstBodyReadsHostNode,
+  irFirstBodyReadsStringElement,
+} from "./ir-first-gate.js";
 import type { FallbackCounts } from "./fallback-telemetry.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
@@ -683,6 +688,25 @@ function resolvePositionType(
           return irVal({ kind: "externref" });
         }
       }
+      // (#2856) Host extern class annotation (`: HTMLElement`, `: Element`,
+      // …) — an ambient lib interface the legacy backend models as an extern
+      // class (opaque externref + per-member `<Class>_get_<p>` /
+      // `<Class>_<m>` imports). JS-host lane only; in host-free modes the
+      // object-lowering fallback below keeps throwing (→ legacy → the
+      // existing #1472 refusal). Placed AFTER the local-class / typed-array /
+      // Array / iterable arms so it can't shadow them, and BEFORE
+      // `objectIrTypeFromTsType`, which rejects method-carrying interfaces
+      // anyway.
+      if (
+        ts.isTypeReferenceNode(node) &&
+        ts.isIdentifier(node.typeName) &&
+        !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports)
+      ) {
+        const refType = ctx.checker.getTypeFromTypeNode(node);
+        if (isExternalDeclaredClass(refType, ctx.checker)) {
+          return { kind: "extern", className: refType.getSymbol()?.name ?? node.typeName.text };
+        }
+      }
       const tsType = ctx.checker.getTypeFromTypeNode(node);
       const ir = objectIrTypeFromTsType(ctx, tsType);
       if (ir) return ir;
@@ -1172,6 +1196,7 @@ function computeIrFirstSkipSet(plan: IrOverlayPlan, sourceFile: ts.SourceFile): 
     const fn = plan.declByName.get(name);
     if (!fn || fn.asteriskToken) continue; // gate 2 — generators
     if (irFirstBodyReadsHostNode(fn, moduleNames)) continue; // gate 4 — host nodes
+    if (irFirstBodyReadsStringElement(fn)) continue; // gate 5 — string element read (#2972)
     if (!edges) continue; // no edge info (defensive) — stay conservative
     const callees = edges.get(name);
     let closed = true;
@@ -1203,7 +1228,25 @@ function planIrOverlay(ctx: CodegenContext, ast: TypedAST): IrOverlayPlan {
   // continues to enable the histogram log; the strict set additionally
   // forces collection.
   const trackFallbacks = process.env.JS2WASM_LOG_IR_FALLBACKS === "1" || STRICT_IR_REASONS.size > 0;
-  const selection = planIrCompilation(ast.sourceFile, { experimentalIR: true, trackFallbacks }, typeMap);
+  // (#2856) Host-extern claiming: mode gate + checker-backed ambient-global
+  // resolution. Selection runs BEFORE `collectDeclaredGlobals` /
+  // `collectUsedExternImports` populate the ctx registries, so the selector
+  // cannot read them — it gets the checker-derived answer instead (which is
+  // also shadow-exact: a user binding named `document` resolves to the user
+  // declaration, never the lib global). The registries ARE populated by the
+  // time from-ast lowers (post-`compileDeclarations`), which is where member
+  // resolution happens.
+  const jsHostExterns = !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+  const selection = planIrCompilation(
+    ast.sourceFile,
+    {
+      experimentalIR: true,
+      trackFallbacks,
+      jsHostExterns,
+      resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
+    },
+    typeMap,
+  );
   // #1530 — when a rejection reason is listed in STRICT_IR_REASONS,
   // promote every fallback with that reason to a hard compile error
   // instead of letting the legacy path silently catch it. The set
@@ -14404,7 +14447,11 @@ function collectDeclaredGlobals(ctx: CodegenContext, libFile: ts.SourceFile, use
       addImport(ctx, "env", importName, { kind: "func", typeIdx });
       const funcIdx = ctx.funcMap.get(importName);
       if (funcIdx !== undefined) {
-        ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx });
+        // (#2856) Record the extern class of the global's declared type so
+        // the IR host-extern path can type the `call global_<name>` handle
+        // as `IrType.extern { className }` and dispatch member access on it.
+        const className = type.getSymbol()?.name;
+        ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx, className });
       }
     }
   }

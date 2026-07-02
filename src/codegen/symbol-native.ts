@@ -25,6 +25,7 @@ import { ensureSymbolCounter } from "./literals.js";
 import { ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { compileNativeStringLiteral } from "./string-ops.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 /** Initial capacity of the description table (covers small symbol counts without
  *  a grow; ids start at 100 so the very first user symbol already forces one
@@ -101,13 +102,13 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
     const symNull: ValType = { kind: "ref_null", typeIdx: symIdx };
     const arrNull: ValType = { kind: "ref_null", typeIdx: internArrTypeIdx };
     const typeIdx = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "externref" }]);
-    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
     ctx.funcMap.set("__box_symbol", funcIdx);
     // params: 0=id(i32). locals: 1=tbl 2=existing 3=grow
     const TBL = 1;
     const EXISTING = 2;
     const GROW = 3;
-    ctx.mod.functions.push({
+    pushDefinedFunc(ctx, funcIdx, {
       name: "__box_symbol",
       typeIdx,
       locals: [
@@ -469,7 +470,7 @@ export function ensureSymbolRegistry(ctx: CodegenContext): {
   // ── __symbol_for_native(key: ref $AnyString) -> i32 ─────────────────────
   {
     const typeIdx = addFuncType(ctx, [{ kind: "ref", typeIdx: anyStrTypeIdx }], [{ kind: "i32" }]);
-    forIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    forIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
     ctx.funcMap.set("__symbol_for_native", forIdx);
     // params: key(0). locals: i(1), n(2), keys(3), ids(4), newCap(5), newKeys(6),
     //   newIds(7), id(8)
@@ -645,7 +646,7 @@ export function ensureSymbolRegistry(ctx: CodegenContext): {
       { op: "local.get", index: ID },
     ];
 
-    ctx.mod.functions.push({
+    pushDefinedFunc(ctx, forIdx, {
       name: "__symbol_for_native",
       typeIdx,
       locals: [
@@ -668,7 +669,7 @@ export function ensureSymbolRegistry(ctx: CodegenContext): {
   // ── __symbol_keyfor_native(id: i32) -> ref_null $AnyString ──────────────
   {
     const typeIdx = addFuncType(ctx, [{ kind: "i32" }], [anyStrNull]);
-    keyForIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    keyForIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
     ctx.funcMap.set("__symbol_keyfor_native", keyForIdx);
     // params: id(0). locals: i(1), n(2), keys(3), ids(4)
     const ID = 0;
@@ -737,7 +738,7 @@ export function ensureSymbolRegistry(ctx: CodegenContext): {
       // not found → undefined
       { op: "ref.null", typeIdx: anyStrTypeIdx } as Instr,
     ];
-    ctx.mod.functions.push({
+    pushDefinedFunc(ctx, keyForIdx, {
       name: "__symbol_keyfor_native",
       typeIdx,
       locals: [

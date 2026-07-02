@@ -128,6 +128,29 @@ const PREFIX_OP_CAPABILITY: ReadonlyMap<ts.PrefixUnaryOperator, IrOpCapability> 
   [ts.SyntaxKind.TildeToken, "defer"], // ToInt32 + i32.xor -1 — not lowered yet
 ]);
 
+// ── Host-extern member access (#2856 — document/console et al.) ────────────
+//
+// Host ambient globals (`document`, `window`, …) and their member
+// reads/writes/calls lower through the legacy extern-class per-member import
+// surface (`global_<name>`, `<Class>_get_<prop>`, `<Class>_<method>`,
+// `console_<method>_<variant>`), which only a JS host can satisfy. The
+// capability is therefore MODE-GATED:
+//
+//   - JS-host mode → "claim-partial": the selector accepts host-global
+//     identifiers and member shapes on them; from-ast lowers the subset whose
+//     members resolve in the extern registry (chain walk). Residuals (an
+//     unregistered member, an unbranded chained receiver) demote via the
+//     metered irPostClaimErrors channel. Tracking issue: #2856.
+//   - standalone / wasi / strictNoHostImports → "defer": there is no host;
+//     the selector rejects up-front and the function stays on the legacy
+//     path, which routes `document.*` to the existing #1472/#2907 refusal.
+//     from-ast guards with `assertNotDeferred` — a host-extern node arriving
+//     post-claim in a host-free mode is a capability violation, not a
+//     fallback.
+export function hostExternCapability(jsHost: boolean): IrOpCapability {
+  return jsHost ? "claim-partial" : "defer";
+}
+
 /** Capability of a BinaryExpression operator token. Unknown ops → "defer". */
 export function binaryOpCapability(op: ts.SyntaxKind): IrOpCapability {
   return BINARY_OP_CAPABILITY.get(op) ?? "defer";

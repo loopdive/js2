@@ -4,6 +4,7 @@ import type { TypedAST } from "../checker/index.js";
 import { analyzeSource } from "../checker/index.js";
 import type { CabiExportInfo, ParamDef, TsSemanticType } from "../codegen-linear/c-abi.js";
 import { emitCabiWrappers, inferSemantic, mapParamsToCabi, mapResultToCabi } from "../codegen-linear/c-abi.js";
+import { absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
 import { generateModule } from "../codegen/index.js";
 import { isFatalCodegenDiagnostic } from "../codegen/context/errors.js";
 import { extractCHeaderExports, generateCHeader } from "../emit/c-header.js";
@@ -55,7 +56,8 @@ function applyCabiTransform(mod: WasmModule, moduleName: string, ast?: TypedAST)
     if (exp.desc.kind !== "func") continue;
     if (exp.name === "memory") continue;
 
-    const funcIdx = exp.desc.index;
+    // (#1916 S3) normalize a possibly-stable handle to the absolute index.
+    const funcIdx = absoluteFuncIndexCached(mod, numImportFuncs, exp.desc.index);
     const localIdx = funcIdx - numImportFuncs;
     if (localIdx < 0 || localIdx >= mod.functions.length) continue;
 

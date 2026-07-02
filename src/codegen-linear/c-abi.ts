@@ -17,6 +17,7 @@
  */
 
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
+import { absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
 
 // ── Linear-memory aggregate header layout (mirrors runtime.ts) ───────
 //
@@ -248,6 +249,8 @@ export function emitCabiWrappers(mod: WasmModule, exportInfos: CabiExportInfo[])
 
     // Find the original function's type
     const numImportFuncs = mod.imports.filter((i) => i.desc.kind === "func").length;
+    // (#1916 S3) normalize a possibly-stable handle to the absolute index.
+    origFuncIdx = absoluteFuncIndexCached(mod, numImportFuncs, origFuncIdx);
     const origFunc = origFuncIdx >= numImportFuncs ? mod.functions[origFuncIdx - numImportFuncs] : null;
     if (!origFunc) continue;
     const origType = mod.types[origFunc.typeIdx] as FuncTypeDef;

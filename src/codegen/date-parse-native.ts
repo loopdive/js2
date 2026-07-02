@@ -26,6 +26,7 @@ import type { CodegenContext } from "./context/types.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { ensureDateDaysFromCivilHelper } from "./expressions/builtins.js";
 import { addFuncType } from "./registry/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 const C_PLUS = 43;
 const C_MINUS = 45;
@@ -64,7 +65,7 @@ export function emitNativeDateParse(ctx: CodegenContext): void {
   const extern: ValType = { kind: "externref" };
 
   const typeIdx = addFuncType(ctx, [extern], [f64]);
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("__date_parse", funcIdx);
 
   const L_FLAT = 1;
@@ -987,7 +988,7 @@ export function emitNativeDateParse(ctx: CodegenContext): void {
     ],
   } as Instr);
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     typeIdx,
     name: "__date_parse",
     locals: [

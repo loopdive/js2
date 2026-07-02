@@ -1,7 +1,8 @@
 ---
 id: 2940
 title: "standalone: __make_callback sole-leak is the harness-wrapper vacuous pass — gated on dynamic-closure-dispatch arity/type tolerance (sub-front 4 of #2903 yields 0)"
-status: blocked
+status: done
+completed: 2026-07-02
 sprint: current
 priority: high
 feasibility: hard
@@ -10,7 +11,7 @@ task_type: research+bugfix
 area: codegen
 language_feature: closures, dynamic-dispatch, typed-arrays, test262-harness
 goal: host-independence
-assignee: ttraenkler/dev-callback
+assignee: ttraenkler/dev-f1
 related: [2939, 2903, 2879, 2075]
 blocked_on: "#2939 (formerly #2923; arity half landed via PR #2441): dynamic dispatch of `fn(...)` on an any-typed closure param must tolerate arity mismatch + coerce arg type-kinds (calls-closures.ts) — otherwise removing the import yields DISHONEST vacuous host-free passes"
 created: 2026-07-02
@@ -148,3 +149,121 @@ inject-throw; control on main = honestly leaky). Shim NOT shipped. Full data +
 the deferred shim text now live in #2939 ("Re-measurement post PR #2441").
 Remaining blocker = #2939 (a) nested-scope candidate registration, then
 (b) kind coercion.
+
+---
+
+## Resolution (dev-f1, 2026-07-02) — vacuity scorer (PR1) + dynamic-dispatch fix (PR2)
+
+The metric-safety caveat above is now ENFORCED IN THE RUNNER, and the
+dynamic-dispatch fix (part 2 / #2939) is built. Delivered as two sequenced PRs.
+
+### PR1 — runner vacuity scorer (this issue) — the integrity correction
+
+**Mechanism (runner-only, no codegen change):** the preamble adds a
+`__harness_cb_expected` sentinel that the `testWith*Constructors` wrappers bump
+per callback invocation they attempt; `test()` returns a distinct `-262` when a
+would-be-pass had an invoked harness wrapper but ZERO counted asserts (the
+callback was dead). That is scored `status: fail` + `vacuous: true` marker so
+`host_free_pass` / the standalone floor structurally EXCLUDE it (a dead callback
+is not a pass — the durable vacuity rule, now enforced not just documented).
+Wired through all three exec paths (`runTest262File`, the compiler-pool worker,
+the fixture path) + a `build-test262-report` counter. Chose `fail`+marker over a
+new status enum (206 status-consumers → too much blast radius for a one-way-door
+change). Also ships the BigInt-TA runner shim (`testWithBigIntTypedArrayConstructors`
+
+- passthrough `makeCtorArg`, fixed `needsTestBigIntTypedArray` regex) so the
+  BigInt wrappers are invocable and thus measurable.
+
+**Integrity correction (measured, all 1,612 harness-invoking files, standalone):**
+**1,433** tests reclassify pass → vacuous-fail — **1,421** in
+`built-ins/TypedArray{,Constructors}` (696 BigInt-variant + 725 non-BigInt) +
+**12** in outside-dir harness-invokers (`built-ins/Array/*/callbackfn-resize-arraybuffer.js`).
+`host_free_pass` **17,802 → 16,369**. CE rate unchanged (~3.5%, pre-existing
+BigInt unsupported-feature CEs — the shim adds none). ZERO non-vacuous pass→fail
+collateral (the `__assert_count === 1` guard never flags a test that ran any
+real assertion). The committed standalone high-water mark is re-seeded downward
+(the floor asserts-then-raises and never auto-lowers, so a deliberate correction
+must be committed; post-merge `promote-baseline --update` raises it to the true
+CI number). **Re-ground after the 12-PR merge wave:** main's mark rose 17,802 →
+18,790 while the PR was parked, so the committed re-seed is **17,357 = 18,790 −
+1,433**, with a documented caveat that the −1,433 delta is from base 854ad5729
+(re-measurement on the merged tree timed out at budget wind-down; #2470/#2480
+plausibly shifted vacuity membership slightly). The #1897 standalone regression
+guard bot-parks the merge_group with the vacuity signature; the shepherd
+verifies the delta is ALL-vacuous (every flip carries `vacuous: true`, zero
+non-vacuous collateral) rather than an exact count, and the tech lead
+admin-merges.
+
+### PR2 — dynamic closure-dispatch fix (#2939)
+
+The nested-scope root cause: a callback function-expression defined INSIDE
+another function (the runner's `export function test()` wrap) registered its
+funcref-wrapper type only lazily at its later-compiled value site, so the
+higher-order body's `fn(...)` dispatch saw ZERO candidates and dropped the call.
+Fix: `computeClosureWrapperSig` extraction + pre-registering the identical
+wrapper type for inner-scope callbacks (restricted to the all-externref harness
+shape — which also fixed 5 invalid-Wasm CEs from over-arity numeric-param
+candidates). Standalone-gated; gc byte-identical. With PR1's scorer already in
+place, PR2's vacuous→executing conversions can only move `host_free_pass` UP
+(genuine passes gained; honest fails stay excluded either way).
+
+**Sub-front-4 conclusion stands:** the win was never a HOF-body flip — it was
+(a) making the dead callbacks EXECUTE (PR2) and (b) scoring the still-dead ones
+honestly (PR1). The final honest `host_free_pass` + gap are reported once both
+land.
+
+---
+
+## Re-measurement + park-signature verification (opus-2, 2026-07-02, CI-FIX #2463)
+
+DIRTY resolved: merged `upstream/main` (mark rose 18,790 → 18,812), re-derived
+the highwater re-seed **17,379 = 18,812 − 1,433** (same caveat: the −1,433 delta
+is from base 854ad5729, not re-measured on the merged tree).
+
+**The "12 non-vacuous regressions" were investigated by direct standalone
+re-measurement (`runTest262File(..., "standalone")` over the full 705-file
+BigInt-TA baseline-pass corpus). Verdict: this PR introduces ZERO un-excused
+non-vacuous standalone regressions.** Every BigInt-TA baseline pass was a LEAKY
+pass (705/705, 0 host-free), so any flip to a host-free non-pass is auto-excused
+by the #1897 guard's `--exclude-leaky-baseline-regressions`. Full classification
+of the 705:
+
+| class                                   | count | disposition                       |
+| --------------------------------------- | ----- | --------------------------------- |
+| `VACUOUS` (marked `vacuous:true`)       | 698   | intended park signature           |
+| leaky-pass → **host-free** non-pass     | 5     | AUTO-EXCUSED (cross-realm, below) |
+| still-pass (genuine)                    | 2     | fine                              |
+| **leaky-fail, un-excused, non-vacuous** | **0** | ← the only bad class; none        |
+
+The 5 excused flips are the cross-realm OtherTA detached-buffer tests
+(`internals/{DefineOwnProperty,Get,GetOwnProperty,HasProperty,Set}/BigInt/…-realm.js`).
+Root cause: the `$262.createRealm()` runner stub returns a realm whose `global`
+carries no constructors, so once the BigInt wrapper shim makes the callback
+dispatch (PR #2441 arity fix on main), `other[TA.name]` is `undefined` and the
+callback throws BEFORE any assertion. These genuinely cannot pass standalone
+(dynamic realm-property access + `Reflect.construct` + cross-realm are all
+unsupported — verified: exposing the constructors on the realm stub does NOT
+help, `other[TA.name]` stays undefined and proto-from-ctor hits
+`Reflect.construct not supported in standalone`). They flip leaky-vacuous-pass →
+honest host-free fail, which is the CORRECT honest classification and is
+auto-excused. The task's other buckets reconciled: the "5 proto-from-ctor-realm"
+were NOT standalone-baseline-pass (no flip); the "1 async-gen invalid-wasm"
+(`ctors-bigint/object-arg/as-generator-iterable-returns.js`, `__closure_3`
+compile failure) was ALREADY `compile_error` on the standalone baseline (CE→CE,
+no flip). The "No dependency provided for extern class OtherTA" wording is the
+HOST-lane message for the same root cause; on host the ≤12 flips sit far below
+the #1668 catastrophic threshold (200).
+
+**LEAD verification recipe (admin-merge, intentional-negative):** run
+`diff-test262.ts <standalone-baseline> <merged-standalone.jsonl> --exclude-leaky-baseline-regressions`.
+Every remaining counted regression must carry `vacuous:true` /
+`"vacuous: harness-wrapper callback never executed"`. The excused set is the
+handful of leaky-baseline→host-free cross-realm flips (≤5 BigInt-TA + their
+non-BigInt siblings). Zero un-excused non-vacuous collateral. `promote-baseline
+--update` raises the mark to the true CI number post-merge.
+
+**Follow-ups (separate issues, NOT blocking this PR):** (a) `$262.createRealm()`
+single-realm stub cannot model cross-realm constructor access standalone;
+(b) `Reflect.construct` unsupported standalone; (c) latent `__closure_3`
+invalid-wasm on `as-generator-iterable-returns.js` (pre-existing CE). None are
+PR-caused regressions.

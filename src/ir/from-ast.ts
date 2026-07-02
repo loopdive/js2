@@ -44,7 +44,7 @@ import { evaluateConstantCondition } from "../codegen/statements/control-flow.js
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "../codegen/statements/loops.js";
 import { IrFunctionBuilder } from "./builder.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
-import { assertNotDeferred, binaryOpCapability, prefixOpCapability } from "./capability.js";
+import { assertNotDeferred, binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import { mathUnaryToIrOp } from "./select.js";
 import {
@@ -136,6 +136,60 @@ export interface IrFromAstResolver {
    * keeps the existing throw → legacy fallback.
    */
   isExpressionTsNonNullable?(expr: ts.Expression): boolean | undefined;
+  /**
+   * (#2856) Host-extern support — resolve a bare identifier to an ambient
+   * host global registered by the legacy `collectDeclaredGlobals` pass
+   * (`document` → `{ importName: "global_document", className: "Document" }`).
+   * Returns `undefined` for anything that isn't a registered declared global.
+   * In host-free modes (standalone/wasi/strictNoHostImports) the legacy pass
+   * registers nothing, so this resolves nothing — the capability gate
+   * (`hostExternCapability`) already made the selector defer those functions.
+   */
+  getHostGlobalInfo?(name: string): { importName: string; className: string } | undefined;
+  /**
+   * (#2856) True iff this compile targets a JS host. Feeds the
+   * `hostExternCapability` invariant assert at the host-extern lowering
+   * arms — a host-extern node reaching the builder in a host-free mode is a
+   * selector↔capability drift, not a fallback.
+   */
+  jsHostExterns?(): boolean;
+  /**
+   * (#2856) Console-argument variant selection for `console.<m>(arg)` —
+   * returns the import-name suffix (`console_<m>_<variant>`). MUST use the
+   * same checker predicates as the legacy `collectConsoleImports` scan so
+   * the variant the IR picks is the variant the scan registered.
+   */
+  consoleArgVariant?(arg: ts.Expression): "number" | "bool" | "string" | "externref";
+  /**
+   * (#2856) Resolve an extern-class member through the legacy inheritance
+   * chain (`ctx.externClasses` + `ctx.externClassParent` — e.g. `appendChild`
+   * on an `Element` receiver resolves on `Node`). `node`, when provided, is
+   * the use-site AST node (the PropertyAccessExpression or its enclosing
+   * CallExpression) — the resolver uses the checker's type AT THE USE SITE to
+   * brand an externref-typed result with its extern class name
+   * (`resultClassName`), which is what lets chained member access
+   * (`document.body.appendChild(...)`, `e.style.cssText = ...`) dispatch.
+   * Registration-time result types can't provide this (overloads collapse to
+   * the first signature; generic returns have no symbol).
+   */
+  resolveExternMember?(
+    className: string,
+    memberName: string,
+    kind: "method" | "property",
+    node?: ts.Node,
+  ):
+    | {
+        /** The registered import prefix — `${prefix}_${method}` / `${prefix}_get_${prop}`. */
+        importPrefix: string;
+        /** Method signature (params[0] = receiver externref), when kind = "method". */
+        method?: { params: ValType[]; results: ValType[]; requiredParams: number };
+        /** Property info, when kind = "property". */
+        property?: { type: ValType; readonly: boolean };
+        /** Extern class name of the RESULT when it is an externref-shaped host
+         *  object (checker-derived at the use site); undefined otherwise. */
+        resultClassName?: string;
+      }
+    | undefined;
 }
 
 export interface AstToIrOptions {
@@ -466,6 +520,14 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
     // as `class.set` or `object.set` based on the receiver's IrType.
     if (ts.isExpressionStatement(s)) {
       if (ts.isCallExpression(s.expression)) {
+        // (#2856) Method-shaped statement calls go through lowerMethodCall
+        // in STATEMENT position so void extern/console methods are legal
+        // (`host.appendChild(box);`, `console.log("…");`). Expression
+        // position keeps throwing on void — only this flag differs.
+        if (ts.isPropertyAccessExpression(s.expression.expression) && !s.expression.questionDotToken) {
+          void lowerMethodCall(s.expression, cx, /* statementPosition */ true);
+          continue;
+        }
         // The result SSA value is unused; DCE strips it if pure.
         // closure.call and call are flagged side-effecting in dead-code
         // so they stay live.
@@ -676,6 +738,17 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   // We accept ExpressionStatement (e.g., `f();`) as a tail in void
   // functions and synthesize the implicit return.
   if (cx.returnType === null && ts.isExpressionStatement(stmt)) {
+    // (#2856) Method-shaped tail call in a void function — statement
+    // position, so void extern/console methods are legal here too.
+    if (
+      ts.isCallExpression(stmt.expression) &&
+      ts.isPropertyAccessExpression(stmt.expression.expression) &&
+      !stmt.expression.questionDotToken
+    ) {
+      void lowerMethodCall(stmt.expression, cx, /* statementPosition */ true);
+      cx.builder.terminate({ kind: "return", values: [] });
+      return;
+    }
     // Lower the expression for side effects, discard the value.
     lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
     cx.builder.terminate({ kind: "return", values: [] });
@@ -1374,6 +1447,34 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   }
   if (ts.isIdentifier(expr)) {
     const p = cx.scope.get(expr.text);
+    // (#2856) Host ambient global (`document`, `window`, …): not a scope
+    // binding — resolves through the legacy declared-globals registry to the
+    // `global_<name>` handle import, typed as the global's extern class so
+    // member access on it dispatches through the extern arms. Scope bindings
+    // take priority (a local named `document` shadows the global, matching
+    // both JS semantics and the selector's checker-backed resolution).
+    // Host-free modes register no declared globals, so this resolves nothing
+    // there — and the capability gate means the selector never claims such a
+    // function in those modes anyway (`assertNotDeferred` guards the
+    // invariant).
+    if (!p) {
+      const hg = cx.resolver?.getHostGlobalInfo?.(expr.text);
+      if (hg) {
+        assertNotDeferred(
+          hostExternCapability(cx.resolver?.jsHostExterns?.() === true),
+          `host global "${expr.text}"`,
+          cx.funcName,
+        );
+        const r = cx.builder.emitCall({ kind: "func", name: hg.importName }, [], {
+          kind: "extern",
+          className: hg.className,
+        });
+        if (r === null) {
+          throw new Error(`ir/from-ast: host global "${expr.text}" produced no result in ${cx.funcName}`);
+        }
+        return r;
+      }
+    }
     if (!p) throw new Error(`ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
     // for-of iterations). Reads emit `slot.read`, which lowers to a
@@ -1930,11 +2031,25 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   }
 
   if (recvType.kind === "extern") {
-    // Slice 10 (#1169i) — extern-class property read. Look up the
-    // property on the resolver's metadata for `recvType.className`.
-    // Result type is `irVal(prop.type)`; the lowerer emits a call to
-    // `<className>_get_<propName>`.
+    // Slice 10 (#1169i), widened by #2856 — extern-class property read with
+    // inheritance-chain resolution. The instr's className must be the
+    // DEFINING class (the import is `<definer>_get_<prop>`, e.g.
+    // `Node_appendChild` for an `Element` receiver), which the chain walk
+    // returns as `importPrefix`. Result branding (#2856): an externref-shaped
+    // property whose USE-SITE type names an extern class becomes
+    // `IrType.extern { className }`, so chained access
+    // (`document.body.appendChild(...)`, `e.style.cssText = ...`) keeps
+    // dispatching through the extern arms.
     const className = recvType.className;
+    const resolved = cx.resolver?.resolveExternMember?.(className, propName, "property", expr);
+    if (resolved?.property) {
+      const resultType: IrType = resolved.resultClassName
+        ? { kind: "extern", className: resolved.resultClassName }
+        : irVal(resolved.property.type);
+      return cx.builder.emitExternProp(resolved.importPrefix, propName, recv, resultType);
+    }
+    // Flat (own-class) lookup for resolvers that don't implement the #2856
+    // chain walk — preserves the pre-#2856 slice-10 behaviour.
     const info = cx.resolver?.getExternClassInfo?.(className);
     if (!info) {
       throw new Error(`ir/from-ast: extern class ${className} not registered in ${cx.funcName}`);
@@ -2273,7 +2388,14 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
   // the class shape and be non-void (slice 4 only handles methods with
   // a returning result in expression position).
   if (ts.isPropertyAccessExpression(expr.expression)) {
-    return lowerMethodCall(expr, cx);
+    const r = lowerMethodCall(expr, cx);
+    if (r === null) {
+      // Unreachable: in expression position (statementPosition=false) every
+      // void arm throws before returning null (#2856 added the null returns
+      // for statement position only).
+      throw new Error(`ir/from-ast: method call produced no result in expression position (${cx.funcName})`);
+    }
+    return r;
   }
   if (!ts.isIdentifier(expr.expression)) {
     throw new Error(`ir/from-ast: only direct calls supported in Phase 2 (${cx.funcName})`);
@@ -2642,11 +2764,62 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
  * Receivers of any IrType other than `class` fall through to a clean
  * error, letting the function fall back to legacy.
  */
-function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
+/**
+ * (#2856) Console methods the IR lowers (single-arg statement calls). Mirrors
+ * the CONSOLE_METHODS list in the legacy `collectConsoleImports` scan — a
+ * method outside this set was never import-registered, so the IR must demote.
+ */
+const IR_CONSOLE_METHODS: ReadonlySet<string> = new Set(["log", "warn", "error", "info", "debug"]);
+
+function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
     throw new Error(`ir/from-ast: malformed method call in ${cx.funcName}`);
   }
   const methodName = expr.expression.name.text;
+
+  // (#2856) console.<m>(arg) — host console variant call. Intercepted BEFORE
+  // receiver lowering (like the Math arm below): `console` has NO
+  // `global_console` handle and NO extern-class registration — the legacy
+  // backend services it via dedicated per-arg-type import variants
+  // (`console_log_string`, `console_log_number`, … — `collectConsoleImports`).
+  // Statement position only: console methods return undefined, and the
+  // single-arg restriction mirrors what this slice lowers (multi-arg calls
+  // demote cleanly). The variant is chosen by the resolver from the CHECKER
+  // type of the argument — the exact predicate `collectConsoleImports` used
+  // to register the import — so the picked name is registered by
+  // construction.
+  if (
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "console" &&
+    cx.scope.get("console") === undefined &&
+    cx.resolver?.consoleArgVariant !== undefined
+  ) {
+    assertNotDeferred(
+      hostExternCapability(cx.resolver?.jsHostExterns?.() === true),
+      `console.${methodName}`,
+      cx.funcName,
+    );
+    if (!statementPosition) {
+      throw new Error(`ir/from-ast: console.${methodName} in expression position not supported (${cx.funcName})`);
+    }
+    if (!IR_CONSOLE_METHODS.has(methodName)) {
+      throw new Error(`ir/from-ast: console.${methodName} not in IR console slice (${cx.funcName})`);
+    }
+    if (expr.arguments.length !== 1) {
+      throw new Error(
+        `ir/from-ast: console.${methodName} with ${expr.arguments.length} args not in slice (${cx.funcName})`,
+      );
+    }
+    const argExpr = expr.arguments[0]!;
+    const variant = cx.resolver.consoleArgVariant(argExpr);
+    const importName = `console_${methodName}_${variant}`;
+    const expected: ValType =
+      variant === "number" ? { kind: "f64" } : variant === "bool" ? { kind: "i32" } : { kind: "externref" };
+    const argVal = lowerExpr(argExpr, cx, irVal(expected));
+    const coerced = coerceToExpectedExtern(argVal, expected, cx, `arg of console.${methodName}`);
+    cx.builder.emitCall({ kind: "func", name: importName }, [coerced], null);
+    return null;
+  }
 
   // (#1371) Math.<whitelisted>(arg) — pure-Wasm f64 unary op. Recognise
   // the shape BEFORE lowering the receiver, because `Math` is a host
@@ -2675,6 +2848,29 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
   const recv = lowerExpr(expr.expression.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
 
+  // (#2856) `<number>.toString()` (no radix) on an f64 receiver → the
+  // `number_toString` `(f64) -> externref` host import, pre-registered by the
+  // legacy source scan whenever a checker-number `.toString()` appears in
+  // source (src/codegen/index.ts ~9100). Host-strings mode only: the import
+  // returns a HOST string (externref), which is exactly `IrType.string`'s
+  // carrier there — so the result composes with the string `+` proof arms
+  // (`"n=" + i.toString()`). Native-strings mode has a `(ref $AnyString)`
+  // carrier and demotes here (native number formatting is a follow-up arm);
+  // radix args likewise demote.
+  if (
+    methodName === "toString" &&
+    expr.arguments.length === 0 &&
+    recvType.kind === "val" &&
+    recvType.val.kind === "f64" &&
+    cx.resolver?.nativeStrings?.() === false
+  ) {
+    const r = cx.builder.emitCall({ kind: "func", name: "number_toString" }, [recv], { kind: "string" });
+    if (r === null) {
+      throw new Error(`ir/from-ast: number_toString produced no result in ${cx.funcName}`);
+    }
+    return r;
+  }
+
   // Slice 13c (#1232) — String prototype method dispatch. When the receiver
   // is `IrType.string`, look up the method in the synthetic String pseudo-
   // extern registry (#1238) and dispatch to either the native helper
@@ -2693,38 +2889,60 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
   // Slice 10 (#1169i) — extern-class method call. The legacy host imports
   // store the signature as `[receiver_externref, ...userParams] ->
   // results`, so we slice off `params[0]` when matching call args.
+  //
+  // #2856 widens this arm with (a) inheritance-chain member resolution
+  // (`appendChild` on an `Element` receiver resolves on `Node`; the instr's
+  // className becomes the DEFINING class so the lowered import name is
+  // `Node_appendChild`), (b) use-site result branding (an externref result
+  // whose checker type names an extern class carries `IrType.extern` so
+  // chained access dispatches), and (c) statement-position void calls
+  // (`host.appendChild(box);`) — expression position keeps throwing on void.
   if (recvType.kind === "extern") {
     const className = recvType.className;
-    const info = cx.resolver?.getExternClassInfo?.(className);
-    if (!info) {
-      throw new Error(`ir/from-ast: extern class ${className} not registered in ${cx.funcName}`);
-    }
-    const method = info.methods.get(methodName);
+    const chained = cx.resolver?.resolveExternMember?.(className, methodName, "method", expr);
+    const method = chained?.method ?? cx.resolver?.getExternClassInfo?.(className)?.methods.get(methodName);
     if (!method) {
       throw new Error(`ir/from-ast: extern class ${className} has no method "${methodName}" in ${cx.funcName}`);
     }
+    const definingClass = chained?.importPrefix ?? className;
     // params[0] is the receiver — userParams = params.slice(1).
     const userParams = method.params.slice(1);
     if (expr.arguments.length > userParams.length) {
       throw new Error(
-        `ir/from-ast: method ${className}.${methodName} has ${expr.arguments.length} args, max ${userParams.length} in ${cx.funcName}`,
+        `ir/from-ast: method ${definingClass}.${methodName} has ${expr.arguments.length} args, max ${userParams.length} in ${cx.funcName}`,
       );
     }
     const args: IrValueId[] = [];
     for (let i = 0; i < expr.arguments.length; i++) {
       const expected = userParams[i]!;
       const argVal = lowerExpr(expr.arguments[i]!, cx, irVal(expected));
-      args.push(coerceToExpectedExtern(argVal, expected, cx, `arg ${i} of ${className}.${methodName}`));
+      args.push(coerceToExpectedExtern(argVal, expected, cx, `arg ${i} of ${definingClass}.${methodName}`));
     }
-    // Result type: first registered result, or null if void.
-    const resultType: IrType | null = method.results.length > 0 ? irVal(method.results[0]!) : null;
-    if (resultType === null) {
+    // (#2856) Pad missing OPTIONAL args with default sentinels: the host
+    // import's Wasm signature has FIXED arity = the registered params
+    // (`createElement(tagName, options?)` imports as (recv, externref,
+    // externref)), so the call must push exactly that many values. Mirrors
+    // the legacy `pushDefaultValue` loop (new-super.ts) and the extern.new
+    // padding above — without it the emitted call is stack-short and the
+    // module fails Wasm validation ("not enough arguments on the stack").
+    for (let i = expr.arguments.length; i < userParams.length; i++) {
+      args.push(emitDefaultExternArg(cx, userParams[i]!));
+    }
+    // Result type: use-site extern brand when available (#2856), else the
+    // first registered result, or null if void.
+    const resultType: IrType | null =
+      method.results.length > 0
+        ? chained?.resultClassName
+          ? { kind: "extern", className: chained.resultClassName }
+          : irVal(method.results[0]!)
+        : null;
+    if (resultType === null && !statementPosition) {
       throw new Error(
-        `ir/from-ast: void method ${className}.${methodName} used in expression position (${cx.funcName})`,
+        `ir/from-ast: void method ${definingClass}.${methodName} used in expression position (${cx.funcName})`,
       );
     }
-    const r = cx.builder.emitExternCall(className, methodName, recv, args, resultType);
-    if (r === null) {
+    const r = cx.builder.emitExternCall(definingClass, methodName, recv, args, resultType);
+    if (resultType !== null && r === null) {
       throw new Error(`ir/from-ast: extern.call produced no result in ${cx.funcName}`);
     }
     return r;
@@ -3024,6 +3242,32 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
       );
     }
     cx.builder.emitObjectSet(recv, fieldName, newValue);
+    return;
+  }
+
+  // (#2856) Extern-class property write (`box.textContent = "x"`,
+  // `e.style.cssText = css`, `host.innerHTML = ""`). Chain-walking
+  // resolution like the read arm; the instr's className is the DEFINING
+  // class so the lowered import is `<definer>_set_<prop>`
+  // (`Element_set_textContent` for an HTMLDivElement receiver). The value
+  // coerces to the registered property ValType exactly as extern method
+  // args do. Readonly properties never resolve as writable in the lib, so
+  // TS source that assigns them failed checking before reaching us.
+  if (recvType.kind === "extern") {
+    assertNotDeferred(
+      hostExternCapability(cx.resolver?.jsHostExterns?.() !== false),
+      `extern property write .${fieldName}`,
+      cx.funcName,
+    );
+    const resolved = cx.resolver?.resolveExternMember?.(recvType.className, fieldName, "property", lhs);
+    if (!resolved?.property) {
+      throw new Error(
+        `ir/from-ast: extern class ${recvType.className} has no property "${fieldName}" in ${cx.funcName}`,
+      );
+    }
+    const newValue = lowerExpr(expr.right, cx, irVal(resolved.property.type));
+    const coerced = coerceToExpectedExtern(newValue, resolved.property.type, cx, `value of .${fieldName}`);
+    cx.builder.emitExternPropSet(resolved.importPrefix, fieldName, recv, coerced);
     return;
   }
 
@@ -3842,6 +4086,12 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
   }
   if (ts.isExpressionStatement(stmt)) {
     if (ts.isCallExpression(stmt.expression)) {
+      // (#2856) Method-shaped statement calls in body position — statement
+      // position, so void extern/console methods are legal.
+      if (ts.isPropertyAccessExpression(stmt.expression.expression) && !stmt.expression.questionDotToken) {
+        void lowerMethodCall(stmt.expression, cx, /* statementPosition */ true);
+        return;
+      }
       void lowerExpr(stmt.expression, cx, irVal({ kind: "f64" }));
       return;
     }

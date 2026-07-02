@@ -263,6 +263,94 @@ bucket's growth** (demonstrated empirically: shape-fixing a leaf in
 > **first slice** (host-global member access, 17/31); the smaller arms are listed
 > separately at the end for dev-lane pickup.
 
+### Implementation notes (2026-07-02, dev-2856f) — verified corrections to this plan
+
+Probe-verified against a real compile (`.tmp/probe-2856-doc-imports.mts`): the
+legacy surface for `document.*` is NOT `__extern_get` — it is the
+**extern-class per-member import surface**: `global_document` (declared-globals
+handle, `collectDeclaredGlobals`), `Document_getElementById` /
+`Document_get_body` / `Element_set_textContent` / `Node_appendChild`
+(`collectUsedExternImports` source pre-scan over `ctx.externClasses`, chain
+walk via `ctx.externClassParent`; DOM classes enter the registry from
+lib.dom's `declare var X: { new(): X; … }` constructor-vars via
+`collectExternFromDeclareVar` + `collectInterfaceMembers`), and
+`console_<method>_<number|bool|string|externref>` per-arg-type variants
+(`collectConsoleImports`). All are **source-scan pre-passes independent of
+which front-end compiles the body**, so IR-claimed functions get their imports
+registered anyway; the IR lowering resolves them **by name**
+(`resolver.resolveFunc`) — funcIdx-shift-safe by construction.
+
+Design deltas vs the plan above:
+
+1. **No new IR node kinds.** `IrInstrCall` takes a symbolic `{kind:"func",
+name}` target and an explicit result IrType, so `document` lowers as
+   `call global_document : {kind:"extern", className:"Document"}`, and
+   `console.log(s)` as a void `call console_log_string`. Member get/set/call
+   reuse the existing `extern.prop` / `extern.propSet` / `extern.call` instrs
+   (their lowering already emits `<prefix>_get_<p>` / `<prefix>_<m>` by name;
+   effects analysis already marks `extern.*` full heap read+write, covering
+   the plan's #2134 barrier concern).
+2. **Selection runs EARLY (index.ts ~1178), before the registries populate
+   (~1471-1524)** — the selector can NOT read `ctx.externClasses` /
+   `ctx.declaredGlobals`. Split: the selector uses a **checker-backed
+   callback** threaded via `IrSelectionOptions`
+   (`resolveHostGlobal(node: ts.Identifier) → className | undefined`:
+   symbol → ambient declare-var in a `.d.ts` → `isExternalDeclaredClass`
+   parity gate → type symbol name; shadow-safe because the checker resolves
+   the real binding), while **from-ast (which runs late) uses the authoritative
+   registry** via new resolver callbacks (`getHostGlobalInfo(name)`,
+   `resolveExternMember(className, member, kind)` — the chain walk). The gate
+   script keeps its direct `planIrCompilation` call and builds the same
+   checker callback from its own program — no script rewrite.
+3. **Capability integration (#2135, agreed with dev-2138f):** mode-gated
+   `hostExternCapability(jsHost): IrOpCapability` in `src/ir/capability.ts` —
+   `"claim-partial"` in JS-host mode, `"defer"` under
+   standalone/wasi/strictNoHostImports; selector consumes it, from-ast entry
+   asserts via `assertNotDeferred` (uniform message class for the #1923 meter
+   and #2138's IR-first channel). Branch is predecessor-stacked on
+   `issue-2135-ir-capability-predicate` (#2476); enqueue only after it lands.
+4. **Two from-ast gaps to close** (pre-existing in the slice-10 extern arms):
+   member resolution does NOT walk `externClassParent` (an `Element` receiver
+   would miss `Node.appendChild`), and `extern.prop`/`extern.call` results
+   lose the class brand (registered as bare ValType, breaking chained
+   `document.body.appendChild`). Fix: chain-walk in the new
+   `resolveExternMember` + record `resultClassName` at registration
+   (`collectInterfaceMembers` et al.) when the mapped result is externref.
+5. **Standalone**: `"defer"` ⇒ the selector never claims ⇒ legacy ⇒ the
+   existing #1472/#2907 refusal — unchanged, as the plan requires. The
+   `console` arm is also host-only (WASI console lowers natively via
+   fd*write, no `console*\*` host imports).
+
+### Slice 1 RESULTS (2026-07-02, dev-2856f — extern-in-IR landed)
+
+- Gate: `body-shape-rejected` **34 → 27** (−7); post-claim demotions **0**
+  (the two `<f64>.toString()` demotions the first run surfaced were fixed by
+  the `number_toString` arm). `call-graph-closure` 5 → 8: the predicted
+  contagion shuffle — `el`/`bcrd`/helpers are now IR-CAPABLE but pinned by
+  callers whose own first blockers are **closure-valued args**
+  (`addBenchCard(…, bench_fib)`), **imported callees** (cross-module calls),
+  `%`-defer (#2945), and misc arms — all separately tracked. Banked via
+  `--update` in the slice PR (net unintended 45 → 41).
+- Runtime parity: IR-on vs IR-off **identical observable behavior** on
+  benchmarks/dom.ts, benchmarks/helpers.ts, js/algorithms.ts, js/classes.ts
+  (full console-output equality on the executable ones; identical
+  failure-mode on DOM files under Node's shimless host).
+- Landmine fixed en route: extern method imports have FIXED Wasm arity
+  including optional params (`createElement(tag, options?)` = 3 slots) — the
+  IR extern.call arm must pad missing optionals with default sentinels like
+  legacy's `pushDefaultValue`, or the module fails validation ("not enough
+  arguments on the stack"). Regression-tested in
+  `tests/issue-2856-extern-in-ir.test.ts`.
+- Use-site branding replaced registration-time branding (the plan's note 4):
+  overloads collapse at registration (`createElement`'s first overload
+  returns a type param), so `resolveExternMember` brands from the checker at
+  the USE SITE (`getTypeAtLocation` + `getNonNullableType`).
+- Remaining body-shape (27): 8 `nontail-callstmt` (mains calling
+  imported/closure-valued fns), 4 helper-internal (incl. the `#private`
+  pair), 3 if-in-loop, 2 ArrayType annotation, 2 `%` (#2945-deferred), 1
+  each arrow-value / tail-expr / if-cond / if-else-nontail / assign-nonprop
+  / vardecl-call / cloop-guard / instanceof.
+
 ### What the bucket actually is (grounded by the Step-1 histogram)
 
 17 of 31 `body-shape-rejected` functions reject on host-global member access in

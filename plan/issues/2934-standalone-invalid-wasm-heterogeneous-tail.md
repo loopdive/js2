@@ -298,6 +298,26 @@ map must SKIP holes, §23.1.3.18 step 5.b) should be audited in B's loop but is
 NOT required for the named invalid-Wasm tests (they throw before iterating
 once A lands).
 
+**Status (dev-2934f, 2026-07-02): A DONE, C DONE, B open.**
+
+- A: `isKnownNonCallable` extended — plain object type with no call/construct
+  signatures (excluding any/unknown/unions) is statically non-callable;
+  `emitCallbackTypeCheck` (already wired into all 12 callback methods) now
+  fires for `arr.map(new Object())`. map/15.4.4.19-4-7 standalone invalid →
+  **pass** (runner-verified TypeError at the right time).
+- C: implemented as `bridgeElemConvertInstrs` (shared by
+  `buildBridgeCallInstrs` + both reduce/reduceRight bridge arms): externref
+  elems unbox (`__unbox_number` → ToNumber), packed i8/i16 read as widened
+  i32 then convert — never assume the element is already numeric.
+  filter/create-species-poisoned + map/create-species-poisoned invalid →
+  valid. Sweep: 648-file map/filter/forEach dirs 632→646 VALID (+14, 0 new
+  invalid); byte-identical common paths; array equivalence tests green.
+  Tests: `tests/issue-2934-hostbridge-iscallable.test.ts` (5).
+- Residual (NOT this class): `Proxy/revocable/tco-fn-realm.js` `__closure_20`
+  `call[0] expected externref, found call_ref of f64` — a realms/Proxy
+  closure-result coercion, out of standalone scope (Proxy is #1472 Phase C /
+  #1355); not a callback-bridge site.
+
 ## Approach
 
 Per the #2868/#2878 playbook: pick one repro per cluster, disassemble with

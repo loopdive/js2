@@ -34,6 +34,8 @@ import {
   type StringEncoding,
 } from "../codegen/native-strings.js";
 import { addStringConstantGlobal, ensureExnTag } from "../codegen/registry/imports.js";
+// (#2856) Console-variant parity with the legacy collectConsoleImports scan.
+import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -736,7 +738,16 @@ export function compileIrPathFunctions(
       errors.push({
         func: name,
         message: e instanceof Error ? e.message : String(e),
-        kind: e instanceof Error && e.message.includes("backend legality failed") ? "backend-legality" : "lower",
+        // (#2134) "emission-schedule verify" marks a failure of the
+        // independent schedule checker in lower.ts — classify it "verify" so
+        // it is a HARD failure under CI/test (`irVerifierHardFailureEnabled`)
+        // while remaining a demote-to-legacy warning in production.
+        kind:
+          e instanceof Error && e.message.includes("backend legality failed")
+            ? "backend-legality"
+            : e instanceof Error && e.message.includes("emission-schedule verify")
+              ? "verify"
+              : "lower",
       });
     }
   }
@@ -899,6 +910,32 @@ function resolveVecForElementImpl(
   };
 }
 
+/**
+ * (#2856) Brand an externref-shaped extern-member result with its extern
+ * class name, resolved from the checker's type AT THE USE SITE. Returns
+ * `undefined` (no brand — the IR carries a plain externref) when the result
+ * isn't externref-shaped, no use-site node is available, or the use-site type
+ * has no named symbol (unions of distinct classes, type params, anonymous
+ * shapes). An unbranded result still lowers correctly — it just can't
+ * dispatch FURTHER member access, which then demotes that function cleanly.
+ */
+function externResultClassName(
+  ctx: CodegenContext,
+  node: ts.Node | undefined,
+  result: ValType | undefined,
+): string | undefined {
+  if (!node || !result || result.kind !== "externref") return undefined;
+  try {
+    const t = ctx.checker.getTypeAtLocation(node);
+    const nonNull = ctx.checker.getNonNullableType(t);
+    const name = nonNull.getSymbol()?.name;
+    if (!name || name === "__type" || name === "__object") return undefined;
+    return name;
+  } catch {
+    return undefined;
+  }
+}
+
 function makeFromAstResolver(ctx: CodegenContext): IrFromAstResolver {
   return {
     nativeStrings(): boolean {
@@ -927,6 +964,74 @@ function makeFromAstResolver(ctx: CodegenContext): IrFromAstResolver {
         methods: info.methods,
         properties: info.properties,
       };
+    },
+    // (#2856) Host-global identifier → the `global_<name>` handle import the
+    // legacy `collectDeclaredGlobals` pass registered. Nothing to resolve in
+    // host-free modes: that pass skips registration under
+    // standalone/strictNoHostImports, so `document` correctly stays
+    // unresolvable there (and the selector's capability gate already deferred
+    // any function that references it).
+    getHostGlobalInfo(name: string) {
+      const g = ctx.declaredGlobals.get(name);
+      if (!g || !g.className) return undefined;
+      return { importName: `global_${name}`, className: g.className };
+    },
+    // (#2856) Mode flag for the capability invariant assert at the from-ast
+    // host-extern arms.
+    jsHostExterns(): boolean {
+      return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+    },
+    // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
+    // predicates as the legacy `collectConsoleImports` registration scan
+    // (string → bool → number → externref, in that order), so the import
+    // name the IR resolves (`console_<m>_<variant>`) is registered by
+    // construction.
+    consoleArgVariant(arg: ts.Expression) {
+      const argType = ctx.checker.getTypeAtLocation(arg);
+      if (isStringType(argType)) return "string";
+      if (isBooleanType(argType)) return "bool";
+      if (isNumberType(argType)) return "number";
+      return "externref";
+    },
+    // (#2856) Chain-walking extern-member resolution + use-site result
+    // branding. Mirrors the legacy `resolveExtern` (collectUsedExternImports)
+    // and `compileExternPropertyGetFromStack` walks: start at the receiver's
+    // class, follow `externClassParent` until a class carries the member.
+    // The RESULT brand comes from the checker at the use site (`node`) — the
+    // same per-site resolution legacy property-access/calls use — because
+    // registration-time member signatures collapse overloads (e.g.
+    // `Document.createElement`'s first overload returns a type-param) and
+    // cannot brand. `getNonNullableType` strips `| null` (e.g.
+    // `getElementById(): HTMLElement | null`) so the brand survives unions
+    // with null/undefined.
+    resolveExternMember(className: string, memberName: string, kind: "method" | "property", node?: ts.Node) {
+      let current: string | undefined = className;
+      while (current) {
+        const info = ctx.externClasses.get(current);
+        if (info) {
+          if (kind === "method") {
+            const method = info.methods.get(memberName);
+            if (method) {
+              return {
+                importPrefix: info.importPrefix,
+                method,
+                resultClassName: externResultClassName(ctx, node, method.results[0]),
+              };
+            }
+          } else {
+            const property = info.properties.get(memberName);
+            if (property) {
+              return {
+                importPrefix: info.importPrefix,
+                property,
+                resultClassName: externResultClassName(ctx, node, property.type),
+              };
+            }
+          }
+        }
+        current = ctx.externClassParent.get(current);
+      }
+      return undefined;
     },
     // Same logic as `IrLowerResolver.resolveVec` in `makeResolver`.
     // Walks `ctx.mod.types` to recover the vec layout from a `(ref|

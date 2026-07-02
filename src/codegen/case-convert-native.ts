@@ -21,6 +21,7 @@ import type { ArrayTypeDef, Instr, ValType, WasmFunction } from "../ir/types.js"
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { LOWER_CASE_RUNS, LOWER_CASE_SPECIAL, UPPER_CASE_RUNS, UPPER_CASE_SPECIAL } from "./case-tables.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 const i32: ValType = { kind: "i32" };
 
@@ -77,7 +78,7 @@ export function emitNativeCaseConversion(
   //                                                  : (off%2==0 && off/2<count))
   const makeSimple = (name: string): void => {
     const typeIdx = addFuncType(ctx, [i32, i32ArrRef], [i32]);
-    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
     ctx.funcMap.set(name, funcIdx);
     // params: ch(0), runs(1)
     // locals: lo(2), hi(3), mid(4), midBase(5), start(6), count(7), stride(8),
@@ -228,7 +229,7 @@ export function emitNativeCaseConversion(
       // no mapping
       get(CH),
     ];
-    ctx.mod.functions.push({
+    pushDefinedFunc(ctx, funcIdx, {
       name,
       typeIdx,
       locals: [
@@ -261,7 +262,7 @@ export function emitNativeCaseConversion(
     specialTable: readonly number[],
   ): void => {
     const typeIdx = addFuncType(ctx, [strRef], [strRef]);
-    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
     ctx.funcMap.set(name, funcIdx);
     // (#40) Re-point the PUBLIC helper name (used by string-ops.ts toUpperCase/
     // toLowerCase routing) at this Unicode implementation, replacing the
@@ -536,7 +537,7 @@ export function emitNativeCaseConversion(
       get(OUTARR),
       { op: "struct.new", typeIdx: strTypeIdx } as Instr,
     ];
-    ctx.mod.functions.push({
+    pushDefinedFunc(ctx, funcIdx, {
       name,
       typeIdx,
       locals: [

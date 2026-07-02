@@ -160,12 +160,21 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
   if (from.kind === "f64") return emit("__any_box_f64");
   if (from.kind === "i64") return emit("__any_box_f64", [{ op: "f64.convert_i64_s" }]);
   if (from.kind === "externref") {
+    // (#2141 S1) Stage-B regime: honest runtime classification behind the
+    // `honestAnyBoxing` flag (default OFF until slice S4), via
+    // `__any_from_extern` — whose null + fallback arms are honest under the
+    // same flag (see ensureAnyFromExternHelper), covering BOTH generic-boxing
+    // chokepoints with one helper. It is pre-registered by `ensureAnyHelpers`
+    // under the flag; if absent (availability preconditions unmet) fall back
+    // to the legacy lie so the flag can never produce a compile-time hole.
+    if (ctx.honestAnyBoxing && emit("__any_from_extern")) return true;
     // #1888 (regression −788/−794): do NOT route generic externref boxing
     // through honest tag recovery. The test262 harness comparator (`isSameValue`
     // over the externref ABI with `any` params) depends on main's tag-5
     // box-the-externref behaviour; honest recovery here flipped ~794 baseline
     // standalone passes. Numeric honesty for open-any dispatch is provided
     // downstream by the $BoxedNumber recovery arm in `__any_to_f64`. Keep tag-5.
+    // Consumers are being made tag-agnostic (#2141 S2/S3); the flip is S4.
     return emit("__any_box_string");
   }
   // (#42) A native WasmGC string is a `ref $AnyString` (nativeStrings/standalone),

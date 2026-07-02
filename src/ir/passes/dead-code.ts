@@ -37,6 +37,11 @@ import {
 } from "../nodes.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
 import { retireAllocsIn } from "./alloc-discipline.js";
+// #2134 slice 1 — the DCE side-effect facet moved (verbatim) into the unified
+// effect model (`../effects.ts`, beside the scheduler's `effectsOf` table).
+// Re-exported so existing importers keep working.
+import { isSideEffecting } from "../effects.js";
+export { isSideEffecting };
 
 /**
  * Run dead-code elimination on an IR function. Returns the same reference
@@ -223,114 +228,6 @@ function computeLiveValues(fn: IrFunction, reachable: ReadonlySet<number>): Set<
   }
 
   return live;
-}
-
-/**
- * Side-effecting instructions are always kept regardless of use count.
- *
- * - `raw.wasm` — opaque Wasm ops with unknown effects (spec #1167a mandates
- *    this stays live).
- * - `call` — conservatively treated as having side effects. Purity analysis
- *    is a later pass.
- * - `global.set` — writes observable state.
- */
-export function isSideEffecting(i: IrInstr): boolean {
-  return (
-    i.kind === "raw.wasm" ||
-    i.kind === "call" ||
-    i.kind === "global.set" ||
-    // Slice 3 (#1169c): closure.call may invoke a body with arbitrary
-    // effects (mutates ref cells, sets globals, calls other functions).
-    // Conservatively keep it live regardless of result use count.
-    i.kind === "closure.call" ||
-    // refcell.set writes observable state through the cell ref.
-    // refcell.new is pure (allocates a fresh struct), so leave it
-    // out — DCE may strip it when its result is dead.
-    i.kind === "refcell.set" ||
-    // object.set mutates the struct (slice 2 didn't add this, but is
-    // currently void-result so the existing `result === null → keep`
-    // catches it; explicit listing is a no-op for now).
-    i.kind === "object.set" ||
-    // Slice 4 (#1169d): class.call invokes a method body with potentially
-    // arbitrary effects. class.set mutates the instance. class.new calls
-    // a constructor (which may run side-effecting user code, e.g.
-    // `this.x = computeAndLogX()`). Conservatively keep all three live.
-    i.kind === "class.call" ||
-    i.kind === "class.set" ||
-    i.kind === "class.new" ||
-    // Slice 6 (#1169e): slot.write and forof.vec are statement-level
-    // side effects — the loop's body executes for every element.
-    // slot.read is pure (load a Wasm local) but always-keep to avoid
-    // breaking the for-of body's load/use pattern.
-    i.kind === "slot.write" ||
-    i.kind === "forof.vec" ||
-    // Slice 6 part 3 (#1182): host-iterator protocol ops mutate iterator
-    // state (advance pointer, dispose). DCE must not eliminate them
-    // even when their results are unused — a `iter.next` whose value is
-    // dropped still has the side effect of advancing the iterator.
-    // forof.iter is statement-level (result: null) and is kept by the
-    // generic null-result rule, but the explicit listing makes the
-    // intent obvious.
-    i.kind === "iter.new" ||
-    i.kind === "iter.next" ||
-    i.kind === "iter.return" ||
-    i.kind === "forof.iter" ||
-    // Slice 7a (#1169f): gen.push pushes a value onto the eager
-    // generator buffer (observable through __gen_next). gen.epilogue
-    // calls __create_generator with the buffer and is materially
-    // referenced as the function's return value — but DCE's
-    // propagation only flows through `result`-bearing instrs, so
-    // explicitly pinning here is the simplest correctness rule.
-    // Without this, DCE would consider gen.push's `value` operand
-    // dead and strip the const that produces it, leaving a stale
-    // SSA reference that the verifier rejects.
-    i.kind === "gen.push" ||
-    i.kind === "gen.epilogue" ||
-    // Slice 7b (#1169f): gen.yieldStar drains every value from the
-    // inner iterable onto the buffer — observable through __gen_next
-    // downstream. Pin for the same reason as gen.push: the operand
-    // (`inner`) must stay live, but DCE's propagation only flows
-    // through `result`-bearing instrs.
-    i.kind === "gen.yieldStar" ||
-    // Slice 6 part 4 (#1183): forof.string is statement-level (result:
-    // null) so the generic null-result rule already keeps it; explicit
-    // listing for clarity.
-    i.kind === "forof.string" ||
-    // Slice 9 (#1169h): throw / try are statement-level side effects
-    // (control flow). DCE must always preserve them.
-    i.kind === "throw" ||
-    i.kind === "try" ||
-    // Slice 12 (#1280): while.loop / for.loop are statement-level control
-    // flow (result: null). They must always run AND their cond/body/update
-    // buffers must be use-walked so a value referenced only inside the loop
-    // stays live. They are seeded here (not merely kept by the null-result
-    // rule) so `collectUses(_, { deep: true })` runs over their buffers.
-    // (#1922 — fixes the ordinary `while (i < limit)` IR demotion.)
-    i.kind === "while.loop" ||
-    i.kind === "for.loop" ||
-    // Slice 10 (#1169i): extern class ops invoke host imports with
-    // arbitrary side effects. Conservatively keep all five live so DCE
-    // never strips a `RegExp_new` or `Uint8Array_set` whose result is
-    // unused but whose execution is observable.
-    i.kind === "extern.new" ||
-    i.kind === "extern.call" ||
-    i.kind === "extern.propSet" ||
-    // extern.prop is a getter call — most are pure but some (Date.now,
-    // Map.size after concurrent mutation) reflect external state. Keep
-    // conservatively until a purity analysis distinguishes them.
-    i.kind === "extern.prop" ||
-    // extern.regex calls RegExp_new which is morally pure (allocates
-    // a fresh value), but it may throw on bad pattern syntax — keep
-    // the side-effect of the throw observable to user code.
-    i.kind === "extern.regex" ||
-    // (#1373 Phase B) Async / await IR nodes are control-flow with
-    // observable suspension / Promise side effects. DCE must always
-    // preserve them. Phase C lowering (CPS transform) does not change
-    // this — even unused-result awaits need to suspend.
-    i.kind === "await" ||
-    i.kind === "async.return" ||
-    i.kind === "async.throw"
-  );
 }
 
 function shouldKeep(i: IrInstr, live: ReadonlySet<IrValueId>): boolean {

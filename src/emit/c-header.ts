@@ -8,6 +8,7 @@
  */
 
 import type { ValType, WasmModule } from "../ir/types.js";
+import { absoluteFuncIndexCached } from "./resolve-layout.js"; // (#1916 S3)
 
 /** Information about a single exported function for C header generation */
 export interface CHeaderExport {
@@ -100,7 +101,8 @@ export function extractCHeaderExports(mod: WasmModule): CHeaderExport[] {
     if (exp.desc.kind !== "func") continue;
     if (exp.name === "memory") continue;
 
-    const funcIdx = exp.desc.index;
+    // (#1916 S3) normalize a possibly-stable handle to the absolute index.
+    const funcIdx = absoluteFuncIndexCached(mod, numImportFuncs, exp.desc.index);
     const localIdx = funcIdx - numImportFuncs;
     if (localIdx < 0 || localIdx >= mod.functions.length) continue;
 

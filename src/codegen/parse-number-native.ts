@@ -19,6 +19,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 const C_TAB = 9;
 const C_LF = 10;
@@ -144,7 +145,7 @@ export function emitNativeParseNumber(ctx: CodegenContext, which: Set<string>): 
   if (which.has("parseFloat") && !ctx.funcMap.has("parseFloat")) {
     // (externref) -> f64
     const typeIdx = addFuncType(ctx, [extern], [f64]);
-    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
     ctx.funcMap.set("parseFloat", funcIdx);
 
     // locals (after param 0 = s:externref):
@@ -454,7 +455,7 @@ export function emitNativeParseNumber(ctx: CodegenContext, which: Set<string>): 
       { op: "return" },
     ];
 
-    ctx.mod.functions.push({
+    pushDefinedFunc(ctx, funcIdx, {
       name: "parseFloat",
       typeIdx,
       locals: [
@@ -507,7 +508,7 @@ function emitStrToNumber(ctx: CodegenContext, flattenIdx: number, strTypeIdx: nu
   const f64: ValType = { kind: "f64" };
   const extern: ValType = { kind: "externref" };
   const typeIdx = addFuncType(ctx, [extern], [f64]);
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("__str_to_number", funcIdx);
 
   // params: 0 s:externref
@@ -856,7 +857,7 @@ function emitStrToNumber(ctx: CodegenContext, flattenIdx: number, strTypeIdx: nu
     { op: "return" },
   ];
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "__str_to_number",
     typeIdx,
     locals: [
@@ -1477,7 +1478,7 @@ function emitParseInt(ctx: CodegenContext, flattenIdx: number, strTypeIdx: numbe
   const f64: ValType = { kind: "f64" };
   const extern: ValType = { kind: "externref" };
   const typeIdx = addFuncType(ctx, [extern, f64], [f64]);
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
   ctx.funcMap.set("parseInt", funcIdx);
 
   // params: 0 s:externref, 1 radixF:f64
@@ -1747,7 +1748,7 @@ function emitParseInt(ctx: CodegenContext, flattenIdx: number, strTypeIdx: numbe
     { op: "return" },
   ];
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, funcIdx, {
     name: "parseInt",
     typeIdx,
     locals: [

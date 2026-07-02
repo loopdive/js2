@@ -1,9 +1,10 @@
 {
-  "pass": 18914,
-  "host_free_pass": 18914,
-  "official_pass": 18563,
+  "pass": 17497,
+  "host_free_pass": 17497,
+  "official_pass": 17146,
   "official_total": 43106,
-  "sha": "6ae34a6e7856fb2bbca6d56aae7f79ae75cab6cc",
-  "generated_at": "2026-07-02T13:52:27Z",
-  "tolerance": 50
+  "sha": "4c74c87a0439906e922555eb07fad93f80f6543d",
+  "generated_at": "2026-07-02T16:31:02Z",
+  "tolerance": 50,
+  "reseed_note": "#2940 vacuity-scorer integrity correction: pass->vacuous-fail reclassification of dead harness-wrapper callbacks. Value = current main mark 18930 minus the -1433 delta measured at base 854ad5729 (1421 in built-ins/TypedArray{,Constructors} + 12 outside). CAVEAT: the delta was NOT re-measured after the merge waves (re-measurement timed out at budget wind-down); the true merged-tree delta may differ slightly (#2470/#2480 plausibly changed vacuity membership). The merge_group run produces the authoritative number; shepherd verifies the signature is all-vacuous (zero non-vacuous collateral) rather than an exact count, and post-merge promote-baseline --update raises the mark to the true CI number."
 }

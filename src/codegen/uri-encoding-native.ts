@@ -29,6 +29,7 @@ import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./nati
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addFuncType } from "./registry/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 /** Helper-name -> mask routed at the call site (calls.ts). */
 export const URI_ENCODE_MASK: Record<string, number> = {
@@ -489,11 +490,13 @@ export function emitNativeUriEncode(ctx: CodegenContext): void {
     { op: "struct.new", typeIdx: strTypeIdx } as Instr,
     { op: "extern.convert_any" } as Instr,
   ];
-  // Now that no further dependency functions can be appended ahead of us,
-  // claim the slot: funcIdx = numImportFuncs + current functions length.
-  ctx.funcMap.set("__uri_encode", ctx.numImportFuncs + ctx.mod.functions.length);
+  // (#1916 S3b) stable-regime handle — the "claim the slot last" ordering
+  // dance this comment used to describe is moot: the handle is
+  // layout-independent from mint.
+  const uriEncodeIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set("__uri_encode", uriEncodeIdx);
 
-  ctx.mod.functions.push({
+  pushDefinedFunc(ctx, uriEncodeIdx, {
     name: "__uri_encode",
     typeIdx: realTypeIdx,
     locals: [
@@ -1045,8 +1048,9 @@ export function emitNativeUriDecode(ctx: CodegenContext): void {
     { op: "extern.convert_any" } as Instr,
   ];
 
-  ctx.funcMap.set("__uri_decode", ctx.numImportFuncs + ctx.mod.functions.length);
-  ctx.mod.functions.push({
+  const uriDecodeIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
+  ctx.funcMap.set("__uri_decode", uriDecodeIdx);
+  pushDefinedFunc(ctx, uriDecodeIdx, {
     name: "__uri_decode",
     typeIdx: realTypeIdx,
     locals: [

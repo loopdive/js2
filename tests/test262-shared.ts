@@ -252,6 +252,10 @@ type RecordMetadata = {
   imports?: string[];
   hostImportLeakClass?: string;
   reachedTest?: boolean;
+  // (#2939/#2940) True when the `fail` is a vacuity correction (harness-wrapper
+  // callback never executed). Surfaced in the JSONL so the report tallies the
+  // integrity correction separately from genuine fails.
+  vacuous?: boolean;
 };
 
 function normalizeErrorSignature(status: string, errorCategory: string | undefined, error: string | undefined) {
@@ -310,6 +314,7 @@ function metadataFromWorkerResult(result: TestResult, reachedTestFallback = fals
   return {
     ...(result.imports && result.imports.length > 0 ? { imports: result.imports } : {}),
     ...(result.hostImportLeakClass ? { hostImportLeakClass: result.hostImportLeakClass } : {}),
+    ...((result as { vacuous?: boolean }).vacuous ? { vacuous: true } : {}),
     reachedTest: result.reachedTest ?? reachedTestFallback,
   };
 }
@@ -342,6 +347,8 @@ function recordResult(
     imports: metadata?.imports && metadata.imports.length > 0 ? metadata.imports : undefined,
     host_import_leak_class: metadata?.hostImportLeakClass,
     reached_test: metadata?.reachedTest ?? false,
+    // (#2939/#2940) vacuity correction marker (only on `fail` rows it applies to).
+    vacuous: metadata?.vacuous || undefined,
     compile_ms: timing?.compileMs !== undefined ? Math.round(timing.compileMs) : undefined,
     exec_ms: timing?.execMs !== undefined ? Math.round(timing.execMs) : undefined,
     scope: scopeInfo?.scope ?? "standard",
@@ -736,6 +743,18 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       undefined,
                       reachedRecordMetadata,
                     );
+                  } else if (ret === -262) {
+                    // (#2939/#2940) Vacuity correction — harness callback never ran.
+                    recordResult(
+                      relPath,
+                      category,
+                      "fail",
+                      "vacuous: harness-wrapper callback never executed (#2940) — no assertion ran",
+                      undefined,
+                      scopeInfo,
+                      undefined,
+                      { ...reachedRecordMetadata, vacuous: true },
+                    );
                   } else {
                     recordResult(
                       relPath,
@@ -1043,7 +1062,10 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               }
 
               if (r.ret !== undefined && r.ret !== 1 && !r.isException && !r.runtimeNegativeNoThrow) {
-                if (r.ret === -1) {
+                if (r.ret === -262 || (r as { vacuous?: boolean }).vacuous) {
+                  // (#2939/#2940) keep the vacuity message (not "returned -262").
+                  error = "vacuous: harness-wrapper callback never executed (#2940) — no assertion ran";
+                } else if (r.ret === -1) {
                   const desc = meta.description?.substring(0, 100) ?? "";
                   const throwsMatch = source.match(/assert\.throws\s*\(\s*(\w+Error)/);
                   const expectedErr = throwsMatch ? throwsMatch[1] : null;

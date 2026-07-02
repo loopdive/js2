@@ -1,8 +1,8 @@
 {
   "generated": "2026-07-02",
   "unintended": {
-    "body-shape-rejected": 32,
-    "call-graph-closure": 7,
+    "body-shape-rejected": 25,
+    "call-graph-closure": 10,
     "class-method": 6
   },
   "deferred": {

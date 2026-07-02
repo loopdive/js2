@@ -85,3 +85,15 @@ inheritance with `super`.
 - `scripts/ir-fallback-baseline.json` — ratchet down.
 - `src/codegen/index.ts:1013` — `STRICT_IR_REASONS` once at zero.
 - `plan/log/ir-adoption.md` — promote rows.
+
+## Banked triage (2026-07-02, dev-2912f — pre-gate prep for the #2856-sequenced dispatch)
+
+`JS2WASM_IR_SHAPE_DIAG=1 check:ir-fallbacks --shape-diag` snapshot (main
+`46e390c`-era): the `class-method` bucket is **6**, all in
+`website/playground/examples/js/classes.ts` (the #1370 Phase C/D/E residual
+this issue targets). Overall corpus context: 32 `body-shape-rejected`
+attributions dominated by `vardecl-init-expr:PropertyAccessExpression` (13 —
+host-global member access, dev-2856f's extern-in-IR dependency), then
+`vardecl-init-expr:CallExpression` (4), `unattributed-arm:helper-internal`
+(4), `body-unhandled-stmt:IfStatement` (3). Use `--shape-diag` per-function
+attribution for the initial triage once the extern-in-IR gate clears.
