@@ -1,8 +1,9 @@
 {
   "id": "2973",
   "assignee": "ttraenkler/dev-2138f",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2973-eval-subcompile-ir-first-optout",
   "claimed_at": "2026-07-02T10:35:33Z",
-  "updated_at": "2026-07-02T10:35:33Z"
+  "updated_at": "2026-07-02T14:48:25Z",
+  "released_at": "2026-07-02T14:48:25Z"
 }
