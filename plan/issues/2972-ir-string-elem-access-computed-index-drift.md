@@ -63,3 +63,44 @@ element-access arm and asserted at from-ast's lowering entry. Then either:
   function either legacy-compiles (option 1) or IR-compiles (option 2) —
   no hard error; the 14 test262 tests pass flag-on.
 - The shape guard lives in `capability.ts` (one row/predicate, not two).
+
+## Scoping analysis (dev-2138f, 2026-07-02) — read before implementing
+
+Mechanism verified against the code; the fix options above need correction:
+
+1. **Option 1 (selector-side shape reject) is NOT viable as written.** The
+   drift is TYPE-level, not shape-level: `isPhase1Expr`'s element-access arm
+   (`select.ts` ~:1887) is shape-only and cannot distinguish `s[i+1]`
+   (string receiver — unlowered) from `arr[i+1]` (vec receiver — the
+   working slice-12 fast path with the #2766 prove-then-specialize bounds
+   handling). Rejecting computed-index element access at the selector would
+   destroy the vec fast path. In capability-table terms the element-access
+   family is **claim-partial** (documented type residual in
+   `lowerElementAccess`, `from-ast.ts` ~:2141 — arms today: string-literal
+   key on object shape; any index on vec receiver; everything else throws
+   at the tail).
+2. **Option 2 (string-receiver lowering) has an OOB-semantics trap.** JS
+   `s[i]` yields a 1-char string in-bounds but **`undefined`** out of
+   bounds (NOT `""` — charAt semantics differ). An IR result typed `string`
+   diverges on OOB (`"%" + undefined` → `"%undefined"` vs `"%" + ""` →
+   `"%"`). A sound computed-index string read therefore needs either
+   (a) a **proven-in-bounds gate** — the actual harness shape is
+   `hex[(n >> 4) & 0xf]` on a 16-char literal: a bitmask-bound rule
+   (`& 0xf` ⇒ idx ∈ [0,15]) against a known-literal receiver length,
+   extending `isProvenInBoundsIr` (vec arm) with mask-range + tracked
+   literal-length receivers; or (b) a result widen to a string|undefined
+   representation (bigger; touches value-rep). (a) covers all 14 tests and
+   is the recommended slice; the unproven-index case stays a documented
+   claim-partial residual.
+3. **Cheap IR-first-noise stopgap exists independently**: a
+   `computeIrFirstSkipSet` gate (like sr-irfirst's gate 4) excluding
+   functions whose bodies contain element access on non-vec-provable
+   receivers — restores flag-on parity for the 14 tests WITHOUT the
+   lowering, but keeps the compile-twice demote flag-off. Acceptable
+   stopgap; not the fix.
+
+Recommended slice: (2a) proven-in-bounds string read + a capability-table
+predicate documenting the element-access family as claim-partial with this
+exact residual. Verify the emitted read against LEGACY's string-index
+emission first (verify-first — #2945's lesson; legacy may route through a
+host import with its own OOB contract).
