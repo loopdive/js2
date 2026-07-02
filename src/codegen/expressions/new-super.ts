@@ -8,6 +8,7 @@ import { forEachChild, ts } from "../../ts-api.js";
 import {
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
+  emitCachedFuncClosureAccess,
   emitFuncRefAsClosure,
   isOwnParamName,
 } from "../closures.js";
@@ -50,7 +51,8 @@ import {
   registerCompileSuperPropertyAccess,
   resolveEnclosingClassName,
 } from "../shared.js";
-import { maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
+import { compileNestedFunctionDeclaration, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
+import { resolveConstantString } from "./eval-inline.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
@@ -2425,6 +2427,133 @@ function emitCoerceElemToAnyrefInto(ctx: CodegenContext, fctx: FunctionContext, 
   for (const instr of scratch) out.push(instr);
 }
 
+// (#2924) Monotonic suffix so each synthesized Function-ctor gets a unique
+// funcMap name even when two call sites share a `pos` (a main-source site and a
+// same-offset site inside a foreign eval SourceFile).
+let __fnCtorSeq = 0;
+
+/**
+ * (#2924) `new Function("p1",…,"pn","body")` / `Function(…)` compile-away MVP.
+ *
+ * When EVERY argument is a compile-time-constant string, synthesize
+ * `function (<p1,…,pn>) { <body> }` and emit it as a real callable closure
+ * value. Per §20.2.1.1 the created function's scope is ALWAYS the global
+ * environment — it never captures the caller's lexical scope — so we compile
+ * the synthesized declaration with an EMPTY enclosing `localMap` (below): any
+ * free identifier in the body resolves as a global, never a caller local
+ * (the no-lexical-capture requirement).
+ *
+ * Returns the result `ValType` on success, or `undefined` to fall through to
+ * the legacy no-op stub (non-constant args, a parse error, an unsupported body,
+ * or a compile bail — all rolled back cleanly so the module is never corrupted).
+ */
+function tryCompileConstantFunctionCtor(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.NewExpression | ts.CallExpression,
+): ValType | undefined {
+  // (#2924 slice-1 — host-lane only.) The synthesized function has all-externref
+  // params (a binding-less foreign body degrades every param to `any`/externref
+  // per #2442). Externref-param closures hit a PRE-EXISTING standalone
+  // call-marshalling bug: two calls coexisting in one expression (`f(1)+f(2)`)
+  // or a ≥3-arg call silently return a WRONG value on the standalone lane —
+  // reproducible with a plain `function(a:any){…}` closure, so it is NOT this
+  // feature's bug and NOT a quick temp fix (it is a whole externref-closure
+  // class). Since those edges can't be detected at the `new Function` site to
+  // bail, and we do not ship silent wrong values in ANY lane, gate the
+  // compile-away to the JS-host lane; standalone / WASI keep the legacy stub
+  // (no miscompile). Standalone enablement is the follow-up #2945, which is
+  // blocked on fixing the externref-param-closure standalone marshalling bug.
+  if (ctx.standalone || ctx.wasi) return undefined;
+
+  const args = expr.arguments ?? [];
+
+  // Every argument must be a compile-time-constant string.
+  const parts: string[] = [];
+  for (const a of args) {
+    const s = resolveConstantString(a);
+    if (s === null) return undefined;
+    parts.push(s);
+  }
+
+  // Last arg is the body; the rest are the parameter list (comma-flattened per
+  // §20.2.1.1.1 CreateDynamicFunction, which joins the param args with ",").
+  const body = parts.length > 0 ? parts[parts.length - 1]! : "";
+  const paramList = parts.slice(0, -1).join(",");
+
+  const synthName = `__fn_ctor_${expr.pos}_${__fnCtorSeq++}`;
+  // Newlines around the body isolate a trailing `//` line comment from the
+  // closing brace, and match acorn's own `function anonymous(<params>\n) {\n<body>\n}`.
+  const src = `function ${synthName}(${paramList}) {\n${body}\n}`;
+
+  const sf = ts.createSourceFile(
+    "<Function>.ts",
+    src,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.JS,
+  );
+  // A parse error means the params/body were malformed. Real `Function` throws
+  // SyntaxError; for the MVP we fall through to the legacy path (no regression
+  // vs. today's stub). Emitting the SyntaxError is a follow-up (#2928 lane).
+  const parseDiag = (sf as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
+  if (parseDiag && parseDiag.length > 0) return undefined;
+
+  const fnDecl = sf.statements[0];
+  if (!fnDecl || !ts.isFunctionDeclaration(fnDecl) || sf.statements.length !== 1) return undefined;
+
+  // Rollback anchors so a mid-body compile throw on a binding-less foreign node
+  // never leaves a half-registered (empty-body) function in the module.
+  const fnCountBefore = ctx.mod.functions.length;
+  const hadName = ctx.funcMap.has(synthName);
+
+  // Global-scope compile: swap the enclosing capture context to empty so the
+  // synthesized function captures NOTHING from the caller (§20.2.1.1). Capture
+  // detection in compileNestedFunctionDeclaration is name-based against
+  // `fctx.localMap`, so an empty map guarantees a no-capture (global) function.
+  const savedLocalMap = fctx.localMap;
+  const savedBoxed = fctx.boxedCaptures;
+  const savedTdz = fctx.tdzFlagLocals;
+  fctx.localMap = new Map();
+  fctx.boxedCaptures = undefined;
+  fctx.tdzFlagLocals = undefined;
+
+  let ok = false;
+  try {
+    compileNestedFunctionDeclaration(ctx, fctx, fnDecl);
+    ok = ctx.funcMap.has(synthName);
+  } catch {
+    ok = false;
+  } finally {
+    fctx.localMap = savedLocalMap;
+    fctx.boxedCaptures = savedBoxed;
+    fctx.tdzFlagLocals = savedTdz;
+  }
+
+  if (!ok) {
+    // Roll back any partial registration and fall through to the stub.
+    if (!hadName) {
+      ctx.funcMap.delete(synthName);
+      ctx.nestedFuncCaptures.delete(synthName);
+    }
+    if (ctx.mod.functions.length > fnCountBefore) ctx.mod.functions.length = fnCountBefore;
+    return undefined;
+  }
+
+  const funcIdx = ctx.funcMap.get(synthName);
+  if (funcIdx === undefined) return undefined;
+
+  // Escape the compiled global function as a first-class callable value.
+  // Prefer the cached-closure access (stable identity, reusable across multiple
+  // calls) exactly as the bare-function-identifier path does (identifiers.ts);
+  // the synthesized function is no-capture, so the cache applies. Fall back to a
+  // per-site closure struct if the cache emit is unavailable.
+  const cachedRefType = emitCachedFuncClosureAccess(ctx, fctx, synthName, funcIdx);
+  if (cachedRefType) return cachedRefType;
+  const refType = emitFuncRefAsClosure(ctx, fctx, synthName, funcIdx);
+  return refType ?? undefined;
+}
+
 function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
   // Handle `new function() { ... }(args)` — constructor with function expression
   if (ts.isFunctionExpression(expr.expression)) {
@@ -3172,12 +3301,21 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     return { kind: "externref" };
   }
 
-  // Handle `new Function(...)` — dynamic code generation is not possible in Wasm.
-  // Emit a no-op function that returns undefined (ref.null extern) to prevent
-  // compile errors. Tests that rely on dynamic behavior will fail at runtime
-  // instead of at compile time, which is more informative.
+  // Handle `new Function(...)` / `Function(...)`.
+  // (#2924) MVP compile-away: when EVERY argument is a compile-time-constant
+  // string, `new Function(p1, …, pn, body)` is — per §20.2.1.1 — semantically a
+  // `function (p1,…,pn) { body }` whose scope is ALWAYS the global environment
+  // (never the caller's lexical scope), so it is identical to compiling that
+  // function at this site. Synthesize + compile it as a real callable value.
+  // Non-constant args fall through to the legacy no-op stub below.
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Function") {
-    // Compile and discard all arguments (they may have side effects)
+    const compiled = tryCompileConstantFunctionCtor(ctx, fctx, expr);
+    if (compiled !== undefined) return compiled;
+
+    // Legacy fallback (non-constant args, unsupported body, or a compile bail):
+    // evaluate args for side effects, return ref.null extern (a "function" that
+    // returns undefined). Dynamic-body `new Function` is deferred to the Tier-2
+    // interpreter (#2928).
     const args = expr.arguments ?? [];
     for (const arg of args) {
       const argResult = compileExpression(ctx, fctx, arg);
@@ -3185,7 +3323,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         fctx.body.push({ op: "drop" });
       }
     }
-    // Return ref.null extern — represents a function that returns undefined
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
   }

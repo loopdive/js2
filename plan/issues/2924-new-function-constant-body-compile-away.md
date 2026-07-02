@@ -1,6 +1,6 @@
 ---
 id: 2924
-title: "new Function(\"<const>\") compile-away MVP — replace the no-op stub"
+title: 'new Function("<const>") compile-away MVP — replace the no-op stub'
 status: ready
 created: 2026-07-02
 updated: 2026-07-02
@@ -29,7 +29,7 @@ Second landable slice — pure AOT, **standalone-safe**, no interpreter.
 `new Function(...)` / `Function(...)` currently lowers to a **no-op stub**
 (`src/codegen/expressions/new-super.ts` ~line 3179): it evaluates the arguments
 for side effects and returns `ref.null.extern` — a "function" that returns
-`undefined`. Every test that actually *calls* the constructed function fails
+`undefined`. Every test that actually _calls_ the constructed function fails
 (119 `new Function(` tests fail today, roadmap §5.2), and standalone gets
 nothing.
 
@@ -61,7 +61,7 @@ Replace the no-op stub with a compile-away path:
 ## Edge cases
 
 - **`Function()` no args** → `function anonymous() {}` (empty body). Returns a
-  callable that returns `undefined` — but a *real* callable, not `ref.null`.
+  callable that returns `undefined` — but a _real_ callable, not `ref.null`.
 - **Multiple param strings** — `new Function("a", "b,c", "return a+b+c")`:
   params flatten across args (`a`, `b`, `c`).
 - **Body parse error** → real JS throws `SyntaxError`. Emit the compile-time
@@ -74,12 +74,63 @@ Replace the no-op stub with a compile-away path:
 
 ## Acceptance criteria
 
-- [ ] `new Function("a","b","return a+b")(1,2) === 3` in **standalone** mode.
-- [ ] `Function("return 42")() === 42` (plain call form) standalone.
-- [ ] `new Function("a", "b,c", "return a+b+c")(1,2,3) === 6` standalone.
-- [ ] A body referencing a caller local resolves it as a global (no capture).
-- [ ] `new Function("return")()` returns `undefined` via a real callable.
-- [ ] No regression in existing `new Function` tests.
+**Slice 1 (this PR) — JS-host lane only:**
+
+- [x] `new Function("a","b","return a+b")(1,2) === 3` on the **JS-host lane**.
+      (headline, minus the standalone half — see the gate rationale below)
+- [x] single-param + no-param const bodies, single call — host.
+- [x] reuse across **separate statements** correct — host.
+- [x] a **non-constant** argument bails gracefully to the legacy stub — compiles,
+      never miscompiles (negative test).
+- [x] **standalone / WASI**: the compile-away is GATED OFF → the pre-existing
+      stub (compiles host-free, no miscompile, no trap) — verified by test.
+- [x] No regression in existing `new Function` tests (the stub still handles
+      every non-const / unsupported / standalone case).
+
+**Gate rationale (ship decision, tech-lead call 2026-07-02):** the synthesized
+function has all-externref params, and externref-param closures hit a
+**PRE-EXISTING standalone call-marshalling bug** — two calls coexisting in one
+expression (`f(1)+f(2)`) or a ≥3-arg call silently return a WRONG value on the
+standalone lane. **Control-verified this is NOT this feature's bug and NOT a
+quick temp fix**: a plain `function(a:any){ return a+10; }` closure reused as
+`f(1)+f(2)` returns the same wrong value in standalone (a typed `a:number`
+closure is correct — typed params take a different, working path). Since those
+edges can't be detected at the `new Function` site to bail, and we do not ship
+silent wrong values in ANY lane (never-miscompile bar), the compile-away is
+gated to the JS-host lane. Standalone enablement is **#2945**, blocked on fixing
+the externref-param-closure standalone marshalling bug.
+
+**Deferred to follow-up slices (explicit NON-GOALS of slice 1):**
+
+- [ ] **Standalone enablement — #2945** (blocked on the externref-param-closure
+      standalone marshalling fix; carries the full collision analysis).
+- [ ] Plain-call value form `Function("return 42")()` — routed in `calls.ts`,
+      not `compileNewExpression`; not yet wired.
+- [ ] `new Function("return")()` / `new Function()()` → `undefined` — currently
+      the no-value result is the stub `null`, not the `undefined` singleton.
+- [ ] no-capture `typeof x` string-return — the empty-`localMap` global compile
+      is in place; the string-return marshalling needs confirming.
+
+## Implementation (dev-f2, 2026-07-02) — slice 1, JS-host lane
+
+`tryCompileConstantFunctionCtor` in `src/codegen/expressions/new-super.ts`,
+wired into the `new Function(...)` stub. On the JS-host lane, when every arg is
+a constant string it: resolves them via `resolveConstantString`, synthesizes
+`function <synth>(<params>) { <body> }` as a foreign `SourceFile`, compiles it
+with an **empty enclosing `localMap`** (global scope, no lexical capture —
+§20.2.1.1), and escapes it as a callable via `emitCachedFuncClosureAccess`
+(stable identity, reusable) / `emitFuncRefAsClosure`. Reuses #2442's
+foreign-binding-less `compileNestedFunctionDeclaration` tolerance.
+Rollback-guarded (snapshots `mod.functions.length` + `funcMap` so a mid-body
+compile throw can't leave a half-registered empty-body function). Standalone /
+WASI return early → the pre-existing stub (see the gate rationale above).
+
+`tests/issue-2924.test.ts` (6/6): host working shapes, host reuse-across-
+statements, the graceful non-const bail (negative), and the standalone
+gated-to-stub clean-compile assertion.
+
+Stacked on #2442 (the eval-broaden `compileNestedFunctionDeclaration`
+foreign-tolerance); re-base onto `main` once #2442 lands, then PR.
 
 ## Notes
 
