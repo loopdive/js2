@@ -1,11 +1,12 @@
 # Symphony Service
 
-This repo implements Symphony as a Node service in `scripts/symphony.mjs`.
-
-Symphony is a long-running scheduler/runner. It reads eligible work, creates a
-deterministic per-issue workspace, runs one coding-agent command in that
-workspace, tracks runtime state, retries failures, and exposes logs/status for
-the operator.
+This repo drives sprint dispatch with **Symphony**, a generic markdown-driven
+coding-agent orchestrator. The engine itself has moved out of `scripts/` and
+into [`packages/symphony`](../../packages/symphony/README.md) as a
+self-contained, zero-dependency package (`@loopdive/symphony`) — see that
+package's README for the full architecture (agent lanes, the Claude Code
+channel, safety posture, current scope). This doc covers only how **this
+repo** is wired into it.
 
 ## Repository Mapping
 
@@ -15,10 +16,13 @@ the operator.
 - Workspace kind: `git_worktree`
 - Workspace root: `.codex/worktrees/symphony/`
 - Runtime logs/state: `.codex/symphony/`
+- Engine: `packages/symphony/bin/{symphony,symphony-channel,symphony-dispatch}.mjs`
 
 The current tracker adapter is markdown-backed because sprint membership and
-issue status are already canonical in repo frontmatter. A Linear adapter can be
-added later without changing the orchestrator or runner contracts.
+issue status are already canonical in repo frontmatter. A Linear adapter can
+be added later without changing the orchestrator or runner contracts — see
+`packages/symphony/README.md`'s "Repository contract" section for what a new
+tracker adapter would need to implement.
 
 ## Issue Status Flow
 
@@ -34,54 +38,26 @@ fresh dispatch and `tracker.active_states: [ready, in-progress]` for
 reconciliation/retries, so a claimed issue is not picked again as fresh work and
 is not cancelled just because the claim state changed.
 
-## Agent Lanes
-
-Agents are configured as lanes in `WORKFLOW.md`.
-
-Each lane has:
-
-- `name`
-- `kind` such as `codex`, `claude`, or `generic`
-- `role` such as `team-lead` or `teammate`
-- `command`
-- `prompt_mode`: `argument` or `stdin`
-- `max_concurrent`
-
-This is what makes Symphony generic. The scheduler does not care whether a
-worker is Codex, Claude Code, or another coding agent. It only needs a command
-that can receive the rendered prompt and run in the assigned workspace.
-
-By default:
-
-- Codex uses `codex.command` unless `SYMPHONY_CODEX_COMMAND` overrides it.
-- Claude uses a `claude-channel` lane. Symphony sends dispatch events to an interactive Claude Code team lead instead of launching `claude -p` workers.
-
-Start Claude Code with the project channel enabled:
-
-```bash
-claude --dangerously-load-development-channels server:symphony
-```
-
-The channel server is configured in `.mcp.json` and implemented in `scripts/claude-symphony-channel.mjs`. Claude receives dispatches as channel events and should use native Claude Code Team/TaskList tools to populate or update teammate work. It can call channel tools to reply, claim, complete, or release a Symphony issue.
-
-Example mixed run:
-
-```bash
-SYMPHONY_CODEX_COMMAND='codex exec --sandbox workspace-write --ask-for-approval never' \
-pnpm run symphony -- --sprint 58 --max 4
-```
-
 ## Claude Code Channel
 
-Claude Code channels are MCP servers that push events into an already-running Claude Code session. The project channel is configured in `.mcp.json`:
+Claude Code channels are MCP servers that push events into an already-running
+Claude Code session. The project channel is configured in `.mcp.json`
+(pointing at `packages/symphony/bin/symphony-channel.mjs`):
 
 ```bash
 claude --dangerously-load-development-channels server:symphony
 ```
 
-When Symphony dispatches to a `claude-channel` lane, it writes a dispatch event to `.codex/dispatch/messages.jsonl`. The channel server watches that file and emits `notifications/claude/channel` into the Claude session. The Claude lead should then use native Claude Code Teams and TaskList tools. Claude can call channel tools to reply, claim, complete, or release the Symphony channel claim.
+When Symphony dispatches to a `claude-channel` lane, it writes a dispatch
+event to `.codex/dispatch/messages.jsonl`. The channel server watches that
+file and emits `notifications/claude/channel` into the Claude session. The
+Claude lead should then use native Claude Code Teams and TaskList tools.
+Claude can call channel tools to reply, claim, complete, or release the
+Symphony channel claim.
 
-If no Claude session is running with the channel enabled, the message remains in `.codex/dispatch/` and will be delivered when the channel server starts.
+If no Claude session is running with the channel enabled, the message
+remains in `.codex/dispatch/` and will be delivered when the channel server
+starts.
 
 ## Commands
 
@@ -90,6 +66,7 @@ pnpm run symphony:dry-run
 pnpm run symphony -- --sprint 58 --max 3
 pnpm run symphony:once -- --sprint 58 --max 3
 pnpm run symphony:status
+pnpm run dispatch:queue
 ```
 
 Use `--dry-run` first. It exercises workflow loading, issue scanning, lane
@@ -105,26 +82,7 @@ agents.
 - Worktrees are preserved after runs. Terminal-state reconciliation cancels
   active runs but does not remove worktrees without operator inspection.
 - The configured Codex command controls Codex approval/sandbox behavior.
-- Claude Code team work stays inside the interactive Claude session. Symphony only sends channel events to the Claude lead; it does not edit Claude-generated team/task files and does not launch `claude -p` unless a separate executable Claude lane is explicitly configured.
-
-## Current Scope
-
-Implemented:
-
-- workflow loader with YAML frontmatter and strict prompt variables
-- markdown issue tracker adapter
-- bounded concurrency and lane selection
-- deterministic git-worktree workspace creation/reuse
-- before/after workspace hooks
-- generic command runner
-- Claude Code channel lane for interactive Claude team-lead dispatch
-- structured JSONL logs
-- runtime state snapshot
-- retry/backoff and stall reconciliation
-
-Not implemented yet:
-
-- Linear tracker adapter
-- Codex app-server JSON-RPC client
-- optional HTTP status API
-- durable DB beyond restart-readable repo/tracker/workspace state
+- Claude Code team work stays inside the interactive Claude session. Symphony
+  only sends channel events to the Claude lead; it does not edit
+  Claude-generated team/task files and does not launch `claude -p` unless a
+  separate executable Claude lane is explicitly configured.

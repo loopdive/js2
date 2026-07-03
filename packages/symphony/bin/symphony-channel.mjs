@@ -1,19 +1,18 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import readline from "node:readline";
+import {
+  appendDispatchMessage,
+  readMessagesSince,
+  receiptOffsetFile,
+  setDispatchClaim,
+} from "../lib/dispatch-state.mjs";
 
-const ROOT = path.resolve(path.join(path.dirname(new URL(import.meta.url).pathname), ".."));
-const STATE_DIR = path.join(ROOT, ".codex", "dispatch");
-const MESSAGES_FILE = path.join(STATE_DIR, "messages.jsonl");
-const RECEIPTS_DIR = path.join(STATE_DIR, "receipts");
-const OFFSET_FILE = path.join(RECEIPTS_DIR, "claude-channel.offset");
-const CLAIMS_FILE = path.join(STATE_DIR, "claims.json");
-
-mkdirSync(RECEIPTS_DIR, { recursive: true });
+// The consuming project's root — this MCP server is launched from there
+// (Claude Code sets cwd to the project directory that owns .mcp.json).
+const ROOT = process.cwd();
+const OFFSET_FILE = receiptOffsetFile(ROOT, "claude-channel");
 
 let nextNotificationId = 1;
-let offset = existsSync(OFFSET_FILE) ? Number(readFileSync(OFFSET_FILE, "utf8") || 0) : 0;
 
 function send(message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
@@ -25,50 +24,6 @@ function respond(id, result) {
 
 function error(id, code, message) {
   send({ id, error: { code, message } });
-}
-
-function appendMessage(message) {
-  mkdirSync(STATE_DIR, { recursive: true });
-  appendFileSync(MESSAGES_FILE, `${JSON.stringify(message)}\n`);
-}
-
-function loadClaims() {
-  try {
-    return JSON.parse(readFileSync(CLAIMS_FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-function saveClaims(claims) {
-  mkdirSync(STATE_DIR, { recursive: true });
-  writeFileSync(CLAIMS_FILE, `${JSON.stringify(claims, null, 2)}\n`);
-}
-
-function setClaim(issue, patch) {
-  const claims = loadClaims();
-  claims[String(issue)] = { ...(claims[String(issue)] || { issue: String(issue) }), ...patch };
-  saveClaims(claims);
-}
-
-function pendingMessages() {
-  if (!existsSync(MESSAGES_FILE)) return [];
-  const text = readFileSync(MESSAGES_FILE, "utf8");
-  if (offset > text.length) offset = 0;
-  const chunk = text.slice(offset);
-  offset = text.length;
-  writeFileSync(OFFSET_FILE, String(offset));
-  return chunk
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter((msg) => msg && (msg.to === "claude-lead" || msg.to === "all"));
 }
 
 function notifyClaude(message) {
@@ -97,7 +52,11 @@ function notifyClaude(message) {
 }
 
 function pump() {
-  for (const message of pendingMessages()) notifyClaude(message);
+  const messages = readMessagesSince(ROOT, OFFSET_FILE, {
+    advance: true,
+    filter: (msg) => msg.to === "claude-lead" || msg.to === "all",
+  });
+  for (const message of messages) notifyClaude(message);
 }
 
 function toolList() {
@@ -159,7 +118,7 @@ function toolList() {
 function callTool(name, args) {
   const now = new Date().toISOString();
   if (name === "reply") {
-    appendMessage({
+    appendDispatchMessage(ROOT, {
       id: `${Date.now()}-${process.pid}`,
       type: "reply",
       from: "claude-lead",
@@ -170,7 +129,7 @@ function callTool(name, args) {
     return { content: [{ type: "text", text: "sent" }] };
   }
   if (name === "claim_issue") {
-    setClaim(args.issue, {
+    setDispatchClaim(ROOT, args.issue, {
       owner: args.owner || "claude-lead",
       status: "claimed",
       reason: args.reason || "",
@@ -179,7 +138,7 @@ function callTool(name, args) {
     return { content: [{ type: "text", text: `claimed #${args.issue}` }] };
   }
   if (name === "complete_issue") {
-    setClaim(args.issue, {
+    setDispatchClaim(ROOT, args.issue, {
       status: "completed",
       reason: args.reason || "",
       completed_at: now,
@@ -187,7 +146,7 @@ function callTool(name, args) {
     return { content: [{ type: "text", text: `completed #${args.issue}` }] };
   }
   if (name === "release_issue") {
-    setClaim(args.issue, {
+    setDispatchClaim(ROOT, args.issue, {
       status: "released",
       reason: args.reason || "",
       released_at: now,

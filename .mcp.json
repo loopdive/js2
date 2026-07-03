@@ -2,7 +2,7 @@
   "mcpServers": {
     "symphony": {
       "command": "node",
-      "args": ["scripts/claude-symphony-channel.mjs"]
+      "args": ["packages/symphony/bin/symphony-channel.mjs"]
     }
   }
 }

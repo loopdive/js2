@@ -1,0 +1,53 @@
+{
+  "name": "@loopdive/symphony",
+  "version": "0.1.0",
+  "description": "Markdown-driven coding-agent orchestrator: dispatches issues from repo frontmatter to Codex/Claude/generic agent lanes over isolated git worktrees",
+  "keywords": [
+    "agent-orchestration",
+    "codex",
+    "claude-code",
+    "multi-agent",
+    "git-worktree",
+    "task-dispatch"
+  ],
+  "homepage": "https://github.com/loopdive/js2/tree/main/packages/symphony",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loopdive/js2.git",
+    "directory": "packages/symphony"
+  },
+  "bugs": {
+    "url": "https://github.com/loopdive/js2/issues"
+  },
+  "type": "module",
+  "main": "./lib/workflow.mjs",
+  "exports": {
+    ".": "./lib/workflow.mjs",
+    "./workflow": "./lib/workflow.mjs",
+    "./orchestrator": "./lib/orchestrator.mjs",
+    "./dispatch-state": "./lib/dispatch-state.mjs",
+    "./yaml": "./lib/yaml.mjs",
+    "./util": "./lib/util.mjs"
+  },
+  "bin": {
+    "symphony": "./bin/symphony.mjs",
+    "symphony-channel": "./bin/symphony-channel.mjs",
+    "symphony-dispatch": "./bin/symphony-dispatch.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "WORKFLOW.example.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {},
+  "author": "Thomas Tränkler <git@thomas.traenkler.com>",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

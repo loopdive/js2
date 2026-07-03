@@ -1,29 +1,26 @@
 #!/usr/bin/env node
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import { loadWorkflow, loadMarkdownIssues, latestSprint, TERMINAL_DEFAULT } from "../lib/workflow.mjs";
+import { get, asArray, normalizeState, expandPath } from "../lib/util.mjs";
+import {
+  appendDispatchMessage,
+  loadDispatchClaims,
+  readAllDispatchMessages,
+  readMessagesSince,
+  receiptOffsetFile,
+  setDispatchClaim,
+} from "../lib/dispatch-state.mjs";
 
-const ROOT = path.resolve(path.join(path.dirname(new URL(import.meta.url).pathname), ".."));
-const ISSUE_DIR = path.join(ROOT, "plan", "issues");
-const STATE_DIR = path.join(ROOT, ".codex", "dispatch");
-const CLAIMS_FILE = path.join(STATE_DIR, "claims.json");
-const MESSAGES_FILE = path.join(STATE_DIR, "messages.jsonl");
-const RECEIPTS_DIR = path.join(STATE_DIR, "receipts");
-const READY_STATES = new Set(["ready"]);
-const TERMINAL_STATES = new Set(["done", "wont-fix"]);
-const ISSUE_FILE_RE = /^\d+[a-z]?(?:[-_].+)?\.md$/i;
+// The consuming project's root — run this from the project directory (or
+// pass --workflow) so tracker.issues_dir resolves the same way it does for
+// the "symphony" daemon.
+const ROOT = process.cwd();
 
 function parseArgs(argv) {
   const args = {
     command: "",
+    workflow: path.join(ROOT, "WORKFLOW.md"),
     sprint: "latest",
     issue: "",
     owner: "",
@@ -40,6 +37,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--") continue;
     if (!args.command && !a.startsWith("-")) args.command = a;
+    else if (a === "--workflow") args.workflow = expandPath(argv[++i], ROOT);
     else if (a === "--sprint") args.sprint = argv[++i];
     else if (a === "--issue") args.issue = argv[++i];
     else if (a === "--owner") args.owner = argv[++i];
@@ -62,10 +60,10 @@ function parseArgs(argv) {
 }
 
 function help() {
-  console.log(`Usage: node scripts/dispatch-channel.mjs <command> [options]
+  console.log(`Usage: symphony-dispatch <command> [options]
 
 Commands:
-  queue             Show claimable issues from plan/issues frontmatter
+  queue             Show claimable issues from the tracker (default: plan/issues)
   request-claude    Send a Claude-lead request to fill native Claude TaskList
   claim             Claim an issue for a lead/teammate/channel
   complete          Mark a channel claim complete
@@ -75,6 +73,8 @@ Commands:
   status            Show claims and recent messages
 
 Options:
+  --workflow PATH   Workflow contract path (default: ./WORKFLOW.md, falls back
+                     to tracker.issues_dir=plan/issues if absent)
   --sprint N        Sprint number, or latest (default)
   --limit N         Max queue/message rows (default 20)
   --issue ID        Issue id for claim/complete/release
@@ -89,163 +89,35 @@ Options:
 `);
 }
 
-function ensureStateDir() {
-  mkdirSync(STATE_DIR, { recursive: true });
-  mkdirSync(RECEIPTS_DIR, { recursive: true });
-}
-
-function parseScalar(raw) {
-  let v = String(raw ?? "").trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  return v;
-}
-
-function parseArray(raw) {
-  const v = parseScalar(raw);
-  if (!v) return [];
-  if (v.startsWith("[") && v.endsWith("]")) {
-    return v
-      .slice(1, -1)
-      .split(",")
-      .map((item) => parseScalar(item))
-      .filter(Boolean);
-  }
-  return [v];
-}
-
-function parseFrontmatter(text) {
-  const m = text.match(/^---\n([\s\S]*?)\n---\n?/);
-  if (!m) return {};
-  const fm = {};
-  let current = null;
-  for (const line of m[1].split("\n")) {
-    if (/^[A-Za-z0-9_ -]+:/.test(line)) {
-      const idx = line.indexOf(":");
-      current = line.slice(0, idx).trim();
-      fm[current] = line.slice(idx + 1).trim();
-    } else if (current && /^\s+-\s+/.test(line)) {
-      fm[current] = `${fm[current] || ""}\n${line}`;
-    }
-  }
-  return fm;
-}
-
-function issueIdFromFile(file) {
-  return path.basename(file).match(/^(\d+[a-z]?)/i)?.[1] ?? path.basename(file, ".md");
-}
-
-function loadIssues() {
-  const issues = [];
-  for (const name of readdirSync(ISSUE_DIR)) {
-    if (!ISSUE_FILE_RE.test(name)) continue;
-    const file = path.join(ISSUE_DIR, name);
-    if (statSync(file).isDirectory()) continue;
-    const text = readFileSync(file, "utf8");
-    const fm = parseFrontmatter(text);
-    const id = parseScalar(fm.id || issueIdFromFile(file));
-    issues.push({
-      id,
-      identifier: id,
-      title: parseScalar(fm.title || text.match(/^#\s+(.+)$/m)?.[1] || "Untitled"),
-      status: parseScalar(fm.status || "ready").toLowerCase(),
-      sprint: parseScalar(fm.sprint || ""),
-      priority: parseScalar(fm.priority || ""),
-      depends_on: parseArray(fm.depends_on),
-      file,
-      relFile: path.relative(ROOT, file),
-    });
-  }
-  return issues.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-}
-
-function currentSprint(issues) {
-  const nums = issues
-    .filter((issue) => /^\d+$/.test(issue.sprint) && !TERMINAL_STATES.has(issue.status))
-    .map((issue) => Number(issue.sprint));
-  return nums.length ? String(Math.max(...nums)) : "";
-}
-
-function loadClaims() {
-  ensureStateDir();
-  if (!existsSync(CLAIMS_FILE)) return {};
+function loadTrackerConfig(workflowPath) {
+  if (!existsSync(workflowPath)) return {};
   try {
-    return JSON.parse(readFileSync(CLAIMS_FILE, "utf8"));
+    return loadWorkflow(workflowPath).config;
   } catch {
     return {};
   }
-}
-
-function saveClaims(claims) {
-  ensureStateDir();
-  const tmp = `${CLAIMS_FILE}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(claims, null, 2)}\n`);
-  renameSync(tmp, CLAIMS_FILE);
 }
 
 function activeClaims(claims) {
   return Object.fromEntries(Object.entries(claims).filter(([, claim]) => claim.status === "claimed"));
 }
 
-function claimableIssues(args) {
-  const issues = loadIssues();
-  const sprint = args.sprint === "latest" ? currentSprint(issues) : String(args.sprint);
-  const byId = new Map(issues.map((issue) => [issue.id, issue]));
-  const claims = activeClaims(loadClaims());
+function claimableIssues(args, config) {
+  const issues = loadMarkdownIssues(config, ROOT);
+  const claimableStates = new Set(asArray(get(config, "tracker.claimable_states"), ["ready"]).map(normalizeState));
+  const terminalStates = new Set(asArray(get(config, "tracker.terminal_states"), TERMINAL_DEFAULT).map(normalizeState));
+  const sprint = args.sprint === "latest" ? latestSprint(issues, terminalStates) : String(args.sprint);
+  const byId = new Map(issues.map((issue) => [String(issue.id), issue]));
+  const claims = activeClaims(loadDispatchClaims(ROOT));
   return issues
-    .filter((issue) => issue.sprint === sprint)
-    .filter((issue) => READY_STATES.has(issue.status))
+    .filter((issue) => String(issue.sprint) === sprint)
+    .filter((issue) => claimableStates.has(issue.state))
     .filter((issue) => !claims[issue.id])
-    .filter((issue) => issue.depends_on.every((id) => TERMINAL_STATES.has(byId.get(String(id))?.status || "")))
+    .filter((issue) =>
+      issue.blocked_by.every((b) => terminalStates.has(normalizeState(byId.get(String(b.id))?.state || ""))),
+    )
     .slice(0, args.limit)
-    .map((issue) => ({ ...issue, sprint }));
-}
-
-function appendMessage(message) {
-  ensureStateDir();
-  appendFileSync(MESSAGES_FILE, `${JSON.stringify(message)}\n`);
-}
-
-function readMessages() {
-  ensureStateDir();
-  if (!existsSync(MESSAGES_FILE)) return [];
-  return readFileSync(MESSAGES_FILE, "utf8")
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
-
-function receiptFile(to) {
-  return path.join(RECEIPTS_DIR, `${String(to || "default").replace(/[^A-Za-z0-9._-]/g, "_")}.offset`);
-}
-
-function readInbox(args) {
-  ensureStateDir();
-  const to = args.to || "claude-lead";
-  const file = receiptFile(to);
-  const offset = args.consume && existsSync(file) ? Number(readFileSync(file, "utf8") || 0) : 0;
-  const text = existsSync(MESSAGES_FILE) ? readFileSync(MESSAGES_FILE, "utf8") : "";
-  const nextText = text.slice(offset);
-  const messages = nextText
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter((msg) => msg && (msg.to === to || msg.to === "all"))
-    .slice(-args.limit);
-  if (args.consume) writeFileSync(file, String(text.length));
-  return messages;
+    .map((issue) => ({ ...issue, sprint, relFile: path.relative(ROOT, issue.file) }));
 }
 
 function renderQueue(rows, json) {
@@ -254,7 +126,7 @@ function renderQueue(rows, json) {
     return;
   }
   for (const issue of rows) {
-    console.log(`#${issue.id} [${issue.priority || "priority?"}] ${issue.title}`);
+    console.log(`#${issue.id} [${issue.priority_raw ?? "priority?"}] ${issue.title}`);
     console.log(`  ${issue.relFile}`);
   }
 }
@@ -278,12 +150,12 @@ function renderInbox(messages, args) {
   for (const msg of messages) console.log(`[${msg.created_at}] ${msg.from} -> ${msg.to}: ${msg.body}`);
 }
 
-function commandQueue(args) {
-  renderQueue(claimableIssues(args), args.json);
+function commandQueue(args, config) {
+  renderQueue(claimableIssues(args, config), args.json);
 }
 
-function commandRequestClaude(args) {
-  const rows = claimableIssues(args);
+function commandRequestClaude(args, config) {
+  const rows = claimableIssues(args, config);
   const sprint = rows[0]?.sprint || args.sprint;
   const body = [
     `Please populate the native Claude Code Team TaskList for sprint ${sprint}.`,
@@ -303,7 +175,7 @@ function commandRequestClaude(args) {
     body,
     created_at: new Date().toISOString(),
   };
-  appendMessage(message);
+  appendDispatchMessage(ROOT, message);
   if (args.json) console.log(JSON.stringify(message, null, 2));
   else console.log(`queued Claude lead TaskList request for sprint ${sprint}: ${rows.length} issue(s)`);
 }
@@ -311,45 +183,36 @@ function commandRequestClaude(args) {
 function commandClaim(args) {
   if (!args.issue) throw new Error("claim requires --issue");
   if (!args.owner) throw new Error("claim requires --owner");
-  const claims = loadClaims();
-  const existing = claims[args.issue];
+  const existing = loadDispatchClaims(ROOT)[args.issue];
   if (existing?.status === "claimed" && existing.owner !== args.owner) {
     throw new Error(`#${args.issue} already claimed by ${existing.owner}`);
   }
-  claims[args.issue] = {
-    issue: args.issue,
+  setDispatchClaim(ROOT, args.issue, {
     owner: args.owner,
     status: "claimed",
     reason: args.reason || "",
     claimed_at: new Date().toISOString(),
-  };
-  saveClaims(claims);
+  });
   console.log(`claimed #${args.issue} for ${args.owner}`);
 }
 
 function commandComplete(args) {
   if (!args.issue) throw new Error("complete requires --issue");
-  const claims = loadClaims();
-  claims[args.issue] = {
-    ...(claims[args.issue] || { issue: args.issue }),
+  setDispatchClaim(ROOT, args.issue, {
     status: "completed",
     completed_at: new Date().toISOString(),
     reason: args.reason || "",
-  };
-  saveClaims(claims);
+  });
   console.log(`completed channel claim for #${args.issue}`);
 }
 
 function commandRelease(args) {
   if (!args.issue) throw new Error("release requires --issue");
-  const claims = loadClaims();
-  claims[args.issue] = {
-    ...(claims[args.issue] || { issue: args.issue }),
+  setDispatchClaim(ROOT, args.issue, {
     status: "released",
     released_at: new Date().toISOString(),
     reason: args.reason || "",
-  };
-  saveClaims(claims);
+  });
   console.log(`released channel claim for #${args.issue}`);
 }
 
@@ -364,30 +227,38 @@ function commandMessage(args) {
     body: args.body,
     created_at: new Date().toISOString(),
   };
-  appendMessage(message);
+  appendDispatchMessage(ROOT, message);
   console.log(`queued message to ${message.to}`);
+}
+
+function readInbox(args) {
+  const to = args.to || "claude-lead";
+  const offsetFile = receiptOffsetFile(ROOT, to);
+  const messages = readMessagesSince(ROOT, offsetFile, {
+    advance: args.consume,
+    filter: (msg) => msg.to === to || msg.to === "all",
+  });
+  return messages.slice(-args.limit);
 }
 
 function commandStatus(args) {
   const payload = {
-    claims: loadClaims(),
-    recent_messages: readMessages().slice(-args.limit),
+    claims: loadDispatchClaims(ROOT),
+    recent_messages: readAllDispatchMessages(ROOT).slice(-args.limit),
   };
-  if (args.json) console.log(JSON.stringify(payload, null, 2));
-  else {
-    console.log(JSON.stringify(payload, null, 2));
-  }
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  const config = loadTrackerConfig(args.workflow);
   switch (args.command) {
     case "queue":
     case "":
-      commandQueue(args);
+      commandQueue(args, config);
       break;
     case "request-claude":
-      commandRequestClaude(args);
+      commandRequestClaude(args, config);
       break;
     case "claim":
       commandClaim(args);

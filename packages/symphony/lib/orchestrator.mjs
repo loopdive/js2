@@ -1,606 +1,24 @@
-#!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { get, expandPath, shellQuote, sanitizeKey } from "./util.mjs";
+import { MarkdownTracker, renderTemplate, issueForWorkspacePrompt, buildAgentLanes } from "./workflow.mjs";
+import {
+  loadDispatchClaims,
+  saveDispatchClaims,
+  activeDispatchClaim,
+  releaseDispatchClaim,
+  appendDispatchMessage,
+} from "./dispatch-state.mjs";
 
-const ROOT = path.resolve(path.join(path.dirname(new URL(import.meta.url).pathname), ".."));
-const DEFAULT_WORKFLOW = path.join(ROOT, "WORKFLOW.md");
-const ISSUE_FILE_RE = /^\d+[a-z]?(?:[-_].+)?\.md$/i;
-const TERMINAL_DEFAULT = ["done", "wont-fix", "closed", "cancelled", "canceled", "duplicate"];
-const ACTIVE_DEFAULT = ["ready"];
-const DISPATCH_STATE_DIR = path.join(ROOT, ".codex", "dispatch");
-const DISPATCH_MESSAGES_FILE = path.join(DISPATCH_STATE_DIR, "messages.jsonl");
-const DISPATCH_CLAIMS_FILE = path.join(DISPATCH_STATE_DIR, "claims.json");
-
-function parseArgs(argv) {
-  const args = {
-    workflow: DEFAULT_WORKFLOW,
-    once: false,
-    dryRun: false,
-    resumeInProgress: false,
-    sprint: null,
-    max: null,
-    status: false,
-    json: false,
-    noFetch: false,
-    control: null,
-    command: null,
-    issue: null,
-    value: null,
-    reason: "",
-    owner: "",
-    from: "",
-    to: "",
-    body: "",
-    limit: 20,
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--") continue;
-    if (a === "--workflow") args.workflow = path.resolve(argv[++i]);
-    else if (a === "--once") args.once = true;
-    else if (a === "--dry-run") args.dryRun = true;
-    else if (a === "--resume-in-progress" || a === "--resume-claimed") args.resumeInProgress = true;
-    else if (a === "--sprint") args.sprint = argv[++i];
-    else if (a === "--max") args.max = Number(argv[++i]);
-    else if (a === "--status") args.status = true;
-    else if (a === "--json") args.json = true;
-    else if (a === "--no-fetch") args.noFetch = true;
-    else if (a === "--control") {
-      let j = i + 1;
-      while (argv[j] === "--") j++;
-      args.control = argv[j];
-      args.command = argv[j];
-      i = j;
-    } else if (a === "--issue") args.issue = argv[++i];
-    else if (a === "--value") args.value = argv[++i];
-    else if (a === "--reason") args.reason = argv[++i];
-    else if (a === "--owner") args.owner = argv[++i];
-    else if (a === "--from") args.from = argv[++i];
-    else if (a === "--to") args.to = argv[++i];
-    else if (a === "--body") args.body = argv[++i];
-    else if (a === "--limit") args.limit = Number(argv[++i]);
-    else if (!a.startsWith("-") && !args.command) {
-      args.command = a;
-      args.control = a;
-    } else if (a === "-h" || a === "--help") {
-      printHelp();
-      process.exit(0);
-    } else {
-      throw new Error(`unknown argument: ${a}`);
-    }
-  }
-  return args;
-}
-
-function printHelp() {
-  console.log(`Usage: node scripts/symphony.mjs [options]
-
-Options:
-  --workflow PATH   Workflow contract path (default: WORKFLOW.md)
-  --once            Run one poll/dispatch cycle and wait for launched workers
-  --dry-run         Show dispatch plan without creating worktrees or agents
-  --resume-in-progress
-                  Treat stale in-progress sprint issues as dispatch candidates
-  --sprint N        Override tracker.sprint
-  --max N           Override agent.max_concurrent_agents
-  --status          Print latest runtime state snapshot
-  queue             Print claimable sprint tasks without launching agents
-  claim             Claim one issue for a lead/teammate channel
-  complete          Mark a broker claim completed
-  release           Release a broker claim
-  message           Append a channel message
-  inbox             Read channel messages for an agent/lead
-  --control ACTION  Queue daemon action: pause, resume, drain, stop, set-max, cancel, release
-  --issue ID        Target issue for claim/complete/release/cancel
-  --owner NAME      Owner for claim (for example claude-lead, codex-lead, alice)
-  --from NAME       Message sender
-  --to NAME         Message recipient
-  --body TEXT       Message body
-  --value VALUE     Value for set-max
-  --reason TEXT     Optional operator reason for control log
-  --json            Emit machine-readable status/dry-run output
-  --no-fetch        Skip git fetch before creating a worktree
-`);
-}
-
-function countIndent(line) {
-  return line.match(/^ */)?.[0].length ?? 0;
-}
-
-function parseScalar(raw) {
-  const value = raw.trim();
-  if (value === "") return "";
-  if (value === "null" || value === "~") return null;
-  if (value === "true") return true;
-  if (value === "false") return false;
-  if (/^-?\d+$/.test(value)) return Number(value);
-  if (/^-?\d+\.\d+$/.test(value)) return Number(value);
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1);
-  }
-  if (value.startsWith("[") && value.endsWith("]")) {
-    const inner = value.slice(1, -1).trim();
-    if (!inner) return [];
-    return splitInlineArray(inner).map(parseScalar);
-  }
-  return value;
-}
-
-function splitInlineArray(s) {
-  const out = [];
-  let cur = "";
-  let quote = null;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if ((ch === '"' || ch === "'") && s[i - 1] !== "\\") {
-      quote = quote === ch ? null : (quote ?? ch);
-      cur += ch;
-      continue;
-    }
-    if (ch === "," && !quote) {
-      out.push(cur.trim());
-      cur = "";
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
-}
-
-function parseYamlBlock(lines, start, indent) {
-  let i = skipBlank(lines, start);
-  if (i >= lines.length || countIndent(lines[i]) < indent) return [{}, i];
-  if (lines[i].slice(indent).startsWith("- ")) return parseYamlArray(lines, i, indent);
-  return parseYamlObject(lines, i, indent);
-}
-
-function skipBlank(lines, i) {
-  while (i < lines.length && /^\s*(#.*)?$/.test(lines[i])) i++;
-  return i;
-}
-
-function parseYamlObject(lines, start, indent) {
-  const obj = {};
-  let i = start;
-  while (i < lines.length) {
-    i = skipBlank(lines, i);
-    if (i >= lines.length) break;
-    const line = lines[i];
-    const ind = countIndent(line);
-    if (ind < indent) break;
-    if (ind > indent) break;
-    const trimmed = line.slice(indent);
-    if (trimmed.startsWith("- ")) break;
-    const m = trimmed.match(/^([^:]+):(?:\s*(.*))?$/);
-    if (!m) throw new Error(`workflow_parse_error: unsupported YAML line: ${line}`);
-    const key = m[1].trim();
-    const rest = (m[2] ?? "").trimEnd();
-    if (rest === "|") {
-      const block = [];
-      i++;
-      while (i < lines.length) {
-        if (/^\s*$/.test(lines[i])) {
-          block.push("");
-          i++;
-          continue;
-        }
-        const childIndent = countIndent(lines[i]);
-        if (childIndent <= indent) break;
-        block.push(lines[i].slice(Math.min(childIndent, indent + 2)));
-        i++;
-      }
-      obj[key] = block.join("\n").replace(/\n+$/, "");
-    } else if (rest === "") {
-      const [value, next] = parseYamlBlock(lines, i + 1, indent + 2);
-      obj[key] = value;
-      i = next;
-    } else {
-      obj[key] = parseScalar(rest);
-      i++;
-    }
-  }
-  return [obj, i];
-}
-
-function parseYamlArray(lines, start, indent) {
-  const arr = [];
-  let i = start;
-  while (i < lines.length) {
-    i = skipBlank(lines, i);
-    if (i >= lines.length) break;
-    const line = lines[i];
-    const ind = countIndent(line);
-    if (ind < indent) break;
-    if (ind !== indent || !line.slice(indent).startsWith("- ")) break;
-    const rest = line.slice(indent + 2).trimEnd();
-    if (rest === "") {
-      const [value, next] = parseYamlBlock(lines, i + 1, indent + 2);
-      arr.push(value);
-      i = next;
-      continue;
-    }
-    const kv = rest.match(/^([^:]+):(?:\s*(.*))?$/);
-    if (kv) {
-      const item = {};
-      item[kv[1].trim()] = kv[2] === "" ? "" : parseScalar(kv[2] ?? "");
-      const [tail, next] = parseYamlObject(lines, i + 1, indent + 2);
-      arr.push({ ...item, ...tail });
-      i = next;
-      continue;
-    }
-    arr.push(parseScalar(rest));
-    i++;
-  }
-  return [arr, i];
-}
-
-function parseYaml(yaml) {
-  const lines = yaml.replace(/\r\n/g, "\n").split("\n");
-  const [value] = parseYamlBlock(lines, 0, 0);
-  if (!value || Array.isArray(value) || typeof value !== "object") {
-    throw new Error("workflow_front_matter_not_a_map");
-  }
-  return value;
-}
-
-function loadWorkflow(file) {
-  if (!existsSync(file)) throw new Error(`missing_workflow_file: ${file}`);
-  const text = readFileSync(file, "utf8");
-  if (!text.startsWith("---\n")) {
-    return { file, config: {}, promptTemplate: text.trim() };
-  }
-  const end = text.indexOf("\n---", 4);
-  if (end < 0) throw new Error("workflow_parse_error: missing closing front matter marker");
-  const yaml = text.slice(4, end);
-  const body = text
-    .slice(end + 4)
-    .replace(/^\n/, "")
-    .trim();
-  return { file, config: parseYaml(yaml), promptTemplate: body };
-}
-
-function get(obj, key, fallback = undefined) {
-  const parts = key.split(".");
-  let cur = obj;
-  for (const p of parts) {
-    if (cur == null || typeof cur !== "object" || !(p in cur)) return fallback;
-    cur = cur[p];
-  }
-  return cur;
-}
-
-function asArray(value, fallback = []) {
-  if (Array.isArray(value)) return value.map(String);
-  if (value == null || value === "") return fallback;
-  return [String(value)];
-}
-
-function normalizeState(s) {
-  return String(s || "")
-    .trim()
-    .toLowerCase();
-}
-
-function resolveEnvValue(value, fallback = "") {
-  if (value == null) return fallback;
-  if (typeof value !== "string") return value;
-  if (/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
-    return process.env[value.slice(1)] ?? fallback;
-  }
-  return value.replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, name) => process.env[name] ?? "");
-}
-
-function expandPath(value, base = ROOT) {
-  let v = String(resolveEnvValue(value, "") || "");
-  if (!v) return "";
-  if (v.startsWith("~/")) v = path.join(os.homedir(), v.slice(2));
-  return path.isAbsolute(v) ? path.normalize(v) : path.resolve(base, v);
-}
-
-function shellQuote(s) {
-  return `'${String(s).replace(/'/g, `'\\''`)}'`;
-}
-
-function sanitizeKey(s) {
-  return String(s || "issue")
-    .replace(/[^A-Za-z0-9._-]/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
-}
-
-function parseFrontmatter(text) {
-  const match = text.match(/^---\n([\s\S]*?)\n---\n?/);
-  if (!match) return { data: {}, body: text };
-  return { data: parseYaml(match[1]), body: text.slice(match[0].length) };
-}
-
-function updateFrontmatterScalar(text, fields) {
-  const match = text.match(/^---\n([\s\S]*?)\n---\n?/);
-  if (!match) throw new Error("missing_frontmatter");
-  const frontmatter = match[1].split("\n");
-  const remaining = new Map(Object.entries(fields).map(([key, value]) => [key, String(value)]));
-  const lines = frontmatter.map((line) => {
-    const idx = line.indexOf(":");
-    if (idx < 0) return line;
-    const key = line.slice(0, idx).trim();
-    if (!remaining.has(key)) return line;
-    const value = remaining.get(key);
-    remaining.delete(key);
-    return `${key}: ${value}`;
-  });
-  for (const [key, value] of remaining) lines.push(`${key}: ${value}`);
-  return `---\n${lines.join("\n")}\n---\n${text.slice(match[0].length)}`;
-}
-
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function readScalarField(fm, key, fallback = "") {
-  const value = fm[key];
-  if (Array.isArray(value)) return value.join(", ");
-  if (value == null) return fallback;
-  return String(value);
-}
-
-function readArrayField(fm, key) {
-  const value = fm[key];
-  if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter(Boolean);
-  if (value == null || value === "") return [];
-  return String(value)
-    .split(",")
-    .map((v) => v.trim())
-    .filter(Boolean);
-}
-
-function walkIssueFiles(dir) {
-  if (!existsSync(dir)) return [];
-  const out = [];
-  for (const name of readdirSync(dir)) {
-    const file = path.join(dir, name);
-    const st = statSync(file);
-    if (st.isDirectory()) continue;
-    if (!ISSUE_FILE_RE.test(name)) continue;
-    out.push(file);
-  }
-  return out;
-}
-
-function basenameIssueId(file) {
-  return path.basename(file).match(/^(\d+[a-z]?)/i)?.[1] ?? path.basename(file, ".md");
-}
-
-function extractTitle(body, fm) {
-  if (fm.title) return String(fm.title);
-  const h = body.match(/^#\s+(.+)$/m);
-  return h ? h[1].trim() : "Untitled";
-}
-
-function priorityRank(priority) {
-  if (priority == null || priority === "") return 999;
-  if (typeof priority === "number") return priority;
-  const p = String(priority).toLowerCase();
-  if (/^\d+$/.test(p)) return Number(p);
-  return { critical: 1, high: 2, medium: 3, low: 4 }[p] ?? 999;
-}
-
-function loadMarkdownIssues(config) {
-  const issuesDir = expandPath(get(config, "tracker.issues_dir", "plan/issues"));
-  const terminal = new Set(asArray(get(config, "tracker.terminal_states"), TERMINAL_DEFAULT).map(normalizeState));
-  const byId = new Map();
-  for (const file of walkIssueFiles(issuesDir)) {
-    let text;
-    try {
-      text = readFileSync(file, "utf8");
-    } catch {
-      continue;
-    }
-    let parsed;
-    try {
-      parsed = parseFrontmatter(text);
-    } catch {
-      continue;
-    }
-    const fm = parsed.data;
-    const id = readScalarField(fm, "id", basenameIssueId(file));
-    const state = normalizeState(readScalarField(fm, "status", "ready"));
-    const sprint = readScalarField(fm, "sprint", "");
-    const issue = {
-      id,
-      identifier: id,
-      title: extractTitle(parsed.body, fm),
-      description: parsed.body.trim() || null,
-      priority: priorityRank(fm.priority),
-      priority_raw: fm.priority ?? null,
-      state,
-      branch_name: null,
-      url: null,
-      labels: [fm.area, fm.task_type, fm.language_feature, fm.goal].filter(Boolean).map((v) => String(v).toLowerCase()),
-      blocked_by: readArrayField(fm, "depends_on").map((dep) => ({ id: dep, identifier: dep, state: null })),
-      created_at: readScalarField(fm, "created", null),
-      updated_at: readScalarField(fm, "updated", null),
-      sprint,
-      file,
-      terminal: terminal.has(state),
-    };
-    byId.set(String(id), issue);
-  }
-  return [...byId.values()];
-}
-
-class MarkdownTracker {
-  constructor(config, options = {}) {
-    this.config = config;
-    this.resumeInProgress = Boolean(options.resumeInProgress);
-    this.activeStates = new Set(asArray(get(config, "tracker.active_states"), ACTIVE_DEFAULT).map(normalizeState));
-    this.claimableStates = new Set(
-      asArray(get(config, "tracker.claimable_states"), ACTIVE_DEFAULT).map(normalizeState),
-    );
-    this.terminalStates = new Set(
-      asArray(get(config, "tracker.terminal_states"), TERMINAL_DEFAULT).map(normalizeState),
-    );
-  }
-
-  allIssues() {
-    const issues = loadMarkdownIssues(this.config);
-    const sprint = get(this.config, "tracker.sprint", "latest");
-    const selectedSprint = sprint === "latest" ? latestSprint(issues, this.terminalStates) : String(sprint);
-    return issues.map((issue) => ({ ...issue, selected_sprint: selectedSprint }));
-  }
-
-  fetchCandidateIssues() {
-    const issues = this.allIssues();
-    const sprint = issues[0]?.selected_sprint ?? "latest";
-    const candidateStates = this.resumeInProgress
-      ? new Set([...this.claimableStates, ...this.activeStates])
-      : this.claimableStates;
-    return issues
-      .filter((issue) => String(issue.sprint) === String(sprint))
-      .filter((issue) => candidateStates.has(issue.state))
-      .filter((issue) => !activeDispatchClaim(issue.id))
-      .filter((issue) => !this.isBlocked(issue, issues))
-      .sort(compareIssues);
-  }
-
-  fetchIssueStatesByIds(ids) {
-    const byId = new Map(this.allIssues().map((issue) => [String(issue.id), issue]));
-    return ids.map((id) => byId.get(String(id))).filter(Boolean);
-  }
-
-  fetchIssuesByStates(states) {
-    const wanted = new Set(states.map(normalizeState));
-    return this.allIssues().filter((issue) => wanted.has(issue.state));
-  }
-
-  claimIssue(issue, lane) {
-    const claimState = normalizeState(get(this.config, "tracker.claim_state", "in-progress"));
-    return this.updateIssueStatusFile(issue, issue.file, claimState, {
-      claimed_by: lane.name,
-      claimed_at: new Date().toISOString(),
-    });
-  }
-
-  claimIssueInWorkspace(issue, workspace, lane) {
-    if (!issue.file || !workspace?.path) return null;
-    const relativeIssuePath = path.relative(ROOT, issue.file);
-    if (relativeIssuePath.startsWith("..") || path.isAbsolute(relativeIssuePath)) return null;
-    const workspaceIssueFile = path.join(workspace.path, relativeIssuePath);
-    if (!existsSync(workspaceIssueFile)) return null;
-    const claimState = normalizeState(get(this.config, "tracker.claim_state", "in-progress"));
-    return this.updateIssueStatusFile(issue, workspaceIssueFile, claimState, {
-      claimed_by: lane.name,
-      claimed_at: new Date().toISOString(),
-    });
-  }
-
-  updateIssueStatusFile(issue, file, state, extraFields = {}) {
-    if (!file) return null;
-    const current = normalizeState(issue.state);
-    const next = normalizeState(state);
-    const text = readFileSync(file, "utf8");
-    const parsed = parseFrontmatter(text);
-    const fileState = normalizeState(readScalarField(parsed.data, "status", current));
-    const pendingFields = { status: next, ...extraFields };
-    const changed = Object.entries(pendingFields).some(
-      ([key, value]) => String(readScalarField(parsed.data, key, "")) !== String(value),
-    );
-    if (!changed && fileState === next) {
-      issue.state = next;
-      return { file, state: next, changed: false };
-    }
-    const updated = todayIsoDate();
-    writeFileSync(
-      file,
-      updateFrontmatterScalar(text, {
-        ...pendingFields,
-        updated,
-      }),
-    );
-    issue.state = next;
-    issue.updated_at = updated;
-    return { file, state: next, changed: true };
-  }
-
-  isBlocked(issue, issues) {
-    if (!issue.blocked_by.length) return false;
-    const byId = new Map(issues.map((i) => [String(i.id), i]));
-    for (const blocker of issue.blocked_by) {
-      const dep = byId.get(String(blocker.id ?? blocker.identifier));
-      if (dep && !this.terminalStates.has(dep.state)) return true;
-    }
-    return false;
-  }
-}
-
-function latestSprint(issues, terminalStates) {
-  const nums = issues
-    .filter((issue) => /^\d+$/.test(String(issue.sprint)))
-    .filter((issue) => !terminalStates.has(issue.state))
-    .map((issue) => Number(issue.sprint));
-  if (nums.length === 0) return "";
-  return String(Math.max(...nums));
-}
-
-function compareIssues(a, b) {
-  if (a.priority !== b.priority) return a.priority - b.priority;
-  const ac = Date.parse(a.created_at || "") || 0;
-  const bc = Date.parse(b.created_at || "") || 0;
-  if (ac !== bc) return ac - bc;
-  return String(a.identifier).localeCompare(String(b.identifier), undefined, { numeric: true });
-}
-
-function loadDispatchClaims() {
-  try {
-    return JSON.parse(readFileSync(DISPATCH_CLAIMS_FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-function saveDispatchClaims(claims) {
-  mkdirSync(DISPATCH_STATE_DIR, { recursive: true });
-  writeFileSync(DISPATCH_CLAIMS_FILE, `${JSON.stringify(claims, null, 2)}\n`);
-}
-
-function activeDispatchClaim(issueId) {
-  const claim = loadDispatchClaims()[String(issueId)];
-  return claim && claim.status === "claimed" ? claim : null;
-}
-
-function appendDispatchMessage(message) {
-  mkdirSync(DISPATCH_STATE_DIR, { recursive: true });
-  appendFileSync(DISPATCH_MESSAGES_FILE, `${JSON.stringify(message)}\n`);
-}
-
-function releaseDispatchClaim(issueId, reason) {
-  const claims = loadDispatchClaims();
-  const key = String(issueId);
-  claims[key] = {
-    ...(claims[key] || { issue: key }),
-    status: "released",
-    reason,
-    released_at: new Date().toISOString(),
-  };
-  saveDispatchClaims(claims);
-}
-class WorkspaceManager {
-  constructor(config, logger, options) {
+export class WorkspaceManager {
+  constructor(config, logger, options, root) {
     this.config = config;
     this.logger = logger;
     this.options = options;
-    this.root = expandPath(get(config, "workspace.root", path.join(os.tmpdir(), "symphony_workspaces")));
+    this.root = root;
+    this.rootDir = expandPath(get(config, "workspace.root", path.join(os.tmpdir(), "symphony_workspaces")), root);
     this.kind = get(config, "workspace.kind", "git_worktree");
     this.baseRef = get(config, "workspace.base_ref", "origin/main");
     this.branchPrefix = get(config, "workspace.branch_prefix", "symphony");
@@ -609,8 +27,8 @@ class WorkspaceManager {
 
   ensure(issue) {
     const key = sanitizeKey(issue.identifier);
-    const workspacePath = path.join(this.root, key);
-    const rootAbs = path.resolve(this.root);
+    const workspacePath = path.join(this.rootDir, key);
+    const rootAbs = path.resolve(this.rootDir);
     const workspaceAbs = path.resolve(workspacePath);
     if (!workspaceAbs.startsWith(`${rootAbs}${path.sep}`) && workspaceAbs !== rootAbs) {
       throw new Error(`workspace_outside_root: ${workspaceAbs}`);
@@ -627,19 +45,19 @@ class WorkspaceManager {
   }
 
   createGitWorktree(workspacePath, branch) {
-    if (this.fetchBeforeCreate) this.git(["fetch", "origin"], ROOT);
-    const branchExists = this.gitOptional(["show-ref", "--verify", `refs/heads/${branch}`], ROOT);
-    if (branchExists) this.git(["worktree", "add", workspacePath, branch], ROOT);
-    else this.git(["worktree", "add", workspacePath, "-b", branch, this.baseRef], ROOT);
+    if (this.fetchBeforeCreate) this.git(["fetch", "origin"], this.root);
+    const branchExists = this.gitOptional(["show-ref", "--verify", `refs/heads/${branch}`], this.root);
+    if (branchExists) this.git(["worktree", "add", workspacePath, branch], this.root);
+    else this.git(["worktree", "add", workspacePath, "-b", branch, this.baseRef], this.root);
   }
 
   remove(issue) {
     const key = sanitizeKey(issue.identifier);
-    const workspacePath = path.join(this.root, key);
+    const workspacePath = path.join(this.rootDir, key);
     if (!existsSync(workspacePath)) return;
     this.runHook("before_remove", workspacePath, issue, { ignoreFailure: true });
     if (this.kind === "git_worktree") {
-      this.git(["worktree", "remove", workspacePath], ROOT, { ignoreFailure: true });
+      this.git(["worktree", "remove", workspacePath], this.root, { ignoreFailure: true });
     } else {
       rmSync(workspacePath, { recursive: true, force: true });
     }
@@ -676,10 +94,9 @@ class WorkspaceManager {
   }
 }
 
-class Logger {
-  constructor(config, dryRun) {
-    this.root = expandPath(get(config, "logging.root", ".codex/symphony"));
-    this.dryRun = dryRun;
+export class Logger {
+  constructor(config, root) {
+    this.root = expandPath(get(config, "logging.root", ".codex/symphony"), root);
     mkdirSync(this.root, { recursive: true });
     this.eventsFile = path.join(this.root, "events.jsonl");
     this.stateFile = path.join(this.root, "state.json");
@@ -705,8 +122,8 @@ class Logger {
   }
 }
 
-function writeControlCommand(workflow, options) {
-  const loggerRoot = expandPath(get(workflow.config, "logging.root", ".codex/symphony"));
+export function writeControlCommand(workflow, options, root) {
+  const loggerRoot = expandPath(get(workflow.config, "logging.root", ".codex/symphony"), root);
   mkdirSync(loggerRoot, { recursive: true });
   const controlFile = path.join(loggerRoot, "control.jsonl");
   const action = String(options.control || "").trim();
@@ -728,67 +145,15 @@ function writeControlCommand(workflow, options) {
       (command.value != null ? " value=" + command.value : ""),
   );
 }
-function buildAgentLanes(config) {
-  const configured = get(config, "agent.lanes", []);
-  const lanes = Array.isArray(configured) ? configured : [];
-  const fallbackCodex = get(config, "codex.command", "");
-  return lanes
-    .map((lane) => {
-      const command = resolveEnvValue(lane.command, lane.kind === "codex" ? fallbackCodex : "");
-      return {
-        name: String(lane.name || lane.kind || "agent"),
-        kind: String(lane.kind || "generic"),
-        role: String(lane.role || "worker"),
-        command: String(command || ""),
-        promptMode: String(lane.prompt_mode || "argument"),
-        recipient: String(lane.recipient || "claude-lead"),
-        maxConcurrent: Number(lane.max_concurrent || get(config, "agent.max_concurrent_agents", 1)) || 1,
-      };
-    })
-    .filter((lane) => lane.kind === "claude-channel" || lane.command.trim().length > 0);
-}
 
-function renderTemplate(template, context) {
-  return template.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (_, expr) => {
-    const value = get(context, expr, undefined);
-    if (value === undefined) throw new Error(`template_render_error: unknown variable ${expr}`);
-    return value == null ? "" : String(value);
-  });
-}
-
-function issueForWorkspacePrompt(issue, workspace) {
-  const renderedIssue = { ...issue };
-  if (issue.file) {
-    const rel = path.relative(ROOT, issue.file);
-    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
-      renderedIssue.file = path.join(workspace.path, rel);
-    }
-  }
-  return renderedIssue;
-}
-
-class AgentRunner {
-  constructor(config, logger) {
-    this.config = config;
-    this.logger = logger;
-  }
-
-  run({ issue, workspace, lane, prompt, attempt, onEvent, onDone }) {
+export class AgentRunner {
+  run({ root, issue, workspace, lane, prompt, attempt, onEvent, onDone }) {
     const cwd = workspace.path;
-    if (path.resolve(process.cwd()) === ROOT) {
-      // The service can run from root, but the agent subprocess must not.
-    }
-    if (path.resolve(cwd) === ROOT) throw new Error("invalid_workspace_cwd: refusing to run agent in repo root");
+    if (path.resolve(cwd) === path.resolve(root))
+      throw new Error("invalid_workspace_cwd: refusing to run agent in repo root");
     const title = `${issue.identifier}: ${issue.title}`;
     const command = lane.promptMode === "stdin" ? lane.command : `${lane.command} ${shellQuote(prompt)}`;
     const logFile = path.join(path.dirname(workspace.path), `${workspace.workspace_key}.log`);
-    this.logger.event("agent_launch", {
-      issue_id: issue.id,
-      issue_identifier: issue.identifier,
-      lane: lane.name,
-      cwd,
-      attempt,
-    });
     const child = spawn("bash", ["-lc", command], {
       cwd,
       env: {
@@ -872,18 +237,19 @@ class AgentRunner {
   }
 }
 
-class Orchestrator {
-  constructor(workflow, options) {
+export class Orchestrator {
+  constructor(workflow, options, root) {
     this.workflow = workflow;
     this.config = workflow.config;
     this.options = options;
+    this.root = root;
     if (options.sprint) this.config.tracker = { ...(this.config.tracker || {}), sprint: options.sprint };
     if (Number.isFinite(options.max))
       this.config.agent = { ...(this.config.agent || {}), max_concurrent_agents: options.max };
-    this.logger = new Logger(this.config, options.dryRun);
-    this.tracker = new MarkdownTracker(this.config, options);
-    this.workspaceManager = new WorkspaceManager(this.config, this.logger, options);
-    this.runner = new AgentRunner(this.config, this.logger);
+    this.logger = new Logger(this.config, root);
+    this.tracker = new MarkdownTracker(this.config, options, root);
+    this.workspaceManager = new WorkspaceManager(this.config, this.logger, options, root);
+    this.runner = new AgentRunner();
     this.lanes = buildAgentLanes(this.config);
     this.running = new Map();
     this.claimed = new Set();
@@ -1031,7 +397,7 @@ class Orchestrator {
       this.writeState();
       return;
     }
-    const candidates = this.tracker.fetchCandidateIssues();
+    const candidates = this.tracker.fetchCandidateIssues((id) => activeDispatchClaim(this.root, id));
     const planned = [];
     const slots = Math.max(this.maxConcurrent() - this.running.size, 0);
     for (const issue of candidates) {
@@ -1069,7 +435,7 @@ class Orchestrator {
         state: issue.state,
         sprint: issue.sprint,
         priority: issue.priority_raw ?? issue.priority,
-        file: path.relative(ROOT, issue.file),
+        file: path.relative(this.root, issue.file),
       })),
       planned: planned.map(({ issue, lane }) => ({ issue: issue.id, lane: lane.name })),
     };
@@ -1110,7 +476,7 @@ class Orchestrator {
           issue_identifier: issue.identifier,
           lane: lane.name,
           state: claim.state,
-          file: path.relative(ROOT, claim.file),
+          file: path.relative(this.root, claim.file),
         });
       }
       if (lane.kind === "claude-channel") {
@@ -1129,7 +495,7 @@ class Orchestrator {
         });
       }
       this.workspaceManager.runHook("before_run", workspace.path, issue);
-      const promptIssue = issueForWorkspacePrompt(issue, workspace);
+      const promptIssue = issueForWorkspacePrompt(issue, workspace, this.root);
       const prompt = renderTemplate(this.workflow.promptTemplate, {
         issue: promptIssue,
         workspace,
@@ -1137,6 +503,7 @@ class Orchestrator {
         attempt: attempt ?? "",
       });
       const run = this.runner.run({
+        root: this.root,
         issue,
         workspace,
         lane,
@@ -1167,7 +534,7 @@ class Orchestrator {
 
   dispatchClaudeChannel(issue, lane, attempt = null) {
     const now = new Date().toISOString();
-    const claims = loadDispatchClaims();
+    const claims = loadDispatchClaims(this.root);
     claims[String(issue.id)] = {
       issue: String(issue.id),
       owner: lane.recipient || "claude-lead",
@@ -1176,7 +543,7 @@ class Orchestrator {
       claimed_at: now,
       reason: "symphony claude-channel dispatch",
     };
-    saveDispatchClaims(claims);
+    saveDispatchClaims(this.root, claims);
     const workspace = { path: "native Claude Code Team worktrees", branch: "native Claude Code Team branches" };
     const body = renderTemplate(this.workflow.promptTemplate, {
       issue,
@@ -1184,7 +551,7 @@ class Orchestrator {
       agent: lane,
       attempt: attempt ?? "",
     });
-    appendDispatchMessage({
+    appendDispatchMessage(this.root, {
       id: `${Date.now()}-${process.pid}`,
       type: "symphony_issue_dispatch",
       from: "symphony",
@@ -1223,6 +590,7 @@ class Orchestrator {
     });
     this.writeState();
   }
+
   onAgentEvent(issue, event, session) {
     if (event.rate_limits || event.rateLimits) this.rateLimits = event.rate_limits || event.rateLimits;
     const running = this.running.get(String(issue.id));
@@ -1339,7 +707,7 @@ class Orchestrator {
   }
 
   reconcileChannelDispatches() {
-    const claims = loadDispatchClaims();
+    const claims = loadDispatchClaims(this.root);
     for (const [id, entry] of [...this.running]) {
       if (entry.lane.kind !== "claude-channel") continue;
       const claim = claims[String(id)];
@@ -1365,6 +733,7 @@ class Orchestrator {
       }
     }
   }
+
   reconcileRunning() {
     this.reconcileChannelDispatches();
     const stallMs = Number(get(this.config, "codex.stall_timeout_ms", 300000)) || 0;
@@ -1376,7 +745,7 @@ class Orchestrator {
           if (entry.lane.kind === "claude-channel") {
             this.running.delete(id);
             this.claimed.delete(id);
-            releaseDispatchClaim(id, "channel dispatch stalled");
+            releaseDispatchClaim(this.root, id, "channel dispatch stalled");
           } else {
             entry.child.kill("SIGTERM");
           }
@@ -1394,7 +763,7 @@ class Orchestrator {
         if (entry.lane.kind === "claude-channel") {
           this.running.delete(id);
           this.claimed.delete(id);
-          releaseDispatchClaim(id, `issue entered terminal state ${issue.state}`);
+          releaseDispatchClaim(this.root, id, `issue entered terminal state ${issue.state}`);
         } else {
           entry.child.kill("SIGTERM");
         }
@@ -1412,7 +781,7 @@ class Orchestrator {
         if (entry.lane.kind === "claude-channel") {
           this.running.delete(id);
           this.claimed.delete(id);
-          releaseDispatchClaim(id, `issue became ineligible: ${issue.state}`);
+          releaseDispatchClaim(this.root, id, `issue became ineligible: ${issue.state}`);
         } else {
           entry.child.kill("SIGTERM");
         }
@@ -1430,7 +799,7 @@ class Orchestrator {
   snapshot() {
     const now = Date.now();
     return {
-      workflow: path.relative(ROOT, this.workflow.file),
+      workflow: path.relative(this.root, this.workflow.file),
       poll_interval_ms: this.pollInterval(),
       max_concurrent_agents: this.maxConcurrent(),
       running: [...this.running.values()].map((r) => ({
@@ -1468,58 +837,3 @@ class Orchestrator {
     this.logger.writeState(this.snapshot());
   }
 }
-
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const workflow = loadWorkflow(options.workflow);
-  const loggerRoot = expandPath(get(workflow.config, "logging.root", ".codex/symphony"));
-  if (options.control) {
-    writeControlCommand(workflow, options);
-    return;
-  }
-  if (options.status) {
-    const stateFile = path.join(loggerRoot, "state.json");
-    if (!existsSync(stateFile)) {
-      console.error("symphony: no state snapshot found");
-      process.exit(1);
-    }
-    const text = readFileSync(stateFile, "utf8");
-    if (options.json) process.stdout.write(text);
-    else console.log(text);
-    return;
-  }
-  const orchestrator = new Orchestrator(workflow, options);
-  orchestrator.validate();
-  if (options.once || options.dryRun) {
-    await orchestrator.tick();
-    if (!options.dryRun) await waitUntilIdle(orchestrator);
-    return;
-  }
-  await orchestrator.tick();
-  if (orchestrator.shouldExit) return;
-  setInterval(() => {
-    orchestrator
-      .tick()
-      .then(() => {
-        if (orchestrator.shouldExit) process.exit(0);
-      })
-      .catch((err) => orchestrator.logger.event("tick_failed", { error: err.message }));
-  }, orchestrator.pollInterval());
-}
-
-function waitUntilIdle(orchestrator) {
-  return new Promise((resolve) => {
-    const timer = setInterval(() => {
-      orchestrator.writeState();
-      if (orchestrator.running.size === 0 && orchestrator.retryAttempts.size === 0) {
-        clearInterval(timer);
-        resolve();
-      }
-    }, 1000);
-  });
-}
-
-main().catch((err) => {
-  console.error(`symphony: ${err.message}`);
-  process.exit(1);
-});
