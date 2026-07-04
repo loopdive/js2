@@ -1,8 +1,9 @@
 {
   "id": "3022",
   "assignee": "ttraenkler/dev-3022",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3022-defineproperty-tail",
   "claimed_at": "2026-07-04T20:57:55Z",
-  "updated_at": "2026-07-04T20:57:55Z"
+  "updated_at": "2026-07-04T21:38:39Z",
+  "released_at": "2026-07-04T21:38:39Z"
 }
