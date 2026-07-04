@@ -1382,3 +1382,69 @@ Everything in the C3 spec §"Slice decomposition / V2-S3" EXCEPT the carrier:
   a Wasm exception from a SEPARATE gOPD engine body — a pre-existing limitation
   unrelated to the carrier; resolved once the reader-arm MOP replaces the
   synthesized-descriptor path.)
+
+---
+
+## V2-S3b — next-steps spec + open root-cause question (opus-2175s3, 2026-07-04)
+
+Branch `issue-2175-v2s3b-reader-arm` (on `origin/main`, post-V2-S3a-merge).
+**Status: spec + established empirical facts; implementation NOT started this
+session (budget — V2-S3a's −7228 recovery consumed the window; this is THE
+coincidental-pass minefield and must not be rushed).**
+
+### Established empirical facts (current main, host-free, `--target standalone`)
+
+1. `RegExp.prototype.exec === RegExp.prototype.exec` (both syntactic) → **1**.
+   So the syntactic singleton boxes tag-6 (GC ref via `__any_box_ref`) and the
+   existing tag-6 `ref.eq` arm answers it. This is the model V2-S3b must extend
+   to the gOPD/runtime read.
+2. `gOPD(RegExp.prototype,"exec").value === RegExp.prototype.exec` → **0**, even
+   with the V2-S3a cross-representation (different-tag) `ref.eq` arm live. So the
+   gOPD `.value` read-back is NOT ref-equal to the syntactic singleton under the
+   recover — despite both call sites (property-access.ts:1102/1122 method arm and
+   calls.ts:7502/7540 gOPD Site-2) resolving via the SAME
+   `ensureStandaloneNativeMethodClosure(ctx, brand, member, kind)` +
+   `pushBuiltinFnSingletonValueInstrs`.
+3. `gOPD(...).value === gOPD(...).value` (two reads, same member) → **0**. Both
+   are tag-5 externref-wrapping-the-descriptor-value; same-tag, so the different-
+   tag V2-S3a arm doesn't fire and the same-tag-5 arm is content-eq (not ref.eq).
+
+### The open root-cause question (RESOLVE AT WAT LEVEL BEFORE CODING)
+
+Facts (1)+(2) are in tension with the code model: if both paths mint the SAME
+singleton global (same meta typeIdx, cache key `proto:<brand>:method:<member>`),
+`recover(gOPD value)=any.convert_extern(externval)` should recover the SAME GC
+ref as `recover(exec)=refval`, and the V2-S3a different-tag arm should return 1.
+It returns 0. So ONE of these is false — pin which by dumping the WAT for the
+guard program and inspecting the two operands' boxing:
+  - **(H1) Divergent singleton.** The two paths mint DIFFERENT closure typeIdxs
+    (e.g. `ensureStandaloneNativeMethodClosure` is not memoized across the
+    property-access vs calls.ts entry, or `memberKind` differs), so two singleton
+    globals → two distinct GC refs → `ref.eq` 0. If so, the fix is targeted:
+    unify the closure identity (one `ensureBuiltinFnMetaType` typeIdx per
+    (brand,member,kind), shared) — NOT a reader-arm MOP. Cheapest guard flip.
+  - **(H2) Same-tag, not different-tag.** `gOPD value` actually boxes tag-6
+    (not tag-5), so the guard is tag-6×tag-6 with DIFFERENT refs (distinct
+    structs), and the different-tag arm never runs. Then the descriptor stores a
+    DISTINCT struct from the syntactic singleton — again an identity-unification
+    problem in the gOPD synthesis, not a reader problem.
+  - **(H3) `__create_descriptor` copies.** `__create_descriptor` /
+    `__extern_get` materialize a fresh carrier rather than round-tripping the
+    stored ref (any.convert_extern∘extern.convert_any not identity here). If so,
+    the reader-arm anyref-return (D4) is required.
+Decide H1/H2/H3 with `WABT`/binaryen `wasm2wat` on the guard binary (inspect the
+`struct.new $AnyValue` tag + which global the `.value` load resolves) — 15 min,
+removes all the speculation above.
+
+### The #3027 driver (independent of the guard flip)
+
+The guard flip is an IDENTITY nicety. The ~1,552-test #3027 residual is the
+RECEIVER-CLASSIFICATION ladder: `__extern_get`/`__extern_has`/gOPD/names/set/
+delete gate on `ref.test $Object` alone (object-runtime.ts:1065) and return null
+for `$NativeProto`, closed-shape nominal structs, vecs, `$AnyString`, closure
+wrappers. Per C3: add the step-3 `$NativeProto` arm (+`$props` table +
+`__nativeproto_populate_<brand>` + `__nativeproto_ensure_props` reserve/fill) and
+the step-4 instance/closed-shape arms. This is the value; do it as its own PR
+with full merge_group standalone-floor evidence (the V2-S3a −7228 lesson:
+standalone-only breaks are invisible to PR-lane checks). Inject-throw / swap-
+wrong-value proofs mandatory — builtin-proto territory hides coincidental passes.
