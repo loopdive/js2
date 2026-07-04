@@ -1409,7 +1409,53 @@ coincidental-pass minefield and must not be rushed).**
    are tag-5 externref-wrapping-the-descriptor-value; same-tag, so the different-
    tag V2-S3a arm doesn't fire and the same-tag-5 arm is content-eq (not ref.eq).
 
-### The open root-cause question (RESOLVE AT WAT LEVEL BEFORE CODING)
+### ROOT CAUSE — RESOLVED at WAT level (2026-07-04, opus-2175s3)
+
+`wasm-dis` of the guard binary (`.tmp/dump.mjs` → `/tmp/guard.wat`, `$test`)
+settles it — **it is H2, and the guard is a SAME-TAG-5 comparison**:
+
+- The gOPD descriptor DOES store the singleton:
+  `__create_descriptor(extern.convert_any(global.get $global$5), 5)` where
+  `$global$5 = struct.new $27 (ref.func $__proto_method_…_exec)` is the exec
+  singleton.
+- `v = __extern_get(descriptor, "value")` round-trips it: the stored value is
+  `any.convert_extern(extern.convert_any($global$5)) = $global$5`, and
+  `__extern_get` returns `extern.convert_any($global$5)` — the SAME externref.
+- `m = extern.convert_any(global.get $global$5)` — also `$global$5` externref.
+- **Both operands are then boxed by `__any_box_string` → tag-5** (WAT:
+  `(call $__any_strict_eq (call $__any_box_string …v…) (call $__any_box_string …m…))`).
+  So `RegExp.prototype.exec` assigned to `const m:any` in THIS context is coerced
+  to externref (not kept as the tag-6 GC ref) — the operand marshalling
+  (`emitAnyEqOperands` → `coerceType $AnyValue`) routes the GC-ref singleton
+  through externref because the sibling operand `v` is externref.
+- The same-tag-5 arm (`tag5ValueEqThen`) does **content-eq (`ref.test $AnyString`
+  guarded), NOT `ref.eq`** — two identical FUNCTION externrefs are not strings,
+  so it answers **0**. Hence the guard is 0 even though both are literally the
+  same `$global$5`.
+
+**Contrast with `exec === exec` → 1:** there BOTH operands stay the raw tag-6 GC
+ref (no externref-typed sibling forces coercion), so `__any_box_ref` → tag-6 and
+the EXISTING tag-6 `ref.eq` arm answers 1. The whole guard problem is that the
+**gOPD `.value` read forces one operand to externref (tag-5), which drags the
+sibling to tag-5 too**, landing on the content-eq (not identity) arm.
+
+**Therefore the correct V2-S3b fixes (either/both):**
+1. **Same-tag-5 object-identity (the real flip, but the −7228 minefield).** Add a
+   `ref.eq` identity short-circuit to the tag-5×tag-5 arm — BUT with a
+   **TAG-DIRECTED recover** (tag-5 → `any.convert_extern(externval)` ONLY; never
+   the `refval`-first fallback my V2-S3a first attempt used, which over-identified
+   distinct same-tag values and caused −7228). Validate: distinct strings/objects
+   → 0; same singleton → 1. Full merge_group standalone-floor evidence REQUIRED
+   (the −7228 was a same-tag false-positive class — this is exactly that surface).
+2. **Keep the reader/value as a GC ref (D4, cleaner).** Make the gOPD `.value`
+   read return the tag-6 GC ref (don't force externref), so BOTH operands stay
+   tag-6 and the existing tag-6 `ref.eq` arm flips the guard for free — exactly
+   how `exec===exec` already works. Requires the `.value` dynamic read to yield
+   `(ref …)` not `externref` (the D4 raw-anyref-carrier reader), which is also the
+   #3027 driver substrate. PREFERRED: no equality-arm minefield, unifies with the
+   receiver-classification work below.
+
+### (superseded speculation — kept for history) The open root-cause question
 
 Facts (1)+(2) are in tension with the code model: if both paths mint the SAME
 singleton global (same meta typeIdx, cache key `proto:<brand>:method:<member>`),
