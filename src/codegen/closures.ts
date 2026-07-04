@@ -76,6 +76,11 @@ import {
 } from "./statements/nested-declarations.js";
 import { detectStringBuilders, type StringBuilderPresizeInfo } from "./string-builder.js";
 import { addFunctionOwnLocals, registerOwnLocalsCollector } from "./binding-info.js"; // (#2103) shared, memoized per-function binding-info oracle
+// (#2957 phase 2) arrow/fn-expr async activation. Imported LAST: `async-activation`
+// pulls the `async-cps`/`async-frame` chain which imports back into `closures`
+// (a cycle), so it must evaluate after this module's other deps are loaded to
+// avoid perturbing the init order of the coercion-engine/string-ops chain.
+import { planAsyncClosureActivation, emitAsyncClosureBody } from "./async-activation.js";
 
 // ── Arrow function callbacks ──────────────────────────────────────────
 
@@ -1726,6 +1731,25 @@ export function compileArrowAsClosure(
   const { params: arrowParams, returnType: closureReturnTypeInit } = computeClosureWrapperSig(ctx, arrow);
   let closureReturnType: ValType | null = closureReturnTypeInit;
 
+  // (#2957 phase 2) Async state-machine activation for arrows / function
+  // expressions. `computeClosureWrapperSig` above set `closureReturnType` to the
+  // *unwrapped* awaited type (the legacy synchronous pass-through model), so an
+  // async arrow silently returned a sync value instead of a Promise. Decide
+  // activation NOW — before the lifted func type + closure struct are built —
+  // and, on a match, bake the `externref` (Promise) result into the signature so
+  // the struct's funcref field, the wrapper type, and every call site agree. The
+  // body is emitted by the async machine at the statement-loop point below (see
+  // `asyncDecision` use). Generators have their own async machinery and are
+  // excluded here. The `__self` closure-env param (lifted param 0) is only ever
+  // spilled by the CPS emitter when a live-after-await capture resolves to it;
+  // the canonical single-tail-await (`return await P`) has no live-after set, so
+  // the env param is untouched — richer shapes stay on the legacy path via the
+  // predicate gate.
+  const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
+  if (asyncDecision) {
+    closureReturnType = { kind: "externref" };
+  }
+
   // 2. Analyze captured variables. Use scope-aware collection so that nested
   //    `var` declarations and parameter bindings inside the closure body shadow
   //    outer references — otherwise a closure with its own `var i;` would be
@@ -2696,6 +2720,16 @@ export function compileArrowAsClosure(
       } as Instr);
     }
     conciseBodyHasValue = true; // generator return value is already on stack
+  } else if (asyncDecision) {
+    // (#2957 phase 2) Emit the async state machine instead of the normal body
+    // loop. `closureReturnType` was already forced to `externref` above, so the
+    // lifted func/struct type carries the Promise result — no post-hoc type
+    // rewrite (unlike the declaration entry `maybeActivateAsync`). Handles both
+    // block bodies (`async () => { return await P; }`) and the concise
+    // single-tail-await (`async () => await P`, routed via the concise branch in
+    // `splitBodyAtAwait`). The emitter leaves the result Promise + a `return` on
+    // the body, so the default-return tail below is a no-op.
+    emitAsyncClosureBody(ctx, liftedFctx, arrow, asyncDecision);
   } else if (ts.isBlock(body)) {
     for (const stmt of body.statements) {
       compileStatement(ctx, liftedFctx, stmt);

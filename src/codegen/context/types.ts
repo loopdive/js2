@@ -311,6 +311,19 @@ export interface NativeGeneratorInfo {
     arrTypeIdx: number;
     elemType: ValType;
   }[];
+  /**
+   * (#2173 slice-2b) `yield*` delegation over a GENERIC iterable — a
+   * `.values()`/`.keys()`/`.entries()` iterator or a custom
+   * `{ [Symbol.iterator]() { return { next() {…} } } }` object, in source
+   * `iterableSiteIndex` order. Each site owns ONE `externref` state-struct field
+   * holding the `$__IterRec` returned by the standalone-native `__iterator`
+   * runtime (`iterator-native.ts`, #2038), driven per resume via
+   * `__iterator_next` (also native → zero host imports). Appended AFTER the
+   * native-gen and vec delegation slots so neither the f64 `spillFieldOffset`
+   * nor the earlier slot field indices are affected (byte-inert for generators
+   * without an iterable-delegation site).
+   */
+  iterableDelegationSlots?: { fieldIdx: number }[];
 }
 
 export type NullishExclusion = "null" | "undefined" | "nullish";

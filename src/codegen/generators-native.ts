@@ -29,7 +29,8 @@ import { ts } from "../ts-api.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { isBooleanType, isNumberType, isStringType, mapTsTypeToWasm } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
+import { ensureNativeIteratorRuntime } from "./iterator-native.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
 import { reportError } from "./context/errors.js";
@@ -125,6 +126,22 @@ type StateTerminator =
       vecSiteIndex: number;
       next: number;
       bindResultTo?: string;
+    }
+  // (#2173 slice-2b) `yield* <generic iterable>` — delegate to a `.values()`
+  // iterator or a custom `{ [Symbol.iterator]() { return { next() {…} } } }` by
+  // driving the standalone-native `__iterator` / `__iterator_next` runtime
+  // (#2038) from an `externref` `$__IterRec` slot. Zero host imports (the native
+  // iterator runtime is emitted Wasm). Like the other delegation kinds this
+  // state is SELF-suspending: each `.next()` re-enters it, steps the iterator,
+  // re-yields the (unboxed) value, and transfers to `next` once the iterator
+  // reports done. `iterableSiteIndex` keys the per-site externref slot.
+  | {
+      kind: "yield-star";
+      delegationKind: "iterable";
+      subject: ts.Expression;
+      iterableSiteIndex: number;
+      next: number;
+      bindResultTo?: string;
     };
 
 interface NativeGeneratorState {
@@ -173,6 +190,12 @@ interface NativeGeneratorPlan {
    * are unaffected (byte-inert for non-vec-delegating generators).
    */
   vecDelegationSites: { subject: ts.Expression }[];
+  /**
+   * (#2173 slice-2b) One entry per `yield* <generic iterable>` site, in source
+   * order. `buildResumeInfo` allocates one `externref` field per entry (the
+   * `$__IterRec` slot), appended AFTER the native-gen and vec delegation slots.
+   */
+  iterableDelegationSites: { subject: ts.Expression }[];
 }
 
 function noJsHostTarget(ctx: CodegenContext): boolean {
@@ -393,6 +416,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // (#2173 slice-2a) `yield* <numeric-array/vec>` sites, allocated in source
   // order; index into `vecDelegationSlots` at emit time.
   const vecDelegationSites: { subject: ts.Expression }[] = [];
+  // (#2173 slice-2b) `yield* <generic iterable>` sites, allocated in source
+  // order; index into `iterableDelegationSlots` at emit time.
+  const iterableDelegationSites: { subject: ts.Expression }[] = [];
   // (#2864 R1) Names bound to a delegation COMPLETION value
   // (`const x = yield* inner()`). Spilled at f64 — the delegation gate admits
   // only f64-elem inners, and the inner's `return` value rides its result
@@ -626,6 +652,43 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           pendingAbrupt = undefined;
           return ok;
         }
+        // (#2173 slice-2b) Not a native-gen call nor a numeric vec — try a
+        // GENERIC iterable (`yield* arr.values()`, `yield* customIterable`).
+        // Driven by the standalone-native `__iterator`/`__iterator_next` runtime
+        // (#2038) → zero host imports. Same STRING-outer bail as the other arms:
+        // the iterator value rides externref and re-yields through the OUTER
+        // result struct's `value` field; an f64 outer unboxes it and a boxed-any
+        // outer passes it through, but a concrete-ref (string) outer has no
+        // repair seam — bail to the host path (the clean #680 refusal).
+        if (!elemIsString && isGenericIterableDelegate(ctx, subject)) {
+          // (#2864 R1) `const x = yield* it` — the delegation completion value
+          // (§27.5.3.7) is the iterator's done-result `value`; for the common
+          // array/`.values()` shape that is `undefined`. The done-arm delivers
+          // the outer's undefined sentinel into the binding's spill (#2106
+          // residual, exactly as the vec arm).
+          if (bindSentTo !== undefined) {
+            delegationBindingNames.add(bindSentTo);
+            addSpill(bindSentTo);
+          }
+          const iterableSiteIndex = iterableDelegationSites.length;
+          iterableDelegationSites.push({ subject });
+          const nextId = startStateAfterYield(undefined, activeFinalizers);
+          finishState(curId, {
+            kind: "yield-star",
+            delegationKind: "iterable",
+            subject,
+            iterableSiteIndex,
+            next: nextId,
+            bindResultTo: bindSentTo,
+          });
+          curId = reserveState();
+          curStatements = [];
+          curResumeBindings = pendingResumeBindings;
+          curAbrupt = pendingAbrupt;
+          pendingResumeBindings = [];
+          pendingAbrupt = undefined;
+          return ok;
+        }
         return fail();
       }
       if (!subject || innerName === undefined) return fail();
@@ -719,6 +782,24 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   function isNumericIterableDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
     const fact = ctx.oracle.typeFactOf(subject);
     return fact.kind === "array" && fact.element.kind === "number";
+  }
+
+  // (#2173 slice-2b) True when `subject`'s static type is a GENERIC iterable that
+  // is NOT already handled by the numeric-vec fast path — a `.values()`/`.keys()`/
+  // `.entries()` iterator or a custom `{ [Symbol.iterator]() {…} }` object. Such a
+  // type carries a well-known `[Symbol.iterator]` member, which the TS checker
+  // names with a `__@iterator`-prefixed escaped name (e.g. `__@iterator@9`). We
+  // require that member (spec-aligned: `yield*` performs GetIterator, which reads
+  // `[Symbol.iterator]`), so a bare non-iterable object is NOT admitted. The
+  // native `__iterator` runtime (#2038) then drives it host-free. Mirrors the
+  // checker use already present in `nativeGeneratorDelegationName`.
+  function isGenericIterableDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
+    const t = ctx.checker.getTypeAtLocation(subject);
+    if (!t) return false;
+    for (const p of ctx.checker.getPropertiesOfType(t)) {
+      if (p.getName().startsWith("__@iterator")) return true;
+    }
+    return false;
   }
 
   // Reserve the successor of a yield and set up its resume binding/abrupt
@@ -1101,7 +1182,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     spillTypes.set(name, resolved);
   }
 
-  return { states, spills, spillTypes, elemValType, delegationSites, vecDelegationSites };
+  return { states, spills, spillTypes, elemValType, delegationSites, vecDelegationSites, iterableDelegationSites };
 }
 
 /** A `break`/`continue` inside a yield-loop body is not modeled in this slice. */
@@ -1569,6 +1650,21 @@ export function registerNativeGenerator(
     });
   }
 
+  // (#2173 slice-2b) `yield* <generic iterable>` slots — appended AFTER the
+  // native-gen and vec delegation slots (and after spills) so no earlier field
+  // index or the f64 `spillFieldOffset` is affected; byte-inert for generators
+  // without a generic-iterable site. Each site gets ONE `externref` field
+  // holding the `$__IterRec` returned by the native `__iterator` runtime.
+  const iterableDelegationSlots: NonNullable<NativeGeneratorInfo["iterableDelegationSlots"]> = [];
+  for (const _site of plan.iterableDelegationSites) {
+    iterableDelegationSlots.push({ fieldIdx: stateFields.length });
+    stateFields.push({
+      name: `iterdeleg_${iterableDelegationSlots.length - 1}`,
+      type: { kind: "externref" },
+      mutable: true,
+    });
+  }
+
   const stateName = `__GenState_${sanitizeTypeName(functionName)}`;
   const stateTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name: stateName, fields: stateFields });
@@ -1597,6 +1693,7 @@ export function registerNativeGenerator(
     elemValType,
     delegationSlots: delegationSlots.length > 0 ? delegationSlots : undefined,
     vecDelegationSlots: vecDelegationSlots.length > 0 ? vecDelegationSlots : undefined,
+    iterableDelegationSlots: iterableDelegationSlots.length > 0 ? iterableDelegationSlots : undefined,
   };
   ctx.nativeGenerators.set(functionName, info);
   return info;
@@ -2174,6 +2271,138 @@ function compileState(
         body.push({ op: "if", blockType: { kind: "empty" }, then: doneArm, else: yieldArm });
         break;
       }
+      if (term.delegationKind === "iterable") {
+        // (#2173 slice-2b) Delegate to a GENERIC iterable by driving the
+        // standalone-native `__iterator`/`__iterator_next` runtime (#2038) from an
+        // externref `$__IterRec` slot — zero host imports. §27.5.3.7:
+        //   if (rec == null) rec = __iterator(<subject>);        ; first entry
+        //   (done, value) = __iterator_next(rec);
+        //   if (done) { rec = null; bindResult = undefined; state = next; br loop }
+        //   else { state = THIS; mode = 0; result = { unbox(value), done:0 }; br exit }
+        const islot = info.iterableDelegationSlots?.[term.iterableSiteIndex];
+        if (!islot) {
+          // Defensive: unresolved slot — complete rather than emit invalid wasm.
+          body.push(...storeSpills(info, fctx, selfLocal));
+          body.push(...setStateInstrs(info, selfLocal, info.doneState));
+          body.push(...emptyResult(info));
+          body.push({ op: "local.set", index: resultLocal });
+          break;
+        }
+        ensureNativeIteratorRuntime(ctx);
+        const iteratorIdx = ctx.funcMap.get("__iterator");
+        const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
+        if (iteratorIdx === undefined || iteratorNextIdx === undefined) {
+          body.push(...storeSpills(info, fctx, selfLocal));
+          body.push(...setStateInstrs(info, selfLocal, info.doneState));
+          body.push(...emptyResult(info));
+          body.push({ op: "local.set", index: resultLocal });
+          break;
+        }
+        const recLocal = allocLocal(fctx, `__gen_iterrec_${fctx.locals.length}`, { kind: "externref" });
+        const doneLocal = allocLocal(fctx, `__gen_iterdone_${fctx.locals.length}`, { kind: "i32" });
+        const valueLocal = allocLocal(fctx, `__gen_iterval_${fctx.locals.length}`, { kind: "externref" });
+
+        // Spill straight-line locals BEFORE suspending; the rec slot lives in the
+        // struct already.
+        body.push(...storeSpills(info, fctx, selfLocal));
+
+        // Lazily materialize the iterator on first entry (slot null): evaluate the
+        // subject ONCE (GetIterator runs once), box to externref, and wrap via the
+        // native `__iterator`.
+        const materialize: Instr[] = [];
+        {
+          const savedC = fctx.body;
+          fctx.body = materialize;
+          const st = compileExpression(ctx, fctx, term.subject, { kind: "externref" });
+          if (st && st.kind !== "externref") coerceType(ctx, fctx, st, { kind: "externref" });
+          fctx.body.push({ op: "call", funcIdx: iteratorIdx } as Instr);
+          fctx.body = savedC;
+        }
+        body.push({ op: "local.get", index: selfLocal });
+        body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: islot.fieldIdx });
+        body.push({ op: "ref.is_null" } as Instr);
+        body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: selfLocal } as Instr,
+            ...materialize,
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: islot.fieldIdx } as Instr,
+          ],
+          else: [],
+        });
+
+        // rec → local; step it once: (done, value) = __iterator_next(rec).
+        body.push({ op: "local.get", index: selfLocal });
+        body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: islot.fieldIdx });
+        body.push({ op: "local.set", index: recLocal });
+        body.push({ op: "local.get", index: recLocal });
+        body.push({ op: "call", funcIdx: iteratorNextIdx } as Instr);
+        body.push({ op: "local.set", index: valueLocal }); // value (top of stack)
+        body.push({ op: "local.set", index: doneLocal }); // done
+
+        // (#2864 R1 / #2106 residual) `const x = yield* it` — deliver the
+        // completion value (undefined for the array/`.values()` shape) into the
+        // binding's local AND spill. Sentinel matches the binding's slot type.
+        const bindInstrs: Instr[] = [];
+        if (term.bindResultTo !== undefined) {
+          const bindLocal = fctx.localMap.get(term.bindResultTo);
+          const bindSpillIdx = info.spillNames.indexOf(term.bindResultTo);
+          if (bindLocal !== undefined && bindSpillIdx >= 0) {
+            const bindType = getLocalType(fctx, bindLocal);
+            const undef: Instr =
+              bindType?.kind === "f64" ? { op: "f64.const", value: NaN } : ({ op: "ref.null.extern" } as Instr);
+            bindInstrs.push(
+              undef,
+              { op: "local.set", index: bindLocal },
+              { op: "local.get", index: selfLocal },
+              undef,
+              {
+                op: "struct.set",
+                typeIdx: info.stateTypeIdx,
+                fieldIdx: info.spillFieldOffset + bindSpillIdx,
+              } as Instr,
+            );
+          }
+        }
+
+        // Re-yielded value: unbox the externref `value` to the OUTER element type
+        // (f64 outer → native `__unbox_number` via coerceType; boxed-any outer →
+        // pass through). String outers bailed in `emitYield`.
+        const valueInstrs: Instr[] = [];
+        {
+          const savedC = fctx.body;
+          fctx.body = valueInstrs;
+          fctx.body.push({ op: "local.get", index: valueLocal } as Instr);
+          if (info.elemValType.kind === "f64") {
+            coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+          }
+          fctx.body = savedC;
+        }
+
+        const doneArm: Instr[] = [
+          // exhausted — clear the slot, advance to the successor, re-enter.
+          { op: "local.get", index: selfLocal } as Instr,
+          { op: "ref.null.extern" } as Instr,
+          { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: islot.fieldIdx } as Instr,
+          ...bindInstrs,
+          ...setStateInstrs(info, selfLocal, term.next),
+          { op: "br", depth: loopDepth + 1 }, // +1 for the inner `if`
+        ];
+        const yieldArm: Instr[] = [
+          // iterator yielded — stay in THIS state so the next .next() re-drives it.
+          ...setStateInstrs(info, selfLocal, stateId),
+          ...setModeInstrs(info, selfLocal, 0),
+          ...valueInstrs,
+          { op: "i32.const", value: 0 },
+          { op: "struct.new", typeIdx: info.resultTypeIdx },
+          { op: "local.set", index: resultLocal },
+          { op: "br", depth: exitDepth + 1 }, // +1 for the inner `if`
+        ];
+        body.push({ op: "local.get", index: doneLocal });
+        body.push({ op: "if", blockType: { kind: "empty" }, then: doneArm, else: yieldArm });
+        break;
+      }
       // (#2170) Delegate to the inner native generator. §27.5.3.7:
       //   if (deleg == null) deleg = <inner>();           ; first entry
       //   innerRes = __gen_resume_<inner>(deleg);
@@ -2533,6 +2762,12 @@ export function compileNativeGeneratorFunction(
       fctx.body.push({ op: "ref.null.eq" });
     }
     fctx.body.push({ op: "i32.const", value: 0 }); // cursor
+  }
+  // (#2173 slice-2b) `yield* <generic iterable>` slots start null-externref —
+  // the `$__IterRec` is materialized lazily (`__iterator(subject)`) on first
+  // entry into the iterable-yield-star state.
+  for (const _slot of info.iterableDelegationSlots ?? []) {
+    fctx.body.push({ op: "ref.null.extern" } as Instr);
   }
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 }

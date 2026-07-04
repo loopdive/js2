@@ -3,7 +3,7 @@ id: 2173
 title: "standalone: yield* over a general iterable (array / custom {next()}) in native generators (SF-3 slice-2 of #2157)"
 status: done
 completed: 2026-07-04
-assignee: ttraenkler/opus-2173
+assignee: ttraenkler/dev-selfserve-1
 blocked_by: []
 sprint: current
 created: 2026-06-16
@@ -270,3 +270,85 @@ before, no regression). The runtime "straight to successor, no suspension" path
 IS exercised and passes for typed empties (`const a: number[] = []; yield* a`
 and `yield* ([] as number[])`). Non-numeric-elem iterables (strings, objects,
 `.values()` iterators, custom `{next()}`) are slice-2b.
+
+## Slice 2b LANDED (dev-selfserve-1, 2026-07-04)
+
+Generic-iterable `yield*` — a `.values()`/`.keys()`/`.entries()` iterator or a
+custom `{ [Symbol.iterator]() { return { next() {…} } } }` object — now lowers
+host-free in standalone native generators. The remaining SF-3 gap in the issue's
+title is closed.
+
+### Design (as shipped) — drive the native iterator runtime, NOT the JS-host bridge
+
+The banked 2b contract said to drive the #1320 `__iterator`/`__iterator_next`
+bridge and unbox via "the union-native `__unbox_number` (standalone-defined)".
+Re-grounding against current main clarified the mechanism precisely:
+
+- In standalone the #1320 bridge IS host-free — `ensureNativeIteratorRuntime`
+  (`iterator-native.ts`, #2038) registers `__iterator`/`__iterator_next` as
+  **emitted Wasm** over a `$__IterRec` GC struct (VEC + USER `{next()}` arms, the
+  USER arm filled at finalize over the module's closed-struct dispatchers). So the
+  "bridge leaks host box/unbox" caveat from the 2a note applies only to the
+  **JS-host** `__iterator` *import*, not the standalone-native runtime.
+- The `yield-star` terminator gained a third `delegationKind: "iterable"` (beside
+  `"native-gen"` and slice-2a's `"vec"`). The native-gen and vec arms are
+  **byte-identical** (verified) — the iterable arm is a new branch keyed off the
+  discriminant.
+- Per iterable site: ONE `externref` state-struct field (the `$__IterRec`),
+  appended AFTER the native-gen and vec slots so no earlier field index or the
+  f64 `spillFieldOffset` moves (byte-inert for non-iterable-delegating
+  generators). Nulled at construction; materialized lazily on first entry
+  (`rec = __iterator(box(subject))`, GetIterator runs once).
+- Runtime arm (`compileState`): each resume `(done,value) = __iterator_next(rec)`;
+  while not done, unbox `value` (externref) to the OUTER element type — f64 outer
+  via `coerceType(externref→f64,"number")` which selects the standalone-native
+  `__unbox_number`, boxed-any outer passes through — build `{ value, done:0 }`,
+  stay in the state; on done, null the slot, deliver the `bindResultTo` completion
+  sentinel, transfer to the successor. STRING-element outers keep the 2a bail
+  (concrete-ref `value`, no repair seam).
+
+### Detection
+
+`isGenericIterableDelegate` gates on the subject's TS type carrying a
+`__@iterator`-prefixed member (the well-known `[Symbol.iterator]`), so only
+genuine iterables are admitted (spec-aligned: `yield*` performs GetIterator).
+Ordered AFTER `isNumericIterableDelegate` so numeric arrays keep the 2a vec
+fast path.
+
+### Files
+
+- `src/codegen/generators-native.ts` — `"iterable"` terminator variant,
+  `iterableDelegationSites` in the plan, `isGenericIterableDelegate`, the iterable
+  branch in `emitYield`, iterable slots in `buildResumeInfo`, the null-extern
+  struct init, and the runtime iterable arm in `compileState`.
+- `src/codegen/context/types.ts` — `NativeGeneratorInfo.iterableDelegationSlots`.
+- `tests/issue-2173-yieldstar-generic-iterable.test.ts` — 10 standalone cases,
+  all assert zero host imports.
+
+### Proofs
+
+- **Measure-first (current main):** all four target shapes reject with the #680
+  native-generator CE. After: compile + run correctly, **zero host imports**, on
+  the native generator path (no `__gen_create_buffer`/`__create_generator`).
+- **New suite (10/10):** `.values()` for-of sum, delegation-only, custom
+  `[Symbol.iterator]` iterable, any-outer pass-through, yield\* in a loop
+  (re-iteration), own-yield interleave, two sequential delegations, manual
+  next()-sequence, element count, plain-numeric regression.
+- **Blast radius (138 tests, no regression):** generators, #2170 slice-1, #2171
+  string yields, #2172 nested, #2864 carrier, #1665, #2079, #2169
+  spread/destructure/arrayfrom, #2571/#2581 method generators, #2920, #2951/#2952,
+  and #2173 slice-2a.
+- **Byte-inertness (sha256 identical to origin/main):** plain numeric generator,
+  numeric-vec `yield*` (2a), native-gen `yield*` (2170), a for-loop generator, and
+  a `.next(v)`-resume generator.
+
+### Still deferred (roll forward — NOT this PR)
+
+- String-element outers (concrete-ref `value`, no fixups repair seam).
+- Precise `.return()`/`.throw()` close-forwarding into the iterator (reuse the
+  #2864 D2 abrupt-forwarding shape) — the current arm iterates + closes on
+  natural exhaustion; abrupt outer `.return()` does not yet forward into a
+  mid-flight inner iterator.
+- #2106 undefined-observability of the `yield*` completion value (`const x =
+  yield* it`) — the done-arm delivers the outer's undefined sentinel (NaN / null-
+  extern), not the iterator's actual done-result `value`.

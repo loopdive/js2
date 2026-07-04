@@ -830,14 +830,21 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // ── collectAsyncCpsImports (#1042) ──
   // Detect a CPS-eligible async function so the host imports the driver emits
   // (__make_callback / Promise_then2 / Promise_resolve) are registered upfront
-  // with STABLE funcMap indices. Mirrors the function-body.ts activation gate
-  // exactly (single tail-await canonical shape, no try-across-await, JS-host).
+  // with STABLE funcMap indices. Mirrors the activation gate exactly (single
+  // tail-await canonical shape, no try-across-await, JS-host).
+  //
+  // (#2957 phase 2) Widened to async ARROWS and FUNCTION EXPRESSIONS: those
+  // shapes now activate the CPS machine too (via `closures.ts`), so their host
+  // imports must likewise be pre-registered. If they were not, a module whose
+  // only async fns are arrows would reach `emitAsyncStateMachine` with the
+  // imports missing → it bails and the arrow silently falls back to the legacy
+  // sync pass-through. Method shapes remain phase 3.
   if (
     ASYNC_CPS_ENABLED &&
     (!state.asyncCpsFound || !state.asyncHostDriveFound) &&
     !ctx.wasi &&
     !ctx.standalone &&
-    ts.isFunctionDeclaration(node) &&
+    (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
     node.body !== undefined &&
     hasAsyncModifier(node)
   ) {

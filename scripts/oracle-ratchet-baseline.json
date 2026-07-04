@@ -225,6 +225,18 @@
       "field": "ctxChecker",
       "extra": 1,
       "reason": "#3000 Phase-1b: the single ctx.checker.getTypeAtLocation call above (buildIrClassShapes field-type derivation)."
+    },
+    {
+      "file": "src/codegen/generators-native.ts",
+      "field": "getTypeAtLocation",
+      "extra": 1,
+      "reason": "#2173 slice-2b: isGenericIterableDelegate needs ts.Type property membership to gate a yield* subject as a genuine iterable (a [Symbol.iterator] member — spec GetIterator). ctx.oracle's TypeFact union has no iterability/property-membership query and models iterables inconsistently (ArrayIterator as class, custom {[Symbol.iterator]} as builtin 'Iterable', Map/Set/generator/String each differently), so an oracle-based gate would be fragile and incomplete. Mirrors the existing direct-checker use in nativeGeneratorDelegationName in this same file."
+    },
+    {
+      "file": "src/codegen/generators-native.ts",
+      "field": "ctxChecker",
+      "extra": 2,
+      "reason": "#2173 slice-2b: the getTypeAtLocation + getPropertiesOfType pair in isGenericIterableDelegate (see the getTypeAtLocation entry above) — both match the ctx.checker counter."
     }
   ]
 }

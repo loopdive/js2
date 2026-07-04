@@ -622,7 +622,28 @@ export function splitBodyAtAwait(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsP
   if (plan.awaitPoints.length !== 1) return null;
   if (plan.hasTryAcrossAwait) return null;
   const body = fn.body;
-  if (body === undefined || !ts.isBlock(body)) return null;
+  if (body === undefined) return null;
+
+  // (#2957 phase 2) Concise arrow expression body: `async (x) => EXPR`. It is
+  // semantically `return EXPR`, so the single canonical `async (x) => await P`
+  // shape is exactly a `return await P`. Only the tail form is accepted — the
+  // whole concise body IS the await (anything richer, e.g. `=> f(await P)`, is
+  // rejected just like the buried-await case in a block body). Function
+  // declarations always have block bodies and never reach this branch, so it is
+  // additive and cannot perturb the declaration lane.
+  if (!ts.isBlock(body)) {
+    const awaitNode = plan.awaitPoints[0]!;
+    if ((body as ts.Node) === (awaitNode as ts.Node)) {
+      return {
+        prefix: [],
+        awaitedExpr: awaitNode.expression,
+        resumeBinding: null,
+        suffix: [],
+        isReturnAwait: true,
+      };
+    }
+    return null;
+  }
 
   const stmts = body.statements;
   const awaitNode = plan.awaitPoints[0]!;
