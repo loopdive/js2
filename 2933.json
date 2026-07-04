@@ -1,8 +1,8 @@
 {
   "id": "2933",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-01T23:57:16Z",
-  "updated_at": "2026-07-01T23:57:16Z"
+  "assignee": "ttraenkler/dev-3023",
+  "status": "in-progress",
+  "branch": "issue-2933-standalone-namespace-static-value",
+  "claimed_at": "2026-07-04T21:40:09Z",
+  "updated_at": "2026-07-04T21:40:09Z"
 }
