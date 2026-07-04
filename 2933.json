@@ -1,8 +1,9 @@
 {
   "id": "2933",
   "assignee": "ttraenkler/dev-3023",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2933-standalone-namespace-static-value",
   "claimed_at": "2026-07-04T21:40:09Z",
-  "updated_at": "2026-07-04T21:40:09Z"
+  "updated_at": "2026-07-04T22:04:14Z",
+  "released_at": "2026-07-04T22:04:14Z"
 }
