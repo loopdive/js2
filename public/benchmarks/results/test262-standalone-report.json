@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-04T19:55:34.550Z",
-  "baseline_generated_at": "2026-07-04T19:55:34.550Z",
-  "baseline_sha": "df07696bd81779894b27777e539fc046c14117e2",
+  "timestamp": "2026-07-04T20:32:39.371Z",
+  "baseline_generated_at": "2026-07-04T20:32:39.371Z",
+  "baseline_sha": "ea8d180477633b27f04961ad8d8b1d1fb19bf984",
   "oracle_version": 1,
   "mode": {
     "target": "standalone",
@@ -1198,8 +1198,8 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 8899,
-    "illegal_cast": 765,
+    "assertion_fail": 8898,
+    "illegal_cast": 766,
     "negative_test_fail": 74,
     "null_deref": 306,
     "oob": 42,
@@ -1274,16 +1274,16 @@
           "wasm_compile": 60,
           "illegal_cast": 4,
           "null_deref": 51,
-          "type_error": 182,
           "assertion_fail": 773,
+          "type_error": 182,
           "oob": 2
         },
         "sample_files": [
           "test/built-ins/Temporal/Now/zonedDateTimeISO/return-value.js",
           "test/built-ins/Temporal/PlainDateTime/subclass.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/eraYear/prop-desc.js",
-          "test/built-ins/Temporal/Instant/prototype/toString/timezone-wrong-type.js",
-          "test/built-ins/Temporal/PlainDateTime/prototype/month/prop-desc.js"
+          "test/built-ins/Temporal/PlainDateTime/prototype/month/prop-desc.js",
+          "test/built-ins/Temporal/Instant/prototype/toString/timezone-wrong-type.js"
         ],
         "sample_signatures": [
           "other:ReferenceError: Temporal is not defined",
@@ -1315,8 +1315,8 @@
           "runtime_error": 2
         },
         "sample_files": [
-          "test/built-ins/DisposableStack/prototype/use/throws-if-value-missing-Symbol.dispose.js",
           "test/built-ins/DisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-is-null.js",
+          "test/built-ins/DisposableStack/prototype/use/throws-if-value-missing-Symbol.dispose.js",
           "test/built-ins/AsyncDisposableStack/undefined-newtarget-throws.js",
           "test/built-ins/AsyncDisposableStack/newtarget-prototype-is-not-object.js",
           "test/built-ins/DisposableStack/prototype/adopt/adds-value-onDispose.js"
@@ -1430,15 +1430,15 @@
         "sample_files": [
           "test/built-ins/JSON/parse/15.12.2-2-2.js",
           "test/built-ins/JSON/stringify/space-wrong-type.js",
-          "test/built-ins/JSON/stringify/replacer-array-empty.js",
           "test/built-ins/JSON/parse/reviver-array-define-prop-err.js",
-          "test/built-ins/JSON/parse/15.12.2-2-6.js"
+          "test/built-ins/JSON/parse/15.12.2-2-6.js",
+          "test/built-ins/JSON/stringify/replacer-array-empty.js"
         ],
         "sample_signatures": [
           "illegal_cast:L#:## illegal cast [in test()]",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(JSON.stringify(obj), JSON.stringify(obj, null, null));",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue( JSON.stringify([#, {a: #}], []), '[#,{}]' );",
           "assertion_fail:returned # — assert ## at L#: throw new Test262Error();",
+          "assertion_fail:returned # — assert ## at L#: assert.sameValue( JSON.stringify([#, {a: #}], []), '[#,{}]' );",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(JSON.stringify(obj, null, ' '), [ '{' , ' \"a1\": {' , ' \"b1\": [' , ' #,' , ' #,' , ' #,' , ' #' , ' ],' , ' \"b2\": {' , ' \"c1\": #,' , ' \"c2\": #'"
         ]
       },
@@ -1646,15 +1646,15 @@
           "test/built-ins/Reflect/enumerate/undefined.js",
           "test/built-ins/DataView/custom-proto-access-throws.js",
           "test/built-ins/Reflect/set/not-a-constructor.js",
-          "test/built-ins/Reflect/get/return-value.js",
-          "test/built-ins/Reflect/getOwnPropertyDescriptor/not-a-constructor.js"
+          "test/built-ins/Reflect/getOwnPropertyDescriptor/not-a-constructor.js",
+          "test/built-ins/Reflect/get/return-value.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: Reflect.hasOwnProperty not supported in standalone mode (## Phase C).",
           "other:L#:## Codegen error: Reflect.construct not supported in standalone mode (## Phase C).",
           "other:L#:## Codegen error: Reflect.set built-in static property value read is not supported in --target standalone (## / ## S6-b). Add a native built-in method closure for this pair.",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue( Reflect.get(o, 'p1'), 'value #', 'Return value from data descriptor' );",
-          "other:L#:## Codegen error: Reflect.getOwnPropertyDescriptor built-in static property value read is not supported in --target standalone (## / ## S6-b). Add a native built-in method closure for this pair."
+          "other:L#:## Codegen error: Reflect.getOwnPropertyDescriptor built-in static property value read is not supported in --target standalone (## / ## S6-b). Add a native built-in method closure for this pair.",
+          "assertion_fail:returned # — assert ## at L#: assert.sameValue( Reflect.get(o, 'p1'), 'value #', 'Return value from data descriptor' );"
         ]
       },
       {
@@ -1672,11 +1672,11 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 1289,
+          "assertion_fail": 1288,
           "wasm_compile": 69,
           "type_error": 445,
           "other": 181,
-          "illegal_cast": 437,
+          "illegal_cast": 438,
           "runtime_error": 90,
           "null_deref": 40,
           "promise_error": 12,
@@ -1722,8 +1722,8 @@
           "null_deref": 3
         },
         "sample_files": [
-          "test/built-ins/AsyncGeneratorFunction/instance-name.js",
           "test/built-ins/AsyncGeneratorFunction/prototype/extensibility.js",
+          "test/built-ins/AsyncGeneratorFunction/instance-name.js",
           "test/built-ins/GeneratorFunction/prototype/extensibility.js",
           "test/built-ins/GeneratorPrototype/throw/from-state-completed.js",
           "test/language/expressions/generators/eval-body-proto-realm.js"
@@ -1845,7 +1845,7 @@
           "test/built-ins/TypedArray/resizable-buffer-length-tracking-1.js",
           "test/built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/detached-buffer.js",
-          "test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js"
+          "test/built-ins/TypedArrayConstructors/internals/HasProperty/indexed-value.js"
         ],
         "sample_signatures": [
           "other:ReferenceError: ctors is not defined",
@@ -1955,7 +1955,7 @@
           "test/built-ins/decodeURI/S15.1.3.1_A2.4_T1.js",
           "test/built-ins/decodeURIComponent/S15.1.3.2_A2.5_T1.js",
           "test/built-ins/encodeURI/S15.1.3.3_A1.2_T1.js",
-          "test/built-ins/decodeURIComponent/S15.1.3.2_A2.2_T1.js"
+          "test/built-ins/encodeURIComponent/S15.1.3.4_A1.2_T1.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: ##: var object = {valueOf: function() {return #}, toString: function() {return #}}; String(object) === \"#\". Actual: [object Object]",
@@ -1988,15 +1988,15 @@
         },
         "sample_files": [
           "test/annexB/language/global-code/if-decl-no-else-global-skip-early-err-try.js",
-          "test/annexB/language/global-code/switch-case-global-no-skip-try.js",
           "test/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-block-scoping.js",
+          "test/annexB/language/global-code/switch-case-global-no-skip-try.js",
           "test/annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for-in.js",
           "test/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-update.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { f; }, 'An initialized binding is not created following evaluation');",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue( f, undefined, 'Initialized binding created prior to evaluation' );",
           "type_error:TypeError: dynamic eval is not supported in standalone mode (##)",
+          "assertion_fail:returned # — assert ## at L#: assert.sameValue( f, undefined, 'Initialized binding created prior to evaluation' );",
           "runtime_error:L#:## Invalid left-hand side in for-in/for-of",
           "other:L#:## ';' expected."
         ]
@@ -2089,15 +2089,15 @@
           "assertion_fail": 10
         },
         "sample_files": [
-          "test/built-ins/Math/SQRT2/value.js",
           "test/built-ins/Math/SQRT1_2/value.js",
+          "test/built-ins/Math/SQRT2/value.js",
           "test/built-ins/Math/LN2/value.js",
           "test/built-ins/Math/Symbol.toStringTag.js",
           "test/built-ins/Math/E/value.js"
         ],
         "sample_signatures": [
-          "assertion_fail:returned # — assert ## at L#: assert.notSameValue(Math.SQRT2, NaN);",
           "assertion_fail:returned # — assert ## at L#: assert.notSameValue(Math.SQRT1_2, NaN);",
+          "assertion_fail:returned # — assert ## at L#: assert.notSameValue(Math.SQRT2, NaN);",
           "assertion_fail:returned # — assert ## at L#: assert.notSameValue(Math.LN2, NaN);",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(Math[Symbol.toStringTag], 'Math');",
           "assertion_fail:returned # — assert ## at L#: assert.notSameValue(Math.E, NaN);"
@@ -2371,8 +2371,8 @@
         },
         "error_categories": {
           "wasm_compile": 13,
-          "assertion_fail": 105,
           "type_error": 5,
+          "assertion_fail": 105,
           "promise_error": 4,
           "other": 46,
           "negative_test_fail": 13,
@@ -2382,15 +2382,15 @@
         },
         "sample_files": [
           "test/language/statements/for/dstr/let-obj-ptrn-prop-obj.js",
-          "test/language/module-code/instn-local-bndng-cls.js",
           "test/language/module-code/namespace/internals/delete-non-exported.js",
+          "test/language/module-code/instn-local-bndng-cls.js",
           "test/language/statements/for/dstr/const-ary-ptrn-elem-id-iter-val-err.js",
           "test/language/statements/for/dstr/const-ary-ptrn-rest-id-iter-val-err.js"
         ],
         "sample_signatures": [
           "wasm_compile:L#:## invalid Wasm binary (WebAssembly.instantiate(): Compiling function ##:\"test\" failed: not enough arguments on the stack for struct.new (need #, got #) @+#) [in test()] [@+#] [wat: (func $test (result f64) (local $iterCount f64) (local ",
-          "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { typeof test262; }, 'Binding is created but not initialized.');",
           "type_error:TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { typeof test262; }, 'Binding is created but not initialized.');",
           "assertion_fail:returned # — assert ## at L#: throw new Test262Error();",
           "assertion_fail:returned # — assert ## at L#: assert.throws(TypeError, function() { const { w: [x, y, z] = [#, #, #] } = { w: null }; });"
         ]

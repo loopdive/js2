@@ -10,8 +10,8 @@
   },
   {
     "edition": "ES5",
-    "pass": 10220,
-    "fail": 2728,
+    "pass": 10221,
+    "fail": 2727,
     "ce": 127,
     "skip": 0,
     "total": 13075,
@@ -2784,12 +2784,12 @@
   },
   {
     "edition": "ES2024",
-    "pass": 327,
-    "fail": 310,
+    "pass": 361,
+    "fail": 276,
     "ce": 8,
     "skip": 0,
     "total": 645,
-    "pct": 51,
+    "pct": 56,
     "features": [
       {
         "name": "TypedArray",
@@ -2856,12 +2856,12 @@
       },
       {
         "name": "Array.fromAsync",
-        "pass": 39,
-        "fail": 55,
+        "pass": 73,
+        "fail": 21,
         "ce": 1,
         "skip": 0,
         "total": 95,
-        "pct": 41
+        "pct": 77
       },
       {
         "name": "SharedArrayBuffer",
@@ -3191,8 +3191,8 @@
   },
   {
     "edition": "ES2025",
-    "pass": 964,
-    "fail": 310,
+    "pass": 965,
+    "fail": 309,
     "ce": 0,
     "skip": 0,
     "total": 1274,
@@ -3209,12 +3209,12 @@
       },
       {
         "name": "explicit-resource-management",
-        "pass": 260,
-        "fail": 81,
+        "pass": 261,
+        "fail": 80,
         "ce": 0,
         "skip": 0,
         "total": 341,
-        "pct": 76
+        "pct": 77
       },
       {
         "name": "regexp-modifiers",
