@@ -8,7 +8,7 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import type { EarlyErrorContext } from "./context.js";
 import {
-  collectBindingNames,
+  collectBindingNamesWithDuplicateCheck,
   collectSwitchClauseLexicalNames,
   collectStatementListBoundNames,
   findNameReference,
@@ -37,15 +37,18 @@ export function checkDuplicateParams(
       (node.asteriskToken !== undefined || node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword))) ||
     params.some((p) => p.initializer !== undefined || p.dotDotDotToken !== undefined || !ts.isIdentifier(p.name));
   if (!alwaysForbid && !isStrictMode(node)) return;
+  // `seen` is shared across every parameter so an INTER-param duplicate
+  // (`(x, x) => …`) is caught; `collectBindingNamesWithDuplicateCheck` also
+  // records INTRA-param duplicates that a single destructuring parameter binds
+  // more than once (`([x, x]) => …`, `({y: x, x}) => …`) — a plain Set collapses
+  // those, which is why the previous per-param Set missed them. BoundNames of a
+  // FormalParameterList / ArrowFormalParameters must contain no duplicates.
   const seen = new Set<string>();
   for (const param of params) {
-    const names = new Set<string>();
-    collectBindingNames(param.name, names);
-    for (const name of names) {
-      if (seen.has(name)) {
-        ctx.addError(param, `Duplicate parameter name '${name}' not allowed`);
-      }
-      seen.add(name);
+    const dupes = new Set<string>();
+    collectBindingNamesWithDuplicateCheck(param.name, seen, dupes);
+    for (const name of dupes) {
+      ctx.addError(param, `Duplicate parameter name '${name}' not allowed`);
     }
   }
 }

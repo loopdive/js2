@@ -1428,6 +1428,13 @@
         color: #f87171;
       }
 
+      /* No isolated test262 metric for this feature (e.g. core language
+         features with no dedicated `features:` tag). Shown as a calm neutral
+         mark instead of a bare ⚠, which read as a broken/loading warning. */
+      .feat-badge.nodata {
+        color: rgba(255, 255, 255, 0.32);
+      }
+
       /* #1583 — explicit pass-rate percentage rendered next to a static
          `✓ full` badge when the live test262 pass rate is below 95%.
          Stays inside the 30px badge column by stacking under the glyph. */
@@ -5562,7 +5569,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           if (!badge) return 0;
           if (usesHost && !hostEnabled) return 0;
           if (badge.classList.contains("full")) return 1;
-          if (badge.classList.contains("partial")) return 0.5;
+          // `nodata` = a headline-only feature whose ⚠ was neutralized (no
+          // isolated test262 metric); score it like the `partial` it was so
+          // the edition passbar aggregate is unchanged by the cosmetic re-skin.
+          if (badge.classList.contains("partial") || badge.classList.contains("nodata")) return 0.5;
           return 0;
         };
 
@@ -5827,11 +5837,26 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           const badge = row.querySelector(".feat-badge");
 
           if (total <= 0) {
-            // No measurable test262 data — keep the static badge but flag
-            // the row so the gap is visible (and auditable) rather than a
-            // misleading auto-derived status.
+            // No measurable test262 data — flag the row so the gap is visible
+            // (and auditable) rather than a misleading auto-derived status.
             row.dataset.noT262Data = "";
             if (badge && paths.length === 0) row.dataset.noT262Category = "";
+            // A `partial` (⚠) badge with no measurable data reads as a broken
+            // or still-loading warning (the yellow sign with no percentage).
+            // Downgrade it to a neutral "not individually measured" mark.
+            // Author-set ✓ (full) and ✗ (none) badges are unambiguous and stay.
+            if (badge instanceof HTMLElement && badge.classList.contains("partial")) {
+              badge.classList.remove("partial");
+              badge.classList.add("nodata");
+              badge.dataset.glyph = "–";
+              const firstChild = badge.firstChild;
+              if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
+                firstChild.textContent = "–";
+              } else {
+                badge.insertBefore(document.createTextNode("–"), badge.firstChild);
+              }
+              badge.title = "No isolated test262 subset scores this feature individually.";
+            }
           } else {
             const ratio = pass / total;
             const tone = toneFor(ratio);

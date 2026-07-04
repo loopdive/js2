@@ -198,3 +198,42 @@ describe("#3026 — rest element / parameter must be last (element after rest)",
     expect(await isRejected("const x = {}; const o = {...x, b: 1};")).toBe(false);
   });
 });
+
+// Slice 5 — early error: a parameter list with a non-simple (destructuring /
+// default / rest) parameter, or any arrow/method/strict function, may not bind
+// the same name twice. BoundNames of the FormalParameterList must contain no
+// duplicates. The pre-existing check caught INTER-parameter duplicates
+// (`(x, x) => …`) but collapsed INTRA-parameter duplicates that a single
+// destructuring pattern binds twice — a plain Set deduped `([x, x])` down to one
+// `x`. Now uses the duplicate-aware collector so both are caught. Covers test262
+// language/expressions/arrow-function/syntax/early-errors/arrowparameters-cover-no-duplicates-*.
+describe("#3026 — duplicate binding names within a destructuring parameter", () => {
+  it("rejects a duplicate name in an array-pattern arrow parameter (`([x, x]) => 1`)", async () => {
+    expect(await isRejected("var af = ([x, x]) => 1;")).toBe(true);
+  });
+
+  it("rejects a duplicate name in an object-pattern arrow parameter (`({y: x, x}) => 1`)", async () => {
+    expect(await isRejected("var af = ({y: x, x}) => 1;")).toBe(true);
+  });
+
+  it("rejects a duplicate name in a destructuring function parameter (`function f([x, x]) {}`)", async () => {
+    expect(await isRejected("function f([x, x]) { return 1; }")).toBe(true);
+  });
+
+  it("rejects a duplicate across a simple + destructuring parameter (`function f(x, [x]) {}`)", async () => {
+    expect(await isRejected("function f(x, [x]) { return 1; }")).toBe(true);
+  });
+
+  // ── Valid controls: must NOT be rejected ──────────────────────────────────
+  it("accepts distinct names in an array-pattern arrow parameter (`([x, y]) => x + y`)", async () => {
+    expect(await isRejected("var af = ([x, y]: any[]) => x + y;")).toBe(false);
+  });
+
+  it("accepts distinct names in an object-pattern arrow parameter (`({y, x}) => x`)", async () => {
+    expect(await isRejected("var af = ({y, x}: any) => x;")).toBe(false);
+  });
+
+  it("accepts the same name across two separate destructuring bindings (not params)", async () => {
+    expect(await isRejected("const [a] = [1]; const {a: b} = {a: 2}; void b;")).toBe(false);
+  });
+});
