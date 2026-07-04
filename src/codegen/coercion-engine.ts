@@ -48,6 +48,7 @@ import {
   isAnyValue,
 } from "./shared.js";
 import { coerceType, tryStructToString } from "./type-coercion.js";
+import { boxStrictEqOperand } from "./value-tags.js";
 
 /**
  * The three coercion modes the backend dispatches over. Derived once from the
@@ -472,27 +473,6 @@ function emitAnyEqOperands(
       coerceType(ctx, fctx, rightType, anyValueTarget);
     }
   }
-  return true;
-}
-
-/**
- * (#2175 V2-S3b — the D4 raw-anyref carrier) Box a STRICT-equality (`===`/`!==`)
- * externref operand as `(ref null $AnyValue)` through `__any_box_eq_operand`, which
- * boxes a genuine GC reference object as tag-6 (`refval` identity) rather than the
- * default `__any_box_string` tag-5 lie. This makes both operands of an object
- * `===` land in the EXISTING tag-6 `ref.eq` arm of `__any_strict_eq`, so
- * `gOPD(p,"exec").value === p.exec` and `[o,o]; a[0]===a[1]` answer identity — with
- * NO equality-arm change. Primitives (string/number/boolean/bigint) and null keep
- * their exact legacy tag-5 box inside the helper. Scoped to STRICT eq only (loose
- * `==` runs ToPrimitive coercion and is untouched); standalone/WASI only (the helper
- * is absent in host/GC, so this returns false and the caller keeps the byte-identical
- * `coerceType` path). Returns true iff it emitted the boxing.
- */
-function boxStrictEqOperand(ctx: CodegenContext, fctx: FunctionContext, operandType: ValType): boolean {
-  if (operandType.kind !== "externref") return false;
-  const boxIdx = ctx.funcMap.get("__any_box_eq_operand");
-  if (boxIdx === undefined) return false;
-  fctx.body.push({ op: "call", funcIdx: boxIdx });
   return true;
 }
 

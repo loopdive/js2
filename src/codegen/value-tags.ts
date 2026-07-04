@@ -228,3 +228,26 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
   if (from.kind === "ref" || from.kind === "ref_null") return emit("__any_box_ref");
   return false;
 }
+
+/**
+ * (#2175 V2-S3b — the D4 raw-anyref carrier) STRICT-equality (`===`/`!==`) operand
+ * boxing. Lives here (the sanctioned `boxToAny` home) rather than in the equality
+ * dispatcher so all direct `__any_box_*` emission stays in one file (#2104
+ * box-site gate). Boxes an `externref` operand through `__any_box_eq_operand`,
+ * which boxes a genuine GC reference object as tag-6 (`refval` identity) instead
+ * of the default `__any_box_string` tag-5 lie — so two externref reads of the SAME
+ * object (a descriptor `.value`, an array element, `const b = a`) land in
+ * `__any_strict_eq`'s EXISTING tag-6 `ref.eq` arm and compare identity. Primitives
+ * (string/number/boolean/bigint) and null keep their exact tag-5 box inside the
+ * helper. Standalone/WASI only (the helper is absent in host/GC, which answers
+ * object identity via host externrefs); returns false there so the caller keeps
+ * the byte-identical generic `coerceType`/`boxToAny` path. Returns true iff it
+ * emitted the boxing `call`.
+ */
+export function boxStrictEqOperand(ctx: CodegenContext, fctx: FunctionContext, operandType: ValType): boolean {
+  if (operandType.kind !== "externref") return false;
+  const boxIdx = ctx.funcMap.get("__any_box_eq_operand");
+  if (boxIdx === undefined) return false;
+  fctx.body.push({ op: "call", funcIdx: boxIdx });
+  return true;
+}
