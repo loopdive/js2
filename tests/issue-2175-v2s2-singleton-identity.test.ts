@@ -121,18 +121,21 @@ describe("#2175 V2-S2 — builtin-proto member values are identity-stable single
     ).toBe(1);
   });
 
-  it("V2-S3 (landed): gOPD(...).value === RegExp.prototype.exec is now 1 (raw-anyref carrier)", async () => {
-    // FLIPPED by V2-S3. The descriptor stores the SAME singleton as the
-    // syntactic read; the descriptor's `.value` still reads back as an
-    // externref-wrapped `$Object`, but the standalone `===` lowering
-    // (`__any_strict_eq`, any-helpers.ts) now carries a reference-IDENTITY
-    // reconciliation arm: it recovers each operand's reference payload (tag-6
-    // `refval`, else `any.convert_extern(tag-5 externval)`) to a common `eqref`
-    // and `ref.eq`-compares them, so an externref-wrapped GC ref and the raw GC
-    // ref for the SAME object compare `===` → 1. This is the C3 raw-anyref
-    // carrier; the same arm fixes the broad `const o:any={z:1}; [o,o]`
-    // array-identity #3027 class. Paired with the swap-guard below (distinct
-    // members stay `!==`), so `1` is genuine identity, not always-true.
+  it("V2-S3b (landed): gOPD(...).value === RegExp.prototype.exec is now 1 (raw-anyref carrier)", async () => {
+    // FLIPPED by V2-S3b (path 2, the D4 raw-anyref carrier). WAT-resolved root
+    // cause: this guard is a SAME-tag-5 × same-tag-5 comparison — the descriptor
+    // `.value` read AND the sibling `RegExp.prototype.exec` both marshal to
+    // externref and box via `__any_box_string` (tag-5, the #1888 lie), landing in
+    // the same-tag-5 content-eq arm (`ref.test $AnyString`-guarded, NEVER
+    // `ref.eq`), so two identical FUNCTION externrefs answered 0. V2-S3b boxes
+    // STRICT-eq operands through `__any_box_eq_operand` (any-helpers.ts): a genuine
+    // GC reference object becomes tag-6 (`refval` identity) while primitives keep
+    // their exact tag-5 box. Both operands now land in the EXISTING tag-6 `ref.eq`
+    // arm of `__any_strict_eq` — the guard flips with NO equality-arm change,
+    // exactly how `exec === exec` already resolves. The same carrier fixes the
+    // broad `const o:any={z:1}; [o,o]` array-identity + `const b=a; a===b` #3027
+    // class. Paired with the swap-guard below (distinct members stay `!==`), so
+    // `1` is genuine identity, not always-true.
     expect(
       await runStandalone(`
         export function test(): number {
@@ -144,7 +147,7 @@ describe("#2175 V2-S2 — builtin-proto member values are identity-stable single
     ).toBe(1);
   });
 
-  it("V2-S3 swap-guard: gOPD(...).value === a DIFFERENT member stays 0 (carrier discriminates)", async () => {
+  it("V2-S3b swap-guard: gOPD(...).value === a DIFFERENT member stays 0 (carrier discriminates)", async () => {
     // Proves the raw-anyref carrier short-circuits on GENUINE identity only —
     // the descriptor's `exec` value must NOT compare `===` to the `test`
     // singleton. Guards the flip above against a vacuous always-1 carrier.
@@ -159,7 +162,7 @@ describe("#2175 V2-S2 — builtin-proto member values are identity-stable single
     ).toBe(0);
   });
 
-  it("V2-S3 array-identity: const o:any={z:1}; [o,o]; a[0]===a[1] is now 1 (#3027 class)", async () => {
+  it("V2-S3b array-identity: const o:any={z:1}; [o,o]; a[0]===a[1] is now 1 (#3027 class)", async () => {
     // The broad round-trip-identity gap the carrier closes: two reads of the
     // same object through the reader (array element get → externref-wrapped)
     // now compare `===` → 1. Distinct objects still 0 (asserted inline).

@@ -451,18 +451,48 @@ export function emitToBoolean(ctx: CodegenContext, valType: ValType | null, sink
  * `compileExpression` → `isAnyValue` guard → `coerceType(ref_null $AnyValue)`
  * sequence (#1211), so the emitted bytes are identical.
  */
-function emitAnyEqOperands(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): boolean {
+function emitAnyEqOperands(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  strict: boolean,
+): boolean {
   const anyValueTarget: ValType = { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx };
   const leftType = compileExpression(ctx, fctx, expr.left);
   if (!leftType) return false;
   if (!isAnyValue(leftType, ctx)) {
-    coerceType(ctx, fctx, leftType, anyValueTarget);
+    if (!(strict && boxStrictEqOperand(ctx, fctx, leftType))) {
+      coerceType(ctx, fctx, leftType, anyValueTarget);
+    }
   }
   const rightType = compileExpression(ctx, fctx, expr.right);
   if (!rightType) return false;
   if (!isAnyValue(rightType, ctx)) {
-    coerceType(ctx, fctx, rightType, anyValueTarget);
+    if (!(strict && boxStrictEqOperand(ctx, fctx, rightType))) {
+      coerceType(ctx, fctx, rightType, anyValueTarget);
+    }
   }
+  return true;
+}
+
+/**
+ * (#2175 V2-S3b — the D4 raw-anyref carrier) Box a STRICT-equality (`===`/`!==`)
+ * externref operand as `(ref null $AnyValue)` through `__any_box_eq_operand`, which
+ * boxes a genuine GC reference object as tag-6 (`refval` identity) rather than the
+ * default `__any_box_string` tag-5 lie. This makes both operands of an object
+ * `===` land in the EXISTING tag-6 `ref.eq` arm of `__any_strict_eq`, so
+ * `gOPD(p,"exec").value === p.exec` and `[o,o]; a[0]===a[1]` answer identity — with
+ * NO equality-arm change. Primitives (string/number/boolean/bigint) and null keep
+ * their exact legacy tag-5 box inside the helper. Scoped to STRICT eq only (loose
+ * `==` runs ToPrimitive coercion and is untouched); standalone/WASI only (the helper
+ * is absent in host/GC, so this returns false and the caller keeps the byte-identical
+ * `coerceType` path). Returns true iff it emitted the boxing.
+ */
+function boxStrictEqOperand(ctx: CodegenContext, fctx: FunctionContext, operandType: ValType): boolean {
+  if (operandType.kind !== "externref") return false;
+  const boxIdx = ctx.funcMap.get("__any_box_eq_operand");
+  if (boxIdx === undefined) return false;
+  fctx.body.push({ op: "call", funcIdx: boxIdx });
   return true;
 }
 
@@ -513,7 +543,7 @@ function emitAnyEquality(
   const funcIdx = ctx.funcMap.get(helperName);
   if (funcIdx === undefined) return null;
 
-  if (!emitAnyEqOperands(ctx, fctx, expr)) return null;
+  if (!emitAnyEqOperands(ctx, fctx, expr, helperName === "__any_strict_eq")) return null;
 
   fctx.body.push({ op: "call", funcIdx });
 

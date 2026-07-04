@@ -1298,6 +1298,97 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
     ],
   );
 
+  // (#2175 V2-S3b — the D4 raw-anyref carrier) __any_box_eq_operand(val: externref)
+  //   -> ref $AnyValue.  STRICT-EQUALITY operand boxing that preserves GC-object
+  // reference IDENTITY.  Standalone/WASI only — host/GC never build it (byte-inert
+  // there; host objects are host externrefs whose `===` identity already holds).
+  //
+  // The `===`/`!==` operand-marshalling default (`__any_box_string`) tags EVERY
+  // externref as tag-5 (the #1888 box-the-externref lie).  For a genuine GC object
+  // read back through the externref boundary (a descriptor `.value`, an array
+  // element, `const b = a`), that lands both operands in the same-tag-5 arm, which
+  // does string CONTENT-eq (`ref.test $AnyString`-guarded) — never `ref.eq` — so
+  // `gOPD(p,"exec").value === p.exec` and `[o,o]; a[0]===a[1]` wrongly answer 0
+  // even though both externrefs wrap the IDENTICAL reference.  This helper boxes a
+  // genuine reference object as tag-6 (`refval` identity), so BOTH operands land in
+  // the EXISTING tag-6 `ref.eq` arm of `__any_strict_eq` — the guard flips for free
+  // with NO change to any equality arm (that is exactly how `exec === exec` already
+  // resolves; #2175 V2-S3b path 2).
+  //
+  // SAFETY (why it can only fix, never regress strict `===`): it delegates to the
+  // byte-identical `__any_box_string` for EVERYTHING except a genuine reference
+  // object.  The PRIMITIVE boxes whose `===` is value/content — $AnyString (string),
+  // $BoxedNumber, $BoxedBoolean, $BoxedBigInt — and any already-wrapped $AnyValue are
+  // explicitly EXCLUDED and keep their exact current tag-5 box.  null falls through
+  // every `ref.test` (each is 0 on null) to the same `__any_box_string` tail.  Only
+  // the residual eq-castable reference (objects, closures, vecs, class instances,
+  // `new Number()`/`new String()` wrappers, symbols — ALL identity-compared in JS)
+  // flips to tag-6.  So the ONLY behavioural change is same-object-via-two-reads:
+  // 0 → 1 (a strict-eq correctness fix; distinct objects stay `ref.eq` 0).  This is
+  // scoped to the STRICT-eq operand site only (coercion-engine `emitAnyEqOperands`),
+  // NOT the generic `boxToAny` externref chokepoint whose solo honest flip measured
+  // −788/−794 (#1888/#2141) — that surface (args/returns/stores/host comparator) is
+  // untouched.
+  if (ctx.standalone === true || ctx.wasi === true) {
+    const boxStringIdx = ctx.funcMap.get("__any_box_string");
+    if (boxStringIdx !== undefined) {
+      const legacyBox: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: boxStringIdx },
+      ];
+      // "genuine reference object" = eq-castable AND none of the value-typed
+      // primitive boxes / already-boxed $AnyValue. Each exclusion is emitted only
+      // when the module actually registered that box type (idx >= 0); a type the
+      // module never minted carries no live values, so skipping its test is safe.
+      const excluded: number[] = [
+        ctx.anyStrTypeIdx,
+        ctx.nativeBoxNumberTypeIdx,
+        ctx.nativeBoxBooleanTypeIdx,
+        ctx.nativeBigIntTypeIdx,
+        anyTypeIdx,
+      ].filter((idx) => idx >= 0);
+      const isReferenceObject: Instr[] = [
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        ...excluded.flatMap((idx): Instr[] => [
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: idx },
+          { op: "i32.eqz" },
+          { op: "i32.and" },
+        ]),
+      ];
+      addHelper(
+        "__any_box_eq_operand",
+        [{ kind: "externref" }],
+        [anyRef],
+        [
+          // any = any.convert_extern(val)
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "local.set", index: 1 },
+          ...isReferenceObject,
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "ref", typeIdx: anyTypeIdx } },
+            // tag-6 identity carrier: refval = the object, externval = null.
+            then: [
+              { op: "i32.const", value: 6 },
+              { op: "i32.const", value: 0 },
+              { op: "f64.const", value: 0 },
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+              { op: "ref.null.extern" },
+              { op: "struct.new", typeIdx: anyTypeIdx },
+            ],
+            // primitive / null / already-boxed → exact legacy tag-5 box.
+            else: legacyBox,
+          },
+        ],
+        [{ name: "any", type: { kind: "anyref" } }],
+      );
+    }
+  }
+
   // __any_unbox_i32(val: ref $AnyValue) -> i32
   // Returns i32val field; if tag==3 (f64), truncate f64val
   addHelper(

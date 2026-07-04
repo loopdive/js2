@@ -2,7 +2,7 @@
 id: 2175
 title: "architect spec: standalone builtin-prototype object representation + native-method-closure dispatch"
 status: in-progress
-assignee: ttraenkler/opus-2175s3
+assignee: ttraenkler/opus-v2s3b-impl
 sprint: current
 created: 2026-06-16
 updated: 2026-07-04
@@ -1494,3 +1494,129 @@ the step-4 instance/closed-shape arms. This is the value; do it as its own PR
 with full merge_group standalone-floor evidence (the V2-S3a −7228 lesson:
 standalone-only breaks are invisible to PR-lane checks). Inject-throw / swap-
 wrong-value proofs mandatory — builtin-proto territory hides coincidental passes.
+
+---
+
+## Implementation log — V2-S3b path 2 (sdev opus-v2s3b-impl, 2026-07-04)
+
+PR: **V2-S3b path 2 — the D4 raw-anyref carrier (strict-eq operand form)**.
+Branch `issue-2175-v2s3b-reader-arm`. Status: implemented, host-free,
+**standalone/wasi-gated (host/GC byte-inert)**.
+
+### Correction to the V2-S3a "landed" claim (a coincidental-pass near-miss)
+
+The V2-S3a impl log above claims `gOPD(...).value === RegExp.prototype.exec`
+flipped 0→1 with `tests/issue-2175-v2s2-singleton-identity.test.ts` at 8/8. On a
+CLEAN build of this branch point (= `origin/main` + the two V2-S3b doc commits)
+that test was **2/8 FAILING**: the guard AND the broad
+`const o:any={z:1}; [o,o]; a[0]===a[1]` case were both **0**. The V2-S3a
+different-tag `ref.eq` arm (any-helpers.ts:2289–2355) is REAL and correct, but —
+exactly as the WAT-resolution section above concluded — these guards are
+**same-tag-5 × same-tag-5**, so they never reach that different-tag arm. The
+V2-S3a self-report was the coincidental pass this issue keeps warning about
+(issue-tests are not in required CI, #3008, so the red test merged unnoticed).
+Verified first, then fixed — this PR genuinely turns the file green (8/8) with
+the guards observably at 1.
+
+### Root cause (WAT-confirmed independently, matches the resolved section)
+
+`wasm-dis` of the three guard binaries (`.tmp`, standalone target):
+- `gOPD(...).value === exec`: both operands are `externref`, boxed via
+  `(call $__any_box_string …)` → **tag-5** each; `__any_strict_eq` lands in the
+  same-tag-5 arm (`tag5ValueEqThen`), which does `ref.test $AnyString`-guarded
+  string CONTENT-eq — two identical FUNCTION externrefs are not strings → **0**.
+- `exec === exec`: NOT `__any_strict_eq` at all — the INLINE externref `===`
+  lowering, which carries a `ref.test (ref eq) … ref.eq` object-identity arm →
+  **1**. That is the model this fix extends to the boxed-operand path.
+- `[o,o]; a[0]===a[1]`: same as gOPD — two tag-5 boxes of the same object → 0.
+Also confirmed on main: `const a:any={x:1}; const b:any=a; a===b` → **0** (the
+broad identity bug); `10n===10n` → 1 (bigint value-eq, via the inline path).
+
+### The fix — PATH 2 realized at the STRICT-eq operand site (not a signature change)
+
+Two implementations of "make the value read a tag-6 GC ref" were considered:
+- **Rejected — change `__extern_get`'s return type** externref→anyref. It is a
+  **JS host IMPORT** in host mode with a fixed externref ABI (dual-mode forbids
+  diverging the standalone signature) and has ~76 call-emission sites. Too broad
+  and it breaks host mode.
+- **Rejected — flip `honestAnyBoxing` globally** (value-tags.ts:187–213). That
+  is the documented **−788/−794** landmine (#1888/#2141): the generic `boxToAny`
+  externref chokepoint feeds args/returns/stores and the test262 harness
+  comparator, which depend on the tag-5 box-the-externref behaviour.
+- **Chosen — a strict-eq-operand-only carrier.** New helper
+  `__any_box_eq_operand` (any-helpers.ts, standalone/wasi only) boxes a **genuine
+  GC reference object** as **tag-6** (`refval` identity) and delegates EVERYTHING
+  else — string / number / boolean / bigint / null / already-boxed `$AnyValue` —
+  to the byte-identical `__any_box_string`. It is wired ONLY into
+  `emitAnyEqOperands` (coercion-engine.ts) for **strict** `===`/`!==`
+  (`helperName === "__any_strict_eq"`), and only for an `externref` operand. Both
+  object operands then land in the EXISTING tag-6 `ref.eq` arm of
+  `__any_strict_eq` — **no equality-arm change** (no −7228 same-tag-5 minefield;
+  no global honest flip). This is ~100× smaller a surface than the global flip:
+  the boxed operand's ONLY consumer is `__any_strict_eq`, whose tag-6 arm is
+  complete and correct.
+
+### Why it can only fix, never regress strict `===` (safety argument)
+
+- Every value/content-compared **primitive** ($AnyString, $BoxedNumber,
+  $BoxedBoolean, $BoxedBigInt) and `$AnyValue` is explicitly EXCLUDED (each test
+  emitted only when its typeIdx ≥ 0) → keeps its exact current tag-5 box. `null`
+  falls through every `ref.test` to the same `__any_box_string` tail.
+- Only a residual eq-castable **reference** (objects, closures, vecs, class
+  instances, `new Number()`/`new String()` wrappers, symbols — ALL
+  identity-compared in JS) flips to tag-6. So the ONLY behavioural change is
+  **same-object-via-two-reads: 0 → 1** — always a `===` correctness gain.
+- Consistency, not a new split: `__extern_strict_eq` / SameValue / array-search
+  ALREADY carry a `ref.eq` object-identity fast path (#2734). The boxed-operand
+  `any === any` path was the outlier lacking it; this closes that gap.
+- Loose `==` (ToPrimitive coercion) is untouched (strict-only). Host/GC never
+  build the helper (`ctx.standalone || ctx.wasi` gate) → byte-inert; `emitAnyEq
+  Operands` returns to the identical `coerceType` path there.
+
+### Proof (inject/contrast + anti-vacuity, host-free throughout; 0 `env` imports)
+
+Branch point → with the carrier (all `--target standalone`):
+- `gOPD(RegExp.prototype,"exec").value === RegExp.prototype.exec`: **0 → 1**;
+  `!==` form: **1 → 0**.
+- swap-wrong-value `gOPD(...,"exec").value === RegExp.prototype.test`: **0**
+  (discriminates — not always-1).
+- `const b=a; a===b`: **0 → 1**; distinct `{x:1}==={x:1}`: **0**.
+- `[o,o]; a[0]===a[1]`: **0 → 1**; `a[0] === (fresh {z:1})`: **0**.
+- Primitives PRESERVED: `10n===10n`→1, `10n===11n`→0; `"a"+"b"==="ab"`→1,
+  `"ab"==="ac"`→0; `23===23.0`→1, `1===2`→0; `null===null`→1; `{x:1}==="x"`→0,
+  `{x:1}===5`→0 (different-tag → V2-S3a arm → correct).
+Tests: `tests/issue-2175-v2s2-singleton-identity.test.ts` **8/8** (was 2/8
+failing on main); new `tests/issue-2175-v2s3b-carrier.test.ts` **10/10**
+(each identity `→1` paired with a swap/distinct `→0`). Regression (isolated,
+load-flake-free): `issue-2734`, `issue-2040-tag5-field4-eq`, `loose-equality`,
+`issue-2063-switch-strict-equality`, `issue-2158-class-identity-standalone`,
+`issue-2583-any-array-method-brand`, `issue-2191-case-equals`, `issue-1888`
+(×3), `issue-2175-typeof-function-arm`, `issue-2175-native-proto-brands`,
+`issue-2059-any-relational`, `issue-2058-any-plus-string`,
+`issue-2106-any-array-element-tag`, `issue-2026-constructor-identity-any`,
+`issue-1917-any-param-toprimitive`, `issue-1103a-standalone-map`,
+`issue-1461-standalone-search-arraylike`, `issue-1917-emit-eq{,-e6}` — all green
+(≈300 tests). `tsc --noEmit` clean. (Pre-existing red on the branch point,
+NOT regressed by this PR: `issue-1917-coercion-plan.test.ts` 1/14 — a stale
+`coercionPlan` externref→anyref expectation, fails identically on the clean
+branch HEAD; issue-tests are not in required CI, #3008.)
+
+### Scope landed vs banked
+
+LANDED: the guard-flip carrier + the broad object-identity-through-externref-reads
+#3027 class (`[o,o]`, `const b=a`, gOPD `.value`). This is the D4 raw-anyref
+carrier's IDENTITY half, delivered at the strict-eq boundary rather than by
+re-typing `__extern_get`. BANKED (unchanged from the V2-S3a bank above): the
+`$NativeProto` reader-arm MOP (`$props` table + populate + `ensure_props` +
+step-3/4 receiver-classification arms) — the ~1,552-test RECEIVER-CLASSIFICATION
+driver — stays its own PR per the spec's "do not fold S3+S5" discipline (a large
+object-runtime change needing separate merge_group evidence). This PR's floor
+delta is the object-identity class; the receiver-classification breadth is the
+next slice.
+
+### Merge discipline
+
+FULL `merge_group` standalone `host_free_pass` floor validation is REQUIRED
+(path-2 changes the strict-eq value-read representation; a standalone-only floor
+move is invisible to PR-lane checks — the V2-S3a −7228 lesson). Expect the floor
+to move POSITIVE (the object-identity class). Report the `host_free_pass` delta.
