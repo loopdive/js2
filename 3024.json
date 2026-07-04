@@ -1,9 +1,8 @@
 {
   "id": "3024",
-  "assignee": "ttraenkler/dev-3024",
-  "status": "released",
-  "branch": "issue-3024-dstr-nested-objlit-structnew",
-  "claimed_at": "2026-07-04T21:09:57Z",
-  "updated_at": "2026-07-04T21:54:23Z",
-  "released_at": "2026-07-04T21:54:23Z"
+  "assignee": "ttraenkler/dev-3023",
+  "status": "in-progress",
+  "branch": "issue-3024-invalid-wasm-emission",
+  "claimed_at": "2026-07-04T22:01:47Z",
+  "updated_at": "2026-07-04T22:01:47Z"
 }
