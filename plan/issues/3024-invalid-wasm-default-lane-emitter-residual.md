@@ -204,3 +204,47 @@ loops, strings, objects, any, bitwise, for-of) is **byte-identical** (sha256) to
 - `__vec_from_extern_*` `array.set`, async-gen `__closure_*`, `struct.new` arg
   count. The 131 bucket has multiple independent root causes; this PR clears the
   eval-redeclaration numeric/compound sub-cluster only.
+
+## Investigation (2026-07-05, dev-3023) — `struct.new (need N, got N-1)` sub-cluster
+
+Isolated the largest identifiable remaining sub-cluster (9 files, one root
+cause): **nested object binding pattern WITH a default value** —
+`*-obj-ptrn-prop-obj.js` across `var`/`let`/`const`/`for`/`function`/
+`generators`/`async-generator` dstr. Minimal untyped repro (compiles to
+invalid Wasm — `struct.new (need 3, got 2)`):
+
+```ts
+const { w: { x, y, z } = { x: 4, y: 5, z: 6 } } = { w: { x: undefined, z: 7 } };
+```
+
+Isolation matrix (confirmed against current main, `skipSemanticDiagnostics`):
+- `{ w = {x:4,y:5,z:6} }` (default, **no nesting**) → OK.
+- `{ w: {x,y,z} }` (nested, **no default**) → OK.
+- `{ a = {x:4,y:5,z:6} }` (3-field literal default, no nesting) → OK.
+- ONLY `{ w: <object-pattern> = <object-literal-default> }` fails (both 3- and
+  2-field defaults).
+
+**Root cause** (retro-patch coverage gap, `#2544`-class): the RHS property value
+`{x:undefined, z:7}` is compiled FIRST and registers the anon struct with its 2
+present fields `{x, z}`; the nested default `{x:4,y:5,z:6}` then unifies into the
+SAME anon-struct family and **appends the missing field `y`**, growing it to 3
+fields `{x, z, y}`. Growing a struct fires `patchStructNewForAddedField`
+(`src/codegen/expressions/late-imports.ts:716-814`) which must retro-pad every
+already-emitted `struct.new` of that type with a default for the new field — but
+the failing `struct.new` sits in a buffer the walk does not reach (the walk
+covers `ctx.mod.functions` + `fctx.body` + `fctx.savedBodies` + `ctx.liveBodies`
+(added by #2544), yet this repro still fails, so a buffer is still uncovered OR
+the growth happens after the patch pass). Emission sites:
+`destructureParamObject` (`src/codegen/destructuring-params.ts:1089-1116`,
+default at `:1102-1110`) → `emitNestedBindingDefault`
+(`src/codegen/statements/destructuring.ts:453-527`, detached `if.then` buffer via
+`collectInstrs` at `:464-470`) → `compileObjectLiteralForStruct`
+(`src/codegen/literals.ts:1717`, `struct.new` at `:2208`).
+
+NOT attempting a blind fix here — retro-patch coverage is subtle and a mis-fix
+risks silent operand corruption. Needs a targeted trace of which buffer holds
+the short `struct.new` at growth time and why the `patchStructNewForAddedField`
+walk misses it (candidate: register the `emitNestedBindingDefault` detached
+buffer into the patch's traversal set, or defer the field-growth until after the
+struct.new is spliced into `fctx.body`). Related fixed siblings: #2544, #2565,
+#2587.
