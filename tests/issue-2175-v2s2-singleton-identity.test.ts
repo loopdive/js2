@@ -121,18 +121,22 @@ describe("#2175 V2-S2 — builtin-proto member values are identity-stable single
     ).toBe(1);
   });
 
-  it("V2-S3 (landed): gOPD(...).value === RegExp.prototype.exec is now 1 (raw-anyref carrier)", async () => {
-    // FLIPPED by V2-S3. The descriptor stores the SAME singleton as the
-    // syntactic read; the descriptor's `.value` still reads back as an
-    // externref-wrapped `$Object`, but the standalone `===` lowering
-    // (`__any_strict_eq`, any-helpers.ts) now carries a reference-IDENTITY
-    // reconciliation arm: it recovers each operand's reference payload (tag-6
-    // `refval`, else `any.convert_extern(tag-5 externval)`) to a common `eqref`
-    // and `ref.eq`-compares them, so an externref-wrapped GC ref and the raw GC
-    // ref for the SAME object compare `===` → 1. This is the C3 raw-anyref
-    // carrier; the same arm fixes the broad `const o:any={z:1}; [o,o]`
-    // array-identity #3027 class. Paired with the swap-guard below (distinct
-    // members stay `!==`), so `1` is genuine identity, not always-true.
+  it("V2-S3b boundary (characterization): gOPD(...).value === RegExp.prototype.exec is NOT YET 1", async () => {
+    // CHARACTERIZATION guard, not a desired end-state — flips to `.toBe(1)` in
+    // V2-S3b (the $NativeProto reader-arm MOP). The V2-S3a carrier arm
+    // (`__any_strict_eq`, different-tag branch only) canNOT flip this: the
+    // descriptor `.value` read-back is a DIFFERENT ref at the SAME tag as the
+    // syntactic singleton (both box the same way), and the only equality path
+    // that could reconcile a same-tag pair is the same-tag object-identity arm
+    // — which produced −7228 host-free false positives (an object's two
+    // $AnyValue boxes at the same tag are NOT one ref) and was scoped OUT.
+    // The correct flip is representational: V2-S3b makes `__extern_get` return
+    // the actual GC singleton ref, so the `.value` read and the syntactic read
+    // are literally the SAME object (tag-6), and the EXISTING same-box/tag-6
+    // `ref.eq` arm answers `===` → 1 for free (exactly how `exec === exec`
+    // above already works). See plan/issues/2175-standalone-builtin-prototype-readers.md
+    // (V2-S3a log). THIS TEST WILL FAIL LOUDLY when V2-S3b lands → update to
+    // `.toBe(1)` then.
     expect(
       await runStandalone(`
         export function test(): number {
@@ -141,13 +145,14 @@ describe("#2175 V2-S2 — builtin-proto member values are identity-stable single
           return (v === m) ? 1 : 0;
         }
       `),
-    ).toBe(1);
+    ).toBe(0);
   });
 
-  it("V2-S3 swap-guard: gOPD(...).value === a DIFFERENT member stays 0 (carrier discriminates)", async () => {
-    // Proves the raw-anyref carrier short-circuits on GENUINE identity only —
-    // the descriptor's `exec` value must NOT compare `===` to the `test`
-    // singleton. Guards the flip above against a vacuous always-1 carrier.
+  it("V2-S3a cross-representation carrier: swap-guard stays 0 (arm discriminates, not always-1)", async () => {
+    // The V2-S3a different-tag carrier arm must never over-identify: a
+    // descriptor's `exec` value must NOT compare `===` to the `test` singleton.
+    // Stays 0 both before and after V2-S3b — a permanent anti-vacuity guard for
+    // the eventual flip above (proves `===` on these is a real discriminator).
     expect(
       await runStandalone(`
         export function test(): number {
@@ -159,21 +164,29 @@ describe("#2175 V2-S2 — builtin-proto member values are identity-stable single
     ).toBe(0);
   });
 
-  it("V2-S3 array-identity: const o:any={z:1}; [o,o]; a[0]===a[1] is now 1 (#3027 class)", async () => {
-    // The broad round-trip-identity gap the carrier closes: two reads of the
-    // same object through the reader (array element get → externref-wrapped)
-    // now compare `===` → 1. Distinct objects still 0 (asserted inline).
-    expect(
-      await runStandalone(`
+  it("V2-S3b boundary (characterization): const o:any={z:1}; [o,o]; a[0]===a[1] is NOT YET 1", async () => {
+    // Same-tag object round-trip identity — the broad #3027 class. Both array
+    // element reads box at the SAME tag, so the V2-S3a different-tag carrier
+    // does not fire (an equality arm cannot safely close this — same-tag
+    // object-identity `ref.eq` is the −7228-false-positive minefield). Closes
+    // with V2-S3b's reader-arm MOP (raw-GC-ref carrier). Distinct objects stay
+    // 0 either way (asserted inline — the invariant V2-S3b must preserve).
+    const same = await runStandalone(`
         export function test(): number {
           const o: any = { z: 1 };
           const a: any[] = [o, o];
-          const same: number = (a[0] === a[1]) ? 1 : 0;
-          const b: any = { z: 1 };
-          const diff: number = (a[0] === b) ? 1 : 0;
-          return (same === 1 && diff === 0) ? 1 : 0;
+          return (a[0] === a[1]) ? 1 : 0;
         }
-      `),
-    ).toBe(1);
+      `);
+    const diff = await runStandalone(`
+        export function test(): number {
+          const o: any = { z: 1 };
+          const a: any[] = [o, o];
+          const b: any = { z: 1 };
+          return (a[0] === b) ? 1 : 0;
+        }
+      `);
+    expect(same).toBe(0); // characterization — flips to 1 in V2-S3b
+    expect(diff).toBe(0); // invariant — distinct objects never ===
   });
 });

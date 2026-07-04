@@ -1262,20 +1262,22 @@ Status: implemented, host-free, **standalone/wasi-gated (host byte-identical)**.
 ### The senior-dev scoping call (WHY this is S3a, not the full C3)
 
 V2-S3 (C3) is two genuinely separable blast radii: **(a)** the raw-anyref
-carrier that reconciles GC-object identity across representations — this is
-what flips the banked `.toBe(0)` guard and fixes a broad #3027 identity class —
-and **(b)** the `$NativeProto` reader-arm MOP (`$props` table + populate +
-`ensure_props` + step-3/4 arms across the 7 reader natives) that makes a proto
-object *flowing as a runtime value* answer reflective reads. The v2 spec itself
-mandates keeping the reader-arm blast radius on its own CI evidence
-("Do not fold S3+S5 into one PR"). The carrier (a) is small, provably safe, and
-delivers the explicitly-requested acceptance signal; the reader arm (b) is a
-large object-runtime change. Landing (a) alone as a tight, well-proven slice —
-and **banking (b)** with the note below — is the disciplined call over one
-sprawling PR that conflates two minefields (equality machinery + reader natives)
-in a single CI signal. The equality machinery is the codebase's most
-regression-prone area (documented −162/−788/−794/−1245 incidents in
-`any-helpers.ts`), so it earns its own isolated evidence.
+carrier that reconciles GC-object identity across *cross-representation*
+(different-tag) pairs, and **(b)** the `$NativeProto` reader-arm MOP (`$props`
+table + populate + `ensure_props` + step-3/4 arms across the 7 reader natives)
+that makes a proto object *flowing as a runtime value* answer reflective reads
+AND returns the actual GC singleton ref (which is what flips the identity guard
+— see "does NOT flip the guard" below). The v2 spec itself mandates keeping the
+reader-arm blast radius on its own CI evidence ("Do not fold S3+S5 into one PR").
+The carrier (a) is small and, once correctly scoped to the different-tag branch,
+provably safe; the reader arm (b) is a large object-runtime change AND the actual
+#3027 driver (the ~1552 flowing-proto residual). Landing (a) alone as a tight,
+well-proven slice — and **dispatching (b)** as the next slice — is the
+disciplined call over one sprawling PR that conflates two minefields (equality
+machinery + reader natives) in a single CI signal. The equality machinery is the
+codebase's most regression-prone area (documented −162/−788/−794/−1245 incidents
+in `any-helpers.ts`; this slice itself measured a −7228 first-attempt breach that
+the merge_group caught — see below), so it earns its own isolated evidence.
 
 ### Root cause (traced, not narrative)
 
@@ -1297,54 +1299,76 @@ point at the identical object. That is the measured wall behind
 `const o:any={z:1}; const a:any[]=[o,o]; a[0]===a[1]` → 0 class (a large #3027
 subset: any object that round-trips through the externref reader loses `===`).
 
-### The fix
+### The fix — AND the correction that reshaped it (the −7228 finding)
 
-A **reference-identity reconciliation arm** inserted in `__any_strict_eq`
-*after* the numeric-class arm and *before* `tagA != tagB → 0`: recover each
-operand's reference payload to a common `eqref` (`refval` field 3 if non-null,
-else `any.convert_extern(externval field 4)`), and if both are `eq` refs and
-`ref.eq`-identical → return 1. This is the exact discipline of the #2734
-`__extern_strict_eq` object-identity fast path, lifted onto the `$AnyValue`
-path so the **whole `any === any` surface** honours it (not just array-search).
-Reuses the `anyA`/`anyB` (locals 4/5) scratch already declared. **Gated on
-`ctx.standalone || ctx.wasi`** — the split is a native-GC phenomenon; host mode
-(objects = host externref proxies) already answers identity and stays
-byte-identical (zero host blast radius; #1888's host `isSameValue` untouched).
+**First attempt (WRONG, caught by the merge_group):** a reference-identity
+reconciliation arm inserted *before* the `tagA != tagB → 0` gate — i.e. for
+**all** tag pairs, including same-tag. Recover each operand's reference payload
+to a common `eqref` (`refval` field 3 if non-null, else
+`any.convert_extern(externval field 4)`) and `ref.eq`. This flipped the guard
+locally, but the merge_group standalone floor caught a **−7228 host-free**
+regression (0 js-host — standalone-only, so PR-lane checks passed; a textbook
+"only merge_group catches it" case). Root cause of the false positives: for
+**same-tag** operands the recover-and-`ref.eq` over-identifies — two `$AnyValue`
+boxes of the *same logical value at the same tag* are NOT guaranteed one `eq`
+ref (the recover's `refval`-first / externval-fallback picks a non-canonical
+payload), so genuinely-distinct same-tag values wrongly compared `===` → the
+class/dstr/generator cluster inverted (~11k standalone tests). This is exactly
+the #1888 minefield the code comments warn about (−162/−788), scaled up.
 
-**Why it cannot false-positive** (the safety argument): `ref.eq` is exact
-identity. Distinct number/string/object boxes are distinct refs → `ref.eq` 0 →
-falls through to the existing value arms unchanged (numbers already returned via
-the earlier numeric-class arm; content-equal distinct strings still reach the
-tag-5 content-eq arm). Only a genuinely identical reference short-circuits, and
-`x === x` for the same reference is always `true` in JS. So the arm only ever
-converts a *wrong 0* into a *correct 1*; it removes/flips no value comparison.
-This is categorically different from the tag-5 VALUE classifier (`tag5ValueEqThen`,
-flag-off) that unmasked −162: that changes value-equality of *distinct* boxes;
-this changes only reference-identity of the *same* box under mixed tags.
+**Landed fix (commit `8ec9a25e`):** move the reconciliation arm **INTO the
+`tagA != tagB` branch** (replacing the legacy flat `0`). It now fires **only for
+cross-representation (different-tag) pairs**; same-tag pairs keep their existing
+tag-specific arms untouched (tag-6×tag-6 already has `ref.eq`; tag-5×tag-5 keeps
+content-eq). Gated on `ctx.standalone || ctx.wasi` (host byte-identical).
+Ground-truthed on a 300-file real-test262 standalone batch: original-arm 109
+pass, no-arm 140, this fix 140 — **0 regressions vs no-arm**, −36 same-tag false
+positives eliminated (scaled: the −7228 is gone).
 
-### Proof (inject/contrast + anti-vacuity, host-free throughout)
+### What V2-S3a does and does NOT achieve (honest scope)
 
-Baseline (`origin/issue-2175-v2s2`, my branch point) → with the arm:
-- `gOPD(RegExp.prototype,"exec").value === RegExp.prototype.exec`: **0 → 1**
-  (the banked characterization guard, now flipped to `.toBe(1)`);
-- `const o:any={z:1}; [o,o]; a[0]===a[1]`: **0 → 1** (#3027 identity class);
-- `const o:any={z:1}; const p:any=o; o===p`: **0 → 1**.
-- **Anti-vacuity (the arm DISCRIMINATES, is not always-1):** distinct objects
-  `{x:1}==={x:1}` → **0**; swap-guard `gOPD(...,"exec").value === RegExp.prototype.test`
-  → **0**; `exec !== test` → **0**; `a[0] === (a fresh {z:1})` → **0**;
-  content-eq strings `"ab" === "a"+"b"` → **1** (content path intact);
-  distinct strings → **0**; `23 === 23.0` → **1**; `1 === 2` → **0**;
-  `null === null` → **1**; `NaN === NaN` → **0**; `"x" === {x:1}` → **0**.
+- **Does:** eliminates the flat-`0` refusal for genuine cross-representation
+  identity (a tag-6 raw-GC-ref vs a tag-5 externref-wrapping-the-SAME-ref),
+  safely and host-free. This is the reader-consumable foundation V2-S3b sits on.
+- **Does NOT flip the guard.** The measured surprise that reshaped this slice:
+  `gOPD(RegExp.prototype,"exec").value === RegExp.prototype.exec` is a
+  **same-tag, different-ref** comparison — the descriptor `.value` read-back and
+  the syntactic singleton box the SAME way but are NOT one `eq` ref (V2-S2 stores
+  the singleton, but the synthesized-descriptor value read materializes a
+  distinct carrier). The ONLY equality path that could reconcile a same-tag pair
+  is the same-tag object-identity arm — the −7228 minefield above. So an equality
+  tweak **cannot** flip the guard. The correct flip is **representational**, owned
+  by **V2-S3b**: make `__extern_get` return the actual GC singleton ref so the
+  `.value` read and the syntactic read are literally the SAME object (tag-6), and
+  the EXISTING same-box/tag-6 `ref.eq` arm answers `===` → 1 for free — precisely
+  how `RegExp.prototype.exec === RegExp.prototype.exec` (both tag-6, one ref)
+  already works today (verified: **1**). The broad `[o,o]` array-identity #3027
+  class is the same same-tag story — also V2-S3b.
 
-Tests: `tests/issue-2175-v2s2-singleton-identity.test.ts` — the boundary guard
-flipped to `.toBe(1)` + two new anti-vacuity cases (swap-guard on the descriptor
-value; array-identity with a distinct-object negative) — **8/8**. Regression
-(isolated, load-flake-free): `issue-2734`, `issue-2040-tag5-field4-eq`,
+### Proof (host-free throughout)
+
+- `RegExp.prototype.exec === RegExp.prototype.exec` (both tag-6, one ref) → **1**
+  (existing arm; unchanged — confirms the same-tag/one-ref path already works).
+- Cross-rep carrier discriminates (never over-identifies): the descriptor `exec`
+  value `=== RegExp.prototype.test` (different member) → **0**; `exec !== test` →
+  **0**; distinct objects `{x:1}==={x:1}` → **0**; `"x" === {x:1}` → **0**.
+- Value arms intact: content-eq strings `"ab" === "a"+"b"` → **1**; distinct
+  strings → **0**; `23 === 23.0` → **1**; `1 === 2` → **0**; `null === null` →
+  **1**; `NaN === NaN` → **0**.
+- **Characterization guards (deferred to V2-S3b, `.toBe(0)`):**
+  `gOPD(...).value === RegExp.prototype.exec` → **0** (flips to 1 in V2-S3b);
+  `[o,o]; a[0]===a[1]` → **0** (flips in V2-S3b). These FAIL LOUDLY when V2-S3b
+  lands — the intended coupling.
+
+Tests: `tests/issue-2175-v2s2-singleton-identity.test.ts` **8/8** (the two
+boundary characterizations at `.toBe(0)` + the cross-rep discrimination guard).
+Regression (isolated, load-flake-free): `issue-2734`, `issue-2040-tag5-field4-eq`,
 `loose-equality`, `issue-2063-switch-strict-equality`,
 `issue-2158-class-identity-standalone`, `issue-2579`,
 `issue-2583-any-array-method-brand`, `issue-2191-case-equals`, `issue-1888`
 (×3 files), `issue-2175-typeof-function-arm`, `issue-2175-native-proto-brands`
-— all green. `tsc --noEmit` clean. The 4 pre-existing
+— all green. `tsc --noEmit` clean. The −7228 floor breach is gone (merge_group
+re-validation is the gate). The 4 pre-existing
 `issue-2175-regexp-proto-readers` getter-body failures fail IDENTICALLY on the
 branch point (V2-S5 boundary, not regressed). Full #3027 blast radius validated
 on CI merge_group + standalone floor.
