@@ -1,8 +1,9 @@
 {
   "id": "3024",
   "assignee": "ttraenkler/dev-3024",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3024-dstr-nested-objlit-structnew",
   "claimed_at": "2026-07-04T21:09:57Z",
-  "updated_at": "2026-07-04T21:09:57Z"
+  "updated_at": "2026-07-04T21:54:23Z",
+  "released_at": "2026-07-04T21:54:23Z"
 }
