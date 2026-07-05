@@ -1,8 +1,9 @@
 {
   "id": "3044",
   "assignee": "ttraenkler/dev-3044",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3044-defineproperty-descriptor-crashes",
   "claimed_at": "2026-07-05T04:42:10Z",
-  "updated_at": "2026-07-05T04:42:10Z"
+  "updated_at": "2026-07-05T05:16:13Z",
+  "released_at": "2026-07-05T05:16:13Z"
 }
