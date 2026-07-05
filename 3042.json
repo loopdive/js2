@@ -1,8 +1,9 @@
 {
   "id": "3042",
   "assignee": "ttraenkler/dev-3042",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3042-defineproperty-attr-roundtrip",
   "claimed_at": "2026-07-05T04:41:36Z",
-  "updated_at": "2026-07-05T04:41:36Z"
+  "updated_at": "2026-07-05T05:17:42Z",
+  "released_at": "2026-07-05T05:17:42Z"
 }
