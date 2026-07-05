@@ -159,6 +159,68 @@ interface CompileNestedFunctionOptions {
   reuseReservedEntry?: WasmFunction;
 }
 
+/**
+ * (#3035) Cache of, per enclosing function/source body, the set of outer-scope
+ * variable names that are ASSIGNED inside SOME nested function/arrow/method
+ * within that body. Keyed by the enclosing body node so it's computed at most
+ * once per enclosing scope.
+ */
+const nestedFnMutatedNamesCache = new WeakMap<ts.Node, Set<string>>();
+
+/**
+ * (#3035) Collect the outer-scope names that are written inside a nested
+ * function scope of `enclosingBody`.
+ *
+ * Why this matters for CAPTURE representation: a variable written by a nested
+ * closure (a `function` decl, arrow, or object-literal method — e.g. an
+ * iterator's `return()` callback) is boxed into a shared ref-cell so the write
+ * propagates across the scope boundary. That boxing DISCONNECTS the variable
+ * from the plain outer local. A sibling nested FUNCTION DECLARATION that only
+ * READS the same variable was, historically, captured BY VALUE (a snapshot of
+ * the now-stale plain local) — so it never observed the writer's mutation.
+ * This is exactly the arrow path's `writtenInOuter` rule (closures.ts): a
+ * read-only capture of a variable mutated elsewhere in the enclosing scope must
+ * be captured BY REF (through the same cell). The nested-fn-decl path lacked
+ * it, which silently mis-compiled the for-await-of / async-generator
+ * iterator-close (`return()` → `doneCallCount`) test262 cluster and any
+ * two-sibling-closure shared-mutable-binding shape (verified sync too).
+ *
+ * `collectWrittenIdentifiers` already handles shadowing at each function
+ * boundary (a name re-declared as an own local of a deeper scope is excluded),
+ * so we only need to restrict collection to writes that occur strictly INSIDE
+ * a nested function scope. Top-level straight-line writes of the enclosing
+ * function stay unboxed — a by-value reader snapshots the live local at the
+ * direct call site, which is correct for those (a var written only in the
+ * enclosing straight-line body is never boxed).
+ */
+function collectNamesMutatedInNestedFunctions(enclosingBody: ts.Node): Set<string> {
+  const cached = nestedFnMutatedNamesCache.get(enclosingBody);
+  if (cached) return cached;
+  const out = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isConstructorDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node)
+    ) {
+      // Every assignment inside this nested scope (to a name it does not itself
+      // declare) mutates an enclosing/outer binding. `collectWrittenIdentifiers`
+      // descends with per-boundary shadowing, so no further recursion is needed
+      // for this subtree.
+      collectWrittenIdentifiers(node, out);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(enclosingBody, visit);
+  nestedFnMutatedNamesCache.set(enclosingBody, out);
+  return out;
+}
+
 export function compileNestedFunctionDeclaration(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -261,6 +323,39 @@ export function compileNestedFunctionDeclaration(
     collectWrittenIdentifiers(s, writtenInBody, ownLocals);
   }
 
+  // (#3035) Also detect captured variables that are mutated by a SIBLING nested
+  // scope (another `function` decl, arrow, or object-literal method) within the
+  // enclosing function — e.g. an iterator's `return()` callback doing
+  // `doneCallCount += 1`. Such a variable is boxed into a shared ref-cell by the
+  // writer's closure materialization; a read-only capture here MUST therefore be
+  // by-ref (through the same cell), not a stale by-value snapshot of the outer
+  // local. Mirrors the arrow path's `writtenInOuter` rule (closures.ts). Without
+  // it, the for-await-of / async-generator iterator-close cluster (and every
+  // two-sibling-closure shared-mutable-binding shape, sync included) read 0.
+  let mutatedInSiblingScope: Set<string> = writtenInBody;
+  {
+    let enclosing: ts.Node | undefined = stmt.parent;
+    while (
+      enclosing &&
+      !ts.isFunctionDeclaration(enclosing) &&
+      !ts.isFunctionExpression(enclosing) &&
+      !ts.isArrowFunction(enclosing) &&
+      !ts.isMethodDeclaration(enclosing) &&
+      !ts.isConstructorDeclaration(enclosing) &&
+      !ts.isGetAccessorDeclaration(enclosing) &&
+      !ts.isSetAccessorDeclaration(enclosing) &&
+      !ts.isSourceFile(enclosing)
+    ) {
+      enclosing = enclosing.parent;
+    }
+    const enclosingBody = enclosing
+      ? ts.isSourceFile(enclosing)
+        ? enclosing
+        : (enclosing as { body?: ts.Node }).body
+      : undefined;
+    if (enclosingBody) mutatedInSiblingScope = collectNamesMutatedInNestedFunctions(enclosingBody);
+  }
+
   const captures: {
     name: string;
     type: ValType;
@@ -360,7 +455,7 @@ export function compileNestedFunctionDeclaration(
     // (`localMap.get(cap.name) ?? cap.outerLocalIdx`) to be re-applied AND
     // the destructure-assign path to be box-aware. Both are out of scope
     // for this PR; the test is marked `.todo` until that follow-up lands.
-    const isMutable = writtenInBody.has(name);
+    const isMutable = writtenInBody.has(name) || mutatedInSiblingScope.has(name);
     // #2623 Slice A: detect a capture whose outer slot is already the canonical
     // ref cell (the outer scope boxed it). For such a name `type` above is the
     // cell ref type, so the generic mutable-capture path would re-box to a
