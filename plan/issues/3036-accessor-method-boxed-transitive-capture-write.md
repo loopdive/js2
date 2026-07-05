@@ -1,10 +1,12 @@
 ---
 id: 3036
 title: "object/class methods & accessors can't read/write a BOXED transitively-captured outer variable (emit garbage)"
-status: ready
+status: done
 sprint: current
 created: 2026-07-04
-updated: 2026-07-04
+updated: 2026-07-05
+completed: 2026-07-05
+assignee: ttraenkler/dev-3036
 priority: high
 horizon: l
 feasibility: hard
@@ -125,3 +127,82 @@ Stack on `issue-3035-async-cps-iterclose-version` (has #3035 bug #1 + #2664).
 Re-claim with `--force` if resuming that branch. Once #3036 lands there, the
 whole stack clears #2664's `merge_group` regressions and can merge, delivering
 #2664's +68 (`.next`-callability) win + the genuine iterator-close cluster.
+
+## Implementation (dev-3036, branch `issue-3036-accessor-method-boxed-capture`)
+
+Implemented the recommended fix. **Key design decision: ADDITIVE, not a
+move.** Rather than moving boxed names OUT of `ctx.capturedGlobals` into
+`ctx.capturedBoxGlobals` (which would silently change every unmodified
+consumer — closure materialization, the class-defer heuristic, var-init
+re-sync, `isUnresolvableIdent`), the boxed name is registered in **both**:
+the existing `capturedGlobals` entry is kept byte-identical, and the same
+global is **additionally** recorded in `capturedBoxGlobals` **with the inner
+`valType`**. The scalar read/write sites consult `capturedBoxGlobals` FIRST
+and deref; every other site is untouched. This makes unmodified paths provably
+regression-free (an unmodified site sees exactly the old map state) and lets
+the fix be added incrementally.
+
+The `capturedBoxGlobals` entry `valType` is present ONLY for direct boxed
+captures (a var the body reads/writes itself). The pre-existing transitive-fn
+box entries (used only by closure materialization in `calls.ts`) leave it
+undefined; `getCapturedBoxGlobal` returns `undefined` for those, so the scalar
+sites never deref a name they shouldn't.
+
+Files changed:
+- `context/types.ts` — added optional `valType` to the `capturedBoxGlobals`
+  entry type, with a doc note on the direct-vs-transitive distinction.
+- `closures.ts` (`promoteAccessorCapturesToGlobals`) — after the existing
+  value-global promotion, if the promoted local is boxed
+  (`fctx.boxedCaptures.has(name)`), additionally register the global in
+  `capturedBoxGlobals` with `refCellTypeIdx` + `valType`.
+- `property-access.ts` — three shared helpers: `getCapturedBoxGlobal`
+  (resolve, valType-gated), `emitCapturedBoxGlobalRead` (null-guarded
+  `global.get; struct.get 0`, mirrors the boxedCaptures local-box read),
+  `emitCapturedBoxGlobalWrite` (null-guarded `struct.set 0` from a temp local).
+- `identifiers.ts` — read branch before `capturedGlobals`.
+- `assignment.ts` — box-first branches at: simple `=`, the
+  destructuring/for-of write helper, the top of `compileCompoundAssignment`
+  (covers `+=`/`-=`/… numeric + externref string-concat via the shared
+  `emitCompoundOp`), and the logical-assign (`&&=`/`||=`/`??=`) storage
+  descriptor (new `capturedBox` kind).
+- `unary-updates.ts` — box branches at prefix `++`, prefix `--`, postfix
+  (`emitCapturedBoxGlobalIncDec`, f64-based, prefix→new / postfix→old).
+- `registry/imports.ts` (`fixupModuleGlobalIndices`) — shift each
+  `capturedBoxGlobals` entry's `globalIdx` on a late string-constant import.
+  **This was also a latent staleness bug for the existing transitive-fn box
+  global** (its object-valued entries were never shifted); fixing it here
+  covers both.
+
+### Verification
+
+- All #3036 read/write/increment repros (`.tmp/repro-3036.mts`) flip
+  garbage→correct: transitive object-method write (=2), class-method write
+  (=2), method-shorthand write, object-method `c++` (=2), class-method `--c`
+  (=-2), boxed-capture getter read under **static** dispatch (=5), class-method
+  read via `any` (=5), iterator-close `return(){}` (=1).
+- **The 12 method-shorthand `for-await-of/*ary-init-iter-close*` test262 files:
+  0/12 pass on the base (`3844b8a`, #3035+#2664 without #3036) → 12/12 pass on
+  this branch.** My fix is exactly what flips them (genuine executions, not
+  vacuous). (Spec estimated "13"; there are 12 with `return(){}` shorthand.)
+- Full `tests/equivalence/` suite (1638 tests): **identical failure set** on
+  this branch vs the base commit (15 files / 36 tests fail on BOTH; 1599 pass
+  on both) — zero regressions. Targeted closure/accessor/class/method/capture
+  files (`accessor-side-effects`, `getters-setters`, `classes`,
+  `class-methods`, `flatmap-closure`, `#1712`, `#1528`, `#1573`, `#2623`
+  capture-box-depth, `#2029` family) also identical to base. `tsc --noEmit`
+  clean.
+
+### Out of scope / caveat (separate pre-existing bug, NOT #3036)
+
+The spec's 4th repro — a getter read via an **`any`-typed receiver on a class
+declared inside a function** (`const o: any = make(); o.v`) — still returns
+`NaN`. This is a **separate, orthogonal dynamic-accessor-dispatch bug**: a
+getter returning a **constant** (no capture at all) also returns `NaN` through
+that exact dispatch shape (`class K { get v(){ return 42; } }` inside a fn,
+read via `any` → `NaN`). My additive branches are no-ops for non-boxed names,
+so that codegen is byte-identical to before. The #3036 capture fix for getter
+*reads* is proven correct by the static-dispatch case (→5) and the
+class-method-read-via-any case (→5). The `any`-receiver nested-class accessor
+dispatch gap should be filed as a follow-up; it is not the boxed-capture deref
+mechanism #3036 targets, and per the senior-dev STOP-AND-DOCUMENT guard I did
+not fold a second, unrelated dispatch redesign into this PR.
