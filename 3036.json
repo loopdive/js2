@@ -1,8 +1,8 @@
 {
   "id": "3036",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-04T23:59:01Z",
-  "updated_at": "2026-07-04T23:59:01Z"
+  "assignee": "ttraenkler/dev-3036",
+  "status": "in-progress",
+  "branch": "issue-3036-accessor-method-boxed-capture",
+  "claimed_at": "2026-07-05T00:11:49Z",
+  "updated_at": "2026-07-05T00:11:49Z"
 }
