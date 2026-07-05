@@ -1,8 +1,9 @@
 {
   "id": "3046",
   "assignee": "ttraenkler/dev-3042",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3046-tmp",
   "claimed_at": "2026-07-05T05:13:57Z",
-  "updated_at": "2026-07-05T05:13:57Z"
+  "updated_at": "2026-07-05T05:46:35Z",
+  "released_at": "2026-07-05T05:46:35Z"
 }
