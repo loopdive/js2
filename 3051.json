@@ -1,9 +1,8 @@
 {
   "id": "3051",
-  "assignee": "ttraenkler/dev-3051",
-  "status": "done",
-  "branch": "issue-3051-regexp-replace-split-coercion",
-  "claimed_at": "2026-07-05T06:33:12Z",
-  "updated_at": "2026-07-05T07:14:26Z",
-  "released_at": "2026-07-05T07:14:26Z"
+  "assignee": "ttraenkler/dev-3051b",
+  "status": "in-progress",
+  "branch": "issue-3051-slice2-coercion",
+  "claimed_at": "2026-07-05T07:31:28Z",
+  "updated_at": "2026-07-05T07:31:28Z"
 }
