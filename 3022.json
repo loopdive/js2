@@ -1,8 +1,9 @@
 {
   "id": "3022",
   "assignee": "ttraenkler/dev-3047",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3022-defineproperty-nonobject-receiver",
   "claimed_at": "2026-07-05T05:42:32Z",
-  "updated_at": "2026-07-05T05:42:32Z"
+  "updated_at": "2026-07-05T05:44:47Z",
+  "released_at": "2026-07-05T05:44:47Z"
 }
