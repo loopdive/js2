@@ -1,8 +1,9 @@
 {
   "id": "3051",
   "assignee": "ttraenkler/dev-3051b",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3051-slice2-coercion",
   "claimed_at": "2026-07-05T07:31:28Z",
-  "updated_at": "2026-07-05T07:31:28Z"
+  "updated_at": "2026-07-05T08:24:11Z",
+  "released_at": "2026-07-05T08:24:11Z"
 }
