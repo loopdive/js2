@@ -1,8 +1,9 @@
 {
   "id": "3035",
   "assignee": "ttraenkler/dev-asynccps",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3035-async-cps-iterclose-version",
   "claimed_at": "2026-07-04T23:06:19Z",
-  "updated_at": "2026-07-04T23:06:19Z"
+  "updated_at": "2026-07-05T00:06:33Z",
+  "released_at": "2026-07-05T00:06:33Z"
 }
