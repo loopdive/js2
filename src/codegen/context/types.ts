@@ -945,8 +945,17 @@ export interface CodegenContext {
    * boxes `v` eagerly in the enclosing fctx and aliases the box in a module
    * global of type `(ref null $cell)`; closure-materialization sites source
    * the capture from here when the current fctx cannot resolve it.
+   *
+   * (#3036) `valType` (the ref cell's inner value type) is present ONLY for
+   * DIRECT boxed captures — a variable the accessor/method body reads or
+   * writes itself (not merely through a nested closure). When set, the
+   * read/write sites (identifiers.ts / assignment.ts / unary-updates.ts) must
+   * DEREF the box (`global.get; struct.get/struct.set field 0`) instead of
+   * treating the global as holding the value. Transitive-fn box entries leave
+   * `valType` undefined; they are consumed only by closure materialization
+   * (calls.ts), never by the scalar read/write sites.
    */
-  capturedBoxGlobals?: Map<string, { globalIdx: number; refCellTypeIdx: number }>;
+  capturedBoxGlobals?: Map<string, { globalIdx: number; refCellTypeIdx: number; valType?: ValType }>;
   /** Set of class names (local classes compiled to Wasm GC structs) */
   classSet: Set<string>;
   /**

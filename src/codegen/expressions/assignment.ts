@@ -36,7 +36,10 @@ import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
   emitAlternateStructSetDispatch,
+  emitCapturedBoxGlobalRead,
+  emitCapturedBoxGlobalWrite,
   emitNullGuardedStructGet,
+  getCapturedBoxGlobal,
   isProvablyNonNull,
   isSafeBoundsEliminated,
   tryEmitDeleteAwareDynamicSet,
@@ -363,6 +366,30 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       emitMappedArgParamSync(ctx, fctx, localIdx, resultType);
       return resultType;
     }
+    // (#3036) Boxed captured global — write THROUGH the ref cell (struct.set
+    // field 0), not into the box global (which would replace the shared cell
+    // with the raw value / null). Mirrors the boxedCaptures local-box `=` path.
+    const capturedBoxSimple = getCapturedBoxGlobal(ctx, name);
+    if (capturedBoxSimple !== undefined) {
+      const resultType = compileExpression(ctx, fctx, expr.right, capturedBoxSimple.valType);
+      if (!resultType) {
+        reportError(ctx, expr, "Failed to compile assignment value");
+        return null;
+      }
+      if (!valTypesMatch(resultType, capturedBoxSimple.valType)) {
+        coerceType(ctx, fctx, resultType, capturedBoxSimple.valType);
+      }
+      const tmpVal = allocLocal(fctx, `__box_g_tmp_${fctx.locals.length}`, capturedBoxSimple.valType);
+      fctx.body.push({ op: "local.set", index: tmpVal });
+      // entry.globalIdx is read fresh inside the helper AFTER RHS compilation,
+      // and `capturedBoxGlobals` is shifted in the global-index fixup, so a
+      // string-constant global added while compiling the RHS can't stale it.
+      emitCapturedBoxGlobalWrite(fctx, capturedBoxSimple, tmpVal);
+      // Assignment expression result: the (coerced) assigned value.
+      fctx.body.push({ op: "local.get", index: tmpVal });
+      return capturedBoxSimple.valType;
+    }
+
     // Check captured globals
     const capturedIdx = ctx.capturedGlobals.get(name);
     if (capturedIdx !== undefined) {
@@ -592,6 +619,17 @@ function emitIdentifierWriteFromLocal(
     const localType = getLocalType(fctx, localIdx);
     pushRhsCoerced(localType);
     fctx.body.push({ op: "local.set", index: localIdx });
+    return;
+  }
+
+  // (#3036) Boxed captured global — destructuring / for-of style write through
+  // the ref cell rather than overwriting the box global.
+  const capturedBoxWrite = getCapturedBoxGlobal(ctx, name);
+  if (capturedBoxWrite !== undefined) {
+    pushRhsCoerced(capturedBoxWrite.valType);
+    const tmpVal = allocLocal(fctx, `__box_gw_${fctx.locals.length}`, capturedBoxWrite.valType);
+    fctx.body.push({ op: "local.set", index: tmpVal });
+    emitCapturedBoxGlobalWrite(fctx, capturedBoxWrite, tmpVal);
     return;
   }
 
@@ -4429,6 +4467,7 @@ export function compileLogicalAssignment(
   let storage:
     | { kind: "local"; index: number; type: ValType }
     | { kind: "captured"; index: number; type: ValType }
+    | { kind: "capturedBox"; box: { globalIdx: number; refCellTypeIdx: number; valType: ValType }; type: ValType }
     | { kind: "module"; index: number; type: ValType }
     | null = null;
 
@@ -4441,6 +4480,13 @@ export function compileLogicalAssignment(
       index: localIdx,
       type: localType ?? { kind: "f64" },
     };
+  }
+  if (!storage) {
+    // (#3036) Boxed captured global — read/write THROUGH the ref cell.
+    const capturedBoxLogical = getCapturedBoxGlobal(ctx, name);
+    if (capturedBoxLogical !== undefined) {
+      storage = { kind: "capturedBox", box: capturedBoxLogical, type: capturedBoxLogical.valType };
+    }
   }
   if (!storage) {
     const capturedIdx = ctx.capturedGlobals.get(name);
@@ -4486,12 +4532,24 @@ export function compileLogicalAssignment(
     return ctx.moduleGlobals.get(name)!;
   };
   const emitGet = () => {
-    if (storage!.kind === "local") fctx.body.push({ op: "local.get", index: getStorageIndex() });
-    else fctx.body.push({ op: "global.get", index: getStorageIndex() });
+    if (storage!.kind === "capturedBox") {
+      emitCapturedBoxGlobalRead(ctx, fctx, storage!.box);
+    } else if (storage!.kind === "local") {
+      fctx.body.push({ op: "local.get", index: getStorageIndex() });
+    } else {
+      fctx.body.push({ op: "global.get", index: getStorageIndex() });
+    }
   };
   const emitSet = () => {
-    if (storage!.kind === "local") fctx.body.push({ op: "local.tee", index: getStorageIndex() });
-    else {
+    if (storage!.kind === "capturedBox") {
+      // Value on stack → stash, write through the cell, re-read for the result.
+      const tmpVal = allocLocal(fctx, `__box_glog_${fctx.locals.length}`, storage!.box.valType);
+      fctx.body.push({ op: "local.set", index: tmpVal });
+      emitCapturedBoxGlobalWrite(fctx, storage!.box, tmpVal);
+      emitCapturedBoxGlobalRead(ctx, fctx, storage!.box);
+    } else if (storage!.kind === "local") {
+      fctx.body.push({ op: "local.tee", index: getStorageIndex() });
+    } else {
       const idx = getStorageIndex();
       fctx.body.push({ op: "global.set", index: idx });
       fctx.body.push({ op: "global.get", index: idx });
@@ -5876,6 +5934,69 @@ export function compileCompoundAssignment(
     emitThrowString(ctx, fctx, "TypeError: Assignment to constant variable.");
     fctx.body.push({ op: "unreachable" });
     return { kind: "f64" };
+  }
+
+  // (#3036) Boxed captured global compound-assign (`c += 1` in a method-
+  // shorthand / class-method / accessor body reading a transitively-captured
+  // boxed var). Read THROUGH the ref cell, apply the op, write back THROUGH the
+  // cell — never treat the box global as holding the scalar. Self-contained
+  // (sources the box from the global each time, no localMap rebind) to avoid a
+  // conditionally-set-local dominance hazard; mirrors the boxedCaptures
+  // local-box compound path below (string concat for externref cells, f64
+  // arithmetic with coerce-in/coerce-out for numeric cells).
+  const capturedBoxCompound = getCapturedBoxGlobal(ctx, name);
+  if (capturedBoxCompound !== undefined) {
+    const valType = capturedBoxCompound.valType;
+    // Read current value (null-guarded default for an uninitialized cell).
+    emitCapturedBoxGlobalRead(ctx, fctx, capturedBoxCompound);
+
+    // externref cell + `+=`: string concat when either side is string-typed.
+    if (valType.kind === "externref" && op === ts.SyntaxKind.PlusEqualsToken) {
+      const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
+      const rhsIsString = isStringType(rightTsType);
+      const lhsIsString = isStringType(ctx.checker.getTypeAtLocation(expr.left));
+      const varHasStringAssign = hasStringAssignment(name, expr) || hasStringAssignmentInParentScopes(name, expr);
+      if (rhsIsString || lhsIsString || varHasStringAssign) {
+        addStringImports(ctx);
+        const concatIdx = ctx.jsStringImports.get("concat");
+        if (concatIdx !== undefined) {
+          const compoundRhsStr = compileExpression(ctx, fctx, expr.right);
+          if (!compoundRhsStr) {
+            reportError(ctx, expr, "Failed to compile compound assignment RHS");
+            return null;
+          }
+          if (compoundRhsStr.kind === "f64" || compoundRhsStr.kind === "i32") {
+            if (compoundRhsStr.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
+            const toStr = ctx.funcMap.get("number_toString");
+            if (toStr !== undefined) fctx.body.push({ op: "call", funcIdx: toStr });
+          }
+          fctx.body.push({ op: "call", funcIdx: concatIdx });
+          const tmpStr = allocLocal(fctx, `__box_gcmp_${fctx.locals.length}`, valType);
+          fctx.body.push({ op: "local.set", index: tmpStr });
+          emitCapturedBoxGlobalWrite(fctx, capturedBoxCompound, tmpStr);
+          fctx.body.push({ op: "local.get", index: tmpStr });
+          return valType;
+        }
+      }
+    }
+
+    // Numeric / bitwise: the op switch is f64-based, so promote a non-f64 cell
+    // value (and the RHS) to f64 and coerce the result back on writeback.
+    const needsCoerce = valType.kind !== "f64";
+    if (needsCoerce) coerceType(ctx, fctx, valType, { kind: "f64" });
+    const compoundRhs = compileExpression(ctx, fctx, expr.right, needsCoerce ? { kind: "f64" } : valType);
+    if (!compoundRhs) {
+      reportError(ctx, expr, "Failed to compile compound assignment RHS");
+      return null;
+    }
+    if (needsCoerce && compoundRhs.kind !== "f64") coerceType(ctx, fctx, compoundRhs, { kind: "f64" });
+    emitCompoundOp(ctx, fctx, op);
+    if (needsCoerce) coerceType(ctx, fctx, { kind: "f64" }, valType);
+    const tmpRes = allocLocal(fctx, `__box_gcmp_${fctx.locals.length}`, valType);
+    fctx.body.push({ op: "local.set", index: tmpRes });
+    emitCapturedBoxGlobalWrite(fctx, capturedBoxCompound, tmpRes);
+    fctx.body.push({ op: "local.get", index: tmpRes });
+    return valType;
   }
 
   // String += : concat instead of numeric add.

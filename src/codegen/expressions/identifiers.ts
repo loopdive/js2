@@ -27,7 +27,7 @@ import {
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
-import { emitNullGuardedStructGet } from "../property-access.js";
+import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { emitTdzCheck } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
@@ -670,6 +670,22 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
     }
 
     return declaredType;
+  }
+
+  // (#3036) Check BOXED captured globals FIRST — a transitively-captured
+  // mutable var (ref cell) that a method-shorthand / class-method / accessor
+  // body reads. The promoted global holds the box; deref it (global.get;
+  // struct.get field 0) rather than returning the ref cell as if it were the
+  // value (which coerced ref→f64 to `f64.const 0` / ref→externref to garbage).
+  const capturedBox = getCapturedBoxGlobal(ctx, name);
+  if (capturedBox !== undefined) {
+    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
+    if (tdzResult === "check") {
+      emitTdzCheck(ctx, fctx, name);
+    } else if (tdzResult === "throw") {
+      emitStaticTdzThrow(ctx, fctx, id.text);
+    }
+    return emitCapturedBoxGlobalRead(ctx, fctx, capturedBox);
   }
 
   // Check captured globals (variables promoted from enclosing scope for callbacks)

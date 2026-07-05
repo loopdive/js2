@@ -344,6 +344,19 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   }
   shiftMap(ctx.moduleGlobals);
   shiftMap(ctx.capturedGlobals);
+  // (#3036) `capturedBoxGlobals` values are objects, not bare indices — shift
+  // each entry's `globalIdx` in place like `protoOverrides` below. The
+  // pre-existing transitive-fn box global shared this latent staleness; a
+  // late string-constant import between registration and the box's
+  // `global.get`/`struct.set` would otherwise leave the recorded index
+  // pointing at the wrong (shifted) slot.
+  if (ctx.capturedBoxGlobals) {
+    for (const entry of ctx.capturedBoxGlobals.values()) {
+      if (entry.globalIdx >= threshold) {
+        entry.globalIdx += delta;
+      }
+    }
+  }
   shiftMap(ctx.staticProps);
   shiftMap(ctx.protoGlobals);
   shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals

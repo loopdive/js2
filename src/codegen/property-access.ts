@@ -2029,6 +2029,82 @@ export function emitNullGuardedStructGet(
 }
 
 /**
+ * (#3036) Resolve a name to a DIRECT boxed captured global — a
+ * transitively-captured mutable local that a method-shorthand / class-method /
+ * class-accessor body reads or writes itself. `promoteAccessorCapturesToGlobals`
+ * aliases the ref-cell BOX in a module global and records the inner value type
+ * in `ctx.capturedBoxGlobals`. Returns the entry only when `valType` is present:
+ * transitive-fn box entries (used only by closure materialization in calls.ts)
+ * leave it undefined and must NOT be dereferenced by the scalar read/write
+ * sites. The read/write sites (identifiers.ts / assignment.ts /
+ * unary-updates.ts) consult this FIRST — before `capturedGlobals` — so a boxed
+ * capture derefs the cell instead of treating the global as holding the value.
+ */
+export function getCapturedBoxGlobal(
+  ctx: CodegenContext,
+  name: string,
+): { globalIdx: number; refCellTypeIdx: number; valType: ValType } | undefined {
+  const e = ctx.capturedBoxGlobals?.get(name);
+  if (e && e.valType) {
+    return e as { globalIdx: number; refCellTypeIdx: number; valType: ValType };
+  }
+  return undefined;
+}
+
+/**
+ * (#3036) Emit a null-guarded READ of a boxed captured global. Leaves the inner
+ * value on the stack and returns its type. Mirrors the `boxedCaptures`
+ * (local-box) read in identifiers.ts, sourcing the box ref from a module global
+ * instead of a local slot. The box is initialised to null and set by the
+ * enclosing function at object/class construction, so an uninitialised cell
+ * yields the type default (never traps) — matching the local-box semantics.
+ */
+export function emitCapturedBoxGlobalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  entry: { globalIdx: number; refCellTypeIdx: number; valType: ValType },
+): ValType {
+  fctx.body.push({ op: "global.get", index: entry.globalIdx });
+  emitNullGuardedStructGet(
+    ctx,
+    fctx,
+    { kind: "ref_null", typeIdx: entry.refCellTypeIdx },
+    entry.valType,
+    entry.refCellTypeIdx,
+    0,
+    undefined /* propName */,
+    false /* throwOnNull — ref cells use default for uninitialized captures */,
+  );
+  return entry.valType;
+}
+
+/**
+ * (#3036) Emit a null-guarded WRITE through a boxed captured global. The value
+ * to store must already sit in `valLocalIdx` (typed as `entry.valType`). Mirrors
+ * the `boxedCaptures` (local-box) write in assignment.ts: if the box ref is null
+ * the store is skipped (#702), otherwise `struct.set field 0` writes through the
+ * shared cell so the enclosing scope observes the mutation.
+ */
+export function emitCapturedBoxGlobalWrite(
+  fctx: FunctionContext,
+  entry: { globalIdx: number; refCellTypeIdx: number },
+  valLocalIdx: number,
+): void {
+  fctx.body.push({ op: "global.get", index: entry.globalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [] as Instr[],
+    else: [
+      { op: "global.get", index: entry.globalIdx } as Instr,
+      { op: "local.get", index: valLocalIdx } as Instr,
+      { op: "struct.set", typeIdx: entry.refCellTypeIdx, fieldIdx: 0 } as Instr,
+    ],
+  });
+}
+
+/**
  * Emit a struct.get from an externref value. The externref on the stack is
  * converted to anyref via any.convert_extern, then null-safely cast to the
  * target struct type. If the value is the expected struct type, use struct.get.

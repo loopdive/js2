@@ -528,6 +528,28 @@ export function promoteAccessorCapturesToGlobals(
       ctx.capturedGlobalsWidened.add(name);
     }
 
+    // (#3036) When the promoted local is a BOXED mutable capture (a ref cell:
+    // a sibling closure mutates it, so `fctx.boxedCaptures.has(name)`), the
+    // global we just created holds the ref-cell BOX, not the scalar value.
+    // Register it ADDITIVELY in `capturedBoxGlobals` WITH the inner value type
+    // (`valType`), keeping the `capturedGlobals` entry above intact so every
+    // unmodified consumer (closure materialization, class-defer heuristic,
+    // var-init re-sync) behaves exactly as before. The accessor/method body's
+    // scalar read (identifiers.ts) and write (assignment.ts / unary-updates.ts)
+    // sites check `capturedBoxGlobals` FIRST and DEREF the box
+    // (`global.get; struct.get/struct.set field 0`). Without this, a
+    // method-shorthand / class-method / class-accessor that reads or writes a
+    // transitively-captured boxed var emits garbage (read → f64/ref default;
+    // write → computes the value, drops it, then NULLs the box global).
+    const boxedInfo = fctx.boxedCaptures?.get(name);
+    if (boxedInfo) {
+      (ctx.capturedBoxGlobals ??= new Map()).set(name, {
+        globalIdx,
+        refCellTypeIdx: boxedInfo.refCellTypeIdx,
+        valType: boxedInfo.valType,
+      });
+    }
+
     // If this variable has a local TDZ flag, also promote it to a global TDZ flag
     const tdzFlagLocalIdx = fctx.tdzFlagLocals?.get(name);
     if (tdzFlagLocalIdx !== undefined) {
