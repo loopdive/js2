@@ -1,8 +1,9 @@
 {
   "id": "2712",
   "assignee": "ttraenkler/dev-3042",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2712-wip",
   "claimed_at": "2026-07-05T06:14:16Z",
-  "updated_at": "2026-07-05T06:14:16Z"
+  "updated_at": "2026-07-05T06:14:53Z",
+  "released_at": "2026-07-05T06:14:53Z"
 }
