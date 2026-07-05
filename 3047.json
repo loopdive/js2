@@ -1,8 +1,9 @@
 {
   "id": "3047",
   "assignee": "ttraenkler/dev-3047",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3047-block-nested-var-function-redeclare",
   "claimed_at": "2026-07-05T04:58:44Z",
-  "updated_at": "2026-07-05T04:58:44Z"
+  "updated_at": "2026-07-05T05:41:41Z",
+  "released_at": "2026-07-05T05:41:41Z"
 }
