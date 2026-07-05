@@ -1,9 +1,8 @@
 {
   "id": "2858",
-  "assignee": "ttraenkler/dev-3022",
-  "status": "released",
-  "branch": "issue-2858-ir-callgraph-closure",
-  "claimed_at": "2026-07-04T21:40:39Z",
-  "updated_at": "2026-07-04T21:43:27Z",
-  "released_at": "2026-07-04T21:43:27Z"
+  "assignee": "ttraenkler/dev-3042",
+  "status": "in-progress",
+  "branch": "issue-2858-wip",
+  "claimed_at": "2026-07-05T06:14:06Z",
+  "updated_at": "2026-07-05T06:14:06Z"
 }
