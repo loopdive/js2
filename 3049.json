@@ -1,8 +1,9 @@
 {
   "id": "3049",
   "assignee": "ttraenkler/dev-3042",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3049-iterator-helper-methods",
   "claimed_at": "2026-07-05T05:53:58Z",
-  "updated_at": "2026-07-05T05:53:58Z"
+  "updated_at": "2026-07-05T06:10:17Z",
+  "released_at": "2026-07-05T06:10:17Z"
 }
