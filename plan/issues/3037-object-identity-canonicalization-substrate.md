@@ -671,7 +671,9 @@ regression ⇒ a non-object leaked into tag-6 → diagnose, don't force.
 - **CS1b(ii) element access** — LANDED (opus-3037-cs1bii). See the section below.
 - **CS1b(iii) descriptor `.value`/`.get` producer** — RE-PROBED: no
   carrier-addressable descriptor-specific gap remains. See the section below.
-- **CS1c** getPrototypeOf/reflective producer carrier (case d).
+- **CS1c** getPrototypeOf/reflective producer — RE-PROBED: case (d) is a
+  null-canon stored-in-local symptom, no bounded carrier win (CS3-owned). See
+  the section below + the CS3 readiness assessment.
 
 ---
 
@@ -838,6 +840,8 @@ Site-2 synthesis can't silently regress descriptor `.value` identity), 3
 anti-vacuity invariants, and the 2 KNOWN-GAP rows pinned at `0` (descriptor +
 plain-read control) marked **CS3-owned** so the eventual universal-reader flip
 is auditable. No `src/` change; no floor movement expected.
+
+---
 
 ## CS1c (getPrototypeOf / reflective producer) — RE-PROBED (opus-3037-cs1c): case (d) is a null-canon symptom, no bounded carrier win
 
