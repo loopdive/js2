@@ -1,8 +1,9 @@
 {
   "id": "3022",
   "assignee": "ttraenkler/dev-3051",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3022-defineproperty-descriptor-fidelity",
   "claimed_at": "2026-07-05T07:10:04Z",
-  "updated_at": "2026-07-05T07:10:04Z"
+  "updated_at": "2026-07-05T07:18:01Z",
+  "released_at": "2026-07-05T07:18:01Z"
 }
