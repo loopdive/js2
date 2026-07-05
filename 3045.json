@@ -1,8 +1,9 @@
 {
   "id": "3045",
   "assignee": "ttraenkler/dev-3044",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3045-private-brand-reflect-has",
   "claimed_at": "2026-07-05T05:11:18Z",
-  "updated_at": "2026-07-05T05:11:18Z"
+  "updated_at": "2026-07-05T05:17:16Z",
+  "released_at": "2026-07-05T05:17:16Z"
 }
