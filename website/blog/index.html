@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Lightweight sandboxing of untrusted JavaScript · JS² Blog</title>
+    <title>Sandboxing untrusted JavaScript Modules · JS² Blog</title>
     <meta
       name="description"
       content="JS² is a compiler that turns JavaScript and TypeScript into WebAssembly with no JS engine in the output, so code no one has read can run in a sandbox that reaches nothing it was not explicitly handed."
@@ -338,9 +338,9 @@
       <article class="post">
         <header class="post-header">
           <span class="eyebrow">JS² Blog</span>
-          <h1>Lightweight sandboxing of untrusted JavaScript</h1>
+          <h1>Sandboxing untrusted JavaScript Modules</h1>
           <p class="dek">
-            JS² is a compiler that turns JavaScript and TypeScript into WebAssembly with no JS engine in the output — so
+            JS² is a compiler that turns JavaScript and TypeScript into WebAssembly with no JS engine in the output, so
             a dependency, a plugin, or code no one has read can run in a sandbox that reaches nothing it was not
             explicitly handed.
           </p>
@@ -357,28 +357,26 @@
           <code>npm install</code>
           is an act of trust. A typical application pulls in hundreds of packages, and each one runs with the full
           rights of the process: the filesystem, the network, environment secrets, every other module's objects. When
-          one of them is compromised — and one is, every few months — it owns everything. The goal here is to run
-          untrusted JavaScript where that outcome is structurally impossible, not merely discouraged by policy.
+          one of them is compromised, and one is every few months, it owns everything. The goal here is to run untrusted
+          JavaScript where that outcome is structurally impossible, not merely discouraged by policy.
         </p>
         <p>
           In the age of generative AI this scales by orders of magnitude. A lot of the code we ship now was never
           reviewed, written faster than anyone can read it. "Someone probably reviewed this" was always optimistic; at
           machine speed it's wishful thinking. We need to contain the problem by limiting the blast radius of untrusted
           code at a granular level, and make code modular and reusable so that less code has to be generated, reviewed,
-          and maintained in the first place. Small WebAssembly modules also make review — by a human or a machine — far
+          and maintained in the first place. Small WebAssembly modules also make review, by a human or a machine, far
           easier: fine-grained modularization keeps each piece small and self-contained instead of one giant one-off
           monolithic codebase. That same fine granularity, along with portability across hosts and language-independent
-          module APIs, makes these modules far more reusable — write a piece once and compose it anywhere, in any
-          language. WebAssembly lends itself as a lightweight, portable, modular, and safe substrate for building a new,
-          trustworthy foundation for computing in the age of untrusted code.
+          module APIs, makes these modules far more reusable: write a piece once and compose it anywhere, in any
+          language. WebAssembly is a good substrate for this, being lightweight, portable, and sandboxed by default.
         </p>
 
         <h2>The idea in a nutshell</h2>
         <p>
           JS² compiles your JavaScript or TypeScript ahead of time to WebAssembly. Anything the compiler can resolve at
-          build time becomes plain Wasm instructions, with no interpreter riding along. (WebAssembly, if you haven't
-          touched it lately, is basically machine code for a portable virtual CPU that every browser and plenty of
-          server runtimes already run.)
+          build time becomes plain Wasm instructions, with no interpreter shipped alongside. (WebAssembly is, in effect,
+          machine code for a portable virtual CPU that every browser and many server runtimes already run.)
         </p>
         <p>
           The security property falls out of how Wasm works. A compiled module starts with
@@ -389,7 +387,7 @@
 
         <h2>Where it actually stands</h2>
         <p>
-          Progress is measured against the full Test262 suite — the same conformance corpus the browser engines certify
+          Progress is measured against the full Test262 suite, the same conformance corpus the browser engines certify
           against, with nothing cherry-picked. There are two numbers, because they answer two different questions:
         </p>
 
@@ -442,21 +440,21 @@
         <p>
           Compiling JavaScript to Wasm has been tried before, and the recurring move is to give something up. Some
           approaches accept only a small, statically-typed subset of the language. Others define a new Wasm-shaped
-          language that looks like TypeScript but drops the prototype chain, dynamic values, and closures — which means
+          language that looks like TypeScript but drops the prototype chain, dynamic values, and closures, which means
           existing code and npm packages have to be rewritten rather than compiled. Others ship an entire JS engine
           inside every module; still others hand-write a garbage collector in linear memory, or skip garbage collection
-          altogether and simply leak. And across all of them, none targets the full ECMAScript language — or comes close
+          altogether and simply leak. And across all of them, none targets the full ECMAScript language, or comes close
           to passing it. JS² takes none of these shortcuts: it compiles the actual language, unchanged, so existing code
           and packages are the input rather than a porting target; it lowers objects to typed WasmGC structs so the host
           runtime owns the heap; and full ECMAScript conformance, measured against the complete Test262 suite, is the
-          explicit target. What always made that direct route hard was scope — full ECMAScript is thousands of built-ins
+          explicit target. What always made that direct route hard was scope: full ECMAScript is thousands of built-ins
           and edge cases that have kept engine teams busy for a decade.
         </p>
         <p>
           Two things changed the calculus.
           <strong>WasmGC</strong>
           , which browsers shipped over the last two years, lets the compiler use the runtime's own garbage collector
-          instead of simulating a heap — which keeps modules small and makes the approach quick to validate inside a JS
+          instead of simulating a heap, which keeps modules small and makes the approach quick to validate inside a JS
           host. And frontier language models make it feasible to work through the long tail of the spec at a pace that
           would otherwise be out of reach. That second point draws the most skepticism, so it is worth being explicit
           about.
@@ -465,7 +463,7 @@
           There is an architecture goal underneath it. The compiler is built around a typed
           <strong>intermediate representation (IR)</strong>
           : a single checked layer between the source and the Wasm where it performs its own type analysis. The aim is
-          to reason about the JavaScript that TypeScript cannot — plain code with no annotations, and the cases where
+          to reason about the JavaScript that TypeScript cannot: plain code with no annotations, and the cases where
           TypeScript is unsound and its declared types do not match what actually runs. Annotations are treated as hints
           to be verified, not as ground truth; the IR recovers real, flow-sensitive types from the code itself, so each
           construct is lowered once and efficiently, and one description can target more than one Wasm backend (WasmGC
@@ -479,11 +477,11 @@
           writes an implementation spec before any code is written, one runs the sprint and the merge queue, and several
           write the code, each in an isolated git worktree. If that reads like an ordinary software team, that is the
           point: no special process was invented for AI. Spec-first issues, test-driven changes, code review, a merge
-          queue — the same discipline that keeps a human team honest is what keeps the agents useful.
+          queue. The process is what makes the output reliable, whoever or whatever writes it.
         </p>
         <p>
           The bar for merging is deliberately high. Every pull request runs the full 48,088-test suite twice, once per
-          mode, plus about 3,400 hand-written tests that compare compiled Wasm against real JavaScript behavior —
+          mode, plus about 3,400 hand-written tests that compare compiled Wasm against real JavaScript behavior. That is
           roughly 100,000 checks before anything lands, and the merge queue re-runs them on the merged result so a
           green-looking PR cannot quietly break the tree. It is the same stance as the compiler itself: don't trust the
           author, verify the output.
@@ -543,7 +541,7 @@
           of the hundreds of dependencies inside one app. V8 isolates are lighter, but the boundary is the engine
           itself, so every isolate shares one process and inherits its attack surface. Embedding QuickJS or SpiderMonkey
           (what Javy and StarlingMonkey do, and they are good tools) keeps the whole engine in the binary, and since
-          Wasm has no JIT, that engine interprets the code — often an order of magnitude slower than compiled Wasm.
+          Wasm has no JIT, that engine interprets the code, often an order of magnitude slower than compiled Wasm.
           <span style="font-size: 13px; color: var(--fg-faint)">*compute-heavy code pays the most.</span>
         </p>
 
@@ -555,7 +553,7 @@
         <ul>
           <li>
             <strong>Review the code.</strong>
-            Fresh eyes on compiler internals are always scarce.
+            Compiler engineers: correctness and architecture feedback on the internals is especially valuable.
           </li>
           <li>
             <strong>Break it.</strong>
@@ -565,7 +563,7 @@
             <strong>Fix something.</strong>
             Pick up a ready issue from
             <code>plan/issues/</code>
-            — each is a real spec, not a vague TODO.
+            . Each is a real spec, not a vague TODO.
           </li>
           <li>
             <strong>Bring your own agent.</strong>
@@ -576,7 +574,7 @@
         <div class="cta">
           <p>
             The playground compiles JavaScript and TypeScript to Wasm in the browser, and the issue queue is open.
-            Contributions — human or agent — are welcome.
+            Contributions are welcome, human or agent.
           </p>
           <p style="margin: 0; font-size: 14px; color: var(--fg-faint)">
             Everything is Apache 2.0 with the LLVM exception.
@@ -592,7 +590,7 @@
     </div>
 
     <footer class="doc-footer">
-      <span>JS² — JavaScript and TypeScript ahead-of-time compilation for WebAssembly GC.</span>
+      <span>JS²: JavaScript and TypeScript ahead-of-time compilation for WebAssembly GC.</span>
       <span><a href="../">← Back to home</a></span>
     </footer>
 
@@ -631,7 +629,7 @@
         }
       })();
 
-      // Conformance-over-time timeline — same run-history source and series as
+      // Conformance-over-time timeline, same run-history source and series as
       // the landing page, so it live-updates from benchmarks/results/runs.
       (async () => {
         const chart = document.getElementById("conformance-history-chart");
