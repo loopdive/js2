@@ -2,7 +2,7 @@
   "id": "3048",
   "assignee": "ttraenkler/dev-3044",
   "status": "in-progress",
-  "branch": "probe-3048",
-  "claimed_at": "2026-07-05T05:17:58Z",
-  "updated_at": "2026-07-05T05:17:58Z"
+  "branch": "issue-3048-make-getter-callback-import",
+  "claimed_at": "2026-07-05T05:19:28Z",
+  "updated_at": "2026-07-05T05:19:28Z"
 }
