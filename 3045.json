@@ -1,9 +1,8 @@
 {
   "id": "3045",
-  "assignee": "ttraenkler/dev-3047",
-  "status": "released",
-  "branch": "issue-3045-private-brand-check-nonobject",
-  "claimed_at": "2026-07-05T05:52:29Z",
-  "updated_at": "2026-07-05T06:28:56Z",
-  "released_at": "2026-07-05T06:28:56Z"
+  "assignee": "ttraenkler/dev-3045",
+  "status": "in-progress",
+  "branch": "issue-3045-classexpr-scope-capture",
+  "claimed_at": "2026-07-06T19:54:07Z",
+  "updated_at": "2026-07-06T19:54:07Z"
 }
