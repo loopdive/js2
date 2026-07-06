@@ -1,10 +1,11 @@
 ---
 id: 2978
 title: "Standalone async scheduler: for-await over a sync iterator yielding rejected promises loops forever (3GB JS-heap OOM)"
-status: ready
+status: in-progress
+assignee: ttraenkler/dev-2978
 sprint: current
 created: 2026-07-02
-updated: 2026-07-05
+updated: 2026-07-06
 priority: high
 feasibility: hard
 reasoning_effort: max
