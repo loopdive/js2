@@ -1,7 +1,8 @@
 ---
 id: 3051
 title: "RegExp.prototype[@@replace] / [@@split] coercion protocol: ToString/ToInteger/ToLength on result-array + lastIndex/limit/flags args (~48 fails)"
-status: ready
+status: in-progress
+assignee: dev-3051c
 sprint: current
 priority: medium
 horizon: m
@@ -183,32 +184,93 @@ showed **0 regressions**; regex vitest suites (issue-1329-b3 / 1539 / 1911 /
 1912 / 2161) unchanged (the 2 pre-existing standalone-refusal fails are on
 `origin/main` too). `tests/issue-3051.test.ts` — 10/10 pass.
 
+## Landed Slice 3 (dev-3051c) — accessor-only exec-result marshals to null (throwing-getter cluster subset)
+
+**PR: `src/codegen/closures.ts` (`computeClosureWrapperSig`) +
+`tests/issue-3051.test.ts`.** Fixes `result-get-{index,length,matched}-err`
+(**+3**, zero regressions across the whole `Symbol.replace`+`Symbol.split`
+corpus: 88 → 91 pass / 25 → 22 fail on the isolated per-file sweep).
+
+**Root cause — the architect's Cluster-1 hypothesis was WRONG; verified
+empirically first (per the "specs turned out incomplete" caveat).** The failure
+is NOT a wasm-exn swallowed in the `_wrapForHost` get-trap. It is upstream of any
+getter read: the poisoned result object literal has _only_ an accessor and NO
+data field (`{ get index(){ throw } }`). Such an accessor-only literal compiles to
+a JS-host plain object (externref `$Object`) via `compileObjectLiteralWithAccessors`
+(literals.ts:1039), but the `r.exec = function(){ return poisoned; }` closure has a
+TS-**inferred structural return type** `{ index: number }`, which `resolveWasmType`
+maps to a **struct** return. `return poisoned` then coerces the externref host
+object to a struct it does not match → the value marshals to **`null`** at the
+host-invocation bridge (`__call_fn_N`). V8's native `@@replace` sees `r.exec()` →
+`null` → `RegExpExec` finds no match → the result-object reads (and their throwing
+getters) never run → no throw → `assert.throws` fails. Empirically confirmed with
+`execReturnBridge` instrumentation (`ret === null` for the accessor-only case;
+`isWasmStruct=false` real object for a data-bearing sibling, which already passed).
+Cases _with_ a data field (`result-get-{capture,groups}-err`: `{ length:2,
+get 1(){throw} }`) already passed pre-Slice-3 because the data field routes the
+literal to a real host object whose getter V8 dispatches normally.
+
+**Fix:** `computeClosureWrapperSig` now forces the closure's wasm return type to
+externref when the body returns a host-path accessor object literal (an object
+literal with get/set accessors, or a var directly initialized to one). This
+mirrors the existing `initForcesExternref` var-hoisting tag (index.ts:15737 /
+declarations.ts:4273) — the RETURN-position analog was missing. Detection is
+purely syntactic (AST + checker symbol resolution), so it is identical between the
+pre-scan (`ensureFuncValueWrappersRegistered`) and the actual-compile calls (the
+pre-registered funcref wrapper type matches the compiled signature). Impact surface
+is narrow: closures that return accessor object literals are rare, and such objects
+are already externref host objects everywhere else, so forcing externref return is
+representation-neutral for every other consumer. Host-lane only (standalone RegExp
+delegates to the native backend #682; the change is in generic closure
+return-typing and does not alter the standalone floor — validated below).
+
 ## Remaining Work (Slice 3+ — senior-depth)
 
-Not addressed by Slice 1 or Slice 2. Distinct mechanisms, all senior-depth:
+Not addressed by Slice 1, 2, or 3. Distinct mechanisms, all senior-depth:
 
-1. **`result-*-err` abrupt-throw propagation** (`result-get-{index,length,matched}-err`,
-   `result-get-groups-prop-err`, `result-coerce-groups-err`): the result object
-   has a **throwing getter** (`get index(){ throw new Test262Error() }`). V8 reads
-   it through the `_wrapForHost` proxy → invokes the wasm getter closure → the
-   wasm `throw` must surface as a JS exception V8 propagates back to the user's
-   `try/catch`. Wasm-exception → host → user-catch bridging across the native
-   protocol is **senior-depth**.
-2. **`Cannot convert object to primitive value` (@@split cluster:** `coerce-flags`,
+0. **[SLICE-3 CORRECTION] The remaining `result-*-err` twins need a DIFFERENT
+   fix than the index/length/matched trio Slice 3 landed** — see the corrected
+   root cause above. `result-get-groups-prop-err` (`{ length:0, index:0, groups:{
+get foo(){throw} } }`) and `result-coerce-groups-err` (`{ length:1, 0:'',
+index:0, groups:null }`, expects `TypeError` from `ToObject(null)`) both have
+   an **outer object with only DATA fields** (no direct accessor), so Slice 3's
+   predicate does not fire and the outer still marshals to null (or its `groups`
+   data field reads as `undefined` host-side — cf. the `mkOnlyData` probe: a
+   struct-typed data object returned through the closure bridge reads its fields
+   as `undefined`). Empirically, adding a dummy accessor to the outer (forcing it
+   onto the host path) makes `groups-prop-err` pass — so the nested throwing
+   getter dispatches fine ONCE the outer is a real host object. The general fix is
+   to route object literals returned from an exec-override closure (or, more
+   broadly, any closure whose inferred return type is a plain object) onto the
+   host `$Object` path so their data fields AND nested accessor values are
+   host-readable. That is a broader object-literal-representation change (higher
+   regression risk across every closure-returning-object site) — **STOP-AND-
+   DOCUMENTED here rather than stranded.**
+
+1. **`result-*-err` (remaining twins)** — the `groups`-family, see item 0 above.
+   The `index`/`length`/`matched` trio was Slice 3. **Senior-depth (object-literal
+   representation).**
+2. **[CORRECTION] The "`Cannot convert object to primitive value` @@split cluster"
+   IS the SpeciesConstructor cluster.** Reading the actual files, `coerce-flags`,
    `limit-0-bail`, `str-coerce-lastindex`, `str-result-coerce-length`,
-   `str-set-lastindex-{match,no-match}`): object args / lastIndex round-trips that
-   throw before reaching the protocol. Note `coerce-limit-err` (a *throwing*
-   valueOf) was fixed by Slice 2's data-struct guard, but these plain
-   object-to-primitive cases still trap — a deeper static-coercion / value-read
-   family. **Senior-depth.**
+   `str-set-lastindex-{match,no-match}`, `str-get-lastindex-err` ALL use
+   `RegExp.prototype[Symbol.split].call(obj, …)` where `obj` is a plain object with
+   `obj.constructor[Symbol.species]` returning a **fake-RegExp splitter** (custom
+   `exec`, `lastIndex` get/set, `flags` getter). So this is not a separate
+   "object-arg ToPrimitive" family — it is the same `SpeciesConstructor` +
+   host-callable-user-constructor + fake-RegExp-splitter mechanism as item 3.
+   Merge items 2 and 3.
 3. **`SpeciesConstructor` for @@split** (`species-ctor{,-y,-err,-ctor-non-obj,-species-non-ctor}`,
-   `splitter-proto-from-ctor-realm`): `C = SpeciesConstructor(rx, %RegExp%)` then
-   `Construct(C, [rx, flags])` — bridging a user constructor through the native
-   split. Deep. **Senior-depth.**
-4. **method-as-value (`name.js`)**: `RegExp.prototype[Symbol.replace]` accessed as
-   a **value** (for `.name`) rather than called — the codegen resolves the member
-   to the protocol-id `i32.const 8`, so `verifyProperty(<8>, "name", …)` fails.
-   Separate feature (well-known-symbol method as first-class value).
+   `splitter-proto-from-ctor-realm`, + all of item 2): `C = SpeciesConstructor(rx,
+%RegExp%)` then `Construct(C, [rx, flags])` — bridging a user constructor and a
+   fake-RegExp splitter object through the native split. This crosses the
+   host-marshaling substrate (Fable-reserved). **~14 files, the deepest cluster —
+   STOP-AND-DOCUMENTED, not attempted this slice** (would strand a broad change).
+4. **method-as-value (`name.js`, both replace + split)**:
+   `RegExp.prototype[Symbol.replace]` accessed as a **value** (for `.name`) rather
+   than called — the codegen resolves the member to the protocol-id `i32.const 8`,
+   so `verifyProperty(<8>, "name", …)` fails. Separate codegen feature
+   (well-known-symbol method as first-class value), orthogonal to 1–3.
 
 ## Test Results (Slice 1)
 
@@ -253,7 +315,7 @@ helper to unwrap the thrown externref? grep `ensureExnTag` consumers + any
 host lane and any throwing-getter-through-native-protocol case.
 
 **Edge:** an actually-buggy wasm trap (real RuntimeError) must STILL be swallowed
-to the absent sentinel where it is today — only *user* throws propagate. Keep the
+to the absent sentinel where it is today — only _user_ throws propagate. Keep the
 two exception classes distinct.
 
 ### Cluster 2 — `Cannot convert object to primitive value` (@@split object args)
@@ -262,7 +324,7 @@ Files: `coerce-flags`, `limit-0-bail`, `str-coerce-lastindex`,
 `str-result-coerce-length`, `str-set-lastindex-{match,no-match}`. An object arg /
 `lastIndex` round-trip that must `ToString`/`ToLength`/`ToPrimitive` traps at the
 wasm boundary before reaching the protocol. Slice 2's data-struct guard fixed the
-*throwing-valueOf* subset (`coerce-limit-err`); these plain object-to-primitive
+_throwing-valueOf_ subset (`coerce-limit-err`); these plain object-to-primitive
 cases still trap because the value is passed to V8 as an opaque wasm struct with
 no `[Symbol.toPrimitive]`/`valueOf`/`toString` visible.
 
@@ -350,7 +412,7 @@ lines) has advanced since 2026-07-05, so the cited line numbers are off by
 - `__regex_symbol_call` is at **`:10628`** (spec said 10587); the local
   `wrapCallable` data-struct guard is at **`:10659`** with the `__is_data_struct`
   gate at **`:10674–10682`** (Cluster 2). Note: the spec's "`wrapCallable` at
-  runtime.ts:1809" is imprecise — `:1824` is a `wrapCallable?` *parameter* of a
+  runtime.ts:1809" is imprecise — `:1824` is a `wrapCallable?` _parameter_ of a
   different accessor-bridge fn; the actual RegExp guard is the local at `:10659`.
 - `_wrapExecReturnForHost` at **`:2362`** (spec 2347); `_wrapForHost` at
   **`:5575`** (spec cited 5278 for its get-trap arm). `_PRIM_ABSENT` still exists

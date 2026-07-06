@@ -231,3 +231,103 @@ describe("#3051 Slice 2 — arg / flag coercion", { timeout: 30000 }, () => {
     expect(out).toBe("b");
   });
 });
+
+// Slice 3 (dev-3051c) — abrupt-throw propagation through a THROWING GETTER on
+// the exec-override result object. test262:
+//   Symbol.replace/result-get-{index,length,matched}-err.js
+//
+// Root cause (verified empirically, distinct from the architect's original
+// "wasm-exn swallowed in the get-trap" hypothesis): an object literal whose ONLY
+// properties are accessors compiles to a JS-host plain object (externref
+// `$Object`), but a closure that RETURNS it (`r.exec = function () { return
+// poisoned; }`) has a TS-inferred *structural* return type `{ … }`, which
+// `resolveWasmType` maps to a struct return. `return poisoned` then coerces the
+// externref host object to a struct it does not match, so the value marshals to
+// `null` at the host-invocation bridge (`__call_fn_N`). V8's native @@replace
+// sees `r.exec()` → null → RegExpExec finds no match → the result-object reads
+// (and their throwing getters) never run. Fix (src/codegen/closures.ts):
+// `computeClosureWrapperSig` forces the closure return type to externref when the
+// body returns a host-path accessor object literal, keeping the host object
+// intact so the native protocol dispatches the getter (and its throw).
+describe("#3051 Slice 3 — throwing getter on exec result (abrupt propagation)", { timeout: 30000 }, () => {
+  it("throwing `index` getter on the result object propagates (result-get-index-err)", async () => {
+    const out = await run(`
+      class Test262Error {}
+      export function test(): string {
+        const poisoned: any = { get index(): number { throw new Test262Error(); } };
+        const r = /./;
+        (r as any).exec = function (): any { return poisoned; };
+        try {
+          (r as any)[Symbol.replace]("a", "b");
+        } catch (e) {
+          return "threw";
+        }
+        return "no-throw";
+      }
+    `);
+    expect(out).toBe("threw");
+  });
+
+  it("throwing `0` (matched) getter on the result object propagates (result-get-matched-err)", async () => {
+    const out = await run(`
+      class Test262Error {}
+      export function test(): string {
+        const poisoned: any = { get 0(): string { throw new Test262Error(); } };
+        const r = /./;
+        (r as any).exec = function (): any { return poisoned; };
+        try {
+          (r as any)[Symbol.replace]("a", "b");
+        } catch (e) {
+          return "threw";
+        }
+        return "no-throw";
+      }
+    `);
+    expect(out).toBe("threw");
+  });
+
+  it("throwing `length` getter on the result object propagates (result-get-length-err)", async () => {
+    const out = await run(`
+      class Test262Error {}
+      export function test(): string {
+        const poisoned: any = { get length(): number { throw new Test262Error(); } };
+        const r = /./;
+        (r as any).exec = function (): any { return poisoned; };
+        try {
+          (r as any)[Symbol.replace]("a", "b");
+        } catch (e) {
+          return "threw";
+        }
+        return "no-throw";
+      }
+    `);
+    expect(out).toBe("threw");
+  });
+
+  it("exec override returning an accessor-only object literal DIRECTLY is not nulled", async () => {
+    // The closure returns the object literal inline (no intermediate var) — the
+    // inferred struct return type must still be forced to externref.
+    const out = await run(`
+      export function test(): number {
+        let ran = 0;
+        const r = /./;
+        (r as any).exec = function (): any { return { get index(): number { ran = 1; return 2; } }; };
+        (r as any)[Symbol.replace]("abcd", function (_m: string, pos: number): string { return String(pos); });
+        return ran; // 1 iff V8's protocol observed the object + ran its getter
+      }
+    `);
+    expect(out).toBe(1);
+  });
+
+  it("regression guard: a closure returning a plain DATA object is unaffected", async () => {
+    // No accessors → the predicate must NOT fire; struct return path preserved.
+    const out = await run(`
+      export function test(): number {
+        const f = function (): { a: number; b: number } { return { a: 3, b: 4 }; };
+        const o = f();
+        return o.a + o.b;
+      }
+    `);
+    expect(out).toBe(7);
+  });
+});

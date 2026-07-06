@@ -1573,6 +1573,79 @@ function closureProvablyAfterLetDecl(
  *
  * Pure: reads only `ctx` + the checker; no side effects, no `fctx`.
  */
+/**
+ * (#3051) An object literal carrying get/set accessors — or a variable directly
+ * initialized to one — compiles to a JS-host plain object (an externref
+ * `$Object`), NOT a closed WasmGC struct: see `compileObjectLiteralWithAccessors`
+ * (literals.ts) and the `initForcesExternref` var-hoisting tag (index.ts /
+ * declarations.ts). When such a value is RETURNED from a function/closure whose
+ * TS-inferred return type is the structural object type `{ … }`, `resolveWasmType`
+ * maps that to a *struct* return, so `return o` coerces the externref host object
+ * to a struct it does not match — and the value marshals to `null` at the
+ * host-invocation bridge (`__call_fn_N`). That is exactly the
+ * `RegExp.prototype.exec` override the native `@@replace` / `@@split` protocol
+ * drives (#3051 Cluster 1): the compiled `exec` returns the match-result object
+ * literal, V8 invokes it via the host bridge and observes `null`, so the
+ * spec-mandated result-object reads (`Get(result, "0"|"index"|"length")` +
+ * ToString/ToIntegerOrInfinity/ToLength, and any throwing getter among them)
+ * never run. Forcing the closure's return type to externref keeps the host object
+ * intact across the boundary.
+ *
+ * Detection is purely syntactic (AST + checker symbol resolution) so it is stable
+ * across the pre-scan (`ensureFuncValueWrappersRegistered`) and the actual-compile
+ * calls — it never consults the order-dependent `externrefAccessorVars` set, so
+ * the wrapper type pre-registered for a callback matches the compiled signature.
+ */
+function objectLiteralHasAccessor(obj: ts.ObjectLiteralExpression): boolean {
+  return obj.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p));
+}
+
+function returnExprIsHostAccessorObject(ctx: CodegenContext, expr: ts.Expression): boolean {
+  let e: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) {
+    e = e.expression;
+  }
+  if (ts.isObjectLiteralExpression(e)) return objectLiteralHasAccessor(e);
+  if (ts.isIdentifier(e)) {
+    const sym = ctx.checker.getSymbolAtLocation(e);
+    const decl = sym?.valueDeclaration;
+    if (decl && ts.isVariableDeclaration(decl) && decl.initializer && ts.isObjectLiteralExpression(decl.initializer)) {
+      return objectLiteralHasAccessor(decl.initializer);
+    }
+  }
+  return false;
+}
+
+function closureReturnsHostAccessorObject(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+): boolean {
+  const body = arrow.body;
+  if (!body) return false;
+  // Expression-bodied arrow: `() => (expr)`.
+  if (!ts.isBlock(body)) return returnExprIsHostAccessorObject(ctx, body);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    // Do NOT descend into nested functions/classes — their `return`s bind to them.
+    if (
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isFunctionDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node)
+    )
+      return;
+    if (ts.isReturnStatement(node) && node.expression && returnExprIsHostAccessorObject(ctx, node.expression)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return found;
+}
+
 export function computeClosureWrapperSig(
   ctx: CodegenContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
@@ -1629,6 +1702,19 @@ export function computeClosureWrapperSig(
         }
       }
     }
+  }
+
+  // (#3051) A body that returns a host-path accessor object literal must return
+  // externref, else the externref `$Object` is coerced to the inferred struct
+  // return type and nulled at the host-invocation bridge (see
+  // `closureReturnsHostAccessorObject`). Only overrides a concrete struct/ref
+  // return — never widens `void`/`null` (an unset return) back to a value.
+  if (
+    closureReturnType !== null &&
+    closureReturnType.kind !== "externref" &&
+    closureReturnsHostAccessorObject(ctx, arrow)
+  ) {
+    closureReturnType = { kind: "externref" };
   }
 
   return { params: arrowParams, returnType: closureReturnType };
