@@ -4886,7 +4886,24 @@ export function compileDeclarations(
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {
             if (insideFunction) {
-              ctx.deferredClassBodies.add(decl.name.text);
+              // (#3045 Bug 2) Defer the class-expression BODY compilation to the
+              // in-scope variable path so its constructor/method bodies can
+              // capture the enclosing function scope — call enclosing functions
+              // and read/write enclosing locals — exactly as a nested class
+              // DECLARATION does (deferred just above, compiled in-scope by
+              // `compileNestedClassDeclaration`). Key the deferral by the
+              // SYNTHETIC name the class was collected under (`anonClassExprNames`)
+              // — the name its ctor/method funcs live under and that
+              // `compileClassExpression` resolves — NOT the binding name (which
+              // is a dead duplicate registration, #1394). The in-scope compile
+              // runs in `compileVariableStatement`. Without this, the body was
+              // compiled eagerly at module scope (in `compileAnonymousClassBodies
+              // InNode` below) BEFORE the enclosing function's nested functions
+              // were registered and BEFORE its captured locals were promoted to
+              // globals → enclosing calls returned garbage and enclosing writes
+              // were dropped.
+              const synth = ctx.anonClassExprNames.get(decl.initializer);
+              if (synth !== undefined) ctx.deferredClassBodies.add(synth);
             } else {
               try {
                 compileClassBodies(ctx, decl.initializer, funcByName, decl.name.text);
@@ -4975,6 +4992,13 @@ export function compileDeclarations(
     const syntheticName = ctx.anonClassExprNames.get(classExpr);
     if (syntheticName) {
       compiledAnonClasses.add(classExpr);
+      // (#3045 Bug 2) A class-expression body deferred to the in-scope variable
+      // path (see the VariableStatement branch in `compileClassesFromStatements`)
+      // must NOT be eagerly compiled here at module scope — its ctor/method
+      // bodies are compiled in `compileVariableStatement`, where the enclosing
+      // function scope is live. It is already marked handled (added to
+      // `compiledAnonClasses` above) so it is never eager-compiled; skip.
+      if (ctx.deferredClassBodies.has(syntheticName)) return;
       try {
         compileClassBodies(ctx, classExpr, funcByName, syntheticName);
       } catch (e) {

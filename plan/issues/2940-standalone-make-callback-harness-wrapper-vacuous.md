@@ -283,3 +283,12 @@ resizable-buffer fixture globals `is not defined` → the assertion callback
 throws before running → vacuous fail), not a #2940 codegen regression. Not
 reopening #2940; flagging for triage — the fix belongs in #1524 (harness
 fixture), which remains `backlog`.
+
+## 2026-07-06 harvest note — cluster PERSISTS, reopened as #3074
+
+`/harvest-errors` (default run 20260706-034320; standalone current 6.7.2026)
+finds the `vacuous: harness-wrapper callback never executed` signature STILL at
+**1,535 default + 448 standalone** even though the blocker #2939 (any-typed
+closure dynamic-dispatch arity/type tolerance) has since landed `done`. So
+either #2939 did not cover the harness-wrapper dispatch path or only a narrow
+case landed. Tracked forward in **#3074** (both lanes; largest default cluster).

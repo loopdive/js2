@@ -28,6 +28,7 @@ import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { emitGuardedRefCast } from "../type-coercion.js";
 import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
+import { compileNestedClassDeclaration } from "./nested-declarations.js";
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
@@ -712,6 +713,26 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         ts.isFunctionExpression(decl.initializer) ||
         ts.isClassExpression(decl.initializer))
     ) {
+      // (#3045 Bug 2) A class expression nested in a function had its BODY
+      // deferred to this in-scope path (declarations.ts). Compile its
+      // constructor/method bodies NOW, with the enclosing function scope
+      // (`fctx`) live and its nested functions already registered — BEFORE
+      // materializing the binding value below. `compileNestedClassDeclaration`
+      // runs `promoteAccessorCapturesToGlobals` for each member (enclosing-local
+      // reads/writes route through module globals) then `compileClassBodies`
+      // (enclosing-function calls resolve to real direct calls). This is the
+      // exact path a nested class DECLARATION takes. Run it FIRST so a module
+      // global added by promotion shifts the enclosing body emitted before this
+      // statement — the #779a index-shift guard registers `fctx` on the shift
+      // stacks inside `compileClassBodies`, exactly as the declaration path
+      // relies on; the binding materialization that follows reads the same
+      // class singleton, unaffected by the ordering.
+      if (ts.isClassExpression(decl.initializer)) {
+        const deferredSynth = ctx.anonClassExprNames.get(decl.initializer);
+        if (deferredSynth !== undefined && ctx.deferredClassBodies.has(deferredSynth)) {
+          compileNestedClassDeclaration(ctx, fctx, decl.initializer, deferredSynth);
+        }
+      }
       // (#3045 identity) Materialize a class-expression BINDING as the class's
       // canonical `__class_<Name>` singleton (identity-stable externref) rather
       // than the ctor-CLOSURE `compileClassExpression` emits. This is what makes

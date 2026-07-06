@@ -10818,10 +10818,40 @@ assert._isSameValue = isSameValue;
       // Get actual JS built-in object by name (#965) — fixes WI3 null receiver for built-in classes
       if (name === "__get_builtin") return (n: string) => (globalThis as any)[n];
       // Object.hasOwn(obj, key) — ES2022 static method (#965)
+      // (#3060) Object.hasOwn(O, P) ≡ HasOwnProperty(ToObject(O), ToPropertyKey(P)),
+      // the same predicate as Object.prototype.hasOwnProperty.call. The previous
+      // body ran native `Object.hasOwn` on the RAW value, so a WasmGC struct
+      // receiver (a statically-shaped object literal `{foo:42}`, or a `{}` given
+      // an accessor via defineProperty) reported `false` for its own properties —
+      // its fields/sidecar/descriptor data are invisible to native introspection.
+      // Route through the shared `__hasOwnProperty` presence predicate instead:
+      // arguments-object arm → non-struct `hasOwnProperty.call` arm → wasm-struct
+      // `_wasmStructHasOwn` arm (tombstone + sidecar + descriptor + class methods
+      // + struct shape).
       if (name === "__object_hasOwn")
         return (obj: any, key: any): number => {
+          // ES2022 Object.hasOwn(O, P): step 1 is `Let obj be ? ToObject(O)`,
+          // which THROWS a TypeError for null/undefined — and it happens BEFORE
+          // step 2 `ToPropertyKey(P)`, so the key must NOT be coerced first
+          // (test262 built-ins/Object/hasOwn/toobject_{null,undefined,before_topropertykey}).
+          // The pre-#3060 body delegated to native `Object.hasOwn`, which threw
+          // here; the struct-routing rewrite must preserve that throw rather than
+          // swallow the null receiver as `false`.
+          if (obj == null) {
+            throw new TypeError("Cannot convert undefined or null to object");
+          }
           key = _toPropertyKey(key, callbackState); // (#1716) ToPropertyKey on struct key
-          return (Object.hasOwn ? Object.hasOwn(obj, key) : Object.prototype.hasOwnProperty.call(obj, key)) ? 1 : 0;
+          if (typeof obj === "object" && _argumentsObjects.has(obj) && _argumentsHasOwn(obj, key)) {
+            return 1;
+          }
+          if (!_isWasmStruct(obj)) {
+            try {
+              return Object.prototype.hasOwnProperty.call(obj, key) ? 1 : 0;
+            } catch {
+              return 0;
+            }
+          }
+          return _wasmStructHasOwn(obj, key, callbackState?.getExports()) ? 1 : 0;
         };
       // Object.is(x, y) — SameValue comparison (#965)
       if (name === "__object_is") return (x: any, y: any): number => (Object.is(x, y) ? 1 : 0);

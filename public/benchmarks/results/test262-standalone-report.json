@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-06T19:34:29.575Z",
-  "baseline_generated_at": "2026-07-06T19:34:29.575Z",
-  "baseline_sha": "0a1555bd257b627240b0a2efd51e8a34d325444d",
+  "timestamp": "2026-07-06T20:46:44.137Z",
+  "baseline_generated_at": "2026-07-06T20:46:44.137Z",
+  "baseline_sha": "14b6a7510129a91489b4c04043b10c898b18ac8b",
   "oracle_version": 1,
   "mode": {
     "target": "standalone",
@@ -1427,15 +1427,15 @@
         "sample_files": [
           "test/built-ins/JSON/parse/15.12.2-2-2.js",
           "test/built-ins/JSON/stringify/space-wrong-type.js",
-          "test/built-ins/JSON/stringify/replacer-array-empty.js",
           "test/built-ins/JSON/parse/reviver-array-define-prop-err.js",
-          "test/built-ins/JSON/parse/15.12.2-2-6.js"
+          "test/built-ins/JSON/parse/15.12.2-2-6.js",
+          "test/built-ins/JSON/stringify/replacer-array-empty.js"
         ],
         "sample_signatures": [
           "illegal_cast:L#:## illegal cast [in test()]",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(JSON.stringify(obj), JSON.stringify(obj, null, null));",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue( JSON.stringify([#, {a: #}], []), '[#,{}]' );",
           "assertion_fail:returned # — assert ## at L#: throw new Test262Error();",
+          "assertion_fail:returned # — assert ## at L#: assert.sameValue( JSON.stringify([#, {a: #}], []), '[#,{}]' );",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(JSON.stringify(obj, null, ' '), [ '{' , ' \"a1\": {' , ' \"b1\": [' , ' #,' , ' #,' , ' #,' , ' #' , ' ],' , ' \"b2\": {' , ' \"c1\": #,' , ' \"c2\": #'"
         ]
       },
@@ -1762,15 +1762,15 @@
         "sample_files": [
           "test/language/expressions/class/subclass-builtins/subclass-Number.js",
           "test/language/expressions/class/dstr/meth-ary-ptrn-elem-ary-rest-init.js",
-          "test/language/expressions/array/S11.1.4_A1.4.js",
           "test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-function-declaration.js",
+          "test/language/expressions/array/S11.1.4_A1.4.js",
           "test/language/expressions/class/dstr/gen-meth-obj-ptrn-id-get-value-err.js"
         ],
         "sample_signatures": [
           "runtime_error:L#:## Codegen error: 'class Subclass extends Number' is not yet supported in --target standalone (##). The primitive-wrapper subclass native box is not implemented yet — routing it through the host path would emit invalid Wasm (the standalo",
           "assertion_fail:returned # — assert ## at L#: assert.notSameValue(x, values);",
-          "assertion_fail:Test262Error: ##: var array = [,,,#,#]; array.toString === Array.prototype.toString. Actual: [object Object]",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue( c[f()], # );",
+          "assertion_fail:Test262Error: ##: var array = [,,,#,#]; array.toString === Array.prototype.toString. Actual: [object Object]",
           "assertion_fail:returned # — assert ## at L#: throw new Test262Error();"
         ]
       },
@@ -1976,23 +1976,23 @@
         "error_categories": {
           "assertion_fail": 176,
           "type_error": 484,
-          "other": 16,
           "runtime_error": 8,
+          "other": 16,
           "wasm_compile": 1
         },
         "sample_files": [
           "test/annexB/language/global-code/if-decl-no-else-global-skip-early-err-try.js",
           "test/annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for-in.js",
-          "test/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-block-scoping.js",
           "test/annexB/language/global-code/switch-case-global-no-skip-try.js",
-          "test/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-update.js"
+          "test/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-update.js",
+          "test/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-block-scoping.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { f; }, 'An initialized binding is not created following evaluation');",
           "type_error:TypeError: dynamic eval is not supported in standalone mode (##)",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue( f, undefined, 'Initialized binding created prior to evaluation' );",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(typeof f, 'function');",
-          "other:L#:## ';' expected."
+          "runtime_error:L#:## Invalid left-hand side in for-in/for-of"
         ]
       },
       {

@@ -107,3 +107,99 @@ describe("#3045 — class-expression binding holds the constructor value", () =>
     ).toBe(8);
   });
 });
+
+// #3045 Bug 2 — a class EXPRESSION nested in a function must capture the
+// enclosing function scope in its constructor/method/accessor bodies, exactly
+// as a class DECLARATION does. Before this fix, the class-expression body was
+// compiled eagerly at module scope (BEFORE the enclosing function's nested
+// functions were registered and BEFORE its captured locals were promoted to
+// module globals) so enclosing calls returned garbage and enclosing writes were
+// dropped. The fix defers the body to the in-scope variable path (via
+// `compileNestedClassDeclaration`), which runs `promoteAccessorCapturesToGlobals`
+// then `compileClassBodies` with the enclosing function context live.
+describe("#3045 Bug 2 — class-expression bodies capture the enclosing function scope", () => {
+  it("method reads an enclosing let (by-value capture)", async () => {
+    expect(
+      await compileAndRun(
+        `export function test(): number { let base = 100; const C = class { m() { return base + 1; } }; return new C().m(); }`,
+      ),
+    ).toBe(101);
+  });
+
+  it("constructor writes an enclosing let (write propagates out)", async () => {
+    expect(
+      await compileAndRun(
+        `export function test(): number { let seen = 0; const C = class { constructor() { seen = 42; } }; new C(); return seen; }`,
+      ),
+    ).toBe(42);
+  });
+
+  it("method calls an enclosing function declaration (correct args/return)", async () => {
+    expect(
+      await compileAndRun(
+        `export function test(): number { function dbl(n: number): number { return n * 2; } const C = class { m() { return dbl(21); } }; return new C().m(); }`,
+      ),
+    ).toBe(42);
+  });
+
+  it("getter captures an enclosing local", async () => {
+    expect(
+      await compileAndRun(
+        `export function test(): number { let x = 9; const C = class { get g() { return x; } }; return new C().g; }`,
+      ),
+    ).toBe(9);
+  });
+
+  it("the 8-file shape: ctor/method calls an enclosing fn that mutates AND returns an enclosing local", async () => {
+    // Mirrors the harvested private-method tests' `hasProp`: the class-expression
+    // constructor calls a `test()`-local helper that both writes an enclosing
+    // `let` and returns a value the caller consumes. This is the exact Bug-2
+    // regression the harvest mislabeled as "Reflect.has called on non-object".
+    expect(
+      await compileAndRun(
+        `export function test(): number { let seen = 0; function bump(n: number): number { seen = seen + n; return n * 10; } const C = class { m() { return bump(3); } }; const r = new C().m(); return r + seen; }`,
+      ),
+    ).toBe(33);
+  });
+
+  it("generator method captures an enclosing local", async () => {
+    expect(
+      await compileAndRun(
+        `export function test(): number { let base = 40; const C = class { *g() { yield base; yield base + 1; yield base + 2; } }; let sum = 0; for (const v of new C().g()) sum += v; return sum; }`,
+      ),
+    ).toBe(123);
+  });
+
+  it("named class expression captures an enclosing local", async () => {
+    expect(
+      await compileAndRun(
+        `export function test(): number { let z = 3; const C = class Named { m() { return z + 1; } }; return new C().m(); }`,
+      ),
+    ).toBe(4);
+  });
+
+  it("a nested arrow inside a class-expression method captures the enclosing scope", async () => {
+    expect(
+      await compileAndRun(
+        `export function test(): number { let q = 11; const C = class { m() { const f = () => q * 2; return f(); } }; return new C().m(); }`,
+      ),
+    ).toBe(22);
+  });
+
+  it("regression guard: a non-capturing in-function class expression still works", async () => {
+    expect(
+      await compileAndRun(
+        `export function test(): number { const C = class { v: number; constructor(v: number) { this.v = v; } getV() { return this.v; } }; return new C(7).getV(); }`,
+      ),
+    ).toBe(7);
+  });
+
+  it("declaration/expression parity: same capture shape yields the same result", async () => {
+    const shape = (kw: string) =>
+      `export function test(): number { let seen = 0; function bump(n: number): number { seen = seen + n; return n * 10; } ${kw} const r = new C().m(); return r + seen; }`;
+    const decl = await compileAndRun(shape("class C { m() { return bump(3); } }"));
+    const expr = await compileAndRun(shape("const C = class { m() { return bump(3); } };"));
+    expect(expr).toBe(decl);
+    expect(expr).toBe(33);
+  });
+});

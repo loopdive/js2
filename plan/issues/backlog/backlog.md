@@ -487,3 +487,24 @@ Existing covered issues pulled into sprint 66 (Backlog → 66): #1642 (for-of It
 Deprioritized (eval / new Function / dynamic-import — NOT scheduled first):
 ~219 ES5 + ~87 ES6 eval/dynamic-code fails; tracked by #1066, #1102, #1240,
 #1263-#1266 (eval tiers). Not added to the prioritized sprint-66 list.
+
+## 2026-07-06 /harvest-errors run (both lanes; standalone de-vacuified)
+
+Data: default baselines run 20260706-034320 (gitHash 2aa204b4, 32,514 pass);
+standalone `test262-standalone-current.jsonl` (6.7.2026), post #3055/#2757
+numeric-any-eq de-vacuification. New clusters filed:
+
+- [#3074](../3074-typedarray-harness-wrapper-callback-vacuous-both-lanes.md) —
+  TypedArray harness-wrapper callback never executes → vacuous fail in BOTH
+  lanes (**1,535 default** = largest default cluster, **448 standalone**).
+  Persists after #2939/#2940 both closed; reopens the feature gap.
+- [#3075](../3075-standalone-forof-dstr-illegal-cast-iterator.md) — standalone
+  for-of/for-await-of destructuring `illegal cast [in __iterator]` — **468**
+  standalone, residual after #1323 (done). goal: standalone-mode.
+
+Verdict on the de-vacuified numeric failures (#3055/#2757): **scattered, not a
+coherent numeric cluster.** Number assertion-fails = 100 (mostly toString radix),
+Math = 3. The ~1,958 newly-honest fails redistributed across general
+assertion_fail categories (language/expressions 2,317, language/statements
+1,927, Array 1,487, Object 1,358), not into a numeric-precision or
+specific-builtin bucket. No numeric-cluster issue warranted.

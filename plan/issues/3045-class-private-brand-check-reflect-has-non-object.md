@@ -1,7 +1,8 @@
 ---
 id: 3045
 title: "class private-element brand check emits Reflect.has on a non-object receiver (private methods/generators/static-private)"
-status: ready
+status: done
+assignee: ttraenkler/dev-3045
 sprint: current
 priority: medium
 horizon: m
@@ -10,6 +11,7 @@ reasoning_effort: max
 model: fable
 architect_spec: done
 created: 2026-07-05
+completed: 2026-07-06
 task_type: bugfix
 area: codegen, runtime
 language_feature: class-private-methods
@@ -253,3 +255,82 @@ No downgrade — the design (run the class-expression analog of
 `compileNestedClassDeclaration` at the var-path, preserving the #779a index-shift
 guards) is correct and greppable. Flagged only so the senior doesn't trust the
 stale `declarations.ts` line numbers.
+
+## Bug 2 — IMPLEMENTED (dev-3045, 2026-07-06)
+
+**Landed via the architect's design.** Root cause re-verified empirically on
+current main before coding (repro: `var C = class { m(){ return bump(3); } }`
+capturing an enclosing `let seen` + calling an enclosing `function bump` → main
+returns garbage `0`; a class DECLARATION of the same shape returns the correct
+`33`). Instrumented probes confirmed the exact asymmetry the spec names:
+
+- Class **declaration**: `promoteAccessorCapturesToGlobals` runs with
+  `currentFunc = test` (the enclosing fn), then `compileClassBodies` compiles the
+  body in-scope. → captures correctly.
+- Class **expression**: NO `promoteAccessorCapturesToGlobals` call at all; the
+  body was compiled eagerly under its synthetic name with `currentFunc = <none>`
+  (module scope) — BEFORE the enclosing function's nested functions were
+  registered and BEFORE its captured locals were promoted. → enclosing calls hit
+  the `ref.null.extern` fallback (returned `0`) and enclosing writes were dropped.
+
+### The fix (3 files, all in `src/codegen`)
+
+1. **`statements/nested-declarations.ts`** — generalised `compileNestedClass
+   Declaration` (and `extendsReferencesClassName`) to accept `ts.ClassDeclaration
+   | ts.ClassExpression` + an explicit `syntheticName`. When `syntheticName` is
+   set, `className = syntheticName`, the TDZ self-reference guard only fires for a
+   NAMED class (`decl.name` present), `collectClassDeclaration`/`compileClass
+   Bodies` receive the synthetic name, and the deferred-flag delete keys on it.
+2. **`declarations.ts`** — in the collection pass' `VariableStatement` branch,
+   an in-function `var/const/let C = class{…}` now defers the class BODY by adding
+   its **synthetic** name (`anonClassExprNames.get(initializer)`) to
+   `deferredClassBodies` (was: the dead binding name). `compileAnonClassIfNeeded`
+   skips (marks handled, never eager-compiles) any class-expression whose
+   synthetic name is deferred — so the eager module-scope compile no longer fires.
+3. **`statements/variables.ts`** — at the top of the arrow/fn-expr/class-expr
+   binding branch, if the class-expression's synthetic name is deferred, call
+   `compileNestedClassDeclaration(ctx, fctx, initializer, synth)` FIRST (promotion
+   + in-scope body compile), THEN the Bug-1 value materialization. Running it
+   first keeps the #779a index-shift set consistent: any module global added by
+   promotion shifts the enclosing body emitted before this statement, exactly as
+   the declaration path relies on (`compileClassBodies` registers `fctx` on
+   `funcStack`/`parentBodiesStack`).
+
+### Validation (regression-free, verified against main @ 0a1555b)
+
+- **`tests/issue-3045.test.ts`**: 19/19 pass (9 Bug-1 + 10 new Bug-2 capture
+  cases: enclosing let read, ctor write-through, enclosing-fn call, getter
+  capture, generator-method capture, named class expr, nested arrow, the 8-file
+  `bump` shape, non-capturing regression guard, decl/expr parity).
+- **Capture matrix** (12 shapes): 11/12 pass. The 1 fail — a `static` method on
+  an in-function class EXPRESSION (`const C = class { static s(){…} }; C.s()`) —
+  is **pre-existing on main** (identical `got=0`), orthogonal to Bug 2.
+- **Regression sweep** — `class-expression(s).test.ts`, `class-methods`,
+  `class-method-calls`, `class-method-struct-new`, `issue-1712/1528`,
+  `illegal-cast-closures-585`, `class-static-private-this`, `issue-846`: **byte-
+  identical pass/fail counts on my branch vs `main`** (the failures are the known
+  pre-existing bare-import / `string_constants` harness issue, NOT this change).
+  Zero regressions.
+
+### Corrected finding — the 8 harvested files are NOT fully fixed by Bug 2
+
+The harvest bucketed the 8 files under "Reflect.has on non-object", which is the
+Bug-2 *symptom*. Bug 2 **resolves that trap** (the ctor's `hasProp(this, …)` now
+runs correctly instead of trapping), but the 8 files then fail on **deeper,
+pre-existing private-method feature gaps that are orthogonal to class-expression
+capture** — confirmed by testing the identical shapes as class DECLARATIONS:
+
+- **private-method `.name`** (`this.#m.name === '#m'`) — returns wrong value for
+  **both** declarations AND expressions. This is the common remaining blocker.
+- **arrow-captured-`this` + private-method identity** (`this.#m === (()=>this)().#m`)
+  — fails for **declarations** (the expression path actually passes it now).
+
+Both reproduce without any class expression, so they are **not** #3045. They need
+a **separate follow-up issue** (`class-private-methods`, `.name` + arrow-`this`
+private identity). dev-3045 flagged this to the tech lead rather than hand-pick an
+id (`claim-issue.mjs --allocate` open-PR scan was timing out; avoided the
+cross-session id-collision hazard given ~100 active worktrees).
+
+**#3045 scope closed:** the class-expression enclosing-scope capture root cause
+(Bug 1 value materialization + Bug 2 body capture) is fixed and regression-free.
+The residual private-method-feature work is spun off.

@@ -59,7 +59,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.j
  * must throw ReferenceError (e.g. `class x extends x {}`). Returns true if the
  * extends heritage clause contains an identifier equal to the class name.
  */
-function extendsReferencesClassName(decl: ts.ClassDeclaration, className: string): boolean {
+function extendsReferencesClassName(decl: ts.ClassDeclaration | ts.ClassExpression, className: string): boolean {
   if (!decl.heritageClauses) return false;
   for (const clause of decl.heritageClauses) {
     if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
@@ -83,15 +83,23 @@ function extendsReferencesClassName(decl: ts.ClassDeclaration, className: string
 export function compileNestedClassDeclaration(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  decl: ts.ClassDeclaration,
+  decl: ts.ClassDeclaration | ts.ClassExpression,
+  // (#3045 Bug 2) A class EXPRESSION nested in a function (`const C = class{…}`)
+  // is compiled in-scope through this same path, keyed by the synthetic name it
+  // was collected under during the collection phase. When set, `decl` is the
+  // `ts.ClassExpression` and `className` is that synthetic name — otherwise this
+  // is the legacy class-DECLARATION path and `className` is `decl.name.text`.
+  syntheticName?: string,
 ): void {
-  if (!decl.name) return;
-  const className = decl.name.text;
+  const className = syntheticName ?? decl.name?.text;
+  if (!className) return;
 
   // §15.7.1: the class name is in TDZ while its own `extends` clause is
-  // evaluated. `class x extends x {}` must throw ReferenceError (#1594B).
-  if (extendsReferencesClassName(decl, className)) {
-    emitThrowReferenceError(ctx, fctx, `Cannot access '${className}' before initialization`);
+  // evaluated. `class x extends x {}` must throw ReferenceError (#1594B). Only
+  // a NAMED class can self-reference in its own heritage (`decl.name` present);
+  // an anonymous class expression has no name to hit the TDZ.
+  if (decl.name && extendsReferencesClassName(decl, decl.name.text)) {
+    emitThrowReferenceError(ctx, fctx, `Cannot access '${decl.name.text}' before initialization`);
     return;
   }
 
@@ -107,9 +115,12 @@ export function compileNestedClassDeclaration(
   }
 
   try {
-    // Collect struct type, constructor, and method stubs (if not already done)
+    // Collect struct type, constructor, and method stubs (if not already done).
+    // A class EXPRESSION was already collected under its synthetic name in the
+    // collection phase, so `structMap.has(syntheticName)` is always true and this
+    // branch only runs for a genuine (un-collected) class declaration.
     if (!ctx.structMap.has(className)) {
-      collectClassDeclaration(ctx, decl);
+      collectClassDeclaration(ctx, decl, syntheticName);
     }
 
     // ES2015 14.5.14 step 21: class with static 'prototype' member must throw TypeError
@@ -145,7 +156,7 @@ export function compileNestedClassDeclaration(
     }
 
     // Compile constructor and method bodies
-    compileClassBodies(ctx, decl, funcByName);
+    compileClassBodies(ctx, decl, funcByName, syntheticName);
 
     // Mark as no longer deferred
     if (isDeferred) ctx.deferredClassBodies.delete(className);
