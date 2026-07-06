@@ -4508,19 +4508,40 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // __module_init so the ordinary property-write arm runs — the same
         // write from inside a function already worked; only the top-level
         // collection dropped it. Scoped narrowly:
-        //   - DIRECT `F.<name> = …` only (bare-identifier receiver);
-        //     `F.prototype = …` / `F.prototype.m = …` chains stay excluded —
-        //     those are consumed by the compile-time fnctor-prototype lift,
-        //     and re-running them at init would double-apply.
+        //   - DIRECT `F.<name> = …` only (bare-identifier receiver); the
+        //     `ts.isIdentifier(expr.left.expression)` guard already excludes
+        //     `F.prototype.m = …` chains (whose receiver `F.prototype` is a
+        //     PropertyAccessExpression, not an identifier).
+        //   - (#3049) `F.prototype = <expr>` (direct) is NOW kept for host/GC
+        //     too. The pre-#3049 code excluded it (`name.text !== "prototype"`)
+        //     believing the compile-time fnctor-prototype lift consumed it — but
+        //     that lift (`tryCompileFnctorPrototypeAssign`) opens with
+        //     `if (!ctx.standalone) return undefined`, so it NEVER fires in
+        //     host/GC mode. Nothing consumed the statement, so a top-level
+        //     `F.prototype = Object.getPrototypeOf(…)` (the test262 `Iterator`
+        //     harness-prelude shape) was silently dropped and `Iterator.prototype`
+        //     was never assigned → `Iterator.prototype.<helper>` read undefined.
+        //     Re-running it at init does NOT double-apply (the lift is inert in
+        //     host mode); the ordinary property-write arm (`compileAssignment`)
+        //     handles `F.prototype = …` the same way it does inside a function
+        //     body (which already worked).
         //   - Host/GC lanes only: standalone's write-arm for fnctor statics
         //     is separate work (its prototype case has its own #2660 S2 keep
         //     above); standalone codegen stays byte-identical.
+        //   - (#3049) The receiver is unwrapped via `ts.skipOuterExpressions`
+        //     so the test262 prelude's CAST form `(Iterator as any).prototype =
+        //     …` resolves to the identifier `Iterator` (the actual harvested
+        //     shape uses the `as any` cast). Only OUTER wrappers (parens / `as`
+        //     / `!`) are stripped — `F.prototype.m = …`'s receiver `F.prototype`
+        //     is a PropertyAccessExpression, so it stays excluded.
+        const staticWriteReceiver = ts.isPropertyAccessExpression(expr.left)
+          ? ts.skipOuterExpressions(expr.left.expression)
+          : undefined;
         if (
           !ctx.standalone &&
-          ts.isPropertyAccessExpression(expr.left) &&
-          ts.isIdentifier(expr.left.expression) &&
-          expr.left.name.text !== "prototype" &&
-          ctx.topLevelFunctionNames.has(expr.left.expression.text)
+          staticWriteReceiver !== undefined &&
+          ts.isIdentifier(staticWriteReceiver) &&
+          ctx.topLevelFunctionNames.has(staticWriteReceiver.text)
         ) {
           ctx.moduleInitStatements.push(stmt);
           continue;
@@ -5311,18 +5332,31 @@ export function compileDeclarations(
     // both would cause init to run twice (once during instantiation, once
     // when the host calls `_start`).
 
-    // (#2796) Diff-test-harness fidelity: when `deferTopLevelInit` is set (and
-    // we are NOT in WASI mode), export `__module_init` and do NOT wire the wasm
-    // `start` section to it. Top-level code that introspects WasmGC structs
-    // (`for…in` / `Object.keys` on a runtime-shaped object) needs the
-    // `__struct_field_names` / `__sget_*` exports, which only exist AFTER the
-    // instance is constructed — so running it via the `start` section (DURING
-    // instantiation, before `setExports`) enumerates zero keys. Exporting it and
-    // letting the host call it after `setExports` is symmetric with the
-    // standalone/WASI `_start` model and gives the diff-test HOST lane the same
-    // fully-wired runtime the standalone lane has. The export's func index is
-    // shifted alongside every other export by the late-import shift logic.
-    const exportModuleInit = ctx.deferTopLevelInit && !ctx.wasi;
+    // (#2796/#3049) Deferred top-level init is now the host/GC DEFAULT (was:
+    // opt-in via `deferTopLevelInit`, #2796). For every non-WASI module we
+    // export `__module_init` and do NOT wire the wasm `start` section to it;
+    // instead `applyModuleInitGuard` (called for host in index.ts, mirroring
+    // the WASI #1789 model) prepends a self-guarded `call __module_init` to
+    // every exported function, so top-level code runs on the FIRST export entry
+    // — AFTER the host has wired `setExports`, against a fully-wired runtime.
+    //
+    // Why the default changed (#3049): running top-level code via the `start`
+    // section executes it DURING `WebAssembly.instantiate`, BEFORE `setExports`.
+    // At that point host imports that need `getExports()` (`__iterator`'s vec
+    // fallback, `__struct_field_names`/`__sget_*` for `for…in`, etc.) can't
+    // reach the exports and throw / return empty. Any top-level host-import
+    // expression — e.g. the test262 `Iterator` prelude
+    // `F.prototype = Object.getPrototypeOf(Object.getPrototypeOf(
+    // [][Symbol.iterator]()))` — hit this. Deferring to first-export-entry is
+    // also MORE spec-correct: ES module top-level runs at load with every
+    // facility present, exactly the model the standalone/WASI `_start` lane uses.
+    //
+    // A module whose top-level code has observable side-effects but is never
+    // followed by an export call (a pure top-level `console.log`) now relies on
+    // the host calling the exported `__module_init()` (or any export) after
+    // `setExports` — the in-repo host consumers (`compileAndInstantiate`, the
+    // playground Run path, the generated npm runner) do exactly that.
+    const exportModuleInit = !ctx.wasi;
     const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
     const initFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
     ctx.mod.functions.push({

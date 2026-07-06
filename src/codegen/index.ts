@@ -2573,6 +2573,19 @@ export function generateModule(
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
     finalizeInModuleInitFlag(ctx);
 
+    // (#3049) Deferred host/GC module-init: `__module_init` is now exported and
+    // NOT wired to the wasm `start` section (see declarations.ts), so — mirroring
+    // the WASI #1789 model — prepend a self-guarded `call __module_init` to every
+    // exported function. The first export the host calls (AFTER `setExports`)
+    // self-initialises; re-entry is a no-op via the `__init_done` guard. MUST run
+    // AFTER `finalizeInModuleInitFlag` so the guard's early `return` (when already
+    // initialised) sits OUTSIDE the `__in_module_init` flag set/reset wrap — else a
+    // second entry would `return` between flag=1 and flag=0 and leave it stuck at 1.
+    // WASI already applied the guard inside `addWasiStartExport`; the idempotent
+    // `moduleInitGuardApplied` flag makes this a no-op there, but gate on !wasi
+    // anyway for clarity.
+    if (!ctx.wasi) applyModuleInitGuard(ctx);
+
     // (#2853) Nominal shape branding: structurally-colliding `__anon_*` /
     // `__fnctor_*` shape types get a trailing brand-ref field so the engine's
     // iso-recursive canonicalization cannot merge distinct key-sets into one
@@ -7200,6 +7213,14 @@ export function generateMultiModule(
     // Runs before dead-elim (which never prunes/remaps live globals) and the
     // index freeze. No-op unless a gc/host delete-aware read recorded the flag.
     finalizeInModuleInitFlag(ctx);
+
+    // (#3049) Deferred host/GC module-init — same guard + placement as the
+    // single-module pipeline (see the detailed note there): prepend a
+    // self-guarded `call __module_init` to every exported function so the first
+    // export the host calls self-initialises AFTER `setExports`. MUST run after
+    // `finalizeInModuleInitFlag` for the flag-wrap compose order. No-op for WASI
+    // (already guarded in `addWasiStartExport`).
+    if (!ctx.wasi) applyModuleInitGuard(ctx);
 
     // (#2853) Nominal shape branding — same pass + placement as the
     // single-module pipeline (see generateModule): after all instruction

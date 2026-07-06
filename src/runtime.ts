@@ -409,6 +409,33 @@ function _getAsyncIteratorPrototype(): any {
   return proto;
 }
 
+let _ArrayIteratorPrototypeCache: any = null;
+/**
+ * (#3049) Build the shared `%ArrayIteratorPrototype%` (spec §23.1.5.2) used by
+ * host-synthesized vec/array iterators (the `__iterator` vec fallback below).
+ * Its `[[Prototype]]` is the compiler's `%IteratorPrototype%`
+ * (`_getIteratorPrototype()`) — the SAME helper-bearing proto the generator
+ * path chains to (`_getGeneratorPrototype` does `Object.create(
+ * _getIteratorPrototype())`) — so an array iterator's chain is
+ * `iter → %ArrayIteratorPrototype% → %IteratorPrototype% → Object.prototype`.
+ * The test262 runner reads `Iterator.prototype = getPrototypeOf(getPrototypeOf(
+ * [][Symbol.iterator]()))`, and this two-level chain makes that DOUBLE hop land
+ * EXACTLY on `_getIteratorPrototype()` (which reaches map/filter/take/… via its
+ * own proto, `Iproto`, where `_installIteratorHelperPolyfills` installs them).
+ * The pre-#3049 fallback used a ONE-level `Object.create(
+ * globalThis.Iterator.prototype)`, so the double hop overshot to
+ * `Object.prototype` (helper-less) and every `Iterator.prototype.<helper>`
+ * resolved to `undefined`. Cached module-wide so ALL array iterators share this
+ * singleton by identity (the #3013 guard: `getPrototypeOf([].values()) ===
+ * getPrototypeOf([][Symbol.iterator]())` and `!== getPrototypeOf([1,2])`).
+ */
+function _getArrayIteratorPrototype(): any {
+  if (_ArrayIteratorPrototypeCache) return _ArrayIteratorPrototypeCache;
+  const proto = Object.create(_getIteratorPrototype());
+  _ArrayIteratorPrototypeCache = proto;
+  return proto;
+}
+
 /** Build `%GeneratorPrototype%` (spec §27.5.1). Idempotent. */
 function _getGeneratorPrototype(): any {
   if (_GeneratorPrototypeCache) return _GeneratorPrototypeCache;
@@ -12519,14 +12546,13 @@ assert._isSameValue = isSameValue;
               const len = vecLen(obj);
               if (typeof len === "number" && len >= 0) {
                 let i = 0;
-                // (#1367) Synthesized iterators MUST inherit from
-                // Iterator.prototype so .drop/.take/.map/.filter etc. resolve.
-                const iterProto = (
-                  typeof (globalThis as any).Iterator === "function"
-                    ? ((globalThis as any).Iterator as any).prototype
-                    : null
-                ) as any;
-                const iterObj: any = iterProto ? Object.create(iterProto) : {};
+                // (#1367/#3049) Synthesized array iterators MUST inherit from a
+                // shared `%ArrayIteratorPrototype%` whose own proto is the
+                // compiler's helper-bearing `%IteratorPrototype%`, so that BOTH
+                // `arrayIter.map(…)` (one hop) AND the runner's
+                // `Iterator.prototype = getPrototypeOf(getPrototypeOf(arrayIter))`
+                // (two hops → `_getIteratorPrototype()`) resolve the helpers.
+                const iterObj: any = Object.create(_getArrayIteratorPrototype());
                 iterObj.next = () => {
                   if (i >= len) return { value: undefined, done: true };
                   const val = vecGet(obj, i);

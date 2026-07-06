@@ -1,7 +1,7 @@
 ---
 id: 3049
 title: "Iterator.prototype helper methods (map/filter/take/drop/flatMap/…): 'X is not a function' + this-plain-iterator / return-forwarding residual (~27 fails)"
-status: in-progress
+status: blocked
 assignee: dev-3049b
 sprint: current
 priority: medium
@@ -9,7 +9,7 @@ horizon: l
 feasibility: hard
 reasoning_effort: max
 model: fable
-architect_spec: done
+architect_spec: needs-revision
 created: 2026-07-05
 task_type: bugfix
 area: codegen, runtime
@@ -642,3 +642,100 @@ Both use the already-built `deferTopLevelInit`. They differ only in blast radius
    regressions and the string/map/set `this-plain-iterator` twins.
 4. **Full `merge_group`** — C1 reshapes host init timing corpus-wide; broad-impact,
    no scoped sweep suffices. Standalone floor must stay green (Lane B untouched).
+
+## Investigation & IMPLEMENTATION FINDING (2026-07-06, dev-3049b, Opus/max) — spec premise is INCOMPLETE; the 27 need a FOURTH (execution) layer
+
+I implemented the full C1+C2 fix exactly as specced and validated it empirically
+against the **real** test262 files. **The spec's central premise — "Layers 1–3
+land the 27" — is false.** Layers 1–3 fix the *resolution* of
+`Iterator.prototype.<helper>` (a genuine, verified bug), but the dominant subset
+of the 27 fails a *further* layer the spec never surfaced, because dev-3049 and
+arch-3049 shipped **no code** and only verified the resolution mechanism — they
+never ran the 27 end-to-end.
+
+### What I implemented (all on branch `issue-3049-iterator-helpers-host-defer`)
+- **Layer 1** (`src/codegen/declarations.ts`): keep top-level
+  `F.prototype = <expr>` in host `__module_init`. **Correction vs spec:** the
+  test262 prelude is the CAST form `(Iterator as any).prototype = …`, so the
+  receiver is a parenthesized as-expression, NOT a bare identifier — the spec's
+  `ts.isIdentifier(expr.left.expression)` predicate misses it. Fixed by unwrapping
+  via `ts.skipOuterExpressions`. Verified: `__module_init` is now emitted +
+  exported and the assignment executes.
+- **Layer 2 = C2a** (`src/codegen/declarations.ts` `exportModuleInit = !ctx.wasi`
+  + `src/codegen/index.ts` `applyModuleInitGuard(ctx)` for host after
+  `finalizeInModuleInitFlag`, both pipelines): deferred host/GC init is the
+  DEFAULT; first-export-entry self-inits after `setExports`. Compose order with
+  the #2800 flag handled (guard early-return sits OUTSIDE the flag wrap).
+  Consumer updates: `compileAndInstantiate`, `src/compiler/output.ts` runner,
+  `website/playground/main.ts`, `tests/issue-2796.test.ts` (6/6 pass, incl. a new
+  C2a-guard test + a negative "no-entry program self-inits via `__module_init`").
+- **Layer 3** (`src/runtime.ts`): two-level identity-stable
+  `%ArrayIteratorPrototype%` (`_getArrayIteratorPrototype()` →
+  `_getIteratorPrototype()`) in the `__iterator` vec fallback. Verified the double
+  `getPrototypeOf` now lands on the helper-bearing proto.
+
+### The FOURTH layer the spec missed (the real blocker for 15 of 16 targets)
+After Layers 1–3, `Iterator.prototype.map` **resolves** (I confirmed
+`typeof Iterator.prototype.map === "function"`, `.name === "map"`, and the double
+`getPrototypeOf` identity all hold). But the `this-plain-iterator` tests then
+call the helper on a **plain object literal** whose `next` is a **compiled
+closure**. Empirically (`.tmp/probe-3049-closure.mts`): a compiled
+`{ get next(){ return function(){…}; } }` crosses to the host as
+`typeof iter.next === "object"` — a **WasmGC closure struct exposed as a
+non-callable `[Object: null prototype] {}`**, NOT a JS function. So:
+- **Native** `Iterator.prototype.map` (present on Node ≥22, so the runtime
+  polyfill's `if (typeof Iproto.map !== "function")` guard skips installing ours)
+  does `Call(nextMethod, iter)` → **"object is not a function"**.
+- The **polyfill** can't help either: `_getIteratorDirect` requires
+  `typeof iter.next === "function"` and would throw "iterator has no next()".
+
+This is the exact "host natives cannot call compiled closures after they cross
+externref" hazard already worked around in `__iterator_next`
+(`src/runtime.ts` ~12639, dispatches via `__call_next`/`__call_fn_0`) and called
+out in the `Iterator.from` comment (~1006). The iterator **helpers** have no such
+compiled-aware dispatch.
+
+### Measured result (REAL test262 files, PROCESS-ISOLATED — the CI fork model)
+Of the 16 harvested target files, the full fix flips **exactly 1**:
+`Symbol.iterator/return-val.js` fail→pass. The other 15 (all 11
+`*/this-plain-iterator.js` + `drop/return-is-forwarded` +
+`filter/exhaustion-does-not-call-return` + both `flatMap` files) **fail on BOTH
+main and my branch** — same "object is not a function" / null-deref signature —
+because of the compiled-closure execution gap.
+- **Zero regressions** in an isolated per-file sample spanning every helper's
+  `name`/`length`/`callable`/`is-function`/`proto`/`prop-desc` basics (all pass on
+  both). Array-iterator-RECEIVER helpers work end-to-end
+  (`[1,2,3][Symbol.iterator]().map(x=>x*10)` and
+  `Iterator.prototype.map.call(arrayIter,fn)` both correct on branch) — the
+  synthesized vec iterator has a JS-callable `next`, so resolution+execution both
+  succeed there.
+- ⚠️ A naive **in-ONE-process** loop over all 373 `Iterator/prototype` files
+  showed 205→98 — but this is a CROSS-TEST CONTAMINATION ARTIFACT of an un-forked
+  loop (main suffers it too: 205 isolated-ish vs 168 fail in-loop). The CI runner
+  forks + sandboxes per test (`tests/test262-shared.ts`), so isolated per-file is
+  the representative measure. Do NOT read 205→98 as a real regression.
+
+### Why the `this-plain-iterator` execution fix is NOT bounded (needs re-spec)
+Making native helpers work on compiled iterators requires **overriding the native
+`Iterator.prototype.*` with the polyfill** AND teaching the polyfill to dispatch
+a compiled `next`/`return`/`throw` via `__call_next`/`__call_fn_0` (capturing the
+`[[NextMethod]]` once, per §7.4.x). Force-installing the polyfill over native has
+a **large regression surface**: the ~100+ currently-passing `name`/`length`/
+`descriptor`/`proto`/`is-function` basics assert the NATIVE function object's
+exact identity; a polyfill replacement must replicate every descriptor precisely
+or it regresses them. That is an architect-level design, not a bounded dev fix,
+and it is orthogonal to (and gated behind) the resolution fix here.
+
+### Status / recommendation
+- `Iterator.prototype.<helper>` **resolution** is now correct (Layers 1–3), a real
+  fix worth landing, but it delivers **+1** of the target 27, not the 27.
+- **C2 (default deferred host init) works in isolation (+1, zero isolated
+  regressions) but its justification — the 27 — is not delivered by it, and it is
+  a broad init-timing change that still needs a full `merge_group` to clear the
+  fork-reuse question.** Shipping a foundational default-change for +1 test is not
+  justified without a decision.
+- **NEITHER C1 NOR C2 "lands the 27"** — the escape-hatch premise is also void.
+- **Handed back for a decision.** Branch preserved (pushed, no PR/enqueue). The
+  compiled-closure iterator-helper execution layer should be its own issue with
+  architect input; the resolution fix (Layers 1–3) can land independently if
+  desired. Probes proving each claim: `.tmp/probe-3049-*.mts` (gitignored).

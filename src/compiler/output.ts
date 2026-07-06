@@ -194,6 +194,10 @@ function generateImportsHelper(mod: WasmModule): string {
     "  const imports = createImports(deps, options);",
     "  const result = await instantiateWasm(wasmBytes, imports.env, imports.string_constants, imports.string_constants16);",
     "  if (imports.setExports) imports.setExports(result.instance.exports);",
+    // (#3049) Host/GC modules defer top-level init: run the exported __module_init
+    // AFTER setExports so top-level code sees a fully-wired runtime. Idempotent —
+    // a later export call won't re-run it. Absent on WASI (_start runs init).
+    "  { const __mi = result.instance.exports.__module_init; if (typeof __mi === 'function') __mi(); }",
     "  return { ...result, imports };",
     "}",
     "",
@@ -201,6 +205,7 @@ function generateImportsHelper(mod: WasmModule): string {
     "  const imports = createImports(deps, options);",
     "  const result = await instantiateWasmStreaming(response, imports.env, imports.string_constants, imports.string_constants16);",
     "  if (imports.setExports) imports.setExports(result.instance.exports);",
+    "  { const __mi = result.instance.exports.__module_init; if (typeof __mi === 'function') __mi(); }",
     "  return { ...result, imports };",
     "}",
     "",

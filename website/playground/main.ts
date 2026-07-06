@@ -4079,10 +4079,17 @@ async function runOnly() {
       if (returnValue !== undefined) logs.push(`→ ${returnValue}`);
     } else if (typeof wasmExports._start === "function") {
       // WASI-target binaries export `_start` as their entry point — call it
-      // explicitly. Non-WASI module-init programs run init via the start
-      // section during instantiation and don't expose `_start`.
+      // explicitly. Non-WASI module-init programs run init via the exported
+      // `__module_init` (#3049) and don't expose `_start`.
       wasmExports._start();
       logs.push("Executed top-level statements via _start().");
+    } else if (typeof wasmExports.__module_init === "function") {
+      // (#3049) Host/GC modules now defer top-level init: `__module_init` is
+      // exported and NOT wired to the wasm `start` section, so top-level code
+      // runs when we call it here — AFTER `setExports`, against a fully-wired
+      // runtime. Idempotent via the `__init_done` guard.
+      wasmExports.__module_init();
+      logs.push("Executed top-level statements via __module_init().");
     } else if (hasTopLevel) {
       // Top-level code already executed during instantiation via start section.
       logs.push("Executed top-level statements during module instantiation.");

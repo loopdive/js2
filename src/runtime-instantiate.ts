@@ -97,5 +97,14 @@ export async function compileAndInstantiate(source: string, deps?: Record<string
   if (imports.setExports) {
     imports.setExports(instance.exports as Record<string, Function>);
   }
+  // (#3049) Host/GC modules now defer top-level init (`__module_init` is exported
+  // and NOT wired to the wasm `start` section). Run it here — AFTER `setExports`,
+  // so top-level code sees a fully-wired runtime — so a program whose only effect
+  // is top-level (no exported entry the caller invokes) still executes. Idempotent
+  // via the `__init_done` guard, so a subsequent export call won't re-run it. WASI
+  // binaries have no `__module_init` export (they run init via `_start`), so this
+  // is a no-op there.
+  const moduleInit = (instance.exports as Record<string, unknown>).__module_init;
+  if (typeof moduleInit === "function") (moduleInit as () => void)();
   return instance.exports;
 }

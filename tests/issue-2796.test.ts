@@ -60,8 +60,15 @@ async function runDeferred(src: string): Promise<string[]> {
   return lines;
 }
 
-/** Sanity: the legacy (start-section) path. */
-async function runStartSection(src: string): Promise<string[]> {
+/**
+ * The DEFAULT compile path (#3049): host/GC modules now defer top-level init —
+ * `__module_init` is exported and NOT wired to the wasm `start` section. A
+ * program with no exported entry the caller invokes runs its top-level code by
+ * calling the exported `__module_init()` AFTER `setExports` (exactly what the
+ * in-repo host consumers — `compileAndInstantiate`, playground, generated runner
+ * — do). No explicit `deferTopLevelInit` option needed anymore.
+ */
+async function runDefaultNoEntry(src: string): Promise<string[]> {
   const result = await compile(src, { fileName: "t.ts" });
   if (!result.success) throw new Error(`compile failed: ${result.errors[0]?.message}`);
   const lines: string[] = [];
@@ -73,6 +80,34 @@ async function runStartSection(src: string): Promise<string[]> {
     const imports = buildImports(result.imports, {}, result.stringPool);
     const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
     imports.setExports?.(instance.exports as Record<string, () => unknown>);
+    const mi = (instance.exports as Record<string, unknown>).__module_init;
+    if (typeof mi === "function") (mi as () => void)();
+  } finally {
+    console.log = origLog;
+  }
+  return lines;
+}
+
+/**
+ * (#3049) The C2a guard: a program WITH an exported function self-inits on the
+ * FIRST export call — no explicit `__module_init()` needed. The compiler
+ * prepends a self-guarded `call __module_init` to every export, so calling `run`
+ * runs top-level code first (AFTER `setExports`), then the export body.
+ */
+async function runViaFirstExportCall(src: string, entry: string): Promise<string[]> {
+  const result = await compile(src, { fileName: "t.ts" });
+  if (!result.success) throw new Error(`compile failed: ${result.errors[0]?.message}`);
+  const lines: string[] = [];
+  const origLog = console.log;
+  // eslint-disable-next-line no-console
+  console.log = (...args: unknown[]) =>
+    lines.push(args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" "));
+  try {
+    const imports = buildImports(result.imports, {}, result.stringPool);
+    const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+    imports.setExports?.(instance.exports as Record<string, () => unknown>);
+    // NOTE: deliberately NO explicit __module_init() call — the guard must run it.
+    (instance.exports as Record<string, () => unknown>)[entry]!();
   } finally {
     console.log = origLog;
   }
@@ -112,11 +147,30 @@ describe("#2796 — top-level for…in enumerates own keys when the runtime is f
     expect(typeof (instance.exports as Record<string, unknown>).__module_init).toBe("function");
   });
 
-  it("DEFAULT (start-section) path leaves the legacy behaviour unchanged for a no-introspection program", async () => {
-    // A top-level program that does NOT introspect struct keys is byte-identical
-    // on both paths — this guards that the default still auto-runs top-level code
-    // via the start section (no __module_init export, no behaviour change).
+  it("DEFAULT path now defers: a no-entry program runs top-level code via the exported __module_init (#3049)", async () => {
+    // #3049 made deferred top-level init the host/GC DEFAULT (was opt-in via
+    // deferTopLevelInit). A program with no exported entry runs its top-level
+    // code by calling the exported __module_init() after setExports.
     const src = `console.log(1 + 2); console.log("hi");`;
-    expect(await runStartSection(src)).toEqual(["3", "hi"]);
+    expect(await runDefaultNoEntry(src)).toEqual(["3", "hi"]);
+  });
+
+  it("exports __module_init by DEFAULT for a host module with top-level code (#3049)", async () => {
+    const result = await compile(`console.log(1 + 2);`, { fileName: "t.ts" });
+    if (!result.success) throw new Error("compile failed");
+    const imports = buildImports(result.imports, {}, result.stringPool);
+    const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+    imports.setExports?.(instance.exports as Record<string, () => unknown>);
+    expect(typeof (instance.exports as Record<string, unknown>).__module_init).toBe("function");
+  });
+
+  it("C2a guard: a program with an export self-inits on the first export call, no explicit __module_init (#3049)", async () => {
+    // The prepended `call __module_init` on `run` runs top-level code (AFTER
+    // setExports) before the export body — no explicit __module_init() call.
+    const src = `
+      console.log("top-level");
+      export function run(): number { console.log("in run"); return 1; }
+    `;
+    expect(await runViaFirstExportCall(src, "run")).toEqual(["top-level", "in run"]);
   });
 });
