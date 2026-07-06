@@ -1,11 +1,12 @@
 ---
 id: 3026
 title: "negative_test_fail: residual early-error / static-semantics gaps (~79 default-lane, 64 unenforced SyntaxErrors)"
-status: ready
+status: done
+completed: 2026-07-06
 sprint: current
 created: 2026-07-03
-updated: 2026-07-04
-status_note: "Slices 1–3 landed. Slice 3 (PR): private-name grammar early errors — (a) private name referenced in a class heritage clause, (b) private name as a destructuring-pattern key (10 test262 files). Issue stays open — remaining unenforced-SyntaxError samples (module-code, import.meta, top-level-await) decompose into further independent point-fixes per the issue's own triage note."
+updated: 2026-07-06
+status_note: "DONE — bounded parser/static-semantics early-error lane complete (slices 1–8). Residual triage 2026-07-06 (see final section) re-ran all 55 `negative_test_fail` entries still in the fetched baseline (run 20260705) through the live runner on current main: 49/55 already PASS (stale baseline — slice 1–8 work + adjacent early-error landings fixed them; the fetched baseline just hadn't refreshed). Only 6 genuinely fail, and NONE is a parse-time early-error point-fix — all deferred-class (eval / module+top-level-await / `using` explicit-resource-management / runtime strict-PutValue / restricted-global runtime SyntaxError). Acceptance criterion (`negative_test_fail` materially below 79) met: 79 → 6 real. Residuals handed to their feature owners; closing the bounded lane."
 priority: medium
 horizon: s
 feasibility: medium
@@ -285,3 +286,40 @@ Byte-inert for valid programs — verified via sha256: `new.target` in a
 constructor, in a plain function, and in a comparison all compile to
 byte-identical Wasm against the pre-change compiler; only an escaped meta-property
 keyword newly raises the early SyntaxError.
+
+## Residual triage (2026-07-06) — bounded early-error lane COMPLETE; issue closed
+
+Re-ran **all 55** `negative_test_fail` entries still present in the fetched
+baseline (`.test262-cache/test262-current.jsonl`, run `20260705`) through the
+**live runner** (`runTest262File`) on current `main`. Result:
+
+- **49 / 55 already PASS.** They are **stale baseline entries** — slices 1–8
+  plus adjacent early-error landings already fixed them; the fetched baseline
+  simply had not been refreshed (the committed baseline auto-refreshes via the
+  `promote-baseline` job on the next push to main). Notably, ALL the class /
+  private-name / rest / switch / throw / meta-property / `class let {}` samples
+  now pass (several are caught by TypeScript's own parser once the class body /
+  strict context is in play).
+- **6 / 55 genuinely fail**, and **none is a parse-time early-error point-fix**.
+  Each is a deferred-class residual belonging to a different feature area:
+
+  | # | file | expected | why it's NOT a bounded early-error fix |
+  |---|------|----------|-----------------------------------------|
+  | 1 | `eval-code/direct/strict-caller-global.js` | runtime SyntaxError | direct **eval** with a strict caller → `strictEval` rejects `var public` (eval is skip-listed; needs eval strict-mode semantics) |
+  | 2 | `eval-code/direct/var-env-global-lex-non-strict.js` | runtime SyntaxError | **eval** `var x` colliding with a global lexical `let x` (EvalDeclarationInstantiation var/lex collision) |
+  | 3 | `global-code/decl-lex-restricted-global.js` | runtime SyntaxError | `let undefined;` at **global-script** scope → GlobalDeclarationInstantiation `HasRestrictedGlobalProperty`. `phase: runtime` — the runner requires a real **runtime throw** (or a compiler *warning*); an early compile-**error** is reported as `compile_error`, NOT a pass, so a parse check does not satisfy it |
+  | 4 | `identifier-resolution/assign-to-global-undefined.js` | runtime ReferenceError | strict-mode assignment to an **unresolvable reference** (`PutValue` on `IsUnresolvableReference` in strict) — runtime strict-assign semantics / value-rep substrate |
+  | 5 | `module-code/top-level-await/await-dynamic-import-rejection.js` | — | **module linking + top-level-await + dynamic `import()`** (all three skip-listed) |
+  | 6 | `statements/using/global-use-before-initialization-in-prior-statement.js` | runtime ReferenceError | `using` **explicit-resource-management** TDZ (unsupported feature) |
+
+**Verdict:** the bounded parser / static-semantics early-error lane for #3026
+is **complete** (slices 1–8; `negative_test_fail` 79 → 6 real). The 6 residuals
+are each out of the early-error lane and are owned by their feature epics
+(eval; module/top-level-await; `using`/ERM; and the strict-runtime / value-rep
+substrate). Closing this issue as **done**; the residuals should be tracked
+under those areas rather than re-opened here.
+
+**Method note for future harvests:** the fetched baseline jsonl lags current
+`main` (here 49/55 entries were phantom). **Always re-verify a
+`negative_test_fail` cluster against `runTest262File` on current `main` before
+coding** — do not trust the baseline snapshot as a live failure list.

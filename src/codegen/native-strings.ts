@@ -8,6 +8,7 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
 import { emitNativeCaseConversion } from "./case-convert-native.js";
+import { emitNativeWellFormedHelpers } from "./wellformed-native.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
@@ -3625,6 +3626,13 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
   // Emitted here, AFTER __str_flatten is registered, so the Unicode helpers can
   // flatten a cons-string input.
   emitNativeCaseConversion(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
+
+  // (#3068) String.prototype.isWellFormed / toWellFormed — pure UTF-16
+  // code-unit scans over the flattened NativeString. Emitted here (after
+  // __str_flatten + the NativeString types exist) so the method arms in
+  // string-ops.ts find `__str_isWellFormed` / `__str_toWellFormed` in
+  // nativeStrHelpers without a mid-body late-import shift.
+  emitNativeWellFormedHelpers(ctx, strTypeIdx, strDataTypeIdx);
 
   // --- $__str_getSubstitution(replacement, matched, prefix, suffix) -> ref $NativeString ---
   // #1822 — expand `$` patterns in a replacement string per ECMAScript

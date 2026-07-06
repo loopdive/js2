@@ -238,6 +238,10 @@ const ES_BASE_LIB_NAMES = [
   "lib.es2023.intl.d.ts",
   // ES2024
   "lib.es2024.collection.d.ts",
+  // ES2024 String.prototype.isWellFormed / toWellFormed (#3068) — required so
+  // the checker types these methods' results as boolean/string (else `X === y`
+  // on an `any` result silently picks reference equality).
+  "lib.es2024.string.d.ts",
   // ESNext — Set methods (union, intersection, difference, etc.)
   "lib.esnext.collection.d.ts",
   // ESNext — DisposableStack / AsyncDisposableStack (#1036)

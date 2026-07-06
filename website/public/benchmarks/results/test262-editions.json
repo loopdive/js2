@@ -2141,12 +2141,12 @@
   },
   {
     "edition": "ES2022",
-    "pass": 3270,
-    "fail": 767,
+    "pass": 3291,
+    "fail": 746,
     "ce": 197,
     "skip": 0,
     "total": 4234,
-    "pct": 77,
+    "pct": 78,
     "features": [
       {
         "name": "class",
@@ -2303,12 +2303,12 @@
       },
       {
         "name": "Object.hasOwn",
-        "pass": 38,
-        "fail": 24,
+        "pass": 59,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 62,
-        "pct": 61
+        "pct": 95
       },
       {
         "name": "ArrayBuffer",
