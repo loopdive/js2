@@ -255,6 +255,12 @@
       "field": "ctxChecker",
       "extra": 1,
       "reason": "#3064: the single ctx.checker.getTypeAtLocation call above (standalone escape/unescape argument ToString)."
+    },
+    {
+      "file": "src/codegen/closures.ts",
+      "field": "ctxChecker",
+      "extra": 1,
+      "reason": "#3051 slice-3: hasAccessorInitializer resolves a bare identifier to its var declaration to detect `var x = { get p(){} }` then bare `x` (accessor-only exec-result marshalling). Needs ctx.checker.getSymbolAtLocation(e) -> valueDeclaration; ctx.oracle exposes only TypeFact, not symbol/declaration resolution. Migrate when the oracle grows an identifier->declaration resolver."
     }
   ]
 }
