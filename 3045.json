@@ -1,8 +1,9 @@
 {
   "id": "3045",
   "assignee": "ttraenkler/dev-3045",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3045-classexpr-scope-capture",
   "claimed_at": "2026-07-06T19:54:07Z",
-  "updated_at": "2026-07-06T19:54:07Z"
+  "updated_at": "2026-07-06T20:37:13Z",
+  "released_at": "2026-07-06T20:37:13Z"
 }
