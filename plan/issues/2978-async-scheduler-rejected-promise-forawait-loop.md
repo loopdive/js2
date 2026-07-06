@@ -1,8 +1,7 @@
 ---
 id: 2978
 title: "Standalone async scheduler: for-await over a sync iterator yielding rejected promises loops forever (3GB JS-heap OOM)"
-status: in-progress
-assignee: ttraenkler/dev-2978
+status: blocked
 sprint: current
 created: 2026-07-02
 updated: 2026-07-06
@@ -226,3 +225,97 @@ a throw/exit. Fix the branch, don't rebuild the drive.
    gate runs only in `merge_group` — this is where an OOM regression would surface;
    Part A+B must be validated there, not by a scoped sweep). Confirm no CI worker
    OOM: the test completes well inside the 15 s timeout.
+
+## Implementation Notes — dev-2978 empirical re-verification (2026-07-06) — PARKED
+
+**Status: Part A implemented + verified. Part B is L/XL and the arch-3049 Part B
+premise is EMPIRICALLY WRONG. Parked; do NOT land Part A alone (pairing
+constraint). Branch `issue-2978-async-forawait-reject` holds the WIP.**
+
+I traced the exact repro on current `origin/main` (12c585e) by compiling it
+standalone and dumping the WAT of the async function `$t` (`.tmp/trace-2978.mjs`,
+`.tmp/trace-targets.mjs`, `.tmp/probe-fallback.mts`). Ground truth:
+
+### Part A (drop-arity) — CORRECT, verified, but CANNOT land alone
+
+- Exact site confirmed: `src/codegen/statements/loops.ts:5045` (the direct
+  `call returnMethodIdx` in `compileForOfDirectIterator`). Pre-fix the repro is
+  **invalid Wasm** — `WebAssembly.compile` fails with *"not enough arguments on
+  the stack for drop (need 1, got 0)"* in `$t`, because the user `return() { … }`
+  is a VOID function.
+- Fix applied: guard the `drop` on `!wasmFuncReturnsVoid(ctx, returnMethodIdx)`
+  (`funcSignatureOf` is the index-shift-safe positional-read chokepoint; result
+  arity is static, so resolving at emit time is correct). Post-fix: module
+  **VALIDATES**. This is the same one-liner dev-2934f verified. It is the ONLY
+  direct-`returnMethodIdx` drop site; the `__iterator_return` sites (loops.ts
+  ~5307/5468) are fixed-arity helpers and untouched.
+- **Pairing confirmed real:** Part A makes the module valid, which is precisely
+  what *exposes* the OOM to CI. It must NOT ship without a working Part B.
+
+### Part B — the arch-3049 premise (native `$Promise` scheduler) does NOT apply to the scored target
+
+The scored lane is `--target standalone` (`test262-runner.ts:3547`,
+`runTest262File(..., "standalone")`). Under that target, EMPIRICALLY:
+
+1. **`for await` over the sync object-literal iterator routes to
+   `compileForOfDirectIterator` (the struct path), which IGNORES
+   `stmt.awaitModifier` entirely.** The only `awaitModifier` handling in loops.ts
+   is at ~5195 in the *`__iterator`* path (`ensureAsyncIterator`); the struct
+   path never sees it. So `for await` compiles to a **plain synchronous for-of
+   loop** — `$t` has **no** async state machine (no suspend/resume/`br_table`),
+   confirmed via WAT dump. It calls `next()`, reads `res.value`, assigns, and
+   `br 0` loops — it **never awaits the value**.
+2. **Promises in `--target standalone` are HOST imports, not native `$Promise`
+   structs.** The WAT imports `env::Promise_reject` / `env::Promise_resolve`; the
+   runner satisfies them via `buildImports` shims (the "env-shim rep"). So
+   `next().value` is a **host** rejected promise (externref).
+3. **`isStandalonePromiseActive` is `ctx.wasi`-only** (async-scheduler.ts:3297;
+   #2895 deliberately reverted the `ctx.standalone` widen as a measured
+   regression). The native `$Promise` state machine the arch spec references
+   (`buildPromiseResolveValueBody`, `emitStandalonePromiseThen`,
+   `PROMISE_STATE_REJECTED`, "the reject branch has a `br` back to the loop
+   header") is **never active for `--target standalone`** — there IS no native
+   promise state machine and no reject branch here, only a synchronous loop.
+4. **OOM mechanism (corrected):** the always-`done:false` iterator + the
+   non-awaiting synchronous loop = an infinite Wasm loop that allocates a fresh
+   **host** rejected promise every iteration and **never yields to the microtask
+   queue**, so nothing can settle/interrupt it → ~3 GB **JS-heap** OOM. This is
+   why dev-2934f found "a shim fix alone is insufficient — retention is
+   event-loop starvation," and why a step cap is both semantically wrong (#2067)
+   and not the fix.
+
+**Therefore the correct Part B is L/XL:** the standalone for-await-over-a-sync-
+iterator drive must become **genuinely async** — suspend the async function at
+each step so the host microtask queue runs and the host promise settles, then
+resume; on rejection run IteratorClose (`return()`) once and rethrow. There is
+**no bounded synchronous fix**: a host promise's rejection cannot be observed
+synchronously from Wasm (JS can't synchronously await a promise), so any
+correct fix needs real suspension. Options, both broad:
+- (A) Add async-CPS suspension support for the for-await-over-sync-iterator shape
+  in the host-promise (env-shim) standalone lane. This is the real work.
+- (B) Re-open the `isStandalonePromiseActive` widen (native `$Promise` for
+  `--target standalone`) so a `$Promise`-struct-based state-aware await becomes
+  possible — but #2895 measured that widen as a net regression and reverted it;
+  redoing it is its own project.
+
+### What is on the branch (WIP, do NOT merge as-is)
+
+- **Part A** (loops.ts:5045 arity guard) — correct, ready.
+- A **wasi-only** Part B: `emitStandaloneForAwaitStepAwait` (in
+  `src/codegen/expressions/helpers.ts`) — a state-aware `$Promise` step-await
+  (reject → `throw` reason; fulfilled/pending → unwrap field 1) — wired into
+  `compileForOfDirectIterator` behind `forAwaitStandalone =
+  stmt.awaitModifier && isStandalonePromiseActive(ctx)`, plus a close-on-throw
+  try/catch_all mirroring the `__iterator` path (`return()` once + `rethrow`), and
+  a `depthDelta` (3 vs 2) that accounts for the extra try nesting.
+  **This fires ONLY for `--target wasi` (native `$Promise`) and is INERT for the
+  scored `--target standalone` lane, so it does NOT satisfy acceptance.** It is
+  unvalidated (no wasi run) and preserved only as scaffolding for whoever builds
+  the real suspension. It must not be taken as "Part B done."
+
+### Sibling gap noted
+
+Bare `await Promise.reject(r)` in standalone also does not throw today
+(`emitStandaloneAwaitUnwrap`, expressions.ts:444, reads `$Promise.value` without
+checking state) — but standalone uses host promises, so this is the same
+host-promise-suspension problem, not a `$Promise` state check.

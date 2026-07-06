@@ -12,8 +12,9 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { getLocalType } from "../context/locals.js";
+import { allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { getOrRegisterPromiseType, PROMISE_STATE_REJECTED } from "../async-scheduler.js";
 import { funcSignatureOf } from "../func-space.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
@@ -443,6 +444,74 @@ export function wasmFuncReturnsVoid(ctx: CodegenContext, funcIdx: number): boole
   // #1916 S2 — funcSignatureOf is the positional-read chokepoint (func-space.ts).
   const sig = funcSignatureOf(ctx, funcIdx);
   return !sig || sig.results.length === 0; // not found — assume void to be safe
+}
+
+/**
+ * #2978 — State-aware "await" of a `for await` step value in the standalone
+ * ($Promise) async model. Consumes an externref on the operand stack (the raw
+ * `next().value`, whose PromiseResolve wrapper is an already-settled `$Promise`
+ * or a plain non-promise value) and leaves the awaited externref value on the
+ * stack — UNLESS the value is an already-REJECTED `$Promise`, in which case it
+ * THROWS the rejection reason (`$Promise.value`, field 1) via the standalone exn
+ * tag.
+ *
+ * Spec §27.1.4.4 AsyncFromSyncIteratorContinuation: each sync-iterator step's
+ * `value` is wrapped with PromiseResolve and awaited; a rejected wrapper rejects
+ * the step promise, so the async-from-sync driver must (a) close the sync
+ * iterator and (b) complete the `for await` abruptly with the reason. Emitting a
+ * `throw` here is what turns the rejection into that abrupt completion — the
+ * caller wraps the drive in a try/catch_all that runs IteratorClose (`return()`)
+ * exactly once and rethrows to the async function's user `catch`.
+ *
+ * Non-rejected `$Promise` (fulfilled/pending) → one level unwrapped (field 1),
+ * mirroring `emitStandaloneAwaitUnwrap`; a plain non-promise value passes
+ * through. Genuinely-pending suspension is out of scope for the synchronous
+ * sync-iterator drive (same limitation as bare `await`, #2865). Without this the
+ * struct-path `for await` drive ignores `awaitModifier`, never awaits, and an
+ * always-`done:false` iterator of rejected promises loops forever (OOM, #2978).
+ */
+export function emitStandaloneForAwaitStepAwait(ctx: CodegenContext, fctx: FunctionContext): void {
+  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+  const tagIdx = ensureExnTag(ctx);
+  const tmp = allocTempLocal(fctx, { kind: "externref" });
+  // Stash the operand, then branch on whether it is a native $Promise.
+  fctx.body.push({ op: "local.set", index: tmp });
+  fctx.body.push({ op: "local.get", index: tmp });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });
+  const castPromise: Instr[] = [
+    { op: "local.get", index: tmp },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: promiseTypeIdx },
+  ];
+  const thenBody: Instr[] = [
+    // Rejected? (state field 0 === REJECTED) → throw the reason (value field 1).
+    ...castPromise,
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: PROMISE_STATE_REJECTED } as Instr,
+    { op: "i32.eq" } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...structuredClone(castPromise),
+        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 } as Instr,
+        { op: "throw", tagIdx } as Instr,
+      ],
+      else: [],
+    } as Instr,
+    // Not rejected (fulfilled / pending) → unwrap one level (value field 1).
+    ...structuredClone(castPromise),
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 } as Instr,
+  ];
+  const elseBody: Instr[] = [{ op: "local.get", index: tmp }];
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: thenBody,
+    else: elseBody,
+  });
+  releaseTempLocal(fctx, tmp);
 }
 
 /** Check whether a function *type* (by type index) has zero results. */

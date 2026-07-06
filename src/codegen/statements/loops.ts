@@ -18,7 +18,13 @@ import {
   findUnresolvableInObjectPattern,
   isStrictContext,
 } from "../expressions/assignment.js";
-import { emitCoercedLocalSet, emitThrowTypeError } from "../expressions/helpers.js";
+import {
+  emitCoercedLocalSet,
+  emitStandaloneForAwaitStepAwait,
+  emitThrowTypeError,
+  wasmFuncReturnsVoid,
+} from "../expressions/helpers.js";
+import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
@@ -4916,16 +4922,32 @@ function compileForOfDirectIterator(
   // Look up the return() method on the iterator struct for iterator close (#851)
   const returnMethodIdx = ctx.funcMap.get(`${iterStructName}_return`);
 
+  // #2978: `for await` over a SYNC struct-iterator in standalone/$Promise mode.
+  // The struct drive otherwise ignores `awaitModifier` entirely — it never
+  // awaits `next().value`, so an always-`done:false` iterator of rejected
+  // promises loops forever (OOM). When awaiting, each step's value is settled
+  // (see emitStandaloneForAwaitStepAwait) and a rejection THROWS; that throw must
+  // run IteratorClose (`return()`) exactly once and rethrow, so we wrap the
+  // block/loop in a try/catch_all (mirroring the __iterator path at ~5470). The
+  // extra try nesting adds ONE outer control-flow level, so the break/continue/
+  // rethrow depth delta becomes 3 (try+block+loop) instead of 2 (block+loop) —
+  // exactly as the __iterator path accounts for it. `break`/`continue` targeting
+  // THIS loop stay 1/0 (relative to the innermost block/loop, unaffected by the
+  // outer try); only OUTER-label targets shift, which the delta captures.
+  const forAwaitStandalone = !!stmt.awaitModifier && isStandalonePromiseActive(ctx);
+  const closeOnThrow = forAwaitStandalone && returnMethodIdx !== undefined;
+  const depthDelta = closeOnThrow ? 3 : 2;
+
   // Done flag: tracks whether iterator completed normally (done=true) (#851)
   const doneFlagDirect = allocLocal(fctx, `__forit_done_${fctx.locals.length}`, { kind: "i32" });
 
   // Build loop body
   const savedBody = pushBody(fctx);
 
-  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! += 2;
-  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! += 2;
-  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth += 2;
-  adjustRethrowDepth(fctx, 2);
+  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! += depthDelta;
+  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! += depthDelta;
+  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth += depthDelta;
+  adjustRethrowDepth(fctx, depthDelta);
 
   fctx.breakStack.push(1);
   fctx.continueStack.push(0);
@@ -4982,7 +5004,21 @@ function compileForOfDirectIterator(
 
   // Coerce value to element type if needed
   const targetElemType = getLocalType(fctx, elemLocal) ?? elemType;
-  if (!valTypesMatch(valueFieldType, targetElemType)) {
+  if (forAwaitStandalone) {
+    // #2978: settle `next().value` through the $Promise state machine as the
+    // `for await` step's Await. Work in externref: coerce the raw value up,
+    // state-aware-await it (rejection THROWS the reason → caught by the
+    // close-on-throw wrapper below), then coerce the unwrapped value to the
+    // element local's type.
+    const externref: ValType = { kind: "externref" };
+    if (!valTypesMatch(valueFieldType, externref)) {
+      coerceType(ctx, fctx, valueFieldType, externref);
+    }
+    emitStandaloneForAwaitStepAwait(ctx, fctx);
+    if (!valTypesMatch(externref, targetElemType)) {
+      coerceType(ctx, fctx, externref, targetElemType);
+    }
+  } else if (!valTypesMatch(valueFieldType, targetElemType)) {
     coerceType(ctx, fctx, valueFieldType, targetElemType);
   }
   fctx.body.push({ op: "local.set", index: elemLocal });
@@ -5012,14 +5048,14 @@ function compileForOfDirectIterator(
   fctx.breakStack.pop();
   fctx.continueStack.pop();
 
-  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! -= 2;
-  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! -= 2;
-  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth -= 2;
-  adjustRethrowDepth(fctx, -2);
+  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! -= depthDelta;
+  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! -= depthDelta;
+  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth -= depthDelta;
+  adjustRethrowDepth(fctx, -depthDelta);
 
   popBody(fctx, savedBody);
 
-  fctx.body.push({
+  const blockLoop: Instr = {
     op: "block",
     blockType: { kind: "empty" },
     body: [
@@ -5029,11 +5065,60 @@ function compileForOfDirectIterator(
         body: loopBody,
       },
     ],
-  });
+  };
+
+  if (closeOnThrow && returnMethodIdx !== undefined) {
+    // #2978: `for await` close-on-throw. A rejected step throws mid-loop; per ES
+    // §7.4.6 IteratorClose (throw completion) the original throw wins and any
+    // error from `return()` is suppressed — modelled by the inner try/catch_all
+    // with an empty catchAll. The outer catch_all runs `return()` once (only when
+    // NOT already done) then `rethrow 0` re-raises the original rejection to the
+    // async function's user `catch`. Mirrors the __iterator path (~5470).
+    const returnHasResult = !wasmFuncReturnsVoid(ctx, returnMethodIdx);
+    const innerCloseTry: Instr = {
+      op: "try",
+      blockType: { kind: "empty" },
+      body: [
+        { op: "local.get", index: iterLocal } as Instr,
+        ...(iterResultType.kind === "ref_null" ? [{ op: "ref.as_non_null" } as Instr] : []),
+        { op: "call", funcIdx: returnMethodIdx } as Instr,
+        ...(returnHasResult ? [{ op: "drop" } as Instr] : []),
+      ],
+      catches: [],
+      catchAll: [], // suppress any error from return() per spec step 6
+    };
+    fctx.body.push({
+      op: "try",
+      blockType: { kind: "empty" },
+      body: [blockLoop],
+      catches: [],
+      catchAll: [
+        { op: "local.get", index: doneFlagDirect } as Instr,
+        { op: "i32.eqz" } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [innerCloseTry],
+          else: [],
+        } as Instr,
+        { op: "rethrow", depth: 0 } as Instr,
+      ],
+    });
+  } else {
+    fctx.body.push(blockLoop);
+  }
 
   // Iterator close protocol (#851): call iterator.return() only on abrupt
   // completion (break/return), NOT on normal completion (done=true).
   if (returnMethodIdx !== undefined) {
+    // #2978 (#2934 3b): the callee is the USER's `return()` method, which may be
+    // a VOID function (`return() { returnCount += 1; }`). An unconditional `drop`
+    // then underflows the operand stack → invalid Wasm. Guard the drop on the
+    // callee's result arity. `wasmFuncReturnsVoid` reads through `funcSignatureOf`
+    // (the index-shift-safe positional-read chokepoint), and result arity is a
+    // static property independent of any later funcIdx shift, so resolving it here
+    // at emit time is correct.
+    const returnHasResult = !wasmFuncReturnsVoid(ctx, returnMethodIdx);
     fctx.body.push({ op: "local.get", index: doneFlagDirect });
     fctx.body.push({ op: "i32.eqz" }); // if NOT done (abrupt exit)
     fctx.body.push({
@@ -5043,8 +5128,9 @@ function compileForOfDirectIterator(
         { op: "local.get", index: iterLocal } as Instr,
         ...(iterResultType.kind === "ref_null" ? [{ op: "ref.as_non_null" } as Instr] : []),
         { op: "call", funcIdx: returnMethodIdx } as Instr,
-        // Drop the return value (return() returns {value, done})
-        { op: "drop" } as Instr,
+        // Drop the return value only when `return()` actually yields one
+        // (a `{value, done}` result); a void `return()` leaves nothing to drop.
+        ...(returnHasResult ? [{ op: "drop" } as Instr] : []),
       ],
       else: [],
     });
