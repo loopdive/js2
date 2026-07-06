@@ -2850,29 +2850,37 @@ function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.SourceFil
     getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
   }
 
-  // (#2939) Nested-scope function-expression / arrow callbacks. A callback like
-  // `testWith*Constructors(function (TA) { … })` defined INSIDE another function
-  // (e.g. the test262 runner's `export function test()` wrapper) registers its
-  // funcref-wrapper type only LAZILY when its value site compiles — which is
-  // inside a body compiled AFTER the higher-order function whose `fn(...)`
-  // dispatch needs the candidate. So the dispatch (`tryEmitInlineDynamicCall`)
-  // saw ZERO candidates and silently dropped the call — the ~814 vacuous
-  // `testWith*Constructors` harness passes (round-4 leak analysis). Pre-register
+  // (#2939 / #3076) Nested-scope function-expression / arrow callbacks. A
+  // callback like `testWith*Constructors(function (TA) { … })` defined INSIDE
+  // another function (e.g. the test262 runner's `export function test()`
+  // wrapper) registers its funcref-wrapper type only LAZILY when its value site
+  // compiles — which is inside a body compiled AFTER the higher-order function
+  // whose `fn(...)` dispatch needs the candidate. So the dispatch
+  // (`tryEmitInlineDynamicCall`) saw ZERO candidates and silently dropped the
+  // call — the ~1480 vacuous `testWith*Constructors` harness passes. Pre-register
   // the SAME wrapper type (computeClosureWrapperSig ≡ the value-site logic;
   // getOrCreateFuncRefWrapperTypes is signature-cached, so the value site reuses
   // it — a capturing callback's custom subtype still shares this funcTypeIdx,
   // which is what the dispatch discriminates on) for every func-expr / arrow used
   // as a call argument or a variable initializer.
   //
-  // Standalone-gated: on the gc/host lane a callback may instead take the
-  // `__make_callback` host path and never materialize a closure wrapper, so
-  // pre-registering one there would add a module type that lazy compilation
-  // would not — a byte change on the default lane. In standalone there is no
-  // host `__make_callback`, so every func-expr/arrow value compiles to a closure
-  // and the wrapper type is created regardless; pre-creating it only reorders
-  // when (all references stay internally consistent — same discipline the
-  // declaration loop above already relies on).
-  if (ctx.standalone) {
+  // (#3076) Runs on BOTH lanes. Originally standalone-gated (#2939) out of
+  // caution that on the gc/host lane a callback might take the `__make_callback`
+  // host path and never materialize a closure wrapper, so pre-registering one
+  // could add a module type lazy compilation would not. But the host lane is
+  // ALSO broken by the same compile-order gap: when a nested-scope callback flows
+  // to a WASM higher-order function (`apply(cb)` — not a host builtin), the
+  // `fn(...)` inline dispatch is emitted with zero candidates and the whole call
+  // is dropped (`drop; ref.null.extern`), leaving the body dead. That is exactly
+  // the 927 built-ins/TypedArray + 553 built-ins/TypedArrayConstructors host-mode
+  // vacuous fails. Pre-registering the wrapper type does NOT redirect any call
+  // site: the inline-dispatch-vs-`__make_callback` choice is made by the CALLEE
+  // (wasm fn vs host builtin), never by whether a wrapper type exists — it only
+  // gives the (already-emitted) inline dispatch a candidate to match. The narrow
+  // all-externref shape restriction below (matching the harness callback shape)
+  // keeps the blast radius bounded, and the signature-cache reuse the #2754
+  // declaration loop above already relies on holds identically on the host lane.
+  {
     const seenFnNodes = new Set<ts.Node>();
     const usedAsValueFn = (node: ts.FunctionExpression | ts.ArrowFunction): void => {
       if (seenFnNodes.has(node)) return;
