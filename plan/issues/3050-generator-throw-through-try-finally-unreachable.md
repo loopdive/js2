@@ -1,11 +1,10 @@
 ---
 id: 3050
 title: "GeneratorPrototype.throw() resumption through try/finally / try/catch hits `unreachable` (6 fails)"
-status: in-progress
-assignee: ttraenkler/dev-3049
+status: ready
 sprint: current
 priority: medium
-horizon: m
+horizon: l
 feasibility: hard
 reasoning_effort: max
 model: fable
