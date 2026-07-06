@@ -86,9 +86,26 @@ function pickMainRemote() {
 }
 const MAIN_REMOTE = pickMainRemote();
 const MAIN_REF = `${MAIN_REMOTE}/main`;
+
+// --- bounded network timeouts (#3079) --------------------------------------
+// `--allocate` must NEVER hang indefinitely. `execFileSync` has no default
+// timeout, so a single stuck `gh`/`git` call under API contention (many
+// concurrent agents) previously blocked the WHOLE team's issue filing. Every
+// network call in the allocate path is now capped; the open-PR scan
+// additionally carries an overall wall-clock budget, after which it degrades to
+// the pre-existing fail-open fallback (allocate against main ∪ reservations
+// only — the PR-time `check:issue-ids:against-main` gate is the hard backstop).
+// All three are env-overridable for tuning under different load.
+const MAIN_FETCH_TIMEOUT_MS = Number(process.env.CLAIM_MAIN_FETCH_TIMEOUT_MS) || 15000;
+const PR_SCAN_CALL_TIMEOUT_MS = Number(process.env.CLAIM_PR_SCAN_CALL_TIMEOUT_MS) || 12000;
+const PR_SCAN_TOTAL_TIMEOUT_MS = Number(process.env.CLAIM_PR_SCAN_TOTAL_TIMEOUT_MS) || 25000;
+
 // Best-effort refresh of the main tip — only when allocating (frequent
-// --check/--list calls shouldn't pay a network round-trip).
-if (process.argv.includes("--allocate")) gitTry(["fetch", "--quiet", MAIN_REMOTE, "main"]);
+// --check/--list calls shouldn't pay a network round-trip). Bounded so a hung
+// fetch can't wedge the allocation before the id scan even starts.
+if (process.argv.includes("--allocate")) {
+  gitTry(["fetch", "--quiet", MAIN_REMOTE, "main"], { timeout: MAIN_FETCH_TIMEOUT_MS, killSignal: "SIGKILL" });
+}
 const MAX_RETRIES = 6;
 
 function git(args, opts = {}) {
@@ -257,10 +274,62 @@ function idsFromAssignRef(sha) {
   if (!sha) return out;
   const ls = gitTry(["ls-tree", "--name-only", sha]);
   if (!ls.ok) return out;
-  for (const f of ls.out.split("\n")) {
-    if (!f.endsWith(".json")) continue;
-    const e = readEntry(sha, f.replace(/\.json$/, ""));
-    if (e && e.id != null && /^\d+$/.test(String(e.id))) out.add(Number(e.id));
+  const files = ls.out.split("\n").filter((f) => f.endsWith(".json"));
+  if (files.length === 0) return out;
+
+  // (#3079) Read EVERY entry blob in a SINGLE `git cat-file --batch` process.
+  // The prior implementation spawned one `git cat-file` PER entry — O(N)
+  // subprocesses (466 and growing) that took >90s under container load and was
+  // the TRUE cause of `--allocate` hanging (previously mis-attributed to the
+  // open-PR gh scan). One batched process is ~constant-time and bounded.
+  const request = files.map((f) => `${sha}:${f}`).join("\n") + "\n";
+  let buf;
+  try {
+    // NOTE: omit `encoding` so execFileSync returns a Buffer — the `--batch`
+    // stream is byte-framed (header declares each object's exact byte size), so
+    // it must be walked as bytes. (`encoding: "buffer"` is NOT a valid option
+    // value — it throws ERR_UNKNOWN_ENCODING; the default already yields a
+    // Buffer.) `input` may still be a string.
+    buf = execFileSync("git", ["cat-file", "--batch"], {
+      input: request,
+      maxBuffer: 128 * 1024 * 1024,
+      timeout: MAIN_FETCH_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    });
+  } catch {
+    // Fallback: derive the id from the FILENAME. Every entry is named
+    // `<id>.json` (reservation/allocation) or `<base>-<slice>.json` (slice
+    // claim) — the leading digits are the id (verified stable on the ref). This
+    // keeps the id universe complete even if the batch read fails.
+    for (const f of files) {
+      const m = f.match(/^(\d+)/);
+      if (m) out.add(Number(m[1]));
+    }
+    return out;
+  }
+
+  // Parse the `--batch` stream: "<oid> <type> <size>\n<content>\n" per object
+  // ("<request> missing\n" — no body — for an absent one). Byte-framed, so walk
+  // the buffer by the declared size rather than splitting on newlines.
+  const LF = 0x0a;
+  let pos = 0;
+  while (pos < buf.length) {
+    const nl = buf.indexOf(LF, pos);
+    if (nl === -1) break;
+    const header = buf.toString("utf8", pos, nl);
+    pos = nl + 1;
+    const parts = header.split(" ");
+    if (parts.length < 3 || parts[1] === "missing") continue; // no content body
+    const size = Number(parts[2]);
+    if (!Number.isFinite(size) || size < 0) break;
+    const content = buf.toString("utf8", pos, pos + size);
+    pos += size + 1; // content + trailing LF
+    try {
+      const e = JSON.parse(content);
+      if (e && e.id != null && /^\d+$/.test(String(e.id))) out.add(Number(e.id));
+    } catch {
+      /* unparseable entry — skip (filename fallback not needed; batch succeeded) */
+    }
   }
   return out;
 }
@@ -317,7 +386,33 @@ const PR_FILES_QUERY = `query($owner:String!,$name:String!,$cursor:String){
 function idsFromOpenPRs() {
   const repo = process.env.CLAIM_PR_REPO || "loopdive/js2";
   const [owner, name] = repo.split("/");
+  // Overall wall-clock budget for the whole scan (all attempts + pagination).
+  // Past this the scan bails to the fail-open fallback rather than hanging.
+  const deadline = Date.now() + PR_SCAN_TOTAL_TIMEOUT_MS;
+  // A single gh invocation, capped at min(per-call limit, remaining budget).
+  // On budget exhaustion it throws a tagged error so the loop bails cleanly;
+  // on a per-call timeout `execFileSync` throws ETIMEDOUT (process SIGKILLed),
+  // which the retry/backoff path below handles like any transient gh failure.
+  const ghBounded = (args) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      const e = new Error("open-PR scan budget exhausted");
+      e.scanBudgetExhausted = true;
+      throw e;
+    }
+    return execFileSync("gh", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: Math.min(PR_SCAN_CALL_TIMEOUT_MS, remaining),
+      killSignal: "SIGKILL",
+    });
+  };
+  let budgetExhausted = false;
   for (let attempt = 1; attempt <= 3; attempt++) {
+    if (Date.now() >= deadline) {
+      budgetExhausted = true;
+      break;
+    }
     try {
       const ids = new Set();
       const bigPRs = [];
@@ -325,7 +420,7 @@ function idsFromOpenPRs() {
       for (;;) {
         const args = ["api", "graphql", "-f", `query=${PR_FILES_QUERY}`, "-F", `owner=${owner}`, "-F", `name=${name}`];
         if (cursor) args.push("-F", `cursor=${cursor}`);
-        const raw = execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+        const raw = ghBounded(args);
         const prs = JSON.parse(raw)?.data?.repository?.pullRequests;
         if (!prs) throw new Error("unexpected GraphQL shape");
         for (const pr of prs.nodes || []) {
@@ -340,25 +435,28 @@ function idsFromOpenPRs() {
       }
       // >100-file PRs: fetch the full file list via REST pagination.
       for (const n of bigPRs) {
-        const raw = execFileSync(
-          "gh",
-          ["api", `repos/${repo}/pulls/${n}/files`, "--paginate", "--jq", ".[].filename"],
-          { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-        );
+        const raw = ghBounded(["api", `repos/${repo}/pulls/${n}/files`, "--paginate", "--jq", ".[].filename"]);
         for (const p of raw.split("\n")) {
           const m = p.match(ISSUE_ID_RE);
           if (m) ids.add(Number(m[1]));
         }
       }
       return { ids, complete: true };
-    } catch {
-      if (attempt < 3) sleepMs(attempt * 1000);
+    } catch (e) {
+      if (e && e.scanBudgetExhausted) {
+        budgetExhausted = true;
+        break;
+      }
+      // Per-call timeout (ETIMEDOUT/SIGKILL) or transient API error: back off
+      // and retry, but never sleep past the overall deadline.
+      const backoff = Math.min(attempt * 1000, Math.max(0, deadline - Date.now()));
+      if (attempt < 3 && backoff > 0) sleepMs(backoff);
     }
   }
   console.error(
-    "warning: open-PR id scan FAILED after 3 attempts (gh offline/unauthenticated/rate-limited). " +
-      "Allocating against main ∪ reservations ONLY — the id may collide with an in-flight PR's issue file " +
-      "(#2943). The CI gate check-issue-ids --against-main remains the hard backstop.",
+    `warning: open-PR id scan ${budgetExhausted ? `timed out (>${PR_SCAN_TOTAL_TIMEOUT_MS}ms)` : "FAILED after 3 attempts"} ` +
+      "(gh offline/unauthenticated/rate-limited/slow). Allocating against main ∪ reservations ONLY — the id may " +
+      "collide with an in-flight PR's issue file (#2943). The CI gate check-issue-ids --against-main remains the hard backstop.",
   );
   return { ids: new Set(), complete: false };
 }

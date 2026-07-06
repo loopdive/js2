@@ -67,7 +67,7 @@ function valueExprTsType(ctx: CodegenContext, node: ts.Expression): ts.Type {
  * wrong. Detect the statically-undefined forms so callers can treat the arg as
  * absent. Unwraps paren/as/!-assertion wrappers.
  */
-function isStaticUndefinedArg(arg: ts.Expression | undefined): boolean {
+export function isStaticUndefinedArg(arg: ts.Expression | undefined): boolean {
   if (arg === undefined) return false;
   let cur: ts.Expression = arg;
   while (
@@ -109,6 +109,31 @@ function emitNativeStringRefFromExternref(ctx: CodegenContext, fctx: FunctionCon
   fctx.body.push({ op: "any.convert_extern" } as Instr);
   fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr);
 }
+
+/**
+ * (#3069) Annex B §B.2.2 legacy HTML string-wrapper method → HTML tag +
+ * optional attribute name (ECMA-262 §B.2.2.2..§B.2.2.14). `String.prototype`
+ * `bold`→`<b>`, `italics`→`<i>`, `anchor(name)`→`<a name="…">`,
+ * `link(url)`→`<a href="…">`, `fontcolor(c)`/`fontsize(s)`→`<font color/size="…">`,
+ * etc. Methods with an `attribute` take one argument (the attribute VALUE,
+ * `"`→`&quot;` escaped); the rest take none. Consumed by
+ * `compileNativeStringMethodCall`'s standalone/WASI native arm.
+ */
+const HTML_WRAPPER_TAGS: Readonly<Record<string, { tag: string; attribute?: string }>> = {
+  anchor: { tag: "a", attribute: "name" },
+  big: { tag: "big" },
+  blink: { tag: "blink" },
+  bold: { tag: "b" },
+  fixed: { tag: "tt" },
+  fontcolor: { tag: "font", attribute: "color" },
+  fontsize: { tag: "font", attribute: "size" },
+  italics: { tag: "i" },
+  link: { tag: "a", attribute: "href" },
+  small: { tag: "small" },
+  strike: { tag: "strike" },
+  sub: { tag: "sub" },
+  sup: { tag: "sup" },
+};
 
 /**
  * #1470 — Compile a `+`-concat operand and coerce its result to a native
@@ -2462,6 +2487,52 @@ export function compileNativeStringMethodCall(
       fctx.body.push({ op: "call", funcIdx: concatIdx });
     }
     return nativeStringType(ctx);
+  }
+
+  // (#3069) Annex B §B.2.2 legacy HTML string-wrapper methods (CreateHTML,
+  // §B.2.2.2.1). Pure UTF-16 concatenation: wrap the receiver `S` in an HTML
+  // tag, e.g. `"x".bold()` → `"<b>x</b>"`, `"x".anchor(n)` → `'<a name="…">x</a>'`.
+  // In JS-host mode these dispatch through `__extern_method_call`; the
+  // standalone/WASI (nativeStrings) lane has no host, so lower them natively via
+  // `__str_concat` + literals. Methods carrying an attribute (anchor/fontcolor/
+  // fontsize/link) run the value through `__str_html_escape_quot` (CreateHTML
+  // step-4.b `"`→`&quot;` escaping). Do NOT add these to STRING_METHODS — that
+  // would register a host `string_<m>` import and regress host-mode boxing.
+  {
+    const htmlWrapper = HTML_WRAPPER_TAGS[method];
+    if (htmlWrapper) {
+      const concatIdx = ctx.nativeStrHelpers.get("__str_concat")!;
+      const { tag, attribute } = htmlWrapper;
+      // §B.2.2.2.1 evaluates ToString(this) (step 2) before ToString(value)
+      // (step 4.b). The receiver EXPRESSION is also evaluated before the argument
+      // in normal call order — so materialize the receiver into a local first.
+      const sLocal = compileReceiverToLocal("__html_recv");
+      // Build the prefix (everything before S).
+      if (attribute) {
+        // prefix = `<tag attribute="` + escapeQuot(ToString(value)) + `">`
+        compileNativeStringLiteral(ctx, fctx, `<${tag} ${attribute}="`);
+        if (expr.arguments.length > 0) {
+          emitArgAsNativeString(ctx, fctx, expr.arguments[0]!);
+        } else {
+          // Absent argument → value is `undefined` → ToString → "undefined".
+          compileNativeStringLiteral(ctx, fctx, "undefined");
+        }
+        const escIdx = ctx.nativeStrHelpers.get("__str_html_escape_quot")!;
+        fctx.body.push({ op: "call", funcIdx: escIdx });
+        fctx.body.push({ op: "call", funcIdx: concatIdx }); // `<tag attr="` + escapedV
+        compileNativeStringLiteral(ctx, fctx, `">`);
+        fctx.body.push({ op: "call", funcIdx: concatIdx }); // … + `">`
+      } else {
+        compileNativeStringLiteral(ctx, fctx, `<${tag}>`);
+      }
+      // prefix + S
+      fctx.body.push({ op: "local.get", index: sLocal });
+      fctx.body.push({ op: "call", funcIdx: concatIdx });
+      // … + `</tag>`
+      compileNativeStringLiteral(ctx, fctx, `</${tag}>`);
+      fctx.body.push({ op: "call", funcIdx: concatIdx });
+      return nativeStringType(ctx);
+    }
   }
 
   // substring: native helper

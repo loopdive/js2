@@ -154,6 +154,7 @@ import {
   compileNativeStringMethodCall,
   compileStringLiteral,
   emitBoolToString,
+  isStaticUndefinedArg,
 } from "../string-ops.js";
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
@@ -11417,7 +11418,14 @@ function compileCallExpression(
     if (isNumberMethodReceiver(ctx, receiverType) && propAccess.name.text === "toPrecision") {
       // (#2160 number-wrapper) f64 receiver recovery (primitive or wrapper).
       emitNumberMethodReceiverF64(ctx, fctx, propAccess, receiverType);
-      if (expr.arguments.length > 0) {
+      // (#3078) §21.1.3.5 step 2: an explicit `undefined` precision is
+      // spec-equivalent to no argument → `return ! ToString(x)`. It is NOT
+      // ToIntegerOrInfinity(undefined)=0 (which would trip the [1,100] RangeError
+      // gate). undefined and NaN both compile to f64 NaN, so they are
+      // indistinguishable at the value site — route the STATIC undefined literal
+      // to the no-arg branch (NaN sentinel) at the AST level.
+      // test262 toPrecision/undefined-precision-arg.js.
+      if (expr.arguments.length > 0 && !isStaticUndefinedArg(expr.arguments[0])) {
         // (#49) Spec §21.1.3.5 step 4 says: if x is non-finite, return
         // Number::toString(x) BEFORE the precision range check. Save the
         // receiver into a local, check finiteness, and only run the
@@ -11506,7 +11514,14 @@ function compileCallExpression(
     if (isNumberMethodReceiver(ctx, receiverType) && propAccess.name.text === "toExponential") {
       // (#2160 number-wrapper) f64 receiver recovery (primitive or wrapper).
       emitNumberMethodReceiverF64(ctx, fctx, propAccess, receiverType);
-      if (expr.arguments.length > 0) {
+      // (#3078) §21.1.3.3 step 2: an explicit `undefined` fractionDigits is
+      // spec-equivalent to no argument → variable-precision exponential (as many
+      // digits as needed), NOT ToIntegerOrInfinity(undefined)=0 (which gives
+      // fixed 0 digits). undefined and NaN both compile to f64 NaN and are
+      // indistinguishable at the value site — route the STATIC undefined literal
+      // to the no-arg branch (NaN sentinel) at the AST level.
+      // test262 toExponential/undefined-fractiondigits.js.
+      if (expr.arguments.length > 0 && !isStaticUndefinedArg(expr.arguments[0])) {
         // (#49) Spec §21.1.3.3 step 3: if x is non-finite, return
         // Number::toString(x) BEFORE the fractionDigits range check.
         // Save receiver, run range check only when x is finite. The
@@ -15551,7 +15566,9 @@ function compileCallExpression(
         } else if (methodName === "toFixed") {
           fctx.body.push({ op: "f64.const", value: 0 });
         }
-        if (methodName === "toPrecision" && expr.arguments.length > 0) {
+        if (methodName === "toPrecision" && expr.arguments.length > 0 && !isStaticUndefinedArg(expr.arguments[0])) {
+          // (#3078) explicit `undefined` precision ≡ no arg (§21.1.3.5 step 2) —
+          // route to the `toString`-equivalent else branch, not ToInteger→0.
           // ToNumber funnel — Symbol args must throw TypeError (#1564).
           coerceNumberMethodArgToF64(ctx, fctx, compileExpression(ctx, fctx, expr.arguments[0]!));
           // (#49) See `number.toPrecision` site above — the precision
@@ -15566,7 +15583,10 @@ function compileCallExpression(
             return { kind: "externref" };
           }
         }
-        if (methodName === "toExponential" && expr.arguments.length > 0) {
+        if (methodName === "toExponential" && expr.arguments.length > 0 && !isStaticUndefinedArg(expr.arguments[0])) {
+          // (#3078) explicit `undefined` fractionDigits ≡ no arg (§21.1.3.3
+          // step 2) — route to the NaN-sentinel else branch (variable digits),
+          // not ToInteger→0.
           // ToNumber funnel — Symbol args must throw TypeError (#1564).
           coerceNumberMethodArgToF64(ctx, fctx, compileExpression(ctx, fctx, expr.arguments[0]!));
           // (#49) See `number.toExponential` site above — the

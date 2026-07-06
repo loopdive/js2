@@ -8,6 +8,7 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
 import { emitNativeCaseConversion } from "./case-convert-native.js";
+import { emitNativeHtmlWrapperHelpers } from "./html-wrapper-native.js";
 import { emitNativeWellFormedHelpers } from "./wellformed-native.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -5048,6 +5049,12 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
       exported: false,
     });
   }
+
+  // (#3069) Annex B §B.2.2 HTML string-wrapper methods — the `__str_html_escape_quot`
+  // helper (CreateHTML step-4.b `"`→`&quot;` escaping). Emitted here, AFTER
+  // __str_flatten/__str_concat are registered. The tag/attribute concatenation
+  // is built inline at each call site in string-ops.ts via __str_concat.
+  emitNativeHtmlWrapperHelpers(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
 }
 
 /**
