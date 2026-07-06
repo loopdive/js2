@@ -1,8 +1,9 @@
 {
   "id": "2978",
   "assignee": "ttraenkler/dev-2978",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2978-async-forawait-reject",
   "claimed_at": "2026-07-06T12:40:55Z",
-  "updated_at": "2026-07-06T12:40:55Z"
+  "updated_at": "2026-07-06T13:05:26Z",
+  "released_at": "2026-07-06T13:05:26Z"
 }
