@@ -1,8 +1,9 @@
 {
   "id": "3049",
   "assignee": "ttraenkler/dev-3049",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3049-iterator-helper-proto-identity",
   "claimed_at": "2026-07-06T11:33:30Z",
-  "updated_at": "2026-07-06T11:33:30Z"
+  "updated_at": "2026-07-06T12:06:52Z",
+  "released_at": "2026-07-06T12:06:52Z"
 }
