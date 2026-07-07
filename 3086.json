@@ -1,8 +1,9 @@
 {
   "id": "3086",
   "assignee": "ttraenkler/dev-honest",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3086-honest-vacuity-oracle",
   "claimed_at": "2026-07-07T00:28:34Z",
-  "updated_at": "2026-07-07T00:28:34Z"
+  "updated_at": "2026-07-07T01:05:20Z",
+  "released_at": "2026-07-07T01:05:20Z"
 }
