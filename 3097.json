@@ -1,8 +1,8 @@
 {
   "id": "3097",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-09T10:14:17Z",
-  "updated_at": "2026-07-09T10:14:17Z"
+  "assignee": "ttraenkler/fable-3097",
+  "status": "in-progress",
+  "branch": "issue-3097-compiled-ab-host-ta-ctor",
+  "claimed_at": "2026-07-09T10:53:30Z",
+  "updated_at": "2026-07-09T10:53:30Z"
 }
