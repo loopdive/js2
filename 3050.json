@@ -1,9 +1,8 @@
 {
   "id": "3050",
-  "assignee": "ttraenkler/dev-3049",
-  "status": "released",
-  "branch": "issue-3050-generator-throw-try-finally",
-  "claimed_at": "2026-07-06T12:07:16Z",
-  "updated_at": "2026-07-06T12:14:20Z",
-  "released_at": "2026-07-06T12:14:20Z"
+  "assignee": "ttraenkler/fable-3050",
+  "status": "in-progress",
+  "branch": "issue-3050-gen-throw-try-region",
+  "claimed_at": "2026-07-09T09:08:56Z",
+  "updated_at": "2026-07-09T09:08:56Z"
 }
