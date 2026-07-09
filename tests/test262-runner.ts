@@ -320,6 +320,22 @@ const HANGING_TESTS = new Set([
   "built-ins/Array/prototype/indexOf/15.4.4.14-3-28.js",
   "built-ins/Array/prototype/indexOf/15.4.4.14-3-29.js",
   "built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-28.js",
+
+  // #3122 (surfaced by #3119): never-done iterator whose ONLY exit is an
+  // abrupt LHS assignment (`for (x.attr of iterable)` with a throwing setter,
+  // §13.7.5.13 step 6.f → IteratorClose). Our accessor-setter store does not
+  // raise on this path, so with the #3119 OBJ arm genuinely driving the
+  // iterator the loop spins to the runner timeout (previously: host lane
+  // compile_timeout / standalone fail "illegal cast" — no pass is lost by
+  // skipping). Remove when #3122 lands.
+  //
+  // NOTE the "test/" prefix: the lookups below strip `.*test262\/` from an
+  // absolute path like <root>/test262/test/language/..., which leaves the
+  // "test/" segment IN the key. The older prefix-less entries above do not
+  // match under this shape (verified 2026-07-09: S7.4_A6.js runs — and now
+  // passes — rather than skipping); they are kept as-is because activating
+  // them would flip a current pass to skip. Tracked in #3122's notes.
+  "test/language/statements/for-of/body-put-error.js",
 ]);
 
 export function shouldSkip(source: string, meta: Test262Meta, filePath?: string): FilterResult {

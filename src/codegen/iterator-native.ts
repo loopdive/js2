@@ -52,11 +52,22 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 // the non-array byte-carrier filter (ArrayBuffer/Uint8Array storage vecs).
 // (#3100 S4) ensureObjectRuntime provides the native `__extern_length` /
 // `__extern_get_idx` readers the index-based `__extern_slice` copies through.
-import { boxVecElementToExternref, ensureObjectRuntime, NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
+import {
+  boxVecElementToExternref,
+  ensureObjectRuntime,
+  NON_ARRAY_BYTE_VEC_ELEM_KINDS,
+  reserveApplyClosure,
+} from "./object-runtime.js";
 // (#3100 S4) `__extern_slice`'s $AnyString arm reuses the #1470 code-point
 // char-vec helper so a string rest (`const [a, ...r] = "hello"`) yields the
 // spec §22.1.5.1 per-code-point elements natively.
-import { ensureStrToCharVecHelper } from "./native-strings.js";
+// (#3119) `nativeStringLiteralInstrs` materializes the OBJ arm's string keys
+// ("next"/"done"/"value"/"return") at fill time — pure instrs against the
+// already-registered native-string types, no new module entities.
+import { ensureStrToCharVecHelper, nativeStringLiteralInstrs } from "./native-strings.js";
+// (#3119) The OBJ arm's miss/undefined value matches `__extern_get`'s miss
+// representation (the #2106 S1 `$undefined` singleton when active, else null).
+import { undefinedExternInstrs } from "./any-helpers.js";
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. */
 const ITER_KIND_VEC = 3;
@@ -72,6 +83,18 @@ const ITER_KIND_VEC = 3;
  * vec-only native runtime.
  */
 const ITER_KIND_USER = 1;
+
+/**
+ * (#3119, #3100 Design arm 3) IterRec kind tag for an OBJ iterator: a plain
+ * open `$Object` (or anything else the object runtime's `__extern_get` can
+ * read) whose `@@iterator` was installed dynamically — the post-hoc
+ * `o[Symbol.iterator] = fn` shape. Distinct from USER because the step arm
+ * dispatches through PROPERTY reads (`__extern_get(iterObj, "next")`) and the
+ * open-`any` closure bridge (`__apply_closure`), NOT the closed-struct
+ * type-switch dispatchers (`__call_next`/`__sget_*`). The iterator object is
+ * held in `userIter` (field 3) exactly like USER; `vec` is null.
+ */
+const ITER_KIND_OBJ = 4;
 
 /**
  * Resolved funcIdx of the closed-struct dispatchers the USER arm calls. All four
@@ -95,6 +118,63 @@ interface UserCarrierDeps {
    * `return` ⇒ NormalCompletion (§7.4.9 step 4), the empty-body no-op.
    */
   callReturnIdx?: number;
+}
+
+/**
+ * (#3119) Resolved fill-time deps of the plain-`$Object` OBJ arm. All are
+ * DEFINED funcs (no import shift): the object runtime's dynamic reader, the
+ * `$Symbol` boxer (#2866 — the `@@iterator` key is a `$Symbol` carrier looked
+ * up by id in `__obj_find`/`__key_equals`), the open-`any` closure bridge
+ * (#1888, reserve-then-fill — reserved by the fill if no other site did), and
+ * ToBoolean. `keyInstrs`/`missInstrs` are FACTORIES so every embed gets fresh
+ * `Instr` objects (#2169b shared-object double-remap hazard).
+ */
+interface ObjCarrierDeps {
+  /** `__extern_get(externref obj, externref key) -> externref` (object runtime). */
+  externGetIdx: number;
+  /** `__apply_closure(externref fn, externref recv, externref args) -> externref`. */
+  applyClosureIdx: number;
+  /** `__box_symbol(i32 id) -> externref` — interned `$Symbol` carrier (#2866). */
+  boxSymbolIdx: number;
+  /** The `(externref) -> i32` §7.1.2 ToBoolean helper (reused USER-deps funcIdx). */
+  isTruthyIdx: number;
+  /** `$Object` struct typeIdx — discriminates the step-result read path. */
+  objectTypeIdx: number;
+  /** `__sget_value(externref) -> externref` — closed-struct `{value,done}` step
+   *  results (an object-literal `next()` result often pre-shapes into a closed
+   *  struct, which `__extern_get` cannot read). Optional: absent when the
+   *  module has no `value` field bucket. */
+  sgetValueIdx?: number;
+  /** `__sget_done(externref) -> externref` — see `sgetValueIdx`. */
+  sgetDoneIdx?: number;
+  /** `__sget_next(externref) -> externref` — the ITERATOR OBJECT itself often
+   *  pre-shapes into a closed struct (`{ next: function () {…} }` literal with
+   *  a field-stored closure, #3117), so the `next` read needs the field getter
+   *  when the carrier is not a `$Object`. Present exactly when some struct has
+   *  a `next` field — i.e. whenever such an iterator literal exists. */
+  sgetNextIdx?: number;
+  /** `__sget_return(externref) -> externref` — same for IteratorClose's
+   *  `return` read on a closed-struct iterator object. */
+  sgetReturnIdx?: number;
+  /** Fresh instrs pushing the string key `name` as externref. */
+  keyInstrs: (name: string) => Instr[];
+  /** Fresh instrs pushing the miss/undefined externref (matches `__extern_get`). */
+  missInstrs: () => Instr[];
+}
+
+/**
+ * (#3119) Fresh instrs pushing an EMPTY canonical externref `$Vec` as externref
+ * — the zero-arg `args` vector for `__apply_closure` (its `__extern_length`
+ * reads 0 → `__call_fn_method_0(recv, fn)`). Factory per #2169b.
+ */
+function emptyArgsVecInstrs(types: IterRuntimeTypes): Instr[] {
+  return [
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "array.new_default", typeIdx: types.arrTypeIdx } as Instr,
+    { op: "struct.new", typeIdx: types.vecTypeIdx } as Instr,
+    { op: "extern.convert_any" } as Instr,
+  ];
 }
 
 /**
@@ -379,6 +459,11 @@ function buildArrayFromIterNBody(
   types: { vecTypeIdx: number; arrTypeIdx: number },
   funcs: { iteratorIdx: number; iteratorNextIdx: number; iteratorReturnIdx: number | undefined },
   extraDrainTypeIdxs: number[],
+  // (#3119) When set, a source with a truthy `@@iterator` PROPERTY (the
+  // post-hoc `o[Symbol.iterator] = fn` install) is admitted to the drain —
+  // the ladder's OBJ arm can drive it. `@@iterator`-less sources keep the
+  // indexed pass-through (#2904 rationale).
+  objGuard?: Pick<ObjCarrierDeps, "externGetIdx" | "boxSymbolIdx" | "isTruthyIdx">,
 ): Instr[] {
   const { vecTypeIdx, arrTypeIdx } = types;
   const { iteratorIdx, iteratorNextIdx, iteratorReturnIdx } = funcs;
@@ -475,6 +560,21 @@ function buildArrayFromIterNBody(
     drainTest.push(
       { op: "local.get", index: 10 } as Instr,
       { op: "ref.test", typeIdx: t } as Instr,
+      { op: "i32.or" } as Instr,
+    );
+  }
+  if (objGuard) {
+    // (#3119) ∨ truthy(__extern_get(src, @@iterator)) — the post-hoc
+    // `o[Symbol.iterator] = fn` install. Property read, so it needs no
+    // `ref.test`: non-`$Object` sources answer the miss (falsy) and keep the
+    // pass-through. `@@iterator` is well-known symbol id 1 (#2866 `$Symbol`
+    // carrier, id-compared in `__obj_find`).
+    drainTest.push(
+      { op: "local.get", index: 0 } as Instr,
+      { op: "i32.const", value: 1 } as Instr,
+      { op: "call", funcIdx: objGuard.boxSymbolIdx } as Instr,
+      { op: "call", funcIdx: objGuard.externGetIdx } as Instr,
+      { op: "call", funcIdx: objGuard.isTruthyIdx } as Instr,
       { op: "i32.or" } as Instr,
     );
   }
@@ -800,9 +900,47 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
           callReturnIdx: ctx.funcMap.get("__call_return"),
         };
 
+  // (#3119) OBJ-arm deps — the plain-`$Object` `@@iterator` protocol arm.
+  // Independent of the closed-struct USER deps: a module whose only custom
+  // iterable is a post-hoc `o[Symbol.iterator] = fn` install has NO closed
+  // dispatchers, yet must iterate. Gated on the object runtime + `$Symbol`
+  // boxer + ToBoolean existing (standalone/wasi only — host mode keeps the
+  // env-import iterator lane and stays byte-identical). `__apply_closure` is
+  // reserve-then-fill (#1888): reserving here (a DEFINED func mint, append-only)
+  // is safe at finalize because `fillApplyClosure` runs AFTER this fill in the
+  // finalize sequence (index.ts), with the `__call_fn_method_N` dispatchers
+  // emitted in between.
+  let objDeps: ObjCarrierDeps | undefined;
+  if (ctx.standalone || ctx.wasi) {
+    const externGetIdx = ctx.funcMap.get("__extern_get");
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+    if (
+      externGetIdx !== undefined &&
+      boxSymbolIdx !== undefined &&
+      objectTypeIdx !== undefined &&
+      isTruthyIdx !== undefined &&
+      ctx.nativeStrTypeIdx >= 0
+    ) {
+      objDeps = {
+        externGetIdx,
+        boxSymbolIdx,
+        objectTypeIdx,
+        isTruthyIdx,
+        applyClosureIdx: reserveApplyClosure(ctx),
+        sgetValueIdx: ctx.funcMap.get("__sget_value"),
+        sgetDoneIdx: ctx.funcMap.get("__sget_done"),
+        sgetNextIdx: ctx.funcMap.get("__sget_next"),
+        sgetReturnIdx: ctx.funcMap.get("__sget_return"),
+        keyInstrs: (name: string) => [...nativeStringLiteralInstrs(ctx, name), { op: "extern.convert_any" } as Instr],
+        missInstrs: () => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr],
+      };
+    }
+  }
+
   const types = iterRuntimeTypes(ctx);
   const familyArms = buildVecFamilyArms(ctx, types);
-  if (!deps && familyArms.length === 0) return; // nothing to fill — byte-identical
+  if (!deps && !objDeps && familyArms.length === 0) return; // nothing to fill — byte-identical
 
   const iteratorIdx = ctx.funcMap.get("__iterator");
   const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
@@ -810,8 +948,8 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
 
   const iteratorFn = definedFuncAt(ctx, iteratorIdx);
   const iteratorNextFn = definedFuncAt(ctx, iteratorNextIdx);
-  if (iteratorFn) iteratorFn.body = buildIteratorBody(types, deps, familyArms);
-  if (deps && iteratorNextFn) iteratorNextFn.body = buildIteratorNextBody(types, deps);
+  if (iteratorFn) iteratorFn.body = buildIteratorBody(types, deps, familyArms, objDeps);
+  if ((deps || objDeps) && iteratorNextFn) iteratorNextFn.body = buildIteratorNextBody(types, deps, objDeps);
 
   // (#3100 S5) `__iterator_rest` was VEC-only — a USER record (custom iterable)
   // drained EMPTY under `[...iterable]` / `Array.from(iterable)`. Rebuild it
@@ -819,7 +957,13 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // exhaustion into a fresh canonical `$Vec` (exhaustion ⇒ [[Done]] ⇒ no
   // IteratorClose, §7.4.9). Locals are replaced alongside the body — the
   // encoder reads both at emit, after this fill.
-  if (deps) {
+  // (#3119) OBJ records drain through the SAME step-to-exhaustion arm (the
+  // kind dispatch lives inside `__iterator_next`), so the guard admits every
+  // step-driven kind the GetIterator ladder can produce in this module.
+  if (deps || objDeps) {
+    const stepKinds: number[] = [];
+    if (deps) stepKinds.push(ITER_KIND_USER);
+    if (objDeps) stepKinds.push(ITER_KIND_OBJ);
     const iteratorRestIdx = ctx.funcMap.get("__iterator_rest");
     const iteratorRestFn = iteratorRestIdx !== undefined ? definedFuncAt(ctx, iteratorRestIdx) : undefined;
     if (iteratorRestFn) {
@@ -834,7 +978,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         { name: "value", type: { kind: "externref" } },
         { name: "grow", type: { kind: "ref_null", typeIdx: types.arrTypeIdx } },
       ];
-      iteratorRestFn.body = buildIteratorRestBodyWithUserArm(types, iteratorNextIdx);
+      iteratorRestFn.body = buildIteratorRestBodyWithUserArm(types, iteratorNextIdx, stepKinds);
     }
   }
 
@@ -842,15 +986,20 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // arm when a `return` dispatcher exists. Without one, close on a USER record
   // finds no `return` method ⇒ NormalCompletion (§7.4.9 step 4) — the eager
   // empty body is already exactly that, so it stays untouched (byte-identical).
-  if (deps && deps.callReturnIdx !== undefined) {
+  // (#3119) The OBJ close arm (`__extern_get(iterObj, "return")` +
+  // `__apply_closure`) fills independently — a plain-object iterator's
+  // `return` is a PROPERTY, reachable without any closed-struct dispatcher.
+  if ((deps && deps.callReturnIdx !== undefined) || objDeps) {
     const iteratorReturnIdx = ctx.funcMap.get("__iterator_return");
     const iteratorReturnFn = iteratorReturnIdx !== undefined ? definedFuncAt(ctx, iteratorReturnIdx) : undefined;
     if (iteratorReturnFn) {
       iteratorReturnFn.locals = [
         { name: "recAny", type: { kind: "anyref" } },
         { name: "userIter", type: { kind: "externref" } },
+        // (#3119) `ret` scratch for the OBJ close arm — harmless when unused.
+        ...(objDeps ? [{ name: "ret", type: { kind: "externref" as const } }] : []),
       ];
-      iteratorReturnFn.body = buildIteratorReturnBody(types, deps.callReturnIdx);
+      iteratorReturnFn.body = buildIteratorReturnBody(types, deps?.callReturnIdx, objDeps);
     }
   }
 
@@ -859,12 +1008,17 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // the `__iterator` USER arm — values AND IteratorClose — instead of passed
   // through to the indexed reader (which cannot read them). Gated on `deps`:
   // without the USER arm a custom-iterable drain would hit the hard-cast tail.
-  if (deps) {
+  // (#3119) With `objDeps`, a source carrying a truthy `@@iterator` PROPERTY
+  // (post-hoc `o[Symbol.iterator] = fn`) is likewise admitted to the drain;
+  // `@@iterator`-less array-like `$Object`s keep the indexed pass-through.
+  if (deps || objDeps) {
     const afinIdx = ctx.funcMap.get("__array_from_iter_n");
     const afinFn = afinIdx !== undefined ? definedFuncAt(ctx, afinIdx) : undefined;
     if (afinFn && afinFn.body.length > 0) {
-      const userTypeIdxs = collectUserIterableStructTypeIdxs(ctx);
-      if (userTypeIdxs.length > 0) {
+      // Closed-struct drain candidates need the USER arm; without `deps` they
+      // would hit the ladder's hard-cast tail, so admit them only with `deps`.
+      const userTypeIdxs = deps ? collectUserIterableStructTypeIdxs(ctx) : [];
+      if (userTypeIdxs.length > 0 || objDeps) {
         afinFn.body = buildArrayFromIterNBody(
           { vecTypeIdx: types.vecTypeIdx, arrTypeIdx: types.arrTypeIdx },
           {
@@ -873,6 +1027,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
             iteratorReturnIdx: ctx.funcMap.get("__iterator_return"),
           },
           userTypeIdxs,
+          objDeps,
         );
       }
     }
@@ -914,10 +1069,106 @@ function collectUserIterableStructTypeIdxs(ctx: CodegenContext): number[] {
  * a null/foreign externref after drift) exits early; the body NEVER traps.
  * The §7.4.9 "innerResult not an Object ⇒ TypeError" refinement is deferred,
  * matching the `__iterator_next` §7.4.4 refinement note (#2038).
- * Locals (set at fill): 1 = recAny (anyref), 2 = userIter (externref).
+ *
+ * (#3119) OBJ close arm (when `objDeps`): `ret = __extern_get(iterObj,
+ * "return")` — absent/undefined ⇒ NormalCompletion no-op (GetMethod §7.3.10:
+ * undefined/null → no close call); else `__apply_closure(ret, iterObj, [])`,
+ * result dropped. Fills independently of `callReturnIdx` (a plain-object
+ * iterator's `return` is a property, not a closed-struct method).
+ *
+ * Locals (set at fill): 1 = recAny (anyref), 2 = userIter (externref),
+ * 3 = ret (externref, only when `objDeps`).
  */
-function buildIteratorReturnBody(types: IterRuntimeTypes, callReturnIdx: number): Instr[] {
+function buildIteratorReturnBody(
+  types: IterRuntimeTypes,
+  callReturnIdx: number | undefined,
+  objDeps: ObjCarrierDeps | undefined,
+): Instr[] {
   const { iterRecTypeIdx } = types;
+  // (#3119) kind == OBJ → property-read close. Placed BEFORE the USER-kind
+  // early-return so both arms coexist; empty when the OBJ arm is not filled
+  // (byte-identical to the #3100 S5 body).
+  const objClose: Instr[] = objDeps
+    ? [
+        { op: "local.get", index: 1 },
+        { op: "ref.cast", typeIdx: iterRecTypeIdx },
+        { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: ITER_KIND_OBJ },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // userIter = rec.userIter; nullish/undefined → no-op.
+            { op: "local.get", index: 1 },
+            { op: "ref.cast", typeIdx: iterRecTypeIdx },
+            { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+            { op: "local.tee", index: 2 },
+            { op: "call", funcIdx: objDeps.isTruthyIdx },
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" } as Instr], else: [] } as Instr,
+            // ret = Get(userIter, "return") — carrier-branched like the step
+            // arm's `next` read; miss/undefined → no-op (§7.4.9 step 4
+            // NormalCompletion).
+            { op: "local.get", index: 2 },
+            { op: "any.convert_extern" } as Instr,
+            { op: "ref.test", typeIdx: objDeps.objectTypeIdx } as Instr,
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [
+                { op: "local.get", index: 2 } as Instr,
+                ...objDeps.keyInstrs("return"),
+                { op: "call", funcIdx: objDeps.externGetIdx } as Instr,
+              ],
+              else:
+                objDeps.sgetReturnIdx !== undefined
+                  ? [{ op: "local.get", index: 2 } as Instr, { op: "call", funcIdx: objDeps.sgetReturnIdx } as Instr]
+                  : objDeps.missInstrs(),
+            } as Instr,
+            { op: "local.tee", index: 3 },
+            { op: "call", funcIdx: objDeps.isTruthyIdx },
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" } as Instr], else: [] } as Instr,
+            // __apply_closure(ret, userIter, []) — drop the result.
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 2 },
+            ...emptyArgsVecInstrs(types),
+            { op: "call", funcIdx: objDeps.applyClosureIdx },
+            { op: "drop" },
+            { op: "return" } as Instr,
+          ],
+          else: [],
+        } as Instr,
+      ]
+    : [];
+  // USER close (closed-struct `__call_return` dispatch) — only when the
+  // dispatcher exists; otherwise the body simply ends after the OBJ arm
+  // (non-OBJ kinds ⇒ NormalCompletion no-op).
+  const userClose: Instr[] =
+    callReturnIdx !== undefined
+      ? [
+          // Only USER records have a user `return` to dispatch.
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: iterRecTypeIdx },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+          { op: "i32.const", value: ITER_KIND_USER },
+          { op: "i32.ne" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" } as Instr], else: [] } as Instr,
+          // userIter = rec.userIter; null → no-op.
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: iterRecTypeIdx },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+          { op: "local.tee", index: 2 },
+          { op: "ref.is_null" } as Instr,
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" } as Instr], else: [] } as Instr,
+          // __call_return(userIter) — drop the result ({done} carrier or null when
+          // the struct has no `return` method; the dispatcher returns null then).
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: callReturnIdx } as Instr,
+          { op: "drop" },
+        ]
+      : [];
   return [
     // recAny = any.convert_extern(recExt); not an $IterRec → no-op return.
     { op: "local.get", index: 0 },
@@ -926,25 +1177,8 @@ function buildIteratorReturnBody(types: IterRuntimeTypes, callReturnIdx: number)
     { op: "ref.test", typeIdx: iterRecTypeIdx } as Instr,
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" } as Instr], else: [] } as Instr,
-    // Only USER records have a user `return` to dispatch.
-    { op: "local.get", index: 1 },
-    { op: "ref.cast", typeIdx: iterRecTypeIdx },
-    { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
-    { op: "i32.const", value: ITER_KIND_USER },
-    { op: "i32.ne" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" } as Instr], else: [] } as Instr,
-    // userIter = rec.userIter; null → no-op.
-    { op: "local.get", index: 1 },
-    { op: "ref.cast", typeIdx: iterRecTypeIdx },
-    { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
-    { op: "local.tee", index: 2 },
-    { op: "ref.is_null" } as Instr,
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" } as Instr], else: [] } as Instr,
-    // __call_return(userIter) — drop the result ({done} carrier or null when
-    // the struct has no `return` method; the dispatcher returns null then).
-    { op: "local.get", index: 2 },
-    { op: "call", funcIdx: callReturnIdx } as Instr,
-    { op: "drop" },
+    ...objClose,
+    ...userClose,
   ];
 }
 
@@ -957,19 +1191,31 @@ function buildIteratorReturnBody(types: IterRuntimeTypes, callReturnIdx: number)
  *      boxing), then the same VEC record. `familyArms` is empty at eager
  *      registration time (carriers not all known yet) and filled by
  *      `fillNativeIteratorLateArms`.
- *   3. (#2038, `deps`) USER `{next()}` protocol → obtain the iterator object via
+ *   3. (#3119, `objDeps`, finalize-filled) plain-`$Object` `@@iterator`
+ *      PROPERTY protocol — the post-hoc `o[Symbol.iterator] = fn` install:
+ *      `iterFn = __extern_get(obj, __box_symbol(@@iterator))`; truthy ⇒
+ *      `iterObj = __apply_closure(iterFn, obj, [])` →
+ *      $IterRec{kind:OBJ, vec:null, 0, userIter:iterObj}. The read needs no
+ *      `ref.test $Object` gate: on every non-`$Object` subject (closed
+ *      structs, strings, boxes) `__extern_get` answers the miss (falsy) and
+ *      the subject falls through to the USER tail unchanged. The §7.4.3
+ *      "iterator not an Object ⇒ TypeError" refinement is deferred (S1
+ *      no-throw discipline, #1888).
+ *   4. (#2038, `deps`) USER `{next()}` protocol → obtain the iterator object via
  *      `__call_@@iterator(obj)` and build $IterRec{kind:USER, vec:null, 0,
  *      userIter}. If the dispatcher returns null (obj is ALREADY an iterator
  *      with a bare `next` and no `@@iterator`), fall back to obj itself.
- *   4. else (no `deps`) — the legacy hard cast: a non-vec subject traps loudly
+ *   5. else (no `deps`) — the legacy hard cast: a non-vec subject traps loudly
  *      (`illegal cast`) rather than silently misbehaving.
- * Locals: 0=obj(param), 1=objAny(anyref), 2=userIter(externref),
- * 3=i(i32)/4=len(i32)/5=out(arr) — scratch for the family-arm normalize loops.
+ * Locals: 0=obj(param), 1=objAny(anyref), 2=userIter(externref — the OBJ arm
+ * reuses it for iterFn/iterObj), 3=i(i32)/4=len(i32)/5=out(arr) — scratch for
+ * the family-arm normalize loops.
  */
 function buildIteratorBody(
   types: IterRuntimeTypes,
   deps: UserCarrierDeps | undefined,
   familyArms: Instr[] = [],
+  objDeps?: ObjCarrierDeps,
 ): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx } = types;
   // VEC arm: $IterRec{VEC, vec, 0, userIter:null}. Field order/arity is
@@ -991,6 +1237,41 @@ function buildIteratorBody(
     { op: "struct.new", typeIdx: iterRecTypeIdx },
     { op: "extern.convert_any" } as Instr,
   ];
+
+  // (#3119) OBJ arm — post-hoc `o[Symbol.iterator] = fn`. All Instr objects
+  // fresh per build (#2169b); baked funcIdxs are fill-time funcMap lookups.
+  const objArm: Instr[] = objDeps
+    ? [
+        // iterFn = __extern_get(obj, __box_symbol(1))  (@@iterator, #2866)
+        { op: "local.get", index: 0 },
+        { op: "i32.const", value: 1 },
+        { op: "call", funcIdx: objDeps.boxSymbolIdx } as Instr,
+        { op: "call", funcIdx: objDeps.externGetIdx } as Instr,
+        { op: "local.tee", index: 2 },
+        { op: "call", funcIdx: objDeps.isTruthyIdx } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // iterObj = __apply_closure(iterFn, obj, [])
+            { op: "local.get", index: 2 },
+            { op: "local.get", index: 0 },
+            ...emptyArgsVecInstrs(types),
+            { op: "call", funcIdx: objDeps.applyClosureIdx } as Instr,
+            { op: "local.set", index: 2 },
+            // $IterRec{OBJ, vec:null, idx:0, userIter:iterObj}
+            { op: "i32.const", value: ITER_KIND_OBJ },
+            { op: "ref.null", typeIdx: vecTypeIdx } as Instr,
+            { op: "i32.const", value: 0 },
+            { op: "local.get", index: 2 },
+            { op: "struct.new", typeIdx: iterRecTypeIdx },
+            { op: "extern.convert_any" } as Instr,
+            { op: "return" } as Instr,
+          ],
+          else: [],
+        } as Instr,
+      ]
+    : [];
 
   const tail: Instr[] = deps
     ? [
@@ -1034,6 +1315,7 @@ function buildIteratorBody(
       else: [],
     },
     ...familyArms,
+    ...objArm,
     ...tail,
   ];
 }
@@ -1197,10 +1479,25 @@ function buildVecFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes): Instr
  *   value = done ? undefined : __sget_value(res)
  * (a non-object `res` ⇒ the field getters return null ⇒ done falsy/value null;
  *  the §7.4.4 "next result not an Object ⇒ TypeError" refinement is a follow-up).
+ *
+ * (#3119) With `objDeps` the OBJ arm dispatches through PROPERTY reads:
+ *   next = __extern_get(iterObj, "next"); res = __apply_closure(next, iterObj, []);
+ *   done = ToBoolean(Get(res, "done")); value = done ? undefined : Get(res, "value")
+ * where Get(res, ·) routes through `__extern_get` when `res` is a `$Object`
+ * and through the closed-struct field getters (`__sget_done`/`__sget_value`)
+ * otherwise — an object-literal `next()` result (`{value, done}`) often
+ * pre-shapes into a closed struct that `__extern_get` cannot read. A falsy
+ * `res` (missing/uncallable `next`, bridge degrade) reports done=1 rather
+ * than spinning (§7.4.3 TypeError refinement deferred).
+ *
  * Locals: 0=recExt(param), 1=rec, 2=vec, 3=i, 4=done(i32), 5=value(externref),
  * 6=res(externref).
  */
-function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | undefined): Instr[] {
+function buildIteratorNextBody(
+  types: IterRuntimeTypes,
+  deps: UserCarrierDeps | undefined,
+  objDeps?: ObjCarrierDeps,
+): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
 
   // The vec-carrier step (existing behavior), computing done(4)/value(5).
@@ -1249,7 +1546,7 @@ function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | 
     },
   ];
 
-  if (!deps) {
+  if (!deps && !objDeps) {
     // Vec-only carrier: kind is always VEC, so emit the vec step directly with no
     // kind branch — byte-identical to the pre-#2038 runtime.
     return [
@@ -1259,6 +1556,142 @@ function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | 
       { op: "ref.cast", typeIdx: iterRecTypeIdx },
       { op: "local.set", index: 1 },
       ...vecStep,
+      // results in ABI order: (done, value)
+      { op: "local.get", index: 4 },
+      { op: "local.get", index: 5 },
+    ];
+  }
+
+  // (#3119) The OBJ-carrier step: property reads + the open-`any` closure
+  // bridge (see the function doc). Fresh Instr objects per build (#2169b).
+  const objStep: Instr[] = objDeps
+    ? (() => {
+        const od = objDeps;
+        // res is a `$Object` → read done/value through the dynamic reader.
+        const readObjArm: Instr[] = [
+          // done = ToBoolean(__extern_get(res, "done"))
+          { op: "local.get", index: 6 },
+          ...od.keyInstrs("done"),
+          { op: "call", funcIdx: od.externGetIdx } as Instr,
+          { op: "call", funcIdx: od.isTruthyIdx } as Instr,
+          { op: "local.set", index: 4 },
+          // value = done ? undefined : __extern_get(res, "value")
+          { op: "local.get", index: 4 },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: od.missInstrs(),
+            else: [
+              { op: "local.get", index: 6 },
+              ...od.keyInstrs("value"),
+              { op: "call", funcIdx: od.externGetIdx } as Instr,
+            ],
+          } as Instr,
+          { op: "local.set", index: 5 },
+        ];
+        // res is a closed struct (`{value, done}` literal pre-shape) → the
+        // #2038 field getters. Without them a non-`$Object` res is unreadable:
+        // report done (terminate) rather than spin.
+        const readStructArm: Instr[] =
+          od.sgetDoneIdx !== undefined && od.sgetValueIdx !== undefined
+            ? [
+                { op: "local.get", index: 6 },
+                { op: "call", funcIdx: od.sgetDoneIdx } as Instr,
+                { op: "call", funcIdx: od.isTruthyIdx } as Instr,
+                { op: "local.set", index: 4 },
+                { op: "local.get", index: 4 },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "externref" } },
+                  then: od.missInstrs(),
+                  else: [{ op: "local.get", index: 6 }, { op: "call", funcIdx: od.sgetValueIdx } as Instr],
+                } as Instr,
+                { op: "local.set", index: 5 },
+              ]
+            : [
+                { op: "i32.const", value: 1 },
+                { op: "local.set", index: 4 },
+                ...od.missInstrs(),
+                { op: "local.set", index: 5 },
+              ];
+        return [
+          // next = Get(rec.userIter, "next") — carrier-branched (#3117): a
+          // `$Object` iterator reads through the dynamic reader; a closed-
+          // struct iterator literal (`{ next: function () {…} }`, field-stored
+          // closure) reads through the `__sget_next` field getter.
+          { op: "local.get", index: 1 },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+          { op: "any.convert_extern" } as Instr,
+          { op: "ref.test", typeIdx: od.objectTypeIdx } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 1 } as Instr,
+              { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 } as Instr,
+              ...od.keyInstrs("next"),
+              { op: "call", funcIdx: od.externGetIdx } as Instr,
+            ],
+            else:
+              od.sgetNextIdx !== undefined
+                ? [
+                    { op: "local.get", index: 1 } as Instr,
+                    { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 } as Instr,
+                    { op: "call", funcIdx: od.sgetNextIdx } as Instr,
+                  ]
+                : od.missInstrs(),
+          } as Instr,
+          // res = __apply_closure(next, rec.userIter, [])
+          { op: "local.get", index: 1 },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+          ...emptyArgsVecInstrs(types),
+          { op: "call", funcIdx: od.applyClosureIdx } as Instr,
+          { op: "local.set", index: 6 },
+          // Falsy res (undefined/null — `next` missing/uncallable, bridge
+          // degrade) → done=1, never spin.
+          { op: "local.get", index: 6 },
+          { op: "call", funcIdx: od.isTruthyIdx } as Instr,
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "i32.const", value: 1 } as Instr,
+              { op: "local.set", index: 4 } as Instr,
+              ...od.missInstrs(),
+              { op: "local.set", index: 5 } as Instr,
+            ],
+            else: [
+              { op: "local.get", index: 6 } as Instr,
+              { op: "any.convert_extern" } as Instr,
+              { op: "ref.test", typeIdx: od.objectTypeIdx } as Instr,
+              { op: "if", blockType: { kind: "empty" }, then: readObjArm, else: readStructArm } as Instr,
+            ],
+          } as Instr,
+        ];
+      })()
+    : [];
+
+  // vecStep, or (with the OBJ arm filled) the kind==OBJ dispatch around it.
+  const vecOrObjStep: Instr[] = objDeps
+    ? [
+        { op: "local.get", index: 1 },
+        { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: ITER_KIND_OBJ },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: objStep, else: vecStep } as Instr,
+      ]
+    : vecStep;
+
+  if (!deps) {
+    // OBJ + VEC kinds only (no closed-struct USER carrier in this module).
+    return [
+      // rec = cast(any.convert_extern(recExt))
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.cast", typeIdx: iterRecTypeIdx },
+      { op: "local.set", index: 1 },
+      ...vecOrObjStep,
       // results in ABI order: (done, value)
       { op: "local.get", index: 4 },
       { op: "local.get", index: 5 },
@@ -1294,7 +1727,7 @@ function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | 
     { op: "any.convert_extern" } as Instr,
     { op: "ref.cast", typeIdx: iterRecTypeIdx },
     { op: "local.set", index: 1 },
-    // if (rec.kind == USER) { userStep } else { vecStep }
+    // if (rec.kind == USER) { userStep } else { vecStep | kind==OBJ dispatch }
     { op: "local.get", index: 1 },
     { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
     { op: "i32.const", value: ITER_KIND_USER },
@@ -1303,7 +1736,7 @@ function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | 
       op: "if",
       blockType: { kind: "empty" },
       then: userStep,
-      else: vecStep,
+      else: vecOrObjStep,
     },
     // results in ABI order: (done, value)
     { op: "local.get", index: 4 },
@@ -1322,7 +1755,14 @@ function buildIteratorNextBody(types: IterRuntimeTypes, deps: UserCarrierDeps | 
  * Locals (replaced at fill): 0=recExt(param), 1=rec, 2=vec, 3=i, 4=len/cap,
  * 5=out(arr), 6=j, 7=done, 8=value, 9=grow(arr).
  */
-function buildIteratorRestBodyWithUserArm(types: IterRuntimeTypes, iteratorNextIdx: number): Instr[] {
+function buildIteratorRestBodyWithUserArm(
+  types: IterRuntimeTypes,
+  iteratorNextIdx: number,
+  // (#3119) The step-driven kinds the drain admits — [USER], [OBJ], or both,
+  // matching which GetIterator arms the fill installed. The kind dispatch of
+  // the step itself lives inside `__iterator_next`, so one drain serves all.
+  stepKinds: number[] = [ITER_KIND_USER],
+): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
   const userDrain: Instr[] = [
     // cap = 4; out = array.new_default(4); j = 0
@@ -1404,11 +1844,14 @@ function buildIteratorRestBodyWithUserArm(types: IterRuntimeTypes, iteratorNextI
     { op: "any.convert_extern" } as Instr,
     { op: "ref.cast", typeIdx: iterRecTypeIdx },
     { op: "local.set", index: 1 },
-    // USER record → step-to-exhaustion drain
-    { op: "local.get", index: 1 },
-    { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
-    { op: "i32.const", value: ITER_KIND_USER },
-    { op: "i32.eq" },
+    // USER/OBJ record → step-to-exhaustion drain
+    ...stepKinds.flatMap((kind, i): Instr[] => [
+      { op: "local.get", index: 1 } as Instr,
+      { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 } as Instr,
+      { op: "i32.const", value: kind } as Instr,
+      { op: "i32.eq" } as Instr,
+      ...(i > 0 ? [{ op: "i32.or" } as Instr] : []),
+    ]),
     { op: "if", blockType: { kind: "empty" }, then: userDrain, else: [] } as Instr,
     // VEC record → the existing tail-copy, reading rec from local 1
     { op: "local.get", index: 1 },

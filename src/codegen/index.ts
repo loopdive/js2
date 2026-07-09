@@ -2322,11 +2322,14 @@ export function generateModule(
     // the standalone native iterator runtime was registered.
     if (
       ctx.nativeIteratorUserArmPending &&
-      ctx.funcMap.has("__call_@@iterator") &&
-      ctx.funcMap.has("__call_next") &&
-      ctx.funcMap.has("__sget_value") &&
-      ctx.funcMap.has("__sget_done") &&
-      !ctx.funcMap.has("__is_truthy")
+      !ctx.funcMap.has("__is_truthy") &&
+      ((ctx.funcMap.has("__call_@@iterator") &&
+        ctx.funcMap.has("__call_next") &&
+        ctx.funcMap.has("__sget_value") &&
+        ctx.funcMap.has("__sget_done")) ||
+        // (#3119) The plain-`$Object` OBJ arm needs `__is_truthy` too (the
+        // `@@iterator`/`res` truthiness gates + the ToBoolean on `done`).
+        (ctx.funcMap.has("__extern_get") && ctx.funcMap.has("__box_symbol") && ctx.objectRuntimeTypes !== undefined))
     ) {
       // The USER `done` flag needs `__is_truthy` (ToBoolean on the boxed bool).
       // `emitStructFieldGetters` usually registers it via `addUnionImports` when a

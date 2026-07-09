@@ -59,8 +59,8 @@
     "edition": "ES2015",
     "pass": 11733,
     "fail": 3509,
-    "ce": 144,
-    "skip": 0,
+    "ce": 143,
+    "skip": 1,
     "total": 15386,
     "pct": 76,
     "features": [
@@ -104,8 +104,8 @@
         "name": "Symbol.iterator",
         "pass": 305,
         "fail": 289,
-        "ce": 30,
-        "skip": 0,
+        "ce": 29,
+        "skip": 1,
         "total": 624,
         "pct": 49
       },
@@ -554,8 +554,8 @@
         "name": "for-of",
         "pass": 1,
         "fail": 1,
-        "ce": 2,
-        "skip": 0,
+        "ce": 1,
+        "skip": 1,
         "total": 4,
         "pct": 25
       },

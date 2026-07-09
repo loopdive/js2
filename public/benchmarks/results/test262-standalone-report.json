@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-09T19:40:55.559Z",
-  "baseline_generated_at": "2026-07-09T19:40:55.559Z",
-  "baseline_sha": "fc8b037bb5ac484660da00bcc63457b2ce74d65e",
+  "timestamp": "2026-07-09T21:24:40.501Z",
+  "baseline_generated_at": "2026-07-09T21:24:40.501Z",
+  "baseline_sha": "963b84d6f0a99063bfd5dbbe07ef9c3ee84c6b43",
   "oracle_version": 2,
   "mode": {
     "target": "standalone",
@@ -10,26 +10,26 @@
   },
   "summary": {
     "total": 43106,
-    "pass": 23444,
-    "fail": 17883,
+    "pass": 23645,
+    "fail": 17678,
     "compile_error": 1758,
-    "compile_timeout": 3,
-    "skip": 18,
-    "compilable": 41327,
-    "host_free_pass": 18931,
-    "leaky_pass": 4513,
+    "compile_timeout": 6,
+    "skip": 19,
+    "compilable": 41323,
+    "host_free_pass": 19042,
+    "leaky_pass": 4603,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 42020,
-        "pass": 23178,
-        "fail": 17104,
+        "pass": 23379,
+        "fail": 16899,
         "compile_error": 1717,
-        "compile_timeout": 3,
-        "skip": 18,
-        "compilable": 40282,
-        "host_free_pass": 18667,
-        "leaky_pass": 4511,
+        "compile_timeout": 6,
+        "skip": 19,
+        "compilable": 40278,
+        "host_free_pass": 18778,
+        "leaky_pass": 4601,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -61,27 +61,27 @@
       },
       "official": {
         "total": 43106,
-        "pass": 23444,
-        "fail": 17883,
+        "pass": 23645,
+        "fail": 17678,
         "compile_error": 1758,
-        "compile_timeout": 3,
-        "skip": 18,
-        "compilable": 41327,
-        "host_free_pass": 18931,
-        "leaky_pass": 4513,
+        "compile_timeout": 6,
+        "skip": 19,
+        "compilable": 41323,
+        "host_free_pass": 19042,
+        "leaky_pass": 4603,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48088,
-        "pass": 24053,
-        "fail": 21924,
+        "pass": 24254,
+        "fail": 21719,
         "compile_error": 1984,
-        "compile_timeout": 4,
-        "skip": 123,
-        "compilable": 45977,
-        "host_free_pass": 19282,
-        "leaky_pass": 4771,
+        "compile_timeout": 7,
+        "skip": 124,
+        "compilable": 45973,
+        "host_free_pass": 19393,
+        "leaky_pass": 4861,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -89,38 +89,38 @@
   },
   "official_summary": {
     "total": 43106,
-    "pass": 23444,
-    "fail": 17883,
+    "pass": 23645,
+    "fail": 17678,
     "compile_error": 1758,
-    "compile_timeout": 3,
-    "skip": 18,
-    "compilable": 41327,
-    "host_free_pass": 18931,
-    "leaky_pass": 4513,
+    "compile_timeout": 6,
+    "skip": 19,
+    "compilable": 41323,
+    "host_free_pass": 19042,
+    "leaky_pass": 4603,
     "stale": 0
   },
   "full_summary": {
     "total": 48088,
-    "pass": 24053,
-    "fail": 21924,
+    "pass": 24254,
+    "fail": 21719,
     "compile_error": 1984,
-    "compile_timeout": 4,
-    "skip": 123,
-    "compilable": 45977,
-    "host_free_pass": 19282,
-    "leaky_pass": 4771,
+    "compile_timeout": 7,
+    "skip": 124,
+    "compilable": 45973,
+    "host_free_pass": 19393,
+    "leaky_pass": 4861,
     "stale": 0
   },
   "strict_summary": {
     "total": 40597,
-    "pass": 22467,
-    "fail": 16444,
+    "pass": 22668,
+    "fail": 16239,
     "compile_error": 1665,
-    "compile_timeout": 3,
-    "skip": 18,
-    "compilable": 38911,
-    "host_free_pass": 18084,
-    "leaky_pass": 4383,
+    "compile_timeout": 6,
+    "skip": 19,
+    "compilable": 38907,
+    "host_free_pass": 18195,
+    "leaky_pass": 4473,
     "stale": 0
   },
   "scope_summaries": {
@@ -150,14 +150,14 @@
     },
     "standard": {
       "total": 42020,
-      "pass": 23178,
-      "fail": 17104,
+      "pass": 23379,
+      "fail": 16899,
       "compile_error": 1717,
-      "compile_timeout": 3,
-      "skip": 18,
-      "compilable": 40282,
-      "host_free_pass": 18667,
-      "leaky_pass": 4511,
+      "compile_timeout": 6,
+      "skip": 19,
+      "compilable": 40278,
+      "host_free_pass": 18778,
+      "leaky_pass": 4601,
       "stale": 0
     }
   },
@@ -209,13 +209,13 @@
     {
       "name": "built-ins/Array",
       "path": "built-ins/Array",
-      "pass": 1182,
-      "fail": 1798,
+      "pass": 1185,
+      "fail": 1795,
       "compile_error": 101,
       "compile_timeout": 0,
       "skip": 0,
       "total": 3081,
-      "host_free_pass": 1157
+      "host_free_pass": 1160
     },
     {
       "name": "built-ins/ArrayBuffer",
@@ -253,13 +253,13 @@
     {
       "name": "built-ins/AsyncFromSyncIteratorPrototype",
       "path": "built-ins/AsyncFromSyncIteratorPrototype",
-      "pass": 1,
-      "fail": 36,
+      "pass": 2,
+      "fail": 35,
       "compile_error": 1,
       "compile_timeout": 0,
       "skip": 0,
       "total": 38,
-      "host_free_pass": 0
+      "host_free_pass": 1
     },
     {
       "name": "built-ins/AsyncFunction",
@@ -990,13 +990,13 @@
     {
       "name": "language/expressions",
       "path": "language/expressions",
-      "pass": 7307,
-      "fail": 3437,
+      "pass": 7408,
+      "fail": 3336,
       "compile_error": 273,
       "compile_timeout": 1,
       "skip": 18,
       "total": 11036,
-      "host_free_pass": 5205
+      "host_free_pass": 5254
     },
     {
       "name": "language/function-code",
@@ -1166,13 +1166,13 @@
     {
       "name": "language/statements",
       "path": "language/statements",
-      "pass": 5827,
-      "fail": 3307,
+      "pass": 5923,
+      "fail": 3207,
       "compile_error": 202,
-      "compile_timeout": 1,
-      "skip": 0,
+      "compile_timeout": 4,
+      "skip": 1,
       "total": 9337,
-      "host_free_pass": 3867
+      "host_free_pass": 3925
     },
     {
       "name": "language/types",
@@ -1198,30 +1198,31 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 12106,
-    "illegal_cast": 865,
+    "assertion_fail": 11926,
+    "illegal_cast": 840,
     "negative_test_fail": 55,
     "null_deref": 305,
     "oob": 49,
-    "other": 6257,
+    "other": 6259,
     "promise_error": 192,
     "range_error": 44,
     "runtime_error": 475,
     "syntax_error": 6,
-    "type_error": 3094,
-    "unreachable": 6,
+    "type_error": 3091,
+    "unreachable": 7,
     "wasm_compile": 454
   },
   "hard_errors": {},
   "skip_reasons": {
+    "compiler hang (see HANGING_TESTS)": 1,
     "dynamic-import + sloppy-script var/fn redecl + fixture path (#1696)": 18,
     "Proposal excluded from default scope: proposal feature: Temporal": 9,
     "proposal feature: import defer (no test harness)": 96
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 23912,
-    "classified": 23912,
+    "total_non_pass_non_skip": 23710,
+    "classified": 23710,
     "unclassified_threshold": null,
     "buckets": [
       {
@@ -1243,8 +1244,8 @@
         },
         "sample_files": [
           "test/language/expressions/object/method-definition/forbidden-ext/b2/async-meth-forbidden-ext-indirect-access-own-prop-caller-get.js",
-          "test/language/expressions/async-arrow-function/eval-var-scope-syntax-err.js",
           "test/language/expressions/async-function/try-reject-finally-throw.js",
+          "test/language/expressions/async-arrow-function/eval-var-scope-syntax-err.js",
           "test/language/expressions/class/async-method-static/returns-async-function-returns-newtarget.js",
           "test/language/expressions/class/dstr/async-private-gen-meth-static-dflt-ary-ptrn-elem-id-iter-done.js"
         ],
@@ -1298,8 +1299,8 @@
         },
         "error_categories": {
           "other": 2491,
-          "illegal_cast": 2,
           "wasm_compile": 60,
+          "illegal_cast": 2,
           "null_deref": 51,
           "type_error": 182,
           "assertion_fail": 782,
@@ -1310,13 +1311,13 @@
           "test/built-ins/Temporal/PlainDateTime/subclass.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/eraYear/prop-desc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/month/prop-desc.js",
-          "test/built-ins/Temporal/PlainMonthDay/refisoyear-undefined.js"
+          "test/built-ins/Temporal/Instant/prototype/toString/timezone-wrong-type.js"
         ],
         "sample_signatures": [
           "other:ReferenceError: Temporal is not defined",
           "other:ReferenceError: TemporalHelpers is not defined",
-          "illegal_cast:illegal cast [in __str_to_number() ← test]",
           "wasm_compile:L#:## invalid Wasm binary (WebAssembly.instantiate(): Compiling function ##:\"test\" failed: extern.convert_any[#] expected type shared anyref, found array.get of type i64 @+#) [in test()] [@+#] [wat: (func $test (result f64) (local $instance",
+          "illegal_cast:illegal cast [in __str_to_number() ← test]",
           "null_deref:L#:## dereferencing a null pointer [in test()]"
         ]
       },
@@ -1643,7 +1644,7 @@
           "runtime_error:L#:## Cannot convert object to primitive value",
           "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
           "other:L#:## Codegen error: Atomics.waitAsync built-in static property value read is not supported in --target standalone (## / ## S6-b). Add a native built-in method closure for this pair.; L#:## Codegen error: '__get_builtin' (dynamic-shape obje",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue(keys[#], \"foo\");"
+          "other:L#:## Codegen error: Proxy not supported in standalone mode (## Phase C).; L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal o"
         ]
       },
       {
@@ -1684,59 +1685,59 @@
         "id": "standalone-iterator-protocol",
         "issues": ["#1665", "#681", "#1718"],
         "label": "Generic iterator protocol still needs a pure-Wasm standalone path",
-        "count": 3364,
+        "count": 3248,
         "statuses": {
           "pass": 0,
-          "fail": 3289,
+          "fail": 3173,
           "compile_error": 74,
           "compile_timeout": 1,
           "skip": 0,
-          "total": 3364,
+          "total": 3248,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 2127,
-          "type_error": 398,
-          "other": 160,
-          "illegal_cast": 486,
+          "assertion_fail": 2036,
+          "type_error": 395,
+          "other": 162,
+          "illegal_cast": 461,
           "runtime_error": 93,
           "wasm_compile": 54,
           "promise_error": 12,
           "range_error": 2,
           "null_deref": 28,
-          "unreachable": 3
+          "unreachable": 4
         },
         "sample_files": [
           "test/language/expressions/class/async-gen-method/forbidden-ext/b2/cls-expr-async-gen-meth-forbidden-ext-indirect-access-prop-caller.js",
-          "test/language/expressions/class/dstr/async-private-gen-meth-dflt-ary-init-iter-close.js",
           "test/language/expressions/class/dstr/gen-meth-static-ary-ptrn-elem-id-iter-val-err.js",
           "test/language/expressions/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-rest-init.js",
-          "test/language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-rest-id.js"
+          "test/language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-rest-id.js",
+          "test/language/expressions/yield/star-rhs-iter-nrml-next-invoke.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(result, #, 'If this test defined an own \"caller\" property on the inner function, then it should be accessible and should return the value it was set to.');",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue(doneCallCount, #);",
           "assertion_fail:returned # — assert ## at L#: throw new Test262Error();",
           "assertion_fail:returned # — assert ## at L#: assert.notSameValue(x, values);",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue(callCount, #);"
+          "assertion_fail:returned # — assert ## at L#: assert.sameValue(callCount, #);",
+          "type_error:TypeError: Cannot destructure 'null' or 'undefined'"
         ]
       },
       {
         "id": "generator-async-iteration",
         "issues": ["#680", "#1665"],
         "label": "Generators and async iteration",
-        "count": 178,
+        "count": 177,
         "statuses": {
           "pass": 0,
-          "fail": 169,
+          "fail": 166,
           "compile_error": 9,
-          "compile_timeout": 0,
+          "compile_timeout": 2,
           "skip": 0,
-          "total": 178,
+          "total": 177,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 147,
+          "assertion_fail": 144,
           "type_error": 17,
           "wasm_compile": 3,
           "negative_test_fail": 2,
@@ -1763,19 +1764,19 @@
         "id": "class-prototype-private-descriptor",
         "issues": ["#1591", "#1365", "#1364"],
         "label": "Class element, prototype, private-name, and descriptor reconciliation gaps",
-        "count": 6728,
+        "count": 6696,
         "statuses": {
           "pass": 0,
-          "fail": 6496,
+          "fail": 6464,
           "compile_error": 232,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 6728,
+          "total": 6696,
           "host_free_pass": 0
         },
         "error_categories": {
           "runtime_error": 58,
-          "assertion_fail": 4914,
+          "assertion_fail": 4882,
           "other": 129,
           "type_error": 1092,
           "illegal_cast": 206,
@@ -1790,15 +1791,15 @@
         "sample_files": [
           "test/language/expressions/class/subclass-builtins/subclass-Number.js",
           "test/language/expressions/class/dstr/meth-ary-ptrn-elem-ary-rest-init.js",
-          "test/language/expressions/array/S11.1.4_A1.4.js",
           "test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-function-declaration.js",
+          "test/language/expressions/array/S11.1.4_A1.4.js",
           "test/language/expressions/class/dstr/gen-meth-obj-ptrn-id-get-value-err.js"
         ],
         "sample_signatures": [
           "runtime_error:L#:## Codegen error: 'class Subclass extends Number' is not yet supported in --target standalone (##). The primitive-wrapper subclass native box is not implemented yet — routing it through the host path would emit invalid Wasm (the standalo",
           "assertion_fail:returned # — assert ## at L#: assert.notSameValue(x, values);",
-          "assertion_fail:Test262Error: ##: var array = [,,,#,#]; array.toString === Array.prototype.toString. Actual: [object Object]",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue( c[f()], # );",
+          "assertion_fail:Test262Error: ##: var array = [,,,#,#]; array.toString === Array.prototype.toString. Actual: [object Object]",
           "assertion_fail:returned # — assert ## at L#: throw new Test262Error();"
         ]
       },
@@ -1840,20 +1841,20 @@
         "id": "array-typedarray-buffer",
         "issues": ["#1358", "#1461", "#1654"],
         "label": "Array, TypedArray, DataView, and buffer semantics",
-        "count": 658,
+        "count": 659,
         "statuses": {
           "pass": 0,
-          "fail": 603,
+          "fail": 604,
           "compile_error": 55,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 658,
+          "total": 659,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 313,
-          "illegal_cast": 56,
+          "assertion_fail": 314,
           "type_error": 201,
+          "illegal_cast": 56,
           "other": 56,
           "promise_error": 3,
           "runtime_error": 3,
@@ -1865,15 +1866,15 @@
         "sample_files": [
           "test/built-ins/TypedArray/out-of-bounds-has.js",
           "test/built-ins/TypedArray/resizable-buffer-length-tracking-1.js",
-          "test/built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/detached-buffer.js",
+          "test/built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js",
           "test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert(i in array);",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(ta.length, # / ta.BYTES_PER_ELEMENT);",
-          "illegal_cast:L#:## illegal cast [in __closure_2() ← testWithTypedArrayConstructors ← test]",
           "type_error:TypeError: Cannot access property on null or undefined at #:#",
+          "illegal_cast:L#:## illegal cast [in __closure_2() ← testWithTypedArrayConstructors ← test]",
           "type_error:TypeError: Object method called on null or undefined"
         ]
       },
@@ -1916,19 +1917,19 @@
         "id": "object-property-semantics",
         "issues": ["#1472", "#176", "#281", "#1466"],
         "label": "Object/property/destructuring semantic mismatches behind the object model",
-        "count": 2052,
+        "count": 2049,
         "statuses": {
           "pass": 0,
-          "fail": 1845,
+          "fail": 1842,
           "compile_error": 207,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 2052,
+          "total": 2049,
           "host_free_pass": 0
         },
         "error_categories": {
           "type_error": 470,
-          "assertion_fail": 1338,
+          "assertion_fail": 1335,
           "other": 122,
           "wasm_compile": 13,
           "promise_error": 88,
@@ -2012,17 +2013,17 @@
         },
         "sample_files": [
           "test/annexB/language/global-code/if-decl-no-else-global-skip-early-err-try.js",
-          "test/annexB/language/global-code/switch-case-global-no-skip-try.js",
-          "test/annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for-in.js",
           "test/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-block-scoping.js",
-          "test/annexB/language/global-code/switch-case-global-update.js"
+          "test/annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for-in.js",
+          "test/annexB/language/global-code/switch-case-global-no-skip-try.js",
+          "test/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-update.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { f; }, 'An initialized binding is not created following evaluation');",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue( f, undefined, 'Initialized binding created prior to evaluation' );",
           "type_error:TypeError: dynamic eval is not supported in standalone mode (##)",
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue(typeof f, 'function');",
-          "runtime_error:L#:## Invalid left-hand side in for-in/for-of"
+          "assertion_fail:returned # — assert ## at L#: assert.sameValue( f, undefined, 'Initialized binding created prior to evaluation' );",
+          "runtime_error:L#:## Invalid left-hand side in for-in/for-of",
+          "assertion_fail:returned # — assert ## at L#: assert.sameValue(typeof f, 'function');"
         ]
       },
       {
@@ -2121,18 +2122,18 @@
         "id": "function-object-semantics",
         "issues": ["#731", "#1732", "#1596"],
         "label": "Function object name/length/prototype/call semantics",
-        "count": 202,
+        "count": 196,
         "statuses": {
           "pass": 0,
-          "fail": 194,
+          "fail": 188,
           "compile_error": 8,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 202,
+          "total": 196,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 147,
+          "assertion_fail": 141,
           "other": 35,
           "illegal_cast": 4,
           "type_error": 6,
@@ -2142,18 +2143,18 @@
           "negative_test_fail": 1
         },
         "sample_files": [
-          "test/language/expressions/arrow-function/dstr/dflt-ary-init-iter-close.js",
           "test/language/expressions/arrow-function/lexical-this.js",
           "test/built-ins/Function/S15.3.5_A2_T1.js",
           "test/language/function-code/10.4.3-1-101gs.js",
-          "test/language/function-code/10.4.3-1-60gs.js"
+          "test/language/function-code/10.4.3-1-60gs.js",
+          "test/built-ins/Function/S15.3.2.1_A3_T4.js"
         ],
         "sample_signatures": [
-          "assertion_fail:returned # — assert ## at L#: assert.sameValue(doneCallCount, #);",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(f.af(), f);",
           "other:ReferenceError: y is not defined",
           "illegal_cast:L#:## illegal cast [in test()]",
-          "other:'this' had incorrect value!"
+          "other:'this' had incorrect value!",
+          "other:Error: dynamic code evaluation (eval / new Function with a non-constant body) is not supported in --target standalone/wasi — no runtime-eval host is available (tracking: runtime-eval goal, bytecode interpreter ##)"
         ]
       },
       {
@@ -2193,18 +2194,18 @@
         "id": "assignment-private-short-circuit",
         "issues": ["#334", "#1456", "#540"],
         "label": "Assignment targets, private refs, and short-circuit semantics",
-        "count": 107,
+        "count": 93,
         "statuses": {
           "pass": 0,
-          "fail": 106,
+          "fail": 92,
           "compile_error": 1,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 107,
+          "total": 93,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 98,
+          "assertion_fail": 84,
           "other": 2,
           "null_deref": 5,
           "type_error": 1,
@@ -2265,18 +2266,18 @@
         "id": "eval-new-function",
         "issues": ["#1066", "#1073", "#990"],
         "label": "Eval and `new Function` semantics",
-        "count": 718,
+        "count": 708,
         "statuses": {
           "pass": 0,
-          "fail": 714,
+          "fail": 704,
           "compile_error": 4,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 718,
+          "total": 708,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 625,
+          "assertion_fail": 615,
           "type_error": 57,
           "null_deref": 22,
           "other": 5,
@@ -2372,19 +2373,19 @@
         "id": "lexical-scope-tdz-declarations",
         "issues": ["#1128", "#990", "#1726"],
         "label": "Lexical scope, TDZ, and declaration semantics",
-        "count": 186,
+        "count": 178,
         "statuses": {
           "pass": 0,
-          "fail": 175,
+          "fail": 167,
           "compile_error": 11,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 186,
+          "total": 178,
           "host_free_pass": 0
         },
         "error_categories": {
           "type_error": 5,
-          "assertion_fail": 104,
+          "assertion_fail": 96,
           "promise_error": 4,
           "wasm_compile": 9,
           "negative_test_fail": 13,
@@ -2485,19 +2486,19 @@
         "id": "tail-call-control-flow",
         "issues": ["#602", "#787"],
         "label": "Tail-call/control-flow loop semantics, including compile timeouts",
-        "count": 124,
+        "count": 119,
         "statuses": {
           "pass": 0,
-          "fail": 90,
+          "fail": 84,
           "compile_error": 32,
-          "compile_timeout": 2,
+          "compile_timeout": 3,
           "skip": 0,
-          "total": 124,
+          "total": 119,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 70,
           "wasm_compile": 23,
+          "assertion_fail": 64,
           "type_error": 1,
           "null_deref": 11,
           "runtime_error": 4,
@@ -2506,17 +2507,17 @@
           "illegal_cast": 6
         },
         "sample_files": [
-          "test/language/statements/try/dstr/ary-init-iter-get-err.js",
           "test/language/statements/function/dstr/dflt-ary-init-iter-no-close.js",
           "test/language/expressions/optional-chaining/iteration-statement-for.js",
           "test/language/statements/throw/S12.13_A3_T4.js",
-          "test/language/statements/function/dstr/obj-ptrn-id-get-value-err.js"
+          "test/language/statements/function/dstr/obj-ptrn-id-get-value-err.js",
+          "test/language/statements/function/13.2-21-s.js"
         ],
         "sample_signatures": [
-          "assertion_fail:returned # — assert ## at L#: throw new Test262Error();",
           "wasm_compile:L#:## invalid Wasm binary (WebAssembly.instantiate(): Compiling function ##:\"test\" failed: call[#] expected type externref, found ref.null of type (ref null #) @+#) [in test()] [@+#] [wat: (func $test (result f64) (local $doneCallCount f64)",
           "compile_timeout:timeout (10s)",
           "assertion_fail:Test262Error: ##: Exception[#]===mycars[#](operation .concat). Actual: Exception[#]===[object Object]",
+          "assertion_fail:returned # — assert ## at L#: throw new Test262Error();",
           "assertion_fail:returned # — assert ## at L#: assert.throws(TypeError, function() { var temp = foo.caller; });"
         ]
       },
@@ -2626,18 +2627,18 @@
         "id": "super-spread-receiver",
         "issues": ["#843", "#1551"],
         "label": "`super`, spread, and receiver-evaluation semantics",
-        "count": 50,
+        "count": 46,
         "statuses": {
           "pass": 0,
-          "fail": 46,
+          "fail": 42,
           "compile_error": 4,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 50,
+          "total": 46,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 44,
+          "assertion_fail": 40,
           "other": 1,
           "range_error": 1,
           "wasm_compile": 2,
@@ -2811,18 +2812,18 @@
         "id": "demasked-native-assertion",
         "issues": ["#2962"],
         "label": "De-masked native assertion failure (Test262Error rendered by the #2962 standalone exception renderer) — real assertion mismatch, re-triage by feature path",
-        "count": 135,
+        "count": 131,
         "statuses": {
           "pass": 0,
-          "fail": 135,
+          "fail": 131,
           "compile_error": 0,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 135,
+          "total": 131,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 135
+          "assertion_fail": 131
         },
         "sample_files": [
           "test/language/expressions/compound-assignment/S11.13.2_A5.2_T1.js",

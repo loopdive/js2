@@ -1,7 +1,7 @@
 {
   "generated": "2026-07-09",
   "threshold": 1500,
-  "totalCeiling": 388437,
+  "totalCeiling": 388883,
   "files": {
     "src/codegen-linear/index.ts": 5506,
     "src/codegen-linear/runtime.ts": 3638,
@@ -26,8 +26,8 @@
     "src/codegen/expressions/new-super.ts": 5602,
     "src/codegen/expressions/unary-updates.ts": 2087,
     "src/codegen/generators-native.ts": 4687,
-    "src/codegen/index.ts": 16608,
-    "src/codegen/iterator-native.ts": 1525,
+    "src/codegen/index.ts": 16611,
+    "src/codegen/iterator-native.ts": 1968,
     "src/codegen/json-codec-native.ts": 2859,
     "src/codegen/literals.ts": 4232,
     "src/codegen/map-runtime.ts": 2104,
