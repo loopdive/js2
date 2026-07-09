@@ -1,8 +1,9 @@
 {
   "id": "3097",
   "assignee": "ttraenkler/fable-3097",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3097-compiled-ab-host-ta-ctor",
   "claimed_at": "2026-07-09T10:53:30Z",
-  "updated_at": "2026-07-09T10:53:30Z"
+  "updated_at": "2026-07-09T14:16:35Z",
+  "released_at": "2026-07-09T14:16:35Z"
 }
