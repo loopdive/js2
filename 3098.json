@@ -1,8 +1,9 @@
 {
   "id": "3098",
   "assignee": "ttraenkler/fable-3098",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3098-standalone-callback-dispatch",
   "claimed_at": "2026-07-09T14:20:33Z",
-  "updated_at": "2026-07-09T14:20:33Z"
+  "updated_at": "2026-07-09T15:30:47Z",
+  "released_at": "2026-07-09T15:30:47Z"
 }
