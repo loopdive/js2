@@ -1,8 +1,9 @@
 {
   "id": "3119",
   "assignee": "ttraenkler/fable-3119",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3119-object-iterator-arm",
   "claimed_at": "2026-07-09T19:38:38Z",
-  "updated_at": "2026-07-09T19:38:38Z"
+  "updated_at": "2026-07-09T21:21:30Z",
+  "released_at": "2026-07-09T21:21:30Z"
 }
