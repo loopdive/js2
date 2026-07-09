@@ -1,8 +1,8 @@
 {
   "id": "3100",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-09T10:34:09Z",
-  "updated_at": "2026-07-09T10:34:09Z"
+  "assignee": "ttraenkler/fable-3100",
+  "status": "in-progress",
+  "branch": "issue-3100-dynamic-iterable-ladder",
+  "claimed_at": "2026-07-09T14:21:15Z",
+  "updated_at": "2026-07-09T14:21:15Z"
 }
